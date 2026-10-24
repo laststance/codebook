@@ -128,6 +128,10 @@ export interface StudyViewMessage {
     loading: boolean
     /** The shown time is the moment being selected, not yet committed: the readout says it is loading (F388). */
     pending?: boolean
+    /** The sequence of the history's first event, from all its entries whatever page the event list shows; Replay from start and Home select it (DS-C). */
+    firstSequence?: number
+    /** The sequence of the history's last event; End selects it (DS-C). */
+    lastSequence?: number
   }
   nodeHistoryPosition?: {
     sequence: number
@@ -148,8 +152,12 @@ export interface StudyViewMessage {
   nodeHistoryScrollToken?: number
   /** The test replay's learning material for the one summary renderer, each referenced step with its event (Design 5). */
   nodeHistoryLearningSummary?: NodeLearningSummaryProjection
+  /** The host's sentence for the last test replay move it refused or that failed, so the shared transport's status line reads it with the summary hidden too (DS-G); absent once a move commits. */
+  nodeHistoryRefusal?: string
   contentTab?: 'overview' | 'live' | 'recording'
   playbackPanelVisible?: boolean
+  /** The replay the summary composition shows: a browser recording or a test replay (Cycle 0051, DS-A); absent outside it. The page lays a replay out by this value and reads `recording` for a browser recording's own parts. */
+  replayFamily?: 'browser' | 'test'
   presentation?: PresentationState
   repositoryReturnAvailable?: boolean
   repositoryArticleAvailable?: boolean
@@ -194,9 +202,11 @@ export function studyHtml(kind: 'context' | 'moments'): string {
   // The values hint and its button stand where their arrival moves no transport control: above the controls in the summary, whose transport is fixed to the bottom and grows upward, and below them in the bottom panel, whose transport starts at the top.
   const valuesHint =
     '<p id="playback-hint" class="muted" role="status" aria-live="polite"></p><button id="playback-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button>'
+  // 5A's Learning summary button stands in the bottom panel's transport, the one shown while the summary is hidden; the summary's own transport shows only with the summary, which the button would bring back (Cycle 0051, DS-E).
+  const learningSummaryButton = `<button id="show-learning-summary" type="button" data-action="focus-context" title="${STUDY_UI_OPTIONS.showLearningSummary}" aria-label="${STUDY_UI_OPTIONS.showLearningSummary}">${STUDY_UI_OPTIONS.learningSummaryButton}</button>`
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; img-src data:;"><style nonce="${nonce}">${STUDY_STYLES}</style></head><body class="${markupOnlyIn(kind, 'moments', 'moments-only')}">
 <p id="bootstrap-status" class="status" role="status" aria-live="polite">Loading study…</p><main id="study-content" hidden inert>
-<header class="learning-header"><p id="reader-kind" class="muted">Codebook study</p><h1 id="title">Codebook study</h1><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">Keyboard shortcuts <kbd>?</kbd></button></header>
+<header class="learning-header"><p id="reader-kind" class="muted">Codebook study</p><h1 id="title" tabindex="-1" data-focus-fallback>Codebook study</h1><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">Keyboard shortcuts <kbd>?</kbd></button></header>
 <details id="reader-options" open ${markupOnlyIn(kind, 'moments', 'hidden')}><summary>Study view and pane controls</summary><header class="presentation-header"><nav class="row study-read-tools" aria-label="Study pane reading"><button data-action="read-app" aria-label="Read application">App</button><button data-action="read-source" aria-label="Read captured source">Source</button><button data-action="read-context" aria-label="Read explanation">Explanation</button><button data-presentation="restore">Restore</button></nav><details id="presentation-options"><summary>View options</summary><p id="presentation-caption" class="muted mode-caption"></p><div class="row presentation-tools"><button data-action="enlarge-app">Enlarge application</button><button data-action="enlarge-context">Enlarge explanation</button><button data-presentation="save-preference" hidden>Save preference</button></div></details></header></details><p id="presentation-status" class="presentation-status" role="status" aria-live="polite"></p>
 <button data-action="return-wiki" hidden>← Return to Wiki</button><button data-action="open-article" hidden>Open article</button><div class="live-strip"><div id="runtime" role="status" aria-live="polite"></div><div class="row"><button data-action="return-current">Return to current pause</button><button class="primary" data-action="continue">Continue inspected pause</button><button data-action="stop">Stop</button></div><small class="muted" id="deadline"></small></div>
 <p id="errors" class="error" role="status" aria-live="polite"></p><button data-action="retry" hidden>Retry storage / refresh</button>
@@ -211,10 +221,10 @@ export function studyHtml(kind: 'context' | 'moments'): string {
 <details id="study-controls"><summary>Study controls</summary><div id="next-scenario"><div class="row"><button class="primary" data-action="connect">Connect your editor agent</button><button data-action="click">Perform configured action once</button></div><p class="muted" id="profile-description">Ask your editor agent to explain a code path in the open repository.</p></div></details>
 <section><h2>Workspace panes</h2><div class="row"><button data-action="focus-app">Focus application</button><button data-action="source">Focus source</button><button data-action="focus-context">Focus explanation</button><button data-action="outline">Show learning outline</button><button data-action="arrange">Restore Study arrangement</button></div></section></div>
 <p id="recording-save-state" class="status" role="status" aria-live="polite"></p><details id="evidence-details" hidden><summary id="evidence-summary">Evidence status</summary><p id="study-state" class="status" hidden></p></details>
-<section id="node-history"><h2>${STUDY_UI_OPTIONS.testReplay.heading}</h2><p id="node-history-status" class="status" role="status"></p><p id="node-history-capture-reason" class="muted"></p><div id="node-history-moment" role="status" aria-live="polite"><p id="node-history-position" class="status"></p><p id="node-history-explanation"></p></div><p id="node-history-not-recorded" class="muted"></p><p id="node-history-unverified" class="muted"></p><p id="node-history-pointer" class="muted"></p><div id="node-history-closed" class="row" hidden><button type="button" data-action="focus-app">${STUDY_UI_OPTIONS.testReplay.showRecordedOutput}</button></div><p id="node-history-hint" class="muted" role="status" aria-live="polite"></p><button id="node-history-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button><button id="node-history-inspect" type="button" hidden>Inspect in native debugger</button><div id="node-history-transport"><div class="playback-row"><button id="node-history-stop-previous" class="primary" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousStop}">${STUDY_UI_OPTIONS.testReplay.previousStop}</button><button id="node-history-stop-next" class="primary" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextStop}">${STUDY_UI_OPTIONS.testReplay.nextStop}</button><button id="node-history-playback-toggle" type="button" data-node-history-playback="play">${STUDY_UI_OPTIONS.testReplay.play}</button><label for="node-history-playhead" class="visually-hidden">Recorded test time</label><div class="timeline-track"><input id="node-history-playhead" type="range" min="0" max="0" step="any" value="0" disabled><div id="node-history-coverage" class="history-coverage" role="img" aria-label="${STUDY_UI_OPTIONS.coverage.unknownName}" hidden></div><span id="node-history-coverage-label" class="history-coverage-label muted"></span></div><span id="node-history-playback-position" class="muted">Test journal playback</span></div><div class="row"><button id="node-history-moment-previous" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousEvent}">${STUDY_UI_OPTIONS.testReplay.previousEvent}</button><button id="node-history-moment-next" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextEvent}">${STUDY_UI_OPTIONS.testReplay.nextEvent}</button></div></div><section id="node-history-learning" hidden><h3 id="node-learning-title"></h3><p id="node-learning-question" class="muted"></p><p id="node-learning-summary"></p><div id="node-learning-sequence" aria-label="Test replay learning sequence"></div><details id="node-learning-steps-details"><summary>${STUDY_UI_OPTIONS.testReplay.stepDetails}</summary><div id="node-learning-steps"></div></details></section><p id="node-history-no-material" class="muted" hidden>${STUDY_UI_OPTIONS.testReplay.noMaterial}</p><label><input id="node-history-understood" type="checkbox"><span>I understand this test history <span id="node-history-understanding-state" class="muted"></span></span></label><details id="node-history-events-details"><summary id="node-history-events-summary">Events</summary><div class="row"><span id="node-history-page" class="muted"></span><button id="node-history-previous" type="button">Previous page</button><button id="node-history-next" type="button">Next page</button></div><div id="node-history-events"></div></details></section>
+<section id="node-history"><h2 id="node-history-heading">${STUDY_UI_OPTIONS.testReplay.heading}</h2><section id="node-history-learning" hidden><h3 id="node-learning-title"></h3></section><p id="node-history-status" class="status" role="status"></p><div class="clamped-text"><p id="node-history-capture-reason" class="muted clamp"></p><button type="button" class="link show-more" data-show-more="node-history-capture-reason" aria-controls="node-history-capture-reason" aria-expanded="false" hidden>${STUDY_UI_OPTIONS.testReplay.showMore}</button></div><div id="node-history-material" hidden><div class="clamped-text"><p id="node-learning-question" class="muted clamp"></p><button type="button" class="link show-more" data-show-more="node-learning-question" aria-controls="node-learning-question" aria-expanded="false" hidden>${STUDY_UI_OPTIONS.testReplay.showMore}</button></div><div class="clamped-text"><p id="node-learning-summary" class="clamp"></p><button type="button" class="link show-more" data-show-more="node-learning-summary" aria-controls="node-learning-summary" aria-expanded="false" hidden>${STUDY_UI_OPTIONS.testReplay.showMore}</button></div><div id="node-learning-sequence" aria-label="Test replay learning sequence"></div><details id="node-learning-steps-details"><summary>${STUDY_UI_OPTIONS.testReplay.stepDetails}</summary><div id="node-learning-steps"></div></details></div><p id="node-history-no-material" class="muted" hidden>${STUDY_UI_OPTIONS.testReplay.noMaterial}</p><div id="node-history-moment" role="status" aria-live="polite"><h3 id="node-history-step-heading" tabindex="-1" data-focus-fallback hidden></h3><p id="node-history-position" class="status"></p><p id="node-history-explanation"></p></div><p id="node-history-not-recorded" class="muted"></p><p id="node-history-unverified" class="muted"></p><p id="node-history-pointer" class="muted"></p><div id="node-history-closed" class="row" hidden><button type="button" data-action="focus-app">${STUDY_UI_OPTIONS.testReplay.showRecordedOutput}</button></div><p id="node-history-hint" class="muted" role="status" aria-live="polite"></p><button id="node-history-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button><button id="node-history-inspect" type="button" hidden>Inspect in native debugger</button><label><input id="node-history-understood" type="checkbox"><span>I understand this test history <span id="node-history-understanding-state" class="muted"></span></span></label><details id="node-history-events-details"><summary id="node-history-events-summary">Events</summary><div class="row"><span id="node-history-page" class="muted"></span><button id="node-history-previous" type="button">Previous page</button><button id="node-history-next" type="button">Next page</button></div><div id="node-history-events"></div></details></section>
 <section id="observed-moments"><h2>Observed moments</h2><p class="muted" id="moments-caption">Select a captured observation or open Recording to follow its time.</p><div id="moments" class="moments"></div></section>
 <section id="saved-studies"><h2>Saved studies</h2><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select><p id="study-unopenable" class="muted" hidden></p><p id="study-newer" class="muted" hidden></p><p id="study-repairable" class="muted" hidden></p><div id="delete-study-row" class="row" hidden><button id="repair-study" class="primary" type="button" data-action="retry" aria-describedby="study-repairable" hidden>Repair saved study</button><button id="delete-study" type="button" aria-describedby="delete-study-reason delete-study-status">Delete saved study…</button></div><p id="delete-study-reason" class="muted" hidden></p><p id="delete-study-status" role="status" aria-live="polite"></p><details id="study-files" hidden><summary>Remove by hand</summary><p id="study-files-note" role="status" aria-live="polite"></p><ul id="study-files-list" class="muted" aria-label="Files of the chosen saved study"></ul><div class="row"><button id="copy-study-files" type="button">Copy paths</button><button type="button" data-action="retry">Retry storage / refresh</button></div><p id="copy-study-files-status" role="status" aria-live="polite"></p></details></section>
-<section id="recording-transport">${markupOnlyIn(kind, 'context', valuesHint)}<div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="${STUDY_UI_OPTIONS.coverage.unknownName}" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span></div><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><span id="application-covered-remedy" class="${markupOnlyIn(kind, 'context', 'visually-hidden')}${markupOnlyIn(kind, 'moments', 'muted')}" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details></div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p>${markupOnlyIn(kind, 'moments', valuesHint)}</section>
+<section id="recording-transport">${markupOnlyIn(kind, 'context', valuesHint)}<div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="${STUDY_UI_OPTIONS.coverage.unknownName}" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span><span id="playback-events" class="playback-events" role="group" aria-label="${STUDY_UI_OPTIONS.testReplay.eventsGroup}" hidden><button id="previous-event" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousEvent}" disabled>${STUDY_UI_OPTIONS.testReplay.previousEvent}</button><button id="next-event" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextEvent}" disabled>${STUDY_UI_OPTIONS.testReplay.nextEvent}</button></span></div><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><span id="application-covered-remedy" class="${markupOnlyIn(kind, 'context', 'visually-hidden')}${markupOnlyIn(kind, 'moments', 'muted')}" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details>${markupOnlyIn(kind, 'moments', learningSummaryButton)}</div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p>${markupOnlyIn(kind, 'moments', valuesHint)}</section>
 </main>
 <script nonce="${nonce}">(${installShortcutHelp.toString()})(${JSON.stringify(STUDY_SHORTCUTS)}, '#study-content');(${studyClient.toString()})(${JSON.stringify(STUDY_UI_OPTIONS)}, ${kind === 'context' ? installWebviewFocus.toString() : 'undefined'}, ${savedStudyLabel.toString()}, ${savedLaterNote.toString()}, ${installPaneFocusMemory.toString()})</script></body></html>`
 }
@@ -250,7 +260,6 @@ function studyClient(
   // In a window without a Trash: the entry the "Remove by hand" disclosure is offered for; another entry, or none, closes it.
   let filesDisclosureStudyId: string | undefined
   let scrubbing = false
-  let nodeHistoryScrubbing = false
   // A Show Variables button that left while it held this pane's focus, and where that focus goes: paid when the Study message is rendered if this document has the focus, else at its next focus event, so a pane the learner left for Run and Debug takes no focus back.
   let transportFocusOwed:
     | { leaving: HTMLElement; preferred: readonly string[]; section: string }
@@ -517,6 +526,11 @@ function studyClient(
     readerOptionsOpenedByLearner = !readerOptions.hasAttribute('open')
   })
   const transport = element('recording-transport')
+  // The shared slider of both replay families (DS-C), and the tooltip the shortcut help gave it for a recording, which it gets back when it leaves a test replay.
+  const playheadInput = element('playhead') as HTMLInputElement
+  const browserPlayheadTitle = playheadInput.title
+  // The slider says it presents no position from the start: its accessible value is the attribute the first replay message writes, before anything else may add one (the browser transport's markup, which the golden pins, keeps its order).
+  playheadInput.setAttribute('aria-valuetext', 'No recorded position presented')
   // Reserve the actual footer height, including expanded recovery details, so reading controls remain reachable; a transport this pane does not show is rendered with nothing in it and has no height.
   new ResizeObserver(() =>
     document.documentElement.style.setProperty(
@@ -558,13 +572,10 @@ function studyClient(
       revealInTransport(playbackDiagnostics)
   })
   const strip = document.querySelector<HTMLElement>('.live-strip')
-  const replayTransportBar = document.getElementById('node-history-transport')
-  // The sticky bars this page has, top first: the live strip, then the test replay's transport.
-  const stickyBars = [strip, replayTransportBar].filter(
-    (bar): bar is HTMLElement => bar !== null,
-  )
+  // The sticky bars this page has: the live strip (a replay's transport is the shared one, fixed or in the bottom panel).
+  const stickyBars = [strip].filter((bar): bar is HTMLElement => bar !== null)
   // Oversized sticky controls must not hide keyboard focus at narrow widths or enlarged text.
-  // The live strip sticks at the top and the test replay's transport sticks right below it, so the sticky bars never cover each other; a bar taller than the fraction of the pane flows with the page instead, and the focus scroll room counts the bars that stay.
+  // A bar taller than the fraction of the pane flows with the page instead, and the focus scroll room counts the bars that stay.
   const adaptStrip = (): void => {
     let stickyHeight = 0
     for (const bar of stickyBars) {
@@ -573,8 +584,6 @@ function studyClient(
         'flowing',
         height > window.innerHeight * options.maxStickyFraction,
       )
-      // The transport sticks below the strip: its offset is the height of the bar above it.
-      if (bar === replayTransportBar) bar.style.top = `${stickyHeight}px`
       if (getComputedStyle(bar).position === 'sticky') stickyHeight += height
     }
     // Native focus scrolling must leave room for the visible sticky bars and their outline.
@@ -619,10 +628,6 @@ function studyClient(
                 : {}),
             },
       )
-    } else if (target.dataset.nodeHistoryPlayback) {
-      nodeHistoryPlayback(
-        target.dataset.nodeHistoryPlayback as 'play' | 'pause',
-      )
     } else if (target.dataset.summaryStep) {
       const positions = current?.recording?.learningSummary?.positions
       const position = positions?.find(
@@ -643,22 +648,9 @@ function studyClient(
         api.setState({ visited: [...visited] })
       }
       send({ type: 'action', action: target.dataset.action })
-    } else if (target.dataset.playback) {
-      if (target.dataset.playback === 'start' && current?.recording?.range)
-        playback('seek', current.recording.range.startMs)
-      else if (
-        target.dataset.playback === 'previous' ||
-        target.dataset.playback === 'next'
-      ) {
-        const position = recordedStep(target.dataset.playback)
-        if (position !== undefined) playback('seek', position)
-      } else if (
-        target.dataset.playback === 'play' ||
-        target.dataset.playback === 'pause'
-      )
-        playback(target.dataset.playback)
-    } else if (target.dataset.tab)
-      send({ type: 'tab', tab: target.dataset.tab })
+    } else if (target.dataset.playback)
+      playTransportControl(target.dataset.playback)
+    else if (target.dataset.tab) send({ type: 'tab', tab: target.dataset.tab })
     else if (target.dataset.item)
       send({ type: 'select', itemId: target.dataset.item })
   })
@@ -779,43 +771,66 @@ function studyClient(
         unit,
       })
   }
-  element('node-history-stop-previous').addEventListener('click', () =>
-    stepTestReplay('previous', 'stop'),
-  )
-  element('node-history-stop-next').addEventListener('click', () =>
-    stepTestReplay('next', 'stop'),
-  )
-  element('node-history-moment-previous').addEventListener('click', () =>
+  /**
+   * Asks the host to select one event of the test replay by its sequence, as the event list does; sent by the shared transport's Replay from start, Home and End (DS-C), so several events at one time never skip the first.
+   * @param sequence - The event's sequence, from the host's whole-history projection.
+   * @example selectTestReplayEvent(current.nodeHistoryPlayback.firstSequence)
+   */
+  const selectTestReplayEvent = (sequence: number | undefined): void => {
+    if (current?.nodeHistory && sequence !== undefined)
+      send({
+        type: 'node-history-event',
+        studyId: current.nodeHistory.header.studyId,
+        sequence,
+      })
+  }
+  /**
+   * Carries out a shared transport button for a test replay (DS-C): Replay from start selects the first event, Previous and Next recorded stop step by stop, and Play or Pause runs the test replay's playback; called by the page's click handler while the summary composition shows a test replay.
+   * @param control - The button's `data-playback` value.
+   * @example playTestReplayControl('start')
+   */
+  /**
+   * Runs a shared transport control for the replay family the page shows (DS-C): a test replay's moves by event and stop, a browser recording's seeks and Play; called by the page's click handler for a `data-playback` button.
+   * @param control - The button's `data-playback` value: `start`, `previous`, `next`, `play` or `pause`.
+   * @example playTransportControl('next') // a test replay: node-history-step to the next stop
+   */
+  const playTransportControl = (control: string): void => {
+    if (current?.replayFamily === 'test') playTestReplayControl(control)
+    else playBrowserReplayControl(control)
+  }
+  /**
+   * Runs a shared transport control for a browser recording: Replay from start seeks the range's start, Previous and Next seek the recorded stop that way, Play and Pause play; called by {@link playTransportControl}.
+   * @param control - The button's `data-playback` value.
+   * @example playBrowserReplayControl('start') // seeks the recording's first millisecond
+   */
+  const playBrowserReplayControl = (control: string): void => {
+    if (control === 'start' && current?.recording?.range)
+      playback('seek', current.recording.range.startMs)
+    else if (control === 'previous' || control === 'next') {
+      const position = recordedStep(control)
+      if (position !== undefined) playback('seek', position)
+    } else if (control === 'play' || control === 'pause') playback(control)
+  }
+  const playTestReplayControl = (control: string): void => {
+    if (control === 'start')
+      selectTestReplayEvent(current?.nodeHistoryPlayback?.firstSequence)
+    else if (control === 'previous' || control === 'next')
+      stepTestReplay(control, 'stop')
+    else if (control === 'play' || control === 'pause')
+      nodeHistoryPlayback(control)
+  }
+  element('previous-event').addEventListener('click', () =>
     stepTestReplay('previous', 'event'),
   )
-  element('node-history-moment-next').addEventListener('click', () =>
+  element('next-event').addEventListener('click', () =>
     stepTestReplay('next', 'event'),
   )
-  const nodePlayhead = element('node-history-playhead') as HTMLInputElement
-  nodePlayhead.addEventListener('input', () => {
-    nodeHistoryScrubbing = true
-    text(
-      'node-history-playback-position',
-      `${(Number(nodePlayhead.value) / options.secondMs).toFixed(2)} s`,
-    )
-    // Assistive technology hears the time under the thumb while it moves, before the host answers the seek.
-    nodePlayhead.setAttribute(
-      'aria-valuetext',
-      `${seconds(Number(nodePlayhead.value))} of recorded test time`,
-    )
-  })
-  nodePlayhead.addEventListener('change', () => {
-    nodeHistoryPlayback('seek', Number(nodePlayhead.value))
-    nodeHistoryScrubbing = false
-  })
-  // A scrub that ends without a change event (focus lost, pointer cancelled) must not keep the playhead from following later seeks and steps.
-  for (const scrubEnd of ['blur', 'pointercancel'])
-    nodePlayhead.addEventListener(scrubEnd, () => {
-      nodeHistoryScrubbing = false
-    })
   // Only a moved thumb holds the playhead: a press without a drag fires no input and no change, and must not stop it from following later seeks.
   element('playhead').addEventListener('input', () => {
     scrubbing = true
+    // Assistive technology hears the test time under the thumb while it moves, before the host answers the seek.
+    if (current?.replayFamily === 'test')
+      describeTestReplayPlayhead(Number(playheadInput.value), '')
   })
   // A scrub that ends without a change event (focus lost, pointer cancelled) releases the playhead as well.
   for (const scrubEnd of ['blur', 'pointercancel'])
@@ -824,31 +839,91 @@ function studyClient(
     })
   element('playhead').addEventListener('change', (event) => {
     scrubbing = false
-    if (event.target instanceof HTMLInputElement)
-      playback('seek', Number(event.target.value))
+    if (!(event.target instanceof HTMLInputElement)) return
+    // A test replay's drag seeks its recorded test time; with no time range (every event at one time) there is no time to seek (DS-C).
+    if (current?.replayFamily === 'test') {
+      const playbackState = current.nodeHistoryPlayback
+      if (
+        playbackState?.startMs !== undefined &&
+        playbackState.endMs !== undefined &&
+        playbackState.endMs > playbackState.startMs
+      )
+        nodeHistoryPlayback('seek', Number(event.target.value))
+      return
+    }
+    playback('seek', Number(event.target.value))
   })
-  element('playhead').addEventListener('keydown', (event) => {
-    if (
-      !(event instanceof KeyboardEvent) ||
-      event.defaultPrevented ||
-      event.isComposing ||
+  /** The keys the shared slider handles itself, for both families (C2). */
+  const timelineKeys = [
+    'ArrowLeft',
+    'ArrowRight',
+    'ArrowUp',
+    'ArrowDown',
+    'PageUp',
+    'PageDown',
+    'Home',
+    'End',
+  ]
+  /**
+   * Says whether a keydown on the shared slider is one the page handles: one of its keys, with no modifier, outside IME composition and not handled already (C2).
+   * @param event - The keydown.
+   * @returns `true` when the slider's own handler moves the replay for this key.
+   * @example isTimelineKey(new KeyboardEvent('keydown', { key: 'End' })) // => true
+   */
+  const isTimelineKey = (event: Event): event is KeyboardEvent =>
+    event instanceof KeyboardEvent &&
+    !event.defaultPrevented &&
+    !event.isComposing &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.altKey &&
+    !event.shiftKey &&
+    timelineKeys.includes(event.key)
+  /**
+   * Says whether a keydown on the shared slider is one of its keys pressed with a modifier, or one already handled, outside IME composition; read by the slider's keydown listener, which moves a test replay by none of these and holds back the native step they would take (C2).
+   * @param event - The keydown.
+   * @returns `true` for Shift, Control, Alt or Meta with a slider key, and for a slider key whose default an earlier listener prevented.
+   * @example isTimelineChord(new KeyboardEvent('keydown', { key: 'End', ctrlKey: true })) // => true
+   */
+  const isTimelineChord = (event: Event): boolean =>
+    event instanceof KeyboardEvent &&
+    !event.isComposing &&
+    timelineKeys.includes(event.key) &&
+    (event.defaultPrevented ||
       event.ctrlKey ||
       event.metaKey ||
       event.altKey ||
-      event.shiftKey ||
-      !current?.recording?.range ||
-      ![
-        'ArrowLeft',
-        'ArrowRight',
-        'ArrowUp',
-        'ArrowDown',
-        'PageUp',
-        'PageDown',
-        'Home',
-        'End',
-      ].includes(event.key)
-    )
+      event.shiftKey)
+  /**
+   * Moves a test replay for a key on the shared slider (C2, DS-C): arrows step by event and Page keys by stop (Page Up forward, as for a recording), Home and End select the first and last event by sequence; a time step would land on the same event again, as a test replay's seek selects the event at or before the time. Called by the slider's one keydown listener while it shows a test replay.
+   * @param key - The key, one of {@link timelineKeys}.
+   * @example moveTestReplayByKey('ArrowRight')
+   */
+  const moveTestReplayByKey = (key: string): void => {
+    const forward = ['ArrowRight', 'ArrowUp', 'PageUp'].includes(key)
+    const playbackState = current?.nodeHistoryPlayback
+    if (key === 'Home') selectTestReplayEvent(playbackState?.firstSequence)
+    else if (key === 'End') selectTestReplayEvent(playbackState?.lastSequence)
+    else
+      stepTestReplay(
+        forward ? 'next' : 'previous',
+        key.startsWith('Page') ? 'stop' : 'event',
+      )
+  }
+  // One listener reads the family shown when the key is pressed, so a family change with the slider focused uses no stale handler (DS-C).
+  element('playhead').addEventListener('keydown', (event) => {
+    // A test replay's slider has no time step of its own: a chord of its keys moves nothing, and the native step it would take is held back (C2).
+    if (current?.replayFamily === 'test' && isTimelineChord(event)) {
+      event.preventDefault()
       return
+    }
+    if (!isTimelineKey(event)) return
+    if (current?.replayFamily === 'test') {
+      event.preventDefault()
+      moveTestReplayByKey(event.key)
+      return
+    }
+    if (!current?.recording?.range) return
     event.preventDefault()
     const { startMs, endMs } = current.recording.range,
       position = current.recording.presentedMs ?? startMs
@@ -1800,7 +1875,7 @@ function studyClient(
    * Shows or hides a Show Variables button, and remembers where the keyboard focus goes when the button leaves while it holds this pane's focus; called for the replay's and the Node history's button on every Study message.
    * @param buttonId - The Show Variables button.
    * @param isOffered - Whether the selected moment's native values are not loaded, so the button is shown.
-   * @param preferred - Selectors of that transport's controls in the order the focus tries them, Play first.
+   * @param preferred - Selectors of the controls in the order the focus tries them: the transport's, Play first, or the summary's fallback headings.
    * @param section - Id of the section whose first usable control takes the focus when none of the preferred ones can.
    * @example offerShowVariables('playback-show-variables', false, options.replayTransportFocus, 'recording-transport')
    */
@@ -1831,7 +1906,7 @@ function studyClient(
     ].find(
       (control): control is HTMLElement =>
         control instanceof HTMLElement &&
-        control.matches('button,input,summary') &&
+        control.matches('button,input,summary,[data-focus-fallback]') &&
         control !== owed.leaving &&
         !control.matches(':disabled') &&
         // Shown: a control inside a closed disclosure still has boxes, and cannot take the focus.
@@ -1890,7 +1965,7 @@ function studyClient(
    * Gives the control of the pane that stays and takes a lost focus when no disclosure around the control that left is shown; read by {@link focusTargetFor}.
    * @param leaving - The control that left while it held the focus.
    * @returns
-   * - In the Study pane: the selected content tab while it is shown; while a selected test replay hides the content tabs ({@link hideArticleForTestReplay}), the first test replay transport control that can be used (F567)
+   * - In the Study pane and the Learning summary: the selected content tab while it is shown; while a selected test replay hides the content tabs ({@link hideArticleForTestReplay}), the moment block's step heading, else the summary's title heading (DS-E)
    * - In the bottom panel's pane, which has no content tabs: Play or the next transport control that can be used while the transport is shown, else the first control the pane shows
    * @example stayingControl(button('stop')!)?.id // => 'live-tab'
    */
@@ -1908,7 +1983,7 @@ function studyClient(
     if (tab?.checkVisibility()) return tab
     return usableTransportControl({
       leaving,
-      preferred: options.nodeTransportFocus,
+      preferred: options.summaryFocusFallback,
       section: 'node-history',
     })
   }
@@ -1925,7 +2000,10 @@ function studyClient(
     (control) => {
       if (control) focusHolder = { control, isTakenByPage: true }
     },
-    () => settleFocus(),
+    () => {
+      settleFocus()
+      focusSummaryStart()
+    },
   )
   /**
    * Says whether a control lost the focus without the learner taking it off inside the pane: the editor took it when the learner left the pane at that control, or the page took it by disabling the control or by taking it out. Read by {@link keptFocusHolder}.
@@ -1996,6 +2074,28 @@ function studyClient(
     focusHolder = undefined
     target.focus({ preventScroll: true })
   }
+  /**
+   * Gives a replay's Learning summary that the learner opens with the focus on the document body and no control ever focused in it (its first open, an empty history) its title heading, so the keyboard starts at the top of the summary and the reading position stays (DS-E); called at the window's focus event after {@link settleFocus}, which places a held control first.
+   * A summary in which the learner has used a control keeps the pane's own return rule, so a focus the learner took off a control stays off it. The Study pane and the bottom panel's pane keep their own rules.
+   * @example focusSummaryStart() // the focus on `#title` after Codebook: Show Learning Summary
+   */
+  // Whether any control of this document has had the keyboard focus, which ends {@link focusSummaryStart}'s first-open rule.
+  let controlEverFocused = false
+  document.addEventListener('focusin', (event) => {
+    if (event.target instanceof HTMLElement && event.target !== document.body)
+      controlEverFocused = true
+  })
+  const focusSummaryStart = (): void => {
+    if (
+      controlEverFocused ||
+      isBottomPanel ||
+      document.body.dataset.replay !== 'true' ||
+      !document.hasFocus() ||
+      document.activeElement !== document.body
+    )
+      return
+    element('title').focus({ preventScroll: true })
+  }
   /** Says whether the transport's status describes a shown moment, which is when it carries the covered label: not while the replay failed, nor while a requested moment is pending. Read by {@link coveredAnnouncement}. @example showsMomentStatus(recording) // => false for a failed replay */
   const showsMomentStatus = (
     recording: NonNullable<StudyViewMessage['recording']>,
@@ -2043,6 +2143,9 @@ function studyClient(
     const replay = Boolean(message.nodeHistory)
     element('content-tabs').hidden = replay
     element('source-flow').hidden = replay
+    // The article's source links and its own understanding check describe the article, not the replay, whose check stands in its summary (Cycle 0051, DS-B).
+    const articleSource = element('source-version').closest('section')
+    if (articleSource) articleSource.hidden = replay
     // The loading line and the selected block were just set from the article's own state; a shown test replay only hides them.
     if (!replay) return
     element('loading').hidden = true
@@ -2346,13 +2449,80 @@ function studyClient(
     return [visual, list]
   }
   /**
+   * Gives the replay family a Study message shows, which decides the summary composition's page (Cycle 0051, DS-A): the host's `replayFamily`, else a browser replay when the message carries a recording, as the page decided before the host named the family.
+   * @param message - The current Study message.
+   * @returns `'browser'`, `'test'` or `undefined` outside a replay.
+   * @example replayFamilyOf({ ...message, recording }) // => 'browser'
+   */
+  const replayFamilyOf = (
+    message: StudyViewMessage,
+  ): StudyViewMessage['replayFamily'] =>
+    message.replayFamily ?? (message.recording ? 'browser' : undefined)
+  /**
    * Says whether a Study message shows a replay in the bottom panel's pane, which shows one transport; read by {@link showsLiveStrip} and before the save state and unrelated Node history are written.
    * The live strip and the save state are left out there by keeping their status regions empty, not by taking them from the page: when the replay is left, the run's state and the save state are written into regions that exist. Both say how things stand at that moment, so their announcement then is no old news.
    * @param message - The current Study message.
    * @example isReplayInBottomPanel(message) // => false in the Study pane, which shows the strip beside a replay
    */
   const isReplayInBottomPanel = (message: StudyViewMessage): boolean =>
-    isBottomPanel && Boolean(message.recording)
+    isBottomPanel && Boolean(replayFamilyOf(message))
+  /**
+   * Names the shown test replay by its test file and title path, as Saved studies and a failed open's notification do; read by the message listener for the summary's heading (DS-B).
+   * @param message - The current Study message.
+   * @returns The test file and titles joined with ` › `, or the section's heading when the catalog does not list the replay.
+   * @example testReplayTitle(message) // => 'app/lib/data.test.ts › invoice data queries'
+   */
+  /**
+   * Draws the shared transport for the replay family the summary composition shows (DS-C): a test replay's controls, or a browser recording's, which give the slider back; called on every Study message.
+   * @param message - The current Study message.
+   * @param isTransportShown - Whether this pane shows the transport ({@link showsTransport}).
+   * @example renderFamilyTransport(message, true)
+   */
+  const renderFamilyTransport = (
+    message: StudyViewMessage,
+    isTransportShown: boolean,
+  ): void => {
+    if (replayFamilyOf(message) === 'test')
+      renderTestReplaySharedTransport(message, isTransportShown)
+    else releaseTestReplayPlayhead()
+  }
+  /**
+   * Gives the reader's heading: a test replay's summary is headed by its test, as Saved studies names it (DS-B); any other reader by the selected article; read on every Study message.
+   * @param message - The current Study message.
+   * @param articleTitle - The selected article's title, when there is one.
+   * @returns The heading text.
+   * @example readerHeading(message, undefined) // => 'Codebook study' outside a test replay
+   */
+  const readerHeading = (
+    message: StudyViewMessage,
+    articleTitle: string | undefined,
+  ): string =>
+    replayFamilyOf(message) === 'test'
+      ? testReplayTitle(message)
+      : (articleTitle ?? 'Codebook study')
+  /**
+   * Takes the saved study's own lines off a test replay's summary, which reads the replay alone (DS-B): Open article, the study's state line, its recording save line and its evidence details; called on every Study message after those lines are set.
+   * @param replayFamily - The family the summary composition shows ({@link replayFamilyOf}).
+   * @example hideSavedStudyForTestReplay('test')
+   */
+  const hideSavedStudyForTestReplay = (
+    replayFamily: ReturnType<typeof replayFamilyOf>,
+  ): void => {
+    if (replayFamily !== 'test') return
+    button('open-article')!.hidden = true
+    element('study-state').hidden = true
+    text('recording-save-state', '')
+    element('evidence-details').hidden = true
+  }
+  const testReplayTitle = (message: StudyViewMessage): string => {
+    const studyId = message.nodeHistory?.header.studyId
+    const summary = message.nodeHistoryCatalog?.find(
+      (entry) => entry.studyId === studyId,
+    )
+    return summary
+      ? [summary.testFile, ...(summary.testTitles ?? [])].join(' › ')
+      : options.testReplay.heading
+  }
   /**
    * Renders the Study pane's test replay section for a Study message (Designs 5 and 6, DS16): status, the selected moment and its explanation, the transport, the summary with the selected step, the learner's decision and the collapsed event list; called by the message listener, which holds no branch of the section's own.
    * During a browser replay in the bottom panel the section's status regions stay empty and in the page.
@@ -2367,7 +2537,6 @@ function studyClient(
     const suppressed = isReplayInBottomPanel(message)
     const section = suppressed ? undefined : message.nodeHistorySection
     renderTestReplayMoment(message, section, suppressed, replaying)
-    renderTestReplayTransport(message, section, replaying, suppressed)
     renderTestReplayLearning(message, section, replaying, suppressed)
     renderTestReplayUnderstanding(message, replaying)
     renderTestReplayEvents(message, section, replaying)
@@ -2411,7 +2580,7 @@ function studyClient(
     offerShowVariables(
       'node-history-show-variables',
       uninspected,
-      options.nodeTransportFocus,
+      options.summaryFocusFallback,
       'node-history',
     )
     // The row's Inspect is wanted while the stop's values are not loaded (beside Show Variables) and whenever the debugger does not show the selected stop: after the learner ended its session, or when it could not start, the press starts it again (F348).
@@ -2444,7 +2613,7 @@ function studyClient(
     offerShowVariables(
       'node-history-inspect',
       offered,
-      options.nodeTransportFocus,
+      options.summaryFocusFallback,
       'node-history',
     )
     if (!offered) return
@@ -2512,10 +2681,129 @@ function studyClient(
   ): string =>
     section ? (section.position ?? options.testReplay.noSelection) : ''
   /**
-   * Enables or disables a control of the section by its id; called by the transport's renderers.
+   * Writes a test replay into the shared transport (Cycle 0051, DS-C): the status line, Replay from start, Previous and Next recorded stop, Play or Pause, the slider with its coverage and the readout, and the event group; a browser recording's own parts (playback details, pending and reason lines, the covered-application remedy) stay out. Called by the message listener while the summary composition shows a test replay.
+   * The status regions carry text only in the pane that shows the transport, as for a recording.
+   * @param message - The current Study message.
+   * @param isTransportShown - Whether this pane shows the transport ({@link showsTransport}).
+   * @example renderTestReplaySharedTransport(message, true)
+   */
+  const renderTestReplaySharedTransport = (
+    message: StudyViewMessage,
+    isTransportShown: boolean,
+  ): void => {
+    const section = message.nodeHistorySection,
+      playbackState = message.nodeHistoryPlayback
+    const playing = playbackState?.mode === 'playing'
+    if (isTransportShown)
+      text('recording-status', testReplayTransportStatus(message, playing))
+    hideBrowserRecovery()
+    element('playback-events').hidden = false
+    renderTestReplayToggle(message, playing)
+    renderTestReplayMoves(message)
+    renderTestReplayPlayhead(playbackState, message.nodeHistoryEventCount ?? 0)
+    renderTimelineCoverage(
+      element('history-coverage'),
+      element('history-coverage-label'),
+      section?.timeline,
+      section?.timeline ? options.testReplay.timelineLegend : '',
+    )
+  }
+  /**
+   * Takes a browser recording's recovery and values hint off the shared transport while it shows a test replay (DS-G): the pending and reason lines, the error details, the covered-application remedy, the hint with its Show Variables, and Playback details; the test replay's own hint stands in its summary. Called by {@link renderTestReplaySharedTransport}.
+   * @example hideBrowserRecovery()
+   */
+  const hideBrowserRecovery = (): void => {
+    for (const id of [
+      'playback-pending',
+      'playback-reason',
+      'playback-diagnostic',
+      'application-covered-remedy',
+      'playback-hint',
+    ])
+      text(id, '')
+    offerShowVariables(
+      'playback-show-variables',
+      false,
+      options.replayTransportFocus,
+      'recording-transport',
+    )
+    element('playback-options').hidden = true
+  }
+  /**
+   * Enables the shared transport's move buttons for a test replay where the move exists (DS-C, DS12): the stop buttons by the host's stop flags, the event buttons and Replay from start by the selected event's place among the whole history's first and last events, compared by sequence (several events may share a time); a history of fewer than two events has no move. Called by {@link renderTestReplaySharedTransport}.
+   * @param message - The current Study message.
+   * @example renderTestReplayMoves(message)
+   */
+  const renderTestReplayMoves = (message: StudyViewMessage): void => {
+    const section = message.nodeHistorySection
+    const { noMove, noEventMove, atFirst, atLast } =
+      testReplayMoveLimits(message)
+    setDisabled('previous-moment', noMove || !section?.previousStop)
+    setDisabled('next-moment', noMove || !section?.nextStop)
+    setDisabled('previous-event', noEventMove || atFirst)
+    setDisabled('next-event', noEventMove || atLast)
+    const start = document.querySelector<HTMLButtonElement>(
+      '[data-playback="start"]',
+    )
+    // Replay from start is wanted unless the first event is selected.
+    if (start) start.disabled = noEventMove || atFirst
+  }
+  /**
+   * Says which moves a test replay's transport has, from the selected event's place among the whole history's first and last events (compared by sequence: several events may share a time); read by {@link renderTestReplayMoves}.
+   * @param message - The current Study message.
+   * @returns `noMove` without a history or events, `noEventMove` also for a history of one event, and whether the selected event is the first (`atFirst`) or the last (`atLast`).
+   * @example testReplayMoveLimits(message) // => { noMove: false, noEventMove: false, atFirst: true, atLast: false }
+   */
+  const testReplayMoveLimits = (message: StudyViewMessage) => {
+    const eventCount = message.nodeHistoryEventCount ?? 0
+    const noMove = !message.nodeHistory || eventCount === 0
+    const selected =
+      message.nodeHistoryPosition?.sequence ??
+      message.nodeHistoryPlayback?.sequence
+    const ends = message.nodeHistoryPlayback
+    return {
+      noMove,
+      noEventMove: noMove || eventCount < 2,
+      atFirst: isSequenceAt(selected, ends?.firstSequence),
+      atLast: isSequenceAt(selected, ends?.lastSequence),
+    }
+  }
+  /**
+   * Says whether the selected event is the one at a history's end, both given by sequence; read by {@link testReplayMoveLimits}.
+   * @param selected - The selected event's sequence, if any.
+   * @param end - The first or last event's sequence, if known.
+   * @returns `true` only when both are known and equal.
+   * @example isSequenceAt(1, 1) // => true
+   */
+  const isSequenceAt = (
+    selected: number | undefined,
+    end: number | undefined,
+  ): boolean => selected !== undefined && selected === end
+
+  /**
+   * Words the shared transport's status line for a test replay: playing or paused, and the host's sentence for a move it refused or that failed (DS-G), so the reason is read with the summary hidden too; called by {@link renderTestReplaySharedTransport}.
+   * The moment a move reaches is said once, by the slider's spoken value and the readout, so the status line, a live region, does not say it a second time.
+   * @param message - The current Study message.
+   * @param playing - Whether the test replay plays.
+   * @returns The status line.
+   * @example testReplayTransportStatus(message, false) // => 'Test replay paused'
+   */
+  const testReplayTransportStatus = (
+    message: StudyViewMessage,
+    playing: boolean,
+  ): string => {
+    const status = playing
+      ? options.testReplay.playingStatus
+      : options.testReplay.pausedStatus
+    return message.nodeHistoryRefusal
+      ? `${status} · ${message.nodeHistoryRefusal}`
+      : status
+  }
+  /**
+   * Enables or disables a control by its id; called by the transport's renderers.
    * @param id - The control's id.
    * @param disabled - Whether it is disabled.
-   * @example setDisabled('node-history-stop-next', true)
+   * @example setDisabled('next-moment', true)
    */
   const setDisabled = (id: string, disabled: boolean): void => {
     const control = element(id)
@@ -2526,148 +2814,89 @@ function studyClient(
       control.disabled = disabled
   }
   /**
-   * Sets the section's transport: Previous stop and Next stop first (DS12), Play or Pause, the time slider and Previous event and Next event; called by {@link renderTestReplay}.
+   * Sets the shared Play or Pause for a test replay: Pause while it plays, Play otherwise, which cannot start at the last event or while loading; called by {@link renderTestReplaySharedTransport}.
    * @param message - The current Study message.
-   * @param section - The section's worded view.
-   * @param replaying - Whether a browser recording is shown.
-   * @param suppressed - Whether a browser replay holds the bottom panel.
-   * @example renderTestReplayTransport(message, message.nodeHistorySection, false, false)
-   */
-  const renderTestReplayTransport = (
-    message: StudyViewMessage,
-    section: StudyViewMessage['nodeHistorySection'],
-    replaying: boolean,
-    suppressed: boolean,
-  ): void => {
-    const eventCount = message.nodeHistoryEventCount ?? 0,
-      selectedIndex = message.nodeHistoryPosition?.eventIndex ?? -1
-    const unavailable = !message.nodeHistory || suppressed || replaying
-    renderTestReplayMoves(section, unavailable, eventCount, selectedIndex)
-    renderTestReplayToggle(
-      message,
-      suppressed,
-      eventCount > 0 && selectedIndex === eventCount - 1,
-    )
-    renderTestReplayPlayhead(
-      message.nodeHistoryPlayback,
-      !message.nodeHistory || replaying,
-    )
-    renderTestReplayTimeline(section, unavailable)
-  }
-  /**
-   * Draws the test replay slider's marks, the whole range unrecorded with a tick at each verified stop, and its legend; called by {@link renderTestReplayTransport}.
-   * @param section - The section's worded view, which carries the timeline of the shown replay.
-   * @param unavailable - Whether no test replay is shown: none, a browser recording shown, or the bottom panel held by a browser replay; the marks belong to the shown replay only.
-   * @example renderTestReplayTimeline(message.nodeHistorySection, false)
-   */
-  const renderTestReplayTimeline = (
-    section: StudyViewMessage['nodeHistorySection'],
-    unavailable: boolean,
-  ): void => {
-    const marks = unavailable ? undefined : section?.timeline
-    renderTimelineCoverage(
-      element('node-history-coverage'),
-      element('node-history-coverage-label'),
-      marks,
-      marks ? options.testReplay.timelineLegend : '',
-    )
-  }
-  /**
-   * Enables Previous stop, Next stop, Previous event and Next event where a move exists; called by {@link renderTestReplayTransport}.
-   * @param section - The section's worded view, which says whether an earlier or later stop exists.
-   * @param unavailable - Whether no move is possible: no test replay, a browser recording shown, or the bottom panel held by a browser replay.
-   * @param eventCount - How many events the replay holds.
-   * @param selectedIndex - The selected event's position among them, or -1.
-   * @example renderTestReplayMoves(message.nodeHistorySection, false, 4, 0)
-   */
-  const renderTestReplayMoves = (
-    section: StudyViewMessage['nodeHistorySection'],
-    unavailable: boolean,
-    eventCount: number,
-    selectedIndex: number,
-  ): void => {
-    setDisabled(
-      'node-history-stop-previous',
-      unavailable || !section?.previousStop,
-    )
-    setDisabled('node-history-stop-next', unavailable || !section?.nextStop)
-    // Without an event there is no event to move to in either direction.
-    const noEvent = unavailable || eventCount === 0
-    setDisabled('node-history-moment-previous', noEvent || selectedIndex === 0)
-    setDisabled(
-      'node-history-moment-next',
-      noEvent || selectedIndex === eventCount - 1,
-    )
-  }
-  /**
-   * Sets Play or Pause: Pause while the replay plays, Play otherwise, which cannot start at the last event; called by {@link renderTestReplayTransport}.
-   * @param message - The current Study message.
-   * @param suppressed - Whether a browser replay holds the bottom panel.
-   * @param atLastEvent - Whether the last event is selected.
-   * @example renderTestReplayToggle(message, false, false)
+   * @param playing - Whether the test replay plays.
+   * @example renderTestReplayToggle(message, false)
    */
   const renderTestReplayToggle = (
     message: StudyViewMessage,
-    suppressed: boolean,
-    atLastEvent: boolean,
+    playing: boolean,
   ): void => {
-    const toggle = element('node-history-playback-toggle')
-    const playing = message.nodeHistoryPlayback?.mode === 'playing'
-    toggle.dataset.nodeHistoryPlayback = playing ? 'pause' : 'play'
+    const toggle = element('playback-toggle')
+    if (!(toggle instanceof HTMLButtonElement)) return
+    toggle.dataset.playback = playing ? 'pause' : 'play'
     toggle.textContent = playing
       ? options.testReplay.pause
       : options.testReplay.play
-    setDisabled(
-      'node-history-playback-toggle',
-      testReplayToggleDisabled(message, suppressed, playing || !atLastEvent),
-    )
+    const label = playing ? 'Pause test replay' : 'Play test replay'
+    toggle.setAttribute('aria-label', label)
+    toggle.title = label
+    toggle.disabled = !canToggleTestReplay(message, playing)
   }
   /**
-   * Says whether Play or Pause is unavailable; called by {@link renderTestReplayToggle}.
+   * Says whether a test replay's Play or Pause can act: Pause always while it plays; Play needs two or more events, a selected event that is not the last one, and no moment loading (DS-C); read by {@link renderTestReplayToggle}.
    * @param message - The current Study message.
-   * @param suppressed - Whether a browser replay holds the bottom panel.
-   * @param canMove - Whether the control has somewhere to go: Pause while playing, or Play before the last event.
-   * @returns `true` without a test replay, while suppressed, without a selected event, while loading, or with nowhere to go.
-   * @example testReplayToggleDisabled(message, false, true) // => false
+   * @param playing - Whether the test replay plays.
+   * @returns `true` when the control is enabled.
+   * @example canToggleTestReplay(message, false) // => false at the last event
    */
-  const testReplayToggleDisabled = (
+  const canToggleTestReplay = (
     message: StudyViewMessage,
-    suppressed: boolean,
-    canMove: boolean,
+    playing: boolean,
   ): boolean => {
     const playbackState = message.nodeHistoryPlayback
-    return (
-      !message.nodeHistory ||
-      suppressed ||
-      !playbackState?.sequence ||
-      Boolean(playbackState.loading) ||
-      !canMove
-    )
+    // A history of one event has nothing to play to (DS-C).
+    if (!message.nodeHistory || (message.nodeHistoryEventCount ?? 0) < 2)
+      return false
+    if (!playbackState?.sequence || playbackState.loading) return false
+    return playing || playbackState.sequence !== playbackState.lastSequence
   }
   /**
-   * Places the section's time slider at the selected time, unless the learner is dragging it; called by {@link renderTestReplayTransport}.
+   * Places the shared slider at a test replay's selected time, unless the learner drags it, and names its keys for this family (DS-C, D035); called by {@link renderTestReplaySharedTransport}.
+   * A history of two or more events keeps the slider enabled for its keys even when every event has one time: the arrows still step by event (DS-C).
    * @param playbackState - The test replay's playback state.
-   * @param unavailable - Whether no test replay is shown or a browser recording is.
-   * @example renderTestReplayPlayhead(message.nodeHistoryPlayback, false)
+   * @param eventCount - How many events the history holds.
+   * @example renderTestReplayPlayhead(message.nodeHistoryPlayback, 4)
    */
   const renderTestReplayPlayhead = (
     playbackState: StudyViewMessage['nodeHistoryPlayback'],
-    unavailable: boolean,
+    eventCount: number,
   ): void => {
     const range = testReplayPlayheadRange(playbackState)
-    // A replay without a time range has a range of nothing (0 to 0), which disables the slider like a single moment does.
-    nodePlayhead.disabled =
-      unavailable || range.startMs === range.endMs || range.loading
+    playheadInput.dataset.replayFamily = 'test'
+    playheadInput.title = options.testReplayTimelineTitle
+    playheadInput.setAttribute(
+      'aria-keyshortcuts',
+      options.testReplayTimelineKeys,
+    )
+    playheadInput.step = '1'
+    playheadInput.disabled = eventCount < 2 || range.loading
     // A disabled playhead cannot be scrubbed, so a scrub interrupted by loading ends here.
-    if (nodePlayhead.disabled) nodeHistoryScrubbing = false
-    nodePlayhead.min = String(range.startMs)
-    nodePlayhead.max = String(range.endMs)
-    if (nodeHistoryScrubbing) return
-    nodePlayhead.value = String(range.positionMs)
+    if (playheadInput.disabled) scrubbing = false
+    playheadInput.min = String(range.startMs)
+    playheadInput.max = String(range.endMs)
+    if (scrubbing) return
+    playheadInput.value = String(range.positionMs)
     describeTestReplayPlayhead(
       playbackState?.positionMs,
       testReplayLoadingSuffix(playbackState),
+      range.endMs,
     )
+  }
+  /**
+   * Gives the shared slider back to a browser recording: its family mark, its keys and its tooltip as the shortcut help set them; called by the message listener whenever the summary composition does not show a test replay.
+   * @example releaseTestReplayPlayhead()
+   */
+  const releaseTestReplayPlayhead = (): void => {
+    if (playheadInput.dataset.replayFamily !== 'test') return
+    delete playheadInput.dataset.replayFamily
+    playheadInput.title = browserPlayheadTitle
+    playheadInput.removeAttribute('aria-keyshortcuts')
+    element('playback-events').hidden = true
+    setDisabled('previous-event', true)
+    setDisabled('next-event', true)
+    element('playback-options').hidden = false
   }
   /**
    * Reads the slider's range and position from a test replay's playback state; called by {@link renderTestReplayPlayhead}.
@@ -2706,26 +2935,28 @@ function studyClient(
     playbackState: StudyViewMessage['nodeHistoryPlayback'],
   ): string => (playbackState?.pending ? options.testReplay.loadingSuffix : '')
   /**
-   * Says the selected test time to assistive technology and beside the slider, never the raw millisecond value; called by {@link renderTestReplayPlayhead}.
+   * Says the selected test time to assistive technology and in the shared readout (`<t> s / <total> s`), never the raw millisecond value; called by {@link renderTestReplayPlayhead} and while the learner drags the slider.
    * @param positionMs - The selected time, if any.
    * @param suffix - What both texts end with: the loading words while the time is a moment still being selected, else nothing (F388).
-   * @example describeTestReplayPlayhead(420, ' · loading…')
+   * @param endMs - The history's last time, for the readout's total.
+   * @example describeTestReplayPlayhead(420, ' · loading…', 900)
    */
   const describeTestReplayPlayhead = (
     positionMs: number | undefined,
     suffix: string,
+    endMs = current?.nodeHistoryPlayback?.endMs,
   ): void => {
-    nodePlayhead.setAttribute(
+    playheadInput.setAttribute(
       'aria-valuetext',
       positionMs === undefined
         ? 'No recorded test time selected'
         : `${seconds(positionMs)} of recorded test time${suffix}`,
     )
     text(
-      'node-history-playback-position',
+      'playback-position',
       positionMs === undefined
         ? 'Test journal playback'
-        : `Recorded test time · ${(positionMs / options.secondMs).toFixed(2)} s${suffix}`,
+        : `${seconds(positionMs)} / ${seconds(endMs ?? positionMs)}${suffix}`,
     )
   }
   /**
@@ -2745,8 +2976,10 @@ function studyClient(
     // While a browser replay holds the bottom panel the block is not drawn: its steps would all read `No recorded event is linked to this step.` (F153).
     const learning = suppressed ? undefined : message.nodeHistoryLearningSummary
     element('node-history-learning').hidden = !learning
+    element('node-history-material').hidden = !learning
     element('node-history-no-material').hidden =
       suppressed || !message.nodeHistory || Boolean(learning)
+    renderTestReplayStepHeading(message, section, learning)
     if (!learning) {
       // A message without material keeps no earlier replay's diagram or steps in the page, hidden or not.
       renderKeys.delete('node-learning-sequence')
@@ -2767,11 +3000,112 @@ function studyClient(
         `Sequence for ${learning.content.title}. Numbered interactions are described below.`,
         (step) => testReplayStepAction(step.id, learning, section),
       )
+      tagTestReplayDrawing(visual, learning.content.steps)
       element('node-learning-sequence').replaceChildren(visual)
       element('node-learning-steps').replaceChildren(list)
     }
     markTestReplaySteps(section, replaying)
+    markTestReplayDrawing(
+      message.nodeHistoryPosition?.pending ? undefined : section,
+    )
   }
+  /**
+   * Names each arrow label of a test replay's drawing by its step (`data-step`), so the selected step can be marked on the drawing that stays (DS-B); called by {@link renderTestReplayLearning} once per drawing. The shared {@link sequenceView} is unchanged, so the browser replay's diagram keeps its markup.
+   * Each step's label is the text the renderer appends right after that step's arrow.
+   * @param visual - The drawing's container.
+   * @param steps - The material's steps, in the drawing's order.
+   * @example tagTestReplayDrawing(visual, learning.content.steps)
+   */
+  const tagTestReplayDrawing = (
+    visual: HTMLElement,
+    steps: readonly { id: string }[],
+  ): void => {
+    visual.querySelectorAll('path.sequence-arrow').forEach((arrow, index) => {
+      const label = arrow.nextElementSibling
+      const step = steps[index]
+      if (label instanceof SVGElement && step) {
+        label.dataset.step = step.id
+        if (arrow instanceof SVGElement) arrow.dataset.step = step.id
+      }
+    })
+  }
+  /**
+   * Marks the selected step on the test replay's drawing by setting `aria-current="step"` and a class on its existing arrow and label, never by drawing again, so a move keeps the diagram's scroll position and the focus (DS-B, Eng); a pending moment or an event with no step marks none. Called by {@link renderTestReplayLearning} for every Study message.
+   * @param section - The section's worded view, which names the selected step; absent while the moment is pending.
+   * @example markTestReplayDrawing(message.nodeHistorySection)
+   */
+  const markTestReplayDrawing = (
+    section: StudyViewMessage['nodeHistorySection'] | undefined,
+  ): void => {
+    const selected = section?.selectedStepId
+    for (const node of Array.from(
+      element('node-learning-sequence').querySelectorAll<SVGElement>(
+        '[data-step]',
+      ),
+    )) {
+      const isSelected =
+        selected !== undefined && node.dataset.step === selected
+      node.classList.toggle('current-step', isSelected)
+      if (isSelected) node.setAttribute('aria-current', 'step')
+      else node.removeAttribute('aria-current')
+    }
+  }
+  /**
+   * Heads the moment block with the selected step's number and label (`Step <n> · <label>`, DS-B), so the moment shows which step of the diagram it is; a pending moment or an event with no step shows none. Called by {@link renderTestReplayLearning} for every Study message.
+   * @param message - The current Study message.
+   * @param section - The section's worded view, which names the selected step.
+   * @param learning - The test replay's learning material, if any.
+   * @example renderTestReplayStepHeading(message, message.nodeHistorySection, message.nodeHistoryLearningSummary)
+   */
+  const renderTestReplayStepHeading = (
+    message: StudyViewMessage,
+    section: StudyViewMessage['nodeHistorySection'],
+    learning: StudyViewMessage['nodeHistoryLearningSummary'],
+  ): void => {
+    const steps = learning?.content.steps ?? []
+    const index = message.nodeHistoryPosition?.pending
+      ? -1
+      : steps.findIndex((step) => step.id === section?.selectedStepId)
+    const step = steps[index]
+    const heading = element('node-history-step-heading')
+    heading.hidden = !step
+    heading.textContent = step
+      ? `${options.testReplay.stepHeading} ${index + 1} · ${step.label}`
+      : ''
+  }
+  /**
+   * Offers Show more under each clamped text of the test replay's summary (the question, the processing summary and the capture reason) whose three-line clamp cuts it, and keeps an expanded text expanded (DS-B, Eng); called after every Study message once the content is shown, at a press of the control and when the pane is resized.
+   * @example offerShowMore()
+   */
+  const offerShowMore = (): void => {
+    for (const control of Array.from(
+      document.querySelectorAll<HTMLButtonElement>('[data-show-more]'),
+    )) {
+      const target = element(control.dataset.showMore ?? '')
+      const expanded = control.getAttribute('aria-expanded') === 'true'
+      target.classList.toggle('clamp', !expanded)
+      // A text that fits its three lines needs no control; an expanded one keeps the control that collapses it.
+      control.hidden =
+        !target.textContent ||
+        (!expanded && target.scrollHeight <= target.clientHeight)
+      control.textContent = expanded
+        ? options.testReplay.showLess
+        : options.testReplay.showMore
+    }
+  }
+  window.addEventListener('resize', offerShowMore)
+  document.addEventListener('click', (event) => {
+    const control =
+      event.target instanceof Element
+        ? event.target.closest<HTMLButtonElement>('[data-show-more]')
+        : null
+    if (!control) return
+    control.setAttribute(
+      'aria-expanded',
+      String(control.getAttribute('aria-expanded') !== 'true'),
+    )
+    offerShowMore()
+  })
   /**
    * Marks the test replay's numbered steps for the selected moment (DS21): the selected step `aria-current`, the selected event's other steps `Same recorded moment`, and every step's control disabled while a browser recording is shown; called by {@link renderTestReplayLearning} for every Study message, also when the steps were drawn before.
    * @param section - The section's worded view, which names the selected step and the steps of the same moment.
@@ -3197,13 +3531,13 @@ function studyClient(
    * Says whether this pane shows the replay transport for a Study message; read on every Study message before the transport is written.
    * @param message - The current Study message.
    * @returns
-   * - No recording is open: `false`
+   * - No replay of either family is shown ({@link replayFamilyOf}): `false`
    * - The Study pane while the bottom panel is visible, which owns the transport then: `false`
    * - Otherwise: `true`
    * @example showsTransport(message) // => true in the bottom panel's pane during a replay
    */
   const showsTransport = (message: StudyViewMessage): boolean =>
-    Boolean(message.recording) &&
+    Boolean(replayFamilyOf(message)) &&
     !(message.playbackPanelVisible && !isBottomPanel)
   /**
    * Shows the replay transport or leaves it out without taking it from the page; called on every Study message before the transport's parts are written.
@@ -3237,6 +3571,9 @@ function studyClient(
     ]) {
       if (document.activeElement === heading) continue
       if (heading.scrollHeight > heading.clientHeight) heading.tabIndex = 0
+      // A heading that takes a lost focus (the summary's title, DS-E) stays focusable by script, out of the tab order.
+      else if (heading.hasAttribute('data-focus-fallback'))
+        heading.tabIndex = -1
       else heading.removeAttribute('tabindex')
     }
   }
@@ -3252,7 +3589,7 @@ function studyClient(
     Boolean(message.nodeHistorySection) &&
     !isReplayInBottomPanel(message)
   /**
-   * Puts the test replay section in view once per open, so the Study's article above it does not push the transport out of sight (F156, D32); called after every Study message.
+   * Puts the test replay in view once per open, so nothing above it pushes it out of sight (F156, D32): in the summary composition the summary from its top, whose title the section follows (Cycle 0051, DS-B), else the section itself; called after every Study message.
    * A message without a new scroll token leaves the learner's scroll alone; the token is kept, not spent, until the section shows (F371).
    * @param message - The current Study message.
    * @example revealNodeHistoryOnOpen(message) // the section scrolled to the top once for token 7
@@ -3266,11 +3603,14 @@ function studyClient(
     )
       return
     scrolledNodeHistoryToken = token
-    element('node-history').scrollIntoView({
-      block: 'start',
-      inline: 'nearest',
-      behavior: 'instant',
-    })
+    if (replayFamilyOf(message) === 'test')
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' })
+    else
+      element('node-history').scrollIntoView({
+        block: 'start',
+        inline: 'nearest',
+        behavior: 'instant',
+      })
   }
   // Listeners of one event run in the order they were added: this one reads the focus before the message changes the page.
   window.addEventListener('message', readFocusHolder)
@@ -3308,14 +3648,17 @@ function studyClient(
     )
       poseTransaction = undefined
     current = message
+    // The summary composition lays out either replay family alike (Cycle 0051, DS-A); `recording` is read for a browser recording's own parts only.
     const { model, recording } = message,
+      replayFamily = replayFamilyOf(message),
       contentTab = message.contentTab ?? model.selection.tab
     document.body.dataset.contentTab = contentTab
-    document.body.dataset.replay = String(Boolean(recording))
-    text('reader-kind', recording ? 'Learning summary' : 'Codebook study')
+    document.body.dataset.replay = String(Boolean(replayFamily))
+    document.body.dataset.replayFamily = replayFamily ?? ''
+    text('reader-kind', replayFamily ? 'Learning summary' : 'Codebook study')
     const shouldRevealFollowedPause =
       contentTab === 'live' &&
-      !recording &&
+      !replayFamily &&
       model.selection.follow &&
       Boolean(model.observation) &&
       model.observation?.id !== revealedFollowedObservationId &&
@@ -3343,7 +3686,7 @@ function studyClient(
       )
       text(
         'presentation-caption',
-        recording
+        replayFamily
           ? 'Recorded application and source stay in the editor; learning summary stays in the sidebar.'
           : (descriptor?.description ?? ''),
       )
@@ -3354,7 +3697,7 @@ function studyClient(
         control.disabled = applying
         if (control.dataset.presentation === 'save-preference')
           control.hidden =
-            Boolean(recording) ||
+            Boolean(replayFamily) ||
             mode.preference.status !== 'failed' ||
             !mode.layoutConfirmed
       }
@@ -3362,24 +3705,27 @@ function studyClient(
         `Restore ${descriptor?.title ?? 'presentation'} layout`
     }
     // A native sidebar cannot use the retired central explanation pane's enlargement action.
-    button('enlarge-context')!.hidden = Boolean(recording)
-    button('read-context')!.textContent = recording ? 'Summary' : 'Explanation'
+    button('enlarge-context')!.hidden = Boolean(replayFamily)
+    button('read-context')!.textContent = replayFamily
+      ? 'Summary'
+      : 'Explanation'
     button('read-context')!.setAttribute(
       'aria-label',
-      recording ? 'Read learning summary' : 'Read explanation',
+      replayFamily ? 'Read learning summary' : 'Read explanation',
     )
-    button('focus-context')!.textContent = recording
+    button('focus-context')!.textContent = replayFamily
       ? 'Focus learning summary'
       : 'Focus explanation'
     button('return-wiki')!.hidden = !message.repositoryReturnAvailable
     button('open-article')!.hidden =
       !message.repositoryArticleAvailable ||
       Boolean(message.repositoryReturnAvailable)
-    element('next-scenario').hidden = Boolean(recording)
-    element('study-controls').hidden = Boolean(recording)
+    element('next-scenario').hidden = Boolean(replayFamily)
+    element('study-controls').hidden = Boolean(replayFamily)
     // A visible bottom panel owns transport; closing it restores the summary fallback.
     const isTransportShown = showsTransport(message)
     offerTransport(isTransportShown)
+    renderFamilyTransport(message, isTransportShown)
     if (recording) {
       const range = recording.range,
         pending = recording.cleared && recording.readiness === 'loading'
@@ -3509,9 +3855,10 @@ function studyClient(
     const item = model.progressByItem.find(
       (value) => value.id === model.selection.itemId,
     )
-    text('title', item?.title ?? 'Codebook study')
+    const heading = readerHeading(message, item?.title)
+    text('title', heading)
     // The heading is clamped to two lines in a narrow replay; its tooltip keeps the whole title for the pointer.
-    element('title').title = item?.title ?? 'Codebook study'
+    element('title').title = heading
     const selectedProfile = message.profiles.find(
         (profile) => profile.id === model.selection.profile,
       ),
@@ -3543,7 +3890,7 @@ function studyClient(
             ? 'Evidence not demonstrated'
             : 'Evidence checks pending'
     const endedProgress =
-      message.study?.terminal && !recording
+      message.study?.terminal && !replayFamily
         ? ` Last observed stop: ${scenario?.lastObservedTitle ?? 'none'}.`
         : ''
     const missingEvidence =
@@ -3589,6 +3936,7 @@ function studyClient(
       message.study && !isReplayInBottomPanel(message) ? recordingLabel : '',
     )
     element('evidence-details').hidden = !message.study
+    hideSavedStudyForTestReplay(replayFamily)
     text('evidence-summary', `Evidence status · ${outcomeLabel}`)
     // Why the last run did not start comes first; Retry storage / refresh cannot fix it, so it does not count for that button.
     text(
@@ -3906,6 +4254,8 @@ function studyClient(
     // Every control is in its state for this message now; a pane without the focus (the learner is in Run and Debug) waits for its next focus event.
     if (document.hasFocus()) payTransportFocus()
     offerClampedTitles()
+    // Measured once the content is shown: a hidden page has no lines to count.
+    offerShowMore()
     // A newly followed pause should reveal its interpretation and facts without requiring a learner scroll past run controls.
     if (shouldRevealFollowedPause && !message.loading) {
       element('live-content').scrollIntoView({

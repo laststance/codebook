@@ -430,13 +430,14 @@ test('a test replay Open replay refused for a non-text preview that cannot be ke
     harness.focusMutableDraft('learner-notes.ts', 1)
     harness.addNonTextPreview('diagram.png', 1, false)
     harness.answerWarningDialogs(async () => 'Keep Tab Open')
+    // The summary composition the open enters first puts the Application pane in group 1, so the learner's group with the preview is group 2 when the open meets it (Cycle 0051, DS-A).
     context.mock.method(
       harness.reader as unknown as { openNodeHistory: () => Promise<unknown> },
       'openNodeHistory',
       async () => ({
         status: 'failed',
         error: new Error(
-          'A destination group contains a foreign preview: "diagram.png" in editor group 1. Close that tab, or keep it open (double-click its tab), then try again.',
+          'A destination group contains a foreign preview: "diagram.png" in editor group 2. Close that tab, or keep it open (double-click its tab), then try again.',
         ),
       }),
     )
@@ -458,7 +459,7 @@ test('a test replay Open replay refused for a non-text preview that cannot be ke
         [
           'open:test-replay',
           'a_b',
-          'A destination group contains a foreign preview: "diagram.png" in editor group 1. Close that tab, or keep it open (double-click its tab), then try again.',
+          'A destination group contains a foreign preview: "diagram.png" in editor group 2. Close that tab, or keep it open (double-click its tab), then try again.',
         ],
       ],
     )

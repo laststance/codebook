@@ -1496,9 +1496,9 @@ test('a test replay that cannot be read names a title with a U+202E in its failu
   }
 })
 
-// Value: protects=Open replay after a live node-test run whose reader stood in the Live composition and whose Study entry failed once: the failure is told in Output › Codebook and a notification, not as a bare command error, and the learner's next Open replay still reaches a Study pane with the replay in it; fails_when=the composition entry's failure escapes the command with no Output entry, or the failed entry leaves the reader open, not live and without a Study pane so the retry skips the entry and shows the Application, the slot and the debugger with no transport (F384, F382 closure); why_new=Cycle 0050 F384 and F382 (N50, the first Open replay after a live run); seam=workspaceHarness with the fake owned Node run, failNextPanelCreation of the Study pane, the diagnostics log, the reader's open, continue and stop; no_claim=which native change F382's guard saw (the cause of that refusal is not settled in the harness)
-test('a failed Study entry of Open replay after a live node-test run is told in Output and the next Open replay shows the Study pane', async () => {
-  // Arrange: the reader stands in the Live composition for the run, which then completes and stops; the Study pane's creation fails once.
+// Value: protects=Open replay after a live node-test run whose reader stood in the Live composition and whose Study entry failed once: the failure is told in Output › Codebook and a notification, not as a bare command error, and the learner's next Open replay still reaches the summary composition with the replay in it (a Study pane before Cycle 0051; moves with D8, F123); fails_when=the composition entry's failure escapes the command with no Output entry, or the failed entry leaves the reader open, not live and outside the composition so the retry skips the entry and shows the Application, the slot and the debugger with no transport (F384, F382 closure); why_new=Cycle 0050 F384 and F382 (N50, the first Open replay after a live run); seam=workspaceHarness with the fake owned Node run, failNextCommand of the Learning summary's focus command, the diagnostics log, the reader's open, continue and stop; no_claim=which native change F382's guard saw (the cause of that refusal is not settled in the harness)
+test('a failed summary-composition entry of Open replay after a live node-test run is told in Output and the next Open replay shows the composition', async () => {
+  // Arrange: the reader stands in the Live composition for the run, which then completes and stops; the Learning summary's focus command fails once (the summary composition creates no Study pane and reuses the run's Application pane, Cycle 0051).
   const harness = await workspaceHarness()
   const logged: CodebookDiagnostic[] = []
   harness.reader.diagnostics = {
@@ -1529,7 +1529,7 @@ test('a failed Study entry of Open replay after a live node-test run is told in 
     })
     await readerSeams(harness).refresh()
     await harness.reader.saveLearningReplay(studyId)
-    harness.failNextPanelCreation('codebook.studyContext')
+    harness.failNextCommand('codebook.learningSummary.focus')
 
     // Act
     const firstOpen = await harness.reader.openLearningReplay(studyId).then(
@@ -1542,10 +1542,11 @@ test('a failed Study entry of Open replay after a live node-test run is told in 
     assert.equal(firstOpen, 'returned')
     assert.deepEqual(
       logged.map((entry) => [entry.surface, entry.studyId, entry.cause]),
-      [['open:test-replay', studyId, 'Injected native panel creation failure']],
+      [['open:test-replay', studyId, 'Native layout command failed']],
     )
     assert.equal(harness.errorMessages.length, 1)
-    assert.notEqual(harness.panelColumn('codebook.studyContext'), undefined)
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
+    assert.notEqual(harness.panelColumn('codebook.scopedBrowser'), undefined)
     assert.equal(
       harness.reader.inspect().view?.nodeHistory?.header.studyId,
       studyId,
@@ -1612,7 +1613,9 @@ test("Open replay that arranges the panes after an agent's refused Study workspa
 
     // Assert
     assert.match(refusal, /did not report the keyboard focus within 5 s/)
-    assert.notEqual(harness.panelColumn('codebook.studyContext'), undefined)
+    // The summary composition (Cycle 0051, DS-A): the Learning summary stands in the Study pane's place.
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
+    assert.equal(harness.summary.visible, true)
     // No refusal of the agent's request and no captured-source reason of the article is shown beside a test replay (F389, F390).
     assert.doesNotMatch(
       harness.reader.presentationState().reason ?? '',
@@ -1625,8 +1628,8 @@ test("Open replay that arranges the panes after an agent's refused Study workspa
   }
 })
 
-// Value: protects=the first Open replay after a node-test run beside Cursor's Agent, which Cursor refuses with the unreported-focus sentence after five seconds: the refusal is told in Output › Codebook and in a notification instead of failing the command bare, and after the learner clicks into a file the next Open replay opens the Study pane with the replay; fails_when=the refusal escapes openLearningReplay with no Output entry, or the retry shows the replay without a Study pane; why_new=Cycle 0050 F384 (N50 Cursor 3.26.16); seam=workspaceHarness with the fake owned Node run, addSeparateEditorPart and leavePaneFocusUnreportedBesideChat (Cursor's chat part), the fake clock, focusMutableDraft as the learner's click; no_claim=Cursor's own focus reports
-test('Open replay refused beside the Cursor Agent is told in Output and the retry after a click into a file shows the Study pane', async (context) => {
+// Value: protects=the first Open replay after a node-test run beside Cursor's Agent, which Cursor refuses with the unreported-focus sentence after five seconds: the refusal is told in Output › Codebook and in a notification instead of failing the command bare, and after the learner clicks into a file the next Open replay opens the summary composition with the replay (the Study pane before Cycle 0051; moves with D8, F123); fails_when=the refusal escapes openLearningReplay with no Output entry, or the retry shows the replay without the Learning summary; why_new=Cycle 0050 F384 (N50 Cursor 3.26.16); seam=workspaceHarness with the fake owned Node run, addSeparateEditorPart and leavePaneFocusUnreportedBesideChat (Cursor's chat part), the fake clock, focusMutableDraft as the learner's click; no_claim=Cursor's own focus reports
+test('Open replay refused beside the Cursor Agent is told in Output and the retry after a click into a file shows the summary composition', async (context) => {
   // Arrange
   const harness = await workspaceHarness()
   const logged: CodebookDiagnostic[] = []
@@ -1687,7 +1690,10 @@ test('Open replay refused beside the Cursor Agent is told in Output and the retr
       openFailures[0]!.cause,
       /did not report the keyboard focus within 5 s/,
     )
-    assert.notEqual(harness.panelColumn('codebook.studyContext'), undefined)
+    // The summary composition (Cycle 0051, DS-A): the Learning summary and the Application stand, the Study pane is closed.
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
+    assert.notEqual(harness.panelColumn('codebook.scopedBrowser'), undefined)
+    assert.equal(harness.summary.visible, true)
     assert.equal(
       harness.reader.inspect().view?.nodeHistory?.header.studyId,
       studyId,

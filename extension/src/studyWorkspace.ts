@@ -954,7 +954,11 @@ export class StudyWorkspace {
   }
   private contextPanel?: vscode.WebviewPanel
   private liveComposition = false
-  /** `true` while {@link openNodeHistoryFromHost} enters the Study composition for a test replay that has not begun opening ({@link testReplayHoldsComposition}). */
+  /** Counts the learner's test replay entries ({@link openNodeHistoryFromHost}) in the order they were made, so the latest one wins also while an earlier one still enters the summary composition (EN19, Cycle 0051). */
+  private nodeHistoryEntryRequest = 0
+  /** Settles when the test replay entry in front has entered its composition: entries take turns there, so two entries never run {@link open} at once (one would be refused as busy and leave no replay shown). */
+  private nodeHistoryEntryTurn: Promise<void> = Promise.resolve()
+  /** `true` while {@link openNodeHistoryFromHost} enters the summary composition for a test replay that has not begun opening ({@link testReplayHoldsComposition}). */
   private hostOpeningTestReplay = false
   /** The editor's recent group and active text editor changes, for {@link refusePlacement}'s report (F382). */
   private readonly placementEvents = new PlacementEventLog()
@@ -2065,6 +2069,12 @@ export class StudyWorkspace {
     )
       return this.selectAfterClosingLeftoverTabs(input, requester)
     if (input.action === 'focus') return this.focusCurrentPresentation(input)
+    // A test replay in the summary composition has no recording to arrange: its Restore shows its slot again, as in the Study composition (Cycle 0051, DS-A; F413).
+    if (
+      this.summaryComposition &&
+      this.isTestReplayRestore(input, this.presentationState())
+    )
+      return this.restoreTestReplayArrangement()
     if (this.liveComposition || this.summaryComposition) {
       this.assertCompositionAllows(input)
       // Selecting the arrangement that is confirmed already changes nothing: it is read once more without taking the focus, and only a layout that no longer holds is arranged again.
@@ -2269,7 +2279,7 @@ export class StudyWorkspace {
    * Says whether a presentation request is a Restore or selection of the Study workspace that a selected test replay's composition answers; asked by {@link admitPresentation} before the article's placement (F413).
    * @param input - The requested change.
    * @param state - The current presentation state.
-   * @returns `true` for a Restore of the Study workspace, or a selection of it while its layout is unconfirmed, while a test replay holds the composition and both Study panes stand.
+   * @returns `true` for a Restore of the Study workspace, or a selection of it while its layout is unconfirmed, while a test replay holds the composition and its panes stand: the Application pane, and the Study pane outside the summary composition.
    * @example this.isTestReplayRestore(input, this.presentationState()) // => true for Restore beside a selected test replay
    */
   private isTestReplayRestore(
@@ -2283,7 +2293,8 @@ export class StudyWorkspace {
       input.mode === 'study-workspace' &&
       input.mode === state.mode &&
       this.testReplayHoldsComposition() &&
-      Boolean(this.app && this.contextPanel)
+      // The summary composition closes the Study pane: the Application and the slot are the panes a test replay's Restore arranges there (Cycle 0051, DS-A).
+      Boolean(this.app && (this.contextPanel || this.summaryComposition))
     )
   }
 
@@ -5642,8 +5653,8 @@ export class StudyWorkspace {
             input.mode === this.presentationMode &&
             this.usesPreparedApplicationLayout())
         ) {
-          // A recording's source is shown by the recording's own load, which the open only began: the selection waits for it instead of refusing while it is opening.
-          if (this.summaryComposition) {
+          // A recording's source is shown by the recording's own load, which the open only began: the selection waits for it instead of refusing while it is opening. A test replay's summary composition has no recording to wait for.
+          if (this.summaryComposition && this.recordingActive) {
             await this.settleOwnedPlayback(signal)
             assertCurrent()
           }
@@ -8151,7 +8162,9 @@ export class StudyWorkspace {
           this.isLiveCompositionRequested() ||
           (currentRecord && !currentRecord.stopped),
         )
-      const summaryComposition = this.recordingActive
+      // A browser recording and a selected or opening test replay share the summary composition (Cycle 0051, DS-A): the Learning summary stands in the chat's place and the Study pane closes.
+      const summaryComposition =
+        this.recordingActive || this.testReplayHoldsComposition()
       const compositionChanged =
         liveComposition !== this.liveComposition ||
         summaryComposition !== this.summaryComposition
@@ -8175,6 +8188,9 @@ export class StudyWorkspace {
       if (retiredContextGroup)
         this.rememberCreatedContextGroup(retiredContextGroup.viewColumn)
       if (compositionChanged) {
+        // A reader that leaves the summary composition withdraws the Learning summary's replay document, for a test replay as a browser replay's departure does, so no stale summary with controls that answer nothing stays beside the chat (Cycle 0051, DS-A).
+        if (this.summaryComposition && !summaryComposition)
+          this.clearLearningSummary()
         this.layoutReceipt = undefined
         this.presentationConfirmed = false
         this.liveComposition = liveComposition
@@ -10842,6 +10858,7 @@ export class StudyWorkspace {
       !this.closing &&
       !this.liveComposition &&
       !this.recordingActive &&
+      !this.testReplayHoldsComposition() &&
       !this.sourceEntryPending &&
       !this.presentationTransition &&
       this.repositoryNavigation === undefined &&
@@ -11521,8 +11538,8 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether a test replay is selected, opening, or about to open from the host, so that {@link open} arranges the Study composition and not the Live one; read by {@link open}.
-   * @returns `true` while a test replay needs the Study pane.
+   * Says whether a test replay is selected, opening, or about to open from the host, so that {@link open} arranges the summary composition and not the Live one (Cycle 0051, DS-A); read by {@link open} and by the message and refresh rules that keep a test replay's summary free of live-run content.
+   * @returns `true` while a test replay holds the summary composition.
    * @example if (this.testReplayHoldsComposition()) liveComposition = false
    */
   private testReplayHoldsComposition(): boolean {
@@ -11531,6 +11548,23 @@ export class StudyWorkspace {
       this.selectedNodeHistory !== undefined ||
       this.pendingNodeHistory !== undefined
     )
+  }
+
+  /**
+   * Names the replay the summary composition shows, so an entry that awaits the editor can tell that the learner chose another replay meanwhile; read by {@link showLearningSummary} before and after each await.
+   * @returns
+   * - `browser:<study id>` while a browser recording is shown
+   * - `test:<study id>` while a test replay is selected, or `test-opening:<study id>` while one is opening
+   * - `none` otherwise
+   * @example this.shownReplayIdentity() // => 'test:i1_r2' after a test replay opened from Saved studies
+   */
+  private shownReplayIdentity(): string {
+    if (this.recordingActive) return `browser:${this.selection.studyId ?? ''}`
+    if (this.selectedNodeHistory)
+      return `test:${this.selectedNodeHistory.header.studyId}`
+    if (this.pendingNodeHistoryStudyId !== undefined)
+      return `test-opening:${this.pendingNodeHistoryStudyId}`
+    return 'none'
   }
 
   /**
@@ -11647,73 +11681,182 @@ export class StudyWorkspace {
   }
 
   /**
-   * Opens a test replay for the status item's Open replay and Open retained history: the Study pane is opened first when it is closed, then the shared open runs ({@link openNodeHistory}); called by {@link openLearningReplay}.
-   * During a browser replay the learner is told that one replay shows at a time and may close it first (DS10). A failed open raises the load-failure notification with Show details and writes one Output › Codebook entry; the Study pane stays open on Saved studies (X4).
+   * Opens a test replay for the learner's two entries, the status item's Open replay (and Open retained history) and a Saved studies choice: the summary composition is entered first (Cycle 0051, DS-A), then the shared open runs ({@link openNodeHistory}); called by {@link openLearningReplay} and by the reader's `node-history` message.
+   * During a browser replay the learner is told that one replay shows at a time and may close it first (DS10). A failed open raises the load-failure notification with Show details and writes one Output › Codebook entry; a reader the open left in the summary composition with no replay shown goes back to the Study composition, so the Study pane stands open on Saved studies (X4, DS-G).
    * @param studyId - The test replay's study id.
+   * @param revision - The reader revision a Saved studies choice belongs to, which a newer revision supersedes; omitted for the status item, whose open takes the revision current after the summary composition was entered (and a browser replay closed).
    * @returns Once the replay is shown, the learner declined to close a browser replay, or the failure was told.
    * @example await workspace.openNodeHistoryFromHost(studyId)
    */
-  async openNodeHistoryFromHost(studyId: string): Promise<void> {
-    if (this.recordingActive) {
-      const refusal = describeNodeLearningSave({ kind: 'open-refused' })
-      const action = await showPlainNotice(
-        vscode.window,
-        'warning',
-        refusal.text,
-        ...(refusal.actions ?? []),
-      )
-      if (action !== NODE_LEARNING_SAVE_ACTION.closeBrowserReplay) return
-      await this.returnCurrentSelection('learner')
-      if (this.recordingActive) return
-    }
+  async openNodeHistoryFromHost(
+    studyId: string,
+    revision?: number,
+  ): Promise<void> {
+    const entry = ++this.nodeHistoryEntryRequest
+    // Entries take turns entering the composition; a newer entry made meanwhile is the learner's latest choice (EN19).
+    const previousTurn = this.nodeHistoryEntryTurn
+    let releaseTurn!: () => void
+    this.nodeHistoryEntryTurn = new Promise<void>((resolve) => {
+      releaseTurn = resolve
+    })
     try {
-      await this.enterStudyCompositionForReplay()
-    } catch (error) {
-      // A refused entry is told like a failed replay open: one Output › Codebook entry and the notification, never a bare command failure (F382, F384).
-      const cause = sanitizeCause(
-        error,
-        this.service?.causeRoots ?? { storage: [] },
-      )
-      await this.tellTestReplayOpenFailure(studyId, error, cause)
-      return
+      await previousTurn
+      if (!(await this.enterCompositionForEntry(studyId, entry))) return
+    } finally {
+      releaseTurn()
     }
-    const outcome = await this.openNodeHistory(studyId, this.revision)
+    if (entry !== this.nodeHistoryEntryRequest) return
+    const outcome = await this.openNodeHistory(
+      studyId,
+      revision ?? this.revision,
+    )
     if (outcome.status !== 'failed') {
       // The learner's own replay open, after the replay is shown: the summary moves beside the chat once per profile (F209).
       await this.moveSummaryBesideChatOnce()
       return
     }
-    const roots = this.service?.causeRoots ?? { storage: [] }
-    const cause = sanitizeCause(outcome.error, roots)
-    // A learner's preview tab that blocks the open is answered with a choice and a retry (F158).
+    if (
+      (await this.answerFailedTestReplayOpen(studyId, outcome.error)) ===
+      'retry'
+    )
+      return this.openNodeHistoryFromHost(studyId)
+  }
+
+  /**
+   * Brings a test replay entry into the summary composition in its turn: a browser replay is closed first when the learner agrees, and a refused entry is told like a failed open (F382, F384); called by {@link openNodeHistoryFromHost} while the entry holds its turn.
+   * @param studyId - The test replay's study id.
+   * @param entry - The entry's ticket ({@link nodeHistoryEntryRequest}).
+   * @returns `true` when the entry stands in the composition and is still the latest; `false` when a newer entry took over, the browser replay stays open, or the failure was told.
+   * @example if (!(await this.enterCompositionForEntry(studyId, entry))) return
+   */
+  private async enterCompositionForEntry(
+    studyId: string,
+    entry: number,
+  ): Promise<boolean> {
+    if (entry !== this.nodeHistoryEntryRequest) return false
+    if (!(await this.closeBrowserReplayForTestReplay(entry))) return false
+    if (entry !== this.nodeHistoryEntryRequest) return false
+    try {
+      await this.enterSummaryCompositionForReplay()
+    } catch (error) {
+      // A newer entry answers for the learner now.
+      if (entry !== this.nodeHistoryEntryRequest) return false
+      // A refused entry is told like a failed replay open: one Output › Codebook entry and the notification, never a bare command failure (F382, F384).
+      await this.leaveEmptySummaryComposition()
+      await this.tellTestReplayOpenFailure(
+        studyId,
+        error,
+        sanitizeCause(error, this.service?.causeRoots ?? { storage: [] }),
+      )
+      return false
+    }
+    return entry === this.nodeHistoryEntryRequest
+  }
+
+  /**
+   * Answers a test replay entry made during a browser replay: one replay shows at a time, so the learner is told so and may close the browser replay first (DS10); called by {@link enterCompositionForEntry}.
+   * The notice is not modal: the browser replay it names is closed only while it is still the one shown and the entry is still the latest, so an answer never closes a replay opened after the notice.
+   * @param entry - The entry's ticket ({@link nodeHistoryEntryRequest}).
+   * @returns `true` when no browser replay is open, or the learner closed the one named; `false` when it stays open or another replay or entry took over.
+   * @example if (!(await this.closeBrowserReplayForTestReplay(entry))) return false
+   */
+  private async closeBrowserReplayForTestReplay(
+    entry: number,
+  ): Promise<boolean> {
+    if (!this.recordingActive) return true
+    const studyId = this.selection.studyId,
+      revision = this.playback?.state().revision
+    const refusal = describeNodeLearningSave({ kind: 'open-refused' })
+    const action = await showPlainNotice(
+      vscode.window,
+      'warning',
+      refusal.text,
+      ...(refusal.actions ?? []),
+    )
+    if (
+      action !== NODE_LEARNING_SAVE_ACTION.closeBrowserReplay ||
+      entry !== this.nodeHistoryEntryRequest ||
+      !this.recordingActive ||
+      this.selection.studyId !== studyId ||
+      this.playback?.state().revision !== revision
+    )
+      return false
+    await this.returnCurrentSelection('learner')
+    return !this.recordingActive
+  }
+
+  /**
+   * Answers a test replay open that failed: a learner's preview tab that blocked it gets its choice and a retry (F158), in the composition the open met it in; otherwise the empty summary composition is left and the failure is told once (DS-G), or only recorded when Keep Tab Open has told it already (F407). Called by {@link openNodeHistoryFromHost}.
+   * @param studyId - The test replay's study id.
+   * @param error - What the open threw.
+   * @returns `retry` when the learner chose a way out of a blocking preview; `told` once the failure is answered.
+   * @example if ((await this.answerFailedTestReplayOpen(studyId, outcome.error)) === 'retry') return this.openNodeHistoryFromHost(studyId)
+   */
+  private async answerFailedTestReplayOpen(
+    studyId: string,
+    error: unknown,
+  ): Promise<'retry' | 'told'> {
+    const cause = sanitizeCause(
+      error,
+      this.service?.causeRoots ?? { storage: [] },
+    )
     const answer = await this.resolveForeignPreviewRefusal(cause)
-    if (answer === 'retry') return this.openNodeHistoryFromHost(studyId)
+    if (answer === 'retry') return 'retry'
+    // A failed open shows no replay in the summary composition: the Study composition comes back, with the failure on its line (DS-G).
+    await this.leaveEmptySummaryComposition()
     // The keep-open refusal has told the learner already, so no second notification follows; the refusal is still recorded once in Output › Codebook, where other open refusals are, so a later take can tell why the replay did not open (F407).
-    if (answer === 'told') {
+    if (answer === 'told')
       this.diagnostics?.log({
         surface: 'open:test-replay',
         studyId,
         profile: NODE_TEST_PROFILE,
         cause,
       })
-      return
-    }
-    await this.tellTestReplayOpenFailure(studyId, outcome.error, cause)
+    else await this.tellTestReplayOpenFailure(studyId, error, cause)
+    return 'told'
   }
 
   /**
-   * Opens the Study composition for a test replay that is about to open: a closed reader opens, the Live composition (which has no Study pane) gives way to it (F208), and a reader that stands in the Study composition without its Study pane gets the pane again; called by {@link openNodeHistoryFromHost}.
-   * An earlier entry that failed after it left the Live composition leaves exactly that state (open, not live, no Study pane); skipping the open then showed the Application, the slot and the debugger with no transport (F384).
+   * Opens the summary composition for a test replay that is about to open (Cycle 0051, DS-A): a closed reader opens, and the Live composition and the Study composition give way to it, so the Study pane closes and the Learning summary takes the chat's place; called by {@link openNodeHistoryFromHost}.
+   * Only a reader that already stands in the summary composition for a test replay (another test replay was shown) is left as it is; an earlier entry that failed after it left the Live composition is opened again, so the Application, the slot and the debugger never show without a transport (F384).
    * @throws What {@link open} throws; the caller tells it.
-   * @example await this.enterStudyCompositionForReplay()
+   * @example await this.enterSummaryCompositionForReplay()
    */
-  private async enterStudyCompositionForReplay(): Promise<void> {
-    if (this.opened && !this.liveComposition && this.contextPanel) return
+  private async enterSummaryCompositionForReplay(): Promise<void> {
+    if (
+      this.opened &&
+      this.summaryComposition &&
+      !this.liveComposition &&
+      !this.recordingActive
+    )
+      return
     this.hostOpeningTestReplay = true
     try {
       await this.open()
     } finally {
       this.hostOpeningTestReplay = false
+    }
+  }
+
+  /**
+   * Leaves a summary composition that shows no replay after a failed test replay open: the reader opens again in the composition its selection asks for, so the Study pane comes back (DS-G); called by {@link openNodeHistoryFromHost} before it tells the failure.
+   * A test replay that was shown before the failed open stays selected and keeps the composition: the last committed moment stays, never shown as the new one.
+   * @returns Once the reader stands in a composition that matches its selection, or at once when nothing is to change.
+   * @example await this.leaveEmptySummaryComposition()
+   */
+  private async leaveEmptySummaryComposition(): Promise<void> {
+    if (
+      !this.opened ||
+      this.closing ||
+      !this.summaryComposition ||
+      this.recordingActive ||
+      this.testReplayHoldsComposition()
+    )
+      return
+    try {
+      await this.open()
+    } catch (error) {
+      this.report('control', error)
     }
   }
 
@@ -11776,6 +11919,8 @@ export class StudyWorkspace {
   > {
     const request = ++this.historyRequest
     this.studyChoices++
+    // A test replay that plays stops before another one opens: a failed open leaves it on its last committed moment with no timer running, and a shown replay never moves behind the opening (DS-A, DS-G).
+    this.nodeHistoryPlaybackController?.pause()
     try {
       // The opening marker is set inside the try, so its finally ends it even when the first publish throws.
       this.pendingNodeHistory = request
@@ -13229,9 +13374,20 @@ export class StudyWorkspace {
           (entry) => entry.type === 'stop' && !nodeStopSourceMatches(entry),
         )
         .map((entry) => entry.sequence),
+      // The host's sentence for a refused or failed test replay move, read in the shared transport's status line with the summary hidden too (DS-G).
+      nodeHistoryRefusal: this.errors
+        .get('node-history-control')
+        ?.replace(/^Error: /, ''),
       // The time readout and the slider follow the moment being selected, as the Study position does, until the commit (F386).
       nodeHistoryPlayback: this.nodeHistoryPlaybackController && {
         ...this.nodeHistoryPlaybackController.state(),
+        // The history's first and last events, from all its entries: the event list reaches the page one page at a time, and a seek to a time would land on the last of several events at that time (DS-C).
+        ...(selectedNodeHistory && {
+          firstSequence:
+            this.shownNodeHistory(selectedNodeHistory).entries[0]?.sequence,
+          lastSequence:
+            this.shownNodeHistory(selectedNodeHistory).entries.at(-1)?.sequence,
+        }),
         ...(pendingNodeHistoryEvent && {
           sequence: pendingNodeHistoryEvent.sequence,
           positionMs: pendingNodeHistoryEvent.elapsedMs,
@@ -13355,7 +13511,8 @@ export class StudyWorkspace {
         record?.historyExcluded === 'refused-at-admission' &&
         record.error &&
         record.id !== this.answeredRunRefusalId &&
-        !this.recordingActive
+        !this.recordingActive &&
+        !this.testReplayHoldsComposition()
           ? `The last run did not start: ${record.error.message}`
           : undefined,
       unstoppedStudyId: this.unstoppedStudyId(),
@@ -13423,6 +13580,16 @@ export class StudyWorkspace {
     this.publish()
   }
 
+  /**
+   * Names the replay family the summary composition shows, which the Study views read for their page (Cycle 0051, DS-A); the one place the family is decided, read by {@link publish}.
+   * @returns `browser` while a browser recording is active, `test` for a selected or opening test replay, `undefined` outside the summary composition.
+   * @example this.shownReplayFamily() // => 'test' while a test replay holds the composition
+   */
+  private shownReplayFamily(): 'browser' | 'test' | undefined {
+    if (!this.summaryComposition) return undefined
+    return this.recordingActive ? 'browser' : 'test'
+  }
+
   /** Publishes a matching projection with stable DOM controls, excluding images from the context channel. @example this.publish() */
   private publish(): void {
     this.publishLearningSave()
@@ -13441,8 +13608,9 @@ export class StudyWorkspace {
       // The recorded test output is the Application pane's alone; the Study views never read it.
       nodeHistoryApplication: undefined,
       playbackPanelVisible: Boolean(
-        this.recordingActive && this.moments?.visible,
+        this.summaryComposition && this.moments?.visible,
       ),
+      replayFamily: this.shownReplayFamily(),
       model: {
         ...message.model,
         image: undefined,
@@ -13460,7 +13628,7 @@ export class StudyWorkspace {
     if (this.summaryComposition)
       void this.summaryView?.webview.postMessage(compact)
     if (this.moments)
-      this.moments.title = this.recordingActive
+      this.moments.title = this.summaryComposition
         ? 'Learning replay'
         : 'Observed moments'
     void this.moments?.webview.postMessage(compact)
@@ -14712,7 +14880,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether the source the layout shows is ready: the article's captured source ({@link sourceReady}), or, while a test replay is selected or opening, the replay's own recorded-source slot with its tab in front at the source position and its content committed (F402).
+   * Says whether the source the layout shows is ready: the article's captured source ({@link sourceReady}), or, while a test replay is selected or opening, the replay's own recorded-source slot with its tab in front and its content committed (F402): in any group in the summary composition, as a browser replay's source, else at the source position.
    * Read by {@link presentationState} for `layoutConfirmed` and by {@link confirmEnlargedLayout} before an Enlarge's Restore confirms, so both apply one rule.
    * @returns `true` when the source of the current composition is shown.
    * @example this.layoutSourceReady() // => false while the slot's tab is closed under a selected test replay
@@ -14729,15 +14897,18 @@ export class StudyWorkspace {
       held.address !== slot.uri.toString()
     )
       return false
+    const isSlotInFront = (group: vscode.TabGroup): boolean =>
+      group.activeTab?.input instanceof vscode.TabInputText &&
+      group.activeTab.input.uri.toString() === slot.uri.toString()
+    // The summary composition shows the slot as a browser replay shows its captured source, in front of any group: the learner's own groups may hold the source column there (Cycle 0051, DS-A).
+    if (this.summaryComposition)
+      return vscode.window.tabGroups.all.some(isSlotInFront)
     // The slot shows at the selected mode's source column, as {@link nodeSourceSlotColumn} places it (F424).
     const column = STUDY_PRESENTATIONS[this.presentationMode].sourceColumn
-    const front = vscode.window.tabGroups.all.find(
-      (group) => group.viewColumn === column,
-    )?.activeTab?.input
-    return (
-      front instanceof vscode.TabInputText &&
-      front.uri.toString() === slot.uri.toString()
+    const group = vscode.window.tabGroups.all.find(
+      (candidate) => candidate.viewColumn === column,
     )
+    return group !== undefined && isSlotInFront(group)
   }
 
   /** Confirms the selected immutable source reached an active native tab before control or MCP reveal succeeds. @example this.sourceReady() */
@@ -19077,7 +19248,7 @@ export class StudyWorkspace {
     preserveFocus = false,
     keepsViewsInFront = false,
   ): Promise<void> {
-    if (!this.recordingActive || !this.summaryComposition || this.closing)
+    if (!this.summaryComposition || this.closing)
       throw new StudyError(
         'EVIDENCE_UNAVAILABLE',
         'Open saved learning before showing its summary.',
@@ -19088,7 +19259,7 @@ export class StudyWorkspace {
         'Focus the Codebook work window before reading the learning summary.',
       )
     const lifetime = this.lifetime,
-      studyId = this.selection.studyId
+      replay = this.shownReplayIdentity()
     let lostFocus = false
     // A window round trip cannot renew the earlier focus request.
     const focusSubscription = vscode.window.onDidChangeWindowState((state) => {
@@ -19102,11 +19273,7 @@ export class StudyWorkspace {
           'PRESENTATION_UNAVAILABLE',
           'The Codebook work window lost focus while opening its learning summary.',
         )
-      if (
-        !this.recordingActive ||
-        studyId !== this.selection.studyId ||
-        !this.summaryComposition
-      )
+      if (replay !== this.shownReplayIdentity() || !this.summaryComposition)
         throw new StudyError(
           'STALE_PRESENTATION',
           'The selected learning changed while opening its summary.',
@@ -19605,7 +19772,7 @@ export class StudyWorkspace {
               if (this.isSummaryViewInState(view, false))
                 this.releaseHiddenSummaryFocus()
             })
-            if (this.recordingActive && this.summaryComposition) {
+            if (this.summaryComposition) {
               this.summaryDocumentActive = true
               view.webview.html = studyHtml('context')
               this.publish()
@@ -22716,7 +22883,7 @@ export class StudyWorkspace {
             ? this.summaryView
             : this.contextPanel) ||
         (owner === this.summaryView &&
-          (!this.opened || !this.recordingActive || this.closing)))
+          (!this.opened || !this.summaryComposition || this.closing)))
     )
       return
     const parsed = messageSchema.safeParse(value)
@@ -22747,7 +22914,7 @@ export class StudyWorkspace {
             ? this.summaryView
             : this.contextPanel) ||
         (owner === this.summaryView &&
-          (!this.opened || !this.recordingActive || this.closing)))
+          (!this.opened || !this.summaryComposition || this.closing)))
     )
       return
     if (message.type === 'ready') {
@@ -22926,7 +23093,8 @@ export class StudyWorkspace {
     if (message.type === 'node-history') {
       if (this.recordingActive)
         throw new Error('Close browser replay before opening a test replay.')
-      await this.openNodeHistory(message.studyId, message.revision)
+      // A Saved studies choice is the learner's entry: it enters the summary composition and tells a failure as Open replay does (DS-A, DS-G).
+      await this.openNodeHistoryFromHost(message.studyId, message.revision)
     }
     if (message.type === 'node-history-understanding') {
       if (this.recordingActive)
@@ -23130,6 +23298,9 @@ export class StudyWorkspace {
     if (!this.isLatestHistoryRequest(request)) return
     await this.showSavedStudy(archive)
     this.publishChoiceOfClosedReader(request)
+    // A browser study chosen from a test replay's summary leaves the summary composition for the Study composition (DS-A).
+    if (this.isLatestHistoryRequest(request))
+      await this.leaveEmptySummaryComposition()
   }
 
   /**
@@ -24578,13 +24749,14 @@ export class StudyWorkspace {
           return
         }
       } catch (error) {
-        if (request !== this.selectedNodeHistoryRequest) throw error
+        // A newer selection owns the surfaces and the status line: a superseded move reports no refusal (DS-F).
+        if (request !== this.selectedNodeHistoryRequest) return
         // The Study position stays on the moment committed before, so the slot and the debugger go back to it: no surface shows the moment whose presentation failed (F199).
-        // A failed return is told on the slot's row, and the presentation's own failure still reaches the caller (F368).
+        // A failed return is told on the slot's row, and the presentation's own failure still reaches the caller (F368), with the open path's recovery clause (DS-G).
         await this.returnToCommittedNodeMoment(history, request).catch(
           (returnError: unknown) => this.report('history-source', returnError),
         )
-        throw error
+        throw new Error(this.describeNodeHistoryMoveFailure(error))
       }
     }
     // A caller that withdrew meanwhile (Pause, dispose) commits nothing, also after a slot that failed to open, which skips the debugger's own check.
@@ -24747,6 +24919,20 @@ export class StudyWorkspace {
         (error: unknown) => this.report('history-source', error),
       )
     }, 0)
+  }
+
+  /**
+   * Words a replay debugger that did not start on a move of a test replay as the open path words its own failure, adding that the last moment is still shown (DS-G), so the transport's status line names the way back with the summary hidden too; called by {@link selectNodeHistoryEvent} when the presentation of a move fails.
+   * @param error - The presentation's failure; its cause is sanitized as on the Study pane's lines.
+   * @returns The sentence the node-history control line shows.
+   * @example this.describeNodeHistoryMoveFailure(new Error('Workspace trust was declined.')) // => 'The replay debugger could not start: Workspace trust was declined. The last moment is still shown. Select this stop or use Inspect in native debugger to restart it.'
+   */
+  private describeNodeHistoryMoveFailure(error: unknown): string {
+    const cause = sanitizeCause(
+      error,
+      this.service?.causeRoots ?? { storage: [] },
+    ).replace(/\.$/, '')
+    return `The replay debugger could not start: ${cause}. The last moment is still shown. Select this stop or use Inspect in native debugger to restart it.`
   }
 
   /**

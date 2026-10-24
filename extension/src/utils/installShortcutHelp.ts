@@ -239,7 +239,8 @@ export function installShortcutHelp(
       hideTooltip()
       tooltipOwner = control
       ;(dialog.contains(control) ? dialog : document.body).append(tooltip)
-      tooltip.textContent = text
+      // The control's current title: a page may reword it for the content the control shows (a test replay's slider), and the tooltip says what the title says.
+      tooltip.textContent = control.title || text
       tooltip.hidden = false
       control.setAttribute('aria-describedby', tooltip.id)
     }

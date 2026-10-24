@@ -357,12 +357,13 @@ async function openReplayBesideBrowserStudy(
   return history
 }
 
-// Value: protects=a saved browser study chosen in Saved studies while a test replay is selected retires the replay once the study is read and shows the study, and the replay stays selected, with its Application output, while the read is pending; fails_when=the replay is retired before the study is read (a failed read then leaves nothing), or stays selected beside the study; why_new=F125: a browser study opened or pending while a test replay is selected had no test; seam=the reader's read of a saved study, held until released; no_claim=the browser study's own display
+// Value: protects=a saved browser study chosen in Saved studies while a test replay is selected retires the replay once the study is read and shows the study in the Study composition with the Learning summary withdrawn, and the replay stays selected, with its Application output, while the read is pending; fails_when=the replay is retired before the study is read (a failed read then leaves nothing), stays selected beside the study, or the summary keeps the replay's document with controls that answer nothing; why_new=F125: a browser study opened or pending while a test replay is selected had no test; the composition and summary it leaves, Cycle 0051 /ship review (state-machines cell, Codex structured pass 2); seam=the reader's read of a saved study, held until released; no_claim=the browser study's own display
 test('a browser study chosen over a selected test replay replaces it only once it is read', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true)
   try {
     const history = await openReplayBesideBrowserStudy(harness)
+    const familyBefore = lastView(harness)?.replayFamily
     const gate = gateArchiveReads(harness)
     gate.hold()
 
@@ -393,6 +394,16 @@ test('a browser study chosen over a selected test replay replaces it only once i
     assert.equal(whilePending.time, 'Recorded test output · 0.20 s')
     assert.equal(lastView(harness)?.nodeHistoryPosition, undefined)
     assert.equal(lastView(harness)?.nodeHistorySection, undefined)
+    // The browser study is read in the Study composition, and the summary composition's document is withdrawn (Cycle 0051, DS-A).
+    assert.equal(familyBefore, 'test')
+    assert.equal(lastView(harness)?.replayFamily, undefined)
+    assert.notEqual(harness.panelColumn('codebook.studyContext'), undefined)
+    assert.equal(
+      harness.summary.webview.html.includes(
+        'Open saved learning from Codebook to view its summary.',
+      ),
+      true,
+    )
   } finally {
     await harness.close()
   }

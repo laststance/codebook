@@ -92,7 +92,7 @@ function shapeOf(layout: unknown): unknown {
     : null
 }
 
-// Value: protects=Show recorded output brings a closed Application pane back above the recorded source in a group of its own when the editor removed the emptied group (workbench.editor.closeEmptyGroups, on by default), with the Study pane's group where it was; fails_when=open() rebuilds the pane as a tab of the source's group and the arrangement moves the Study group, leaving an empty group on the right (the defect VS Code 1.142.0 showed); why_new=F137: the first fix (D21) only asserted that arrange ran, and a native check falsified it; seam=the workspace harness's group model with closeDisposedPanelTabsLater (the editor removes the emptied group), closeTabByHand and the Study pane's focus-app action; no_claim=the native placement itself, which the driving agent checks in VS Code and Cursor
+// Value: protects=Show recorded output brings a closed Application pane back above the recorded source in a group of its own when the editor removed the emptied group (workbench.editor.closeEmptyGroups, on by default), with the composition's other groups where they were (the Study pane's before Cycle 0051; moves with D8, F123); fails_when=open() rebuilds the pane as a tab of the source's group and the arrangement moves the other groups (the defect VS Code 1.142.0 showed); why_new=F137: the first fix (D21) only asserted that arrange ran, and a native check falsified it; seam=the workspace harness's group model with closeDisposedPanelTabsLater (the editor removes the emptied group), closeTabByHand and the Study pane's focus-app action; no_claim=the native placement itself, which the driving agent checks in VS Code and Cursor
 test('Show recorded output puts a closed Application pane back above the recorded source in its own group when the editor removed the emptied group', async () => {
   // Arrange & Act
   const { before, closed, after } =
@@ -100,21 +100,17 @@ test('Show recorded output puts a closed Application pane back above the recorde
       emptyGroupsClose: true,
     })
 
-  // Assert
+  // Assert: the summary composition (Cycle 0051, DS-A) has no Study pane; its third group stands where it was, as in a browser replay's composition.
   assert.deepEqual(before.groups, [
-    { column: 2, tabs: ['Captured-theme.ts'] },
     { column: 1, tabs: ['codebook.scopedBrowser'] },
-    { column: 3, tabs: ['codebook.studyContext'] },
+    { column: 3, tabs: [] },
+    { column: 2, tabs: ['Captured-theme.ts'] },
   ])
   assert.deepEqual(closed.groups, [
+    { column: 2, tabs: [] },
     { column: 1, tabs: ['Captured-theme.ts'] },
-    { column: 2, tabs: ['codebook.studyContext'] },
   ])
-  assert.deepEqual(after.groups, [
-    { column: 1, tabs: ['codebook.scopedBrowser'] },
-    { column: 2, tabs: ['Captured-theme.ts'] },
-    { column: 3, tabs: ['codebook.studyContext'] },
-  ])
+  assert.deepEqual(after.groups, before.groups)
   // The Application group and the source's share the left column, and the Study pane's group stays the right column.
   assert.deepEqual(after.layout, before.layout)
 })
@@ -127,11 +123,11 @@ test('Show recorded output reuses the emptied group of the closed Application pa
       emptyGroupsClose: false,
     })
 
-  // Assert
+  // Assert: the summary composition (Cycle 0051, DS-A) has no Study pane.
   assert.deepEqual(closed.groups, [
-    { column: 2, tabs: ['Captured-theme.ts'] },
     { column: 1, tabs: [] },
-    { column: 3, tabs: ['codebook.studyContext'] },
+    { column: 3, tabs: [] },
+    { column: 2, tabs: ['Captured-theme.ts'] },
   ])
   assert.deepEqual(after.groups, before.groups)
   assert.deepEqual(after.layout, before.layout)

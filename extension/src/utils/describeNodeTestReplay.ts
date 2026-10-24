@@ -35,6 +35,16 @@ export const NODE_TEST_REPLAY_TEXT = {
   play: 'Play',
   pause: 'Pause',
   stepDetails: 'Step details',
+  /** The control under a clamped question, summary or capture reason that shows its whole text in place (Cycle 0051, DS-B), and its label while the whole text shows. */
+  /** The shared transport's status line while a test replay plays and while it is paused (Cycle 0051, DS-C). */
+  playingStatus: 'Test replay playing',
+  pausedStatus: 'Test replay paused',
+  showMore: 'Show more',
+  showLess: 'Show less',
+  /** The name of the shared transport's group of Previous event and Next event, shown for a test replay only (DS-C). */
+  eventsGroup: 'Event steps',
+  /** Opens the moment block's heading: the selected step's number and label (DS-B). */
+  stepHeading: 'Step',
   /** The slider's legend: a test journal records when a stop paused, not when the run resumed. */
   timelineLegend:
     'Ticks mark recorded stops; source and debugger are not recorded between them.',
