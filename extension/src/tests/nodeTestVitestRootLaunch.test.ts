@@ -391,3 +391,79 @@ test('a nearer config added after the plan refuses the launch, naming what chang
   )
   assert.deepEqual(await calls(), [])
 })
+
+// Value: protects=a plan whose config files, config-named entries or Vitest changed between the pre-history check and the launch being refused with a sentence naming what changed, before Vitest is asked anything; fails_when=a second config file, a folder named like a config, or a nearer Vitest installed after the plan is silently run with the stale plan, or the refusal does not name the change; why_new=the nearest-config change is pinned by the test above but verifyExecutionPlan's other three comparisons (config files, refused entries, Vitest identity) had no test; seam=real files changed after the plan; no_claim=the nearest-config comparison (the test above)
+test('a second config file, a config-named folder or a nearer Vitest added after the plan each refuse the launch, naming what changed', async (context) => {
+  // Arrange
+  const refusalAfter = async (change: (root: string) => Promise<void>) => {
+    const { root, configuration, calls } = await createRepository(
+      context,
+      'packages/a',
+      ['packages/a/vite.config.ts'],
+    )
+    const plan = await planNodeTestExecution({
+      root,
+      testFile: join(root, configuration.testFile),
+      declaredTestFile: configuration.testFile,
+      listRootClaim: async () => assert.fail('no root config'),
+    })
+    await change(root)
+    const refusal = await prepareNodeTestLaunch(
+      root,
+      configuration,
+      async () => assert.fail('a changed plan lists nothing'),
+      plan,
+    ).then(
+      () => undefined,
+      (thrown: unknown) => thrown,
+    )
+    assert.ok(refusal instanceof StudyError)
+    assert.deepEqual(await calls(), [])
+    return { code: refusal.code, message: refusal.message }
+  }
+  const changedPrefix =
+    "node-test's plan for packages/a/src/subscribable.test.ts changed while the run was preparing ("
+
+  // Act
+  const secondConfig = await refusalAfter((root) =>
+    writeFile(
+      join(root, 'packages', 'a', 'vitest.config.ts'),
+      'export default {}\n',
+    ),
+  )
+  const configFolder = await refusalAfter((root) =>
+    mkdir(join(root, 'packages', 'a', 'vitest.config.mts')),
+  )
+  const nearerVitest = await refusalAfter(async (root) => {
+    await mkdir(join(root, 'packages', 'a', 'node_modules', 'vitest'), {
+      recursive: true,
+    })
+    await writeFile(
+      join(root, 'packages', 'a', 'node_modules', 'vitest', 'package.json'),
+      JSON.stringify({ name: 'vitest', version: '5.0.3' }),
+    )
+    await writeFile(
+      join(root, 'packages', 'a', 'node_modules', 'vitest', 'vitest.mjs'),
+      '',
+    )
+  })
+
+  // Assert
+  assert.deepEqual(
+    [secondConfig, configFolder, nearerVitest],
+    [
+      {
+        code: 'INVALID_CONFIGURATION',
+        message: `${changedPrefix}the config files in packages/a are now vitest.config.ts, vite.config.ts, not vite.config.ts); start the test again.`,
+      },
+      {
+        code: 'INVALID_CONFIGURATION',
+        message: `${changedPrefix}vitest.config.mts in packages/a is now a folder or a link that leaves the repository); start the test again.`,
+      },
+      {
+        code: 'INVALID_CONFIGURATION',
+        message: `${changedPrefix}the Vitest for it is now packages/a/node_modules/vitest 5.0.3, not ./node_modules/vitest 5.0.2); start the test again.`,
+      },
+    ],
+  )
+})

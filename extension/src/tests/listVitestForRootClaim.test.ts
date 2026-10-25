@@ -5,7 +5,10 @@ import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { listVitestForRootClaim } from '../utils/listVitestForRootClaim'
-import type { listVitestTestFiles } from '../utils/listVitestTestFiles'
+import type {
+  listVitestTestFiles,
+  VitestListingReleaseFailure,
+} from '../utils/listVitestTestFiles'
 
 /**
  * Writes a stand-in Vitest program that behaves as the given body and returns its folder and path.
@@ -129,4 +132,43 @@ test('a root listing whose process group could not be confirmed as ended is unco
     String('error' in claim && claim.error),
     "Error: Vitest's listing from the repository root ended, but Codebook could not confirm that its process group 4242 ended (Error: kill EPERM), so a process of that group may still run. The test was not started, and the listing's folder /tmp/codebook-vitest-list-x is kept. Start the run again.",
   )
+})
+
+// Value: protects=a root listing whose process group could not be confirmed as ended reading unconfirmed, and its caller hearing of it, also when the start was stopped meanwhile; fails_when=a stop that races the failed release reads cancelled and drops the failure, so the run reads stopped with no word of a listing member that may still run; why_new=state-machine review of Cycle 0053 (cancelled was checked before the release failure); seam=the listing is replaced by one that reports a failed release after the stop; no_claim=the service's journal of it (nodeTestVitestRootService tests)
+test('a stop that races a root listing whose process group was not released still reads unconfirmed and tells the caller', async (context) => {
+  // Arrange
+  const vitest = await stubVitest(context, '')
+  const cancellation = new AbortController()
+  cancellation.abort(new Error('stopped by the learner'))
+  const heard: VitestListingReleaseFailure[] = []
+  const failure = {
+    processGroup: 4242,
+    directory: '/tmp/codebook-vitest-list-x',
+    reason: 'Error: kill EPERM',
+  }
+  const unreleased: typeof listVitestTestFiles = async (request) => {
+    request.onReleaseFailed?.(failure)
+    throw cancellation.signal.reason
+  }
+
+  // Act
+  const claim = await listVitestForRootClaim(
+    {
+      program: vitest.program,
+      vitestRoot: vitest.folder,
+      filter: 'browser-extension/tests/unit/popup.test.tsx',
+      excludes: [],
+    },
+    {
+      node: process.execPath,
+      cancellation: cancellation.signal,
+      deadlineAt: Date.now() + 60_000,
+      onReleaseFailed: (released) => heard.push(released),
+    },
+    unreleased,
+  )
+
+  // Assert
+  assert.equal(claim.outcome, 'unconfirmed')
+  assert.deepEqual(heard, [failure])
 })

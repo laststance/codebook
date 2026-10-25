@@ -349,3 +349,136 @@ test('a refused node-test start answers with its receipt and names the refusal i
     await harness.close()
   }
 })
+
+// Value: protects=a node-test start's root-claim listing being bound to the run's own cancellation and to a preparation deadline inside the 90-second setup window; fails_when=the pre-history check gets a signal that a stop does not abort, or a deadline past the setup limit, so a stopped start keeps listing Vitest from the root; why_new=the fakes of the other service tests ignore the check's control argument; seam=a fake environment check that captures its control and waits for the cancellation; no_claim=the listing process group's release (listVitestForRootClaim tests)
+test('a stop during the pre-history check cancels the signal the root-claim listing runs with, and its deadline lies within the setup window', async () => {
+  // Arrange
+  const { harness, service, received, start } = await nodeTestService(
+    ROOT_MODE_EXECUTION_PLAN,
+  )
+  let control: { signal: AbortSignal; deadlineAt: number } | undefined
+  service.environment.checkNodeTestFiles = async (
+    _configuration,
+    _citedSources,
+    given,
+  ) => {
+    control = given
+    await new Promise<void>((resolve) =>
+      given.signal.addEventListener('abort', () => resolve(), { once: true }),
+    )
+    throw given.signal.reason
+  }
+  try {
+    // Act
+    const receipt = start('stopped-during-check')
+    const started = service.record(receipt)
+    await waitUntil(() => control !== undefined, 'the check was reached')
+    const before = {
+      aborted: control?.signal.aborted,
+      deadlineWithinSetup:
+        (control?.deadlineAt ?? Infinity) <= Date.now() + 90_000 &&
+        (control?.deadlineAt ?? 0) > Date.now(),
+    }
+    await service.stop({
+      instanceId: service.instanceId,
+      runId: started.id,
+    })
+
+    // Assert
+    assert.deepEqual(before, { aborted: false, deadlineWithinSetup: true })
+    assert.equal(control?.signal.aborted, true)
+    assert.equal(received.starts, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the run's journaled node-test.started entry carrying the root-relative vitestRoot and rootClaim the agent reads, and never the launch's absolute working directory; fails_when=the service's mapping drops either field or copies the host path into the run's events; why_new=Step 7 coverage audit of Cycle 0053 (the mapping had no test); seam=the owned run is a fake that journals the start as launchNodeTest does; no_claim=the launch itself (nodeTestVitestRootLaunch tests)
+test('a started test run journals its Vitest root and root claim without the host path', async () => {
+  // Arrange
+  const { harness, service, start } = await nodeTestService(
+    PACKAGE_MODE_EXECUTION_PLAN,
+  )
+  const createRun = service.environment.createNodeTestRun!
+  service.environment.createNodeTestRun = async (...input) => {
+    await input[1]('node-test.started', {
+      pid: 4242,
+      cwd: '/private/workspace/packages/query-core',
+      vitestRoot: 'packages/query-core',
+      rootClaim: 'not-applicable',
+      secretEnvironmentInherited: false,
+    })
+    return createRun(...input)
+  }
+  try {
+    const receipt = start('journaled-start')
+    const record = service.record(receipt)
+    await record.preparation
+
+    // Act
+    const events = await readResource(service, service.state(record).eventsUri)
+
+    // Assert
+    assert.ok('text' in events)
+    assert.match(
+      events.text,
+      /"started":true,"vitestRoot":"packages\/query-core","rootClaim":"not-applicable"/,
+    )
+    assert.doesNotMatch(events.text, /\/private\/workspace/)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a root listing that may still run being named in the run's events when a learner's stop ends the start before its history, while the run still reads stopped with no error; fails_when=the stop drops the failed release, so nothing tells the agent a listing member may still run, or the run reads refused or failed; why_new=state-machine review of Cycle 0053 (a stop racing a failed release lost it); seam=the environment's check is a fake that reports the failed release and fails once the stop is under way; no_claim=the real release (listVitestTestFiles tests)
+test('a stop during a start whose root listing was not released reads stopped and names the listing in its events', async () => {
+  // Arrange
+  const { harness, service, received, start } = await nodeTestService(
+    ROOT_MODE_EXECUTION_PLAN,
+  )
+  let checkIsHeld = false,
+    letCheckFail!: () => void
+  const checkMayFail = new Promise<void>((resolve) => {
+    letCheckFail = resolve
+  })
+  service.environment.checkNodeTestFiles = async (
+    _configuration,
+    _sources,
+    control,
+  ) => {
+    control.onListingNotReleased?.({
+      processGroup: 4242,
+      directory: '/tmp/codebook-vitest-list-x',
+      reason: 'Error: kill EPERM',
+    })
+    checkIsHeld = true
+    await checkMayFail
+    throw new Error('The operation was aborted.')
+  }
+  try {
+    const receipt = start('unreleased-listing-stopped')
+    const record = service.record(receipt)
+    await waitUntil(() => checkIsHeld, 'the check holds the preparation')
+
+    // Act
+    const stopping = service.stop({
+      instanceId: service.instanceId,
+      runId: record.id,
+    })
+    letCheckFail()
+    const afterStop = await stopping
+    const events = await readResource(service, service.state(record).eventsUri)
+
+    // Assert
+    assert.equal(afterStop.error, undefined)
+    assert.equal(afterStop.state, 'stopped')
+    assert.equal(record.historyExcluded, 'stopped-before-history')
+    assert.equal(received.starts, 0)
+    assert.ok('text' in events)
+    assert.match(events.text, /node-test\.vitest-listing-not-released/)
+    assert.doesNotMatch(events.text, /codebook-vitest-list-x/)
+  } finally {
+    letCheckFail()
+    await harness.close()
+  }
+})

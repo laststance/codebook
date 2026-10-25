@@ -282,10 +282,11 @@ export class OwnedNodeTestRun {
       async () => {
         for (const session of this.active.values()) {
           try {
+            // The worker runs in the Vitest root it was started in; the debugger's attach stays bound to the opened checkout.
             return await bindOwnedNodeTestDebugSession(
               session,
               this.id,
-              launch.workspace,
+              launch.vitestRoot,
               this.owned!.processGroup!,
               signal,
               (sessionId) => this.assertActive(sessionId),

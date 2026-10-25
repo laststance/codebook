@@ -584,3 +584,86 @@ test('a folder on the way to the Vitest that cannot be read refuses the start', 
       'node-test cannot read packages/a/node_modules/vitest for packages/a/src/a.test.ts (EACCES). Ask the learner to make that folder readable, then start the test again.',
   })
 })
+
+// Value: protects=a root listing that reports the cited test through a link counting as that test's one selection, and a listed path that cannot be resolved counting as another file; fails_when=entries are compared by their text alone, so a listing through a link reads not-selected and moves a test the root config runs out of root mode; why_new=testing review of Cycle 0053 (every claim test listed the exact path); seam=the root listing is scripted with a real link; no_claim=Vitest's own reporting of links
+test('a root listing that names the cited test through a link keeps it at the root', async (context) => {
+  // Arrange
+  const root = await claimRepository(context)
+  await symlink(join(root, CLAIMED_TEST), join(root, 'linked-popup.test.tsx'))
+  const { plan } = planWith(root, CLAIMED_TEST, async () => ({
+    outcome: 'listed',
+    files: [
+      { file: join(root, 'linked-popup.test.tsx') },
+      { file: join(root, 'missing', 'popup.test.tsx') },
+    ],
+  }))
+
+  // Act
+  const planned = await plan
+
+  // Assert
+  assert.equal(planned.summary.rootClaim, 'selected-once')
+  assert.equal(planned.summary.vitestRoot, '.')
+})
+
+// Value: protects=no root claim being made where the opened root holds a config-named folder or a link out of the repository beside its config, so no Vitest starts there; fails_when=the claim lists from such a root, where Vitest's own config search could load the folder's or link's target, or the package test is refused instead of running in its package; why_new=testing review of Cycle 0053 (the branch had no test); seam=real folders; no_claim=the refusal of such a root in root mode (tested above)
+test('a root holding a config-named folder beside its config makes no root claim and runs the test in its package', async (context) => {
+  // Arrange
+  const root = await claimRepository(context)
+  await mkdir(join(root, 'vite.config.ts'))
+  const { plan, claims } = planWith(root, CLAIMED_TEST)
+
+  // Act
+  const planned = await plan
+
+  // Assert
+  assert.deepEqual(claims, [])
+  assert.equal(planned.summary.vitestRoot, 'browser-extension')
+  assert.equal(planned.summary.rootClaim, 'not-applicable')
+})
+
+// Value: protects=a config that is a link to a file inside the repository counting as the folder's config; fails_when=a linked config (a shared base config linked into each package) is passed over, so the walk leaves the package and runs the test with another folder's config; why_new=testing review of Cycle 0053; seam=a real link inside the repository; no_claim=a link that leaves the repository (passed over, tested above)
+test('a config that links to a file inside the repository makes its folder the Vitest root', async (context) => {
+  // Arrange
+  const root = await repository(context)
+  await write(root, 'shared/vite.base.ts')
+  await write(root, 'packages/a/src/a.test.ts')
+  await symlink(
+    join(root, 'shared', 'vite.base.ts'),
+    join(root, 'packages', 'a', 'vite.config.ts'),
+  )
+  await installVitest(root, '.', '5.0.2')
+
+  // Act
+  const planned = await planWith(root, 'packages/a/src/a.test.ts').plan
+
+  // Assert
+  assert.equal(planned.summary.vitestRoot, 'packages/a')
+  assert.deepEqual(planned.summary.vitestConfigFiles, ['vite.config.ts'])
+})
+
+// Value: protects=a folder of the config walk that cannot be searched refusing the start with the unreadable-folder sentence; fails_when=an EACCES while looking for a config reads as "no config here", so the walk goes on and runs the test with a config above it; why_new=testing review of Cycle 0053 (only the Vitest walk's EACCES was tested); seam=a real folder without permissions; no_claim=a run as root, which reads every folder (skipped)
+test('a folder of the config walk that cannot be searched refuses the start', async (context) => {
+  // Arrange
+  if (process.getuid?.() === 0) {
+    context.skip('root reads every folder')
+    return
+  }
+  const root = await repository(context)
+  await write(root, 'packages/a/vite.config.ts')
+  await write(root, 'packages/a/src/a.test.ts')
+  await installVitest(root, '.', '5.0.2')
+  await chmod(join(root, 'packages/a/src'), 0o000)
+
+  // Act
+  const refusal = await refusalOf(
+    planWith(root, 'packages/a/src/a.test.ts').plan,
+  ).finally(() => chmod(join(root, 'packages/a/src'), 0o755))
+
+  // Assert
+  assert.deepEqual(refusal, {
+    code: 'PREREQUISITE_MISSING',
+    message:
+      'node-test cannot read packages/a/src/vitest.config.ts for packages/a/src/a.test.ts (EACCES). Ask the learner to make that folder readable, then start the test again.',
+  })
+})

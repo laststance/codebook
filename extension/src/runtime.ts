@@ -17,6 +17,7 @@ import type {
   ProfileLeft,
 } from './runtimeSupport/hostBrowser'
 import type { PauseIdentity, PauseGate } from './runtimeSupport/pauseGate'
+import type { VitestListingReleaseFailure } from './utils/listVitestTestFiles'
 import type { NodeTestExecutionPlan } from './utils/planNodeTestExecution'
 import type { NodeTestVitestSearch } from './utils/searchRepositoryVitest'
 
@@ -173,14 +174,18 @@ export interface StudyEnvironment {
   /**
    * Checks the files a node-test configuration names against the opened repository and the editor's open documents of the cited sources ({@link checkNodeTestFiles}), then plans the run ({@link planNodeTestExecution}): its Vitest root, the root claim, its Vitest and its filter, before the run's history begins; a refusal ends the run with its typed error and records nothing.
    * @param citedSources - The article's text of every source the selected node cites; an open editor document with other text refuses the start.
-   * @param control - The start's cancellation and preparation deadline (epoch milliseconds), which bound a root claim's listing.
+   * @param control - The start's cancellation and preparation deadline (epoch milliseconds), which bound a root claim's listing, and who hears of a root listing whose process group could not be confirmed as ended.
    * @returns The execution plan the run launches with.
    * @throws The typed refusal of a path that is not a file, a changed source or a changed test file, a cited source open in the editor with other text, and every refusal of the plan's Vitest rules.
    */
   checkNodeTestFiles?(
     configuration: NodeTestConfiguration,
     citedSources: ConfiguredDescriptor['sources'],
-    control: { signal: AbortSignal; deadlineAt: number },
+    control: {
+      signal: AbortSignal
+      deadlineAt: number
+      onListingNotReleased?: (failure: VitestListingReleaseFailure) => void
+    },
   ): Promise<NodeTestExecutionPlan>
   createNodeTestRun?(
     configuration: NodeTestConfiguration,

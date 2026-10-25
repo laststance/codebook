@@ -1026,6 +1026,8 @@ export const NODE_TEST_LEARNING_DECISION_LIMIT_BYTES = 4_096
 export const NODE_TEST_LEARNING_MATERIAL_VERSION = 1
 export const NODE_TEST_LEARNING_MATERIAL_LIMIT_BYTES =
   LEARNING_SUMMARY_LIMITS.bytes
+/** The folder name package managers install dependencies in; node-test's readiness search never enters one ({@link searchRepositoryVitest}). */
+export const NODE_MODULES_DIRECTORY_NAME = 'node_modules'
 /** A Vitest installation's package folder, relative to the directory whose `node_modules` holds it ({@link requireOwnedVitest}, {@link searchRepositoryVitest}). */
 export const VITEST_PACKAGE_DIRECTORY = 'node_modules/vitest'
 /** A Vitest installation's package file, read for its version, relative to the directory whose `node_modules` holds it ({@link readVitestPrerequisite}). */

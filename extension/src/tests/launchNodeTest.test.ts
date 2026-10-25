@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mock, test } from 'node:test'
@@ -135,6 +135,62 @@ test('an owned Node test announces its own loopback debugger and releases the pa
     await rm(workspace, { recursive: true, force: true })
   }
   assert.deepEqual(events, ['node-test.started', 'node-test.closed'])
+})
+
+// Value: protects=a test launched in its package's Vitest root passing the worker identity check against that root, and only that root; fails_when=the identity check compares the worker's cwd with the opened checkout, so every package-mode run refuses its own worker and never reaches a stop, or a worker started elsewhere passes; why_new=red-team review of Cycle 0053 (launchNodeTest moved the cwd to the Vitest root); seam=a stand-in program that opens the real Node Inspector; no_claim=js-debug's attach (ownedNodeTestRun tests)
+test('a test launched in its package passes the worker check against that package and is refused against the opened checkout', async () => {
+  // Arrange
+  const workspace = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-owned-node-package-')),
+  )
+  const vitestRoot = join(workspace, 'packages', 'theme')
+  await mkdir(vitestRoot, { recursive: true })
+  const program = join(workspace, 'runner.cjs')
+  await writeFile(
+    program,
+    "const inspector = require('node:inspector'); const port = Number(process.argv.find(value => value.startsWith('--inspect-brk='))?.split('=')[1]); inspector.open(port, '127.0.0.1'); setInterval(() => {}, 1000);\n",
+  )
+  const launch = {
+    vitestRoot,
+    execution: { ...ROOT_MODE_EXECUTION, vitestRoot: 'packages/theme' },
+    program,
+    args: [
+      'run',
+      'src/theme.test.ts',
+      '--inspect-brk',
+      '--no-file-parallelism',
+    ],
+  }
+  const owned = await launchNodeTest(launch, process.execPath, () => undefined)
+  let inspector: Cdp | undefined
+  try {
+    const endpoint = await owned.inspectorEndpoint(AbortSignal.timeout(10_000))
+    inspector = await Cdp.connect(endpoint, () => undefined)
+
+    // Act
+    const identity = await verifyNodeTestInspectorOwnership(
+      inspector,
+      vitestRoot,
+      owned.processGroup!,
+      AbortSignal.timeout(10_000),
+      () => undefined,
+    )
+    const againstCheckout = verifyNodeTestInspectorOwnership(
+      inspector,
+      workspace,
+      owned.processGroup!,
+      AbortSignal.timeout(10_000),
+      () => undefined,
+    )
+
+    // Assert
+    assert.equal(identity.workspace, vitestRoot)
+    await assert.rejects(againstCheckout, /belongs to a different repository/)
+  } finally {
+    inspector?.close()
+    await owned.close()
+    await rm(workspace, { recursive: true, force: true })
+  }
 })
 
 test('a Node test that exits before inspection reports the failure and still cleans up', async () => {

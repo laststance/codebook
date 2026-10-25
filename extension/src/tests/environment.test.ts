@@ -395,6 +395,58 @@ test('a Vitest search that cannot read the repository is reported without the re
   )
 })
 
+// Value: protects=a node-test start's own prerequisites in the real environment: ready on the editor and the external Node alone, without waiting on or running the repository-wide Vitest search; fails_when=the start's prerequisites call the Vitest search again, so a repository whose search is slow or fails (or holds no root Vitest) delays or refuses a start whose test has its own package Vitest; why_new=the service tests replace nodeTestStartPrerequisites with fakes, so the real environment's version had no test; seam=the real environment over a repository without any Vitest, with a Vitest search that fails if it is called; no_claim=a missing external Node (the service test names that refusal)
+test('a node-test start is ready on the editor and Node alone, without running the Vitest search', async (context) => {
+  // Arrange
+  let searches = 0
+  const { environment } = await createNodeTestEnvironment(context, {
+    searchRepositoryVitest: async () => {
+      searches++
+      throw new Error('the start must not search the repository for Vitest')
+    },
+  })
+
+  // Act
+  const prerequisites = await environment.nodeTestStartPrerequisites?.()
+
+  // Assert
+  assert.deepEqual(
+    {
+      ready: prerequisites?.ready,
+      missing: [...(prerequisites?.missing ?? [])],
+    },
+    { ready: true, missing: [] },
+  )
+  assert.equal(searches, 0)
+})
+
+// Value: protects=a node-test run created without the plan of the pre-history check being refused instead of launching with a guessed Vitest root; fails_when=createNodeTestRun builds an owned run from an undefined plan, so a run that skipped the check starts Vitest in the wrong folder or crashes later with a TypeError; why_new=the guard in createNodeTestRun was added with the plan and no test reaches it; seam=the real environment, no run is created; no_claim=a run created with a plan (service and owned-run tests)
+test('a node-test run created without its preparation plan is refused', async (context) => {
+  // Arrange
+  const { environment, configuration } = await createNodeTestEnvironment(
+    context,
+    { vitestVersion: '5.0.2' },
+  )
+
+  // Act
+  const refusal = await environment
+    .createNodeTestRun?.(configuration, () => undefined, [], undefined)
+    .then(
+      () => undefined,
+      (thrown: unknown) => thrown,
+    )
+
+  // Assert
+  assert.deepEqual(
+    z.object({ code: z.string(), message: z.string() }).parse(refusal),
+    {
+      code: 'PREREQUISITE_MISSING',
+      message:
+        'The node-test run has no execution plan from its preparation check.',
+    },
+  )
+})
+
 // Value: protects=the environment's own wiring of the preparation check that service tests replace with fakes; fails_when=checkNodeTestFiles is not reached with the opened repository, so a changed test file starts a run, or a matching configuration is refused; why_new=the optional member was exercised only through fakes (F30); seam=real files, real environment; no_claim=Vitest's selection of the test
 test('the environment refuses a node-test configuration whose test file changed and accepts one that still matches', async (context) => {
   // Arrange

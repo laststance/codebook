@@ -1,5 +1,3 @@
-import { relative, sep } from 'node:path'
-
 import { StudyError } from '../errors'
 
 import {
@@ -177,7 +175,7 @@ export async function planNodeTestExecution(
   const filter =
     chosen.vitestRoot === root
       ? input.declaredTestFile
-      : relative(chosen.vitestRoot, testFile).split(sep).join('/')
+      : repositoryPosixPath(chosen.vitestRoot, testFile)
   if (filter.startsWith('-'))
     throw new StudyError(
       'INVALID_CONFIGURATION',

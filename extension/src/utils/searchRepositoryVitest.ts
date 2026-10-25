@@ -2,6 +2,7 @@ import { lstat, readdir, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import {
+  NODE_MODULES_DIRECTORY_NAME,
   NODE_TEST_MINIMUM_VITEST_MAJOR,
   NODE_TEST_READINESS_DEPTH,
   NODE_TEST_READINESS_DIRECTORY_LIMIT,
@@ -42,7 +43,7 @@ async function childFolders(
     .filter(
       (entry) =>
         entry.isDirectory() &&
-        entry.name !== 'node_modules' &&
+        entry.name !== NODE_MODULES_DIRECTORY_NAME &&
         !entry.name.startsWith('.'),
     )
     .map((entry) =>

@@ -64,11 +64,16 @@ export async function readVitestConfigEntries(
   directory: string,
   testFile: string,
 ): Promise<VitestConfigEntries> {
-  const kinds = await Promise.all(
+  const results = await Promise.allSettled(
     VITEST_CONFIG_FILE_NAMES.map((name) =>
       classifyEntry(root, join(directory, name), testFile),
     ),
   )
+  // The first refusal in Vitest's name order, whichever read failed first, so the sentence names the same entry every time.
+  const kinds = results.map((result) => {
+    if (result.status === 'rejected') throw result.reason
+    return result.value
+  })
   const named = (kind: (typeof kinds)[number]) =>
     VITEST_CONFIG_FILE_NAMES.filter((_name, index) => kinds[index] === kind)
   return {

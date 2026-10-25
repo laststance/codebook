@@ -3275,6 +3275,14 @@ export class StudyService {
                 record.deadlineAt,
                 record.createdAt + REPOSITORY_SETUP_TIMEOUT_MS,
               ),
+              // Before the history exists the run's events are its only journal: a root listing that may still run is named there, also when a stop ends the start.
+              onListingNotReleased: () => {
+                record.nodeEvents?.push({
+                  sequence: record.nodeEvents.length + 1,
+                  type: 'node-test.vitest-listing-not-released',
+                  detail: { omitted: true },
+                })
+              },
             },
           )
         if (this.stopping || record.stopping) return
@@ -3306,7 +3314,8 @@ export class StudyService {
             throw error
           })
         record.nodeHistoryStatus = 'recording'
-        let sequence = 0,
+        // Events journaled before the history began (a root listing that was not released) keep their numbers.
+        let sequence = record.nodeEvents?.length ?? 0,
           retainedEventBytes = 0,
           eventsTruncated = false
         record.nodeRun = await this.environment.createNodeTestRun(

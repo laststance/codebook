@@ -20,21 +20,26 @@ export type RootClaimListing =
  * Lists the cited test from the opened root with the root's Vitest, for a root claim made before the run's history begins, and tells a clean failure Vitest itself reported apart from a cancelled start, a passed deadline and a listing whose process group could not be confirmed as ended.
  * Called by the study environment's pre-history check through {@link planNodeTestExecution}; the listing runs within {@link VITEST_FILE_LIST_TIMEOUT_MS} and the start's preparation deadline, whichever ends first.
  * @param request - The root's Vitest program, the opened root, the cited repository-relative file and no excludes.
- * @param run - The Node executable, the start's cancellation and its preparation deadline (epoch milliseconds).
+ * @param run - The Node executable, the start's cancellation, its preparation deadline (epoch milliseconds), and who hears of a listing whose process group could not be confirmed as ended, before the run's history (or its journal) exists.
  * @param list - The listing to run; tests replace it.
  * @returns
  * - `listed` with Vitest's entries.
  * - `failed`: Vitest ended with an error or wrote no readable list, and its process group ended.
+ * - `unconfirmed`: the listing's process group could not be confirmed as ended, also when the start was cancelled meanwhile; its error names the group and the folder that was kept.
  * - `cancelled`: the start was cancelled.
  * - `deadline`: the deadline passed before or during the listing.
- * - `unconfirmed`: the listing's process group could not be confirmed as ended; its error names the group and the folder that was kept.
  * @example
  * await listVitestForRootClaim({ program, vitestRoot: '/repo', filter: 'packages/a/src/a.test.ts', excludes: [] }, { node, cancellation, deadlineAt })
  * // => { outcome: 'listed', files: [] }
  */
 export async function listVitestForRootClaim(
   request: ListVitestTestFilesRequest,
-  run: { node: string; cancellation: AbortSignal; deadlineAt: number },
+  run: {
+    node: string
+    cancellation: AbortSignal
+    deadlineAt: number
+    onReleaseFailed?: (failure: VitestListingReleaseFailure) => void
+  },
   list: typeof listVitestTestFiles = listVitestTestFiles,
 ): Promise<RootClaimListing> {
   const remainingMs = run.deadlineAt - Date.now()
@@ -54,12 +59,12 @@ export async function listVitestForRootClaim(
       timeoutMs: Math.min(VITEST_FILE_LIST_TIMEOUT_MS, remainingMs),
       onReleaseFailed: (failure) => {
         releaseFailure = failure
+        run.onReleaseFailed?.(failure)
       },
     })
     return { outcome: 'listed', files }
   } catch (error) {
-    if (run.cancellation.aborted) return { outcome: 'cancelled', error }
-    // A member of the listing's group may still run: no second Vitest starts beside it, whatever the listing's own result.
+    // A member of the listing's group may still run: no second Vitest starts beside it, whatever the listing's own result or a stop meanwhile.
     if (releaseFailure)
       return {
         outcome: 'unconfirmed',
@@ -68,6 +73,7 @@ export async function listVitestForRootClaim(
           { cause: error },
         ),
       }
+    if (run.cancellation.aborted) return { outcome: 'cancelled', error }
     if (error instanceof VitestListingDeadlineError)
       return { outcome: 'deadline', error }
     return { outcome: 'failed', error }

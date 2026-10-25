@@ -13,10 +13,10 @@ const inspectorIdentitySchema = z.strictObject({
   cwd: z.string().min(1),
 })
 
-/** Binds a Vitest worker Inspector to the owned test group and opened checkout before debugger control. Called after its loopback announcement. @param inspector - Connected Inspector protocol. @param workspace - Canonical opened checkout. @param processGroup - Owned detached launch group. @param signal - Preparation cancellation. @param assertRunning - Current process ownership check. @example await verifyNodeTestInspectorOwnership(cdp, root, launch.processGroup!, signal, assertRunning) */
+/** Binds a Vitest worker Inspector to the owned test group and the folder the owned Vitest was started in before debugger control. Called after its loopback announcement. @param inspector - Connected Inspector protocol. @param workingDirectory - Canonical folder the owned Vitest was started in: the test's Vitest root, which is the opened checkout in root mode (a worker inherits it as its `process.cwd()`). @param processGroup - Owned detached launch group. @param signal - Preparation cancellation. @param assertRunning - Current process ownership check. @example await verifyNodeTestInspectorOwnership(cdp, launch.vitestRoot, launch.processGroup!, signal, assertRunning) */
 export async function verifyNodeTestInspectorOwnership(
   inspector: Pick<Cdp, 'request'>,
-  workspace: string,
+  workingDirectory: string,
   processGroup: number,
   signal: AbortSignal,
   assertRunning: () => void,
@@ -34,11 +34,11 @@ export async function verifyNodeTestInspectorOwnership(
   if (response.exceptionDetails)
     throw new Error('Node test Inspector identity evaluation failed.')
   const identity = inspectorIdentitySchema.parse(response.result.value)
-  const [actualWorkspace, expectedWorkspace] = await Promise.all([
+  const [actualDirectory, expectedDirectory] = await Promise.all([
     realpath(identity.cwd),
-    realpath(workspace),
+    realpath(workingDirectory),
   ])
-  if (actualWorkspace !== expectedWorkspace)
+  if (actualDirectory !== expectedDirectory)
     throw new Error('Node test Inspector belongs to a different repository.')
   // ps is started by its absolute path: one of the search path could be the opened repository's own.
   const { stdout } = await promisify(execFile)(
@@ -50,5 +50,6 @@ export async function verifyNodeTestInspectorOwnership(
     throw new Error('Node test Inspector belongs to a different process group.')
   signal.throwIfAborted()
   assertRunning()
-  return { pid: identity.pid, processGroup, workspace: actualWorkspace }
+  // `workspace` names the worker's real working directory, the Vitest root it was started in.
+  return { pid: identity.pid, processGroup, workspace: actualDirectory }
 }
