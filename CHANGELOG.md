@@ -19,7 +19,7 @@ Cycle 0052 pt1 ([Issue #124](https://github.com/laststance/codebook/issues/124))
 
 **Reloading a browser replay keeps it on screen.**
 
-- **Reload saved recording keeps the Learning summary** while the recording reloads, with the reload's loading or failure on the replay's status line, and the Application pane keeps the recording through refreshes and a runtime release.
+- **Reload saved recording keeps the Learning summary** while the recording reloads, with the reload's loading or failure on the replay's status line, and the Application pane keeps the recording through refreshes, a runtime release and Focus source.
 - **While a reload loads, or after it failed**, a saved study you choose opens its own recording, a step you select is refused until the recording has loaded again, Reload and Retry storage / refresh load the recording again, choosing Live leaves the replay, and the replay's study cannot be deleted until you leave it. An agent reads the reader as showing the recording, so it returns to Live before it starts a run.
 - **A browser recording opened over a test replay** shows its loading, failure and recovery in the Learning summary.
 
