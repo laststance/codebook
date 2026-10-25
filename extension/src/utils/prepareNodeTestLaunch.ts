@@ -14,6 +14,7 @@ import {
   type CheckedNodeTestStop,
 } from './checkNodeTestFiles'
 import { decideRootClaimFromListing } from './decideRootClaimFromListing'
+import { isPackageRootClaim } from './isPackageRootClaim'
 import type { RootClaimListing } from './listVitestForRootClaim'
 import {
   VitestListingFailedError,
@@ -146,12 +147,7 @@ async function reaskRootClaim(
   listTestFiles: ListVitestTestFiles,
 ): Promise<void> {
   const planned = plan.summary.rootClaim
-  if (
-    planned !== 'not-selected' &&
-    planned !== 'several-projects' &&
-    planned !== 'listing-failed'
-  )
-    return
+  if (!isPackageRootClaim(planned)) return
   const rootVitest = await requireOwnedVitest(root, root, testFile)
   let releaseFailed = false
   const listing: RootClaimListing = await listTestFiles({

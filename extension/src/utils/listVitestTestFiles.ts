@@ -70,7 +70,7 @@ const listedFilesSchema = z.array(
  * @param request.filter - The cited test file relative to the Vitest root.
  * @param request.excludes - Escaped absolute paths passed as `--exclude=` globs.
  * @param request.signal - The run's cancellation.
- * @param request.timeoutMs - Listing deadline; the default fits inside the attach phase.
+ * @param request.timeoutMs - Listing deadline; the default bounds each listing on its own, and the owned Node test run starts its attach budget only after its listings.
  * @param request.onReleaseFailed - Told once when the listing's process group could not be confirmed as ended, whatever the listing's own outcome, with a {@link RetryVitestListingRelease} that runs the release again; the owned Node test run journals it and keeps the retry for its own release.
  * @returns Every file entry Vitest reports, in Vitest's order, once the listing's process group is confirmed as ended.
  * @throws When Vitest fails or writes no readable list (a {@link VitestListingFailedError}), times out (a {@link VitestListingDeadlineError}), is cancelled, or cannot be started; that reason is kept also when the release fails. When a listing that finished

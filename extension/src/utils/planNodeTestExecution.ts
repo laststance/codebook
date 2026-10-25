@@ -66,7 +66,7 @@ type ChosenVitestRoot = {
 }
 
 /**
- * Makes the root claim for a test whose config walk stopped below the opened root: where the root holds a config file (and no config-named folder or outside link), its own Vitest is usable and the declared path does not start with `-`, the root's listing of the cited test decides ({@link decideNodeTestRootClaim}).
+ * Makes the root claim for a test whose config walk stopped below the opened root: where the root holds a config file (and no config-named folder or outside link), its own Vitest is usable and the declared path does not start with `-`, the root's listing of the cited test decides ({@link decideRootClaimFromListing}).
  * @param input - The plan's input.
  * @param walk - Where the config walk stopped.
  * @returns

@@ -124,7 +124,7 @@ async function runTrial(configPath: string, trial: NativeTrial): Promise<void> {
  * @param name - The environment variable holding whole milliseconds.
  * @param label - What the hold lets the recording observe, for the refusal.
  * @returns The hold in milliseconds, 0 when the variable is unset.
- * @throws When the value is not a whole number from 0 to 60,000.
+ * @throws When the value is not a whole number from 0 to {@link NATIVE_TRIAL_HOLD_LIMIT_MS}.
  * @example observationHoldMs('CODEBOOK_NODE_TEST_HOLD_MS', 'observation') // => 0
  */
 function observationHoldMs(name: string, label: string): number {
@@ -139,7 +139,7 @@ function observationHoldMs(name: string, label: string): number {
 }
 
 /**
- * Ends a native trial: stops its run, releases its root listings once more and writes the private report with the trial's error and every listing still not confirmed as ended. Each step runs whatever the one before it did.
+ * Ends a native trial: stops its run, releases its root listings once more and writes the private report with the trial's error, the run's stop error when the stop failed (a test process may then still run), and every listing still not confirmed as ended. Each step runs whatever the one before it did.
  * Called by {@link run} only, after the trial ended or failed.
  * @param trial - The trial's run, report and unreleased root listings.
  * @param reportPath - The private report file, written with mode 0600.
@@ -163,6 +163,8 @@ async function endTrial(
   )
   const trialFailure = failure ?? stopFailure ?? listingFailure
   if (trialFailure) trial.report.error = String(trialFailure.error)
+  // A failed stop is named even behind an earlier error: the test process it was to end may still run.
+  if (stopFailure) trial.report.stopError = String(stopFailure.error)
   trial.report.unreleasedListings = trial.unreleasedListings.flatMap(
     (retryRelease) => {
       const listing = trial.listingFailures.get(retryRelease)

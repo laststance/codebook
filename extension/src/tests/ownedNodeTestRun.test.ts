@@ -46,6 +46,8 @@ const LEARNER_BREAKPOINT_ID = 12
  * @param options.acknowledgements - Uses the real breakpoint tracker instead of the stand-in: the adapter's registration reply for each owned breakpoint in the order they are armed, passed through the run's own tracker as the editor would send it.
  * @param options.listingNotReleased - The preparation asks the run for its Vitest listing, as the real one does, and the listing answers that its release failed with this report.
  * @param options.listingRelease - The retry the failed listing hands to the run, which runs it at its release; without it the retry succeeds at once.
+ * @param options.endsWhileFirstStopIsRevealed - Right after the first stop was captured, its test process exits, the owned session ends and the output tab cannot be shown, so the preparation fails after its stop.
+ * @param options.launchListingMs - The preparation asks the run for its Vitest listing, which takes this long and ends early only when its signal aborts, as the real one does.
  * @param options.typedWhileRunning - The learner types this text into the cited source right after Codebook's continue request with this number (1 is the continue of the entry pause, 2 the first continuation of a declared stop), while the test runs to its next stop.
  * @param options.openDocumentText - The text the editor holds for the cited source `theme.ts` from the start, whose file and article text is `export const nextTheme = "dark";\n`; without it the editor has no document open until a test types into the source (`typeIntoCitedSource`).
  * @param options.closeFailures - How many first releases of the owned test process fail, each with "process group still running (close <n>)"; the later ones succeed.
@@ -77,6 +79,8 @@ async function nodeRunHarness({
   bindingReadUnanswered,
   listingNotReleased,
   listingRelease = async () => undefined,
+  endsWhileFirstStopIsRevealed = false,
+  launchListingMs,
   declaredColumn = 14,
   pausedColumn,
   verifiedByNews,
@@ -129,6 +133,8 @@ async function nodeRunHarness({
   bindingReadUnanswered?: boolean
   listingNotReleased?: VitestListingReleaseFailure
   listingRelease?: RetryVitestListingRelease
+  endsWhileFirstStopIsRevealed?: boolean
+  launchListingMs?: number
   /** One-based column every stop is declared at on line 1; at column 1 the editor's breakpoint has no column of its own. */
   declaredColumn?: number
   /** The column the debugger reports for the paused frame when it is not the declared one: the debugger bound the declared line at another column. */
@@ -519,6 +525,12 @@ async function nodeRunHarness({
     reveal(): void {
       this.refuseOnceClosed()
       outputReveals += 1
+      // The test process ends right after the first stop was captured, and the tab cannot be shown.
+      if (endsWhileFirstStopIsRevealed && outputReveals === 1) {
+        testExited = true
+        terminate?.(session)
+        throw new Error('Owned Node test output tab could not be shown.')
+      }
     }
     dispose(): void {
       this.closed = true
@@ -653,8 +665,8 @@ async function nodeRunHarness({
           listTestFiles: (request: ListVitestTestFilesRequest) => unknown,
         ) => {
           launchPreparations += 1
-          // Only a test of the listing's release asks for the listing; every other test gets its launch at once.
-          if (listingNotReleased)
+          // Only a test of the listing asks for it; every other test gets its launch at once.
+          if (listingNotReleased || launchListingMs !== undefined)
             await listTestFiles({
               program: 'vitest',
               vitestRoot: directory,
@@ -668,11 +680,25 @@ async function nodeRunHarness({
       },
       './utils/listVitestTestFiles': {
         listVitestTestFiles: async (request: {
+          signal?: AbortSignal
           onReleaseFailed?: (
             failure: VitestListingReleaseFailure,
             retryRelease: RetryVitestListingRelease,
           ) => void
         }) => {
+          // A slow listing: it ends early only when the signal it was given aborts.
+          if (launchListingMs !== undefined)
+            await new Promise<void>((resolve, reject) => {
+              const timer = setTimeout(resolve, launchListingMs)
+              request.signal?.addEventListener(
+                'abort',
+                () => {
+                  clearTimeout(timer)
+                  reject(request.signal?.reason)
+                },
+                { once: true },
+              )
+            })
           if (listingNotReleased)
             request.onReleaseFailed?.(listingNotReleased, listingRelease)
           return []
@@ -776,6 +802,11 @@ async function nodeRunHarness({
     verified,
     /** The learner closes the run's test output tab. */
     closeOutputAsLearner: (): void => outputSurfaces.at(-1)?.closeByLearner(),
+    /** The learner stops the owned debug session in the native debugger, and its test process exits. */
+    endSessionAsLearner: (): void => {
+      testExited = true
+      terminate?.(session)
+    },
     events,
     debugStartOptions,
     attachDirectories,
@@ -1753,6 +1784,70 @@ test('a Vitest listing whose process group could not be released is journaled by
     )
   } finally {
     await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=a continuation refused before Codebook asks the test to run on keeping its own words, though the learner ended the session and the test exited; fails_when=the refusal is reworded as the test exiting before the next declared stop, which blames the stop order for the learner's action; why_new=Cycle 0054 /ship Step 9 red team (advance explained every failure); seam=the harness ends the session as the learner's Stop would; no_claim=how a real Stop ends the debuggee
+test('a continuation refused before the test runs on keeps its own words after the learner stopped the session', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({ declaredStops: 2 })
+  try {
+    await harness.run.prepare()
+    harness.endSessionAsLearner()
+
+    // Act
+    const refusal = await harness.run.advance().then(
+      () => 'advanced',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.equal(
+      refusal,
+      'Error: Owned Node debugger session terminated or was cancelled.',
+    )
+    assert.equal(harness.calls.filter((call) => call === 'continue').length, 1)
+  } finally {
+    await harness.run.stop().catch(() => undefined)
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=the attach budget starting after the launch's Vitest listings, which each have their own deadline, so a slow root and package listing do not use up the time the attach needs; fails_when=the listings share the attach budget and a launch whose listings outlast it fails with a bare timeout before the debugger attaches; why_new=Cycle 0054 /ship Step 9 red team (the root claim asked again at launch adds a third listing); seam=a stand-in listing that takes longer than the budget; no_claim=the real listing deadline (listVitestTestFiles tests)
+test('a launch whose Vitest listings take longer than the attach budget still attaches and reaches its first stop', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({ budgetMs: 300, launchListingMs: 500 })
+  try {
+    // Act
+    const stop = await harness.run.prepare()
+
+    // Assert
+    assert.equal(stop.frame.line, 1)
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=a preparation that fails after its first stop was captured keeping its own error, though the test process has exited by then; fails_when=the failure is reworded as the test exiting before declared stop 1, which it reached; why_new=Cycle 0054 /ship Step 7 (the guard moved from explainEarlyExit into prepare had no test); seam=the output tab stand-in ends the session and fails at the first reveal; no_claim=which later step fails in a real run
+test('a preparation that fails after its first stop was captured keeps its own error rather than naming an early exit', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({ endsWhileFirstStopIsRevealed: true })
+  try {
+    // Act
+    const failure = await harness.run.prepare().then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+    // Assert
+    assert.equal(
+      (failure as { message?: unknown } | undefined)?.message,
+      'Owned Node test output tab could not be shown.',
+    )
+  } finally {
+    await harness.run.stop().catch(() => undefined)
     await harness.cleanup()
   }
 })

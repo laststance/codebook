@@ -20,6 +20,11 @@ export type RootClaimDecision =
       rootClaim: 'not-selected' | 'several-projects' | 'listing-failed'
     }
   | { mode: 'refused'; refusal: unknown }
+/** A root claim that leaves the run at the test's nearest config: the root listing selected the test zero times or under several projects, or Vitest itself ended it with an error. */
+export type PackageRootClaim = Extract<
+  RootClaimDecision,
+  { mode: 'package' }
+>['rootClaim']
 
 /**
  * Decides a root claim from the root listing of the cited test: a root config whose own listing selects the test exactly once keeps the run at the opened root, as it runs today; zero selections, several projects or a listing Vitest itself ended with an error leave it at the test's nearest config; a cancelled start, a passed deadline, a listing whose process group could not be confirmed as ended or one Codebook could not run refuses the start, as today's listing refuses it.

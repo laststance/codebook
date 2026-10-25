@@ -218,10 +218,7 @@ export class OwnedNodeTestRun {
       this.citedSources,
       vscode.workspace.textDocuments,
     )
-    const signal = AbortSignal.any([
-      this.abort.signal,
-      AbortSignal.timeout(NODE_TEST_ATTACH_TIMEOUT_MS),
-    ])
+    // Each Vitest listing is bounded by its own deadline (VITEST_FILE_LIST_TIMEOUT_MS), so a slow root and package listing end with a listing's own deadline error; the attach budget starts once they are done.
     const launch = (this.launch = await prepareNodeTestLaunch(
       this.workspace,
       this.configuration,
@@ -229,7 +226,7 @@ export class OwnedNodeTestRun {
         listVitestTestFiles({
           ...request,
           node: this.node,
-          signal,
+          signal: this.abort.signal,
           // A failed release is journaled with its group and folder. A listing that failed keeps its own reason; a listing that finished but whose process group could not be confirmed as ended refuses the run, so the test is not started.
           onReleaseFailed: (failure, retryRelease) => {
             this.record('node-test.vitest-listing-not-released', failure)
@@ -240,6 +237,10 @@ export class OwnedNodeTestRun {
         }),
       this.plan,
     ))
+    const signal = AbortSignal.any([
+      this.abort.signal,
+      AbortSignal.timeout(NODE_TEST_ATTACH_TIMEOUT_MS),
+    ])
     signal.throwIfAborted()
     this.outputTerminal = new NodeTestOutputTerminal(this.id, vscode, () => {
       this.record('node-test.output-surface-closed')
@@ -508,6 +509,8 @@ export class OwnedNodeTestRun {
     )
       throw new Error('Node test has no next declared source stop to capture.')
     this.advancing = true
+    // Set once Codebook asked the test to run on: only then can the test have ended before the next declared stop.
+    let continued = false
     try {
       const signal = AbortSignal.any([
         this.abort.signal,
@@ -537,6 +540,7 @@ export class OwnedNodeTestRun {
         vscode.workspace.textDocuments,
       )
       const fromIndex = this.stops.length
+      continued = true
       await awaitResponse(
         bound.session.customRequest('continue', {
           threadId: previous.threadId,
@@ -546,8 +550,10 @@ export class OwnedNodeTestRun {
       )
       return await this.captureStop(previous.index + 1, fromIndex)
     } catch (error) {
-      // A test that ended before the next declared stop is named as such, with its exit, before the release ends the evidence of it.
-      const failure = await this.explainEarlyExit(error, previous.index + 2)
+      // A test that ended before the next declared stop is named as such, with its exit, before the release ends the evidence of it. A refusal before the continuation (the learner resumed or stopped, a changed source, a breakpoint bound elsewhere) keeps its own words.
+      const failure = continued
+        ? await this.explainEarlyExit(error, previous.index + 2)
+        : error
       await this.release()
       throw failure
     } finally {
@@ -912,7 +918,7 @@ export class OwnedNodeTestRun {
   /**
    * Names the likely cause when the owned test process ended before a declared stop: for the first stop most often a test Vitest skipped, for a later one a stop on a line the test ran before the previous stop, which it never reaches again.
    *
-   * Called by {@link prepare} when preparation fails before its first stop was captured, and by {@link advance} when the continuation to the next stop fails. Cancellation and a test that still runs keep their original error.
+   * Called by {@link prepare} when preparation fails before its first stop was captured, and by {@link advance} when the continuation to the next stop fails after Codebook asked the test to run on. Cancellation and a test that still runs keep their original error.
    *
    * @param error - The failure of the preparation or the continuation.
    * @param stopNumber - The one-based number of the declared stop the test did not reach.

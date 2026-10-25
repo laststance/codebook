@@ -140,6 +140,7 @@ const PLAN_REFUSAL = new Error(
  * @param standIns.planRefusal - When given, the plan is refused with it after the root listing; otherwise a package-mode plan is made.
  * @param standIns.OwnedNodeTestRun - The run the trial starts after a plan is made.
  * @param standIns.unwritableReport - The report path is in a folder that does not exist.
+ * @param standIns.noWorkspaceFolder - The editor has no folder open.
  * @returns The trial's module and a reader of the report it wrote, or `undefined` when there is none.
  * @example const { bootstrap, readReport } = await loadTrial(context, { planRefusal: new Error('refused') })
  */
@@ -150,6 +151,7 @@ async function loadTrial(
     planRefusal?: Error
     OwnedNodeTestRun?: new () => unknown
     unwritableReport?: boolean
+    noWorkspaceFolder?: boolean
   },
 ) {
   const folder = await realpath(
@@ -191,7 +193,11 @@ async function loadTrial(
     resolve(__dirname, '../nativeNodeTestBootstrap.js'),
     {
       vscode: {
-        workspace: { workspaceFolders: [{ uri: { fsPath: folder } }] },
+        workspace: {
+          workspaceFolders: standIns.noWorkspaceFolder
+            ? []
+            : [{ uri: { fsPath: folder } }],
+        },
         env: { appName: 'Visual Studio Code' },
       },
       './ownedNodeTestRun': {
@@ -378,7 +384,7 @@ test('a native trial whose plan is refused writes its report with the refusal', 
   )
 })
 
-// Value: protects=a native trial whose run fails and whose stop fails too still releasing its root listings and writing its report, and ending with the run's own error; fails_when=a failing stop skips the release or the report, or the stop's error replaces the run's; why_new=Cycle 0054 task 3 (CR-OD2: each cleanup step in its own try); seam=a plan made while a root listing's first retry fails, a run stand-in whose preparation and stop fail; no_claim=a real plan, which refuses a listing whose process group could not be confirmed as ended
+// Value: protects=a native trial whose run fails and whose stop fails too still releasing its root listings and writing its report with the stop's error beside the run's, and ending with the run's own error; fails_when=a failing stop skips the release or the report, the report loses the stop's error behind the run's, or the stop's error replaces the run's; why_new=Cycle 0054 task 3 (CR-OD2: each cleanup step in its own try); seam=a plan made while a root listing's first retry fails, a run stand-in whose preparation and stop fail; no_claim=a real plan, which refuses a listing whose process group could not be confirmed as ended
 test("a native trial whose run and stop both fail still releases its listings, writes its report and ends with the run's error", async (context) => {
   // Arrange
   let retries = 0
@@ -411,6 +417,10 @@ test("a native trial whose run and stop both fail still releases its listings, w
         .unreleasedListings,
     },
     { error: String(runFailure), unreleasedListings: [] },
+  )
+  assert.equal(
+    (report as { stopError?: unknown }).stopError,
+    'Error: the debug adapter did not answer the terminate request',
   )
 })
 
@@ -459,4 +469,155 @@ test('a native trial ends with its stop error before an unreleased listing, and 
     [stopBeforeListing, listingBeforeWrite, writeAlone],
     ['stop error', 'listing still running', 'report write error'],
   )
+})
+
+// Value: protects=a passing native trial writing a private report that names its first stop, every additional stop and the test result, with no error and no unreleased listing, after stopping its run once; fails_when=the report omits a stop or the result, a stop is skipped, the run is not stopped at the trial's end, or an error is recorded for a passing trial; why_new=Cycle 0054 task 3 restructured the trial into run/runTrial/endTrial, and every other trial test ends in a refusal or a failure, so the passing path's report had no test; seam=the editor, the file checks, the plan, the root listing and the run are stand-ins, the trial's own code and its report are real; no_claim=the real run's stops (ownedNodeTestRun tests)
+test('a native trial that passes every stop writes its report with the stops and the result and stops its run once', async (context) => {
+  // Arrange
+  const stopCalls: string[] = []
+  const { bootstrap, folder, readReport } = await loadTrial(context, {
+    OwnedNodeTestRun: class {
+      private remaining = 2
+      async prepare() {
+        return { line: 1 }
+      }
+      hasNextStop() {
+        return this.remaining > 0
+      }
+      async advance() {
+        this.remaining--
+        return { line: 10 - this.remaining }
+      }
+      async complete() {
+        return { testResult: 'passed' }
+      }
+      async stop(): Promise<void> {
+        stopCalls.push('stop')
+      }
+    },
+  })
+
+  // Act
+  const outcome = await bootstrap.run().then(
+    () => 'passed',
+    (error: unknown) => String(error),
+  )
+
+  // Assert
+  assert.equal(outcome, 'passed')
+  assert.deepEqual(stopCalls, ['stop'])
+  assert.deepEqual(await readReport(), {
+    host: 'Visual Studio Code',
+    events: [],
+    workspace: folder,
+    testFile: 'packages/a/src/scheduler.test.ts',
+    source: {
+      path: 'packages/a/src/scheduler.ts',
+      hash: 'b'.repeat(64),
+      line: 1,
+      column: 1,
+    },
+    execution: {
+      vitestRoot: 'packages/a',
+      vitestRootReason: 'nearest-config',
+      rootClaim: 'not-selected',
+    },
+    sourceStop: { line: 1 },
+    additionalStops: [{ line: 9 }, { line: 10 }],
+    result: { testResult: 'passed' },
+    unreleasedListings: [],
+  })
+})
+
+// Value: protects=a private observation hold outside 0 to 60,000 whole milliseconds being refused with a sentence naming which hold it is, while the trial still stops its run and writes its report with the error (the hold after the result keeps the result in the report); fails_when=an out-of-range or fractional hold is accepted and the trial waits on it, the refusal names the wrong hold, or the refusal skips the run's stop or the report; why_new=Cycle 0054 task 3 added NATIVE_TRIAL_HOLD_LIMIT_MS and the hold validation, and no test sets either hold; seam=the editor, the file checks, the plan, the root listing and the run are stand-ins, the trial's own code and its report are real; no_claim=that a valid hold waits for its time (timer behavior)
+test('a native trial refuses a private hold above 60,000 ms or a fractional one, naming the hold, and still stops its run and writes its report', async (context) => {
+  // Arrange
+  const stopCalls: string[] = []
+  const RunWithStops = class {
+    async prepare() {
+      return { line: 1 }
+    }
+    hasNextStop() {
+      return false
+    }
+    async complete() {
+      return { testResult: 'passed' }
+    }
+    async stop(): Promise<void> {
+      stopCalls.push('stop')
+    }
+  }
+  const holdNames = [
+    'CODEBOOK_NODE_TEST_HOLD_MS',
+    'CODEBOOK_NODE_TEST_HOLD_AFTER_MS',
+  ]
+  const previous = holdNames.map((name) => process.env[name])
+  context.after(() => {
+    holdNames.forEach((name, index) => {
+      const value = previous[index]
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    })
+  })
+  const trialWith = async (hold: Record<string, string>) => {
+    for (const name of holdNames) delete process.env[name]
+    Object.assign(process.env, hold)
+    const { bootstrap, readReport } = await loadTrial(context, {
+      OwnedNodeTestRun: RunWithStops,
+    })
+    const outcome = await bootstrap.run().then(
+      () => 'passed',
+      (error: unknown) => String(error),
+    )
+    const report = (await readReport()) as {
+      error?: unknown
+      result?: unknown
+    }
+    return { outcome, error: report.error, result: report.result }
+  }
+
+  // Act
+  const tooLong = await trialWith({ CODEBOOK_NODE_TEST_HOLD_MS: '60001' })
+  const fractionalAfter = await trialWith({
+    CODEBOOK_NODE_TEST_HOLD_AFTER_MS: '1.5',
+  })
+
+  // Assert
+  assert.deepEqual(tooLong, {
+    outcome: 'Error: Invalid private Node test observation hold.',
+    error: 'Error: Invalid private Node test observation hold.',
+    result: undefined,
+  })
+  assert.deepEqual(fractionalAfter, {
+    outcome: 'Error: Invalid private Node test result observation hold.',
+    error: 'Error: Invalid private Node test result observation hold.',
+    result: { testResult: 'passed' },
+  })
+  assert.deepEqual(stopCalls, ['stop', 'stop'])
+})
+
+// Value: protects=a native trial started without an open folder writing its private report with the refusal that names the missing repository; fails_when=the refusal leaves no report or the report lacks the error; why_new=Cycle 0054 /ship Step 7 (the trial's first refusal had no test once every trial writes its report); seam=the editor stand-in has no folder open; no_claim=the editor's own folder handling
+test('a native trial started without an open folder writes its report with the refusal', async (context) => {
+  // Arrange
+  const { bootstrap, readReport } = await loadTrial(context, {
+    noWorkspaceFolder: true,
+  })
+
+  // Act
+  const outcome = await bootstrap.run().then(
+    () => 'passed',
+    (error: unknown) => String(error),
+  )
+
+  // Assert
+  assert.equal(
+    outcome,
+    'Error: Open the external test repository before this trial.',
+  )
+  assert.deepEqual(await readReport(), {
+    host: 'Visual Studio Code',
+    events: [],
+    error: 'Error: Open the external test repository before this trial.',
+    unreleasedListings: [],
+  })
 })
