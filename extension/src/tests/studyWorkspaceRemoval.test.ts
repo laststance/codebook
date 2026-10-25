@@ -5420,6 +5420,12 @@ test('the line “History not saved: …” of a study that still waits stays, w
       'the save of the second run',
       1_000,
     )
+    // The save decides about the line only once its write left the queue, after it reported 'saved': the pane is read after that decision, with the first study alone waiting (Cycle 0052 task 47).
+    await waitUntil(
+      () => readerSeams(harness).queuedStudyWrites() === 1,
+      'the end of the second run’s write',
+      READER_RESULT_BOUND_MS,
+    )
     const afterOtherSave = structuredClone({
       queued: readerSeams(harness).queuedStudyWrites(),
       errors: harness.reader.inspect().view!.errors,
@@ -5473,6 +5479,12 @@ test('the line “History not saved: …” of a study whose capture failed befo
         harness.service.state(second.record).historyOutcome.status === 'saved',
       'the save of the second run',
       1_000,
+    )
+    // The save decides about the line only once its write left the queue, after it reported 'saved': the pane is read after that decision (Cycle 0052 task 47).
+    await waitUntil(
+      () => readerSeams(harness).queuedStudyWrites() === 0,
+      'the end of the second run’s write',
+      READER_RESULT_BOUND_MS,
     )
     const afterOtherSave = structuredClone({
       queued: readerSeams(harness).queuedStudyWrites(),
@@ -10035,6 +10047,12 @@ async function recordRunWithFailedCapture(context: TestContext) {
         harness.service.state(second.record).historyOutcome.status === 'saved',
       'the save of the second run',
       2_000,
+    )
+    // The save reports 'saved' before it writes the recording's context and leaves the queue; a Stop before that read one queued write (Cycle 0052 task 47).
+    await waitUntil(
+      () => readerSeams(harness).queuedStudyWrites() === 0,
+      'the end of the second run’s write',
+      READER_RESULT_BOUND_MS,
     )
     failedStudyId = studyId
     await harness.reader.action('stop')
