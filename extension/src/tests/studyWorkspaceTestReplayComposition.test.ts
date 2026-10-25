@@ -3171,3 +3171,154 @@ for (const ending of ['held', 'failed'] as const) {
     }
   })
 }
+
+// Value: protects=Retry storage / refresh after a failed same-study Reload that meets a presentation change begun while it read the storage is refused before it leaves the replay, so the failed recording and its reason stay as they were; fails_when=reloadShownRecording leaves the playback and sets the Reload mark before openRecording refuses the pending presentation change, so the replay's failure is gone and no load starts (hosted CodeRabbit on PR #125, Cycle 0052 task 39); why_new=the Reload's refusals were only tested from the Reload button, which action() checks before anything changes; seam=recordedReaderHarness, a Reload failed at the debugger replacement, an agent's restore held at its layout response while Retry reads the storage; no_claim=which presentation change the agent asks for
+test('Retry after a failed same-study Reload that meets a pending presentation change keeps the failed replay as it was', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  let releaseArrangement = (): void => {}
+  try {
+    await reloadHeldOrFailed(harness, 'failed')
+    const failedReplay = harness.controller.state()
+    const arrangement = harness.holdNextLayoutResponse()
+    releaseArrangement = arrangement.release
+
+    // Act: Retry starts reading the storage, and an agent's restore begins and waits for its layout meanwhile.
+    const retry = harness.reader.action('retry').then(
+      () => 'retried',
+      (error: unknown) => String(error),
+    )
+    const presentation = harness.reader.presentationState()
+    const restore = harness.reader
+      .changePresentation(
+        {
+          presentationId: presentation.presentationId,
+          expectedRevision: presentation.presentationControlRevision,
+          mode: presentation.mode,
+          action: 'restore',
+        },
+        'agent',
+      )
+      .catch(() => undefined)
+    await arrangement.started
+    const retryOutcome = await retry
+    const replayAfterRetry = harness.controller.state()
+    arrangement.release()
+    await restore
+
+    // Assert
+    assert.match(retryOutcome, /presentation change or reader close is pending/)
+    assert.deepEqual(
+      {
+        studyId: replayAfterRetry.studyId,
+        readiness: replayAfterRetry.readiness,
+        reason: replayAfterRetry.reason,
+      },
+      {
+        studyId: harness.studyId,
+        readiness: 'failed',
+        reason: failedReplay.reason,
+      },
+    )
+  } finally {
+    releaseArrangement()
+    await harness.close()
+  }
+})
+
+// Value: protects=a learner's Return to Live ends an Open replay that waits for the work window's focus at once, so it neither holds the next entry's turn for the 10 s focus bound nor tells a failure; fails_when=the overtaken entry keeps polling the window focus until its bound after the Return (hosted CodeRabbit on PR #125, Cycle 0052 task 40); why_new=task 12 tested entries waiting for their turn, not one waiting for the focus inside its turn; seam=changeWindowFocus(false), the harness's count of unfocused window reads, a bound of half the focus wait; no_claim=the native window manager
+test('Return to Live ends an Open replay that waits for the work window’s focus at once', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const second = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openByOpenReplay(harness)
+    harness.hideSummary()
+    harness.changeWindowFocus(false)
+    const readsBefore = harness.unfocusedWindowReads()
+    let hasEntryEnded = false
+    const entry = harness.reader
+      .openLearningReplay(second.studyId)
+      .finally(() => {
+        hasEntryEnded = true
+      })
+    await waitUntil(
+      () => harness.unfocusedWindowReads() > readsBefore,
+      'the entry waits for the window focus',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Act
+    const returning = harness.reader.action('return-current')
+    // Half of the 10 s focus wait: an entry still waiting for the focus would not end within it.
+    await waitUntil(
+      () => hasEntryEnded,
+      'the overtaken entry ends before the focus wait would',
+      5_000,
+    )
+    harness.changeWindowFocus(true)
+    await returning
+    await entry
+
+    // Assert
+    assert.deepEqual(
+      {
+        errors: harness.errorMessages,
+        testReplay: harness.reader.inspect().view?.nodeHistory?.header.studyId,
+      },
+      { errors: [], testReplay: undefined },
+    )
+  } finally {
+    harness.changeWindowFocus(true)
+    await harness.close()
+  }
+})
+
+// Value: protects=a saved study chosen in the bottom panel after a same-study Reload failed keeps the panel's open request unanswered until the chosen recording has loaded, as a choice during the replay does, so the panel's list does not fall back to the failed replay's study meanwhile; fails_when=openReplyOwedTo reads recordingActive alone, so the reply is posted while the chosen recording still loads (hosted CodeRabbit on PR #125, Cycle 0052 task 41); why_new=task 28 tested the choice's open, not its pane reply; seam=recordedReaderHarness, a Reload failed and the chosen load held at the debugger replacement, one event-loop turn for the choice's handling to end, the bottom panel's open-request replies; no_claim=the panel's list rendering
+test('a Saved studies choice after a failed same-study Reload is answered once the chosen recording has loaded', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  let chosenLoad: ReturnType<typeof holdNextRecordingLoad> | undefined
+  try {
+    const other = await saveOtherBrowserStudyShown(harness)
+    await reloadHeldOrFailed(harness, 'failed')
+    chosenLoad = holdNextRecordingLoad(harness)
+
+    // Act
+    harness.receivePlaybackPanel({
+      type: 'history',
+      revision: harness.reader.inspect().view!.revision,
+      studyId: other.id,
+      openRequest: 7,
+    })
+    await chosenLoad.hasEntered
+    // The load holds at its first step while the choice's handling still has promise steps to run; one event-loop turn lets them end.
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const repliesWhileLoading = harness.openRequestReplies()
+    chosenLoad.release()
+    await waitUntil(
+      () => harness.openRequestReplies().length > 0,
+      'the choice is answered',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        repliesWhileLoading,
+        replies: harness.openRequestReplies(),
+        recording: harness.controller.state().studyId,
+      },
+      {
+        repliesWhileLoading: [],
+        replies: [{ webview: 'moments', openRequest: 7 }],
+        recording: other.id,
+      },
+    )
+  } finally {
+    chosenLoad?.release()
+    await harness.close()
+  }
+})

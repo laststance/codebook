@@ -964,6 +964,8 @@ export class StudyWorkspace {
   private liveComposition = false
   /** Counts the learner's test replay entries ({@link openNodeHistoryFromHost}) in the order they were made, so the latest one wins also while an earlier one still enters the summary composition (EN19, Cycle 0051). */
   private nodeHistoryEntryRequest = 0
+  /** Aborts when the latest test replay entry's ticket ({@link nodeHistoryEntryRequest}) is superseded by a newer entry, a Return or a Close ({@link supersedeNodeHistoryEntries}), so an entry waiting for the work window's focus ends at once instead of holding the next entry's turn (Cycle 0052 task 40). */
+  private nodeHistoryEntryCancellation = new AbortController()
   /** How many test replay entries ({@link openNodeHistoryFromHost}) are under way, the waiting ones included; the last superseded entry to end leaves the empty summary composition an earlier one built only when none is under way to fill it (Cycle 0052 task 12). */
   private nodeHistoryEntriesUnderWay = 0
   /** Settles when the test replay entry in front has entered its composition: entries take turns there, so two entries never run {@link open} at once (one would be refused as busy and leave no replay shown). */
@@ -1486,7 +1488,7 @@ export class StudyWorkspace {
         'The reader content changed. Read current presentation state before returning to live execution.',
       )
     // A Return supersedes every test replay entry still waiting for its turn, also one that finds the reader in Live already (Cycle 0052 task 12).
-    this.nodeHistoryEntryRequest++
+    this.supersedeNodeHistoryEntries()
     // A return can change the selection while native source rendering fails; report that partial state honestly.
     // A failed native source open leaves the selection current, so explicit retry must render it again.
     // A selected Node journal masks the live application even while the selection still follows the run.
@@ -8916,7 +8918,7 @@ export class StudyWorkspace {
     }
     if (action === 'return-current') {
       // The learner's Return supersedes every test replay entry still waiting for its turn (Cycle 0052 task 12).
-      this.nodeHistoryEntryRequest++
+      this.supersedeNodeHistoryEntries()
       await this.returnCurrentSelection()
     }
     if (action === 'source') {
@@ -9148,7 +9150,7 @@ export class StudyWorkspace {
   /**
    * Loads the shown browser replay's recording again (a same-study Reload): the Summary keeps its document, so a failed read can publish its recovery there, and the Reload's mark keeps the replay shown until the recording is active again ({@link loadPlayback}) or a departure supersedes it; a failed load keeps it. Called by the Reload action and by Retry while a Reload's recording has not loaded (Cycle 0052 tasks 18 and 31).
    * @returns Once the recording's open is accepted; the load itself continues in the playback controller.
-   * @throws When no browser replay is shown, or it names no study.
+   * @throws When no browser replay is shown, or it names no study; {@link openRecording}'s refusals of a pending presentation change and of a study on its way to the Trash, before anything changes.
    * @example await this.reloadShownRecording()
    */
   private async reloadShownRecording(): Promise<void> {
@@ -9158,6 +9160,9 @@ export class StudyWorkspace {
       : (this.playback?.state().studyId ?? this.selection.studyId)
     if (!this.browserReplayShown() || !studyId)
       throw new Error('Select a recording first.')
+    // What openRecording would refuse is refused before the replay is left, so a refused Reload changes nothing: a presentation change that began while Retry read the storage keeps the replay and its failure as they were (Cycle 0052 task 39). After these checks openRecording only awaits the reader's finished initialization.
+    this.assertPresentationIdle()
+    this.assertStudyNotMoving(studyId)
     // The controller keeps a pending load of the same study and would start none: a Reload whose recording has not loaded cancels that load first, so the recording loads again (Cycle 0052 task 35).
     if (!this.recordingActive) this.playback?.leave()
     this.leavePlayback(true)
@@ -9525,7 +9530,7 @@ export class StudyWorkspace {
     // The reader's close closes its owned tabs, the slot's among them.
     this.nodeSourceSlotTabsAwaitingArea = undefined
     // A test replay entry still waiting for its turn belongs to the closed reader and never opens it again (Cycle 0052 task 12).
-    this.nodeHistoryEntryRequest++
+    this.supersedeNodeHistoryEntries()
     // Closing disposes the native session: a Node stop still loading its values is abandoned, and no Run and Debug hint may survive a reopen.
     this.selectedNodeHistoryRequest++
     // The cut-off selection no longer clears its requested moment (its token is gone), so the bump gives it back.
@@ -11741,6 +11746,19 @@ export class StudyWorkspace {
   }
 
   /**
+   * Supersedes every test replay entry under way: a newer entry's ticket replaces theirs, and the cancellation their waits listen to aborts, so one waiting for the work window's focus ends at once (Cycle 0052 tasks 12 and 40). Called by {@link openNodeHistoryFromHost} for each new entry, by the learner's and the agent's Return and by {@link close}.
+   * @returns The new ticket, which the caller holds as its entry when it is one.
+   * @example const entry = this.supersedeNodeHistoryEntries()
+   */
+  private supersedeNodeHistoryEntries(): number {
+    this.nodeHistoryEntryCancellation.abort(
+      new Error('A newer test replay entry, a Return or a Close took over.'),
+    )
+    this.nodeHistoryEntryCancellation = new AbortController()
+    return ++this.nodeHistoryEntryRequest
+  }
+
+  /**
    * Opens a test replay for the learner's two entries, the status item's Open replay (and Open retained history) and a Saved studies choice: the summary composition is entered first (Cycle 0051, DS-A), then the shared open runs ({@link openNodeHistory}); called by {@link openLearningReplay} and by the reader's `node-history` message.
    * During a browser replay the learner is told that one replay shows at a time and may close it first (DS10). A failed open raises the load-failure notification with Show details and writes one Output › Codebook entry; a reader the open left in the summary composition with no replay shown goes back to the Study composition, so the Study pane stands open on Saved studies (X4, DS-G).
    * @param studyId - The test replay's study id.
@@ -11752,7 +11770,8 @@ export class StudyWorkspace {
     studyId: string,
     revision?: number,
   ): Promise<void> {
-    const entry = ++this.nodeHistoryEntryRequest
+    const entry = this.supersedeNodeHistoryEntries(),
+      overtaken = this.nodeHistoryEntryCancellation.signal
     // Entries take turns entering the composition; a newer entry made meanwhile is the learner's latest choice (EN19).
     const previousTurn = this.nodeHistoryEntryTurn
     let releaseTurn!: () => void
@@ -11763,7 +11782,7 @@ export class StudyWorkspace {
     let entered = false
     try {
       await previousTurn
-      entered = await this.enterCompositionForEntry(studyId, entry)
+      entered = await this.enterCompositionForEntry(studyId, entry, overtaken)
     } finally {
       this.nodeHistoryEntriesUnderWay--
       releaseTurn()
@@ -11804,12 +11823,14 @@ export class StudyWorkspace {
    * Brings a test replay entry into the summary composition in its turn: a browser replay is closed first when the learner agrees, and a refused entry is told like a failed open (F382, F384); called by {@link openNodeHistoryFromHost} while the entry holds its turn.
    * @param studyId - The test replay's study id.
    * @param entry - The entry's ticket ({@link nodeHistoryEntryRequest}).
+   * @param overtaken - Aborts when a newer entry, a Return or a Close supersedes the ticket ({@link nodeHistoryEntryCancellation}).
    * @returns `true` when the entry stands in the composition and is still the latest; `false` when a newer entry took over, the browser replay stays open, or the failure was told.
-   * @example if (!(await this.enterCompositionForEntry(studyId, entry))) return
+   * @example if (!(await this.enterCompositionForEntry(studyId, entry, overtaken))) return
    */
   private async enterCompositionForEntry(
     studyId: string,
     entry: number,
+    overtaken: AbortSignal,
   ): Promise<boolean> {
     if (entry !== this.nodeHistoryEntryRequest) return false
     // The learner's test replay supersedes a saved study that waits for the hidden editor area: the slot tabs that waited with it close now, before its own slot shows, so its tab is never closed as an earlier one's and a failed open leaves none behind (Cycle 0052 task 15).
@@ -11820,9 +11841,9 @@ export class StudyWorkspace {
     if (!(await this.closeBrowserReplayForTestReplay(entry))) return false
     if (entry !== this.nodeHistoryEntryRequest) return false
     try {
-      await this.enterSummaryCompositionForReplay(entry)
+      await this.enterSummaryCompositionForReplay(entry, overtaken)
     } catch (error) {
-      // A newer entry answers for the learner now.
+      // A newer entry answers for the learner now; an entry whose focus wait its supersession aborted ends here quietly too.
       if (entry !== this.nodeHistoryEntryRequest) return false
       // A refused entry is told like a failed replay open: one Output › Codebook entry and the notification, never a bare command failure (F382, F384).
       await this.leaveEmptySummaryComposition()
@@ -11905,9 +11926,14 @@ export class StudyWorkspace {
    * Only a reader that already stands in the summary composition for a test replay (another test replay was shown) is left as it is; an earlier entry that failed after it left the Live composition is opened again, so the Application, the slot and the debugger never show without a transport (F384).
    * @throws What {@link open} throws; the caller tells it.
    * @param entry - The entry's ticket ({@link nodeHistoryEntryRequest}); an entry a newer one or a Return overtook while it waited for the work window reveals nothing.
-   * @example await this.enterSummaryCompositionForReplay(entry)
+   * @param overtaken - Aborts the wait for the work window when a newer entry, a Return or a Close supersedes the ticket, so the next entry's turn is not held for the focus bound (Cycle 0052 task 40).
+   * @throws The abort's reason when the wait is overtaken; the caller ends quietly for a superseded ticket.
+   * @example await this.enterSummaryCompositionForReplay(entry, overtaken)
    */
-  private async enterSummaryCompositionForReplay(entry: number): Promise<void> {
+  private async enterSummaryCompositionForReplay(
+    entry: number,
+    overtaken: AbortSignal,
+  ): Promise<void> {
     if (
       this.opened &&
       this.summaryComposition &&
@@ -11915,7 +11941,7 @@ export class StudyWorkspace {
       !this.recordingActive
     ) {
       // The composition stands already, but the learner may have hidden the summary and the bottom panel: the entry shows them again, so Open replay never ends with no visible replay (Cycle 0052 task 14). The reveal waits for the work window as open()'s does, and an entry overtaken meanwhile reveals nothing.
-      await this.waitForRecordingWindow(undefined, this.lifetime)
+      await this.waitForRecordingWindow(overtaken, this.lifetime)
       if (entry !== this.nodeHistoryEntryRequest) return
       await this.showLearningSummary(undefined, true)
       return
@@ -12828,6 +12854,8 @@ export class StudyWorkspace {
       this.playback?.state().studyId ?? this.sourceView?.studyId,
       this.sourceView?.uri.toString(),
     )
+    // A departure releases the recorded viewport before the controller leaves, so the controller's clear reaches no open viewport and the Application pane never paints "Loading recorded position…" while it leaves the replay (Cycle 0052 task 38, N52); a same-study Reload keeps the clear, which reads true there.
+    if (!preserveSummary) this.dropReplayViewport()
     this.playback?.leave()
     // Only same-study Reload keeps the reader's current Summary and its reading context.
     if (!preserveSummary) this.clearLearningSummary()
@@ -22950,7 +22978,8 @@ export class StudyWorkspace {
     return {
       webview: owner.webview,
       openRequest: request.openRequest,
-      opensRecording: request.type === 'history' && this.recordingActive,
+      // A same-study Reload still shows its browser replay, so a choice during it opens a recording as during the replay (Cycle 0052 task 41).
+      opensRecording: request.type === 'history' && this.browserReplayShown(),
     }
   }
 

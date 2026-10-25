@@ -8,11 +8,11 @@ Cycle 0052 pt1 ([Issue #124](https://github.com/laststance/codebook/issues/124))
 
 - **Return to Live and another saved study** withdraw the Learning summary before the reader shows the Live state, so the summary never draws the Live Study page, and the transport never shows the other replay family's controls while you leave.
 - **A browser replay's open and its Return to Live** send the Learning summary nothing of the Study before the replay's own summary.
-- **The Application tab takes back its name** `codebook · Application` after a browser replay, in the Live composition and in a test replay.
+- **The Application tab takes back its name** `codebook · Application` after a browser replay, in the Live composition and in a test replay, and while you leave a browser replay the Application pane no longer flashes the recording's `Loading recorded position…` line.
 
 **Entries do what you chose.**
 
-- **Close and Return to Live cancel an Open replay that is still waiting** for its turn, so it neither asks a second time nor reopens the reader; a Return to Live while a test replay is still opening ends that open at once in Live, with no loading state left. An entry overtaken while it closes earlier tabs asks no one-replay-at-a-time notice.
+- **Close and Return to Live cancel an Open replay that is still waiting** for its turn or for the work window's focus, so it neither asks a second time, holds up your next Open replay nor reopens the reader; a Return to Live while a test replay is still opening ends that open at once in Live, with no loading state left. An entry overtaken while it closes earlier tabs asks no one-replay-at-a-time notice.
 - **A superseded Saved studies open** gives the Study pane back, and an earlier replay's failed or superseded open no longer takes the summary composition from a newer Open replay that is entering it.
 - **Open replay brings the Learning summary back** if you had hidden it, also with the bottom panel hidden, and waits for the work window's focus as the first open does.
 - **A browser study chosen over a test replay while the bottom panel is maximized** waits for the editor area: the panel stays maximized, and the Study pane, the study's source and the closing of the test replay's recorded-source tab wait until you restore the panel; a close the editor refuses is told and tried again at your next display.
@@ -20,7 +20,7 @@ Cycle 0052 pt1 ([Issue #124](https://github.com/laststance/codebook/issues/124))
 **Reloading a browser replay keeps it on screen.**
 
 - **Reload saved recording keeps the Learning summary** while the recording reloads, with the reload's loading or failure on the replay's status line, and the Application pane keeps the recording through refreshes, a runtime release and Focus source.
-- **While a reload loads, or after it failed**, a saved study you choose opens its own recording, a step you select is refused until the recording has loaded again, Reload and Retry storage / refresh load the recording again, choosing Live leaves the replay, and the replay's study cannot be deleted until you leave it. An agent reads the reader as showing the recording, so it returns to Live before it starts a run.
+- **While a reload loads, or after it failed**, a saved study you choose opens its own recording (Saved studies keeps your choice while it loads), a step you select is refused until the recording has loaded again, Reload and Retry storage / refresh load the recording again (one refused because a layout change is still pending changes nothing, so a failed reload keeps its reason), choosing Live leaves the replay, and the replay's study cannot be deleted until you leave it. An agent reads the reader as showing the recording, so it returns to Live before it starts a run.
 - **A browser recording opened over a test replay** shows its loading, failure and recovery in the Learning summary.
 
 **Compatibility.** The MCP API stays 1.8, the bundled skill is unchanged and no stored format changes. Tasks 1, 5, 7 to 11, 17, 19 to 23, 26 and 27 of Issue #124 follow in the cycle's second and third pull requests.

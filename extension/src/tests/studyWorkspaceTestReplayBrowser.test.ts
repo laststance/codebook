@@ -1086,3 +1086,35 @@ test('Return to Live from a browser replay titles the Application pane codebook 
     await harness.close()
   }
 })
+
+// Value: protects=Return to Live from a browser replay releases the recorded viewport before the playback controller leaves, so the Application pane never paints the recording's "Loading recorded position…" line while it leaves the replay; fails_when=the controller's leave clears the still-open recorded viewport first (N52 Cursor take 742da665: two frames of "Loading recorded position…" under codebook · Recorded application before the Live pane, Cycle 0052 task 38); why_new=no test read the order of the viewport's clear and its release on a departure; seam=recordedReaderHarness, the recording viewport's clearRecorded and close; no_claim=the webview's paint timing, which N52 observes
+test('Return to Live from a browser replay releases the recorded viewport without clearing it to its loading line', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const viewport = harness.viewportInstances.find(
+      (instance) => instance.mode === 'recording',
+    )!
+    const viewportCalls: string[] = []
+    const clearRecorded = viewport.clearRecorded.bind(viewport),
+      close = viewport.close.bind(viewport)
+    viewport.clearRecorded = (): void => {
+      viewportCalls.push('clear')
+      clearRecorded()
+    }
+    viewport.close = (): void => {
+      viewportCalls.push('close')
+      close()
+    }
+
+    // Act
+    await harness.reader.action('return-current')
+
+    // Assert
+    assert.deepEqual(viewportCalls, ['close'])
+  } finally {
+    await harness.close()
+  }
+})
