@@ -1100,6 +1100,34 @@ test('an explicit display that ends the wait for the editor area closes the slot
   }
 })
 
+// Value: protects=an explicit display whose close of the waiting slot tabs outlives a Close and a new Open is cut off with the closed reader, so it never renders into the reader the learner opened again; fails_when=renderSelection reads the reader's lifetime only after that close and goes on rendering the reopened reader (OCR self-review, Cycle 0052 task 15); why_new=Cycle 0052 task 15; seam=holdNextTabCloseResponse during the source action's slot close; no_claim=the native editor's own restore of the area
+test('an explicit display that outlives Close and a new Open during its slot close renders nothing into the reopened reader', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    await chooseBrowserStudyWithPanelMaximized(harness)
+    const held = harness.holdNextTabCloseResponse()
+    const display = harness.reader.action('source').then(
+      () => 'rendered',
+      (error: unknown) => String(error),
+    )
+    await held.started
+    await harness.reader.close()
+    await harness.reader.open()
+
+    // Act
+    held.release()
+
+    // Assert
+    assert.equal(
+      await display,
+      'Error: The study workspace was closed; repeat the action explicitly if needed.',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a slot tab the learner closes by hand after Cursor rebuilt the tab objects, and opens again at its address, survives the end of the wait for the editor area; fails_when=the record keeps the closed tab's address and the end of the wait closes the tab the learner opened (local CodeRabbit round 4, minor); why_new=Cycle 0052 task 15; seam=rebuildTabObjectsNow, closeTabByHand, restoreLeftoverCapturedSource at the slot's path, restorePanel and the reader's refresh; no_claim=the native tab strip
 test('a waiting slot tab the learner closes after Cursor rebuilt the tabs and opens again survives the end of the wait', async () => {
   // Arrange

@@ -13834,8 +13834,9 @@ export class StudyWorkspace {
     if (!preserveFocus) this.keyboardOutsideEditors = undefined
     // An explicit entry, selection or placement shows the panes now; a study that waited for the editor area waits no longer, nor do the slot tabs that waited with it (Cycle 0052 task 15).
     this.studyAwaitingEditorArea = undefined
-    await this.closeSlotTabsAwaitingArea()
+    // The lifetime is read before the first await, so a Close during the slot close cuts this render off also after a new Open.
     const lifetime = this.lifetime
+    await this.closeSlotTabsAwaitingArea()
     await this.refreshCitations()
     // Citation I/O can outlive Close or a later Open; it cannot create a new rendering revision afterward.
     this.assertLifetime(lifetime)
