@@ -4143,3 +4143,42 @@ test('a presentation whose session the editor refuses to start rejects as a star
     await fixture.owner.dispose()
   }
 })
+
+// Value: protects=a presentation abandoned while the editor still starts the historical session rejects with the abandonment's own reason, so a test replay move never words a learner's or a newer frame's cancellation as the debugger failing to start; fails_when=awaitSession wraps every rejection in ReplayDebuggerStartError, abort included (Cycle 0052 task 17); why_new=the start-failure test reads a refused start only, and the abort tests match /abort/i, which the wrapper's copied message also satisfies; seam=the fake editor's start held by a gate, the presentation's signal; no_claim=the sentence the workspace words
+test('a presentation abandoned during the session start rejects with the abandonment, not as a start failure', async () => {
+  // Arrange
+  let releaseStart = (): void => {}
+  const startGate = new Promise<void>((resolve) => {
+    releaseStart = resolve
+  })
+  const fixture = harness(startGate)
+  const abandoned = new AbortController()
+  try {
+    const showing = fixture.owner
+      .present(inspectedSnapshot, 'Recorded pause', abandoned.signal)
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+    await fixture.started
+
+    // Act
+    abandoned.abort(new Error('Playback presentation superseded'))
+    const failure = await showing
+
+    // Assert
+    assert.deepEqual(
+      {
+        isStartFailure: failure instanceof ReplayDebuggerStartError,
+        message: failure instanceof Error ? failure.message : undefined,
+      },
+      {
+        isStartFailure: false,
+        message: 'Playback presentation superseded',
+      },
+    )
+  } finally {
+    releaseStart()
+    await fixture.owner.dispose()
+  }
+})
