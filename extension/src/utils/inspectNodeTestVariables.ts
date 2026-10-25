@@ -39,7 +39,12 @@ export async function inspectNodeTestVariables(
   variables: DebugProtocol.Variable[]
   unavailable: string[]
 }> {
-  const read = debuggerVariableReader(debugSession, signal)
+  // A pass that fails ends the requests its other reads still have under way, so no binding read goes on asking a debugger whose stop has failed.
+  const failedPass = new AbortController()
+  const read = debuggerVariableReader(
+    debugSession,
+    AbortSignal.any([signal, failedPass.signal]),
+  )
   // Only lexical runtime scopes can supply an operation fact; global state is unrelated to this stop.
   const lexicalScopes = scopes.filter(
     (scope) => !scope.name.toLowerCase().includes('global'),
@@ -53,7 +58,10 @@ export async function inspectNodeTestVariables(
       read,
       lexicalScopes,
       inspection.path,
-    )
+    ).catch((error: unknown) => {
+      failedPass.abort()
+      throw error
+    })
     const display =
       inspection.mode === 'type' ? variable?.type : variable?.value
     if (
@@ -93,7 +101,7 @@ type DebuggerVariableReader = (
 /**
  * Makes the cached reader of debugger variable children that one inspection pass shares; called by {@link inspectNodeTestVariables}.
  * @param debugSession - The native debug session.
- * @param signal - Run cancellation.
+ * @param signal - Run cancellation, or the end of a failed pass.
  * @returns A reader answering an invalid or empty reference with no children.
  * @example const read = debuggerVariableReader(debugSession, signal); await read(7) // => [{ name: 'count', value: '3', ... }]
  */
@@ -106,6 +114,8 @@ function debuggerVariableReader(
   const request = async (
     reference: number,
   ): Promise<DebugProtocol.Variable[]> => {
+    // A cancelled or failed pass sends the debugger no further request.
+    signal.throwIfAborted()
     const response = (await awaitResponse(
       Promise.resolve(
         debugSession.customRequest('variables', {
@@ -135,12 +145,18 @@ function debuggerVariableReader(
   }
 }
 
-/** The debug adapter's error answer to a `variables` request, as opposed to a timeout, a cancellation or a malformed answer; {@link settledLazy} reads it as an unreadable step. */
+/** The debug adapter's error answer to a `variables` request, as opposed to a timeout, a cancellation or a malformed answer; {@link settledLazy} reads it as an unreadable step. The adapter's error stays its `cause`. */
 class DebuggerRefusedVariables extends Error {
   constructor(cause: unknown) {
-    super(`Native debugger refused the variables request: ${String(cause)}`)
+    // The name stays `Error`, so a failure worded from it reads as other run failures do (withoutErrorName drops only `…Error: `); only `instanceof` tells it apart.
+    super(`Native debugger refused the variables request: ${String(cause)}`, {
+      cause,
+    })
   }
 }
+
+/** What a stop's scopes hold under a path's root: its variable, `undefined` when its lazy value could not be read; the root then still shadows any import of that name. */
+type ScopeRoot = { variable: DebugProtocol.Variable | undefined }
 
 /**
  * Walks one declared path, `root.segment.segment`, to its variable; called by {@link inspectNodeTestVariables}.
@@ -175,14 +191,14 @@ async function readDeclaredPath(
  * @param read - The pass's variable reader.
  * @param scopes - The stop's lexical scopes, innermost first.
  * @param name - The root's name.
- * @returns The scope's variable, its `variable` `undefined` when its lazy value could not be read; `undefined` when no scope has the name.
+ * @returns The {@link ScopeRoot} of the first scope that has the name; `undefined` when no scope has it.
  * @example await scopeVariable(read, scopes, 'set') // => { variable: { name: 'set', value: 'ƒ (...args)', ... } }
  */
 async function scopeVariable(
   read: DebuggerVariableReader,
   scopes: DebugProtocol.Scope[],
   name: string,
-): Promise<{ variable: DebugProtocol.Variable | undefined } | undefined> {
+): Promise<ScopeRoot | undefined> {
   for (const scope of scopes) {
     const variable = (await read(scope.variablesReference)).find(
       (candidate) => candidate.name === name,

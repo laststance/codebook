@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import type { DebugProtocol } from '@vscode/debugprotocol'
 import type * as vscode from 'vscode'
 
+import { ACTIVE_TIMEOUT_MS } from '../runtimeSupport/constants'
 import { inspectNodeTestVariables } from '../utils/inspectNodeTestVariables'
 
 test('a Node pause keeps declared nested facts without retaining unrelated local values', async () => {
@@ -847,4 +848,473 @@ test('a Node pause asks the debugger once for a reference two module bindings re
 
   // Assert
   assert.equal(requests.get(60), 1)
+})
+
+// Value: protects=a Node stop whose lazy local the debugger never answers: the pass fails with the timeout instead of reading the fact as unavailable and keeping a stop on a stalled session; fails_when=the lazy expansion swallows the timeout like the adapter's error answer, so a hung debugger reads as a missing fact and the agent is told to continue; why_new=pt3 /ship review pass 3 (testing, state machines): the timeout path of the expansion's rethrow had no test; seam=a fake debug session that never answers the lazy reference, and node:test's mocked setTimeout advanced by the active timeout; no_claim=how long the native adapter takes
+test('a Node pause whose lazy local the debugger never answers fails with the timeout instead of reporting the fact unavailable', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  let markExpansionRequested!: () => void
+  const expansionRequested = new Promise<void>((resolve) => {
+    markExpansionRequested = resolve
+  })
+  const session: Pick<vscode.DebugSession, 'customRequest'> = {
+    customRequest: (
+      _command: string,
+      arguments_: { variablesReference: number },
+    ) => {
+      if (arguments_.variablesReference === 30) {
+        markExpansionRequested()
+        return new Promise(() => {})
+      }
+      return Promise.resolve({
+        variables:
+          arguments_.variablesReference === 1
+            ? [
+                {
+                  name: 'limit',
+                  value: '(...)',
+                  variablesReference: 30,
+                  presentationHint: { lazy: true },
+                },
+              ]
+            : [],
+      })
+    },
+  }
+  const outcome = inspectNodeTestVariables(
+    session,
+    VITEST_SCOPES,
+    [{ path: 'limit', mode: 'value', required: true }],
+    new AbortController().signal,
+  ).then(
+    () => 'read',
+    (error: unknown) => String(error),
+  )
+  await expansionRequested
+
+  // Act
+  context.mock.timers.tick(ACTIVE_TIMEOUT_MS)
+
+  // Assert
+  assert.equal(
+    await outcome,
+    'Error: Timed out waiting for owned Node debugger variables',
+  )
+})
+
+// Value: protects=a Node stop whose imported name sits behind a getter the debugger cannot expand (an unmocked module's export that throws in the test process): the fact reads unavailable and the stop keeps its other facts; fails_when=the import's lazy expansion lets the adapter's error answer escape, so the whole advance fails and the live run ends instead of the agent hearing which fact is missing; why_new=pt3 /ship review pass 3 (state machines): the refused expansion was tested for a local and a path step only; seam=a fake debug session that rejects the expansion of the module export's reference; no_claim=how the native adapter answers a throwing getter
+test('a Node pause reports a required imported name whose getter the debugger cannot expand as unavailable and keeps its other facts', async () => {
+  // Arrange
+  const session: Pick<vscode.DebugSession, 'customRequest'> = {
+    customRequest: async (
+      _command: string,
+      arguments_: { variablesReference: number },
+    ) => {
+      if (arguments_.variablesReference === 50)
+        throw new Error('ITEMS_PER_PAGE is not initialized')
+      const table = new Map<number, DebugProtocol.Variable[]>([
+        [
+          1,
+          [
+            {
+              name: 'status',
+              value: "'paid'",
+              type: 'string',
+              variablesReference: 0,
+            },
+          ],
+        ],
+        [
+          2,
+          [
+            {
+              name: '__vite_ssr_import_3__',
+              value: 'Module',
+              variablesReference: 5,
+            },
+          ],
+        ],
+        [
+          5,
+          [
+            {
+              name: 'ITEMS_PER_PAGE',
+              value: '(...)',
+              variablesReference: 50,
+              presentationHint: { lazy: true },
+            },
+          ],
+        ],
+      ])
+      return { variables: table.get(arguments_.variablesReference) ?? [] }
+    },
+  }
+
+  // Act
+  const result = await inspectNodeTestVariables(
+    session,
+    VITEST_SCOPES,
+    [
+      { path: 'ITEMS_PER_PAGE', mode: 'value', required: true },
+      { path: 'status', mode: 'value', required: true },
+    ],
+    AbortSignal.timeout(1_000),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { facts: result.facts, unavailable: result.unavailable },
+    {
+      facts: [
+        { path: 'status', mode: 'value', display: "'paid'", type: 'string' },
+      ],
+      unavailable: ['value:ITEMS_PER_PAGE'],
+    },
+  )
+})
+
+// Value: protects=a Node stop whose imported name's getter the debugger never answers: the pass fails with the timeout instead of reading the fact as unavailable; fails_when=the import's lazy expansion swallows the timeout, so a hung debugger reads as a missing fact; why_new=pt3 /ship review pass 3 (state machines): the timeout cell of an imported name had no test; seam=a fake debug session that never answers the module export's lazy reference, and node:test's mocked setTimeout advanced by the active timeout; no_claim=how long the native adapter takes
+test('a Node pause whose imported getter the debugger never answers fails with the timeout instead of reporting the fact unavailable', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  let markExpansionRequested!: () => void
+  const expansionRequested = new Promise<void>((resolve) => {
+    markExpansionRequested = resolve
+  })
+  const table = new Map<number, DebugProtocol.Variable[]>([
+    [1, []],
+    [
+      2,
+      [
+        {
+          name: '__vite_ssr_import_3__',
+          value: 'Module',
+          variablesReference: 5,
+        },
+      ],
+    ],
+    [
+      5,
+      [
+        {
+          name: 'ITEMS_PER_PAGE',
+          value: '(...)',
+          variablesReference: 50,
+          presentationHint: { lazy: true },
+        },
+      ],
+    ],
+  ])
+  const session: Pick<vscode.DebugSession, 'customRequest'> = {
+    customRequest: (
+      _command: string,
+      arguments_: { variablesReference: number },
+    ) => {
+      if (arguments_.variablesReference === 50) {
+        markExpansionRequested()
+        return new Promise(() => {})
+      }
+      return Promise.resolve({
+        variables: table.get(arguments_.variablesReference) ?? [],
+      })
+    },
+  }
+  const outcome = inspectNodeTestVariables(
+    session,
+    VITEST_SCOPES,
+    [{ path: 'ITEMS_PER_PAGE', mode: 'value', required: true }],
+    new AbortController().signal,
+  ).then(
+    () => 'read',
+    (error: unknown) => String(error),
+  )
+  await expansionRequested
+
+  // Act
+  context.mock.timers.tick(ACTIVE_TIMEOUT_MS)
+
+  // Assert
+  assert.equal(
+    await outcome,
+    'Error: Timed out waiting for owned Node debugger variables',
+  )
+})
+
+// Value: protects=a Node stop cancelled while an imported name's getter is being expanded: the pass ends with the cancellation instead of returning the fact as unavailable; fails_when=the import's lazy expansion swallows the cancellation and the pass returns partial facts for a run that was stopped; why_new=pt3 /ship review pass 3 (state machines): the cancellation cell of an imported name had no test; seam=a fake debug session whose answer to the module export's lazy reference never comes, and the run's abort controller, aborted by the test; no_claim=the native debugger's own cancellation
+test('a Node pause cancelled while an imported getter is expanded ends with the cancellation', async () => {
+  // Arrange
+  const controller = new AbortController()
+  const table = new Map<number, DebugProtocol.Variable[]>([
+    [1, []],
+    [
+      2,
+      [
+        {
+          name: '__vite_ssr_import_3__',
+          value: 'Module',
+          variablesReference: 5,
+        },
+      ],
+    ],
+    [
+      5,
+      [
+        {
+          name: 'ITEMS_PER_PAGE',
+          value: '(...)',
+          variablesReference: 50,
+          presentationHint: { lazy: true },
+        },
+      ],
+    ],
+  ])
+  const session: Pick<vscode.DebugSession, 'customRequest'> = {
+    customRequest: (
+      _command: string,
+      arguments_: { variablesReference: number },
+    ) => {
+      if (arguments_.variablesReference === 50) {
+        controller.abort()
+        return new Promise(() => {})
+      }
+      return Promise.resolve({
+        variables: table.get(arguments_.variablesReference) ?? [],
+      })
+    },
+  }
+
+  // Act
+  const outcome = await inspectNodeTestVariables(
+    session,
+    VITEST_SCOPES,
+    [{ path: 'ITEMS_PER_PAGE', mode: 'value', required: true }],
+    controller.signal,
+  ).then(
+    () => 'read',
+    (error: unknown) => String(error),
+  )
+
+  // Assert
+  assert.equal(outcome, 'Error: Cancelled owned Node debugger variables')
+})
+
+// Value: protects=a Node stop whose imported name's getter gets a malformed answer from the debugger: the pass fails, rather than reading the fact as merely unavailable and keeping a stop on a broken session; fails_when=the import's lazy expansion swallows the malformed answer, so a broken debugger reads as a missing fact and the agent is told to continue; why_new=pt3 /ship review pass 3 (state machines): the malformed-answer cell of an imported name had no test; seam=a fake debug session that answers the module export's lazy reference without a variable list; no_claim=which native adapters answer that way
+test('a Node pause whose imported getter gets a malformed debugger answer fails instead of reporting the fact unavailable', async () => {
+  // Arrange
+  const table = new Map<number, DebugProtocol.Variable[]>([
+    [1, []],
+    [
+      2,
+      [
+        {
+          name: '__vite_ssr_import_3__',
+          value: 'Module',
+          variablesReference: 5,
+        },
+      ],
+    ],
+    [
+      5,
+      [
+        {
+          name: 'ITEMS_PER_PAGE',
+          value: '(...)',
+          variablesReference: 50,
+          presentationHint: { lazy: true },
+        },
+      ],
+    ],
+  ])
+  const session: Pick<vscode.DebugSession, 'customRequest'> = {
+    customRequest: async (
+      _command: string,
+      arguments_: { variablesReference: number },
+    ) =>
+      arguments_.variablesReference === 50
+        ? {}
+        : { variables: table.get(arguments_.variablesReference) ?? [] },
+  }
+
+  // Act
+  const outcome = await inspectNodeTestVariables(
+    session,
+    VITEST_SCOPES,
+    [{ path: 'ITEMS_PER_PAGE', mode: 'value', required: true }],
+    AbortSignal.timeout(1_000),
+  ).then(
+    () => 'read',
+    (error: unknown) => String(error),
+  )
+
+  // Assert
+  assert.equal(outcome, 'Error: Native debugger supplied no variable list.')
+})
+
+// Value: protects=a lazy value whose expansion the debugger refused once is asked again by a later fact of the same stop, so a refusal that does not repeat (a getter that threw only the first time) leaves only the first fact unavailable; fails_when=the pass keeps the failed request, so every later fact through that reference reads unavailable without asking the debugger; why_new=pt3 /ship review pass 3 (testing): the eviction of a failed request from the pass's request cache had no test; seam=a fake debug session that refuses the lazy reference's first expansion and answers its second, counting the requests; no_claim=whether a native getter's failure repeats
+test('a Node pause asks again for a lazy value whose earlier expansion the debugger refused', async () => {
+  // Arrange
+  let expansions = 0
+  const session: Pick<vscode.DebugSession, 'customRequest'> = {
+    customRequest: async (
+      _command: string,
+      arguments_: { variablesReference: number },
+    ) => {
+      if (arguments_.variablesReference === 30) {
+        expansions += 1
+        if (expansions === 1)
+          throw new Error('Cannot access the getter before initialization')
+        return {
+          variables: [
+            {
+              name: 'limit',
+              value: '6',
+              type: 'number',
+              variablesReference: 0,
+            },
+          ],
+        }
+      }
+      return {
+        variables:
+          arguments_.variablesReference === 1
+            ? [
+                {
+                  name: 'limit',
+                  value: '(...)',
+                  variablesReference: 30,
+                  presentationHint: { lazy: true },
+                },
+              ]
+            : [],
+      }
+    },
+  }
+
+  // Act
+  const result = await inspectNodeTestVariables(
+    session,
+    VITEST_SCOPES,
+    [
+      { path: 'limit', mode: 'value', required: true },
+      { path: 'limit', mode: 'type', required: true },
+    ],
+    AbortSignal.timeout(1_000),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      facts: result.facts,
+      unavailable: result.unavailable,
+      expansions,
+    },
+    {
+      facts: [
+        { path: 'limit', mode: 'type', display: 'number', type: 'number' },
+      ],
+      unavailable: ['value:limit'],
+      expansions: 2,
+    },
+  )
+})
+
+// Value: protects=the debugger after a failed Node stop: once one module binding's read fails the pass, the other bindings read together with it ask the debugger nothing more; fails_when=the other bindings' reads go on after the pass has failed, sending variables requests (a Proxy's [[Target]]) to a session whose stop the run is ending; why_new=pt3 /ship review pass 3 (Red Team): Promise.all rejects on the first failure while its siblings keep reading; seam=a fake debug session that answers one binding malformed and holds the other's answer until the pass has failed, recording every requested reference; no_claim=what the native adapter does with a request it gets late
+test('a Node pause whose module binding read fails sends the debugger no further request for the other bindings', async () => {
+  // Arrange
+  const requested: number[] = []
+  let releaseHeldBinding!: () => void
+  const heldBinding = new Promise<void>((resolve) => {
+    releaseHeldBinding = resolve
+  })
+  const table = new Map<number, DebugProtocol.Variable[]>([
+    [1, []],
+    [
+      2,
+      [
+        {
+          name: '__vi_import_0__',
+          value: 'Proxy(Object)',
+          variablesReference: 40,
+        },
+        {
+          name: '__vi_import_1__',
+          value: 'Proxy(Object)',
+          variablesReference: 41,
+        },
+      ],
+    ],
+    [41, [{ name: '[[Target]]', value: 'Object', variablesReference: 60 }]],
+    [60, [{ name: 'db', value: 'Object', variablesReference: 0 }]],
+  ])
+  const session: Pick<vscode.DebugSession, 'customRequest'> = {
+    customRequest: async (
+      _command: string,
+      arguments_: { variablesReference: number },
+    ) => {
+      const reference = arguments_.variablesReference
+      requested.push(reference)
+      if (reference === 40) return {}
+      if (reference === 41) await heldBinding
+      return { variables: table.get(reference) ?? [] }
+    },
+  }
+  const outcome = await inspectNodeTestVariables(
+    session,
+    VITEST_SCOPES,
+    [{ path: 'db', mode: 'value', required: true }],
+    AbortSignal.timeout(1_000),
+  ).then(
+    () => 'read',
+    (error: unknown) => String(error),
+  )
+
+  // Act: the held binding's answer arrives after the pass failed.
+  releaseHeldBinding()
+  await new Promise((resolve) => setImmediate(resolve))
+
+  // Assert
+  assert.deepEqual(
+    { outcome, requested },
+    {
+      outcome: 'Error: Native debugger supplied no variable list.',
+      requested: [1, 2, 40, 41],
+    },
+  )
+})
+
+// Value: protects=the diagnosis of a Node stop whose scope read the debug adapter refuses: the pass fails with the adapter's own error kept as the cause, under the same message as before; fails_when=the refusal is re-wrapped without its cause, so a log or a debugger of the extension loses the adapter's error and its stack; why_new=pt3 /ship review pass 3 (maintainability): the wrapper kept the adapter's error only as text; seam=a fake debug session that rejects the Local scope's read; no_claim=how the run words the failure (StudyService sanitizes it)
+test('a Node pause whose scope read the debugger refuses fails with the adapter error as its cause', async () => {
+  // Arrange
+  const adapterError = new Error('Unable to find thread for evaluation')
+  const session: Pick<vscode.DebugSession, 'customRequest'> = {
+    customRequest: async () => {
+      throw adapterError
+    },
+  }
+
+  // Act
+  const failure = await inspectNodeTestVariables(
+    session,
+    VITEST_SCOPES,
+    [{ path: 'status', mode: 'value', required: true }],
+    AbortSignal.timeout(1_000),
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.ok(failure instanceof Error)
+  assert.deepEqual(
+    {
+      message: failure.message,
+      causeIsAdapterError: failure.cause === adapterError,
+    },
+    {
+      message:
+        'Native debugger refused the variables request: Error: Unable to find thread for evaluation',
+      causeIsAdapterError: true,
+    },
+  )
 })
