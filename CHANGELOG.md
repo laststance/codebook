@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.2.42.0] - 2026-10-26 (development candidate)
+
+Cycle 0052 pt3 ([Issue #124](https://github.com/laststance/codebook/issues/124)), the last of three pull requests of a bug-fix cycle: a live test run survives a value it cannot read, and a browser run's refusals and seals say what happened.
+
+**A live test run keeps going past a value it cannot read.**
+
+- **A value the chat asks for at a test stop is read also when it is a name the stopped file imports**, such as `revalidatePath.mock.calls.length` of a mocked `next/cache` or a mocked database client's `db.insert.mock.calls`: Codebook reads it through the module Vitest binds it to, as the export the file's import declaration names, so an alias reads its module's original export and a default import its default export, and a name the file does not import is never taken from another module that happens to export it. A getter on the asked path runs once, as it does when you expand it in the Variables view.
+- **A required value that still cannot be read no longer ends the run.** The stop keeps its other values and names the missing one, and the continuation that reached it (the chat's `codebook_continue`, or your Continue in the Study pane) answers `EVIDENCE_UNAVAILABLE` naming it while the run stays paused there, so it can go on without it or stop the run; `codebook://help/errors` says so in its recovery. A getter the debugger cannot expand, or expands to no single value, leaves only its own value unavailable (never its `(...)` placeholder), and a local variable keeps priority over an import of the same name even when its value cannot be read.
+- **A run that went on without a required value seals its history partial**, with a reason that names the value and its stop: the study reads partial although the test passed.
+
+**A browser run says where a stop can go and why it ended.**
+
+- **A stop in another page's component** (one a link from the launched page navigates to) is refused before input with a sentence that names the stop's file and the launched page, and says to start the run at the stop's page (`entryPath`) or to choose a stop in the launched page's own components.
+- **A run refused during its preparation, or failed later, seals its recording with that failure's own words** (`The run failed: <cause>. Recorded prefix retained.`, a long cause cut so that the sentence keeps its end), not as an interrupted run; a run whose release did not complete keeps `Runtime cleanup incomplete; recorded prefix retained.`
+- **A browser replay whose open fails** also writes one `open:recording` entry to **Output › Codebook**, with the study, the profile and the cause.
+
+**Other fixes.**
+
+- **A node-history reference with an unknown study id** (a mistyped id, for example, or a history removed while it is read) is refused as `NOT_FOUND`, naming the id and telling the agent to copy the `studyId` or `historyUri` from `codebook://node-history`, instead of a failed operation with a raw file error.
+- **Update anyway chosen right after this window's own update run ended** starts the update: it waits for that run's marker change instead of refusing itself as another window's update.
+
+**Compatibility.** The MCP API stays 1.8, the bundled skill is unchanged (1.0.47) and no stored format changes. This closes Issue #124's tasks; nothing is carried.
+
 ## [0.2.41.0] - 2026-10-25 (development candidate)
 
 Cycle 0052 pt2 ([Issue #124](https://github.com/laststance/codebook/issues/124)), the second of three pull requests of a bug-fix cycle: a test replay's moves, notices and summary page.
