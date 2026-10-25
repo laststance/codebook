@@ -11591,6 +11591,13 @@ export class StudyWorkspace {
     if (answer === 'retry') return this.openLearningReplay(studyId)
     // The keep-open refusal has told the learner already; a second notice would repeat it.
     if (answer === 'told') return
+    // The failure also goes to Output › Codebook, as a test replay's failed open does, so the learner can copy it into a report (Cycle 0052 task 59).
+    this.diagnostics?.log({
+      surface: 'open:recording',
+      studyId,
+      profile: REPOSITORY_BROWSER_PROFILE,
+      cause: sanitizeCause(state.reason, this.privateRoots()),
+    })
     // The controller keeps a failure as its string form, which starts with the error's name.
     void showPlainNotice(
       vscode.window,

@@ -1158,6 +1158,59 @@ async function check(page, options, collected) {
               value.revision === revisionAt(5),
           ),
       })
+      // Value: protects=a browser replay's Replay from start sends a seek to the recording's first millisecond, and the readout then reads the start time the host presents; fails_when=Replay from start sends another request or position, or the readout keeps the earlier time (Cycle 0052 task 22, the state cell browser replay × Replay from start); why_new=Replay from start was covered for test replays only; seam=none; no_claim=the host's seek (studyWorkspace tests)
+      await publish(replay)
+      await page.evaluate(() => {
+        window.sent = []
+      })
+      await page.locator('[data-playback="start"]').click()
+      const fromStart = await page.evaluate(() =>
+        window.sent.filter((message) => message.type === 'playback'),
+      )
+      await publish({
+        ...replay,
+        recording: { ...replay.recording, presentedMs: 0 },
+      })
+      const readoutAtStart = await page
+        .locator('#playback-position')
+        .textContent()
+      cases.push({
+        name: "a browser replay's Replay from start seeks the recording's start and the readout then shows its start time",
+        actual: { fromStart, readoutAtStart },
+        passed:
+          fromStart.length === 1 &&
+          fromStart[0].action === 'seek' &&
+          fromStart[0].positionMs === 0 &&
+          readoutAtStart === 'Presented 0.00 s / 8.00 s',
+      })
+      // Value: protects=a browser replay's Pause sends pause, and the toggle then reads Play once the host presents it paused; fails_when=the toggle sends play or nothing while the recording plays, or keeps reading Pause after the host paused (Cycle 0052 task 22, the state cell browser replay × Pause); why_new=Pause was covered for test replays only; seam=none; no_claim=the host's pause (studyWorkspace tests)
+      await publish({
+        ...replay,
+        recording: { ...replay.recording, mode: 'playing' },
+      })
+      const toggleWhilePlaying = await page
+        .locator('#playback-toggle')
+        .textContent()
+      await page.evaluate(() => {
+        window.sent = []
+      })
+      await page.locator('#playback-toggle').click()
+      const pausing = await page.evaluate(() =>
+        window.sent.filter((message) => message.type === 'playback'),
+      )
+      await publish(replay)
+      const toggleAfterPause = await page
+        .locator('#playback-toggle')
+        .textContent()
+      cases.push({
+        name: "a browser replay's Pause sends pause and the toggle then reads Play",
+        actual: { toggleWhilePlaying, pausing, toggleAfterPause },
+        passed:
+          toggleWhilePlaying === 'Pause' &&
+          pausing.length === 1 &&
+          pausing[0].action === 'pause' &&
+          toggleAfterPause === 'Play',
+      })
       await page.locator('#understood').focus()
       const reading = await page.evaluate(() => ({
         bottom: document.getElementById('understood').getBoundingClientRect()
