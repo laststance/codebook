@@ -3284,11 +3284,17 @@ test('the placeholder is revealed from its first line when an output follows a s
     // Act
     await selectMoment(harness, history.studyId, 3)
 
-    // Assert
-    const revealed = harness.slotReveals().slice(revealsAtStop)
+    // Assert: the placeholder is revealed from its first line (before its bytes arrive, and again at the commit), and no reveal scrolls it anywhere else.
+    const revealed = harness
+      .slotReveals()
+      .slice(revealsAtStop)
+      .map((reveal) => reveal.line)
     assert.deepEqual(
-      revealed.map((reveal) => reveal.line),
-      [0],
+      {
+        last: revealed.at(-1),
+        elsewhere: revealed.filter((line) => line !== 0),
+      },
+      { last: 0, elsewhere: [] },
     )
   } finally {
     await harness.close()
@@ -4424,6 +4430,59 @@ test('a Retry of a failed slot that a newer seek overtakes while its tab is show
     )
     assert.equal(lastView(harness)?.errors.length, 0)
   } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a move from a stop to an output scrolls the slot to its first line before the placeholder's bytes reach the editor, so the editor never draws the stop's source's sticky-scroll header over the placeholder while it recomputes it; fails_when=the slot keeps the stop's scroll until the commit's reveal, which N52 saw in Cursor as 11 frames of `27 export async function authenticate(` over the placeholder (Cycle 0052 task 1); why_new=the commit's reveal was the only one; seam=the hand-driven slot clock and the harness's held delivery of the next provider result, with the slot's reveals; no_claim=how each host draws its sticky-scroll header (N52 (b))
+test('a move from a stop to an output scrolls the slot to its first line before the placeholder’s bytes arrive', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  let release = (): void => {}
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const slot = slotTabs(harness)[0]!
+    const revealsAtStop = harness.slotReveals().length
+    const invalidationsBefore =
+      harness.historicalDebugInvalidationLabels().length
+    harness.useManualSlotClock()
+    const held = harness.holdNextSourceUpdate()
+    release = held.release
+
+    // Act: the move leaves the stop, and the settle ends; the placeholder's bytes are on their way.
+    startMomentSelection(harness, history.studyId, 3)
+    await waitUntil(
+      () =>
+        harness.historicalDebugInvalidationLabels().length >
+        invalidationsBefore,
+      'the debugger leaves the stop',
+      READER_RESULT_BOUND_MS,
+    )
+    harness.elapseSlotClock(300)
+    await held.started
+    const whileBytesTravel = {
+      text: harness.documentTextOf(slot),
+      reveals: harness
+        .slotReveals()
+        .slice(revealsAtStop)
+        .map((reveal) => reveal.line),
+    }
+    held.release()
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 3 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
+      'the output commits',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(whileBytesTravel, { text: THEME_TEXT, reveals: [0] })
+  } finally {
+    release()
     await harness.close()
   }
 })

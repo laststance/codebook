@@ -10548,21 +10548,26 @@ async function check(page, options, collected) {
             return append.apply(this, nodes)
           }
         })
-        await publish(regionTwoAt(4))
-        const marked = await page.evaluate(() =>
-          Array.from(
-            document.querySelectorAll(
-              '#node-learning-sequence [aria-current="step"]',
+        let marked
+        try {
+          await publish(regionTwoAt(4))
+          marked = await page.evaluate(() =>
+            Array.from(
+              document.querySelectorAll(
+                '#node-learning-sequence [aria-current="step"]',
+              ),
+            ).map((node) =>
+              node.tagName === 'text'
+                ? `text:${node.textContent}`
+                : `${node.tagName}:${node.dataset.step}`,
             ),
-          ).map((node) =>
-            node.tagName === 'text'
-              ? `text:${node.textContent}`
-              : `${node.tagName}:${node.dataset.step}`,
-          ),
-        )
-        await page.evaluate(() => {
-          Element.prototype.append = window.originalAppend
-        })
+          )
+        } finally {
+          // The page's own append comes back also when the publish or the reading threw, so no later case draws through the patch.
+          await page.evaluate(() => {
+            Element.prototype.append = window.originalAppend
+          })
+        }
         cases.push({
           name: "a test replay's drawing whose labels stand before their arrows marks the selected step's own label and arrow",
           actual: marked,

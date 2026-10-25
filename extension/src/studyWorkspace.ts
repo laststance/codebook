@@ -25528,7 +25528,7 @@ export class StudyWorkspace {
       // The document serves the new text from here on, so the old held bytes no longer describe it: a quick reselect of them must show again, not reuse the slot (F551).
       this.nodeSourceSlotHeld = undefined
       this.nodeSourceSlot = { studyId, uri, text }
-      this.sourceChanges.fire(uri)
+      this.announceNodeSourceSlotText(uri, verifiedStop)
       shown = this.openNodeSourceSlot(
         uri,
         earlier?.uri,
@@ -25551,6 +25551,28 @@ export class StudyWorkspace {
     } finally {
       stopNudge()
     }
+  }
+
+  /**
+   * Tells the editor that the recorded-source slot serves new bytes; called by {@link openNodeSourceSlotWithinDeadline} once the slot holds a moment's text.
+   * The placeholder goes in at the slot's first line: an editor that kept a stop's scroll draws that source's sticky-scroll header over the placeholder until it recomputes it, which N52 saw in Cursor for 11 frames (Cycle 0052 task 1). A stop's own line is revealed at its commit.
+   * @param uri - The slot's address.
+   * @param verifiedStop - The stop whose bytes the slot serves, or `undefined` for the placeholder.
+   * @example this.announceNodeSourceSlotText(uri, undefined) // the slot's editors at line 1, then the provider event
+   */
+  private announceNodeSourceSlotText(
+    uri: vscode.Uri,
+    verifiedStop: NodeTestHistoryStop | undefined,
+  ): void {
+    const address = uri.toString()
+    if (!verifiedStop)
+      for (const editor of vscode.window.visibleTextEditors)
+        if (editor.document.uri.toString() === address)
+          editor.revealRange(
+            new vscode.Range(0, 0, 0, 0),
+            vscode.TextEditorRevealType.AtTop,
+          )
+    this.sourceChanges.fire(uri)
   }
 
   /**
