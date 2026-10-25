@@ -8,8 +8,6 @@ import { test } from 'node:test'
 import {
   NODE_TEST_HISTORY_DIRECTORY,
   REPOSITORY_BROWSER_PROFILE as PROFILE_ID,
-  STUDY_REMOVAL_REFUSALS,
-  SUMMARY_PLACEMENT_OFFER,
 } from '../constants'
 import { ReplayDebuggerStartError, StudyError } from '../errors'
 import { sha256 } from '../runtimeSupport/utils/sha256'
@@ -198,7 +196,9 @@ for (const entry of ['Open replay', 'Saved studies'] as const) {
       await waitUntil(
         () =>
           harness.informationMessages.some(
-            (notice) => notice.message === SUMMARY_PLACEMENT_OFFER,
+            (notice) =>
+              notice.message ===
+              'Cursor opens the Codebook Learning summary in its primary side bar. To keep it on the right, move it once: choose "New Secondary Side Bar Entry" in the list that opens.',
           ),
         'the Move View offer is made',
         READER_RESULT_BOUND_MS,
@@ -932,7 +932,7 @@ test('a delete request for the shown test replay is refused and the replay keeps
     // Assert
     assert.equal(
       lastView(harness)?.studyRemoval?.text,
-      STUDY_REMOVAL_REFUSALS.nodeHistory,
+      'Test replays cannot be deleted here yet.',
     )
     assert.equal(
       lastView(harness)?.nodeHistory?.header.studyId,
