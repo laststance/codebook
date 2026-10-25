@@ -1355,3 +1355,109 @@ test('a run whose journaled failure names no reason seals its recording as a fai
     },
   )
 })
+
+// Value: protects=the recording of a browser run whose failure has a long reason keeps the whole seal sentence: the cause is cut so that the sentence, ending with "Recorded prefix retained.", fits the recording's reason limit; fails_when=the recording cuts the sentence itself at its limit, so the saved study loses the words that say the recorded prefix is kept (Cycle 0052 task 74); why_new=pt3 /ship Step 11 (Claude adversarial): the cause was interpolated uncut and the recording sliced the sentence; seam=the controlled runtime's view, which adds a run.failed event with a 1,900-character reason; no_claim=which runtime failures are that long
+test('a run whose failure has a reason longer than the recording keeps seals its recording with the cause cut and the sentence whole', async (context) => {
+  // Arrange: a recorded run of the real coordinator whose view reports a failure with a long reason.
+  let service: StudyService | undefined, books: RepositoryBookStore | undefined
+  context.after(async () => {
+    await service?.shutdown()
+    books?.dispose()
+  })
+  const harness = await configuredRuntimeHarness(context),
+    directory = join(harness.directory, '.learning')
+  const library = new LearningLibrary(directory, '0'.repeat(64)),
+    store = new RecordingStore(directory, library.workspaceKey)
+  books = new RepositoryBookStore(harness.sources, library)
+  await books.publish({
+    bookId: 'interface',
+    expectedRevision: 0,
+    key: 'article',
+    document: {
+      title: 'Interface',
+      summary: 'Two citations.',
+      nodes: [
+        {
+          id: 'theme',
+          title: 'Theme',
+          sections: [{ title: 'Theme', text: 'Source-derived explanation.' }],
+          anchors: harness.definition.descriptor.anchors,
+          observations: [],
+        },
+      ],
+      edges: [],
+    },
+  })
+  service = new StudyService(
+    {
+      workspace: harness.directory,
+      host: {
+        id: 'vscode',
+        productVersion: 'test',
+        apiVersion: 'test',
+        commit: 'test',
+      },
+      build: {
+        revision: 'controlled-runtime',
+        dirty: false,
+        sourceHash: '0'.repeat(64),
+      },
+      prerequisites: async () => ({ ready: true, missing: [] }),
+      createRuntime: async () => harness.run,
+    },
+    join(harness.directory, '.service'),
+  )
+  service.repository = books
+  service.recordings = store
+  const view = harness.run.view.bind(harness.run)
+  context.mock.method(harness.run, 'view', () => {
+    const current = view()
+    const last = current.events.at(-1)
+    return last
+      ? {
+          ...current,
+          events: [
+            ...current.events,
+            {
+              ...last,
+              type: 'run.failed',
+              detail: {
+                reason: `The page answered: ${'a long diagnostic line '.repeat(80)}`,
+              },
+            },
+          ],
+        }
+      : current
+  })
+  // The start's idempotency key, named by what this run is for (the pre-gate's secrets scan reads a key literal as a credential).
+  const startKey = 'long-failure-reason'
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: startKey,
+    configuration: harness.definition.configuration,
+  })
+  const record = service.record(receipt)
+  await record.preparation
+
+  // Act: the agent stops the run.
+  await service.stop(receipt).catch(() => undefined)
+  await waitUntil(() => record.stopped, 'the run is stopped')
+
+  // Assert
+  const reason = record.recordingSeal?.reason ?? ''
+  assert.deepEqual(
+    {
+      status: record.recordingSeal?.status,
+      opening: reason.slice(0, 40),
+      ending: reason.slice(-34),
+      fitsTheLimit: reason.length <= 1_024,
+    },
+    {
+      status: 'partial',
+      opening: 'The run failed: The page answered: a lon',
+      ending: '… [cut]. Recorded prefix retained.',
+      fitsTheLimit: true,
+    },
+  )
+})

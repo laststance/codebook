@@ -6,6 +6,7 @@ import type * as vscode from 'vscode'
 
 import { ACTIVE_TIMEOUT_MS } from '../runtimeSupport/constants'
 import { inspectNodeTestVariables } from '../utils/inspectNodeTestVariables'
+import { sourceImportBindings } from '../utils/sourceImportBindings'
 
 test('a Node pause keeps declared nested facts without retaining unrelated local values', async () => {
   // Arrange
@@ -50,6 +51,7 @@ test('a Node pause keeps declared nested facts without retaining unrelated local
       { path: 'listener', mode: 'value', required: true },
       { path: 'state.count', mode: 'value', required: true },
     ],
+    new Map(),
     AbortSignal.timeout(1_000),
   )
   // Assert
@@ -108,6 +110,7 @@ test('a Node pause does not inspect global variables when the declared local fac
     session,
     scopes,
     [{ path: 'listener', mode: 'value', required: true }],
+    new Map(),
     AbortSignal.timeout(1_000),
   )
   // Assert
@@ -130,6 +133,7 @@ test('a Node pause returns a required value it cannot read by name instead of fa
     session,
     scopes,
     [{ path: 'listener', mode: 'value', required: true }],
+    new Map(),
     AbortSignal.timeout(1_000),
   )
 
@@ -162,6 +166,7 @@ test('a Node pause keeps a declared value whose debugger type name is too long t
     session,
     scopes,
     [{ path: 'totals', mode: 'value', required: true }],
+    new Map(),
     AbortSignal.timeout(1_000),
   )
 
@@ -266,6 +271,7 @@ test('a Node pause reads a required value of a name the test imports from a mock
         required: true,
       },
     ],
+    sourceImportBindings("import { revalidatePath } from 'next/cache'"),
     AbortSignal.timeout(1_000),
   )
 
@@ -332,6 +338,7 @@ test('a Node pause reads a required value of a name the test imports from an unm
     session,
     VITEST_SCOPES,
     [{ path: 'ITEMS_PER_PAGE', mode: 'value', required: true }],
+    sourceImportBindings("import { ITEMS_PER_PAGE } from './data'"),
     AbortSignal.timeout(1_000),
   )
 
@@ -390,6 +397,7 @@ test('a Node pause leaves a name that two imported modules export unavailable', 
     session,
     VITEST_SCOPES,
     [{ path: 'formatCurrency', mode: 'value', required: true }],
+    sourceImportBindings("import { formatCurrency } from './utils'"),
     AbortSignal.timeout(1_000),
   )
 
@@ -445,6 +453,7 @@ test('a Node pause reads a local variable before an imported name it shadows', a
     session,
     VITEST_SCOPES,
     [{ path: 'status', mode: 'value', required: true }],
+    sourceImportBindings("import { status } from './status'"),
     AbortSignal.timeout(1_000),
   )
 
@@ -500,6 +509,7 @@ test('a Node pause reads a required value behind a lazy getter in the middle of 
     session,
     VITEST_SCOPES,
     [{ path: 'revalidatePath.mock.callCount', mode: 'value', required: true }],
+    new Map(),
     AbortSignal.timeout(1_000),
   )
 
@@ -571,6 +581,7 @@ test('a Node pause reports a required value behind a lazy getter the debugger ca
       { path: 'config.limit', mode: 'value', required: true },
       { path: 'status', mode: 'value', required: true },
     ],
+    new Map(),
     AbortSignal.timeout(1_000),
   )
 
@@ -637,6 +648,7 @@ test('a Node pause reads an imported name once when two scopes list the same mod
       { name: 'Closure', variablesReference: 5, expensive: false },
     ],
     [{ path: 'db.inserted', mode: 'value', required: true }],
+    sourceImportBindings("import { db } from '@/db'"),
     AbortSignal.timeout(1_000),
   )
 
@@ -682,6 +694,7 @@ test('a Node pause whose lazy expansion gets a malformed debugger answer fails i
     session,
     VITEST_SCOPES,
     [{ path: 'limit', mode: 'value', required: true }],
+    new Map(),
     AbortSignal.timeout(1_000),
   ).then(
     () => 'read',
@@ -726,6 +739,7 @@ test('a Node pause cancelled while a lazy value is expanded ends with the cancel
     session,
     VITEST_SCOPES,
     [{ path: 'limit', mode: 'value', required: true }],
+    new Map(),
     controller.signal,
   ).then(
     () => 'read',
@@ -789,6 +803,7 @@ test('a Node pause leaves a required local whose lazy value cannot be read unava
     session,
     VITEST_SCOPES,
     [{ path: 'status', mode: 'value', required: true }],
+    sourceImportBindings("import { status } from './status'"),
     AbortSignal.timeout(1_000),
   )
 
@@ -843,6 +858,7 @@ test('a Node pause asks the debugger once for a reference two module bindings re
     session,
     VITEST_SCOPES,
     [{ path: 'shared', mode: 'value', required: false }],
+    sourceImportBindings("import { shared } from './shared'"),
     AbortSignal.timeout(1_000),
   )
 
@@ -886,6 +902,7 @@ test('a Node pause whose lazy local the debugger never answers fails with the ti
     session,
     VITEST_SCOPES,
     [{ path: 'limit', mode: 'value', required: true }],
+    new Map(),
     new AbortController().signal,
   ).then(
     () => 'read',
@@ -959,6 +976,7 @@ test('a Node pause reports a required imported name whose getter the debugger ca
       { path: 'ITEMS_PER_PAGE', mode: 'value', required: true },
       { path: 'status', mode: 'value', required: true },
     ],
+    sourceImportBindings("import { ITEMS_PER_PAGE } from './data'"),
     AbortSignal.timeout(1_000),
   )
 
@@ -1024,6 +1042,7 @@ test('a Node pause whose imported getter the debugger never answers fails with t
     session,
     VITEST_SCOPES,
     [{ path: 'ITEMS_PER_PAGE', mode: 'value', required: true }],
+    sourceImportBindings("import { ITEMS_PER_PAGE } from './data'"),
     new AbortController().signal,
   ).then(
     () => 'read',
@@ -1089,6 +1108,7 @@ test('a Node pause cancelled while an imported getter is expanded ends with the 
     session,
     VITEST_SCOPES,
     [{ path: 'ITEMS_PER_PAGE', mode: 'value', required: true }],
+    sourceImportBindings("import { ITEMS_PER_PAGE } from './data'"),
     controller.signal,
   ).then(
     () => 'read',
@@ -1141,6 +1161,7 @@ test('a Node pause whose imported getter gets a malformed debugger answer fails 
     session,
     VITEST_SCOPES,
     [{ path: 'ITEMS_PER_PAGE', mode: 'value', required: true }],
+    sourceImportBindings("import { ITEMS_PER_PAGE } from './data'"),
     AbortSignal.timeout(1_000),
   ).then(
     () => 'read',
@@ -1199,6 +1220,7 @@ test('a Node pause asks again for a lazy value whose earlier expansion the debug
       { path: 'limit', mode: 'value', required: true },
       { path: 'limit', mode: 'type', required: true },
     ],
+    new Map(),
     AbortSignal.timeout(1_000),
   )
 
@@ -1263,6 +1285,7 @@ test('a Node pause whose module binding read fails sends the debugger no further
     session,
     VITEST_SCOPES,
     [{ path: 'db', mode: 'value', required: true }],
+    sourceImportBindings("import { db } from '@/db'"),
     AbortSignal.timeout(1_000),
   ).then(
     () => 'read',
@@ -1298,6 +1321,7 @@ test('a Node pause whose scope read the debugger refuses fails with the adapter 
     session,
     VITEST_SCOPES,
     [{ path: 'status', mode: 'value', required: true }],
+    new Map(),
     AbortSignal.timeout(1_000),
   ).then(
     () => undefined,
@@ -1316,5 +1340,224 @@ test('a Node pause whose scope read the debugger refuses fails with the adapter 
         'Native debugger refused the variables request: Error: Unable to find thread for evaluation',
       causeIsAdapterError: true,
     },
+  )
+})
+
+// Value: protects=an aliased import at a Node stop reads the module export the alias stands for, not another module's export named like the alias; fails_when=the export is matched by the local name, so `import { actual as count } from './a'` records b's `count` (99) instead of a's `actual` (7) as the fact, with nothing unavailable (Cycle 0052 task 70); why_new=pt3 /ship Step 11 (Claude adversarial, Codex adversarial and structured review), Codex's repro; seam=a fake debug session with two module bindings, and the stopped source's import declarations; no_claim=Vite's binding order
+test('a Node pause reads an aliased import as the export the alias stands for, not another module export of the alias name', async () => {
+  // Arrange
+  const session = sessionAnswering(
+    new Map<number, DebugProtocol.Variable[]>([
+      [1, []],
+      [
+        2,
+        [
+          {
+            name: '__vite_ssr_import_0__',
+            value: 'Module',
+            variablesReference: 40,
+          },
+          {
+            name: '__vite_ssr_import_1__',
+            value: 'Module',
+            variablesReference: 41,
+          },
+        ],
+      ],
+      [
+        40,
+        [{ name: 'actual', value: '7', type: 'number', variablesReference: 0 }],
+      ],
+      [
+        41,
+        [
+          { name: 'helper', value: 'ƒ helper()', variablesReference: 0 },
+          { name: 'count', value: '99', type: 'number', variablesReference: 0 },
+        ],
+      ],
+    ]),
+  )
+
+  // Act
+  const result = await inspectNodeTestVariables(
+    session,
+    VITEST_SCOPES,
+    [{ path: 'count', mode: 'value', required: true }],
+    sourceImportBindings(
+      "import { actual as count } from './a'\nimport { helper } from './b'",
+    ),
+    AbortSignal.timeout(1_000),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { facts: result.facts, unavailable: result.unavailable },
+    {
+      facts: [{ path: 'count', mode: 'value', display: '7', type: 'number' }],
+      unavailable: [],
+    },
+  )
+})
+
+// Value: protects=a name the stopped source does not import, or imports as a namespace, is never read from whichever module binding happens to export that name: the fact reads unavailable; fails_when=any module binding's export of the name answers for it, recording a module's value under a name the source does not bind to it (Cycle 0052 task 70); why_new=pt3 /ship Step 11 (Claude adversarial, Codex adversarial): the lookup did not ask the source; seam=a fake debug session whose module binding exports both names, and the stopped source's import declarations; no_claim=names bound by `require`
+test('a Node pause leaves a name the source does not import, or imports as a namespace, unavailable even when a module exports it', async () => {
+  // Arrange
+  const session = sessionAnswering(
+    new Map<number, DebugProtocol.Variable[]>([
+      [1, []],
+      [
+        2,
+        [
+          {
+            name: '__vite_ssr_import_0__',
+            value: 'Module',
+            variablesReference: 40,
+          },
+        ],
+      ],
+      [
+        40,
+        [
+          { name: 'count', value: '99', type: 'number', variablesReference: 0 },
+          { name: 'schema', value: 'Object', variablesReference: 0 },
+        ],
+      ],
+    ]),
+  )
+
+  // Act
+  const result = await inspectNodeTestVariables(
+    session,
+    VITEST_SCOPES,
+    [
+      { path: 'count', mode: 'value', required: true },
+      { path: 'schema', mode: 'value', required: true },
+    ],
+    sourceImportBindings("import * as schema from './schema'"),
+    AbortSignal.timeout(1_000),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { facts: result.facts, unavailable: result.unavailable },
+    { facts: [], unavailable: ['value:count', 'value:schema'] },
+  )
+})
+
+// Value: protects=a default import at a Node stop is read as its module's default export; fails_when=the default import's local name is looked up as an export, so `import db from '@/db'` reads unavailable, or another module's `db` export answers for it (Cycle 0052 task 70); why_new=pt3 /ship Step 11 (Claude adversarial: default imports never resolved); seam=a fake debug session whose module binding exports `default` and whose other binding exports `db`; no_claim=CommonJS interop shapes
+test('a Node pause reads a default import as its module default export', async () => {
+  // Arrange
+  const session = sessionAnswering(
+    new Map<number, DebugProtocol.Variable[]>([
+      [1, []],
+      [
+        2,
+        [
+          {
+            name: '__vi_import_0__',
+            value: 'Proxy(Object)',
+            variablesReference: 40,
+          },
+          {
+            name: '__vite_ssr_import_1__',
+            value: 'Module',
+            variablesReference: 41,
+          },
+        ],
+      ],
+      [40, [{ name: '[[Target]]', value: 'Object', variablesReference: 50 }]],
+      [50, [{ name: 'default', value: 'Object', variablesReference: 51 }]],
+      [
+        51,
+        [
+          {
+            name: 'inserted',
+            value: '1',
+            type: 'number',
+            variablesReference: 0,
+          },
+        ],
+      ],
+      [41, [{ name: 'db', value: 'Object', variablesReference: 60 }]],
+      [
+        60,
+        [
+          {
+            name: 'inserted',
+            value: '5',
+            type: 'number',
+            variablesReference: 0,
+          },
+        ],
+      ],
+    ]),
+  )
+
+  // Act
+  const result = await inspectNodeTestVariables(
+    session,
+    VITEST_SCOPES,
+    [{ path: 'db.inserted', mode: 'value', required: true }],
+    sourceImportBindings(
+      "import db from '@/db'\nimport { users } from '@/db/schema'",
+    ),
+    AbortSignal.timeout(1_000),
+  )
+
+  // Assert
+  assert.deepEqual(result.facts, [
+    { path: 'db.inserted', mode: 'value', display: '1', type: 'number' },
+  ])
+})
+
+// Value: protects=a lazy value whose expansion the debugger answers with no single value: the fact reads unavailable instead of saving the "(...)" placeholder as the value; fails_when=the unresolved lazy variable is returned as it is, so its "(...)" passes as a read required fact and lands in the immutable history with nothing unavailable (Cycle 0052 task 71); why_new=pt3 /ship Step 11 (Codex adversarial), Codex's repro with an empty answer; seam=a fake debug session that answers the lazy references with no variables and with two; no_claim=which adapters answer that way
+test('a Node pause reports a lazy value the debugger expands to no single value as unavailable instead of saving its placeholder', async () => {
+  // Arrange
+  const session = sessionAnswering(
+    new Map<number, DebugProtocol.Variable[]>([
+      [
+        1,
+        [
+          {
+            name: 'count',
+            value: '(...)',
+            variablesReference: 30,
+            presentationHint: { lazy: true },
+          },
+          {
+            name: 'total',
+            value: '(...)',
+            variablesReference: 31,
+            presentationHint: { lazy: true },
+          },
+        ],
+      ],
+      [30, []],
+      [
+        31,
+        [
+          { name: 'total', value: '1', variablesReference: 0 },
+          { name: 'total', value: '2', variablesReference: 0 },
+        ],
+      ],
+    ]),
+  )
+
+  // Act
+  const result = await inspectNodeTestVariables(
+    session,
+    VITEST_SCOPES,
+    [
+      { path: 'count', mode: 'value', required: true },
+      { path: 'total', mode: 'value', required: true },
+    ],
+    new Map(),
+    AbortSignal.timeout(1_000),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { facts: result.facts, unavailable: result.unavailable },
+    { facts: [], unavailable: ['value:count', 'value:total'] },
   )
 })

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -185,6 +186,44 @@ test('a history resource or an explanation that names a study id this workspace 
         'Read codebook_status and use a resource reference from the selected instance and run; for a Node test history, copy its studyId or historyUri from codebook://node-history.',
     }
     assert.deepEqual(answers, [refusal, refusal, refusal])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an agent reading a test history that is removed while the read runs (moved to the Trash from Saved studies, for example): the resource is refused as NOT_FOUND, naming the id and the catalog, as for an id never saved; fails_when=the store's raw ENOENT reaches the agent as RUNTIME_FAILED "The study operation failed.", the answer task 60 replaced for an unknown id (Cycle 0052 task 75); why_new=pt3 /ship Step 11 (Claude adversarial): the history folder was checked only before the read; seam=a store whose read removes the history's folder first; no_claim=a history whose folder stays but whose journal cannot be read, which is a failed read
+test('a history resource whose history is removed while it is read is refused as NOT_FOUND, naming the id and the catalog', async () => {
+  // Arrange: the store's read finds the history's folder gone, as when the learner trashes it at that moment.
+  const { harness, store, studyId } = await serviceWithOneHistory()
+  const historyFolder = join(
+    harness.directory,
+    '.learning',
+    'node-tests.v1',
+    studyId,
+  )
+  const read = store.read.bind(store)
+  store.read = async (id) => {
+    await rm(historyFolder, { recursive: true, force: true })
+    return read(id)
+  }
+  try {
+    // Act
+    const answer = await readResource(
+      harness.service,
+      `codebook://node-history/${studyId}`,
+    ).then(
+      () => 'answered',
+      (error: unknown) =>
+        error instanceof StudyError
+          ? { code: error.code, message: error.message }
+          : String(error),
+    )
+
+    // Assert
+    assert.deepEqual(answer, {
+      code: 'NOT_FOUND',
+      message: `No Node test history ${studyId} is saved in this workspace. Read codebook://node-history and copy the studyId or historyUri of the history you mean.`,
+    })
   } finally {
     await harness.close()
   }

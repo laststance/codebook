@@ -45,7 +45,7 @@ import { readRecordingResource } from './utils/readRecordingResource'
 import { readRepositoryResource } from './utils/readRepositoryResource'
 import { secondsText } from './utils/secondsText'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
-import { unknownNodeHistoryError } from './utils/unknownNodeHistoryError'
+import { withKnownNodeHistory } from './utils/withKnownNodeHistory'
 
 /** The active-progress deadline in the whole seconds the repository-browser help names, so the help follows {@link ACTIVE_TIMEOUT_MS}. */
 const ACTIVE_TIMEOUT_SECONDS = ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND
@@ -147,10 +147,12 @@ export async function readResource(
         'NOT_FOUND',
         'Node history storage is unavailable for this workspace.',
       )
-    // An id this workspace holds no history for (mistyped, or another workspace's) is a reference to correct, not a failed study operation.
-    if (!service.nodeHistoryStore.holdsHistoryFolder(nodeHistoryMatch[1]))
-      throw unknownNodeHistoryError(nodeHistoryMatch[1])
-    const history = await service.nodeHistoryStore.read(nodeHistoryMatch[1])
+    const store = service.nodeHistoryStore,
+      studyId = nodeHistoryMatch[1]
+    // An unknown id, or a history removed while it is read, is a reference to correct, not a failed study operation (Cycle 0052 tasks 60, 75).
+    const history = await withKnownNodeHistory(store, studyId, () =>
+      store.read(studyId),
+    )
     const baseUri = `codebook://node-history/${nodeHistoryMatch[1]}`
     if (nodeHistoryMatch[2] === 'events')
       return readJsonPage(`${baseUri}/events`, history.entries)
@@ -164,8 +166,8 @@ export async function readResource(
       nodeHistoryMatch[2] === 'learning-material' ||
       nodeHistoryMatch[2]?.startsWith('learning-material/pages/')
     ) {
-      const material = await service.nodeHistoryStore.readLearningMaterial(
-        nodeHistoryMatch[1],
+      const material = await withKnownNodeHistory(store, studyId, () =>
+        store.readLearningMaterial(studyId),
       )
       const data = material ?? {
         studyId: nodeHistoryMatch[1],

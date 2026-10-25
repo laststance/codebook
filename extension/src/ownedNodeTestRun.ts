@@ -40,6 +40,7 @@ import { listVitestTestFiles } from './utils/listVitestTestFiles'
 import { prepareNodeTestLaunch } from './utils/prepareNodeTestLaunch'
 import type { PreparedNodeTestLaunch } from './utils/prepareNodeTestLaunch'
 import { selectCheckedNodeFrame } from './utils/selectCheckedNodeFrame'
+import { sourceImportBindings } from './utils/sourceImportBindings'
 import { thrownMessage } from './utils/thrownMessage'
 import { verifyVitestTestResult } from './utils/verifyVitestTestResult'
 
@@ -689,10 +690,15 @@ export class OwnedNodeTestRun {
       throw new Error(
         'Native debugger supplied no variable scope at the source stop.',
       )
+    // The stopped module's imports tell which export each imported name reads (Cycle 0052 task 70); the source is verified again after the capture.
+    const sourceImports = sourceImportBindings(
+      await readFile(selected.file, 'utf8'),
+    )
     const result = await inspectNodeTestVariables(
       bound.session,
       scopes.scopes,
       selected.inspections,
+      sourceImports,
       signal,
     )
     signal.throwIfAborted()

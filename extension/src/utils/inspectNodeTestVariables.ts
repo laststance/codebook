@@ -19,20 +19,22 @@ export type NodeTestFact = {
 
 /**
  * Reads only the declared debugger paths of a Node test stop through native DAP scopes, never evaluating an expression or retaining other local values; called by {@link OwnedNodeTestRun} at an owned source stop.
- * A path's root is the scope variable of that name, or, when none has it, the name a module exports to the stopped module: Vitest binds each imported module whole ({@link NODE_TEST_MODULE_BINDING_NAME}), a mocked one as a Proxy whose exports sit under {@link DEBUGGER_PROXY_TARGET_NAME}, an unmocked one as a namespace of getters that the debugger shows lazily. A lazy value on the path is expanded once, as the Variables view does (Cycle 0052 task 5).
+ * A path's root is the scope variable of that name, or, when none has it, a name the stopped source imports, read as the export it stands for ({@link sourceImportBindings}): Vitest binds each imported module whole ({@link NODE_TEST_MODULE_BINDING_NAME}), a mocked one as a Proxy whose exports sit under {@link DEBUGGER_PROXY_TARGET_NAME}, an unmocked one as a namespace of getters that the debugger shows lazily. A lazy value on the path (a getter, such as a Vitest spy's `mock`) is expanded once, which runs that getter in the test process as the Variables view does when the learner expands it (Cycle 0052 task 5).
  * @param debugSession - Verified native debug session.
  * @param scopes - Scopes of its checked source frame.
  * @param inspections - Validated requested facts.
+ * @param sourceImports - The stopped source's imported names, each with the export it reads ({@link sourceImportBindings}).
  * @param signal - Run cancellation.
  * @returns The facts read; the variables they came from; and, as `<mode>:<path>`, each required fact the debugger could not read (absent, ambiguous between two imported modules, empty or longer than {@link REPOSITORY_LITERAL_LIMIT_CHARS}), which the caller reports while the stop stays accepted. An unreadable optional fact is left out, as before.
  * @example
- * await inspectNodeTestVariables(debugSession, scopes, [{ path: 'revalidatePath.mock.calls.length', mode: 'value', required: true }], signal)
+ * await inspectNodeTestVariables(debugSession, scopes, [{ path: 'revalidatePath.mock.calls.length', mode: 'value', required: true }], new Map([['revalidatePath', 'revalidatePath']]), signal)
  * // => { facts: [{ path: 'revalidatePath.mock.calls.length', mode: 'value', display: '1', type: 'number' }], variables: [...], unavailable: [] }
  */
 export async function inspectNodeTestVariables(
   debugSession: Pick<vscode.DebugSession, 'customRequest'>,
   scopes: DebugProtocol.Scope[],
   inspections: RepositoryInspection[],
+  sourceImports: ReadonlyMap<string, string>,
   signal: AbortSignal,
 ): Promise<{
   facts: NodeTestFact[]
@@ -57,6 +59,7 @@ export async function inspectNodeTestVariables(
     const variable = await readDeclaredPath(
       read,
       lexicalScopes,
+      sourceImports,
       inspection.path,
     ).catch((error: unknown) => {
       failedPass.abort()
@@ -162,18 +165,22 @@ type ScopeRoot = { variable: DebugProtocol.Variable | undefined }
  * Walks one declared path, `root.segment.segment`, to its variable; called by {@link inspectNodeTestVariables}.
  * @param read - The pass's variable reader.
  * @param scopes - The stop's lexical scopes.
+ * @param sourceImports - The stopped source's imported names, each with the export it reads.
  * @param path - The declared path.
  * @returns The variable at the end of the path, or `undefined` when a step is missing.
- * @example await readDeclaredPath(read, scopes, 'revalidatePath.mock.calls.length') // => { name: 'length', value: '1', ... }
+ * @example await readDeclaredPath(read, scopes, new Map([['revalidatePath', 'revalidatePath']]), 'revalidatePath.mock.calls.length') // => { name: 'length', value: '1', ... }
  */
 async function readDeclaredPath(
   read: DebuggerVariableReader,
   scopes: DebugProtocol.Scope[],
+  sourceImports: ReadonlyMap<string, string>,
   path: string,
 ): Promise<DebugProtocol.Variable | undefined> {
   const [root = '', ...segments] = path.split('.')
   const local = await scopeVariable(read, scopes, root)
-  let variable = local ? local.variable : await importedName(read, scopes, root)
+  let variable = local
+    ? local.variable
+    : await importedName(read, scopes, sourceImports.get(root))
   for (const segment of segments)
     variable =
       variable &&
@@ -210,19 +217,21 @@ async function scopeVariable(
 }
 
 /**
- * Finds a name the stopped module imports: the export of that name in one of Vitest's module bindings ({@link NODE_TEST_MODULE_BINDING_NAME}) in the stop's scopes, read through a Proxy's {@link DEBUGGER_PROXY_TARGET_NAME} for a mocked module; called by {@link readDeclaredPath} when no scope variable has the name.
- * A name that two bindings export is left unread: without the source map's binding there is no telling which import the source means. A binding listed by two scopes counts once.
+ * Reads a name the stopped module imports, as the export the source says it stands for: that export in one of Vitest's module bindings ({@link NODE_TEST_MODULE_BINDING_NAME}) in the stop's scopes, read through a Proxy's {@link DEBUGGER_PROXY_TARGET_NAME} for a mocked module; called by {@link readDeclaredPath} when no scope variable has the root's name.
+ * A name the source does not import, and a namespace import, are left unread: no binding tells which module they mean. An export that two bindings have is left unread too: without the source map's binding there is no telling which import the source means. A binding listed by two scopes counts once.
  * @param read - The pass's variable reader.
  * @param scopes - The stop's lexical scopes.
- * @param name - The root's name.
- * @returns The export's variable, or `undefined` when no binding, or more than one, exports it.
+ * @param exportName - The export the root's name reads ({@link sourceImportBindings}: `default` for a default import, `*` for a namespace import), or `undefined` when the source does not import the name.
+ * @returns The export's variable, or `undefined` when the name is not read that way, or no binding, or more than one, exports it.
  * @example await importedName(read, scopes, 'revalidatePath') // => { name: 'revalidatePath', value: 'ƒ (...args)', ... }
  */
 async function importedName(
   read: DebuggerVariableReader,
   scopes: DebugProtocol.Scope[],
-  name: string,
+  exportName: string | undefined,
 ): Promise<DebugProtocol.Variable | undefined> {
+  // Only a name the source imports from one module's export is read; another module's export of the same name may hold another value (Cycle 0052 task 70).
+  if (exportName === undefined || exportName === '*') return undefined
   // A binding that two scopes list is one import: it is read once, so it never counts as a second module.
   const bindings = new Map<string, DebugProtocol.Variable>()
   for (const scope of scopes)
@@ -236,7 +245,7 @@ async function importedName(
   const exports = (
     await Promise.all(
       [...bindings.values()].map((binding) =>
-        moduleExport(read, binding, name),
+        moduleExport(read, binding, exportName),
       ),
     )
   ).filter((exported) => exported !== undefined)
@@ -274,7 +283,7 @@ async function moduleExport(
  * Expands a lazy debugger value (a getter the debugger shows as `(...)`) to the one value it stands for, as the Variables view does when the learner opens it; any other variable is returned as it is; called for every step of a declared path.
  * @param read - The pass's variable reader.
  * @param variable - The step's variable, if any.
- * @returns The resolved variable, the given one when the answer is not a single value, or `undefined` when the adapter refused the expansion.
+ * @returns The resolved variable, or `undefined` when the adapter refused the expansion or answered with no single value, so its `(...)` placeholder never stands for a value.
  * @throws What the reader threw for a timeout, a cancellation or a malformed answer.
  * @example await settledLazy(read, { name: 'ITEMS_PER_PAGE', value: '(...)', variablesReference: 50, presentationHint: { lazy: true } }) // => { name: 'ITEMS_PER_PAGE', value: '6', ... }
  */
@@ -290,8 +299,7 @@ async function settledLazy(
       throw error
     },
   )
-  if (!children) return undefined
-  const [value, ...others] = children
-  // The protocol answers a lazy value with exactly one variable; anything else is left as it is.
-  return value && others.length === 0 ? value : variable
+  const [value, ...others] = children ?? []
+  // The protocol answers a lazy value with exactly one variable; any other answer leaves the step unreadable (Cycle 0052 task 71).
+  return others.length === 0 ? value : undefined
 }
