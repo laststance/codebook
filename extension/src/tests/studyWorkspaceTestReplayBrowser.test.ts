@@ -1019,3 +1019,102 @@ test('a rebuilt captured-source tab the editor refused to close at the first sto
     await harness.close()
   }
 })
+
+// Value: protects=after a browser replay, the Application pane's tab names what it shows: a test replay opened afterwards titles it codebook · Application, not the recording's title; fails_when=the tab keeps codebook · Recorded application over the test output (N51-V4); why_new=Cycle 0052 task 4: only the recording and a live lease retitled the pane; seam=recordedReaderHarness, the native panel's title; no_claim=the native tab's look
+test('a test replay opened after a browser replay titles the Application pane codebook · Application', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const titleDuringRecording = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')?.title
+
+    // Act: the one-replay-at-a-time notice is answered by closing the browser replay.
+    harness.answerWarningDialogs(async () => 'Close browser replay')
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        titleDuringRecording,
+        titleDuringTestReplay: harness
+          .nativePanels()
+          .find((panel) => panel.kind === 'codebook.scopedBrowser')?.title,
+      },
+      {
+        titleDuringRecording: 'codebook · Recorded application',
+        titleDuringTestReplay: 'codebook · Application',
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Return to Live from a browser replay gives the Application pane its own title back; fails_when=the Live composition's pane keeps codebook · Recorded application (N51-V4); why_new=Cycle 0052 task 4; seam=recordedReaderHarness, the native panel's title; no_claim=the native tab's look
+test('Return to Live from a browser replay titles the Application pane codebook · Application', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Act
+    await harness.reader.action('return-current')
+
+    // Assert
+    assert.equal(
+      harness
+        .nativePanels()
+        .find((panel) => panel.kind === 'codebook.scopedBrowser')?.title,
+      'codebook · Application',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Return to Live from a browser replay releases the recorded viewport before the playback controller leaves, so the Application pane never paints the recording's "Loading recorded position…" line while it leaves the replay; fails_when=the controller's leave clears the still-open recorded viewport first (N52 Cursor take 742da665: two frames of "Loading recorded position…" under codebook · Recorded application before the Live pane, Cycle 0052 task 38); why_new=no test read the order of the viewport's clear and its release on a departure; seam=recordedReaderHarness, the recording viewport's clearRecorded and close; no_claim=the webview's paint timing, which N52 observes
+test('Return to Live from a browser replay releases the recorded viewport without clearing it to its loading line', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const viewport = harness.viewportInstances.find(
+      (instance) => instance.mode === 'recording',
+    )!
+    const viewportCalls: string[] = []
+    const clearRecorded = viewport.clearRecorded.bind(viewport),
+      close = viewport.close.bind(viewport)
+    viewport.clearRecorded = (): void => {
+      viewportCalls.push('clear')
+      clearRecorded()
+    }
+    viewport.close = (): void => {
+      viewportCalls.push('close')
+      close()
+    }
+
+    // Act
+    await harness.reader.action('return-current')
+
+    // Assert
+    assert.deepEqual(viewportCalls, ['close'])
+  } finally {
+    await harness.close()
+  }
+})

@@ -6,10 +6,12 @@ import { test } from 'node:test'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import {
+  readerSeams,
   recordedReaderHarness,
   workspaceHarness,
 } from './studyWorkspaceHarness'
 import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
+import { saveOtherBrowserStudy } from './utils/saveOtherBrowserStudy'
 import { lastView, saveTwoStopNodeHistory } from './utils/twoStopNodeHistory'
 
 type Harness = Awaited<ReturnType<typeof workspaceHarness>>
@@ -755,6 +757,503 @@ test('closing the reader waits for a reader-position write that is still running
     assert.equal(closedWhileWriting, false)
     assert.equal(await store.readReaderPosition(history.studyId), 4)
   } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a saved browser study chosen in the bottom panel's Saved studies while a test replay is shown and the bottom panel is maximized waits for the editor area, as a choice from the Study pane does: the panel stays maximized and the chosen study is selected in it; fails_when=leaving the summary composition opens the Study pane at once, which brings the hidden editor area back and takes the panel out of its maximized state (Cycle 0051 /ship review); why_new=Cycle 0052 task 15: showChosenStudy left the summary composition past the studyAwaitingEditorArea deferral; seam=recordedReaderHarness with a maximized bottom panel, the bottom panel's history message; no_claim=the native editor's own restore of the area
+test('a browser study chosen from a test replay with the bottom panel maximized keeps the panel maximized', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    await openReplayBesideBrowserStudy(harness)
+    harness.maximizePanel()
+
+    // Act
+    harness.receivePlaybackPanel({
+      type: 'history',
+      revision: lastView(harness)!.revision,
+      studyId: harness.studyId,
+    })
+    await waitUntil(
+      () =>
+        harness.reader.inspect().view?.nodeHistory === undefined &&
+        harness.reader.inspect().view?.model.selection.studyId ===
+          harness.studyId &&
+        !harness.reader.inspect().view?.loading,
+      'the browser study is chosen',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        panelMaximized: harness.isPanelMaximized(),
+        studyPaneShown:
+          harness.panelColumn('codebook.studyContext') !== undefined,
+      },
+      { panelMaximized: true, studyPaneShown: false },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=once the learner restores the maximized bottom panel, the browser study chosen over a test replay shows in the Study composition and the retired replay's recorded-source tab closes; fails_when=the deferred arrangement never runs, or the slot tab stays open beside the study; why_new=Cycle 0052 task 15: the slot's close waits for the editor area with the chosen study; seam=recordedReaderHarness, restorePanel and the reader's refresh; no_claim=the native editor's own restore of the area
+test('restoring the panel after a browser study was chosen from a maximized test replay shows the Study pane and closes the slot tab', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    await chooseBrowserStudyWithPanelMaximized(harness)
+    const slotTabsWhileMaximized = slotTabCount(harness)
+
+    // Act
+    harness.restorePanel()
+    await readerSeams(harness).refresh()
+    await waitUntil(
+      () =>
+        harness.panelColumn('codebook.studyContext') !== undefined &&
+        slotTabCount(harness) === 0,
+      'the Study pane shows and the slot tab closes',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(slotTabsWhileMaximized, 1)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a test replay opened after a browser study was chosen with the bottom panel maximized keeps its own recorded-source tab when the wait for the editor area ends; fails_when=the end of the wait closes every slot tab, the new replay's among them (OCR self-review of b37912f4); why_new=Cycle 0052 task 15's deferred slot close; seam=recordedReaderHarness with a maximized bottom panel, restorePanel and the reader's refresh; no_claim=the native editor's own restore of the area
+test('a test replay opened while a chosen browser study waits for the editor area keeps its slot tab when the wait ends', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    const second = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await chooseBrowserStudyWithPanelMaximized(harness)
+
+    // Act
+    await harness.reader.openLearningReplay(second.studyId)
+    await waitUntil(
+      () =>
+        harness.reader.inspect().view?.nodeHistoryPosition?.sequence === 2 &&
+        !harness.reader.inspect().view?.loading,
+      'the second test replay lands on its first stop',
+      READER_RESULT_BOUND_MS,
+    )
+    harness.restorePanel()
+    await readerSeams(harness).refresh()
+    await readerSeams(harness).refresh()
+
+    // Assert
+    assert.equal(slotTabCount(harness), 1)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a second Saved studies choice made while the first still waits for the hidden editor area keeps the retired replay's slot tabs waiting too, so the maximized bottom panel stays maximized; fails_when=the second choice's retirement closes the waiting slot tabs, which brings the editor area back (local CodeRabbit round 2, minor); why_new=Cycle 0052 task 15; seam=recordedReaderHarness with a maximized bottom panel, two history messages from the bottom panel; no_claim=the native editor's own restore of the area
+test('a second Saved studies choice while the first waits for the editor area keeps the panel maximized', async () => {
+  // Arrange: a second saved browser study stands in Saved studies beside the first.
+  const harness = await recordedReaderHarness(true)
+  try {
+    const second = await saveOtherBrowserStudy(
+      await harness.reader.learningStorage(),
+    )
+    await openReplayBesideBrowserStudy(harness)
+    harness.maximizePanel()
+    const chooseSavedStudy = async (studyId: string): Promise<void> => {
+      harness.receivePlaybackPanel({
+        type: 'history',
+        revision: harness.reader.inspect().view!.revision,
+        studyId,
+      })
+      await waitUntil(
+        () =>
+          harness.reader.inspect().view?.nodeHistory === undefined &&
+          harness.reader.inspect().view?.model.selection.studyId === studyId &&
+          !harness.reader.inspect().view?.loading,
+        'the saved study is chosen',
+        READER_RESULT_BOUND_MS,
+      )
+    }
+    await chooseSavedStudy(harness.studyId)
+
+    // Act
+    await chooseSavedStudy(second.id)
+
+    // Assert
+    assert.equal(harness.isPanelMaximized(), true)
+  } finally {
+    await harness.close()
+  }
+})
+
+/**
+ * Opens a saved test replay beside a saved browser study, maximizes the bottom panel and chooses the browser study there, so the study waits for the hidden editor area with the replay's slot tab; the round-3 tests of Cycle 0052 task 15 start from it.
+ * @param harness - The recorded reader harness.
+ * @returns The test replay's header.
+ * @example const history = await chooseBrowserStudyWithPanelMaximized(harness)
+ */
+async function chooseBrowserStudyWithPanelMaximized(
+  harness: Awaited<ReturnType<typeof recordedReaderHarness>>,
+) {
+  const history = await openReplayBesideBrowserStudy(harness)
+  harness.maximizePanel()
+  harness.receivePlaybackPanel({
+    type: 'history',
+    revision: lastView(harness)!.revision,
+    studyId: harness.studyId,
+  })
+  await waitUntil(
+    () =>
+      harness.reader.inspect().view?.nodeHistory === undefined &&
+      harness.reader.inspect().view?.model.selection.studyId ===
+        harness.studyId &&
+      !harness.reader.inspect().view?.loading,
+    'the browser study is chosen',
+    READER_RESULT_BOUND_MS,
+  )
+  return history
+}
+
+/**
+ * Counts the recorded-source slot tabs in every group.
+ * @param harness - The recorded reader harness.
+ * @returns How many slot tabs stand open.
+ * @example slotTabCount(harness) // => 1
+ */
+function slotTabCount(
+  harness: Awaited<ReturnType<typeof recordedReaderHarness>>,
+): number {
+  return harness.groups
+    .flatMap((group) => group.tabs)
+    .filter((tab) => JSON.stringify(tab.input).includes('/node-history-slot/'))
+    .length
+}
+
+// Value: protects=the same test replay opened again while a chosen browser study waits for the editor area keeps its reused slot tab when the panel is restored; fails_when=the end of the wait closes the reused tab as the earlier wait's (local CodeRabbit round 3, minor); why_new=Cycle 0052 task 15; seam=recordedReaderHarness with a maximized bottom panel, restorePanel and the reader's refresh; no_claim=the native editor's own restore of the area
+test('the same test replay opened again while a chosen browser study waits keeps its slot tab when the panel is restored', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    const history = await chooseBrowserStudyWithPanelMaximized(harness)
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        harness.reader.inspect().view?.nodeHistory?.header.studyId ===
+          history.studyId && !harness.reader.inspect().view?.loading,
+      'the test replay is shown again',
+      READER_RESULT_BOUND_MS,
+    )
+    harness.restorePanel()
+    await readerSeams(harness).refresh()
+    await readerSeams(harness).refresh()
+
+    // Assert
+    assert.equal(slotTabCount(harness), 1)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the retired replay's waiting slot tab closes when the panel is restored also after Cursor rebuilt the tab objects meanwhile; fails_when=the record holds only the old tab objects, so nothing matches and the slot tab stays beside the chosen study (local CodeRabbit round 3, minor); why_new=Cycle 0052 task 15; seam=rebuildTabObjectsNow (Cursor's whole new tab model), restorePanel and the reader's refresh; no_claim=Cursor's own timing of the rebuild
+test('a waiting slot tab closes on the panel’s restore also after Cursor rebuilt the tab objects', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    harness.useHostAppName('Cursor')
+    await chooseBrowserStudyWithPanelMaximized(harness)
+    const slotTabsWhileWaiting = slotTabCount(harness)
+    harness.rebuildTabObjectsNow()
+
+    // Act
+    harness.restorePanel()
+    await readerSeams(harness).refresh()
+    await waitUntil(
+      () => harness.panelColumn('codebook.studyContext') !== undefined,
+      'the Study pane shows',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { slotTabsWhileWaiting, slotTabsAfter: slotTabCount(harness) },
+      { slotTabsWhileWaiting: 1, slotTabsAfter: 0 },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a Saved studies choice that a newer test replay entry overtakes while it reads whether the editor area is hidden retires nothing: the newer replay and its debugger stay; fails_when=the old choice retires the replay the learner opened during its read (local CodeRabbit round 3, minor); why_new=Cycle 0052 task 15's area read before the retirement; seam=holdNextCommand on vscode.getEditorLayout; no_claim=the native editor's answer time
+test('a Saved studies choice overtaken during its editor-area read retires nothing', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  let release = (): void => {}
+  try {
+    await openReplayBesideBrowserStudy(harness)
+    const second = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    const held = harness.holdNextCommand('vscode.getEditorLayout')
+    release = held.release
+    harness.receivePlaybackPanel({
+      type: 'history',
+      revision: lastView(harness)!.revision,
+      studyId: harness.studyId,
+    })
+    await held.started
+
+    // Act: the learner opens another test replay while the choice reads the layout.
+    const entry = harness.reader.openLearningReplay(second.studyId)
+    await waitUntil(
+      () =>
+        harness.reader.inspect().view?.nodeHistory?.header.studyId ===
+          second.studyId && !harness.reader.inspect().view?.loading,
+      'the second test replay is shown',
+      READER_RESULT_BOUND_MS,
+    )
+    held.release()
+    await entry
+    await readerSeams(harness).refresh()
+
+    // Assert
+    assert.equal(
+      harness.reader.inspect().view?.nodeHistory?.header.studyId,
+      second.studyId,
+    )
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
+// Value: protects=a test replay entry made while a chosen browser study waits for the hidden editor area closes the slot tabs that waited with it, also when the new replay's own slot never shows; fails_when=the entry drops the record of the waiting tabs, so a failed open leaves the earlier replay's slot tab open for good (local CodeRabbit round 4, minor); why_new=Cycle 0052 task 15; seam=failCurrentSourceOpen (the new replay's slot cannot open); no_claim=the native failure's cause
+test('a test replay entry whose slot fails to show still closes the slot tab that waited for the editor area', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    const second = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await chooseBrowserStudyWithPanelMaximized(harness)
+    const slotTabsWhileWaiting = slotTabCount(harness)
+    harness.failCurrentSourceOpen()
+
+    // Act
+    await harness.reader.openLearningReplay(second.studyId)
+    await waitUntil(
+      () =>
+        harness.reader.inspect().view?.nodeHistory?.header.studyId ===
+          second.studyId && !harness.reader.inspect().view?.loading,
+      'the second test replay is selected',
+      READER_RESULT_BOUND_MS,
+    )
+    harness.restoreCurrentSourceOpen()
+
+    // Assert
+    assert.deepEqual(
+      { slotTabsWhileWaiting, slotTabsAfter: slotTabCount(harness) },
+      { slotTabsWhileWaiting: 1, slotTabsAfter: 0 },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an explicit display (Focus source) that ends a chosen browser study's wait for the hidden editor area closes the slot tabs that waited with it; fails_when=renderSelection ends the wait and the waiting slot tab stays open beside the shown study (local CodeRabbit round 4, minor); why_new=Cycle 0052 task 15; seam=the reader's source action; no_claim=the native editor's own restore of the area
+test('an explicit display that ends the wait for the editor area closes the slot tab that waited', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    await chooseBrowserStudyWithPanelMaximized(harness)
+    const slotTabsWhileWaiting = slotTabCount(harness)
+
+    // Act
+    await harness.reader.action('source')
+
+    // Assert
+    assert.deepEqual(
+      { slotTabsWhileWaiting, slotTabsAfter: slotTabCount(harness) },
+      { slotTabsWhileWaiting: 1, slotTabsAfter: 0 },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an explicit display whose close of the waiting slot tabs outlives a Close and a new Open is cut off with the closed reader, so it never renders into the reader the learner opened again; fails_when=renderSelection reads the reader's lifetime only after that close and goes on rendering the reopened reader (OCR self-review, Cycle 0052 task 15); why_new=Cycle 0052 task 15; seam=holdNextTabCloseResponse during the source action's slot close; no_claim=the native editor's own restore of the area
+test('an explicit display that outlives Close and a new Open during its slot close renders nothing into the reopened reader', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    await chooseBrowserStudyWithPanelMaximized(harness)
+    const held = harness.holdNextTabCloseResponse()
+    const display = harness.reader.action('source').then(
+      () => 'rendered',
+      (error: unknown) => String(error),
+    )
+    await held.started
+    await harness.reader.close()
+    await harness.reader.open()
+
+    // Act
+    held.release()
+
+    // Assert
+    assert.equal(
+      await display,
+      'Error: The study workspace was closed; repeat the action explicitly if needed.',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a slot tab the learner closes by hand after Cursor rebuilt the tab objects, and opens again at its address, survives the end of the wait for the editor area; fails_when=the record keeps the closed tab's address and the end of the wait closes the tab the learner opened (local CodeRabbit round 4, minor); why_new=Cycle 0052 task 15; seam=rebuildTabObjectsNow, closeTabByHand, restoreLeftoverCapturedSource at the slot's path, restorePanel and the reader's refresh; no_claim=the native tab strip
+test('a waiting slot tab the learner closes after Cursor rebuilt the tabs and opens again survives the end of the wait', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    harness.useHostAppName('Cursor')
+    await chooseBrowserStudyWithPanelMaximized(harness)
+    harness.rebuildTabObjectsNow()
+    const rebuiltSlotTab = harness.groups
+      .flatMap((group) => group.tabs)
+      .find((tab) => JSON.stringify(tab.input).includes('/node-history-slot/'))
+    assert.ok(rebuiltSlotTab)
+    const slotPath = (rebuiltSlotTab.input as { uri: { path: string } }).uri
+      .path
+    harness.closeTabByHand(rebuiltSlotTab)
+    const reopenedTab = harness.restoreLeftoverCapturedSource({
+      active: false,
+      path: slotPath,
+    })
+
+    // Act
+    harness.restorePanel()
+    await readerSeams(harness).refresh()
+    await waitUntil(
+      () => harness.panelColumn('codebook.studyContext') !== undefined,
+      'the Study pane shows',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(
+      harness.groups.flatMap((group) => group.tabs).includes(reopenedTab),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a refused close of the slot tabs that waited for the hidden editor area does not stop the explicit display that ended the wait: the chosen study is shown and the refusal is told on the layout line; fails_when=closeSlotTabsAwaitingArea lets the editor's refusal escape and the display rejects (Cycle 0052 task 15); why_new=the other wait tests accept every close, so the new catch is never reached; seam=refuseCloseOfTabsShowing on the slot tab, the reader's source action; no_claim=the wording of the editor's refusal
+test('a refused close of the slot tab that waited for the editor area is told and does not stop the display', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  let acceptClose = (): void => {}
+  try {
+    await chooseBrowserStudyWithPanelMaximized(harness)
+    acceptClose = harness.refuseCloseOfTabsShowing('/node-history-slot/')
+
+    // Act
+    await harness.reader.action('source')
+
+    // Assert
+    assert.deepEqual(
+      {
+        slotTabsAfter: slotTabCount(harness),
+        studyShown:
+          harness.reader.inspect().view?.model.selection.studyId ===
+          harness.studyId,
+        layoutLine: [...(harness.reader.inspect().view?.errors ?? [])].filter(
+          (line) => line.includes('previous recorded source tab'),
+        ),
+      },
+      {
+        slotTabsAfter: 1,
+        studyShown: true,
+        layoutLine: [
+          'Error: The previous recorded source tab could not close. Arrange the Codebook panes manually. Error: The editor kept an earlier recorded source tab.',
+        ],
+      },
+    )
+  } finally {
+    acceptClose()
+    await harness.close()
+  }
+})
+
+// Value: protects=a refused close of the waiting slot tabs at an explicit display keeps them recorded, so the next explicit display closes the slot tab once the editor accepts; fails_when=the failed close drops the record, and the slot tab of the retired replay stays open beside the shown study for good (Codex C3 / Claude F4 of the pt1 /ship review, Cycle 0052 task 35); why_new=the refusal test checked the first display only; seam=refuseCloseOfTabsShowing for the first close, the reader's source action twice; no_claim=the wording of the editor's refusal
+test('a slot tab whose close the editor refused at one display closes at the next display', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  let acceptClose = (): void => {}
+  try {
+    await chooseBrowserStudyWithPanelMaximized(harness)
+    acceptClose = harness.refuseCloseOfTabsShowing('/node-history-slot/')
+    await harness.reader.action('source')
+    const slotTabsAfterRefusal = slotTabCount(harness)
+    acceptClose()
+
+    // Act
+    await harness.reader.action('source')
+
+    // Assert
+    assert.deepEqual(
+      { slotTabsAfterRefusal, slotTabsAfterAccept: slotTabCount(harness) },
+      { slotTabsAfterRefusal: 1, slotTabsAfterAccept: 0 },
+    )
+  } finally {
+    acceptClose()
+    await harness.close()
+  }
+})
+
+// Value: protects=a test replay entry whose slot close for the waiting tabs is overtaken by a Return to Live and a browser recording opened meanwhile asks no one-replay-at-a-time notice and opens no test replay; fails_when=the entry goes on after its slot close with a ticket a newer choice superseded, asks to close the browser replay the learner just opened and opens the test replay over it (Codex C4, Cycle 0052 task 35); why_new=the entry's ticket was checked before the slot close only; seam=holdNextTabCloseResponse during the entry's closeSlotTabsAwaitingArea, answerWarningDialogs counting notices; no_claim=the native notification
+test('a test replay entry overtaken during its slot close asks no notice for a browser recording opened meanwhile', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  let release = (): void => {}
+  try {
+    const history = await chooseBrowserStudyWithPanelMaximized(harness)
+    let noticesShown = 0
+    harness.answerWarningDialogs(async () => {
+      noticesShown++
+      return 'Close browser replay'
+    })
+    const held = harness.holdNextTabCloseResponse()
+    release = held.release
+    const entry = harness.reader.openLearningReplay(history.studyId)
+    await held.started
+
+    // Act: the learner returns to Live and opens the browser recording while the entry's slot close is pending.
+    await harness.reader.action('return-current')
+    await harness.reader.openRecording(harness.studyId)
+    held.release()
+    await entry
+    await harness.controller.settle()
+
+    // Assert
+    assert.deepEqual(
+      {
+        noticesShown,
+        testReplay: harness.reader.inspect().view?.nodeHistory?.header.studyId,
+        recording: harness.controller.state().studyId,
+      },
+      { noticesShown: 0, testReplay: undefined, recording: harness.studyId },
+    )
+  } finally {
+    release()
     await harness.close()
   }
 })

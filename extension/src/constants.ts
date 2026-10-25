@@ -8,7 +8,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.8'
-export const EXTENSION_VERSION = '0.2.39'
+export const EXTENSION_VERSION = '0.2.40'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -491,6 +491,10 @@ export const SUMMARY_BESIDE_CHAT_MOVE_ARGUMENT = {
   viewIds: ['codebook.learningSummary'],
   destinationId: 'workbench.panel.chat',
 } as const
+/** The Application pane's own title: at its creation, and again when another writer takes its document after a browser replay retitled it (Cycle 0052 task 4). */
+export const APPLICATION_PANE_TITLE = 'codebook · Application'
+/** The Application pane's title while it shows a browser replay's recorded frames. */
+export const RECORDED_APPLICATION_PANE_TITLE = 'codebook · Recorded application'
 /** Why the Learning summary opens on the left in Cursor and how to keep it on the right; Cursor rejects an extension's own secondary side bar container, so only the learner's Move View can place it there. */
 export const SUMMARY_PLACEMENT_OFFER =
   'Cursor opens the Codebook Learning summary in its primary side bar. To keep it on the right, move it once: choose "New Secondary Side Bar Entry" in the list that opens.'

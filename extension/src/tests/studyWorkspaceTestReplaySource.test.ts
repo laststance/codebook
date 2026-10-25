@@ -1902,8 +1902,9 @@ test('returning to Live after a recorded-source slot failed to open leaves no fa
     await harness.reader.action('return-current')
 
     // Assert
+    // The Learning summary takes no Study message once the replay is left (Cycle 0052 task 2), so the bottom panel, which every publish reaches, shows the reader's state.
     assert.deepEqual(slotTabs(harness), [])
-    assert.equal(lastView(harness)?.errors.length, 0)
+    assert.equal(harness.playbackPanelMessages.at(-1)?.errors.length, 0)
   } finally {
     await harness.close()
   }
@@ -3062,7 +3063,8 @@ test('retiring a replay publishes the removal of its slot failure row', async ()
     await harness.reader['retireNodeHistorySelection']()
 
     // Assert
-    assert.equal(lastView(harness)?.errors.length, 0)
+    // The Learning summary takes no Study message once the replay is left (Cycle 0052 task 2), so the bottom panel, which every publish reaches, shows the reader's state.
+    assert.equal(harness.playbackPanelMessages.at(-1)?.errors.length, 0)
   } finally {
     await harness.close()
   }

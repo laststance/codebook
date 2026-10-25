@@ -15,6 +15,7 @@ import {
   APPLICATION_GROUP_MAY_HAVE_KEYBOARD_MESSAGE,
   APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE,
   APPLICATION_PANE_CLOSED_MESSAGE,
+  APPLICATION_PANE_TITLE,
   EDITOR_GROUPS_PRESERVED_MESSAGE,
   CHAT_KEYBOARD_RETURNED_MESSAGES,
   CHOICE_RETIRED_ERROR_KINDS,
@@ -53,6 +54,7 @@ import {
   READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE,
   READER_CLOSE_STORAGE_TIMEOUT_MS,
   type ReaderErrorKind,
+  RECORDED_APPLICATION_PANE_TITLE,
   RECORDING_WINDOW_FOCUS_WAIT_MS,
   REPLAY_COVERED_LABEL,
   REPLAY_VIEWPORT_RECEIPT_LIMIT,
@@ -311,6 +313,7 @@ import {
 } from './utils/projectNodeTestApplication'
 import { projectNodeTestSection } from './utils/projectNodeTestSection'
 import { projectPlaybackStudy } from './utils/projectPlaybackStudy'
+import { pruneClosedTabRecord } from './utils/pruneClosedTabRecord'
 import { readNodeTestOutputReport } from './utils/readNodeTestOutputReport'
 import {
   type OpenRequestSettled,
@@ -324,6 +327,7 @@ import {
   recordedLeftoverGroups,
 } from './utils/recordedLeftoverGroups'
 import { recordingNotShownReason } from './utils/recordingNotShownReason'
+import { replacedTabAddresses } from './utils/replacedTabAddresses'
 import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition'
 import { sanitizeCause } from './utils/sanitizeCause'
 import { sanitizedStack } from './utils/sanitizedStack'
@@ -838,11 +842,15 @@ export class StudyWorkspace {
   private nodeSourceSlotShownRequest = 0
   /** How many times the recorded-source slot was retired ({@link retireNodeSourceSlot}); a show that began before a retirement is closed when it completes ({@link settleLateSlotShow}, F364). */
   private nodeSourceSlotRetirements = 0
+  /** The retired test replay's recorded-source tabs, held as the editor's tab objects with the address each had, that were left open because the editor area was hidden when a saved study was chosen over it: a close of the tab a group shows brings the area back, so they close once the area is shown again or the wait for it ends ({@link closeSlotTabsAwaitingArea}, Cycle 0052 task 15). A tab object the editor rebuilt (Cursor) matches by its address; a test replay entry ends the record, so a slot tab of a replay opened later is never among them. */
+  private nodeSourceSlotTabsAwaitingArea?: ReadonlyMap<vscode.Tab, string>
   private playback?: PlaybackController
   private replayDebugger?: ReplayDebugger
   /** The disposal of replaced historical debuggers that is still running; the editor accepts the next owner only once it has settled. */
   private replayDebuggerRetirement?: Promise<void>
   private recordingActive = false
+  /** The study whose same-study Reload is loading its recording again: from the Reload's leave until {@link loadPlayback} makes the recording active again or a newer departure supersedes it ({@link leavePlayback}, {@link close}); a failed load keeps it. While it is set the summary composition still shows that browser replay, so the Reload's loading, error and retry messages reach its Learning summary (Cycle 0052 tasks 3 and 18). */
+  private recordingReloadStudyId?: string
   /** The captured-source tabs of the browser replay that were open when it was last left, with the address each had, held as the editor's own tab objects (F485): kept until a test replay's first slot show gets the editor to close them (a refused close keeps them for the next show, F484), or until a browser replay starts, the test replay's slot ends or the reader closes (F482). A tab the learner closes by hand leaves it ({@link forgetClosedRetiredBrowserReplayTabs}), so one the learner opens after the replay was left, even at a recorded address, is a different tab and is not in it; an editor that rebuilds its tab objects (Cursor, at a removed group) leaves entries no tab object matches, and those match by their address (F466, F474). */
   private retiredBrowserReplayTabs?: ReadonlyMap<vscode.Tab, string>
   private replayViewport?: BrowserViewport
@@ -956,6 +964,10 @@ export class StudyWorkspace {
   private liveComposition = false
   /** Counts the learner's test replay entries ({@link openNodeHistoryFromHost}) in the order they were made, so the latest one wins also while an earlier one still enters the summary composition (EN19, Cycle 0051). */
   private nodeHistoryEntryRequest = 0
+  /** Aborts when the latest test replay entry's ticket ({@link nodeHistoryEntryRequest}) is superseded by a newer entry, a Return or a Close ({@link supersedeNodeHistoryEntries}), so an entry waiting for the work window's focus ends at once instead of holding the next entry's turn (Cycle 0052 task 40). */
+  private nodeHistoryEntryCancellation = new AbortController()
+  /** How many test replay entries ({@link openNodeHistoryFromHost}) are under way, the waiting ones included; the last superseded entry to end leaves the empty summary composition an earlier one built only when none is under way to fill it (Cycle 0052 task 12). */
+  private nodeHistoryEntriesUnderWay = 0
   /** Settles when the test replay entry in front has entered its composition: entries take turns there, so two entries never run {@link open} at once (one would be refused as busy and leave no replay shown). */
   private nodeHistoryEntryTurn: Promise<void> = Promise.resolve()
   /** `true` while {@link openNodeHistoryFromHost} enters the summary composition for a test replay that has not begun opening ({@link testReplayHoldsComposition}). */
@@ -1353,7 +1365,7 @@ export class StudyWorkspace {
             'The recorded source of the test replay is not shown in its pane. Use Focus source to show it again.'
         else if (playback?.readiness === 'loading')
           reason = 'The recorded source is opening in its native pane.'
-        else if (this.recordingActive && playback?.readiness === 'failed')
+        else if (this.browserReplayShown() && playback?.readiness === 'failed')
           reason = recordingNotShownReason(playback.reason)
         else reason = this.capturedSourceReason()
       } else if (!matchingColumns)
@@ -1375,10 +1387,13 @@ export class StudyWorkspace {
       presentationControlRevision: this.presentationControlRevision,
       reader: {
         contentRevision: this.revision + this.readerSelectionRevision,
-        contentTab: this.recordingActive ? 'recording' : this.selection.tab,
+        // A same-study Reload that is loading or failed still shows its browser replay, so an agent returns to the run before it starts another (Cycle 0052 task 18).
+        contentTab: this.browserReplayShown()
+          ? 'recording'
+          : this.selection.tab,
         followingCurrentRun:
           this.selection.follow &&
-          !this.recordingActive &&
+          !this.browserReplayShown() &&
           !this.selectedNodeHistory,
       },
       mode: this.presentationMode,
@@ -1472,13 +1487,15 @@ export class StudyWorkspace {
         'STALE_PRESENTATION',
         'The reader content changed. Read current presentation state before returning to live execution.',
       )
+    // A Return supersedes every test replay entry still waiting for its turn, also one that finds the reader in Live already (Cycle 0052 task 12).
+    this.supersedeNodeHistoryEntries()
     // A return can change the selection while native source rendering fails; report that partial state honestly.
     // A failed native source open leaves the selection current, so explicit retry must render it again.
     // A selected Node journal masks the live application even while the selection still follows the run.
     if (
       this.selectedNodeHistory ||
       !this.selection.follow ||
-      this.recordingActive ||
+      this.browserReplayShown() ||
       this.selection.tab !== 'live' ||
       !this.liveComposition ||
       !this.sourceReady()
@@ -8153,7 +8170,7 @@ export class StudyWorkspace {
       const currentRecord = this.currentRecord()
       // A selected or opening test replay is read in the Study composition, whatever run is current (F208).
       const liveComposition =
-        !this.recordingActive &&
+        !this.browserReplayShown() &&
         !this.testReplayHoldsComposition() &&
         this.selection.follow &&
         this.selection.tab === 'live' &&
@@ -8164,7 +8181,7 @@ export class StudyWorkspace {
         )
       // A browser recording and a selected or opening test replay share the summary composition (Cycle 0051, DS-A): the Learning summary stands in the chat's place and the Study pane closes.
       const summaryComposition =
-        this.recordingActive || this.testReplayHoldsComposition()
+        this.browserReplayShown() || this.testReplayHoldsComposition()
       const compositionChanged =
         liveComposition !== this.liveComposition ||
         summaryComposition !== this.summaryComposition
@@ -8633,6 +8650,8 @@ export class StudyWorkspace {
    */
   private forgetUnopenedComposition(): void {
     if (!this.hasComposition()) return
+    // A failed first entry withdraws the replay's document it may have given the Learning summary (Cycle 0052 task 18).
+    if (this.summaryComposition) this.clearLearningSummary()
     this.liveComposition = false
     this.summaryComposition = false
     this.layoutReceipt = undefined
@@ -8764,7 +8783,8 @@ export class StudyWorkspace {
       clearInterval(this.timer)
       this.timer = undefined
     }
-    if (this.opened && !this.recordingActive) await this.renderSelection()
+    // A same-study Reload that is loading or failed still shows its browser replay: no Study selection is rendered under it (Cycle 0052 task 33).
+    if (this.opened && !this.browserReplayShown()) await this.renderSelection()
     this.publishLearningSave()
     if (failure)
       throw new Error(
@@ -8893,15 +8913,14 @@ export class StudyWorkspace {
       return
     }
     if (action === 'reload-recording') {
-      const studyId = this.selection.studyId
-      if (!this.recordingActive || !studyId)
-        throw new Error('Select a recording first.')
-      // Same-study Reload keeps its Summary document so a failed read can publish recovery there.
-      this.leavePlayback(true)
-      await this.openRecording(studyId)
+      await this.reloadShownRecording()
       return
     }
-    if (action === 'return-current') await this.returnCurrentSelection()
+    if (action === 'return-current') {
+      // The learner's Return supersedes every test replay entry still waiting for its turn (Cycle 0052 task 12).
+      this.supersedeNodeHistoryEntries()
+      await this.returnCurrentSelection()
+    }
     if (action === 'source') {
       // A test replay's source is its recorded-source slot; the Study's own selection shows no article source (F156), so Focus source fronts the slot (F383).
       if (this.testReplayHoldsComposition()) await this.focusNodeSourceSlot()
@@ -9119,8 +9138,36 @@ export class StudyWorkspace {
         this.publish()
         return
       }
+      // A same-study Reload whose recording did not load still shows its browser replay: Retry loads that recording again, as its Reload does, and renders no Study selection under the replay (Cycle 0052 task 32).
+      if (!this.recordingActive && this.browserReplayShown()) {
+        await this.reloadShownRecording()
+        return
+      }
       await this.renderSelection(true, true)
     }
+  }
+
+  /**
+   * Loads the shown browser replay's recording again (a same-study Reload): the Summary keeps its document, so a failed read can publish its recovery there, and the Reload's mark keeps the replay shown until the recording is active again ({@link loadPlayback}) or a departure supersedes it; a failed load keeps it. Called by the Reload action and by Retry while a Reload's recording has not loaded (Cycle 0052 tasks 18 and 31).
+   * @returns Once the recording's open is accepted; the load itself continues in the playback controller.
+   * @throws When no browser replay is shown, or it names no study; {@link openRecording}'s refusals of a pending presentation change and of a study on its way to the Trash, before anything changes.
+   * @example await this.reloadShownRecording()
+   */
+  private async reloadShownRecording(): Promise<void> {
+    // A Reload whose recording has not loaded (still loading, or failed) retries the recording the replay last asked for.
+    const studyId = this.recordingActive
+      ? this.selection.studyId
+      : (this.playback?.state().studyId ?? this.selection.studyId)
+    if (!this.browserReplayShown() || !studyId)
+      throw new Error('Select a recording first.')
+    // What openRecording would refuse is refused before the replay is left, so a refused Reload changes nothing: a presentation change that began while Retry read the storage keeps the replay and its failure as they were (Cycle 0052 task 39). After these checks openRecording only awaits the reader's finished initialization.
+    this.assertPresentationIdle()
+    this.assertStudyNotMoving(studyId)
+    // The controller keeps a pending load of the same study and would start none: a Reload whose recording has not loaded cancels that load first, so the recording loads again (Cycle 0052 task 35).
+    if (!this.recordingActive) this.playback?.leave()
+    this.leavePlayback(true)
+    this.recordingReloadStudyId = studyId
+    await this.openRecording(studyId)
   }
 
   /**
@@ -9150,6 +9197,13 @@ export class StudyWorkspace {
       this.historyRequest++
       this.leavePlayback()
       this.pendingHistory = undefined
+      // A test replay still opening is superseded by the request above and ends here with its opening marker, loading state and the summary it drew, so this Return arranges Live at once; its open finds itself superseded and changes nothing more (Cycle 0052 task 30).
+      if (this.pendingNodeHistory !== undefined) {
+        this.clearLearningSummary()
+        this.pendingNodeHistory = undefined
+        this.pendingNodeHistoryStudyId = undefined
+        this.loading = false
+      }
       // A selected Node journal would otherwise keep masking the live application and debugger after the return.
       await this.retireNodeHistorySelection()
       this.assertLifetime(lifetime)
@@ -9323,6 +9377,11 @@ export class StudyWorkspace {
       !this.message().model.progressByItem.some((item) => item.id === selected)
     )
       throw new Error('Select the matching study profile first.')
+    // A same-study Reload shows its browser replay with no recording to seek in until its load ends: a step is selected in the replay once it is loaded, never outside it (Cycle 0052 task 18).
+    if (!this.recordingActive && this.browserReplayShown())
+      throw new Error(
+        'The recording is not loaded. Select this step once it has loaded again.',
+      )
     this.readerSelectionRevision++
     this.historyRequest++
     if (this.recordingActive) {
@@ -9467,6 +9526,11 @@ export class StudyWorkspace {
     // A closed reader carries no reason of a reading or a refused change that ended with it.
     this.presentationReason = undefined
     this.repositoryRecordingOpen = undefined
+    this.recordingReloadStudyId = undefined
+    // The reader's close closes its owned tabs, the slot's among them.
+    this.nodeSourceSlotTabsAwaitingArea = undefined
+    // A test replay entry still waiting for its turn belongs to the closed reader and never opens it again (Cycle 0052 task 12).
+    this.supersedeNodeHistoryEntries()
     // Closing disposes the native session: a Node stop still loading its values is abandoned, and no Run and Debug hint may survive a reopen.
     this.selectedNodeHistoryRequest++
     // The cut-off selection no longer clears its requested moment (its token is gone), so the bump gives it back.
@@ -10791,7 +10855,8 @@ export class StudyWorkspace {
     if (this.opened && !this.closing) {
       if (this.selectedNodeHistory !== undefined) return 'publish'
       if (
-        !this.recordingActive &&
+        // A same-study Reload keeps the recording it loads on every surface until its load ends (Cycle 0052 task 18).
+        !this.browserReplayShown() &&
         this.repositoryNavigation === undefined &&
         !this.presentationTransition &&
         // A saved study chosen with the editor area hidden is shown by showStudyAwaitingEditorArea once the area is back.
@@ -11681,6 +11746,19 @@ export class StudyWorkspace {
   }
 
   /**
+   * Supersedes every test replay entry under way: a newer entry's ticket replaces theirs, and the cancellation their waits listen to aborts, so one waiting for the work window's focus ends at once (Cycle 0052 tasks 12 and 40). Called by {@link openNodeHistoryFromHost} for each new entry, by the learner's and the agent's Return and by {@link close}.
+   * @returns The new ticket, which the caller holds as its entry when it is one.
+   * @example const entry = this.supersedeNodeHistoryEntries()
+   */
+  private supersedeNodeHistoryEntries(): number {
+    this.nodeHistoryEntryCancellation.abort(
+      new Error('A newer test replay entry, a Return or a Close took over.'),
+    )
+    this.nodeHistoryEntryCancellation = new AbortController()
+    return ++this.nodeHistoryEntryRequest
+  }
+
+  /**
    * Opens a test replay for the learner's two entries, the status item's Open replay (and Open retained history) and a Saved studies choice: the summary composition is entered first (Cycle 0051, DS-A), then the shared open runs ({@link openNodeHistory}); called by {@link openLearningReplay} and by the reader's `node-history` message.
    * During a browser replay the learner is told that one replay shows at a time and may close it first (DS10). A failed open raises the load-failure notification with Show details and writes one Output › Codebook entry; a reader the open left in the summary composition with no replay shown goes back to the Study composition, so the Study pane stands open on Saved studies (X4, DS-G).
    * @param studyId - The test replay's study id.
@@ -11692,24 +11770,43 @@ export class StudyWorkspace {
     studyId: string,
     revision?: number,
   ): Promise<void> {
-    const entry = ++this.nodeHistoryEntryRequest
+    const entry = this.supersedeNodeHistoryEntries(),
+      overtaken = this.nodeHistoryEntryCancellation.signal
     // Entries take turns entering the composition; a newer entry made meanwhile is the learner's latest choice (EN19).
     const previousTurn = this.nodeHistoryEntryTurn
     let releaseTurn!: () => void
     this.nodeHistoryEntryTurn = new Promise<void>((resolve) => {
       releaseTurn = resolve
     })
+    this.nodeHistoryEntriesUnderWay++
+    let entered = false
     try {
       await previousTurn
-      if (!(await this.enterCompositionForEntry(studyId, entry))) return
+      entered = await this.enterCompositionForEntry(studyId, entry, overtaken)
     } finally {
+      this.nodeHistoryEntriesUnderWay--
       releaseTurn()
+    }
+    if (!entered) {
+      // The last superseded entry to end leaves the summary composition an earlier one built, when no entry is under way to fill it: a Return or a Close superseded them all (Cycle 0052 task 12).
+      if (
+        entry !== this.nodeHistoryEntryRequest &&
+        this.nodeHistoryEntriesUnderWay === 0
+      )
+        await this.leaveEmptySummaryComposition()
+      return
     }
     if (entry !== this.nodeHistoryEntryRequest) return
     const outcome = await this.openNodeHistory(
       studyId,
       revision ?? this.revision,
     )
+    if (outcome.status === 'superseded') {
+      // A superseded open leaves the summary composition it entered when no newer replay stands in it, as a failed open does (Cycle 0052 task 13); an entry still under way fills or leaves that composition itself (task 35).
+      if (this.nodeHistoryEntriesUnderWay === 0)
+        await this.leaveEmptySummaryComposition()
+      return
+    }
     if (outcome.status !== 'failed') {
       // The learner's own replay open, after the replay is shown: the summary moves beside the chat once per profile (F209).
       await this.moveSummaryBesideChatOnce()
@@ -11726,20 +11823,27 @@ export class StudyWorkspace {
    * Brings a test replay entry into the summary composition in its turn: a browser replay is closed first when the learner agrees, and a refused entry is told like a failed open (F382, F384); called by {@link openNodeHistoryFromHost} while the entry holds its turn.
    * @param studyId - The test replay's study id.
    * @param entry - The entry's ticket ({@link nodeHistoryEntryRequest}).
+   * @param overtaken - Aborts when a newer entry, a Return or a Close supersedes the ticket ({@link nodeHistoryEntryCancellation}).
    * @returns `true` when the entry stands in the composition and is still the latest; `false` when a newer entry took over, the browser replay stays open, or the failure was told.
-   * @example if (!(await this.enterCompositionForEntry(studyId, entry))) return
+   * @example if (!(await this.enterCompositionForEntry(studyId, entry, overtaken))) return
    */
   private async enterCompositionForEntry(
     studyId: string,
     entry: number,
+    overtaken: AbortSignal,
   ): Promise<boolean> {
+    if (entry !== this.nodeHistoryEntryRequest) return false
+    // The learner's test replay supersedes a saved study that waits for the hidden editor area: the slot tabs that waited with it close now, before its own slot shows, so its tab is never closed as an earlier one's and a failed open leaves none behind (Cycle 0052 task 15).
+    this.studyAwaitingEditorArea = undefined
+    await this.closeSlotTabsAwaitingArea()
+    // A Close, a Return or a newer entry during the slot close owns the reader now: this entry asks nothing more (Cycle 0052 task 35).
     if (entry !== this.nodeHistoryEntryRequest) return false
     if (!(await this.closeBrowserReplayForTestReplay(entry))) return false
     if (entry !== this.nodeHistoryEntryRequest) return false
     try {
-      await this.enterSummaryCompositionForReplay()
+      await this.enterSummaryCompositionForReplay(entry, overtaken)
     } catch (error) {
-      // A newer entry answers for the learner now.
+      // A newer entry answers for the learner now; an entry whose focus wait its supersession aborted ends here quietly too.
       if (entry !== this.nodeHistoryEntryRequest) return false
       // A refused entry is told like a failed replay open: one Output › Codebook entry and the notification, never a bare command failure (F382, F384).
       await this.leaveEmptySummaryComposition()
@@ -11763,7 +11867,7 @@ export class StudyWorkspace {
   private async closeBrowserReplayForTestReplay(
     entry: number,
   ): Promise<boolean> {
-    if (!this.recordingActive) return true
+    if (!this.browserReplayShown()) return true
     const studyId = this.selection.studyId,
       revision = this.playback?.state().revision
     const refusal = describeNodeLearningSave({ kind: 'open-refused' })
@@ -11776,13 +11880,13 @@ export class StudyWorkspace {
     if (
       action !== NODE_LEARNING_SAVE_ACTION.closeBrowserReplay ||
       entry !== this.nodeHistoryEntryRequest ||
-      !this.recordingActive ||
+      !this.browserReplayShown() ||
       this.selection.studyId !== studyId ||
       this.playback?.state().revision !== revision
     )
       return false
     await this.returnCurrentSelection('learner')
-    return !this.recordingActive
+    return !this.browserReplayShown()
   }
 
   /**
@@ -11802,8 +11906,9 @@ export class StudyWorkspace {
     )
     const answer = await this.resolveForeignPreviewRefusal(cause)
     if (answer === 'retry') return 'retry'
-    // A failed open shows no replay in the summary composition: the Study composition comes back, with the failure on its line (DS-G).
-    await this.leaveEmptySummaryComposition()
+    // A failed open shows no replay in the summary composition: the Study composition comes back, with the failure on its line (DS-G). A newer entry still under way keeps that composition for its own replay (Cycle 0052 task 35).
+    if (this.nodeHistoryEntriesUnderWay === 0)
+      await this.leaveEmptySummaryComposition()
     // The keep-open refusal has told the learner already, so no second notification follows; the refusal is still recorded once in Output › Codebook, where other open refusals are, so a later take can tell why the replay did not open (F407).
     if (answer === 'told')
       this.diagnostics?.log({
@@ -11820,19 +11925,32 @@ export class StudyWorkspace {
    * Opens the summary composition for a test replay that is about to open (Cycle 0051, DS-A): a closed reader opens, and the Live composition and the Study composition give way to it, so the Study pane closes and the Learning summary takes the chat's place; called by {@link openNodeHistoryFromHost}.
    * Only a reader that already stands in the summary composition for a test replay (another test replay was shown) is left as it is; an earlier entry that failed after it left the Live composition is opened again, so the Application, the slot and the debugger never show without a transport (F384).
    * @throws What {@link open} throws; the caller tells it.
-   * @example await this.enterSummaryCompositionForReplay()
+   * @param entry - The entry's ticket ({@link nodeHistoryEntryRequest}); an entry a newer one or a Return overtook while it waited for the work window reveals nothing.
+   * @param overtaken - Aborts the waits for the work window and for the Learning summary view, in a standing composition and in {@link open}, when a newer entry, a Return or a Close supersedes the ticket, so the next entry's turn is not held for their bounds (Cycle 0052 tasks 40, 44 and 45).
+   * @throws The abort's reason when the wait is overtaken; the caller ends quietly for a superseded ticket.
+   * @example await this.enterSummaryCompositionForReplay(entry, overtaken)
    */
-  private async enterSummaryCompositionForReplay(): Promise<void> {
+  private async enterSummaryCompositionForReplay(
+    entry: number,
+    overtaken: AbortSignal,
+  ): Promise<void> {
     if (
       this.opened &&
       this.summaryComposition &&
       !this.liveComposition &&
       !this.recordingActive
-    )
+    ) {
+      // The composition stands already, but the learner may have hidden the summary and the bottom panel: the entry shows them again, so Open replay never ends with no visible replay (Cycle 0052 task 14). The reveal waits for the work window as open()'s does, and an entry overtaken meanwhile reveals nothing.
+      await this.waitForRecordingWindow(overtaken, this.lifetime)
+      if (entry !== this.nodeHistoryEntryRequest) return
+      // The reveal's wait for the summary view ends too when the entry is overtaken (Cycle 0052 task 45).
+      await this.showLearningSummary(overtaken, true)
       return
+    }
     this.hostOpeningTestReplay = true
     try {
-      await this.open()
+      // The open's waits for the work window end too when a newer entry, a Return or a Close supersedes this one (Cycle 0052 task 44).
+      await this.open(overtaken)
     } finally {
       this.hostOpeningTestReplay = false
     }
@@ -11850,7 +11968,10 @@ export class StudyWorkspace {
       this.closing ||
       !this.summaryComposition ||
       this.recordingActive ||
-      this.testReplayHoldsComposition()
+      this.testReplayHoldsComposition() ||
+      // A Return or a presentation change under way arranges the reader itself (Cycle 0052 task 12).
+      this.returningCurrent !== undefined ||
+      this.presentationTransition !== undefined
     )
       return
     try {
@@ -12188,6 +12309,13 @@ export class StudyWorkspace {
       signal.throwIfAborted()
     }
     this.recordingActive = true
+    // A test replay retired for this recording left the summary its placeholder: the recording's loading, failure and retry need the reader's document there (Cycle 0052 task 35).
+    if (this.summaryComposition) {
+      this.giveSummaryItsDocument()
+      this.lastPublished = undefined
+    }
+    // The reloaded recording is active again: a same-study Reload's mark has served its turn.
+    this.recordingReloadStudyId = undefined
     // A browser replay starting ends any earlier record of tabs to close (F474).
     this.retiredBrowserReplayTabs = undefined
     this.pendingHistory = undefined
@@ -12414,7 +12542,7 @@ export class StudyWorkspace {
       return this.replayViewport
     }
     const panel = await this.prepareApplicationGroup(signal)
-    panel.title = 'codebook · Recorded application'
+    panel.title = RECORDED_APPLICATION_PANE_TITLE
     const viewport = new BrowserViewport(
       this.selection.studyId!,
       (type, detail) => this.recordReplayDelivery(type, detail),
@@ -12710,17 +12838,30 @@ export class StudyWorkspace {
    * @example this.leavePlayback(true)
    */
   private leavePlayback(preserveSummary = false): void {
+    // An explicit departure supersedes a same-study Reload that is still loading.
+    const reloading = this.recordingReloadStudyId !== undefined
+    if (!preserveSummary) this.recordingReloadStudyId = undefined
     this.nodeHistoryPlaybackController?.pause()
     this.repositoryRecordingOpen = undefined
-    if (!this.recordingActive) return
+    if (!this.recordingActive) {
+      // The Reload's pending load is cancelled with the departure, so it never comes back over the reader's next choice (Cycle 0052 task 18).
+      if (reloading && !preserveSummary) {
+        this.playback?.leave()
+        this.clearLearningSummary()
+      }
+      return
+    }
     // The captured-source tabs it has now are closed once, when a test replay's slot first shows over them; tabs opened later are not (F466, F474).
     this.retiredBrowserReplayTabs = this.browserReplaySourceTabs(
       this.playback?.state().studyId ?? this.sourceView?.studyId,
       this.sourceView?.uri.toString(),
     )
+    // A departure releases the recorded viewport and withdraws the Learning summary before the controller leaves: the controller's clear then reaches no open viewport, so the Application pane never paints "Loading recorded position…" (Cycle 0052 task 38), and its leave publishes into no replay summary, which would redraw a departing state (task 43). Only a same-study Reload keeps the clear, which reads true there, and the reader's current Summary with its reading context.
+    if (!preserveSummary) {
+      this.dropReplayViewport()
+      this.clearLearningSummary()
+    }
     this.playback?.leave()
-    // Only same-study Reload keeps the reader's current Summary and its reading context.
-    if (!preserveSummary) this.clearLearningSummary()
     this.dropReplayViewport()
     this.recordingActive = false
     this.playbackPending = undefined
@@ -12733,14 +12874,24 @@ export class StudyWorkspace {
 
   /**
    * Retires the selected Node journal with its playback and historical debugger context when the learner leaves it for a browser history or the current run.
-   * Ends the recorded-source slot ({@link retireNodeSourceSlot}); the learner's own tabs, a pinned or edited slot tab among them, stay.
+   * A replay shown in the summary composition withdraws its Learning summary first, before anything publishes (Cycle 0052 task 2). Ends the recorded-source slot ({@link retireNodeSourceSlot}); the learner's own tabs, a pinned or edited slot tab among them, stay.
    * A caller rechecks its own request afterwards, because the native tab close can let the reader change.
+   * @param keepSlotTabsForHiddenArea - `true` when a saved study is chosen while the editor area is hidden: the slot's tabs stay open until the area is back ({@link retireNodeSourceSlot}).
    * @example
    * ```ts
    * await this.retireNodeHistorySelection()
    * ```
    */
-  private async retireNodeHistorySelection(): Promise<void> {
+  private async retireNodeHistorySelection(
+    keepSlotTabsForHiddenArea = false,
+  ): Promise<void> {
+    // A test replay shown in the summary composition withdraws its summary before anything publishes, as a browser replay's departure does (Cycle 0052 task 2, N51-V2).
+    if (
+      this.selectedNodeHistory &&
+      this.summaryComposition &&
+      !this.recordingActive
+    )
+      this.clearLearningSummary()
     // A test replay that ends (Return to Live, an open that did not finish) ends the record of the browser replay's tabs it was to close; a record taken before any test replay was selected stays for the first one (F482).
     if (this.selectedNodeHistory) this.retiredBrowserReplayTabs = undefined
     this.selectedNodeHistoryRequest++
@@ -12768,16 +12919,20 @@ export class StudyWorkspace {
       this.errors.delete('history-position'),
       this.errors.delete('history-learning'),
     ].some(Boolean)
-    await this.retireNodeSourceSlot()
+    await this.retireNodeSourceSlot(keepSlotTabsForHiddenArea)
     if (removedRows) this.publish()
   }
 
   /**
    * Ends the test replay's recorded-source slot: its failure row goes, its stopped line, label and CodeLens are cleared, every slot tab Codebook may close is closed (whether or not a slot object exists: a tab an editor restart restored has none), and the documents of the slot tabs that stay (a pinned one) read the placeholder again; called by {@link retireNodeHistorySelection} and by {@link close}.
+   * With the editor area hidden, the slot's tabs are kept instead and recorded in {@link nodeSourceSlotTabsAwaitingArea}, because closing the tab a group shows would bring the area back; {@link closeSlotTabsAwaitingArea} closes them when the wait ends (Cycle 0052 task 15).
    * The Study pane is published when the failure row was removed, so a Retry for a replay that is gone does not stay (F168, F192).
+   * @param keepSlotTabsForHiddenArea - `true` to keep and record the slot's tabs while the editor area is hidden; `false` closes them now, with any tabs an earlier wait recorded.
    * @example await this.retireNodeSourceSlot()
    */
-  private async retireNodeSourceSlot(): Promise<void> {
+  private async retireNodeSourceSlot(
+    keepSlotTabsForHiddenArea = false,
+  ): Promise<void> {
     const slot = this.nodeSourceSlot
     this.nodeSourceSlotRetirements++
     // The retired replay's wait for the native views ends with it.
@@ -12790,15 +12945,28 @@ export class StudyWorkspace {
     const removedRow = this.errors.delete('history-source')
     this.clearNodeSourceSlotDecorations()
     try {
-      // The retired replay's recorded-source slot goes with it, with any slot tab a rename still opening or one that failed left.
-      await this.closeNodeSourceSlotTabs()
+      // A saved study chosen with the editor area hidden keeps the slot's tabs, which read the placeholder below, until the area is back: closing the tab a group shows would bring the area back (Cycle 0052 task 15).
+      if (keepSlotTabsForHiddenArea)
+        // A later choice made while the area is still hidden keeps the earlier wait's tabs waiting too.
+        this.nodeSourceSlotTabsAwaitingArea = new Map([
+          ...(this.nodeSourceSlotTabsAwaitingArea ?? []),
+          ...vscode.window.tabGroups.all
+            .flatMap((group) => group.tabs)
+            .flatMap((tab): [vscode.Tab, string][] =>
+              tab.input instanceof vscode.TabInputText &&
+              isNodeSourceSlotPath(tab.input.uri.path) &&
+              this.ownsCapturedSourceTab(tab)
+                ? [[tab, tab.input.uri.toString()]]
+                : [],
+            ),
+        ])
+      else {
+        // The retired replay's recorded-source slot goes with it, with any slot tab a rename still opening or one that failed left; tabs that waited for the area go too.
+        this.nodeSourceSlotTabsAwaitingArea = undefined
+        await this.closeNodeSourceSlotTabs()
+      }
     } catch (error) {
-      this.report(
-        'layout',
-        new Error(
-          `The previous recorded source tab could not close. Arrange the Codebook panes manually. ${String(error)}`,
-        ),
-      )
+      this.reportSlotCloseFailure(error)
     }
     // A slot tab that stays open (pinned) no longer holds the last stop's bytes: the document asks the provider again.
     const remaining = vscode.window.tabGroups.all
@@ -13186,10 +13354,10 @@ export class StudyWorkspace {
     if (!this.baselines) throw new Error('Study reader is not initialized.')
     const record = this.currentRecord(),
       live = record && this.service?.state(record)
-    const playbackState = this.recordingActive
-      ? this.playback?.state()
-      : undefined
-    const bundle = this.recordingActive
+    // A same-study Reload that is loading or failed still shows its browser replay: the views read its playback state, loading, failure and recovery (Cycle 0052 task 36).
+    const browserReplay = this.browserReplayShown()
+    const playbackState = browserReplay ? this.playback?.state() : undefined
+    const bundle = browserReplay
       ? forSource || this.playbackPresentingReady || playbackState?.cleared
         ? (this.playbackPending ?? this.playback?.bundle())
         : this.playback?.bundle()
@@ -13327,11 +13495,11 @@ export class StudyWorkspace {
     return {
       type: 'study',
       revision: this.revision,
-      model: this.recordingActive
+      model: browserReplay
         ? projectPlaybackStudy(projectionInput, bundle)
         : projectStudy(projectionInput),
       presentation: this.presentationState(),
-      contentTab: this.recordingActive ? 'recording' : this.selection.tab,
+      contentTab: browserReplay ? 'recording' : this.selection.tab,
       repositoryReturnAvailable: Boolean(
         this.controls.returnToRepository &&
         this.repositoryOrigin?.studyId === this.selection.studyId &&
@@ -13440,7 +13608,7 @@ export class StudyWorkspace {
         createdAt: study.createdAt,
         reason: study.reason,
         finalOutcome: study.finalOutcome,
-        links: this.recordingActive ? [] : study.links,
+        links: browserReplay ? [] : study.links,
         historyOutcome,
         studyOutcome,
         recordingSave: selectedState
@@ -13485,7 +13653,7 @@ export class StudyWorkspace {
         title: profile.title,
         description: profile.description,
       })),
-      canClick: !this.recordingActive && Boolean(nextAction),
+      canClick: !browserReplay && Boolean(nextAction),
       canRun:
         (!record || record.stopped) &&
         this.selection.profile !== REPOSITORY_BROWSER_PROFILE,
@@ -13511,7 +13679,7 @@ export class StudyWorkspace {
         record?.historyExcluded === 'refused-at-admission' &&
         record.error &&
         record.id !== this.answeredRunRefusalId &&
-        !this.recordingActive &&
+        !browserReplay &&
         !this.testReplayHoldsComposition()
           ? `The last run did not start: ${record.error.message}`
           : undefined,
@@ -13581,13 +13749,27 @@ export class StudyWorkspace {
   }
 
   /**
+   * Says whether the reader shows a browser replay: a loaded recording, or a same-study Reload whose recording is loading again or failed to load, which keeps the replay's summary composition and recovery until a newer selection supersedes it (Cycle 0052 task 18); asked wherever the reader decides between a browser replay and its other selections: {@link open}'s composition, {@link refreshPresentation}, a test replay's entry, a saved study's choice, an item's selection, {@link presentationState} and an agent's Return.
+   * @returns
+   * - `true` while a recording is active or a same-study Reload's mark is set
+   * - `false` otherwise
+   * @example this.browserReplayShown() // => true after a same-study Reload whose load failed
+   */
+  private browserReplayShown(): boolean {
+    return this.recordingActive || this.recordingReloadStudyId !== undefined
+  }
+
+  /**
    * Names the replay family the summary composition shows, which the Study views read for their page (Cycle 0051, DS-A); the one place the family is decided, read by {@link publish}.
-   * @returns `browser` while a browser recording is active, `test` for a selected or opening test replay, `undefined` outside the summary composition.
+   * @returns `browser` while a browser recording is active or reloading, `test` for a selected or opening test replay, `undefined` outside the summary composition and while the reader leaves a replay.
    * @example this.shownReplayFamily() // => 'test' while a test replay holds the composition
    */
   private shownReplayFamily(): 'browser' | 'test' | undefined {
     if (!this.summaryComposition) return undefined
-    return this.recordingActive ? 'browser' : 'test'
+    if (this.recordingActive) return 'browser'
+    if (this.testReplayHoldsComposition()) return 'test'
+    // A same-study Reload still shows its browser replay; a reader that is leaving a replay shows neither family until open() leaves the composition, so no view draws a test replay transport without a history (Cycle 0052 task 3, N51-V3).
+    return this.recordingReloadStudyId !== undefined ? 'browser' : undefined
   }
 
   /** Publishes a matching projection with stable DOM controls, excluding images from the context channel. @example this.publish() */
@@ -13625,7 +13807,8 @@ export class StudyWorkspace {
     if (signature === this.lastPublished) return
     this.lastPublished = signature
     void this.contextPanel?.webview.postMessage(compact)
-    if (this.summaryComposition)
+    // The Learning summary draws only a shown replay: a publish while the reader leaves one would draw the Live Study page there (Cycle 0052 task 2, N51-V2).
+    if (this.summaryComposition && compact.replayFamily)
       void this.summaryView?.webview.postMessage(compact)
     if (this.moments)
       this.moments.title = this.summaryComposition
@@ -13730,9 +13913,11 @@ export class StudyWorkspace {
     }
     // An explicit source request revokes pending chat returns before source I/O can yield.
     if (!preserveFocus) this.keyboardOutsideEditors = undefined
-    // An explicit entry, selection or placement shows the panes now; a study that waited for the editor area waits no longer.
+    // An explicit entry, selection or placement shows the panes now; a study that waited for the editor area waits no longer, nor do the slot tabs that waited with it (Cycle 0052 task 15).
     this.studyAwaitingEditorArea = undefined
+    // The lifetime is read before the first await, so a Close during the slot close cuts this render off also after a new Open.
     const lifetime = this.lifetime
+    await this.closeSlotTabsAwaitingArea()
     await this.refreshCitations()
     // Citation I/O can outlive Close or a later Open; it cannot create a new rendering revision afterward.
     this.assertLifetime(lifetime)
@@ -14172,15 +14357,7 @@ export class StudyWorkspace {
             throw new Error('Obsolete source-derived reader could not close.')
           signal?.throwIfAborted()
           // A pinned tab keeps showing its capture, so its bytes stay with the provider.
-          const stillShown = new Set(
-            vscode.window.tabGroups.all
-              .flatMap((group) => group.tabs)
-              .flatMap((tab) =>
-                tab.input instanceof vscode.TabInputText
-                  ? [tab.input.uri.toString()]
-                  : [],
-              ),
-          )
+          const stillShown = this.shownTextTabAddresses()
           for (const obsoleteUri of obsoleteUris)
             if (!stillShown.has(obsoleteUri)) this.documents.delete(obsoleteUri)
         }
@@ -14986,7 +15163,9 @@ export class StudyWorkspace {
    * @example this.presentApplication(message)
    */
   private presentApplication(message: StudyViewMessage): void {
-    if (this.recordingActive) return
+    // A same-study Reload that is loading or failed still shows its browser replay: no Study selection is drawn in its Application pane (Cycle 0052 task 37).
+    if (this.browserReplayShown()) return
+    this.retitleApplicationAfterRecording()
     // A test replay's pane is one document per history; each later moment is posted into it (EN3).
     if (message.nodeHistoryApplication) {
       this.presentNodeHistoryApplication(
@@ -15054,6 +15233,15 @@ export class StudyWorkspace {
   }
 
   /**
+   * Gives the Application pane its own title back once another writer takes its document after a browser replay retitled it, so the tab never names a recording over Live content or a test replay's output (Cycle 0052 task 4, N51-V4); called by {@link presentApplication} and {@link presentNodeHistoryApplication}. A live run's lease title and a parked recording's title are left as they are.
+   * @example this.retitleApplicationAfterRecording()
+   */
+  private retitleApplicationAfterRecording(): void {
+    if (this.app?.title === RECORDED_APPLICATION_PANE_TITLE)
+      this.app.title = APPLICATION_PANE_TITLE
+  }
+
+  /**
    * Shows a selected test replay in the Application pane as one document per history and posts each later moment into it (EN3), so moving through the replay never reloads the page and the learner's scroll position, text selection and focus survive; called by {@link presentApplication} for every render and refresh, and by {@link publish} for every published change, while a test replay is selected.
    * The document is written again only for another history or another pane; an unchanged view's generation posts nothing. A hidden pane's restore copy follows the latest view ({@link BrowserViewport.updateHistory}).
    * @param message - The Study message whose test replay is shown.
@@ -15073,6 +15261,7 @@ export class StudyWorkspace {
     ])
     // This runs inside catch and finally blocks and must not throw: the lease's panel can be disposed before its release is seen, and a write into it throws "Viewport lease is released" (F133). The pane is written again when it is next opened.
     try {
+      this.retitleApplicationAfterRecording()
       if (key !== this.lastApplicationKey) {
         this.lastApplicationKey = key
         this.shownNodeHistoryApplicationGeneration = view.generation
@@ -18860,7 +19049,7 @@ export class StudyWorkspace {
     try {
       panel = vscode.window.createWebviewPanel(
         'codebook.scopedBrowser',
-        'codebook · Application',
+        APPLICATION_PANE_TITLE,
         {
           viewColumn: STUDY_PRESENTATIONS[this.presentationMode].appColumn,
           preserveFocus: true,
@@ -19315,14 +19504,20 @@ export class StudyWorkspace {
         assertCurrent()
       }
       // A summary view resolved earlier holds the closed replay's placeholder; it gets the reader's document even while it waits behind the chat.
-      if (this.summaryView && !this.summaryDocumentActive) {
-        this.summaryDocumentActive = true
-        this.summaryView.webview.html = studyHtml('context')
-      }
+      this.giveSummaryItsDocument()
       this.lastPublished = undefined
       this.publish()
       if (keptBehind) this.tellSummaryKeptBehindChat()
       else this.offerSummaryPlacement('summary-shown')
+    } catch (error) {
+      // A newer selection superseded this reveal: its own reveal answers the learner, so this one ends without an error (Cycle 0052 task 16).
+      if (
+        error instanceof StudyError &&
+        error.code === 'STALE_PRESENTATION' &&
+        replay !== this.shownReplayIdentity()
+      )
+        return
+      throw error
     } finally {
       focusSubscription.dispose()
     }
@@ -19576,6 +19771,16 @@ export class StudyWorkspace {
     if (this.summaryView)
       this.summaryView.webview.html =
         '<!DOCTYPE html><html><body><p>Open saved learning from Codebook to view its summary.</p></body></html>'
+  }
+
+  /**
+   * Gives the Learning summary view the reader's document when it holds the closed replay's placeholder, so the next publish can draw a replay there; called by {@link showLearningSummary} and by {@link loadPlayback} for a recording that loads over a retired test replay.
+   * @example this.giveSummaryItsDocument()
+   */
+  private giveSummaryItsDocument(): void {
+    if (!this.summaryView || this.summaryDocumentActive) return
+    this.summaryDocumentActive = true
+    this.summaryView.webview.html = studyHtml('context')
   }
 
   /**
@@ -22776,7 +22981,8 @@ export class StudyWorkspace {
     return {
       webview: owner.webview,
       openRequest: request.openRequest,
-      opensRecording: request.type === 'history' && this.recordingActive,
+      // A same-study Reload still shows its browser replay, so a choice during it opens a recording as during the replay (Cycle 0052 task 41).
+      opensRecording: request.type === 'history' && this.browserReplayShown(),
     }
   }
 
@@ -23034,7 +23240,8 @@ export class StudyWorkspace {
           throw new Error('Select a saved study before opening its recording.')
         await this.openRecording(studyId)
       } else {
-        const wasRecording = this.recordingActive
+        // A same-study Reload that is loading or failed shows its browser replay too: leaving it arranges the reader again (Cycle 0052 task 32).
+        const wasRecording = this.browserReplayShown()
         this.leavePlayback()
         // Leaving Recording retires the line of a finished removal, as choosing another entry does: a refusal that told the learner to leave Recording first is no longer true under a delete button that can be used again.
         if (wasRecording) this.dismissStudyRemoval()
@@ -23091,7 +23298,7 @@ export class StudyWorkspace {
     )
       this.publish()
     if (message.type === 'node-history') {
-      if (this.recordingActive)
+      if (this.browserReplayShown())
         throw new Error('Close browser replay before opening a test replay.')
       // A Saved studies choice is the learner's entry: it enters the summary composition and tells a failure as Open replay does (DS-A, DS-G).
       await this.openNodeHistoryFromHost(message.studyId, message.revision)
@@ -23256,7 +23463,8 @@ export class StudyWorkspace {
    * @example await this.openChosenStudy({ type: 'history', revision: this.revision, studyId })
    */
   private async openChosenStudy(message: HistoryPaneMessage): Promise<void> {
-    if (this.recordingActive) {
+    // A same-study Reload that is loading or failed still shows its browser replay: the choice opens the chosen recording as it does during the replay, and supersedes the Reload (Cycle 0052 task 18).
+    if (this.browserReplayShown()) {
       await this.openRecording(message.studyId)
       return
     }
@@ -23292,14 +23500,21 @@ export class StudyWorkspace {
     choice.hasReadArchive = true
     if (this.isStaleHistoryRead(request, message.revision)) return
     this.pendingHistory = undefined
-    // Browser selection retires the separate Node journal and its historical debugger context.
-    await this.retireNodeHistorySelection()
+    // Browser selection retires the separate Node journal and its historical debugger context; with the editor area hidden its slot tabs wait for the area, as the chosen study does (Cycle 0052 task 15).
+    const keepSlotTabs =
+      (Boolean(this.selectedNodeHistory) ||
+        this.nodeSourceSlotTabsAwaitingArea !== undefined) &&
+      this.replayReaderOpen &&
+      (await this.editorAreaHidden())
+    // A newer choice made during the area read owns the reader: this one retires nothing.
+    if (!this.isLatestHistoryRequest(request)) return
+    await this.retireNodeHistorySelection(keepSlotTabs)
     // Closing a native preview can publish a new reader revision; the owned history request still controls this switch.
     if (!this.isLatestHistoryRequest(request)) return
     await this.showSavedStudy(archive)
     this.publishChoiceOfClosedReader(request)
-    // A browser study chosen from a test replay's summary leaves the summary composition for the Study composition (DS-A).
-    if (this.isLatestHistoryRequest(request))
+    // A browser study chosen from a test replay's summary leaves the summary composition for the Study composition (DS-A); a study that waits for the hidden editor area leaves it once the area is shown, with its deferred arrangement (Cycle 0052 task 15).
+    if (this.isLatestHistoryRequest(request) && !this.studyAwaitsEditorArea())
       await this.leaveEmptySummaryComposition()
   }
 
@@ -23548,10 +23763,12 @@ export class StudyWorkspace {
     )
   }
 
-  /** Says whether Recording is open, or an accepted open is still loading: the controller reports the load from the moment it accepts the open, before the reader marks Recording as active. @example if (this.recordingOpenOrOpening()) return STUDY_REMOVAL_REFUSALS.recordingOpen */
+  /** Says whether Recording is open (a loaded recording, or a same-study Reload that is loading or failed: {@link browserReplayShown}), or an accepted open is still loading: the controller reports the load from the moment it accepts the open, before the reader marks Recording as active. @example if (this.recordingOpenOrOpening()) return STUDY_REMOVAL_REFUSALS.recordingOpen */
   private recordingOpenOrOpening(): boolean {
+    // A same-study Reload whose load failed still shows its browser replay, whose Reload and Retry need its study (Cycle 0052 task 33).
     return (
-      this.recordingActive || this.playback?.state().readiness === 'loading'
+      this.browserReplayShown() ||
+      this.playback?.state().readiness === 'loading'
     )
   }
 
@@ -24540,6 +24757,88 @@ export class StudyWorkspace {
     )
   }
 
+  /**
+   * Closes the recorded-source tabs a test replay's retirement left open while the editor area was hidden, once that wait ends; called by {@link showStudyAwaitingEditorArea} (the area is back, or the wait ended without it), by {@link renderSelection} (an explicit entry, selection or placement) and by {@link enterCompositionForEntry} (a test replay entry).
+   * @returns Once the tabs are closed, or at once when none wait; a refused close is told on the layout line.
+   * @example await this.closeSlotTabsAwaitingArea()
+   */
+  private async closeSlotTabsAwaitingArea(): Promise<void> {
+    const retired = this.nodeSourceSlotTabsAwaitingArea
+    if (!retired) return
+    this.nodeSourceSlotTabsAwaitingArea = undefined
+    // A tab object the editor rebuilt meanwhile (Cursor) is in no entry: its address stands for it.
+    const replacedAddresses = replacedTabAddresses(
+      retired,
+      new Set(vscode.window.tabGroups.all.flatMap((group) => group.tabs)),
+    )
+    try {
+      // Only the retired replay's own tabs close.
+      await this.closeCapturedSourceTabs(
+        (uri, tab) =>
+          isNodeSourceSlotPath(uri.path) &&
+          (retired.has(tab) || replacedAddresses.has(uri.toString())),
+      )
+    } catch (error) {
+      // The tabs a refused close left open stay recorded, so the next explicit display or entry closes them again (Cycle 0052 task 35); a tab no longer shown at its address leaves the record.
+      const shownAddresses = this.shownTextTabAddresses()
+      this.nodeSourceSlotTabsAwaitingArea = new Map([
+        ...[...retired].filter(([, address]) => shownAddresses.has(address)),
+        ...(this.nodeSourceSlotTabsAwaitingArea ?? []),
+      ])
+      this.reportSlotCloseFailure(error)
+    }
+  }
+
+  /**
+   * Names the addresses every text tab of the editor shows now; read after a close to tell the tabs that stayed (a pinned capture keeps its bytes, a refused slot close keeps its record).
+   * @returns The `uri.toString()` of each open text tab.
+   * @example this.shownTextTabAddresses().has(uri.toString()) // => true while a tab shows the document
+   */
+  private shownTextTabAddresses(): Set<string> {
+    return new Set(
+      vscode.window.tabGroups.all
+        .flatMap((group) => group.tabs)
+        .flatMap((tab) =>
+          tab.input instanceof vscode.TabInputText
+            ? [tab.input.uri.toString()]
+            : [],
+        ),
+    )
+  }
+
+  /**
+   * Tells on the layout line that an earlier recorded-source tab could not close; called by {@link retireNodeSourceSlot} and {@link closeSlotTabsAwaitingArea}.
+   * @param error - What the editor's close threw.
+   * @example this.reportSlotCloseFailure(error)
+   */
+  private reportSlotCloseFailure(error: unknown): void {
+    this.report(
+      'layout',
+      new Error(
+        `The previous recorded source tab could not close. Arrange the Codebook panes manually. ${String(error)}`,
+      ),
+    )
+  }
+
+  /**
+   * Says whether the end of a wait for the editor area was overtaken while it closed the slot tabs that waited: a Close (also with a new Open), a newer choice or a new wait owns the reader then; asked by {@link showStudyAwaitingEditorArea} after its close.
+   * @param awaited - The wait that ended.
+   * @param lifetime - The reader's lifetime when the wait ended.
+   * @returns `true` when the wait's end must arrange nothing; `false` when it still owns the reader.
+   * @example if (this.waitEndOvertaken(awaited, lifetime)) return
+   */
+  private waitEndOvertaken(
+    awaited: NonNullable<StudyWorkspace['studyAwaitingEditorArea']>,
+    lifetime: number,
+  ): boolean {
+    return (
+      lifetime !== this.lifetime ||
+      this.closing ||
+      this.studyAwaitingEditorArea !== undefined ||
+      awaited.selectionRevision !== this.readerSelectionRevision
+    )
+  }
+
   /** Says whether the selected saved study still waits for the editor area the learner hid before choosing it; the reader's timer then leaves the panes as they are, while an explicit entry, selection or placement shows them. @example if (!this.studyAwaitsEditorArea()) await this.renderSelection(true, false, signal) */
   private studyAwaitsEditorArea(): boolean {
     return (
@@ -24562,6 +24861,7 @@ export class StudyWorkspace {
     if (!awaited) return
     if (!this.studyAwaitsEditorArea() || !this.opened || this.closing) {
       this.studyAwaitingEditorArea = undefined
+      await this.closeSlotTabsAwaitingArea()
       return
     }
     if (this.presentationTransition || this.repositoryNavigation !== undefined)
@@ -24589,7 +24889,11 @@ export class StudyWorkspace {
     // A newer choice or a close during the read owns the reader now.
     if (this.studyAwaitingEditorArea !== awaited || this.closing) return
     this.studyAwaitingEditorArea = undefined
+    const lifetime = this.lifetime
     try {
+      await this.closeSlotTabsAwaitingArea()
+      // A Close, a newer choice or a new wait during the slot close owns the reader now: this wait's end arranges nothing (Cycle 0052 task 35).
+      if (this.waitEndOvertaken(awaited, lifetime)) return
       if (awaited.arrange && this.needsReaderArrangement())
         await this.open(signal)
       await this.renderSelection(true, true, signal)
@@ -25713,14 +26017,10 @@ export class StudyWorkspace {
   private async closeRetiredBrowserReplaySourceTabs(): Promise<void> {
     const retired = this.retiredBrowserReplayTabs
     if (!retired) return
-    const live = new Set(
-      vscode.window.tabGroups.all.flatMap((group) => group.tabs),
-    )
     // A tab object the editor replaced is no longer live; its address stands for it, unless the learner closed that tab (its entry is gone then).
-    const replacedAddresses = new Set(
-      [...retired]
-        .filter(([tab]) => !live.has(tab))
-        .map(([, address]) => address),
+    const replacedAddresses = replacedTabAddresses(
+      retired,
+      new Set(vscode.window.tabGroups.all.flatMap((group) => group.tabs)),
     )
     await this.closeCapturedSourceTabs(
       (uri, tab) =>
@@ -25772,8 +26072,8 @@ export class StudyWorkspace {
   private forgetClosedRetiredBrowserReplayTabs(
     closed: readonly vscode.Tab[],
   ): void {
-    const retired = this.retiredBrowserReplayTabs
-    if (!retired) return
+    if (!this.retiredBrowserReplayTabs && !this.nodeSourceSlotTabsAwaitingArea)
+      return
     const live = new Set(
       vscode.window.tabGroups.all.flatMap((group) => group.tabs),
     )
@@ -25781,19 +26081,21 @@ export class StudyWorkspace {
       tab.input instanceof vscode.TabInputText
         ? tab.input.uri.toString()
         : undefined
-    const liveAddresses = new Set([...live].map(addressOf))
-    const kept = new Map(retired)
-    for (const tab of closed) {
-      if (kept.delete(tab)) continue
-      // A tab object the editor rebuilt (Cursor) is in no entry: the learner closing it by hand ends the entry its address stands for, unless another tab still shows that address (F494).
-      const address = addressOf(tab)
-      if (address === undefined || liveAddresses.has(address)) continue
-      const stale = [...kept].find(
-        ([entry, entryAddress]) => entryAddress === address && !live.has(entry),
+    // A tab the learner closes by hand leaves each record, also as a tab object Cursor rebuilt (F494); a waiting slot tab closed so never takes one opened later at its address (Cycle 0052 task 15).
+    if (this.retiredBrowserReplayTabs)
+      this.retiredBrowserReplayTabs = pruneClosedTabRecord(
+        this.retiredBrowserReplayTabs,
+        closed,
+        live,
+        addressOf,
       )
-      if (stale) kept.delete(stale[0])
-    }
-    if (kept.size !== retired.size) this.retiredBrowserReplayTabs = kept
+    if (this.nodeSourceSlotTabsAwaitingArea)
+      this.nodeSourceSlotTabsAwaitingArea = pruneClosedTabRecord(
+        this.nodeSourceSlotTabsAwaitingArea,
+        closed,
+        live,
+        addressOf,
+      )
   }
 
   /**
