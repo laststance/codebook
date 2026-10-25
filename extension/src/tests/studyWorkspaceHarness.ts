@@ -1273,7 +1273,7 @@ export async function workspaceHarness(
     | undefined
   const windowState = { focused: true, active: true },
     windowListeners = new Set<(state: typeof windowState) => void>()
-  /** How many times the extension read `vscode.window.state.focused` while the window had no focus; a test waits on it to act while the reader waits for the focus. */
+  /** How many times the extension read `vscode.window.state.focused` while the window had no focus; a test waits on it to act while the reader waits for the focus. It is a heuristic signal: any reader path that reads the focus counts, so a test that waits on it asserts an outcome that holds wherever the entry stood when it acted. */
   let unfocusedWindowReads = 0
   /** The window state the extension reads: the harness's own state, with each unfocused read counted. */
   const windowStateForExtension = {

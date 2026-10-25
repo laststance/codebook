@@ -8781,7 +8781,8 @@ export class StudyWorkspace {
       clearInterval(this.timer)
       this.timer = undefined
     }
-    if (this.opened && !this.recordingActive) await this.renderSelection()
+    // A same-study Reload that is loading or failed still shows its browser replay: no Study selection is rendered under it (Cycle 0052 task 33).
+    if (this.opened && !this.browserReplayShown()) await this.renderSelection()
     this.publishLearningSave()
     if (failure)
       throw new Error(
@@ -23719,10 +23720,12 @@ export class StudyWorkspace {
     )
   }
 
-  /** Says whether Recording is open, or an accepted open is still loading: the controller reports the load from the moment it accepts the open, before the reader marks Recording as active. @example if (this.recordingOpenOrOpening()) return STUDY_REMOVAL_REFUSALS.recordingOpen */
+  /** Says whether Recording is open (a loaded recording, or a same-study Reload that is loading or failed: {@link browserReplayShown}), or an accepted open is still loading: the controller reports the load from the moment it accepts the open, before the reader marks Recording as active. @example if (this.recordingOpenOrOpening()) return STUDY_REMOVAL_REFUSALS.recordingOpen */
   private recordingOpenOrOpening(): boolean {
+    // A same-study Reload whose load failed still shows its browser replay, whose Reload and Retry need its study (Cycle 0052 task 33).
     return (
-      this.recordingActive || this.playback?.state().readiness === 'loading'
+      this.browserReplayShown() ||
+      this.playback?.state().readiness === 'loading'
     )
   }
 

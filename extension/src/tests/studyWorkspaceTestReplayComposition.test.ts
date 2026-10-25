@@ -2659,7 +2659,7 @@ test('Reload pressed again after a failed same-study Reload loads the recording'
       () => harness.controller.state().readiness === 'ready',
       'the second Reload loads the recording',
       READER_RESULT_BOUND_MS,
-    ).catch(() => undefined)
+    )
     await settleReload(harness, reloading)
 
     // Assert
@@ -2730,7 +2730,7 @@ test('Retry after a failed same-study Reload loads the recording and keeps the r
       () => harness.controller.state().readiness === 'ready',
       'the retry loads the recording',
       READER_RESULT_BOUND_MS,
-    ).catch(() => undefined)
+    )
     await settleReload(harness, reloading)
 
     // Assert
@@ -2770,7 +2770,7 @@ test('choosing the Live tab after a failed same-study Reload leaves the summary 
       () => harness.panelColumn('codebook.studyContext') !== undefined,
       'the Study pane is back',
       READER_RESULT_BOUND_MS,
-    ).catch(() => undefined)
+    )
     await harness.controller.settle()
 
     // Assert
@@ -2886,3 +2886,81 @@ for (const requester of ['learner', 'agent'] as const) {
     }
   })
 }
+
+for (const ending of ['held', 'failed'] as const) {
+  // Value: protects=a runtime release (the run's service retiring) during a same-study Reload, loading or failed, leaves the browser replay shown: no Study selection is drawn in the Application pane under it; fails_when=retire() renders the selection because no recording is active yet, and the pane stops showing the recording the Reload loads (Cycle 0052 task 33); why_new=the Reload mark's release row was untested; seam=a Reload held at, or failed at, its debugger replacement, the reader's retire(service); no_claim=the native pane's pixels
+  test(`a runtime release during a same-study Reload${ending === 'held' ? '' : ' that failed'} keeps the Application pane on the recording`, async () => {
+    // Arrange
+    const harness = await recordedReaderHarness(true)
+    let load: Awaited<ReturnType<typeof reloadHeldOrFailed>>['load'] | undefined
+    try {
+      const reloading = await reloadHeldOrFailed(harness, ending)
+      load = reloading.load
+      const application = harness
+        .nativePanels()
+        .find((panel) => panel.kind === 'codebook.scopedBrowser')!
+      const documentBeforeRelease = application.webview.html
+
+      // Act
+      await harness.reader.retire(harness.service)
+      const afterRelease = {
+        applicationUnchanged:
+          application.webview.html === documentBeforeRelease,
+        contentTab: harness.reader.presentationState().reader.contentTab,
+      }
+      await settleReload(harness, reloading)
+
+      // Assert
+      assert.deepEqual(afterRelease, {
+        applicationUnchanged: true,
+        contentTab: 'recording',
+      })
+    } finally {
+      load?.release()
+      await harness.close()
+    }
+  })
+}
+
+// Value: protects=deleting the study of a failed same-study Reload is refused with the Recording-open sentence and the study is not moved to the Trash, since the replay's Reload and Retry need it; fails_when=the failed Reload counts as no open recording and the study is removed under the replay (Cycle 0052 task 33); why_new=the Reload mark's removal row was untested; seam=a Reload failed at its debugger replacement, the Study pane's delete-study message; no_claim=the native Trash
+test('deleting the study of a failed same-study Reload is refused and keeps the study', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    await reloadHeldOrFailed(harness, 'failed')
+
+    // Act
+    await readerSeams(harness).receive(
+      {
+        type: 'delete-study',
+        revision: harness.reader.inspect().view!.revision,
+        studyId: harness.studyId,
+      },
+      'context',
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        studyRemoval: structuredClone(
+          harness.reader.inspect().view!.studyRemoval,
+        ),
+        trashMoves: harness.trashMoves,
+        archiveKept:
+          (await readerSeams(harness).readSavedArchive(harness.studyId)) !==
+          undefined,
+      },
+      {
+        studyRemoval: {
+          status: 'refused',
+          studyId: harness.studyId,
+          text: 'Choose Overview or Live to leave Recording before deleting this study.',
+        },
+        trashMoves: [],
+        archiveKept: true,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
