@@ -39,6 +39,7 @@ import {
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { idleChild } from './utils/idleChild'
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
+import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 import { rewriteWriterRecord } from './utils/rewriteWriterRecord'
 
 type Harness = Awaited<ReturnType<typeof workspaceHarness>>
@@ -5539,6 +5540,13 @@ test('a Retry storage / refresh that saved the earlier study keeps the line “H
       `${harness.service.instanceId}_${second.record.id}`,
     )
     await readerSeams(harness).refresh()
+    // The second run's save is refused while the Retry still reconciles, as the case means: a test that read the pane before that refusal was handled raced it (Cycle 0052 task 26).
+    await waitUntil(
+      () =>
+        harness.service.state(second.record).historyOutcome.status === 'failed',
+      "the refusal of the second run's save",
+      READER_RESULT_BOUND_MS,
+    )
     continueReconcile()
     await retry
     const afterRetry = structuredClone({
@@ -5616,6 +5624,13 @@ test('a Retry storage / refresh whose selection names a study without an archive
       `${harness.service.instanceId}_${second.record.id}`,
     )
     await readerSeams(harness).refresh()
+    // The second run's save is refused while the Retry still reconciles, as the case means (the same race as Cycle 0052 task 26).
+    await waitUntil(
+      () =>
+        harness.service.state(second.record).historyOutcome.status === 'failed',
+      "the refusal of the second run's save",
+      READER_RESULT_BOUND_MS,
+    )
     continueReconcile()
     await retry
     // Assert
