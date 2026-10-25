@@ -402,3 +402,42 @@ test('a history’s learning-material resource whose history is removed right af
     await harness.close()
   }
 })
+
+// Value: protects=an agent reading a test history's events while the history is removed right after its journal was read: the resource is refused as NOT_FOUND, not answered with the events of a history that no longer exists; fails_when=the folder is checked only before the read and when it fails, so a journal read just before the removal answers the history and events pages (Cycle 0052 task 95); why_new=hosted CodeRabbit review of d0b78db7 (outside-diff, resources.ts:154-156); seam=a store whose journal read removes the history's folder after it read the journal; no_claim=a removal after the page was answered
+test('a history’s events resource whose history is removed right after its journal was read is refused as NOT_FOUND', async () => {
+  // Arrange: the journal comes back, then the history's folder is gone.
+  const { harness, store, studyId } = await serviceWithOneHistory()
+  const historyFolder = join(
+    harness.directory,
+    '.learning',
+    'node-tests.v1',
+    studyId,
+  )
+  const read = store.read.bind(store)
+  store.read = async (id) => {
+    const history = await read(id)
+    await rm(historyFolder, { recursive: true, force: true })
+    return history
+  }
+  try {
+    // Act
+    const answer = await readResource(
+      harness.service,
+      `codebook://node-history/${studyId}/events`,
+    ).then(
+      () => 'answered',
+      (error: unknown) =>
+        error instanceof StudyError
+          ? { code: error.code, message: error.message }
+          : String(error),
+    )
+
+    // Assert
+    assert.deepEqual(answer, {
+      code: 'NOT_FOUND',
+      message: `No Node test history ${studyId} is saved in this workspace. Read codebook://node-history and copy the studyId or historyUri of the history you mean.`,
+    })
+  } finally {
+    await harness.close()
+  }
+})

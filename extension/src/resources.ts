@@ -45,7 +45,6 @@ import { readRecordingResource } from './utils/readRecordingResource'
 import { readRepositoryResource } from './utils/readRepositoryResource'
 import { secondsText } from './utils/secondsText'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
-import { unknownNodeHistoryError } from './utils/unknownNodeHistoryError'
 import { withKnownNodeHistory } from './utils/withKnownNodeHistory'
 
 /** The active-progress deadline in the whole seconds the repository-browser help names, so the help follows {@link ACTIVE_TIMEOUT_MS}. */
@@ -150,7 +149,7 @@ export async function readResource(
       )
     const store = service.nodeHistoryStore,
       studyId = nodeHistoryMatch[1]
-    // An unknown id, or a history removed while it is read, is a reference to correct, not a failed study operation (Cycle 0052 tasks 60, 75).
+    // An unknown id, or a history removed while or right after it is read, is a reference to correct, not a failed study operation (Cycle 0052 tasks 60, 75, 95); each read below is checked the same way.
     const history = await withKnownNodeHistory(store, studyId, () =>
       store.read(studyId),
     )
@@ -167,13 +166,9 @@ export async function readResource(
       nodeHistoryMatch[2] === 'learning-material' ||
       nodeHistoryMatch[2]?.startsWith('learning-material/pages/')
     ) {
-      const material = await withKnownNodeHistory(store, studyId, async () => {
-        const saved = await store.readLearningMaterial(studyId)
-        // A history removed meanwhile is an unknown history, whether its material came back empty or was read just before the removal (Cycle 0052 tasks 78, 94).
-        if (!store.holdsHistoryFolder(studyId))
-          throw unknownNodeHistoryError(studyId)
-        return saved
-      })
+      const material = await withKnownNodeHistory(store, studyId, () =>
+        store.readLearningMaterial(studyId),
+      )
       const data = material ?? {
         studyId: nodeHistoryMatch[1],
         revision: 0,
@@ -186,13 +181,9 @@ export async function readResource(
       return readJsonPage(`${baseUri}/learning-material`, data, cursor)
     }
     // The result and the learning coverage come from the store's one summary, which Saved studies and Save read too (Design 13); only the history's own page needs them, not its events or learning material pages (F14).
-    const summary = await withKnownNodeHistory(store, studyId, async () => {
-      const summarized = await store.summarize(studyId)
-      // A history removed meanwhile is an unknown history, whether its summary came back empty or from the store's cache (Cycle 0052 tasks 86, 90).
-      if (!store.holdsHistoryFolder(studyId))
-        throw unknownNodeHistoryError(studyId)
-      return summarized
-    })
+    const summary = await withKnownNodeHistory(store, studyId, () =>
+      store.summarize(studyId),
+    )
     const learning = {
       testResult: summary?.testResult ?? 'none',
       learningCoverage: summary?.learningCoverage ?? 'none',
