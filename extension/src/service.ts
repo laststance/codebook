@@ -81,6 +81,7 @@ import type {
   StudyEnvironment,
   StudyRuntime,
 } from './runtime'
+import type { RecordedEvent } from './runtimeSupport/evidence'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import {
   explainNodeHistorySchema,
@@ -3643,6 +3644,36 @@ export class StudyService {
     return !record.stopping && record.recording?.isSealed === true
   }
 
+  /**
+   * Words why a browser run's recording ends before its run completed, for the recording's gap and its seal: the run's own failure as its `run.failed` event names it, or a release that did not complete; called by {@link StudyService.stopRecord}.
+   * A run refused during its preparation used to read "Runtime interrupted or cleanup incomplete" in its recording although nothing was interrupted (Cycle 0052 task 7a).
+   * @param failure - The run's `run.failed` event, if it has one.
+   * @param error - The run's error, whose bare cause reads better than its wrapped message ("The study operation failed. Cause: …").
+   * @returns The sentence; the recording cuts it to its reason limit.
+   * @example
+   * this.recordingStopReason(failedEvent, record.error) // => 'The run failed: Selected source app/ui/login-form.tsx is not in the client code … Recorded prefix retained.'
+   * this.recordingStopReason(undefined, undefined) // => 'Runtime cleanup incomplete; recorded prefix retained.'
+   */
+  private recordingStopReason(
+    failure: RecordedEvent | undefined,
+    error: StudyError | undefined,
+  ): string {
+    if (!failure) return 'Runtime cleanup incomplete; recorded prefix retained.'
+    const detail = failure.detail
+    const reason =
+      error?.causeDetail ??
+      (typeof detail === 'object' &&
+      detail !== null &&
+      'reason' in detail &&
+      typeof detail.reason === 'string'
+        ? detail.reason
+        : undefined)
+    // A failure journaled without words still says the run failed rather than that it was interrupted.
+    return reason === undefined
+      ? 'The run failed. Recorded prefix retained.'
+      : `The run failed: ${this.sanitizedCause(reason).replace(/\.$/, '')}. Recorded prefix retained.`
+  }
+
   /** Serializes release after acquisitions and accepted explanation writes settle. @example await this.stopRecord(record) */
   private async stopRecord(record: StudyRecord): Promise<void> {
     if (record.stopped) return
@@ -3675,7 +3706,7 @@ export class StudyService {
             if (failure || !runtime.resourcesReleased)
               record.recording.stopFrames(
                 failure?.elapsedMs ?? record.runtime.evidence.elapsedMs(),
-                'Runtime interrupted or cleanup incomplete; recorded prefix retained.',
+                this.recordingStopReason(failure, record.error),
               )
             try {
               const seal = await record.recording.finish(

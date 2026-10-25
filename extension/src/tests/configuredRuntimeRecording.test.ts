@@ -700,8 +700,9 @@ test('a completed run whose final save fails records the failure and seals its r
       ],
       recordingSeal: {
         status: 'partial',
+        // The seal names the run's own failure (Cycle 0052 task 7a).
         reason:
-          'Runtime interrupted or cleanup incomplete; recorded prefix retained.',
+          'The run failed: ENOSPC: no space left on device, write. Recorded prefix retained.',
       },
     },
   )
@@ -1085,4 +1086,89 @@ test('an agent whose last continuation is acknowledged only after the completed 
     { next: 'result', runtimeState: 'completed' },
   )
   await service.stop(receipt)
+})
+
+// Value: protects=the recording of a browser run whose preparation was refused names that refusal when it is sealed, so the saved study and the agent read why nothing was recorded; fails_when=the seal reads "Runtime interrupted or cleanup incomplete; recorded prefix retained." for a run that was refused before input and stopped by the agent, as N51's three Cursor runs did (Cycle 0052 task 7a); why_new=the seal had one sentence for any journaled failure and for an incomplete release; seam=the controlled runtime's preparation, which refuses with the route-chunk sentence; no_claim=the native browser and debugger
+test('a run refused during its preparation seals its recording with the refusal, not as interrupted', async (context) => {
+  // Arrange: a recorded run of the real coordinator whose preparation is refused.
+  let service: StudyService | undefined, books: RepositoryBookStore | undefined
+  context.after(async () => {
+    await service?.shutdown()
+    books?.dispose()
+  })
+  const harness = await configuredRuntimeHarness(context),
+    directory = join(harness.directory, '.learning')
+  const library = new LearningLibrary(directory, '0'.repeat(64)),
+    store = new RecordingStore(directory, library.workspaceKey)
+  books = new RepositoryBookStore(harness.sources, library)
+  await books.publish({
+    bookId: 'interface',
+    expectedRevision: 0,
+    key: 'article',
+    document: {
+      title: 'Interface',
+      summary: 'Two citations.',
+      nodes: [
+        {
+          id: 'theme',
+          title: 'Theme',
+          sections: [{ title: 'Theme', text: 'Source-derived explanation.' }],
+          anchors: harness.definition.descriptor.anchors,
+          observations: [],
+        },
+      ],
+      edges: [],
+    },
+  })
+  service = new StudyService(
+    {
+      workspace: harness.directory,
+      host: {
+        id: 'vscode',
+        productVersion: 'test',
+        apiVersion: 'test',
+        commit: 'test',
+      },
+      build: {
+        revision: 'controlled-runtime',
+        dirty: false,
+        sourceHash: '0'.repeat(64),
+      },
+      prerequisites: async () => ({ ready: true, missing: [] }),
+      createRuntime: async () => harness.run,
+    },
+    join(harness.directory, '.service'),
+  )
+  service.repository = books
+  service.recordings = store
+  context.mock.method(harness.run, 'prepare', async () => {
+    throw new Error(
+      'Selected source app/ui/login-form.tsx is not in the client code that the launched page (entryPath "/") loads, and a browser stop can only be armed in that code before input; start the run at the page whose component holds the stop (set entryPath to it) or choose a stop in the launched page\'s own components',
+    )
+  })
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'refused-at-preparation',
+    configuration: harness.definition.configuration,
+  })
+  const record = service.record(receipt)
+  await record.preparation
+
+  // Act: the agent stops the refused run, as N51's did.
+  await service.stop(receipt).catch(() => undefined)
+  await waitUntil(() => record.stopped, 'the refused run is released')
+
+  // Assert
+  assert.deepEqual(
+    {
+      status: record.recordingSeal?.status,
+      reason: record.recordingSeal?.reason,
+    },
+    {
+      status: 'partial',
+      reason:
+        'The run failed: Selected source app/ui/login-form.tsx is not in the client code that the launched page (entryPath "/") loads, and a browser stop can only be armed in that code before input; start the run at the page whose component holds the stop (set entryPath to it) or choose a stop in the launched page\'s own components. Recorded prefix retained.',
+    },
+  )
 })
