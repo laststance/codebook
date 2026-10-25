@@ -46,12 +46,23 @@ export async function run(): Promise<void> {
     unreleasedListings: [],
     listingFailures: new Map(),
   }
-  const failure = await runTrial(configPath, trial).then(
+  const failure = await settled(runTrial(configPath, trial))
+  await endTrial(trial, reportPath, failure)
+}
+
+/**
+ * Waits for one step of a native trial and keeps its failure as a value, so the trial's end runs every step and then chooses which failure to throw.
+ * @param step - The step's work.
+ * @returns `undefined` once the step succeeded, or its error wrapped as `{ error }`.
+ * @example await settled(run.stop()) // => undefined, or { error } when the stop failed
+ */
+const settled = (
+  step: Promise<void>,
+): Promise<{ error: unknown } | undefined> =>
+  step.then(
     () => undefined,
     (error: unknown) => ({ error }),
   )
-  await endTrial(trial, reportPath, failure)
-}
 
 /**
  * Plans and runs the cited test as a started run does, recording what the report shows; the trial's end ({@link endTrial}) stops the run and releases its listings.
@@ -152,11 +163,6 @@ async function endTrial(
   reportPath: string,
   failure: { error: unknown } | undefined,
 ): Promise<void> {
-  const settled = (step: Promise<void>) =>
-    step.then(
-      () => undefined,
-      (error: unknown) => ({ error }),
-    )
   const stopFailure = trial.run ? await settled(trial.run.stop()) : undefined
   const listingFailure = await settled(
     releaseVitestListings(trial.unreleasedListings),

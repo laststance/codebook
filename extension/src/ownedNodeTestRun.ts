@@ -13,6 +13,7 @@ import {
   NODE_REPLAY_DEBUG_MAX_VARIABLES,
   NODE_TEST_ATTACH_TIMEOUT_MS,
   NODE_TEST_EXIT_GRACE_MS,
+  NODE_TEST_LISTING_PHASE_TIMEOUT_MS,
 } from './constants'
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
 import { NodeTestOutputTerminal } from './nodeTestOutputTerminal'
@@ -45,6 +46,7 @@ import { prepareNodeTestLaunch } from './utils/prepareNodeTestLaunch'
 import type { PreparedNodeTestLaunch } from './utils/prepareNodeTestLaunch'
 import { releaseVitestListings } from './utils/releaseVitestListings'
 import { selectCheckedNodeFrame } from './utils/selectCheckedNodeFrame'
+import { REAL_DEADLINE_TIMERS, startSlotDeadline } from './utils/slotDeadline'
 import { sourceImportBindings } from './utils/sourceImportBindings'
 import { thrownMessage } from './utils/thrownMessage'
 import { verifyVitestTestResult } from './utils/verifyVitestTestResult'
@@ -218,7 +220,16 @@ export class OwnedNodeTestRun {
       this.citedSources,
       vscode.workspace.textDocuments,
     )
-    // Each Vitest listing is bounded by its own deadline (VITEST_FILE_LIST_TIMEOUT_MS), so a slow root and package listing end with a listing's own deadline error; the attach budget starts once they are done.
+    // The Vitest listings share their own budget, each listing within its own deadline as well, so slow listings end with a sentence naming them; the attach budget starts once they are done.
+    const listingDeadline = startSlotDeadline(
+      NODE_TEST_LISTING_PHASE_TIMEOUT_MS,
+      "the test's Vitest listings",
+      REAL_DEADLINE_TIMERS,
+    )
+    const listingSignal = AbortSignal.any([
+      this.abort.signal,
+      listingDeadline.signal,
+    ])
     const launch = (this.launch = await prepareNodeTestLaunch(
       this.workspace,
       this.configuration,
@@ -226,7 +237,7 @@ export class OwnedNodeTestRun {
         listVitestTestFiles({
           ...request,
           node: this.node,
-          signal: this.abort.signal,
+          signal: listingSignal,
           // A failed release is journaled with its group and folder. A listing that failed keeps its own reason; a listing that finished but whose process group could not be confirmed as ended refuses the run, so the test is not started.
           onReleaseFailed: (failure, retryRelease) => {
             this.record('node-test.vitest-listing-not-released', failure)
@@ -236,7 +247,7 @@ export class OwnedNodeTestRun {
           },
         }),
       this.plan,
-    ))
+    ).finally(() => listingDeadline.cancel()))
     const signal = AbortSignal.any([
       this.abort.signal,
       AbortSignal.timeout(NODE_TEST_ATTACH_TIMEOUT_MS),
@@ -551,8 +562,10 @@ export class OwnedNodeTestRun {
       return await this.captureStop(previous.index + 1, fromIndex)
     } catch (error) {
       // A test that ended before the next declared stop is named as such, with its exit, before the release ends the evidence of it. A refusal before the continuation (the learner resumed or stopped, a changed source, a breakpoint bound elsewhere) keeps its own words.
+      // The next stop's index is previous.index + 1; its number counts from 1.
+      const nextStopNumber = previous.index + 2
       const failure = continued
-        ? await this.explainEarlyExit(error, previous.index + 2)
+        ? await this.explainEarlyExit(error, nextStopNumber)
         : error
       await this.release()
       throw failure

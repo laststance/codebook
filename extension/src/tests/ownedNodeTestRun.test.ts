@@ -48,6 +48,7 @@ const LEARNER_BREAKPOINT_ID = 12
  * @param options.listingRelease - The retry the failed listing hands to the run, which runs it at its release; without it the retry succeeds at once.
  * @param options.endsWhileFirstStopIsRevealed - Right after the first stop was captured, its test process exits, the owned session ends and the output tab cannot be shown, so the preparation fails after its stop.
  * @param options.launchListingMs - The preparation asks the run for its Vitest listing, which takes this long and ends early only when its signal aborts, as the real one does.
+ * @param options.listingPhaseMs - Replaces the shared budget of the launch's Vitest listings.
  * @param options.typedWhileRunning - The learner types this text into the cited source right after Codebook's continue request with this number (1 is the continue of the entry pause, 2 the first continuation of a declared stop), while the test runs to its next stop.
  * @param options.openDocumentText - The text the editor holds for the cited source `theme.ts` from the start, whose file and article text is `export const nextTheme = "dark";\n`; without it the editor has no document open until a test types into the source (`typeIntoCitedSource`).
  * @param options.closeFailures - How many first releases of the owned test process fail, each with "process group still running (close <n>)"; the later ones succeed.
@@ -81,6 +82,7 @@ async function nodeRunHarness({
   listingRelease = async () => undefined,
   endsWhileFirstStopIsRevealed = false,
   launchListingMs,
+  listingPhaseMs,
   declaredColumn = 14,
   pausedColumn,
   verifiedByNews,
@@ -135,6 +137,7 @@ async function nodeRunHarness({
   listingRelease?: RetryVitestListingRelease
   endsWhileFirstStopIsRevealed?: boolean
   launchListingMs?: number
+  listingPhaseMs?: number
   /** One-based column every stop is declared at on line 1; at column 1 the editor's breakpoint has no column of its own. */
   declaredColumn?: number
   /** The column the debugger reports for the paused frame when it is not the declared one: the debugger bound the declared line at another column. */
@@ -655,6 +658,8 @@ async function nodeRunHarness({
         ...constants,
         NODE_TEST_ATTACH_TIMEOUT_MS:
           budgetMs ?? constants.NODE_TEST_ATTACH_TIMEOUT_MS,
+        NODE_TEST_LISTING_PHASE_TIMEOUT_MS:
+          listingPhaseMs ?? constants.NODE_TEST_LISTING_PHASE_TIMEOUT_MS,
       },
       './ownedRepositoryBreakpoint': trackerModule,
       './nodeTestOutputTerminal': { NodeTestOutputTerminal: OutputTerminal },
@@ -1826,6 +1831,31 @@ test('a launch whose Vitest listings take longer than the attach budget still at
     assert.equal(stop.frame.line, 1)
   } finally {
     await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=the launch's Vitest listings ending at their shared budget with a sentence naming them, so a run with several slow listings neither waits on each listing's own deadline in turn nor fails with a bare timeout; fails_when=the listings have no shared bound, or its end is reported without naming the listings; why_new=Cycle 0054 /ship Step 9 pass 2 red team (the listing phase had no overall bound once the attach budget started after it); seam=a stand-in listing that outlasts a shortened phase budget; no_claim=the real per-listing deadline (listVitestTestFiles tests)
+test("a launch whose Vitest listings outlast their shared budget fails naming the test's listings", async () => {
+  // Arrange
+  const harness = await nodeRunHarness({
+    launchListingMs: 500,
+    listingPhaseMs: 200,
+  })
+  try {
+    // Act
+    const failure = await harness.run.prepare().then(
+      () => 'prepared',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.equal(
+      failure,
+      "Error: Timed out waiting for the test's Vitest listings",
+    )
+  } finally {
+    await harness.run.stop().catch(() => undefined)
     await harness.cleanup()
   }
 })
