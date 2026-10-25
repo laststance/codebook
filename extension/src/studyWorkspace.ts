@@ -413,6 +413,8 @@ const openRequestShape = { openRequest: openRequestNumberSchema.optional() }
 const NODE_HISTORY_READER_PAGE_SIZE = 20
 /** A saved test stop, the only journal entry with captured source and a debugger snapshot. */
 type NodeTestHistoryStop = Extract<NodeTestHistoryEntry, { type: 'stop' }>
+/** How {@link StudyWorkspace}'s return to a test replay's committed moment ended: the slot shows that moment again, a newer selection took over, or the slot could not show it (its row says why). */
+type NodeMomentReturn = 'returned' | 'superseded' | 'not-shown'
 
 /** How one selection of a test replay's moment behaves; see {@link StudyWorkspace.selectNodeHistoryEvent}. */
 type NodeHistorySelectionOptions = {
@@ -25086,10 +25088,18 @@ export class StudyWorkspace {
         if (request !== this.selectedNodeHistoryRequest) return
         // The Study position stays on the moment committed before, so the slot and the debugger go back to it: no surface shows the moment whose presentation failed (F199).
         // A failed return is told on the slot's row, and the presentation's own failure still reaches the caller (F368), with the open path's recovery clause (DS-G).
-        await this.returnToCommittedNodeMoment(history, request).catch(
-          (returnError: unknown) => this.report('history-source', returnError),
+        const returned = await this.returnToCommittedNodeMoment(
+          history,
+          request,
+        ).catch((returnError: unknown): NodeMomentReturn => {
+          this.report('history-source', returnError)
+          return 'not-shown'
+        })
+        // A newer selection took over during the return and owns the status line (DS-F).
+        if (returned === 'superseded') return
+        throw new Error(
+          this.describeNodeHistoryMoveFailure(error, returned === 'returned'),
         )
-        throw new Error(this.describeNodeHistoryMoveFailure(error))
       }
     }
     // A caller that withdrew meanwhile (Pause, dispose) commits nothing, also after a slot that failed to open, which skips the debugger's own check.
@@ -25181,13 +25191,17 @@ export class StudyWorkspace {
    * @param history - The selected test replay.
    * @param request - The failed or withdrawn selection's request token; a newer selection ends the return.
    * @param presentDebugger - Whether the debugger shows the committed moment again (a withdrawal).
-   * @example await this.returnToCommittedNodeMoment(history, request)
+   * @returns
+   * - `'returned'` once the slot shows the committed moment again
+   * - `'superseded'` when a newer selection took over meanwhile
+   * - `'not-shown'` when the slot could not show it (its row says why)
+   * @example await this.returnToCommittedNodeMoment(history, request) // => 'returned'
    */
   private async returnToCommittedNodeMoment(
     history: NodeTestHistoryIndex,
     request: number,
     presentDebugger = false,
-  ): Promise<void> {
+  ): Promise<NodeMomentReturn> {
     this.replayDebugger?.invalidate()
     this.selectedNodeHistoryDebugAvailable = false
     this.selectedNodeHistoryValuesUninspected = false
@@ -25204,10 +25218,11 @@ export class StudyWorkspace {
         ? committed
         : undefined
     await this.nodeLeaveSettle?.done
-    if (request !== this.selectedNodeHistoryRequest) return
+    if (request !== this.selectedNodeHistoryRequest) return 'superseded'
     const slot = await this.showNodeSourceSlot(history, stop, request)
     // A newer selection took over, or the slot could not open and told so itself.
-    if (!slot || slot === 'failed' || !this.nodeSourceSlot) return
+    if (!slot) return 'superseded'
+    if (slot === 'failed' || !this.nodeSourceSlot) return 'not-shown'
     // A debugger the learner stopped is restarted only by the learner's own selection.
     if (
       presentDebugger &&
@@ -25219,14 +25234,15 @@ export class StudyWorkspace {
         true,
       ))
     )
-      return
-    if (request !== this.selectedNodeHistoryRequest || !this.nodeSourceSlot)
-      return
+      return 'superseded'
+    if (request !== this.selectedNodeHistoryRequest) return 'superseded'
+    if (!this.nodeSourceSlot) return 'not-shown'
     this.nodeSourceSlot = { ...this.nodeSourceSlot, stop }
     this.nodeSurfacesSequence = this.selectedNodeHistorySequence
     this.settleNodeSourceSlotRow()
     this.decorateNodeSourceSlot(true)
     if (presentDebugger) this.publish()
+    return 'returned'
   }
 
   /**
@@ -25255,20 +25271,25 @@ export class StudyWorkspace {
   }
 
   /**
-   * Words the failure of a test replay move by its cause, adding that the last moment is still shown (DS-G), so the transport's status line names the way back with the summary hidden too; called by {@link selectNodeHistoryEvent} when the presentation of a move fails.
-   * A replay debugger that did not start ({@link ReplayDebuggerStartError}) is worded as the open path words its own failure, with the restart clause; any other failure of the moment's presentation asks for the stop again (Cycle 0052 task 17).
+   * Words the failure of a test replay move by its cause, adding that the last moment is still shown when the slot shows it again (DS-G), so the transport's status line names the way back with the summary hidden too; called by {@link selectNodeHistoryEvent} when the presentation of a move fails.
+   * A replay debugger that did not start ({@link ReplayDebuggerStartError}) is worded as the open path words its own failure, with the restart clause; any other failure of the moment's presentation asks for the stop again (Cycle 0052 task 17). When the return to the last moment failed too, the line claims no shown moment, and the recorded-source row tells why (Cycle 0052 pt2, local CodeRabbit round 5).
    * @param error - The presentation's failure; its cause is sanitized as on the Study pane's lines.
+   * @param lastMomentShown - Whether the slot shows the committed moment again ({@link returnToCommittedNodeMoment} returned).
    * @returns The sentence the node-history control line shows.
    * @example
-   * this.describeNodeHistoryMoveFailure(new ReplayDebuggerStartError(new Error('Workspace trust was declined.'))) // => 'The replay debugger could not start: Workspace trust was declined. The last moment is still shown. Select this stop or use Inspect in native debugger to restart it.'
-   * this.describeNodeHistoryMoveFailure(new Error('The presentation failed.')) // => 'The recorded moment could not be shown: The presentation failed. The last moment is still shown. Select this stop again to retry.'
+   * this.describeNodeHistoryMoveFailure(new ReplayDebuggerStartError(new Error('Workspace trust was declined.')), true) // => 'The replay debugger could not start: Workspace trust was declined. The last moment is still shown. Select this stop or use Inspect in native debugger to restart it.'
+   * this.describeNodeHistoryMoveFailure(new Error('The presentation failed.'), false) // => 'The recorded moment could not be shown: The presentation failed. Select this stop again to retry.'
    */
-  private describeNodeHistoryMoveFailure(error: unknown): string {
+  private describeNodeHistoryMoveFailure(
+    error: unknown,
+    lastMomentShown: boolean,
+  ): string {
     const cause = sanitizeCause(error, this.privateRoots()).replace(/\.$/, '')
+    const shown = lastMomentShown ? ' The last moment is still shown.' : ''
     // Only the debugger's start keeps the restart clause; a running debugger, a closed one or another surface failing asks for the stop again.
     return error instanceof ReplayDebuggerStartError
-      ? `The replay debugger could not start: ${cause}. The last moment is still shown. Select this stop or use Inspect in native debugger to restart it.`
-      : `The recorded moment could not be shown: ${cause}. The last moment is still shown. Select this stop again to retry.`
+      ? `The replay debugger could not start: ${cause}.${shown} Select this stop or use Inspect in native debugger to restart it.`
+      : `The recorded moment could not be shown: ${cause}.${shown} Select this stop again to retry.`
   }
 
   /**

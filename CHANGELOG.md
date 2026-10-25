@@ -8,7 +8,7 @@ Cycle 0052 pt2 ([Issue #124](https://github.com/laststance/codebook/issues/124))
 
 - **The recorded-source tab draws no CodeLens.** The editor redraws a lens only after its own delay, so a lens could still name the stop you left beside the next moment. The stop's whole label stays at the end of the stopped line, and its hover carries it where a narrow group cuts the line.
 - **A move from a stop to an output or the result** shows the placeholder from its first line, with no sticky-scroll header of the stop's source above it.
-- **A move that fails is worded by its cause.** When the replay debugger cannot start, the line keeps its restart advice; when the moment fails for another cause, it reads `The recorded moment could not be shown: <cause>. The last moment is still shown. Select this stop again to retry.`
+- **A move that fails is worded by its cause.** When the replay debugger cannot start, the line keeps its restart advice; when the moment fails for another cause, it reads `The recorded moment could not be shown: <cause>. The last moment is still shown. Select this stop again to retry.` The line says the last moment is still shown only when it is: when it cannot be shown again either, the recorded-source row says why.
 - **A refused or failed move shows the storage folder as `<storage>`**, on the transport's status line and in the Study pane's line, also after the runtime is released; the causes Codebook words after a release name the storage, the workspace and the home folder as `<storage>`, `<workspace>` and `~`, as before it.
 
 **Notices and the summary page.**

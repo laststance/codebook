@@ -752,9 +752,9 @@ test('a failed presentation is reported as itself when the return to the committ
     )
     // The rejection is awaited below, after the held presentation fails.
     const outcome = assert.rejects(selecting, {
-      // The move's failure carries the open path's recovery clause and names the presentation's own cause (Cycle 0051, DS-G).
+      // The move's failure carries the open path's recovery clause and names the presentation's own cause (Cycle 0051, DS-G); the return failed, so it claims no shown moment (Cycle 0052 pt2, local CodeRabbit round 5).
       message:
-        'The recorded moment could not be shown: The presentation failed. The last moment is still shown. Select this stop again to retry.',
+        'The recorded moment could not be shown: The presentation failed. Select this stop again to retry.',
     })
     await held.started
 

@@ -3792,3 +3792,49 @@ test('a failure worded after the runtime is released hides the storage folder, t
     await harness.close()
   }
 })
+
+// Value: protects=a failed move whose return to the committed moment fails too does not claim that the last moment is still shown: the line words the move's failure and its recovery, and the recorded-source row tells why the return failed; fails_when=the line says `The last moment is still shown.` while the slot could not show that moment again (local CodeRabbit round 5 on dba70b06, Major); why_new=the move-failure tests return to the committed moment successfully; seam=the harness's held historical debug presentation rejected with a plain Error, the learner's own close of the slot tab and the harness's failure of the next non-file document open; no_claim=a real DAP or editor failure
+test('a failed move whose return to the last moment fails too does not say the last moment is still shown', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await openByOpenReplay(harness)
+    harness.hideSummary()
+    const held = harness.holdHistoricalDebugPresentation(true)
+    harness.receivePlaybackPanel({
+      type: 'node-history-step',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      direction: 'next',
+      unit: 'stop',
+    })
+    await held.started
+    // The learner closes the slot's tab, and the editor will refuse to open it again.
+    const slotTab = harness.groups
+      .flatMap((group) => group.tabs)
+      .find((tab) =>
+        (
+          tab.input as { uri?: { path?: string } } | undefined
+        )?.uri?.path?.includes('/node-history-slot/'),
+      )!
+    harness.closeTabByHand(slotTab)
+    harness.failCurrentSourceOpen()
+
+    // Act: the running debugger fails to show the stop, and the return to the last moment cannot open the slot.
+    held.reject(new Error('The stop could not be shown in Run and Debug.'))
+    await waitUntil(
+      () => lastView(harness)?.nodeHistoryRefusal !== undefined,
+      'the failure reaches the transport',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(
+      lastView(harness)?.nodeHistoryRefusal,
+      'The recorded moment could not be shown: The stop could not be shown in Run and Debug. Select this stop again to retry.',
+    )
+  } finally {
+    harness.restoreCurrentSourceOpen()
+    await harness.close()
+  }
+})
