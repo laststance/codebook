@@ -1053,6 +1053,12 @@ export const VITEST_CONFIG_FILE_NAMES: readonly string[] = [
 export const NODE_TEST_READINESS_DIRECTORY_LIMIT = 256
 /** How many folder entries `codebook_status` reads at most while it lists the folders of the next level for a Vitest; a search that reaches it says it did not look further, so a folder holding many entries cannot make a status call slow ({@link searchRepositoryVitest}). */
 export const NODE_TEST_READINESS_ENTRY_LIMIT = 20_000
+/** How long one `codebook_status` readiness search may look before it stops and says it did not look further; checked between folders and entries, so a slow file system cannot hold the status call ({@link searchRepositoryVitest}). */
+export const NODE_TEST_READINESS_TIMEOUT_MS = 2_000
+/** The largest root config whose bytes a root claim's basis hashes; a larger one is identified by its size, modification time and file id instead, so a huge or sparse file named like a config cannot hold a start ({@link readRootClaimBasis}). */
+export const NODE_TEST_ROOT_CONFIG_HASH_LIMIT_BYTES = 1_048_576
+/** How many listed test files node-test resolves to their real paths at once, so a listing of thousands of files is compared with the cited test quickly ({@link partitionListedTestFiles}). */
+export const NODE_TEST_LISTED_FILE_REALPATH_CONCURRENCY = 64
 /** How many levels below the repository root `codebook_status` looks for a Vitest: a package such as `packages/query-core` lies two levels below it ({@link searchRepositoryVitest}). */
 export const NODE_TEST_READINESS_DEPTH = 2
 export const NODE_TEST_HISTORY_DIRECTORY = 'node-tests.v1'

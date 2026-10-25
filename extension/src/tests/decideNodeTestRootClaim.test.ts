@@ -50,3 +50,17 @@ test('a root listing that was cancelled, timed out or left its process group unc
   // Assert
   assert.deepEqual(decisions, [true, true, true])
 })
+
+// Value: protects=a root listing Codebook could not run (its folder, the spawn or a file read failed) refusing the start with its own error instead of falling back; fails_when=such a host failure leaves the test in its package as if Vitest had failed cleanly; why_new=Cycle 0053 Step 11 round 2 (Claude adversarial, finding 1); seam=none; no_claim=which errors are host failures (listVitestForRootClaim tests)
+test('a root listing Codebook could not run is a refusal, not a fallback', () => {
+  // Arrange
+  const error = new Error(
+    'Vitest could not list packages/a/src/a.test.ts from the repository root (Error: spawn ENOENT). The test was not started; start it again.',
+  )
+
+  // Act
+  const decision = decideNodeTestRootClaim({ outcome: 'error', error })
+
+  // Assert
+  assert.deepEqual(decision, { mode: 'refused', refusal: error })
+})

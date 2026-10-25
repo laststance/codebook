@@ -103,7 +103,9 @@ test('the first unusable Vitest found is named in its own form', async (context)
 
   // Act
   const searches = await Promise.all(
-    [tooOld, unreadable, linked, withoutProgram].map(searchRepositoryVitest),
+    [tooOld, unreadable, linked, withoutProgram].map((root) =>
+      searchRepositoryVitest(root),
+    ),
   )
 
   // Assert
@@ -300,4 +302,48 @@ test('a Vitest entry the search cannot look at is named as found with an unreada
     // The repository's removal needs the folder readable again.
     await chmod(denied, 0o755)
   }
+})
+
+// Value: protects=a search that could not read a folder saying so and asking for no install, instead of reporting that no Vitest was found; fails_when=an unreadable folder is passed over silently and missing asks the learner to install a Vitest the search could not look for; why_new=Cycle 0053 Step 11 round 2 (Claude adversarial, finding 4); seam=a folder the user may search but not list; no_claim=a Vitest entry that cannot be looked at (the unreadable entry test)
+test('a search that could not read a folder says so instead of reporting none found', async (context) => {
+  // Arrange
+  if (process.getuid?.() === 0)
+    return context.skip('chmod 0o100 does not deny the root user')
+  const root = await repository(context)
+  await mkdir(join(root, 'tools', 'scripts'), { recursive: true })
+  const unlistable = join(root, 'tools')
+  await chmod(unlistable, 0o100)
+  try {
+    // Act
+    const search = await searchRepositoryVitest(root)
+
+    // Assert
+    assert.deepEqual(search, {
+      vitestSearch: 'incomplete',
+      missing:
+        "node-test found no usable Vitest in the 2 folders it looked at (the repository root and up to two levels below it), but could not read every folder there. A start still checks the cited test's own package.",
+    })
+  } finally {
+    // The repository's removal needs the folder readable again.
+    await chmod(unlistable, 0o755)
+  }
+})
+
+// Value: protects=a readiness search that runs past its time limit stopping and saying how many folders it looked at, so a slow file system cannot hold codebook_status; fails_when=the search keeps reading past its time and reports what it finds only after it, or reports none found; why_new=Cycle 0053 Step 11 round 2 (Claude adversarial, finding 5); seam=a clock that jumps past the time limit after the root was looked at; no_claim=the length of the limit
+test('a readiness search past its time limit stops and says how many folders it looked at', async (context) => {
+  // Arrange
+  const root = await repository(context)
+  await installVitest(join(root, 'packages', 'query-core'), '5.0.5')
+  let reads = 0
+  const clock = () => (reads++ < 2 ? 0 : 5_000)
+
+  // Act
+  const search = await searchRepositoryVitest(root, clock)
+
+  // Assert
+  assert.deepEqual(search, {
+    vitestSearch: 'incomplete',
+    missing:
+      "node-test found no usable Vitest in the first 1 folders it looked at (the repository root and up to two levels below it) and did not look further. A start still checks the cited test's own package.",
+  })
 })

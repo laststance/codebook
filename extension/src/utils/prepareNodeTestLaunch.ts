@@ -130,7 +130,7 @@ async function verifyExecutionPlan(
  * other file Vitest reports and anchors the literal title path. Vitest 5 joins titles with " > " and Vitest 4 with one space.
  * The listing and the launch run in the plan's Vitest root with its filter, as the test's package would run its own `vitest`; in root mode exactly as before.
  * Called by the owned Node test run during preparation, before any test code executes.
- * The paths and hashes are checked by {@link checkNodeTestFiles} and the plan by {@link verifyExecutionPlan}, the same checks the run's preparation made before its history began; they run again here because time passes between the two.
+ * The paths and hashes are checked by {@link checkNodeTestFiles} and the plan by {@link verifyExecutionPlan}, the same checks the run's preparation made before its history began; they run again here because time passes between the two, and the plan once more after the listings. Vitest itself loads its config after the launch, so a change after this last check is not seen.
  *
  * @param workspace - Opened repository root.
  * @param configuration - Validated test intent of a new run.
@@ -163,6 +163,8 @@ export async function prepareNodeTestLaunch(
     program,
     listTestFiles,
   )
+  // The listings take seconds: a config or Vitest changed while they ran is refused too, so the launch follows the plan as it stands after them.
+  await verifyExecutionPlan(root, testFile, plan)
   const separator = major >= 5 ? ' > ' : ' '
   // Created last so a refused preparation leaves nothing behind; the run removes it on release.
   const reportDirectory = await mkdtemp(

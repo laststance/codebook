@@ -550,3 +550,53 @@ test('a root config added or edited, or the root Vitest replaced, after a packag
     ],
   )
 })
+
+// Value: protects=a root config changed while the launch's own listings run being refused once they end, before the test is launched; fails_when=the plan is compared only before the listings, so a root config that changed during them, and would now run the test from the root, is launched in the package with the stale rootClaim; why_new=Cycle 0053 Step 11 round 2 (Codex adversarial, Medium); seam=the launch's first listing edits the root config before the real listing runs; no_claim=a change after the last check, which Vitest itself reads after the launch
+test('a root config changed while the launch lists its test files refuses the launch after the listings', async (context) => {
+  // Arrange
+  const { root, configuration, calls } = await createRepository(
+    context,
+    'packages/a',
+    ['packages/a/vite.config.ts', 'vitest.config.ts'],
+  )
+  const plan = await planNodeTestExecution({
+    root,
+    testFile: join(root, configuration.testFile),
+    declaredTestFile: configuration.testFile,
+    listRootClaim: async () => ({ outcome: 'listed', files: [] }),
+  })
+  let edited = false
+  const listEditingRootConfig = async (request: ListVitestTestFilesRequest) => {
+    if (!edited) {
+      edited = true
+      await writeFile(
+        join(root, 'vitest.config.ts'),
+        "export default { test: { include: ['packages/**/*.test.ts'] } }\n",
+      )
+    }
+    return listVitestTestFiles({
+      ...request,
+      node: process.execPath,
+      signal: new AbortController().signal,
+    })
+  }
+
+  // Act
+  const refusal = await prepareNodeTestLaunch(
+    root,
+    configuration,
+    listEditingRootConfig,
+    plan,
+  ).then(
+    () => undefined,
+    (thrown: unknown) => thrown,
+  )
+
+  // Assert
+  assert.ok(refusal instanceof StudyError)
+  assert.equal(
+    refusal.message,
+    "node-test's plan for packages/a/src/subscribable.test.ts changed while the run was preparing (the Vitest or Vite config files at the repository root changed after the root claim was decided); start the test again.",
+  )
+  assert.equal((await calls()).length, 2)
+})

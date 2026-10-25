@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import {
+  chmod,
   mkdtemp,
   readFile,
   realpath,
@@ -624,6 +625,150 @@ writeFileSync('started-helper.json', JSON.stringify({ launcher: process.pid, hel
       try {
         process.kill(processes.helper, 'SIGKILL')
       } catch {}
+    await removeKeptListingFolder(vitest)
+    await rm(vitest.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a listing whose helper left the process group and holds the error stream being released by its retry once the group has ended, so the run that owns it can stop and the next start is not BUSY for as long as the helper lives; fails_when=the retry waits again for the stream the helper holds, fails at every stop, and every start answers BUSY until the helper exits or the editor reloads; why_new=Cycle 0053 /ship review pass 5 (red team); seam=a stand-in Vitest whose helper starts its own process group and inherits the error stream; no_claim=the helper itself, which is outside the group and is not Codebook's to end
+test('a retried release of a listing whose helper holds its error stream succeeds once the group has ended and removes the kept folder', async () => {
+  // Arrange: the helper starts its own process group, inherits the listing's error stream and outlives the launcher, which writes its list and ends.
+  const vitest = await stubVitest(`
+import { spawn } from 'node:child_process';
+const helper = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: ['ignore', 'ignore', 'inherit'] });
+helper.unref();
+writeFileSync(output, JSON.stringify([{ file: '/repo/src/a.test.ts' }]));
+writeFileSync('started-helper.json', JSON.stringify({ launcher: process.pid, helper: helper.pid }));
+`)
+  const retries: RetryVitestListingRelease[] = []
+  const cancellation = new AbortController()
+  let processes: { launcher: number; helper: number } | undefined
+  try {
+    const listing = listVitestTestFiles({
+      node: process.execPath,
+      program: vitest.program,
+      vitestRoot: vitest.directory,
+      filter: 'src/a.test.ts',
+      excludes: [],
+      signal: cancellation.signal,
+      onReleaseFailed: (_failure, retryRelease) => retries.push(retryRelease),
+    }).then(
+      (files) => files,
+      (error: unknown) => error,
+    )
+    processes = await waitUntil(
+      async () =>
+        readFile(join(vitest.directory, 'started-helper.json'), 'utf8').then(
+          (text) => JSON.parse(text) as { launcher: number; helper: number },
+          () => undefined,
+        ),
+      'listing helper start',
+      5_000,
+    )
+    const launcher = processes.launcher
+    await waitUntil(
+      () => {
+        try {
+          process.kill(launcher, 0)
+          return false
+        } catch {
+          return true
+        }
+      },
+      'listing launcher exit',
+      5_000,
+    )
+    cancellation.abort(new Error('run cancelled'))
+    await listing
+    const started = await vitest.started()
+    const directory = dirname(started.argv[2]!.slice('--json='.length))
+
+    // Act
+    const retried = await retries[0]!().then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+    // Assert
+    assert.equal(retries.length, 1)
+    assert.equal(retried, undefined)
+    await assert.rejects(stat(directory), { code: 'ENOENT' })
+  } finally {
+    // Only this test's own synthetic helper is ended.
+    cancellation.abort(new Error('run cancelled'))
+    if (processes)
+      try {
+        process.kill(processes.helper, 'SIGKILL')
+      } catch {}
+    await removeKeptListingFolder(vitest)
+    await rm(vitest.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a retry that found the listing's group ended never probing or signalling that group id again, also when the folder's removal failed and a later stop retries; fails_when=a later retry probes and signals the old id, which by then may name another process's group, so a stop ends an unrelated process group; why_new=Cycle 0053 Step 11 round 2 (Codex adversarial, High); seam=process.kill refuses the first release's signals and records every call to a group, and the kept folder is made unwritable once; no_claim=a group id reused before the first probe (cannot be told apart by id)
+test('a retry that found the group ended and could not remove the folder touches no group again on the next retry', async (context) => {
+  // Arrange
+  if (process.getuid?.() === 0)
+    return context.skip('chmod 0o500 does not deny the root user')
+  const vitest = await stubVitest(
+    `writeFileSync(output, JSON.stringify([{ file: '/repo/src/a.test.ts' }]));`,
+  )
+  const retries: RetryVitestListingRelease[] = []
+  const callsToGroups: (string | number | undefined)[] = []
+  const kill = process.kill.bind(process)
+  let firstReleaseRefused = true
+  context.mock.property(process, 'platform', 'linux')
+  context.mock.method(
+    process,
+    'kill',
+    (pid: number, signal?: string | number): true => {
+      if (pid < 0) {
+        callsToGroups.push(signal)
+        if (firstReleaseRefused)
+          throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+      }
+      return kill(pid, signal)
+    },
+  )
+  let directory: string | undefined
+  try {
+    await listVitestTestFiles({
+      node: process.execPath,
+      program: vitest.program,
+      vitestRoot: vitest.directory,
+      filter: 'src/a.test.ts',
+      excludes: [],
+      signal: new AbortController().signal,
+      onReleaseFailed: (_failure, retryRelease) => retries.push(retryRelease),
+    }).catch(() => undefined)
+    const started = await vitest.started()
+    directory = dirname(started.argv[2]!.slice('--json='.length))
+    firstReleaseRefused = false
+    await chmod(directory, 0o500)
+    const firstRetry = await retries[0]!().then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    await chmod(directory, 0o700)
+    callsToGroups.splice(0)
+
+    // Act
+    const secondRetry = await retries[0]!().then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+    // Assert
+    assert.ok(firstRetry instanceof Error)
+    assert.match(
+      firstRetry.message,
+      /^The Vitest listing's process group \d+ has ended, but Codebook could not remove its folder .+ \(Error: EACCES/,
+    )
+    assert.equal(secondRetry, undefined)
+    assert.deepEqual(callsToGroups, [])
+    await assert.rejects(stat(directory), { code: 'ENOENT' })
+  } finally {
+    if (directory) await chmod(directory, 0o700).catch(() => undefined)
     await removeKeptListingFolder(vitest)
     await rm(vitest.directory, { recursive: true, force: true })
   }

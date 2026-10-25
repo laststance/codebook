@@ -5,10 +5,12 @@ import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { listVitestForRootClaim } from '../utils/listVitestForRootClaim'
-import type {
-  listVitestTestFiles,
-  RetryVitestListingRelease,
-  VitestListingReleaseFailure,
+import {
+  VitestListingFailedError,
+  type listVitestTestFiles,
+  type RetryVitestListingRelease,
+  type VitestListedFile,
+  type VitestListingReleaseFailure,
 } from '../utils/listVitestTestFiles'
 
 /**
@@ -141,6 +143,96 @@ test("a root listing reads its deadline on the start's own clock", async (contex
     outcome: 'listed',
     files: [{ file: '/repo/browser-extension/tests/unit/popup.test.tsx' }],
   })
+})
+
+// Value: protects=only Vitest's own failure (an error exit or no readable list) counting as the clean failure a root claim falls back from, while a listing Codebook could not run (its folder, the spawn or a file read failed) refuses the start; fails_when=a full disk or a failed spawn reads as a clean failure, so the test silently runs under its package config while the root config would have run it; why_new=Cycle 0053 Step 11 round 2 (Claude adversarial, finding 1); seam=the listing is replaced by one that throws each failure; no_claim=how Vitest's own failure is detected (listVitestTestFiles tests)
+test("only Vitest's own failure is a clean failure of a root listing, and one Codebook could not run refuses", async (context) => {
+  // Arrange
+  const vitest = await stubVitest(context, '')
+  const throwing =
+    (error: Error): typeof listVitestTestFiles =>
+    async () => {
+      throw error
+    }
+
+  // Act
+  const vitestFailed = await claimFrom(
+    vitest,
+    {},
+    throwing(
+      new VitestListingFailedError(
+        'Vitest could not list the cited test file (exit code 1): no config',
+      ),
+    ),
+  )
+  const diskFull = await claimFrom(
+    vitest,
+    {},
+    throwing(
+      Object.assign(new Error('ENOSPC: no space left on device, mkdtemp'), {
+        code: 'ENOSPC',
+      }),
+    ),
+  )
+
+  // Assert
+  assert.equal(vitestFailed.outcome, 'failed')
+  assert.equal(diskFull.outcome, 'error')
+  assert.equal(
+    String('error' in diskFull && diskFull.error),
+    'Error: Vitest could not list browser-extension/tests/unit/popup.test.tsx from the repository root (Error: ENOSPC: no space left on device, mkdtemp). The test was not started; start it again.',
+  )
+})
+
+// Value: protects=a root listing that ended after the start's preparation deadline refusing the start as a deadline, whether Vitest failed or listed, instead of falling back to the package or going on to another listing and the launch; fails_when=a listing that failed just before the deadline and released after it reads as a clean failure, so a start past its deadline goes on; why_new=Cycle 0053 Step 11 round 2 (Codex structured review, P2); seam=the listing is replaced by one that moves the start's clock past the deadline; no_claim=a deadline that passes while Vitest still runs (the cancellation and deadline test)
+test("a root listing that ended after the start's deadline refuses as a deadline, whether Vitest failed or listed", async (context) => {
+  // Arrange
+  const vitest = await stubVitest(context, '')
+  let clock = 1_000
+  const endingLate =
+    (ending: () => never | VitestListedFile[]): typeof listVitestTestFiles =>
+    async () => {
+      clock = 1_000 + 60_000
+      return ending()
+    }
+  const claimEndingLate = (ending: () => never | VitestListedFile[]) => {
+    clock = 1_000
+    return listVitestForRootClaim(
+      {
+        program: vitest.program,
+        vitestRoot: vitest.folder,
+        filter: 'browser-extension/tests/unit/popup.test.tsx',
+        excludes: [],
+      },
+      {
+        node: process.execPath,
+        cancellation: new AbortController().signal,
+        deadlineAt: 1_000 + 30_000,
+        now: () => clock,
+      },
+      endingLate(ending),
+    )
+  }
+
+  // Act
+  const failedLate = await claimEndingLate(() => {
+    throw new VitestListingFailedError(
+      'Vitest could not list the cited test file (exit code 1): ',
+    )
+  })
+  const listedLate = await claimEndingLate(() => [
+    { file: '/repo/browser-extension/tests/unit/popup.test.tsx' },
+  ])
+
+  // Assert
+  assert.deepEqual(
+    [failedLate.outcome, listedLate.outcome],
+    ['deadline', 'deadline'],
+  )
+  assert.equal(
+    String('error' in listedLate && listedLate.error),
+    "Error: node-test's preparation deadline passed before Vitest could list browser-extension/tests/unit/popup.test.tsx from the repository root.",
+  )
 })
 
 // Value: protects=a root listing whose process group could not be confirmed as ended refusing the start, also when the listing itself failed, with a sentence naming the group and the kept folder; fails_when=such a listing reads as a clean failure, so a second Vitest starts beside a member that may still run; why_new=Eng review (H5 unconfirmed process-group end); seam=the listing is replaced by one that reports a failed release; no_claim=how the release fails (listVitestTestFiles tests)

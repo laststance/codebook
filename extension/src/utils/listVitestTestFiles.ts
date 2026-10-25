@@ -31,6 +31,8 @@ export type ListVitestTestFilesRequest = {
 }
 /** A listing that outlived its deadline, told apart from Vitest's own failure so that a root claim refuses the start instead of falling back ({@link listVitestForRootClaim}). */
 export class VitestListingDeadlineError extends Error {}
+/** A listing Vitest itself ended with an error exit or without a readable list: the only failure a root claim treats as clean and falls back from ({@link listVitestForRootClaim}); a folder, spawn or file-system failure of Codebook's own is no such failure. */
+export class VitestListingFailedError extends Error {}
 /** What a listing left behind when its release failed: the group that may still have a member, the folder that was kept for it, and the release's error as text. `processGroup` is `undefined` when the listing process never started. */
 export type VitestListingReleaseFailure = {
   processGroup: number | undefined
@@ -38,7 +40,7 @@ export type VitestListingReleaseFailure = {
   reason: string
 }
 /**
- * Runs a failed listing release again: signals the listing's process group while it still has a member, waits until it has ended, then removes the folder that was kept for it.
+ * Runs a failed listing release again: signals the listing's process group while it still has a member, waits until it has ended, then removes the folder that was kept for it; once the group was found ended, later calls only remove the folder.
  * Handed to {@link listVitestTestFiles}'s `onReleaseFailed` beside the failure, so whoever owns the run can release the listing at its own stop ({@link releaseVitestListings}); it throws while the group still cannot be confirmed as ended, and may then be called again.
  * A group found ended gets no signal, since its id may by then name another process's group; a group id the system reuses between the group's end and this probe cannot be told apart, as with any release by group id.
  * @example
@@ -66,7 +68,7 @@ const listedFilesSchema = z.array(
  * @param request.timeoutMs - Listing deadline; the default fits inside the attach phase.
  * @param request.onReleaseFailed - Told once when the listing's process group could not be confirmed as ended, whatever the listing's own outcome, with a {@link RetryVitestListingRelease} that runs the release again; the owned Node test run journals it and keeps the retry for its own release.
  * @returns Every file entry Vitest reports, in Vitest's order, once the listing's process group is confirmed as ended.
- * @throws When Vitest fails, times out (a {@link VitestListingDeadlineError}), is cancelled or writes no readable list; that reason is kept also when the release fails. When a listing that finished
+ * @throws When Vitest fails or writes no readable list (a {@link VitestListingFailedError}), times out (a {@link VitestListingDeadlineError}), is cancelled, or cannot be started; that reason is kept also when the release fails. When a listing that finished
  * could not be released, because a signal or a probe was refused or the group did not end within its wait after SIGTERM and SIGKILL, with that failure as the
  * cause: a process of the group may still run, so the Node test run is not started and the listing's folder is kept.
  * @example
@@ -142,8 +144,11 @@ export async function listVitestTestFiles(
           VITEST_FILE_LIST_SHUTDOWN_TIMEOUT_MS,
         )
       }
-      // A retry may run long after the first release: once the group has ended, its id can name another process's group, which is never signalled.
-      if (onlyWhileRunning && isProcessGroupGone(processGroup)) return drain()
+      // A retry may run long after the first release: once the group has ended, its id can name another process's group, which is never signalled. A helper outside the group may still hold the error stream, which then never closes; the group's end is what the release owes.
+      if (onlyWhileRunning && isProcessGroupGone(processGroup)) {
+        child.stderr?.destroy()
+        return
+      }
       signalProcessGroup(processGroup, 'SIGTERM')
       // Repository configuration can spawn a helper or intercept SIGTERM; release the complete owned group.
       try {
@@ -168,7 +173,7 @@ export async function listVitestTestFiles(
         timeoutMs,
       )
       if (exitCode !== 0)
-        throw new Error(
+        throw new VitestListingFailedError(
           `Vitest could not list the cited test file (exit code ${exitCode}): ${errorText.trim()}`,
         )
     } catch (error) {
@@ -186,7 +191,9 @@ export async function listVitestTestFiles(
         .catch(() => undefined),
     )
     if (!listed.success)
-      throw new Error('Vitest wrote an unreadable test file list.')
+      throw new VitestListingFailedError(
+        'Vitest wrote an unreadable test file list.',
+      )
     files = listed.data.map((entry) =>
       entry.projectName === undefined
         ? { file: entry.file }
@@ -202,17 +209,29 @@ export async function listVitestTestFiles(
     else {
       const reason = String(failedRelease.error)
       const releaseAgain = release
+      /** Set once a retry found the listing's group ended: later retries only remove the folder. */
+      const retryState = { groupEnded: false }
       request.onReleaseFailed?.(
         { processGroup: listingProcessGroup, directory, reason },
         async () => {
-          // The same release as above, with SIGKILL after SIGTERM while the group still runs; the folder goes only once the group has ended.
-          await releaseAgain?.(true).catch((error: unknown) => {
-            throw new Error(
-              `Codebook still could not confirm that the Vitest listing's process group ${listingProcessGroup} ended (${String(error)}), so a process of that group may still run, and its folder ${directory} is kept. Stop the run again.`,
-              { cause: error },
-            )
-          })
-          await rm(directory, { recursive: true, force: true })
+          // The same release as above, with SIGKILL after SIGTERM while the group still runs. A group once found ended is never probed or signalled again, since by a later retry its id may name another process's group.
+          if (!retryState.groupEnded)
+            await releaseAgain?.(true).catch((error: unknown) => {
+              throw new Error(
+                `Codebook still could not confirm that the Vitest listing's process group ${listingProcessGroup} ended (${String(error)}), so a process of that group may still run, and its folder ${directory} is kept. Stop the run again.`,
+                { cause: error },
+              )
+            })
+          retryState.groupEnded = true
+          // The folder goes only once the group has ended; a removal that fails is tried again by the next retry, without the group.
+          await rm(directory, { recursive: true, force: true }).catch(
+            (error: unknown) => {
+              throw new Error(
+                `The Vitest listing's process group ${listingProcessGroup} has ended, but Codebook could not remove its folder ${directory} (${String(error)}). Stop the run again.`,
+                { cause: error },
+              )
+            },
+          )
         },
       )
       // A refused signal or probe and a group that did not end within its wait alike leave a member that may still run: a listing that finished is refused.
