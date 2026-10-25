@@ -11926,7 +11926,7 @@ export class StudyWorkspace {
    * Only a reader that already stands in the summary composition for a test replay (another test replay was shown) is left as it is; an earlier entry that failed after it left the Live composition is opened again, so the Application, the slot and the debugger never show without a transport (F384).
    * @throws What {@link open} throws; the caller tells it.
    * @param entry - The entry's ticket ({@link nodeHistoryEntryRequest}); an entry a newer one or a Return overtook while it waited for the work window reveals nothing.
-   * @param overtaken - Aborts the waits for the work window, in a standing composition and in {@link open}, when a newer entry, a Return or a Close supersedes the ticket, so the next entry's turn is not held for the focus bound (Cycle 0052 tasks 40 and 44).
+   * @param overtaken - Aborts the waits for the work window and for the Learning summary view, in a standing composition and in {@link open}, when a newer entry, a Return or a Close supersedes the ticket, so the next entry's turn is not held for their bounds (Cycle 0052 tasks 40, 44 and 45).
    * @throws The abort's reason when the wait is overtaken; the caller ends quietly for a superseded ticket.
    * @example await this.enterSummaryCompositionForReplay(entry, overtaken)
    */
@@ -11943,7 +11943,8 @@ export class StudyWorkspace {
       // The composition stands already, but the learner may have hidden the summary and the bottom panel: the entry shows them again, so Open replay never ends with no visible replay (Cycle 0052 task 14). The reveal waits for the work window as open()'s does, and an entry overtaken meanwhile reveals nothing.
       await this.waitForRecordingWindow(overtaken, this.lifetime)
       if (entry !== this.nodeHistoryEntryRequest) return
-      await this.showLearningSummary(undefined, true)
+      // The reveal's wait for the summary view ends too when the entry is overtaken (Cycle 0052 task 45).
+      await this.showLearningSummary(overtaken, true)
       return
     }
     this.hostOpeningTestReplay = true

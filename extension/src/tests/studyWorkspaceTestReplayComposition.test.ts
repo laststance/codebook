@@ -3434,3 +3434,62 @@ test('a newer Open replay ends an earlier one that waits for the work window’s
     await harness.close()
   }
 })
+
+// Value: protects=a newer Open replay ends an earlier one whose Learning summary reveal in the standing composition waits for the summary view, so the earlier entry holds no turn for the reveal's 5 s bound and tells nothing; fails_when=the standing composition's showLearningSummary gets no cancellation from the entry and waits for the view until its bound (hosted CodeRabbit on PR #125, outside-diff finding at studyWorkspace.ts:11946, Cycle 0052 task 45); why_new=tasks 40 and 44 covered the waits for the work window, not the summary reveal's wait for its view; seam=the first entry's codebook.learningSummary.focus held, hideSummary after it so the view stays hidden, a bound of half the reveal's wait; no_claim=the native view container
+test('a newer Open replay ends an earlier one whose Learning summary reveal waits in the standing composition', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  let release = (): void => {}
+  try {
+    const second = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    const third = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openByOpenReplay(harness)
+    harness.hideSummary()
+    const held = harness.holdNextCommand('codebook.learningSummary.focus')
+    release = held.release
+    let hasFirstEnded = false
+    const firstEntry = harness.reader
+      .openLearningReplay(second.studyId)
+      .finally(() => {
+        hasFirstEnded = true
+      })
+    await held.started
+    // The editor shows no summary for this reveal, so the reveal would wait for the view.
+    harness.hideSummary()
+
+    // Act
+    const secondEntry = harness.reader.openLearningReplay(third.studyId)
+    held.release()
+    // Half of the reveal's 5 s wait for the view: an entry still waiting for it would not end within it.
+    await waitUntil(
+      () => hasFirstEnded,
+      'the overtaken entry ends before its summary wait would',
+      2_500,
+    )
+    await firstEntry
+    await secondEntry
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistory?.header.studyId === third.studyId &&
+        !lastView(harness)?.loading,
+      'the third replay is shown',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        errors: harness.errorMessages,
+        testReplay: lastView(harness)?.nodeHistory?.header.studyId,
+      },
+      { errors: [], testReplay: third.studyId },
+    )
+  } finally {
+    release()
+    await harness.close()
+  }
+})
