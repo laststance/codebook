@@ -2102,13 +2102,60 @@ test('a continuation that reaches a stop without its required fact after the dea
     const continuation = await answer
     await waitUntil(() => record.stopped, 'the run released')
 
-    // Assert
-    assert.doesNotMatch(continuation, /stays paused/)
+    // Assert: the continuation is answered as before task 5 (F77); the run resource names the deadline.
+    assert.equal(continuation, 'answered')
     assert.equal(record.nodePhase, 'failed')
     assert.equal(
       run.service.state(record).error?.message,
       'Study wall deadline expired; history only.',
     )
+  } finally {
+    await run.harness.close()
+  }
+})
+
+// Value: protects=an agent whose continuation reaches a stop without its required fact while the learner's Stop is already under way: the answer does not say the run stays paused, and the run ends stopped; fails_when=continueNodeTest refuses with EVIDENCE_UNAVAILABLE "The run stays paused at this stop" for a run that is being stopped; why_new=pt3 /ship review pass 2 (state machines, testing): the guard's stopping branch had no test; seam=the history writer's journal write of the reached stop, held until the Stop began, and a last stop without its fact; no_claim=a stop that ends before the continuation settles, which the run's own barrier rules out
+test('a continuation that reaches a stop without its required fact while a stop is under way does not say the run stays paused', async () => {
+  // Arrange
+  const run = await testRunHarness({ stops: 2, lastStopUnread: true })
+  try {
+    const { record } = await run.start()
+    const writer = record.nodeHistoryWriter!
+    const appendStop = writer.appendStop.bind(writer)
+    let reachWrite!: () => void
+    let letWriteFinish!: () => void
+    const writeReached = new Promise<void>((resolve) => {
+      reachWrite = resolve
+    })
+    const writeMayFinish = new Promise<void>((resolve) => {
+      letWriteFinish = resolve
+    })
+    writer.appendStop = async (stop): Promise<void> => {
+      reachWrite()
+      await writeMayFinish
+      return appendStop(stop)
+    }
+    const answer = continueCurrentPause(run.service, record).then(
+      () => 'answered',
+      (error: unknown) =>
+        error instanceof StudyError
+          ? `${error.code}: ${error.message}`
+          : String(error),
+    )
+    await writeReached
+
+    // Act: the learner's Stop begins while the reached stop is being journaled.
+    const stopping = run.service
+      .stop({ instanceId: run.service.instanceId, runId: record.id })
+      .catch(() => undefined)
+    letWriteFinish()
+    const continuation = await answer
+    await stopping
+
+    // Assert
+    assert.equal(continuation, 'answered')
+    assert.equal(record.stopped, true)
+    assert.equal(record.error, undefined)
   } finally {
     await run.harness.close()
   }

@@ -101,22 +101,44 @@ function debuggerVariableReader(
   debugSession: Pick<vscode.DebugSession, 'customRequest'>,
   signal: AbortSignal,
 ): DebuggerVariableReader {
-  const cache = new Map<number, DebugProtocol.Variable[]>()
-  return async (reference) => {
-    if (!Number.isSafeInteger(reference) || reference <= 0) return []
-    const cached = cache.get(reference)
-    if (cached) return cached
+  // The request of each reference, so bindings read together share one request for a reference they both reach.
+  const cache = new Map<number, Promise<DebugProtocol.Variable[]>>()
+  const request = async (
+    reference: number,
+  ): Promise<DebugProtocol.Variable[]> => {
     const response = (await awaitResponse(
-      debugSession.customRequest('variables', {
-        variablesReference: reference,
+      Promise.resolve(
+        debugSession.customRequest('variables', {
+          variablesReference: reference,
+        }),
+      ).catch((error: unknown) => {
+        // The adapter answered with an error (a getter that threw, for example); a timeout or a cancellation is not this.
+        throw new DebuggerRefusedVariables(error)
       }),
       'owned Node debugger variables',
       signal,
     )) as DebugProtocol.VariablesResponse['body']
     if (!Array.isArray(response?.variables))
       throw new Error('Native debugger supplied no variable list.')
-    cache.set(reference, response.variables)
     return response.variables
+  }
+  return (reference) => {
+    if (!Number.isSafeInteger(reference) || reference <= 0)
+      return Promise.resolve([])
+    const cached = cache.get(reference)
+    if (cached) return cached
+    const reading = request(reference)
+    cache.set(reference, reading)
+    // A failed request is not kept: the reference may be asked again.
+    reading.catch(() => cache.delete(reference))
+    return reading
+  }
+}
+
+/** The debug adapter's error answer to a `variables` request, as opposed to a timeout, a cancellation or a malformed answer; {@link settledLazy} reads it as an unreadable step. */
+class DebuggerRefusedVariables extends Error {
+  constructor(cause: unknown) {
+    super(`Native debugger refused the variables request: ${String(cause)}`)
   }
 }
 
@@ -134,9 +156,8 @@ async function readDeclaredPath(
   path: string,
 ): Promise<DebugProtocol.Variable | undefined> {
   const [root = '', ...segments] = path.split('.')
-  let variable =
-    (await scopeVariable(read, scopes, root)) ??
-    (await importedName(read, scopes, root))
+  const local = await scopeVariable(read, scopes, root)
+  let variable = local ? local.variable : await importedName(read, scopes, root)
   for (const segment of segments)
     variable =
       variable &&
@@ -154,19 +175,20 @@ async function readDeclaredPath(
  * @param read - The pass's variable reader.
  * @param scopes - The stop's lexical scopes, innermost first.
  * @param name - The root's name.
- * @returns The variable, or `undefined` when no scope has it.
- * @example await scopeVariable(read, scopes, 'set') // => { name: 'set', value: 'ƒ (...args)', ... }
+ * @returns The scope's variable, its `variable` `undefined` when its lazy value could not be read; `undefined` when no scope has the name.
+ * @example await scopeVariable(read, scopes, 'set') // => { variable: { name: 'set', value: 'ƒ (...args)', ... } }
  */
 async function scopeVariable(
   read: DebuggerVariableReader,
   scopes: DebugProtocol.Scope[],
   name: string,
-): Promise<DebugProtocol.Variable | undefined> {
+): Promise<{ variable: DebugProtocol.Variable | undefined } | undefined> {
   for (const scope of scopes) {
     const variable = (await read(scope.variablesReference)).find(
       (candidate) => candidate.name === name,
     )
-    if (variable) return settledLazy(read, variable)
+    // A scope variable of the name shadows any import, also when its lazy value cannot be read.
+    if (variable) return { variable: await settledLazy(read, variable) }
   }
   return undefined
 }
@@ -236,7 +258,8 @@ async function moduleExport(
  * Expands a lazy debugger value (a getter the debugger shows as `(...)`) to the one value it stands for, as the Variables view does when the learner opens it; any other variable is returned as it is; called for every step of a declared path.
  * @param read - The pass's variable reader.
  * @param variable - The step's variable, if any.
- * @returns The resolved variable, the given one when the answer is not a single value, or `undefined` when the expansion failed.
+ * @returns The resolved variable, the given one when the answer is not a single value, or `undefined` when the adapter refused the expansion.
+ * @throws What the reader threw for a timeout, a cancellation or a malformed answer.
  * @example await settledLazy(read, { name: 'ITEMS_PER_PAGE', value: '(...)', variablesReference: 50, presentationHint: { lazy: true } }) // => { name: 'ITEMS_PER_PAGE', value: '6', ... }
  */
 async function settledLazy(
@@ -244,9 +267,12 @@ async function settledLazy(
   variable: DebugProtocol.Variable | undefined,
 ): Promise<DebugProtocol.Variable | undefined> {
   if (!variable?.presentationHint?.lazy) return variable
-  // Expanding a lazy value runs its getter in the test process; a getter that throws, or a request the debugger refuses, leaves the step unreadable instead of failing the stop (the caller ends a cancelled pass).
+  // Expanding a lazy value runs its getter in the test process: the adapter's error answer (a getter that threw) leaves the step unreadable instead of failing the stop; a timeout, a cancellation or a malformed answer still fails it.
   const children = await read(variable.variablesReference).catch(
-    () => undefined,
+    (error: unknown) => {
+      if (error instanceof DebuggerRefusedVariables) return undefined
+      throw error
+    },
   )
   if (!children) return undefined
   const [value, ...others] = children

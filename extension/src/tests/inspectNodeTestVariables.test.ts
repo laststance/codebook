@@ -650,3 +650,201 @@ test('a Node pause reads an imported name once when two scopes list the same mod
     },
   )
 })
+
+// Value: protects=a Node stop whose lazy expansion gets a malformed answer from the debugger: the pass fails as before, rather than reading the fact as merely unavailable and keeping a stop on a broken session; fails_when=the lazy expansion swallows every failure (a timeout, a cancellation, a malformed answer), so a broken debugger reads as a missing fact and the agent is told to continue; why_new=pt3 /ship review pass 2 (Red Team): the first catch took every failure for a throwing getter; seam=a fake debug session that answers the lazy reference without a variable list; no_claim=a timeout, which takes the active timeout to reach
+test('a Node pause whose lazy expansion gets a malformed debugger answer fails instead of reporting the fact unavailable', async () => {
+  // Arrange
+  const session: Pick<vscode.DebugSession, 'customRequest'> = {
+    customRequest: async (
+      _command: string,
+      arguments_: { variablesReference: number },
+    ) =>
+      arguments_.variablesReference === 30
+        ? {}
+        : {
+            variables:
+              arguments_.variablesReference === 1
+                ? [
+                    {
+                      name: 'limit',
+                      value: '(...)',
+                      variablesReference: 30,
+                      presentationHint: { lazy: true },
+                    },
+                  ]
+                : [],
+          },
+  }
+
+  // Act
+  const outcome = await inspectNodeTestVariables(
+    session,
+    VITEST_SCOPES,
+    [{ path: 'limit', mode: 'value', required: true }],
+    AbortSignal.timeout(1_000),
+  ).then(
+    () => 'read',
+    (error: unknown) => String(error),
+  )
+
+  // Assert
+  assert.equal(outcome, 'Error: Native debugger supplied no variable list.')
+})
+
+// Value: protects=a Node stop cancelled while a lazy value is being expanded: the pass ends with the cancellation instead of returning the fact as unavailable; fails_when=the lazy expansion swallows the cancellation and the pass returns partial facts for a run that was stopped; why_new=pt3 /ship review pass 2 (testing): the cancellation path of the lazy expansion had no test; seam=a fake debug session whose answer to the lazy reference never comes, and the run's abort controller, aborted by the test; no_claim=the native debugger's own cancellation
+test('a Node pause cancelled while a lazy value is expanded ends with the cancellation', async () => {
+  // Arrange
+  const controller = new AbortController()
+  const session: Pick<vscode.DebugSession, 'customRequest'> = {
+    customRequest: (
+      _command: string,
+      arguments_: { variablesReference: number },
+    ) => {
+      if (arguments_.variablesReference === 30) {
+        controller.abort()
+        return new Promise(() => {})
+      }
+      return Promise.resolve({
+        variables:
+          arguments_.variablesReference === 1
+            ? [
+                {
+                  name: 'limit',
+                  value: '(...)',
+                  variablesReference: 30,
+                  presentationHint: { lazy: true },
+                },
+              ]
+            : [],
+      })
+    },
+  }
+
+  // Act
+  const outcome = await inspectNodeTestVariables(
+    session,
+    VITEST_SCOPES,
+    [{ path: 'limit', mode: 'value', required: true }],
+    controller.signal,
+  ).then(
+    () => 'read',
+    (error: unknown) => String(error),
+  )
+
+  // Assert
+  assert.equal(outcome, 'Error: Cancelled owned Node debugger variables')
+})
+
+// Value: protects=JavaScript shadowing at a Node stop: a scope variable whose lazy value the debugger cannot read still shadows a same-named import, so the fact reads unavailable instead of taking the imported module's value; fails_when=an unreadable scope variable counts as absent and the walk falls through to the import, recording another module's value under the local name; why_new=pt3 /ship review pass 2 (Red Team); seam=a fake debug session with a refused lazy local and a module binding exporting the same name; no_claim=how often a local getter throws natively
+test('a Node pause leaves a required local whose lazy value cannot be read unavailable instead of reading an import of the same name', async () => {
+  // Arrange
+  const session: Pick<vscode.DebugSession, 'customRequest'> = {
+    customRequest: async (
+      _command: string,
+      arguments_: { variablesReference: number },
+    ) => {
+      if (arguments_.variablesReference === 30)
+        throw new Error('Cannot access the getter before initialization')
+      const table = new Map<number, DebugProtocol.Variable[]>([
+        [
+          1,
+          [
+            {
+              name: 'status',
+              value: '(...)',
+              variablesReference: 30,
+              presentationHint: { lazy: true },
+            },
+          ],
+        ],
+        [
+          2,
+          [
+            {
+              name: '__vite_ssr_import_0__',
+              value: 'Module',
+              variablesReference: 40,
+            },
+          ],
+        ],
+        [
+          40,
+          [
+            {
+              name: 'status',
+              value: "'imported'",
+              type: 'string',
+              variablesReference: 0,
+            },
+          ],
+        ],
+      ])
+      return { variables: table.get(arguments_.variablesReference) ?? [] }
+    },
+  }
+
+  // Act
+  const result = await inspectNodeTestVariables(
+    session,
+    VITEST_SCOPES,
+    [{ path: 'status', mode: 'value', required: true }],
+    AbortSignal.timeout(1_000),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { facts: result.facts, unavailable: result.unavailable },
+    { facts: [], unavailable: ['value:status'] },
+  )
+})
+
+// Value: protects=the debugger's load at a Node stop: two module bindings that reach one shared reference, read together, ask the debugger for that reference once; fails_when=the pass caches only finished answers, so bindings read together send duplicate variables requests for the same reference; why_new=pt3 /ship review pass 2 (performance): the bindings became concurrent reads; seam=a fake debug session that counts the requests per reference; no_claim=the adapter's own request handling
+test('a Node pause asks the debugger once for a reference two module bindings reach together', async () => {
+  // Arrange
+  const requests = new Map<number, number>()
+  const table = new Map<number, DebugProtocol.Variable[]>([
+    [1, []],
+    [
+      2,
+      [
+        {
+          name: '__vi_import_0__',
+          value: 'Proxy(Object)',
+          variablesReference: 40,
+        },
+        {
+          name: '__vi_import_1__',
+          value: 'Proxy(Object)',
+          variablesReference: 41,
+        },
+      ],
+    ],
+    [40, [{ name: '[[Target]]', value: 'Object', variablesReference: 60 }]],
+    [41, [{ name: '[[Target]]', value: 'Object', variablesReference: 60 }]],
+    [
+      60,
+      [{ name: 'shared', value: '1', type: 'number', variablesReference: 0 }],
+    ],
+  ])
+  const session: Pick<vscode.DebugSession, 'customRequest'> = {
+    customRequest: async (
+      _command: string,
+      arguments_: { variablesReference: number },
+    ) => {
+      const reference = arguments_.variablesReference
+      requests.set(reference, (requests.get(reference) ?? 0) + 1)
+      return { variables: table.get(reference) ?? [] }
+    },
+  }
+
+  // Act
+  await inspectNodeTestVariables(
+    session,
+    VITEST_SCOPES,
+    [{ path: 'shared', mode: 'value', required: false }],
+    AbortSignal.timeout(1_000),
+  )
+
+  // Assert
+  assert.equal(requests.get(60), 1)
+})
