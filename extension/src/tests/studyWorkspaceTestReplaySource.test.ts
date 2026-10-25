@@ -4486,3 +4486,104 @@ test('a move from a stop to an output scrolls the slot to its first line before 
     await harness.close()
   }
 })
+
+// Value: protects=a move between two moments without a verified stop (an output, then the result) keeps the placeholder in the slot through the whole move: no stop label is drawn, the slot's bytes stay the placeholder, and no reveal scrolls it off its first line; fails_when=the leave step draws a label, puts other bytes in the slot, or reveals another line while the slot holds the placeholder; why_new=the state cell slot-placeholder × leave-to-other-moment was untested (Cycle 0052 pt2 /ship review, state-machines specialist); seam=the workspace harness's slot document text, its source identity decorations and its slot reveal log; no_claim=the native paint (N52 (b))
+test('a move from an output to the result keeps the placeholder in the slot, with no stop label and no reveal off its first line', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    await selectMoment(harness, history.studyId, 1)
+    const slot = slotTabs(harness)[0]!
+    const revealsBefore = harness.slotReveals().length
+    const decorationsBefore = harness.sourceIdentityDecorations().length
+
+    // Act
+    await selectMoment(harness, history.studyId, 3)
+
+    // Assert
+    assert.deepEqual(
+      {
+        text: harness.documentTextOf(slot),
+        labels: harness
+          .sourceIdentityDecorations()
+          .slice(decorationsBefore)
+          .filter((call) => call.uri.includes('/node-history-slot/'))
+          .flatMap((call) => call.ranges),
+        offFirstLine: harness
+          .slotReveals()
+          .slice(revealsBefore)
+          .filter((reveal) => reveal.line !== 0),
+      },
+      { text: PLACEHOLDER, labels: [], offFirstLine: [] },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=after the slot failed to show its stop and reads its loading text, a move to another moment (an output) replaces the loading text with the placeholder, shown from its first line, and draws no stop label on the way; fails_when=the loading text stays after the move, a stop label is drawn, or a reveal scrolls the placeholder off its first line; why_new=the state cells slot-loading × leave-to-other-moment and slot-loading × commit-output were untested (Cycle 0052 pt2 /ship review, state-machines specialist); seam=the harness's injected failure of a non-file document open (F170's route to the loading text), its slot document text, source identity decorations and slot reveal log; no_claim=the native paint
+test('a move to an output after the slot failed to show its stop replaces the loading text with the placeholder from its first line, with no stop label', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await saveOneStopNodeHistory(store)
+    await store.saveReaderPosition(history.studyId, 2)
+    await openReplayAt(harness, history.studyId, 2)
+    // The learner closes the slot's tab by hand and the reselect's open fails, so the slot reads its loading text (F170).
+    const slotAddress = slotTabs(harness)[0]!
+    const slotTab = harness.groups
+      .flatMap((group) => group.tabs)
+      .find((tab) =>
+        (
+          tab.input as { uri?: { path?: string } } | undefined
+        )?.uri?.path?.includes('/node-history-slot/'),
+      )!
+    harness.closeTabByHand(slotTab)
+    harness.failCurrentSourceOpen()
+    await harness.reader['requestNodeHistoryEvent'](
+      harness.reader['selectedNodeHistory']!,
+      2,
+    )
+    harness.restoreCurrentSourceOpen()
+    const loadingText = await harness.readCapturedSource(slotAddress)
+    const revealsBefore = harness.slotReveals().length
+    const decorationsBefore = harness.sourceIdentityDecorations().length
+
+    // Act
+    await selectMoment(harness, history.studyId, 1)
+
+    // Assert
+    const revealed = harness
+      .slotReveals()
+      .slice(revealsBefore)
+      .map((reveal) => reveal.line)
+    assert.deepEqual(
+      {
+        before: loadingText,
+        after: harness.documentTextOf(slotTabs(harness)[0]!),
+        labels: harness
+          .sourceIdentityDecorations()
+          .slice(decorationsBefore)
+          .filter((call) => call.uri.includes('/node-history-slot/'))
+          .flatMap((call) => call.ranges),
+        lastReveal: revealed.at(-1),
+        offFirstLine: revealed.filter((line) => line !== 0),
+      },
+      {
+        before: '// Loading recorded source…\n',
+        after: PLACEHOLDER,
+        labels: [],
+        lastReveal: 0,
+        offFirstLine: [],
+      },
+    )
+  } finally {
+    harness.restoreCurrentSourceOpen()
+    await harness.close()
+  }
+})
