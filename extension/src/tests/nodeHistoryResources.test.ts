@@ -166,7 +166,11 @@ test('a history resource or an explanation that names a study id this workspace 
           () => 'answered',
           (error: unknown) =>
             error instanceof StudyError
-              ? { code: error.code, message: error.message }
+              ? {
+                  code: error.code,
+                  message: error.message,
+                  recovery: error.describe().recovery,
+                }
               : String(error),
         ),
       ),
@@ -177,6 +181,8 @@ test('a history resource or an explanation that names a study id this workspace 
       code: 'NOT_FOUND',
       message:
         'No Node test history 11111111-1111-4111-8111-111111111111_22222222-2222-4222-8222-222222222222 is saved in this workspace. Read codebook://node-history and copy the studyId or historyUri of the history you mean.',
+      recovery:
+        'Read codebook_status and use a resource reference from the selected instance and run; for a Node test history, copy its studyId or historyUri from codebook://node-history.',
     }
     assert.deepEqual(answers, [refusal, refusal, refusal])
   } finally {

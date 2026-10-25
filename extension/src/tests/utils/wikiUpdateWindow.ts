@@ -67,7 +67,7 @@ type NumericConstantName = {
     : never
 }[keyof typeof constants]
 
-/** An awaited step of an update that a test can keep open: the freshness inspection among the start checks, VS Code's chat command that carries the request, one listing of the candidates (the next listing after `hold` is kept open once it has read the folder; later ones pass), the wait of the start check before its second look at a publish journal written a moment ago (held, it lasts until the release and no real time), a read of the publish token (the start checks read it and so does the end of a run, so a hold set after the start keeps the end open), or the change of the run's marker at its end (its removal or its turn into a reservation: held, the run's end is already recorded and told, and the run waits there), or the write of the reservation that turn puts beside the marker (held, the change holds the claim on the marker while it waits, as a slow disk holds it). */
+/** An awaited step of an update that a test can keep open: the freshness inspection among the start checks, VS Code's chat command that carries the request, one listing of the candidates (the next listing after `hold` is kept open once it has read the folder; later ones pass), the wait of the start check before its second look at a publish journal written a moment ago (held, it lasts until the release and no real time), a read of the publish token (the start checks read it and so does the end of a run, so a hold set after the start keeps the end open), or the change of the run's marker at its end (its removal or its turn into a reservation: held, the run's end is already recorded and told, and the run waits there), or the write of the reservation that turn puts beside the marker (held, the change holds the claim on the marker while it waits, as a slow disk holds it), or the moment after a start's claim on the marker answered and before the start reads the answer (`claim-answer`). */
 export type HeldUpdateStep =
   | 'freshness-inspection'
   | 'chat-open'
@@ -76,6 +76,7 @@ export type HeldUpdateStep =
   | 'publish-token-read'
   | 'marker-change'
   | 'marker-write'
+  | 'claim-answer'
 
 /**
  * Opens an editor window (the real extension with a stubbed `vscode`) on a project whose Wiki already exists, and records everything the learner would see of an update.
@@ -498,6 +499,7 @@ export async function openWikiUpdateWindow(options: {
         ) => {
           const claim = await claimWikiUpdateMarker(...claimed)
           looks.markerClaims += 1
+          await passHold('claim-answer')
           if (!('release' in claim)) return claim
           return {
             release: async () => {

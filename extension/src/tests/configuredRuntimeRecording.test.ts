@@ -1174,3 +1174,184 @@ test('a run refused during its preparation seals its recording with the refusal,
     },
   )
 })
+
+// Value: protects=the recording of a browser run that journaled no failure but whose resources were not released is sealed with the cleanup sentence, so the saved study says the cleanup was incomplete and not that the run failed or was interrupted; fails_when=the sentence changes back to "Runtime interrupted or cleanup incomplete; recorded prefix retained." (Cycle 0052 task 7a) or the unreleased run is sealed without a reason; why_new=no test pins the seal of an incomplete release, only those of journaled failures; seam=the controlled runtime's view, which reports resourcesReleased false; no_claim=a real failed release of the native browser or debugger
+test('a run stopped with its resources not released and no failure seals its recording as cleanup incomplete', async (context) => {
+  // Arrange: a recorded run of the real coordinator whose view reports that its resources are still held.
+  let service: StudyService | undefined, books: RepositoryBookStore | undefined
+  context.after(async () => {
+    await service?.shutdown()
+    books?.dispose()
+  })
+  const harness = await configuredRuntimeHarness(context),
+    directory = join(harness.directory, '.learning')
+  const library = new LearningLibrary(directory, '0'.repeat(64)),
+    store = new RecordingStore(directory, library.workspaceKey)
+  books = new RepositoryBookStore(harness.sources, library)
+  await books.publish({
+    bookId: 'interface',
+    expectedRevision: 0,
+    key: 'article',
+    document: {
+      title: 'Interface',
+      summary: 'Two citations.',
+      nodes: [
+        {
+          id: 'theme',
+          title: 'Theme',
+          sections: [{ title: 'Theme', text: 'Source-derived explanation.' }],
+          anchors: harness.definition.descriptor.anchors,
+          observations: [],
+        },
+      ],
+      edges: [],
+    },
+  })
+  service = new StudyService(
+    {
+      workspace: harness.directory,
+      host: {
+        id: 'vscode',
+        productVersion: 'test',
+        apiVersion: 'test',
+        commit: 'test',
+      },
+      build: {
+        revision: 'controlled-runtime',
+        dirty: false,
+        sourceHash: '0'.repeat(64),
+      },
+      prerequisites: async () => ({ ready: true, missing: [] }),
+      createRuntime: async () => harness.run,
+    },
+    join(harness.directory, '.service'),
+  )
+  service.repository = books
+  service.recordings = store
+  const view = harness.run.view.bind(harness.run)
+  context.mock.method(harness.run, 'view', () => ({
+    ...view(),
+    resourcesReleased: false,
+  }))
+  // The start's idempotency key, named by what this run is for (the pre-gate's secrets scan reads a key literal as a credential).
+  const startKey = 'unreleased-resources'
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: startKey,
+    configuration: harness.definition.configuration,
+  })
+  const record = service.record(receipt)
+  await record.preparation
+
+  // Act: the agent stops the run whose release leaves resources held.
+  await service.stop(receipt).catch(() => undefined)
+  await waitUntil(() => record.stopped, 'the unreleased run is stopped')
+
+  // Assert
+  assert.deepEqual(
+    {
+      status: record.recordingSeal?.status,
+      reason: record.recordingSeal?.reason,
+    },
+    {
+      status: 'partial',
+      reason: 'Runtime cleanup incomplete; recorded prefix retained.',
+    },
+  )
+})
+
+// Value: protects=the recording of a browser run whose journaled failure names no reason and that has no error of its own is sealed as a failed run, not as an interrupted one; fails_when=the reasonless failure is sealed with "Runtime interrupted or cleanup incomplete; recorded prefix retained." again or with an empty cause (Cycle 0052 task 7a); why_new=pt3 /ship review (state machines, testing): the reasonless branch of the seal had no test; seam=the controlled runtime's view, which adds a run.failed event without a reason; no_claim=which runtime paths journal a failure without a reason (none known)
+test('a run whose journaled failure names no reason seals its recording as a failed run', async (context) => {
+  // Arrange: a recorded run of the real coordinator whose view reports a failure without a reason.
+  let service: StudyService | undefined, books: RepositoryBookStore | undefined
+  context.after(async () => {
+    await service?.shutdown()
+    books?.dispose()
+  })
+  const harness = await configuredRuntimeHarness(context),
+    directory = join(harness.directory, '.learning')
+  const library = new LearningLibrary(directory, '0'.repeat(64)),
+    store = new RecordingStore(directory, library.workspaceKey)
+  books = new RepositoryBookStore(harness.sources, library)
+  await books.publish({
+    bookId: 'interface',
+    expectedRevision: 0,
+    key: 'article',
+    document: {
+      title: 'Interface',
+      summary: 'Two citations.',
+      nodes: [
+        {
+          id: 'theme',
+          title: 'Theme',
+          sections: [{ title: 'Theme', text: 'Source-derived explanation.' }],
+          anchors: harness.definition.descriptor.anchors,
+          observations: [],
+        },
+      ],
+      edges: [],
+    },
+  })
+  service = new StudyService(
+    {
+      workspace: harness.directory,
+      host: {
+        id: 'vscode',
+        productVersion: 'test',
+        apiVersion: 'test',
+        commit: 'test',
+      },
+      build: {
+        revision: 'controlled-runtime',
+        dirty: false,
+        sourceHash: '0'.repeat(64),
+      },
+      prerequisites: async () => ({ ready: true, missing: [] }),
+      createRuntime: async () => harness.run,
+    },
+    join(harness.directory, '.service'),
+  )
+  service.repository = books
+  service.recordings = store
+  const view = harness.run.view.bind(harness.run)
+  context.mock.method(harness.run, 'view', () => {
+    const current = view()
+    const last = current.events.at(-1)
+    return last
+      ? {
+          ...current,
+          events: [
+            ...current.events,
+            { ...last, type: 'run.failed', detail: {} },
+          ],
+        }
+      : current
+  })
+  // The start's idempotency key, named by what this run is for (the pre-gate's secrets scan reads a key literal as a credential).
+  const startKey = 'reasonless-failure'
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: startKey,
+    configuration: harness.definition.configuration,
+  })
+  const record = service.record(receipt)
+  await record.preparation
+
+  // Act: the agent stops the run.
+  await service.stop(receipt).catch(() => undefined)
+  await waitUntil(() => record.stopped, 'the run is stopped')
+
+  // Assert
+  assert.deepEqual(
+    {
+      status: record.recordingSeal?.status,
+      reason: record.recordingSeal?.reason,
+    },
+    {
+      status: 'partial',
+      reason: 'The run failed. Recorded prefix retained.',
+    },
+  )
+})

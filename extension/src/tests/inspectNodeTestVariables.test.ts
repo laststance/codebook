@@ -452,3 +452,201 @@ test('a Node pause reads a local variable before an imported name it shadows', a
     { path: 'status', mode: 'value', display: "'paid'", type: 'string' },
   ])
 })
+
+// Value: protects=a declared path that passes through a getter the debugger shows as lazy ("(...)") is walked on: the lazy step is expanded once and the next segment is read from its value; fails_when=only the first and last step expand a lazy value, so a path such as mock.calls.length stops at the "(...)" placeholder and the required fact is unavailable (Cycle 0052 task 5); why_new=the unmocked-module test expands one lazy value at the end of a root, none in the middle of a path; seam=a fake debug session answering a lazy middle step with its one resolved child; no_claim=which getters the native debugger marks lazy (N52 live)
+test('a Node pause reads a required value behind a lazy getter in the middle of its path', async () => {
+  // Arrange
+  const session = sessionAnswering(
+    new Map<number, DebugProtocol.Variable[]>([
+      [
+        1,
+        [
+          {
+            name: 'revalidatePath',
+            value: 'ƒ (...args)',
+            variablesReference: 3,
+          },
+        ],
+      ],
+      [
+        3,
+        [
+          {
+            name: 'mock',
+            value: '(...)',
+            variablesReference: 30,
+            presentationHint: { lazy: true },
+          },
+        ],
+      ],
+      [30, [{ name: 'mock', value: 'Object', variablesReference: 31 }]],
+      [
+        31,
+        [
+          {
+            name: 'callCount',
+            value: '2',
+            type: 'number',
+            variablesReference: 0,
+          },
+        ],
+      ],
+    ]),
+  )
+
+  // Act
+  const result = await inspectNodeTestVariables(
+    session,
+    VITEST_SCOPES,
+    [{ path: 'revalidatePath.mock.callCount', mode: 'value', required: true }],
+    AbortSignal.timeout(1_000),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { facts: result.facts, unavailable: result.unavailable },
+    {
+      facts: [
+        {
+          path: 'revalidatePath.mock.callCount',
+          mode: 'value',
+          display: '2',
+          type: 'number',
+        },
+      ],
+      unavailable: [],
+    },
+  )
+})
+
+// Value: protects=a Node stop whose required value sits behind a lazy getter the debugger cannot expand (the getter throws in the test process, or the adapter refuses the request): the fact reads unavailable and the stop keeps its other facts; fails_when=the rejected expansion escapes the inspector, so the whole advance fails and the live run ends instead of the agent hearing which fact is missing; why_new=pt3 /ship review (Red Team): the lazy expansion added for imported names runs getters and its rejection was not caught; seam=a fake debug session that rejects the expansion of one reference; no_claim=how the native adapter answers a throwing getter (it may answer with the error as a value instead)
+test('a Node pause reports a required value behind a lazy getter the debugger cannot expand as unavailable and keeps its other facts', async () => {
+  // Arrange
+  const session: Pick<vscode.DebugSession, 'customRequest'> = {
+    customRequest: async (
+      _command: string,
+      arguments_: { variablesReference: number },
+    ) => {
+      if (arguments_.variablesReference === 30)
+        throw new Error('Cannot access the getter before initialization')
+      const table = new Map<number, DebugProtocol.Variable[]>([
+        [
+          1,
+          [
+            {
+              name: 'status',
+              value: "'paid'",
+              type: 'string',
+              variablesReference: 0,
+            },
+            {
+              name: 'config',
+              value: 'Object',
+              variablesReference: 3,
+            },
+          ],
+        ],
+        [
+          3,
+          [
+            {
+              name: 'limit',
+              value: '(...)',
+              variablesReference: 30,
+              presentationHint: { lazy: true },
+            },
+          ],
+        ],
+      ])
+      return { variables: table.get(arguments_.variablesReference) ?? [] }
+    },
+  }
+
+  // Act
+  const result = await inspectNodeTestVariables(
+    session,
+    VITEST_SCOPES,
+    [
+      { path: 'config.limit', mode: 'value', required: true },
+      { path: 'status', mode: 'value', required: true },
+    ],
+    AbortSignal.timeout(1_000),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { facts: result.facts, unavailable: result.unavailable },
+    {
+      facts: [
+        { path: 'status', mode: 'value', display: "'paid'", type: 'string' },
+      ],
+      unavailable: ['value:config.limit'],
+    },
+  )
+})
+
+// Value: protects=an imported name whose module binding two of the stop's scopes both list: it is one import, so the fact is read, not left unavailable as ambiguous; fails_when=each scope's listing of the same binding counts as another module exporting the name, so a required fact such as db.insert.mock.calls reads unavailable; why_new=pt3 /ship review (Red Team): bindings were collected per scope without telling a repeated listing from a second module; seam=a fake debug session in which the Block and Closure scopes list the same __vi_import_0__ binding; no_claim=which native scope layouts repeat a binding
+test('a Node pause reads an imported name once when two scopes list the same module binding', async () => {
+  // Arrange
+  const session = sessionAnswering(
+    new Map<number, DebugProtocol.Variable[]>([
+      [1, []],
+      [
+        2,
+        [
+          {
+            name: '__vi_import_0__',
+            value: 'Proxy(Object)',
+            variablesReference: 40,
+          },
+        ],
+      ],
+      [
+        5,
+        [
+          {
+            name: '__vi_import_0__',
+            value: 'Proxy(Object)',
+            variablesReference: 41,
+          },
+        ],
+      ],
+      [40, [{ name: 'db', value: 'Object', variablesReference: 50 }]],
+      [41, [{ name: 'db', value: 'Object', variablesReference: 50 }]],
+      [
+        50,
+        [
+          {
+            name: 'inserted',
+            value: '0',
+            type: 'number',
+            variablesReference: 0,
+          },
+        ],
+      ],
+    ]),
+  )
+
+  // Act
+  const result = await inspectNodeTestVariables(
+    session,
+    [
+      { name: 'Local', variablesReference: 1, expensive: false },
+      { name: 'Block', variablesReference: 2, expensive: false },
+      { name: 'Closure', variablesReference: 5, expensive: false },
+    ],
+    [{ path: 'db.inserted', mode: 'value', required: true }],
+    AbortSignal.timeout(1_000),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { facts: result.facts, unavailable: result.unavailable },
+    {
+      facts: [
+        { path: 'db.inserted', mode: 'value', display: '0', type: 'number' },
+      ],
+      unavailable: [],
+    },
+  )
+})

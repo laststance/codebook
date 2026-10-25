@@ -59,6 +59,8 @@ type FakeRunSteps = {
   releaseFailureText?: () => string
   /** The Saved Study Limit in force and how many saved studies the library holds; the history store counts both. */
   storage?: { limit: number; savedStudies: number }
+  /** The last declared stop arrives without its required fact, as one the inspector could not read. */
+  lastStopUnread?: boolean
 }
 
 /**
@@ -117,9 +119,10 @@ async function testRunHarness(steps: FakeRunSteps = {}) {
     source: base.source,
     frame: { id: 10 + index, name: 'schedule', line: 1, column: 1 },
     variables: [{ name: 'delayMs', value: '5000' }],
-    facts: [
-      { path: 'delayMs', mode: 'value', display: '5000', type: 'number' },
-    ],
+    facts:
+      steps.lastStopUnread && index === declaredStops - 1
+        ? []
+        : [{ path: 'delayMs', mode: 'value', display: '5000', type: 'number' }],
     debuggerSnapshot: {
       version: 1,
       frames: [
@@ -2056,6 +2059,51 @@ test('a continuation that finishes after the deadline marked the test failed lea
     await waitUntil(() => record.stopped, 'the run released')
 
     // Assert
+    assert.equal(record.nodePhase, 'failed')
+    assert.equal(
+      run.service.state(record).error?.message,
+      'Study wall deadline expired; history only.',
+    )
+  } finally {
+    await run.harness.close()
+  }
+})
+
+// Value: protects=an agent whose continuation reaches a stop without its required fact after the whole-run deadline already failed the test: the answer does not say the run stays paused, and the run reads failed with the deadline; fails_when=continueNodeTest refuses with EVIDENCE_UNAVAILABLE "The run stays paused at this stop" for a run that is failed and released; why_new=pt3 /ship review (state machines): the refusal was computed from the journaled stop whatever the run's phase; seam=the owned run's advance is held until the deadline passed, and its last stop carries no fact; no_claim=the real debugger's timing
+test('a continuation that reaches a stop without its required fact after the deadline failed the test does not say the run stays paused', async () => {
+  // Arrange
+  let nowMs = 1_000_000
+  let letAdvanceFinish!: () => void
+  const advanceHeld = new Promise<void>((resolve) => {
+    letAdvanceFinish = resolve
+  })
+  const run = await testRunHarness({
+    stops: 2,
+    advanceHeld,
+    now: () => nowMs,
+    lastStopUnread: true,
+  })
+  try {
+    const { record } = await run.start()
+    const advancing = continueCurrentPause(run.service, record)
+    const answer = advancing.then(
+      () => 'answered',
+      (error: unknown) =>
+        error instanceof StudyError
+          ? `${error.code}: ${error.message}`
+          : String(error),
+    )
+    await waitUntil(() => record.nodePhase === 'advancing', 'the advance')
+    nowMs = record.deadlineAt + 1
+
+    // Act
+    run.service.maintain()
+    letAdvanceFinish()
+    const continuation = await answer
+    await waitUntil(() => record.stopped, 'the run released')
+
+    // Assert
+    assert.doesNotMatch(continuation, /stays paused/)
     assert.equal(record.nodePhase, 'failed')
     assert.equal(
       run.service.state(record).error?.message,

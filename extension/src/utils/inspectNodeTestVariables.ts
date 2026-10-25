@@ -80,6 +80,8 @@ export async function inspectNodeTestVariables(
     })
     selected.push(variable)
   }
+  // A lazy value whose expansion failed reads as unavailable (settledLazy); a run cancelled meanwhile still ends the pass.
+  signal.throwIfAborted()
   return { facts, variables: selected, unavailable }
 }
 
@@ -171,7 +173,7 @@ async function scopeVariable(
 
 /**
  * Finds a name the stopped module imports: the export of that name in one of Vitest's module bindings ({@link NODE_TEST_MODULE_BINDING_NAME}) in the stop's scopes, read through a Proxy's {@link DEBUGGER_PROXY_TARGET_NAME} for a mocked module; called by {@link readDeclaredPath} when no scope variable has the name.
- * A name that two bindings export is left unread: without the source map's binding there is no telling which import the source means.
+ * A name that two bindings export is left unread: without the source map's binding there is no telling which import the source means. A binding listed by two scopes counts once.
  * @param read - The pass's variable reader.
  * @param scopes - The stop's lexical scopes.
  * @param name - The root's name.
@@ -183,13 +185,23 @@ async function importedName(
   scopes: DebugProtocol.Scope[],
   name: string,
 ): Promise<DebugProtocol.Variable | undefined> {
-  const exports: DebugProtocol.Variable[] = []
+  // A binding that two scopes list is one import: it is read once, so it never counts as a second module.
+  const bindings = new Map<string, DebugProtocol.Variable>()
   for (const scope of scopes)
-    for (const binding of await read(scope.variablesReference)) {
-      if (!NODE_TEST_MODULE_BINDING_NAME.test(binding.name)) continue
-      const exported = await moduleExport(read, binding, name)
-      if (exported) exports.push(exported)
-    }
+    for (const binding of await read(scope.variablesReference))
+      if (
+        NODE_TEST_MODULE_BINDING_NAME.test(binding.name) &&
+        !bindings.has(binding.name)
+      )
+        bindings.set(binding.name, binding)
+  // The bindings are independent requests, read together rather than one after another.
+  const exports = (
+    await Promise.all(
+      [...bindings.values()].map((binding) =>
+        moduleExport(read, binding, name),
+      ),
+    )
+  ).filter((exported) => exported !== undefined)
   // Only one module may answer for the name; two would make the fact a guess.
   return exports.length === 1 ? settledLazy(read, exports[0]) : undefined
 }
@@ -224,7 +236,7 @@ async function moduleExport(
  * Expands a lazy debugger value (a getter the debugger shows as `(...)`) to the one value it stands for, as the Variables view does when the learner opens it; any other variable is returned as it is; called for every step of a declared path.
  * @param read - The pass's variable reader.
  * @param variable - The step's variable, if any.
- * @returns The resolved variable, or the given one.
+ * @returns The resolved variable, the given one when the answer is not a single value, or `undefined` when the expansion failed.
  * @example await settledLazy(read, { name: 'ITEMS_PER_PAGE', value: '(...)', variablesReference: 50, presentationHint: { lazy: true } }) // => { name: 'ITEMS_PER_PAGE', value: '6', ... }
  */
 async function settledLazy(
@@ -232,7 +244,12 @@ async function settledLazy(
   variable: DebugProtocol.Variable | undefined,
 ): Promise<DebugProtocol.Variable | undefined> {
   if (!variable?.presentationHint?.lazy) return variable
-  const [value, ...others] = await read(variable.variablesReference)
+  // Expanding a lazy value runs its getter in the test process; a getter that throws, or a request the debugger refuses, leaves the step unreadable instead of failing the stop (the caller ends a cancelled pass).
+  const children = await read(variable.variablesReference).catch(
+    () => undefined,
+  )
+  if (!children) return undefined
+  const [value, ...others] = children
   // The protocol answers a lazy value with exactly one variable; anything else is left as it is.
   return value && others.length === 0 ? value : variable
 }

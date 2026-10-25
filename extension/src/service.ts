@@ -1566,7 +1566,13 @@ export class StudyService {
         record.nodeStops?.push(next)
         // A deadline that passed during the advance already marked the test failed: the late stop is journaled, the phase stays (F77).
         if (record.nodePhase === 'advancing') record.nodePhase = 'paused'
-        refusal = this.unreadRequiredFactsRefusal(record, next)
+        // Only a run that stays paused at the stop can tell the agent to continue without the fact; a deadline that failed it, or a stop under way, speaks through the run resource.
+        if (
+          record.nodePhase === 'paused' &&
+          !record.stopping &&
+          !record.stopped
+        )
+          refusal = this.unreadRequiredFactsRefusal(record, next)
       } else await this.completeNodeTest(record, run)
     } catch (error) {
       // A stop cancelled this continuation: the run ends as stopped, without an error of its own.

@@ -459,7 +459,7 @@ test('Update anyway chosen while this window still turns its ended run’s marke
     await wiki.runUpdateCommand()
     const errorsAfterThePress = wiki.errors.length
     await waitUntil(
-      () => wiki.looks.markerClaims === 2,
+      () => wiki.looks.markerClaims >= 2,
       'the claim of the start of Update anyway',
       READER_RESULT_BOUND_MS,
     )
@@ -474,6 +474,63 @@ test('Update anyway chosen while this window still turns its ended run’s marke
 
     // Assert
     assert.equal(firstRun.state, 'conflict')
+    assert.deepEqual(wiki.errors.slice(errorsAfterThePress), [])
+    assert.equal(wiki.status().state, 'running')
+    assert.equal(wiki.chatRequests.length, 2)
+  } finally {
+    reservationWrite.release()
+    await wiki.close()
+  }
+})
+
+// Value: protects=Update anyway chosen while this window's ended run turned its marker into a reservation, when that turn ends between the start's claim meeting the marker in change and the start reading that answer: the start claims again and runs; fails_when=claimWikiMarkerForStart claims again only while the change still runs, so a change that ended just before is taken for another window's and the start is refused with "Another editor window is starting or ending an update of this Wiki" (Cycle 0052 task 27); why_new=pt3 /ship review (testing): the ended-change branch had no test; seam=the write of the reservation, held under the claim, and the moment after the start's claim answered, both held by the test; no_claim=how often this ordering occurs natively
+test('Update anyway whose claim met this window’s marker turn, which ended before the start read the answer, starts the update', async () => {
+  // Arrange: the first run ends as a conflict; the write of its reservation is held under the claim on the marker.
+  let isOverrideChosen = false
+  const wiki = await openPublishedWikiWindow({
+    chooseAction: (_message, actions) =>
+      isOverrideChosen
+        ? actions.find((action) => action === 'Update anyway')
+        : undefined,
+  })
+  await mkdir(join(wiki.outputDirectory, 'pages'))
+  await writeFile(join(wiki.outputDirectory, 'pages', 'notes.html'), 'mine')
+  const reservationWrite = wiki.hold('marker-write')
+  try {
+    await wiki.clickUpdate()
+    await agentTakesAMoment()
+    const stage = await wiki.prepare()
+    await wiki.writeCandidate(stage, {
+      heading: 'Second',
+      extraPages: ['pages/notes.html'],
+    })
+    const firstRun = await waitForStatus(wiki.status, hasEnded)
+    await reservationWrite.started
+    const claimAnswer = wiki.hold('claim-answer')
+
+    // Act: Update anyway's claim meets the marker in change and is held before the start reads the answer; the turn then ends, and only after it the start reads the answer.
+    isOverrideChosen = true
+    await wiki.runUpdateCommand()
+    const errorsAfterThePress = wiki.errors.length
+    await claimAnswer.started
+    reservationWrite.release()
+    await waitUntil(
+      () => wiki.markerChanges.at(-1)?.answer !== undefined,
+      'the end of the reservation turn',
+      READER_RESULT_BOUND_MS,
+    )
+    claimAnswer.release()
+    await waitUntil(
+      () =>
+        wiki.status().state === 'running' ||
+        wiki.errors.length > errorsAfterThePress,
+      'the start of Update anyway or its refusal',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(firstRun.state, 'conflict')
+    assert.deepEqual(wiki.markerChanges, [{ kind: 'reserve', answer: true }])
     assert.deepEqual(wiki.errors.slice(errorsAfterThePress), [])
     assert.equal(wiki.status().state, 'running')
     assert.equal(wiki.chatRequests.length, 2)

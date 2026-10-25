@@ -150,6 +150,13 @@ import { WikiUpdateTimeoutError } from './utils/wikiUpdateTimeoutError'
 
 let stopExtension: (() => Promise<void>) | undefined
 
+/** One change of this window's own Wiki update marker (its removal, or its turn into a stopped watch's reservation): the change, the timer of its next attempt while it waits, and the attempt while it runs. */
+type WikiMarkerChangeEntry = {
+  change: () => Promise<boolean>
+  timer?: NodeJS.Timeout
+  running?: Promise<boolean>
+}
+
 /** Registers explicit trusted commands without reading auto-run instructions from repository files. @example VS Code calls activate(context) */
 export function activate(
   context: Pick<vscode.ExtensionContext, 'extensionPath' | 'subscriptions'> & {
@@ -268,14 +275,7 @@ export function activate(
     { release: () => Promise<boolean>; timer: NodeJS.Timeout }
   >()
   // The latest change of this window's own marker on each Wiki output (its removal, or its turn into a stopped watch's reservation), while it runs (`running`) or waits for its next attempt, with the timer of that attempt.
-  const wikiMarkerChanges = new Map<
-    string,
-    {
-      change: () => Promise<boolean>
-      timer?: NodeJS.Timeout
-      running?: Promise<boolean>
-    }
-  >()
+  const wikiMarkerChanges = new Map<string, WikiMarkerChangeEntry>()
   // How many attempts of this window's own marker changes have ended on each Wiki output; a start whose claim met the marker in change compares it ({@link claimWikiMarkerForStart}).
   const endedWikiMarkerChanges = new Map<string, number>()
   /**
@@ -293,11 +293,7 @@ export function activate(
     retriesLeft = WIKI_UPDATE_MARKER_CHANGE_RETRIES,
   ): Promise<void> => {
     clearTimeout(wikiMarkerChanges.get(outputDirectory)?.timer)
-    const pending: {
-      change: () => Promise<boolean>
-      timer?: NodeJS.Timeout
-      running?: Promise<boolean>
-    } = { change }
+    const pending: WikiMarkerChangeEntry = { change }
     wikiMarkerChanges.set(outputDirectory, pending)
     pending.running = change().catch(() => false)
     const isChanged = await pending.running

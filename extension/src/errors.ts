@@ -3,7 +3,7 @@ import { newerStudyFormatMessage } from './utils/newerStudyFormatMessage'
 
 export const ERROR_RECOVERY = {
   NOT_FOUND:
-    'Read codebook_status and use a resource reference from the selected instance and run.',
+    'Read codebook_status and use a resource reference from the selected instance and run; for a Node test history, copy its studyId or historyUri from codebook://node-history.',
   STALE_INSTANCE:
     'Copy the current connection from the editor, initialize, and read codebook_status. Never replay input automatically.',
   STALE_PAUSE:
@@ -32,7 +32,7 @@ export const ERROR_RECOVERY = {
   RUNTIME_FAILED:
     'Read the terminal reason and captured history. Stop owned resources; do not retry the click automatically.',
   EVIDENCE_UNAVAILABLE:
-    'Inspect the evidence failure and storage availability. Do not treat missing evidence as success.',
+    'Inspect the evidence failure and storage availability. Do not treat missing evidence as success. When codebook_continue names a required fact the debugger could not read, the run stays paused at that stop: read nodeTest.stops, then call codebook_continue again to go on without it, or stop the run.',
   SERVER_STOPPING:
     'Wait for the editor stop command to finish, then explicitly start and copy a new connection.',
   PREREQUISITE_MISSING:
