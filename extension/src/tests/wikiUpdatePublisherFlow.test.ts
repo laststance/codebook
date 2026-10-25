@@ -47,6 +47,18 @@ async function waitForStatus(
 const hasEnded = (current: WikiUpdateStatus): boolean =>
   current.state !== 'running'
 
+/** Awaits a held step's start, failing with the step's name when it has not started within {@link READER_RESULT_BOUND_MS}, so a regression that never reaches the step fails the test instead of stopping it. */
+async function heldStepStarted(
+  hold: { started: Promise<void> },
+  step: string,
+): Promise<void> {
+  let hasStarted = false
+  void hold.started.then(() => {
+    hasStarted = true
+  })
+  await waitUntil(() => hasStarted, step, READER_RESULT_BOUND_MS)
+}
+
 /** An agent needs a moment before it stages anything; the pause also lets the file system's clock pass the run's start. */
 const agentTakesAMoment = (): Promise<void> =>
   new Promise((resolveWait) => setTimeout(resolveWait, 50))
@@ -452,7 +464,7 @@ test('Update anyway chosen while this window still turns its ended run’s marke
       extraPages: ['pages/notes.html'],
     })
     const firstRun = await waitForStatus(wiki.status, hasEnded)
-    await reservationWrite.started
+    await heldStepStarted(reservationWrite, 'the write of the reservation')
 
     // Act: the learner presses and chooses Update anyway on its refusal while the reservation is still written; Update anyway's start claims the marker; then the write ends.
     isOverrideChosen = true
@@ -507,14 +519,14 @@ test('Update anyway whose claim met this window’s marker turn, which ended bef
       extraPages: ['pages/notes.html'],
     })
     const firstRun = await waitForStatus(wiki.status, hasEnded)
-    await reservationWrite.started
+    await heldStepStarted(reservationWrite, 'the write of the reservation')
     claimAnswer = wiki.hold('claim-answer')
 
     // Act: Update anyway's claim meets the marker in change and is held before the start reads the answer; the turn then ends, and only after it the start reads the answer.
     isOverrideChosen = true
     await wiki.runUpdateCommand()
     const errorsAfterThePress = wiki.errors.length
-    await claimAnswer.started
+    await heldStepStarted(claimAnswer, 'the answer of the start’s claim')
     reservationWrite.release()
     await waitUntil(
       () => wiki.markerChanges.at(-1)?.answer !== undefined,

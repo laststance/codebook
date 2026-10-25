@@ -228,3 +228,41 @@ test('a history resource whose history is removed while it is read is refused as
     await harness.close()
   }
 })
+
+// Value: protects=an agent reading a test history's learning material while the history is removed (after its journal was read, before its material was): the resource is refused as NOT_FOUND, not answered as a history whose material was never saved; fails_when=the material read finds no file because the folder is gone and the resource answers status not-saved for a history that no longer exists (Cycle 0052 task 78); why_new=local CodeRabbit round 2 on b42256f1 (resources.ts): task 75 caught only reads that throw; seam=a store whose material read removes the history's folder first; no_claim=a material that was never saved, which still reads not-saved
+test('a history’s learning-material resource whose history is removed while it is read is refused as NOT_FOUND, not answered as not saved', async () => {
+  // Arrange: the history's folder is gone when its material is read.
+  const { harness, store, studyId } = await serviceWithOneHistory()
+  const historyFolder = join(
+    harness.directory,
+    '.learning',
+    'node-tests.v1',
+    studyId,
+  )
+  const readLearningMaterial = store.readLearningMaterial.bind(store)
+  store.readLearningMaterial = async (id) => {
+    await rm(historyFolder, { recursive: true, force: true })
+    return readLearningMaterial(id)
+  }
+  try {
+    // Act
+    const answer = await readResource(
+      harness.service,
+      `codebook://node-history/${studyId}/learning-material`,
+    ).then(
+      () => 'answered',
+      (error: unknown) =>
+        error instanceof StudyError
+          ? { code: error.code, message: error.message }
+          : String(error),
+    )
+
+    // Assert
+    assert.deepEqual(answer, {
+      code: 'NOT_FOUND',
+      message: `No Node test history ${studyId} is saved in this workspace. Read codebook://node-history and copy the studyId or historyUri of the history you mean.`,
+    })
+  } finally {
+    await harness.close()
+  }
+})

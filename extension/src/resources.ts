@@ -45,6 +45,7 @@ import { readRecordingResource } from './utils/readRecordingResource'
 import { readRepositoryResource } from './utils/readRepositoryResource'
 import { secondsText } from './utils/secondsText'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
+import { unknownNodeHistoryError } from './utils/unknownNodeHistoryError'
 import { withKnownNodeHistory } from './utils/withKnownNodeHistory'
 
 /** The active-progress deadline in the whole seconds the repository-browser help names, so the help follows {@link ACTIVE_TIMEOUT_MS}. */
@@ -166,9 +167,13 @@ export async function readResource(
       nodeHistoryMatch[2] === 'learning-material' ||
       nodeHistoryMatch[2]?.startsWith('learning-material/pages/')
     ) {
-      const material = await withKnownNodeHistory(store, studyId, () =>
-        store.readLearningMaterial(studyId),
-      )
+      const material = await withKnownNodeHistory(store, studyId, async () => {
+        const saved = await store.readLearningMaterial(studyId)
+        // No material because the history was removed meanwhile is an unknown history, not one without material (Cycle 0052 task 78).
+        if (saved === undefined && !store.holdsHistoryFolder(studyId))
+          throw unknownNodeHistoryError(studyId)
+        return saved
+      })
       const data = material ?? {
         studyId: nodeHistoryMatch[1],
         revision: 0,
