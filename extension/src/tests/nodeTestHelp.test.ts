@@ -183,6 +183,30 @@ test('the node-test help tells refusals, the Vitest-root rule, failing tests and
   )
 })
 
+// Value: protects=each preparation refusal the help names being listed under the error code the service actually returns: a full Saved Study Limit under PREREQUISITE_MISSING with its learner-only recovery, a test path starting with "-" and a changed plan under INVALID_CONFIGURATION; fails_when=the help files a full library under INVALID_CONFIGURATION, so the agent picks a configuration fix for a limit only the learner can raise; why_new=hosted CodeRabbit review of PR #129 (Cycle 0053's rewrite of the sentence moved the limit to the wrong code); seam=none; no_claim=the refusal's own wording (studyLibrary tests)
+test('the node-test help lists a full Saved Study Limit under PREREQUISITE_MISSING and a changed plan under INVALID_CONFIGURATION', async () => {
+  // Arrange / Act
+  const { body } = await servedNodeTestHelp()
+  const prerequisiteClause = body.refusals.slice(
+    body.refusals.indexOf('PREREQUISITE_MISSING when'),
+    body.refusals.indexOf('INVALID_CONFIGURATION also when'),
+  )
+  const configurationClause = body.refusals.slice(
+    body.refusals.indexOf('INVALID_CONFIGURATION also when'),
+  )
+
+  // Assert
+  assert.match(
+    prerequisiteClause,
+    /or when the saved studies and test histories fill the Saved Study Limit \(only the learner can raise it/,
+  )
+  assert.match(
+    configurationClause,
+    /^INVALID_CONFIGURATION also when the test's path from its Vitest root starts with "-" or its plan changed while the run was preparing\./,
+  )
+  assert.doesNotMatch(configurationClause, /Saved Study Limit/)
+})
+
 // Value: protects=the owner's rule that learning content is the question's own: no development-target test title in the served help or the codebook_start input schema; fails_when=an example quotes a title of the development target; why_new=the help and the schema quoted the dashboard's invoice test titles (owner, 2026-10-21; AC8); seam=none; no_claim=JSDoc examples, which nothing serves
 test('no development-target test title appears in the node-test help or the codebook_start input schema', async () => {
   // Arrange
