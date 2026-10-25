@@ -61,16 +61,16 @@ function exampleWithValues(example: ServedHelpExample) {
   }
 }
 
-// Value: protects=the Vitest version the help names, which must follow NODE_TEST_MINIMUM_VITEST_MAJOR; fails_when=one of the three sentences keeps a hard-coded major when the supported major changes; why_new=the help hard-coded 4 in three sentences (F43); seam=none; no_claim=the status sentence of readVitestPrerequisite
+// Value: protects=the Vitest version the help names, which must follow NODE_TEST_MINIMUM_VITEST_MAJOR; fails_when=one of the three sentences keeps a hard-coded major when the supported major changes; why_new=the help hard-coded 4 in three sentences (F43); Cycle 0053 rewrote the three for the Vitest root (task 6); seam=none; no_claim=the status sentence of searchRepositoryVitest
 test('the node-test help names the minimum Vitest major in each of its three sentences', async () => {
   // Arrange
   const { text } = await servedNodeTestHelp()
 
   // Act
   const sentences = [
-    'its missing list names a root Vitest that is missing or older than 4, or the count and the limit',
-    'PREREQUISITE_MISSING when the root Vitest is missing or older than 4, or when the saved studies',
-    'node-test runs the Vitest 4 or later installed at the repository root',
+    'profiles node-test is ready when a usable Vitest 4 or later lies at the repository root or in a package one or two levels below it',
+    "PREREQUISITE_MISSING when the cited test's Vitest is missing, older than 4, unreadable",
+    'with that config and the Vitest 4 or later Node resolves from there',
   ]
 
   // Assert
@@ -149,8 +149,8 @@ test('the node-test help’s walkthrough names every call in order', async () =>
   )
 })
 
-// Value: protects=the help's statements an agent needs at the edges: refusals at preparation, the root-Vitest limit, failing tests and the replay's contents; fails_when=one of them is missing, or a removed sentence that calls the replay unavailable is served; why_new=the help said a test history was no replay (the node-test help's replay sentence, Design 6, AC8, AC18); seam=none; no_claim=other help resources
-test('the node-test help tells refusals, the root-Vitest limit, failing tests and what a test replay holds, and calls no replay unavailable', async () => {
+// Value: protects=the help's statements an agent needs at the edges: refusals at preparation, the Vitest-root rule, failing tests and the replay's contents; fails_when=one of them is missing, or a removed sentence that calls the replay unavailable is served; why_new=the help said a test history was no replay (the node-test help's replay sentence, Design 6, AC8, AC18); Cycle 0053 replaced the root-only Vitest limit with the Vitest-root rule (task 6); seam=none; no_claim=other help resources
+test('the node-test help tells refusals, the Vitest-root rule, failing tests and what a test replay holds, and calls no replay unavailable', async () => {
   // Arrange / Act
   const { text, body } = await servedNodeTestHelp()
 
@@ -159,7 +159,15 @@ test('the node-test help tells refusals, the root-Vitest limit, failing tests an
   assert.match(body.refusals, /SOURCE_CHANGED/)
   assert.match(
     body.limits.vitest,
-    /a Vitest installed only inside a package is not supported yet/,
+    /in its Vitest root, the nearest folder above the test that holds a Vitest or Vite config/,
+  )
+  assert.match(
+    body.limits.vitest,
+    /unless the repository root's config already selects the test exactly once/,
+  )
+  assert.match(
+    body.limits.vitest,
+    /not the variables or options of the package's test script/,
   )
   assert.match(
     body.results,
@@ -173,6 +181,30 @@ test('the node-test help tells refusals, the root-Vitest limit, failing tests an
     text,
     /not application video or synchronized application replay/i,
   )
+})
+
+// Value: protects=each preparation refusal the help names being listed under the error code the service actually returns: a full Saved Study Limit under PREREQUISITE_MISSING with its learner-only recovery, a test path starting with "-" and a changed plan under INVALID_CONFIGURATION; fails_when=the help files a full library under INVALID_CONFIGURATION, so the agent picks a configuration fix for a limit only the learner can raise; why_new=hosted CodeRabbit review of PR #129 (Cycle 0053's rewrite of the sentence moved the limit to the wrong code); seam=none; no_claim=the refusal's own wording (studyLibrary tests)
+test('the node-test help lists a full Saved Study Limit under PREREQUISITE_MISSING and a changed plan under INVALID_CONFIGURATION', async () => {
+  // Arrange / Act
+  const { body } = await servedNodeTestHelp()
+  const prerequisiteClause = body.refusals.slice(
+    body.refusals.indexOf('PREREQUISITE_MISSING when'),
+    body.refusals.indexOf('INVALID_CONFIGURATION also when'),
+  )
+  const configurationClause = body.refusals.slice(
+    body.refusals.indexOf('INVALID_CONFIGURATION also when'),
+  )
+
+  // Assert
+  assert.match(
+    prerequisiteClause,
+    /or when the saved studies and test histories fill the Saved Study Limit \(only the learner can raise it/,
+  )
+  assert.match(
+    configurationClause,
+    /^INVALID_CONFIGURATION also when the test's path from its Vitest root starts with "-" or its plan changed while the run was preparing\./,
+  )
+  assert.doesNotMatch(configurationClause, /Saved Study Limit/)
 })
 
 // Value: protects=the owner's rule that learning content is the question's own: no development-target test title in the served help or the codebook_start input schema; fails_when=an example quotes a title of the development target; why_new=the help and the schema quoted the dashboard's invoice test titles (owner, 2026-10-21; AC8); seam=none; no_claim=JSDoc examples, which nothing serves

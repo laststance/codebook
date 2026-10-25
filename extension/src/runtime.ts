@@ -17,6 +17,12 @@ import type {
   ProfileLeft,
 } from './runtimeSupport/hostBrowser'
 import type { PauseIdentity, PauseGate } from './runtimeSupport/pauseGate'
+import type {
+  RetryVitestListingRelease,
+  VitestListingReleaseFailure,
+} from './utils/listVitestTestFiles'
+import type { NodeTestExecutionPlan } from './utils/planNodeTestExecution'
+import type { NodeTestVitestSearch } from './utils/searchRepositoryVitest'
 
 export interface NodeTestRuntime {
   readonly id: string
@@ -137,6 +143,17 @@ export interface StudyRuntime {
   /** Says whether the run completed and its final save has not settled yet, during which its completion is no result (a failed save fails the run); runtimes without such a save omit it. */
   isSavingCompletion?(): boolean
 }
+/** What a node-test start's pre-history check is bound by: the start's cancellation and preparation deadline (epoch milliseconds on the service's clock `now`), which bound a root claim's listing, and who hears of a root listing whose process group could not be confirmed as ended, before the run's history (or its journal) exists, with the retry that releases it at the run's stop. */
+export type NodeTestPreparationControl = {
+  signal: AbortSignal
+  deadlineAt: number
+  /** The clock `deadlineAt` is measured on: the service's own, which a test may replace. */
+  now: () => number
+  onListingNotReleased?: (
+    failure: VitestListingReleaseFailure,
+    retryRelease: RetryVitestListingRelease,
+  ) => void
+}
 export interface StudyEnvironment {
   readonly workspace: string
   readonly host: HostConfiguration
@@ -150,28 +167,42 @@ export interface StudyEnvironment {
     profiles?: Partial<
       Record<
         typeof REPOSITORY_BROWSER_PROFILE | typeof NODE_TEST_PROFILE,
-        { ready: boolean; missing: string[] }
+        {
+          ready: boolean
+          missing: string[]
+          /** node-test only: what the readiness search for a usable Vitest found ({@link searchRepositoryVitest}). */
+          vitestSearch?: NodeTestVitestSearch
+        }
       >
     >
   }>
+  /**
+   * The prerequisites a node-test start waits on: the editor's own, the bundled debugger and the external Node, never the repository-wide Vitest search, since the start checks the cited test's own Vitest before its history begins. Environments without it make the start wait on {@link StudyEnvironment.prerequisites}.
+   */
+  nodeTestStartPrerequisites?(): Promise<{ ready: boolean; missing: string[] }>
   createRuntime(
     directory: string,
     definition: RuntimeDefinition,
     control?: RuntimeControl,
   ): Promise<StudyRuntime>
   /**
-   * Checks the files a node-test configuration names against the opened repository, the editor's open documents of the cited sources and the root Vitest's program before the run's history begins ({@link checkNodeTestFiles}); a refusal ends the run with its typed error and records nothing.
+   * Checks the files a node-test configuration names against the opened repository and the editor's open documents of the cited sources ({@link checkNodeTestFiles}), then plans the run ({@link planNodeTestExecution}): its Vitest root, the root claim, its Vitest and its filter, before the run's history begins; a refusal ends the run with its typed error and records nothing.
    * @param citedSources - The article's text of every source the selected node cites; an open editor document with other text refuses the start.
-   * @throws The typed refusal of a path that is not a file, a changed source or a changed test file, a cited source open in the editor with other text, or a missing root Vitest program.
+   * @param control - The start's cancellation, its preparation deadline and who hears of an unreleased root listing ({@link NodeTestPreparationControl}).
+   * @returns The execution plan the run launches with.
+   * @throws The typed refusal of a path that is not a file, a changed source or a changed test file, a cited source open in the editor with other text, and every refusal of the plan's Vitest rules.
    */
   checkNodeTestFiles?(
     configuration: NodeTestConfiguration,
     citedSources: ConfiguredDescriptor['sources'],
-  ): Promise<void>
+    control: NodeTestPreparationControl,
+  ): Promise<NodeTestExecutionPlan>
   createNodeTestRun?(
     configuration: NodeTestConfiguration,
     record: (type: string, detail?: unknown) => unknown,
     /** The article's text of every source the selected node cites: the run refuses its start, and ends at a continuation or at a stop, while the editor holds other text for one of them. */
     citedSources: ConfiguredDescriptor['sources'],
+    /** The plan {@link StudyEnvironment.checkNodeTestFiles} returned; `undefined` only for an environment without that check, which then refuses. */
+    plan: NodeTestExecutionPlan | undefined,
   ): Promise<NodeTestRuntime>
 }

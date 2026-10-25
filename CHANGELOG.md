@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.2.43.0] - 2026-10-26 (development candidate)
+
+Cycle 0053 ([Issue #128](https://github.com/laststance/codebook/issues/128)), a feature cycle: a test inside a workspace package runs with that package's Vitest and config.
+
+**A package's test runs the way its own `vitest` would.**
+
+- **A test under a package config now runs in that package.** Codebook starts Vitest in the test's Vitest root, the nearest folder above the test that holds a `vitest.config.*` or `vite.config.*` (TanStack Query's `packages/query-core`, Redux Toolkit's `packages/toolkit`), with that config, the test's path from there, and the Vitest Node resolves from there: the package's own, or one hoisted to a folder above it inside the repository. **Upgrade note:** in a repository with no root config, such a test used to run from the root with the root's defaults; it now runs with its package's config, and the run manifest's `vitestRoot` shows which folder it ran in.
+- **A test the root config already selects exactly once keeps running from the root, as before** (the root claim), and a test with no config above it runs from the root, as before. The test moves to its package when the root's listing selects it zero times or under several projects, or when Vitest itself ends that listing with an error; a listing Codebook could not run, a stopped start and a passed preparation deadline refuse the start instead.
+- **The node-test run manifest names** `vitestRoot`, `vitestRootReason`, `rootClaim`, `vitestConfigFiles` and `skippedConfigFiles`.
+- **The run keeps Codebook's fixed environment** (`CI=true`, `NODE_ENV=test`, no inherited credentials), not the variables and options of the package's `test` script; Vite and Vitest still load the chosen config and its folder's `.env*` files.
+
+**Readiness and refusals.**
+
+- **`codebook_status` reports `node-test` ready when a usable Vitest lies at the repository root or in a folder one or two levels below it** (it looks at no more than 256 folders, reads no more than 20,000 folder entries to list them and stops after two seconds, never inside `node_modules`, a dot-folder or a linked folder), and names what it found in `vitestSearch`; `incomplete`, which also follows a folder it could not read, names how many folders it looked at, and a `node_modules/vitest` it cannot look at counts as found with an unreadable version. **A start no longer waits on that search:** it checks the cited test's own Vitest, so a test in a deeper package starts when its own Vitest is usable, while a missing Node or debugger still refuses it.
+- **Each refusal names the test, the folder and the fix, and ends "then start the test again"**: no Vitest, an older one, an unreadable version, a missing `vitest.mjs`, a Vitest that links outside the repository, a Vitest root that holds a config-named folder or a link out of the repository (this also refuses such a repository root, which earlier versions ran from), a test path that starts with `-` from its Vitest root, and a plan that changed before the launch, checked before and after the launch's own listings (a nearer config, the Vitest root's config files or its Vitest, or the repository root's config files, byte for byte, and its Vitest, which decide the root claim; files a config imports are not compared). A listing refusal keeps its message, and its cause names the test, the Vitest root, the root claim's result and the filter. The README's new troubleshooting table lists each one.
+- **A Vitest listing that may still run keeps its run from ending.** When a process a config started outlives a listing, or Codebook may not signal it, the run stays unstopped with the release's failure in `cleanupError`, another start answers `BUSY`, so no second Vitest runs beside it, and `codebook_stop` releases the listing once that process has ended. This holds for the root claim's listing before the run's history begins (its events name it, `node-test.vitest-listing-not-released`) and for a run's own listing; earlier versions named such a listing and then let the next start run beside it.
+
+**Documentation.**
+
+- **The README no longer says Cursor's copy of the skill holds the packaged bytes:** Cursor setup replaces one placeholder with the path of the installation's Wiki publisher.
+
+**Compatibility.** The MCP API stays 1.8 (additive output fields only), no input or stored format changes, and the bundled skill is unchanged (1.0.47).
+
 ## [0.2.42.0] - 2026-10-26 (development candidate)
 
 Cycle 0052 pt3 ([Issue #124](https://github.com/laststance/codebook/issues/124)), the last of three pull requests of a bug-fix cycle: a live test run survives a value it cannot read, and a browser run's refusals and seals say what happened.

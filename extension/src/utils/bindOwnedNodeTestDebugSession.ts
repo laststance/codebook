@@ -12,11 +12,11 @@ const proxySchema = z.strictObject({
   path: z.string().startsWith('/').max(512),
 })
 
-/** Binds a tracked native JavaScript debug session to this run's live Vitest worker before accepting its DAP state. Called after the owned attach starts and its session is observed. @param session - Tracker-observed root or descendant session. @param runId - Current Codebook run identity. @param workspace - Canonical opened checkout. @param processGroup - Owned Vitest launch group. @param signal - Run cancellation. @param assertActive - Rejects a terminated or foreign session. @example const bound = await bindOwnedNodeTestDebugSession(session, runId, workspace, group, signal, assertActive); bound.cdp.close() */
+/** Binds a tracked native JavaScript debug session to this run's live Vitest worker before accepting its DAP state. Called after the owned attach starts and its session is observed. @param session - Tracker-observed root or descendant session. @param runId - Current Codebook run identity. @param workingDirectory - Canonical folder the owned Vitest was started in (its Vitest root). @param processGroup - Owned Vitest launch group. @param signal - Run cancellation. @param assertActive - Rejects a terminated or foreign session. @example const bound = await bindOwnedNodeTestDebugSession(session, runId, launch.vitestRoot, group, signal, assertActive); bound.cdp.close() */
 export async function bindOwnedNodeTestDebugSession(
   session: vscode.DebugSession,
   runId: string,
-  workspace: string,
+  workingDirectory: string,
   processGroup: number,
   signal: AbortSignal,
   assertActive: (sessionId: string) => void,
@@ -60,7 +60,7 @@ export async function bindOwnedNodeTestDebugSession(
   try {
     const identity = await verifyNodeTestInspectorOwnership(
       cdp,
-      workspace,
+      workingDirectory,
       processGroup,
       signal,
       () => assertActive(session.id),

@@ -17,6 +17,7 @@ import {
 import { StudyError } from './errors'
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
 import type {
+  NodeTestPreparationControl,
   RuntimeControl,
   RuntimeDefinition,
   RuntimeSnapshot,
@@ -34,10 +35,14 @@ import { causeRootsFor } from './utils/causeRootsFor'
 import { checkNodeTestFiles } from './utils/checkNodeTestFiles'
 import { configuredStops } from './utils/configuredStops'
 import { createChromeExecutableLookup } from './utils/createChromeExecutableLookup'
-import { readVitestPrerequisite } from './utils/readVitestPrerequisite'
-import { requireOwnedVitest } from './utils/requireOwnedVitest'
+import { listVitestForRootClaim } from './utils/listVitestForRootClaim'
+import {
+  planNodeTestExecution,
+  type NodeTestExecutionPlan,
+} from './utils/planNodeTestExecution'
 import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
 import { sanitizeCause } from './utils/sanitizeCause'
+import { searchRepositoryVitest } from './utils/searchRepositoryVitest'
 
 export interface StudyPresentation {
   createViewport: BrowserViewportFactory
@@ -188,21 +193,30 @@ export async function createEnvironment(
   })
   // One lookup for the window's life: it remembers the last PATH search between prerequisite checks.
   const lookUpChromeExecutable = createChromeExecutableLookup()
-  const resolvePrerequisites = async () => {
-    const missing = editorPrerequisiteGaps(workspace)
+  const configuredNodeExecutable = () =>
+    resolveExternalNodeExecutable(
+      vscode.workspace
+        .getConfiguration('codebook')
+        .get<string>('nodeExecutable', 'node'),
+    )
+  // What a node-test run needs of the editor and the machine: the workspace, the bundled debugger and the external Node, without Chrome.
+  const resolveNodePrerequisites = async () => {
+    const nodeMissing = editorPrerequisiteGaps(workspace)
     let nodeExecutable: string | undefined
-    let chrome: HostConfiguration['chrome']
-    const configuration = vscode.workspace.getConfiguration('codebook')
     try {
-      nodeExecutable = await resolveExternalNodeExecutable(
-        configuration.get<string>('nodeExecutable', 'node'),
-      )
+      nodeExecutable = await configuredNodeExecutable()
     } catch {
-      missing.push(
+      nodeMissing.push(
         'codebook.nodeExecutable: configure an executable external Node.js >=24.',
       )
     }
-    const nodeMissing = [...missing]
+    return { nodeMissing, nodeExecutable }
+  }
+  const resolvePrerequisites = async () => {
+    const { nodeMissing, nodeExecutable } = await resolveNodePrerequisites()
+    const missing = [...nodeMissing]
+    let chrome: HostConfiguration['chrome']
+    const configuration = vscode.workspace.getConfiguration('codebook')
     const binary = await lookUpChromeExecutable(
       configuration.get<string>('chromeExecutable', ''),
       process.platform,
@@ -263,7 +277,7 @@ export async function createEnvironment(
         }
         if (ownedConfiguredLock) break
       }
-      const [{ ready, missing, nodeMissing }, checkedConfigured, vitest] =
+      const [{ ready, missing, nodeMissing }, checkedConfigured, vitestSearch] =
         await Promise.all([
           resolvePrerequisites(),
           // Even during a run, recheck dependencies and directories; only its exact live lock is permitted.
@@ -275,11 +289,11 @@ export async function createEnvironment(
             () => [],
             (error) => [String(error)],
           ),
-          // node-test runs the root Vitest: a missing or older one is named before any start (X9).
-          readVitestPrerequisite(workspace).catch((error: unknown) => ({
-            ready: false as const,
+          // A usable Vitest at the root or in a package up to two levels below it is named before any start (X9); a start checks its test's own.
+          searchRepositoryVitest(workspace).catch((error: unknown) => ({
+            vitestSearch: 'incomplete' as const,
             // The reason reaches the agent in codebook_status, so it names no private path (F10).
-            reason: `node-test could not read the repository's root Vitest: ${sanitizeCause(error, causeRootsFor([], workspace))}`,
+            missing: `node-test could not finish looking for Vitest in the repository: ${sanitizeCause(error, causeRootsFor([], workspace))}. A start still checks the cited test's own package.`,
           })),
         ])
       // A preparing run may have created its lock before it has sealed ownership; never label that interval foreign.
@@ -308,8 +322,14 @@ export async function createEnvironment(
         profiles: {
           'repository-browser': check(configured),
           'node-test': {
-            ready: nodeMissing.length === 0 && vitest.ready,
-            missing: [...nodeMissing, ...(vitest.ready ? [] : [vitest.reason])],
+            ready:
+              nodeMissing.length === 0 &&
+              vitestSearch.vitestSearch === 'usable',
+            missing: [
+              ...nodeMissing,
+              ...('missing' in vitestSearch ? [vitestSearch.missing] : []),
+            ],
+            vitestSearch: vitestSearch.vitestSearch,
           },
         },
       }
@@ -373,25 +393,52 @@ export async function createEnvironment(
       runs.set(run.id, run)
       return run
     },
+    async nodeTestStartPrerequisites() {
+      const { nodeMissing } = await resolveNodePrerequisites()
+      return { ready: nodeMissing.length === 0, missing: nodeMissing }
+    },
     async checkNodeTestFiles(
       configuration: NodeTestConfiguration,
       citedSources: ConfiguredDescriptor['sources'],
-    ): Promise<void> {
+      control: NodeTestPreparationControl,
+    ) {
       // The owned run's own checks, made before the history begins: a refusal leaves no zero-entry history behind (F57).
       assertConfiguredSourceDocuments(
         workspace,
         citedSources,
         vscode.workspace.textDocuments,
       )
-      const { root } = await checkNodeTestFiles(workspace, configuration)
-      await requireOwnedVitest(root)
+      const { root, testFile } = await checkNodeTestFiles(
+        workspace,
+        configuration,
+      )
+      return planNodeTestExecution({
+        root,
+        testFile,
+        declaredTestFile: configuration.testFile,
+        // The Node executable is looked up only when a root claim lists from the root.
+        listRootClaim: async (request) =>
+          listVitestForRootClaim(request, {
+            node: await configuredNodeExecutable(),
+            cancellation: control.signal,
+            deadlineAt: control.deadlineAt,
+            now: control.now,
+            onReleaseFailed: control.onListingNotReleased,
+          }),
+      })
     },
     async createNodeTestRun(
       configuration: NodeTestConfiguration,
       record: (type: string, detail?: unknown) => unknown,
       citedSources: ConfiguredDescriptor['sources'],
+      plan: NodeTestExecutionPlan | undefined,
     ) {
-      const prerequisites = await resolvePrerequisites()
+      if (!plan)
+        throw new StudyError(
+          'PREREQUISITE_MISSING',
+          'The node-test run has no execution plan from its preparation check.',
+        )
+      const prerequisites = await resolveNodePrerequisites()
       if (prerequisites.nodeMissing.length || !prerequisites.nodeExecutable)
         throw new StudyError(
           'PREREQUISITE_MISSING',
@@ -410,6 +457,7 @@ export async function createEnvironment(
         prerequisites.nodeExecutable,
         record,
         citedSources,
+        plan,
       )
     },
     dispose(): void {
