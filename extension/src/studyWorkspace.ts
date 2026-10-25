@@ -9158,6 +9158,8 @@ export class StudyWorkspace {
       : (this.playback?.state().studyId ?? this.selection.studyId)
     if (!this.browserReplayShown() || !studyId)
       throw new Error('Select a recording first.')
+    // The controller keeps a pending load of the same study and would start none: a Reload whose recording has not loaded cancels that load first, so the recording loads again (Cycle 0052 task 35).
+    if (!this.recordingActive) this.playback?.leave()
     this.leavePlayback(true)
     this.recordingReloadStudyId = studyId
     await this.openRecording(studyId)
@@ -11781,8 +11783,9 @@ export class StudyWorkspace {
       revision ?? this.revision,
     )
     if (outcome.status === 'superseded') {
-      // A superseded open leaves the summary composition it entered when no newer replay stands in it, as a failed open does (Cycle 0052 task 13).
-      await this.leaveEmptySummaryComposition()
+      // A superseded open leaves the summary composition it entered when no newer replay stands in it, as a failed open does (Cycle 0052 task 13); an entry still under way fills or leaves that composition itself (task 35).
+      if (this.nodeHistoryEntriesUnderWay === 0)
+        await this.leaveEmptySummaryComposition()
       return
     }
     if (outcome.status !== 'failed') {
@@ -11812,6 +11815,8 @@ export class StudyWorkspace {
     // The learner's test replay supersedes a saved study that waits for the hidden editor area: the slot tabs that waited with it close now, before its own slot shows, so its tab is never closed as an earlier one's and a failed open leaves none behind (Cycle 0052 task 15).
     this.studyAwaitingEditorArea = undefined
     await this.closeSlotTabsAwaitingArea()
+    // A Close, a Return or a newer entry during the slot close owns the reader now: this entry asks nothing more (Cycle 0052 task 35).
+    if (entry !== this.nodeHistoryEntryRequest) return false
     if (!(await this.closeBrowserReplayForTestReplay(entry))) return false
     if (entry !== this.nodeHistoryEntryRequest) return false
     try {
@@ -11880,8 +11885,9 @@ export class StudyWorkspace {
     )
     const answer = await this.resolveForeignPreviewRefusal(cause)
     if (answer === 'retry') return 'retry'
-    // A failed open shows no replay in the summary composition: the Study composition comes back, with the failure on its line (DS-G).
-    await this.leaveEmptySummaryComposition()
+    // A failed open shows no replay in the summary composition: the Study composition comes back, with the failure on its line (DS-G). A newer entry still under way keeps that composition for its own replay (Cycle 0052 task 35).
+    if (this.nodeHistoryEntriesUnderWay === 0)
+      await this.leaveEmptySummaryComposition()
     // The keep-open refusal has told the learner already, so no second notification follows; the refusal is still recorded once in Output › Codebook, where other open refusals are, so a later take can tell why the replay did not open (F407).
     if (answer === 'told')
       this.diagnostics?.log({
@@ -12275,6 +12281,11 @@ export class StudyWorkspace {
       signal.throwIfAborted()
     }
     this.recordingActive = true
+    // A test replay retired for this recording left the summary its placeholder: the recording's loading, failure and retry need the reader's document there (Cycle 0052 task 35).
+    if (this.summaryComposition) {
+      this.giveSummaryItsDocument()
+      this.lastPublished = undefined
+    }
     // The reloaded recording is active again: a same-study Reload's mark has served its turn.
     this.recordingReloadStudyId = undefined
     // A browser replay starting ends any earlier record of tabs to close (F474).
@@ -14315,15 +14326,7 @@ export class StudyWorkspace {
             throw new Error('Obsolete source-derived reader could not close.')
           signal?.throwIfAborted()
           // A pinned tab keeps showing its capture, so its bytes stay with the provider.
-          const stillShown = new Set(
-            vscode.window.tabGroups.all
-              .flatMap((group) => group.tabs)
-              .flatMap((tab) =>
-                tab.input instanceof vscode.TabInputText
-                  ? [tab.input.uri.toString()]
-                  : [],
-              ),
-          )
+          const stillShown = this.shownTextTabAddresses()
           for (const obsoleteUri of obsoleteUris)
             if (!stillShown.has(obsoleteUri)) this.documents.delete(obsoleteUri)
         }
@@ -19469,10 +19472,7 @@ export class StudyWorkspace {
         assertCurrent()
       }
       // A summary view resolved earlier holds the closed replay's placeholder; it gets the reader's document even while it waits behind the chat.
-      if (this.summaryView && !this.summaryDocumentActive) {
-        this.summaryDocumentActive = true
-        this.summaryView.webview.html = studyHtml('context')
-      }
+      this.giveSummaryItsDocument()
       this.lastPublished = undefined
       this.publish()
       if (keptBehind) this.tellSummaryKeptBehindChat()
@@ -19730,6 +19730,16 @@ export class StudyWorkspace {
   }
 
   /** Withdraws replay controls on explicit departure or close while leaving the native sidebar and other chat containers intact. @example this.clearLearningSummary() */
+  /**
+   * Gives the Learning summary view the reader's document when it holds the closed replay's placeholder, so the next publish can draw a replay there; called by {@link showLearningSummary} and by {@link loadPlayback} for a recording that loads over a retired test replay.
+   * @example this.giveSummaryItsDocument()
+   */
+  private giveSummaryItsDocument(): void {
+    if (!this.summaryView || this.summaryDocumentActive) return
+    this.summaryDocumentActive = true
+    this.summaryView.webview.html = studyHtml('context')
+  }
+
   private clearLearningSummary(): void {
     this.summaryDocumentActive = false
     // The document that reported the focus is replaced; its successor reports for itself.
@@ -24736,8 +24746,31 @@ export class StudyWorkspace {
           (retired.has(tab) || replacedAddresses.has(uri.toString())),
       )
     } catch (error) {
+      // The tabs a refused close left open stay recorded, so the next explicit display or entry closes them again (Cycle 0052 task 35); a tab no longer shown at its address leaves the record.
+      const shownAddresses = this.shownTextTabAddresses()
+      this.nodeSourceSlotTabsAwaitingArea = new Map([
+        ...[...retired].filter(([, address]) => shownAddresses.has(address)),
+        ...(this.nodeSourceSlotTabsAwaitingArea ?? []),
+      ])
       this.reportSlotCloseFailure(error)
     }
+  }
+
+  /**
+   * Names the addresses every text tab of the editor shows now; read after a close to tell the tabs that stayed (a pinned capture keeps its bytes, a refused slot close keeps its record).
+   * @returns The `uri.toString()` of each open text tab.
+   * @example this.shownTextTabAddresses().has(uri.toString()) // => true while a tab shows the document
+   */
+  private shownTextTabAddresses(): Set<string> {
+    return new Set(
+      vscode.window.tabGroups.all
+        .flatMap((group) => group.tabs)
+        .flatMap((tab) =>
+          tab.input instanceof vscode.TabInputText
+            ? [tab.input.uri.toString()]
+            : [],
+        ),
+    )
   }
 
   /**
@@ -24751,6 +24784,25 @@ export class StudyWorkspace {
       new Error(
         `The previous recorded source tab could not close. Arrange the Codebook panes manually. ${String(error)}`,
       ),
+    )
+  }
+
+  /**
+   * Says whether the end of a wait for the editor area was overtaken while it closed the slot tabs that waited: a Close (also with a new Open), a newer choice or a new wait owns the reader then; asked by {@link showStudyAwaitingEditorArea} after its close.
+   * @param awaited - The wait that ended.
+   * @param lifetime - The reader's lifetime when the wait ended.
+   * @returns `true` when the wait's end must arrange nothing; `false` when it still owns the reader.
+   * @example if (this.waitEndOvertaken(awaited, lifetime)) return
+   */
+  private waitEndOvertaken(
+    awaited: NonNullable<StudyWorkspace['studyAwaitingEditorArea']>,
+    lifetime: number,
+  ): boolean {
+    return (
+      lifetime !== this.lifetime ||
+      this.closing ||
+      this.studyAwaitingEditorArea !== undefined ||
+      awaited.selectionRevision !== this.readerSelectionRevision
     )
   }
 
@@ -24804,8 +24856,11 @@ export class StudyWorkspace {
     // A newer choice or a close during the read owns the reader now.
     if (this.studyAwaitingEditorArea !== awaited || this.closing) return
     this.studyAwaitingEditorArea = undefined
+    const lifetime = this.lifetime
     try {
       await this.closeSlotTabsAwaitingArea()
+      // A Close, a newer choice or a new wait during the slot close owns the reader now: this wait's end arranges nothing (Cycle 0052 task 35).
+      if (this.waitEndOvertaken(awaited, lifetime)) return
       if (awaited.arrange && this.needsReaderArrangement())
         await this.open(signal)
       await this.renderSelection(true, true, signal)

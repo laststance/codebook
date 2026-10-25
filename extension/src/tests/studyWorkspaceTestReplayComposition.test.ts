@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { appendFile } from 'node:fs/promises'
+import { appendFile, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -2958,6 +2958,156 @@ test('deleting the study of a failed same-study Reload is refused and keeps the 
         },
         trashMoves: [],
         archiveKept: true,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a test replay open A that fails after a newer Open replay B has entered the standing summary composition and waits for the work window's focus does not dismantle that composition: once the focus returns, B is shown in the summary composition; fails_when=A's failed or superseded open leaves the "empty" summary composition while B is still under way, so B enters a Study composition (Codex C1 / Claude F1 of the pt1 /ship review, Cycle 0052 task 35); why_new=the leave of an empty composition was tested against Return and Close, not against a newer entry under way; seam=the first open held then failed at the debugger replacement, changeWindowFocus(false) with unfocusedWindowReads; no_claim=the native window manager
+test('a failed test replay open does not dismantle the composition a newer Open replay waits to fill', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  let release = (): void => {}
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const first = await saveTwoStopNodeHistory(store)
+    const second = await saveTwoStopNodeHistory(store)
+    await harness.reader.action('retry')
+    await harness.reader.open()
+    const seams = readerSeams(harness)
+    const replace = seams.debuggerReplacement
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let entered = (): void => {}
+    const opening = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    seams.debuggerReplacement = async (): Promise<void> => {
+      // Only the first open is held and then failed: the second replay starts its debugger as usual.
+      seams.debuggerReplacement = replace
+      entered()
+      await held
+      throw new Error('The historical debugger did not start.')
+    }
+    const firstEntry = harness.reader.openLearningReplay(first.studyId)
+    await opening
+
+    // Act: the second entry waits for the window's focus inside the composition; then the first open fails and the focus returns.
+    harness.changeWindowFocus(false)
+    const readsBefore = harness.unfocusedWindowReads()
+    const secondEntry = harness.reader.openLearningReplay(second.studyId)
+    await waitUntil(
+      () => harness.unfocusedWindowReads() > readsBefore,
+      'the second entry waits for the window focus',
+      READER_RESULT_BOUND_MS,
+    )
+    release()
+    await firstEntry
+    harness.changeWindowFocus(true)
+    await secondEntry
+    await landsOn(harness, 2, 'the second test replay lands on its first stop')
+
+    // Assert
+    assert.deepEqual(
+      {
+        testReplay: harness.reader.inspect().view?.nodeHistory?.header.studyId,
+        ...compositionOf(harness),
+      },
+      {
+        testReplay: second.studyId,
+        studyPane: false,
+        application: true,
+        summary: true,
+        family: 'test',
+      },
+    )
+  } finally {
+    release()
+    harness.changeWindowFocus(true)
+    await harness.close()
+  }
+})
+
+// Value: protects=a browser recording opened over a shown test replay whose read fails leaves the Learning summary the reader's document, so the failure and its recovery show there and not the closed replay's placeholder; fails_when=loadPlayback retires the test replay and leaves the summary its placeholder while the recording loads and fails (Codex structured S1, Cycle 0052 task 35); why_new=the failed-read row was tested for a Reload (a browser replay already shown), not for a recording over a test replay; seam=a test replay opened by Open replay, the recording's header.json broken as the Reload recovery test does; no_claim=the native pane's pixels
+test('a browser recording that fails to read over a shown test replay gives the Learning summary its recovery document', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  const headerPath = join(harness.store.path(harness.studyId), 'header.json')
+  const header = await readFile(headerPath)
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(history.studyId)
+    await landsOn(harness, 2, 'the test replay lands on its first stop')
+    await writeFile(headerPath, '{broken')
+
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await waitUntil(
+      () => harness.controller.state().readiness === 'failed',
+      'the recording read fails',
+      READER_RESULT_BOUND_MS,
+    )
+    await harness.controller.settle()
+
+    // Assert
+    assert.deepEqual(
+      {
+        transport: harness.summary.webview.html.includes(
+          'id="recording-transport"',
+        ),
+        placeholder: harness.summary.webview.html.includes(SUMMARY_PLACEHOLDER),
+      },
+      { transport: true, placeholder: false },
+    )
+  } finally {
+    await writeFile(headerPath, header)
+    await harness.close()
+  }
+})
+
+// Value: protects=a second Reload pressed while the first Reload's load is held starts a new load, and the first load, released afterwards and failing, does not decide the outcome: the recording ends ready; fails_when=the controller keeps the pending load of the same study and starts none, so the second Reload restarts nothing and the first load's failure ends the replay failed (Codex structured S2, Cycle 0052 task 35); why_new=the second-Reload test only checked the refusal and the end state, not that a load restarted; seam=the first load held then failed at the debugger replacement, a counting wrapper for the second load; no_claim=the native pane's pixels
+test('a second Reload during a held Reload restarts the load and the first load’s failure does not decide the outcome', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    const reloading = await reloadHeldOrFailed(harness, 'held')
+    const seams = readerSeams(harness)
+    const replace = seams.debuggerReplacement
+    let secondLoadsStarted = 0
+    seams.debuggerReplacement = async (signal?: AbortSignal): Promise<void> => {
+      secondLoadsStarted++
+      return replace(signal)
+    }
+
+    // Act
+    await harness.reader.action('reload-recording')
+    await waitUntil(
+      () => harness.controller.state().readiness === 'ready',
+      'the second Reload loads the recording',
+      READER_RESULT_BOUND_MS,
+    ).catch(() => undefined)
+    const startedBeforeFirstEnds = secondLoadsStarted
+    reloading.load.fail()
+    await reloading.reload
+    await harness.controller.settle()
+
+    // Assert
+    assert.deepEqual(
+      {
+        startedBeforeFirstEnds,
+        ...browserReplayObservations(harness),
+      },
+      {
+        startedBeforeFirstEnds: 1,
+        readiness: 'ready',
+        transport: true,
+        family: 'browser',
       },
     )
   } finally {

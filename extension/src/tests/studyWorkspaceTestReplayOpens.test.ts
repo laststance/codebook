@@ -1203,3 +1203,68 @@ test('a refused close of the slot tab that waited for the editor area is told an
     await harness.close()
   }
 })
+
+// Value: protects=a refused close of the waiting slot tabs at an explicit display keeps them recorded, so the next explicit display closes the slot tab once the editor accepts; fails_when=the failed close drops the record, and the slot tab of the retired replay stays open beside the shown study for good (Codex C3 / Claude F4 of the pt1 /ship review, Cycle 0052 task 35); why_new=the refusal test checked the first display only; seam=refuseCloseOfTabsShowing for the first close, the reader's source action twice; no_claim=the wording of the editor's refusal
+test('a slot tab whose close the editor refused at one display closes at the next display', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  let acceptClose = (): void => {}
+  try {
+    await chooseBrowserStudyWithPanelMaximized(harness)
+    acceptClose = harness.refuseCloseOfTabsShowing('/node-history-slot/')
+    await harness.reader.action('source')
+    const slotTabsAfterRefusal = slotTabCount(harness)
+    acceptClose()
+
+    // Act
+    await harness.reader.action('source')
+
+    // Assert
+    assert.deepEqual(
+      { slotTabsAfterRefusal, slotTabsAfterAccept: slotTabCount(harness) },
+      { slotTabsAfterRefusal: 1, slotTabsAfterAccept: 0 },
+    )
+  } finally {
+    acceptClose()
+    await harness.close()
+  }
+})
+
+// Value: protects=a test replay entry whose slot close for the waiting tabs is overtaken by a Return to Live and a browser recording opened meanwhile asks no one-replay-at-a-time notice and opens no test replay; fails_when=the entry goes on after its slot close with a ticket a newer choice superseded, asks to close the browser replay the learner just opened and opens the test replay over it (Codex C4, Cycle 0052 task 35); why_new=the entry's ticket was checked before the slot close only; seam=holdNextTabCloseResponse during the entry's closeSlotTabsAwaitingArea, answerWarningDialogs counting notices; no_claim=the native notification
+test('a test replay entry overtaken during its slot close asks no notice for a browser recording opened meanwhile', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  let release = (): void => {}
+  try {
+    const history = await chooseBrowserStudyWithPanelMaximized(harness)
+    let noticesShown = 0
+    harness.answerWarningDialogs(async () => {
+      noticesShown++
+      return 'Close browser replay'
+    })
+    const held = harness.holdNextTabCloseResponse()
+    release = held.release
+    const entry = harness.reader.openLearningReplay(history.studyId)
+    await held.started
+
+    // Act: the learner returns to Live and opens the browser recording while the entry's slot close is pending.
+    await harness.reader.action('return-current')
+    await harness.reader.openRecording(harness.studyId)
+    held.release()
+    await entry
+    await harness.controller.settle()
+
+    // Assert
+    assert.deepEqual(
+      {
+        noticesShown,
+        testReplay: harness.reader.inspect().view?.nodeHistory?.header.studyId,
+        recording: harness.controller.state().studyId,
+      },
+      { noticesShown: 0, testReplay: undefined, recording: harness.studyId },
+    )
+  } finally {
+    release()
+    await harness.close()
+  }
+})
