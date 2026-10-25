@@ -7,6 +7,7 @@ import { test, type TestContext } from 'node:test'
 import { listVitestForRootClaim } from '../utils/listVitestForRootClaim'
 import type {
   listVitestTestFiles,
+  RetryVitestListingRelease,
   VitestListingReleaseFailure,
 } from '../utils/listVitestTestFiles'
 
@@ -110,16 +111,51 @@ test('a root listing cancelled by the start or outlasting its deadline is told a
   )
 })
 
+// Value: protects=a root claim's deadline read on the clock it was set on, the study service's, which a test may replace; fails_when=the listing compares a deadline set on a fake clock with the real one, so a start whose deadline is still minutes away on its own clock reads as past it and is refused; why_new=Cycle 0053 /ship review pass 4 (the service sets the deadline with its injectable now, the listing read Date.now); seam=a fake clock a minute before the real epoch's start; no_claim=the deadline's length (the cancellation and deadline test)
+test("a root listing reads its deadline on the start's own clock", async (context) => {
+  // Arrange
+  const listing = await stubVitest(
+    context,
+    "writeFileSync(output, JSON.stringify([{ file: '/repo/browser-extension/tests/unit/popup.test.tsx' }]));",
+  )
+  const serviceClock = () => 1_000
+
+  // Act
+  const claim = await listVitestForRootClaim(
+    {
+      program: listing.program,
+      vitestRoot: listing.folder,
+      filter: 'browser-extension/tests/unit/popup.test.tsx',
+      excludes: [],
+    },
+    {
+      node: process.execPath,
+      cancellation: new AbortController().signal,
+      deadlineAt: 1_000 + 60_000,
+      now: serviceClock,
+    },
+  )
+
+  // Assert
+  assert.deepEqual(claim, {
+    outcome: 'listed',
+    files: [{ file: '/repo/browser-extension/tests/unit/popup.test.tsx' }],
+  })
+})
+
 // Value: protects=a root listing whose process group could not be confirmed as ended refusing the start, also when the listing itself failed, with a sentence naming the group and the kept folder; fails_when=such a listing reads as a clean failure, so a second Vitest starts beside a member that may still run; why_new=Eng review (H5 unconfirmed process-group end); seam=the listing is replaced by one that reports a failed release; no_claim=how the release fails (listVitestTestFiles tests)
 test('a root listing whose process group could not be confirmed as ended is unconfirmed, whatever its own result', async (context) => {
   // Arrange
   const vitest = await stubVitest(context, '')
   const unreleased: typeof listVitestTestFiles = async (request) => {
-    request.onReleaseFailed?.({
-      processGroup: 4242,
-      directory: '/tmp/codebook-vitest-list-x',
-      reason: 'Error: kill EPERM',
-    })
+    request.onReleaseFailed?.(
+      {
+        processGroup: 4242,
+        directory: '/tmp/codebook-vitest-list-x',
+        reason: 'Error: kill EPERM',
+      },
+      async () => undefined,
+    )
     throw new Error('Vitest could not list the cited test file (exit code 1): ')
   }
 
@@ -134,20 +170,21 @@ test('a root listing whose process group could not be confirmed as ended is unco
   )
 })
 
-// Value: protects=a root listing whose process group could not be confirmed as ended reading unconfirmed, and its caller hearing of it, also when the start was stopped meanwhile; fails_when=a stop that races the failed release reads cancelled and drops the failure, so the run reads stopped with no word of a listing member that may still run; why_new=state-machine review of Cycle 0053 (cancelled was checked before the release failure); seam=the listing is replaced by one that reports a failed release after the stop; no_claim=the service's journal of it (nodeTestVitestRootService tests)
+// Value: protects=a root listing whose process group could not be confirmed as ended reading unconfirmed, and its caller hearing of it with the listing's retry, also when the start was stopped meanwhile; fails_when=a stop that races the failed release reads cancelled and drops the failure, so the run reads stopped with no word of a listing member that may still run, or the caller gets no retry to release it with (Cycle 0053 /ship Step 11); why_new=state-machine review of Cycle 0053 (cancelled was checked before the release failure); seam=the listing is replaced by one that reports a failed release after the stop; no_claim=the service's journal of it (nodeTestVitestRootService tests)
 test('a stop that races a root listing whose process group was not released still reads unconfirmed and tells the caller', async (context) => {
   // Arrange
   const vitest = await stubVitest(context, '')
   const cancellation = new AbortController()
   cancellation.abort(new Error('stopped by the learner'))
-  const heard: VitestListingReleaseFailure[] = []
+  const heard: [VitestListingReleaseFailure, RetryVitestListingRelease][] = []
   const failure = {
     processGroup: 4242,
     directory: '/tmp/codebook-vitest-list-x',
     reason: 'Error: kill EPERM',
   }
+  const retryRelease = async () => undefined
   const unreleased: typeof listVitestTestFiles = async (request) => {
-    request.onReleaseFailed?.(failure)
+    request.onReleaseFailed?.(failure, retryRelease)
     throw cancellation.signal.reason
   }
 
@@ -163,12 +200,14 @@ test('a stop that races a root listing whose process group was not released stil
       node: process.execPath,
       cancellation: cancellation.signal,
       deadlineAt: Date.now() + 60_000,
-      onReleaseFailed: (released) => heard.push(released),
+      onReleaseFailed: (released, retry) => heard.push([released, retry]),
     },
     unreleased,
   )
 
   // Assert
   assert.equal(claim.outcome, 'unconfirmed')
-  assert.deepEqual(heard, [failure])
+  assert.equal(heard.length, 1)
+  assert.deepEqual(heard[0]![0], failure)
+  assert.equal(heard[0]![1], retryRelease)
 })

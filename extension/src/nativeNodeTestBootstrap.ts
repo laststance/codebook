@@ -8,7 +8,12 @@ import { nodeTestConfigSchema } from './nodeTestConfigSchemas'
 import { OwnedNodeTestRun } from './ownedNodeTestRun'
 import { checkNodeTestFiles } from './utils/checkNodeTestFiles'
 import { listVitestForRootClaim } from './utils/listVitestForRootClaim'
-import { planNodeTestExecution } from './utils/planNodeTestExecution'
+import type { RetryVitestListingRelease } from './utils/listVitestTestFiles'
+import {
+  planNodeTestExecution,
+  type NodeTestExecutionPlan,
+} from './utils/planNodeTestExecution'
+import { releaseVitestListings } from './utils/releaseVitestListings'
 import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
 
 /** Runs the reusable owned Node runtime against an external test in an isolated native editor profile. Called only by the extension test runner. @example --extensionTestsPath dist/nativeNodeTestBootstrap.js */
@@ -36,17 +41,27 @@ export async function run(): Promise<void> {
   const node = await resolveExternalNodeExecutable('node')
   // The same pre-history plan a started run gets from the study environment's check.
   const { root, testFile } = await checkNodeTestFiles(workspace, configuration)
-  const plan = await planNodeTestExecution({
-    root,
-    testFile,
-    declaredTestFile: configuration.testFile,
-    listRootClaim: (request) =>
-      listVitestForRootClaim(request, {
-        node,
-        cancellation: new AbortController().signal,
-        deadlineAt: Date.now() + REPOSITORY_SETUP_TIMEOUT_MS,
-      }),
-  })
+  const unreleasedListings: RetryVitestListingRelease[] = []
+  let plan: NodeTestExecutionPlan
+  try {
+    plan = await planNodeTestExecution({
+      root,
+      testFile,
+      declaredTestFile: configuration.testFile,
+      listRootClaim: (request) =>
+        listVitestForRootClaim(request, {
+          node,
+          cancellation: new AbortController().signal,
+          deadlineAt: Date.now() + REPOSITORY_SETUP_TIMEOUT_MS,
+          onReleaseFailed: (_failure, retryRelease) => {
+            unreleasedListings.push(retryRelease)
+          },
+        }),
+    })
+  } finally {
+    // A root listing that could not be released is released before the trial goes on or ends, as a run's stop releases it.
+    await releaseVitestListings(unreleasedListings)
+  }
   report.execution = plan.summary
   const run = new OwnedNodeTestRun(
     workspace,

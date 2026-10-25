@@ -17,7 +17,10 @@ import type {
   ProfileLeft,
 } from './runtimeSupport/hostBrowser'
 import type { PauseIdentity, PauseGate } from './runtimeSupport/pauseGate'
-import type { VitestListingReleaseFailure } from './utils/listVitestTestFiles'
+import type {
+  RetryVitestListingRelease,
+  VitestListingReleaseFailure,
+} from './utils/listVitestTestFiles'
 import type { NodeTestExecutionPlan } from './utils/planNodeTestExecution'
 import type { NodeTestVitestSearch } from './utils/searchRepositoryVitest'
 
@@ -140,11 +143,16 @@ export interface StudyRuntime {
   /** Says whether the run completed and its final save has not settled yet, during which its completion is no result (a failed save fails the run); runtimes without such a save omit it. */
   isSavingCompletion?(): boolean
 }
-/** What a node-test start's pre-history check is bound by: the start's cancellation and preparation deadline (epoch milliseconds), which bound a root claim's listing, and who hears of a root listing whose process group could not be confirmed as ended, before the run's history (or its journal) exists. */
+/** What a node-test start's pre-history check is bound by: the start's cancellation and preparation deadline (epoch milliseconds on the service's clock `now`), which bound a root claim's listing, and who hears of a root listing whose process group could not be confirmed as ended, before the run's history (or its journal) exists, with the retry that releases it at the run's stop. */
 export type NodeTestPreparationControl = {
   signal: AbortSignal
   deadlineAt: number
-  onListingNotReleased?: (failure: VitestListingReleaseFailure) => void
+  /** The clock `deadlineAt` is measured on: the service's own, which a test may replace. */
+  now: () => number
+  onListingNotReleased?: (
+    failure: VitestListingReleaseFailure,
+    retryRelease: RetryVitestListingRelease,
+  ) => void
 }
 export interface StudyEnvironment {
   readonly workspace: string

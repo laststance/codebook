@@ -22,6 +22,7 @@ import type {
   NodeTestExecutionPlan,
   NodeTestExecutionSummary,
 } from './planNodeTestExecution'
+import { readRootClaimBasis } from './readRootClaimBasis'
 import { readVitestConfigEntries } from './readVitestConfigEntries'
 import { repositoryPosixPath } from './repositoryPosixPath'
 import { requireNodeTestTitles } from './requireNodeTestTitles'
@@ -58,7 +59,7 @@ const literalPattern = (text: string) =>
 const literalGlob = (path: string) => path.replace(/[\\*?[\]{}()!+@]/g, '\\$&')
 
 /**
- * Compares the execution plan made before the run's history began with the repository right before the launch: the config walk still stops in the same folder, the Vitest root holds the same config files and no folder or outside link named like one, and the same Vitest (package folder and version) resolves from it.
+ * Compares the execution plan made before the run's history began with the repository right before the launch: the config walk still stops in the same folder, the root claim's basis is unchanged (the opened root's config files, byte for byte, and its Vitest), the Vitest root holds the same config files and no folder or outside link named like one, and the same Vitest (package folder and version) resolves from it.
  * @param root - The repository's real root.
  * @param testFile - The cited test's real path.
  * @param plan - The plan of the run's pre-history check.
@@ -81,6 +82,23 @@ async function verifyExecutionPlan(
     throw changed(
       `the nearest Vitest config is now in ${repositoryPosixPath(root, walk.directory)}, not ${repositoryPosixPath(root, plan.nearestConfigDirectory)}`,
     )
+  // The root claim decided where the test runs; a root config added, edited or removed, or a root Vitest installed or replaced, could decide it the other way.
+  if (plan.rootClaimBasis) {
+    const { basis } = await readRootClaimBasis(root, testFile)
+    if (
+      basis.configFiles.join('\n') !==
+        plan.rootClaimBasis.configFiles.join('\n') ||
+      basis.refusedEntries.join('\n') !==
+        plan.rootClaimBasis.refusedEntries.join('\n')
+    )
+      throw changed(
+        'the Vitest or Vite config files at the repository root changed after the root claim was decided',
+      )
+    if (basis.vitest !== plan.rootClaimBasis.vitest)
+      throw changed(
+        'the Vitest at the repository root changed after the root claim was decided',
+      )
+  }
   const rootPath = plan.summary.vitestRoot
   const entries = await readVitestConfigEntries(root, plan.vitestRoot, testFile)
   const refusedEntry = entries.refusedEntries[0]

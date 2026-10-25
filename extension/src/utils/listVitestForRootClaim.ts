@@ -4,6 +4,7 @@ import {
   listVitestTestFiles,
   VitestListingDeadlineError,
   type ListVitestTestFilesRequest,
+  type RetryVitestListingRelease,
   type VitestListedFile,
   type VitestListingReleaseFailure,
 } from './listVitestTestFiles'
@@ -20,7 +21,7 @@ export type RootClaimListing =
  * Lists the cited test from the opened root with the root's Vitest, for a root claim made before the run's history begins, and tells a clean failure Vitest itself reported apart from a cancelled start, a passed deadline and a listing whose process group could not be confirmed as ended.
  * Called by the study environment's pre-history check through {@link planNodeTestExecution}; the listing runs within {@link VITEST_FILE_LIST_TIMEOUT_MS} and the start's preparation deadline, whichever ends first.
  * @param request - The root's Vitest program, the opened root, the cited repository-relative file and no excludes.
- * @param run - The Node executable, the start's cancellation, its preparation deadline (epoch milliseconds), and who hears of a listing whose process group could not be confirmed as ended, before the run's history (or its journal) exists.
+ * @param run - The Node executable, the start's cancellation, its preparation deadline (epoch milliseconds on the clock `now`, `Date.now` by default), and who hears of a listing whose process group could not be confirmed as ended, before the run's history (or its journal) exists, with the retry that releases it at the run's stop.
  * @param list - The listing to run; tests replace it.
  * @returns
  * - `listed` with Vitest's entries.
@@ -38,11 +39,16 @@ export async function listVitestForRootClaim(
     node: string
     cancellation: AbortSignal
     deadlineAt: number
-    onReleaseFailed?: (failure: VitestListingReleaseFailure) => void
+    now?: () => number
+    onReleaseFailed?: (
+      failure: VitestListingReleaseFailure,
+      retryRelease: RetryVitestListingRelease,
+    ) => void
   },
   list: typeof listVitestTestFiles = listVitestTestFiles,
 ): Promise<RootClaimListing> {
-  const remainingMs = run.deadlineAt - Date.now()
+  // The deadline is read on the clock it was set on: the study service's, which a test may replace.
+  const remainingMs = run.deadlineAt - (run.now ?? Date.now)()
   if (remainingMs <= 0)
     return {
       outcome: 'deadline',
@@ -57,9 +63,9 @@ export async function listVitestForRootClaim(
       node: run.node,
       signal: run.cancellation,
       timeoutMs: Math.min(VITEST_FILE_LIST_TIMEOUT_MS, remainingMs),
-      onReleaseFailed: (failure) => {
+      onReleaseFailed: (failure, retryRelease) => {
         releaseFailure = failure
-        run.onReleaseFailed?.(failure)
+        run.onReleaseFailed?.(failure, retryRelease)
       },
     })
     return { outcome: 'listed', files }

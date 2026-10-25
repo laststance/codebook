@@ -130,6 +130,7 @@ import {
   type NodeLearningNeeds,
 } from './utils/listMissingNodeExplanations'
 import type { NodeLearningCapturePart } from './utils/listMissingNodeLearning'
+import type { RetryVitestListingRelease } from './utils/listVitestTestFiles'
 import { namesLineNumber } from './utils/namesLineNumber'
 import { nodeTestResultKind } from './utils/nodeTestResultKind'
 import { numberSourceLines } from './utils/numberSourceLines'
@@ -141,6 +142,7 @@ import {
   type NodeTestHistoryState,
 } from './utils/projectNodeTestOutcome'
 import { readerNotFollowingRunRefusal } from './utils/readerNotFollowingRunRefusal'
+import { releaseVitestListings } from './utils/releaseVitestListings'
 import { resolveCapturedFactPaths } from './utils/resolveCapturedFactPaths'
 import { sanitizeCause, type CauseRoots } from './utils/sanitizeCause'
 import { sanitizedStack } from './utils/sanitizedStack'
@@ -317,6 +319,8 @@ interface StudyRecordState {
   nodeRun?: NodeTestRuntime
   nodeStops?: NodeTestSourceStop[]
   nodeEvents?: { sequence: number; type: string; detail?: unknown }[]
+  /** Root listings of the pre-history check whose process group could not be confirmed as ended, each with the retry that releases it: {@link StudyService.stopRecord} runs them, and the run reads stopped only once every one succeeded, so no next start runs beside a listing that may still run. */
+  unreleasedListings?: RetryVitestListingRelease[]
   nodeResult?: Awaited<ReturnType<NodeTestRuntime['complete']>>
   nodePhase?: 'preparing' | 'paused' | 'advancing' | 'completed' | 'failed'
   nodeHistoryWriter?: NodeTestHistoryWriter
@@ -3275,13 +3279,15 @@ export class StudyService {
                 record.deadlineAt,
                 record.createdAt + REPOSITORY_SETUP_TIMEOUT_MS,
               ),
-              // Before the history exists the run's events are its only journal: a root listing that may still run is named there, also when a stop ends the start.
-              onListingNotReleased: () => {
+              now: this.now,
+              // Before the history exists the run's events are its only journal: a root listing that may still run is named there, also when a stop ends the start. The run keeps its release, which its stop runs again.
+              onListingNotReleased: (_failure, retryRelease) => {
                 record.nodeEvents?.push({
                   sequence: record.nodeEvents.length + 1,
                   type: 'node-test.vitest-listing-not-released',
                   detail: { omitted: true },
                 })
+                ;(record.unreleasedListings ??= []).push(retryRelease)
               },
             },
           )
@@ -3806,6 +3812,9 @@ export class StudyService {
       }
       if (record.nodeRun && record.nodeRun !== cancellingNodeRun)
         await record.nodeRun.stop()
+      // A root listing that was not released is the run's to release: one still running fails this stop, so the run stays unstopped, the next start answers BUSY, and the next stop tries again.
+      if (record.unreleasedListings)
+        await releaseVitestListings(record.unreleasedListings)
       // The continuation in flight settles first: its stop or result entry is written, or it failed (EN5).
       await record.nodeContinuation
       // A release that failed at an earlier stop is no error of the run once this stop released it (EN4).

@@ -14,6 +14,7 @@ import { test } from 'node:test'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import {
   listVitestTestFiles,
+  type RetryVitestListingRelease,
   type VitestListingReleaseFailure,
 } from '../utils/listVitestTestFiles'
 
@@ -423,6 +424,122 @@ test('a finished listing whose process group has a member the user may not signa
       (await stat(directory)).isDirectory(),
       'the listing folder is kept while a member of the group may still write it',
     )
+  } finally {
+    await removeKeptListingFolder(vitest)
+    await rm(vitest.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a listing whose release failed handing its owner a retry that runs the release again: it fails with its sentence while a member of the group still refuses its signal, and removes the kept folder once the group has ended; fails_when=the retry is missing, succeeds while the group may still run, or leaves the folder behind after the group ended, so the run that owns the listing reads released too early or never; why_new=Cycle 0053 /ship Step 11 (Codex adversarial review: an unreleased root listing was owned by nobody); seam=process.kill refuses group signals until the test lets them through; no_claim=who runs the retry (ownedNodeTestRun and nodeTestVitestRootService tests)
+test('a listing whose release failed hands over a retry that fails while the group refuses its signal and removes the kept folder once it has ended', async (context) => {
+  // Arrange
+  const vitest = await stubVitest(
+    `writeFileSync(output, JSON.stringify([{ file: '/repo/src/a.test.ts' }]));`,
+  )
+  const retries: RetryVitestListingRelease[] = []
+  const kill = process.kill.bind(process)
+  let groupSignalsRefused = true
+  context.mock.property(process, 'platform', 'linux')
+  // Outside macOS, EPERM for a group means a live member of another user.
+  context.mock.method(
+    process,
+    'kill',
+    (pid: number, signal?: string | number): true => {
+      if (pid < 0 && groupSignalsRefused)
+        throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+      return kill(pid, signal)
+    },
+  )
+  try {
+    await listVitestTestFiles({
+      node: process.execPath,
+      program: vitest.program,
+      vitestRoot: vitest.directory,
+      filter: 'src/a.test.ts',
+      excludes: [],
+      signal: new AbortController().signal,
+      onReleaseFailed: (_failure, retryRelease) => retries.push(retryRelease),
+    }).catch(() => undefined)
+    const started = await vitest.started()
+    const directory = dirname(started.argv[2]!.slice('--json='.length))
+    assert.equal(retries.length, 1)
+
+    // Act
+    const whileRefused = await retries[0]!().then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    const keptWhileRefused = await stat(directory).then(
+      (entry) => entry.isDirectory(),
+      () => false,
+    )
+    groupSignalsRefused = false
+    const onceEnded = await retries[0]!().then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+    // Assert
+    assert.ok(whileRefused instanceof Error)
+    assert.match(
+      whileRefused.message,
+      /^Codebook still could not confirm that the Vitest listing's process group \d+ ended \(Error: kill EPERM\), so a process of that group may still run, and its folder .+ is kept\. Stop the run again\.$/,
+    )
+    assert.equal(keptWhileRefused, true)
+    assert.equal(onceEnded, undefined)
+    await assert.rejects(stat(directory), { code: 'ENOENT' })
+  } finally {
+    await removeKeptListingFolder(vitest)
+    await rm(vitest.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a retried listing release sending no signal to a process group that has ended since its first release failed, since by the retry, which runs at a later stop, the group's id may name another process's group; fails_when=the retry sends SIGTERM and SIGKILL to the old group id whatever its state, so a stop long after the failure can end an unrelated process group the system gave that id; why_new=Cycle 0053 /ship review pass 4 (three reviewers: the retry widened the window from seconds to a later stop); seam=process.kill refuses SIGTERM and SIGKILL to groups and records them, while its probe reaches the system; no_claim=a group id reused before the probe (cannot be told apart by id)
+test('a retried listing release sends no signal to a group that has ended since and removes the kept folder', async (context) => {
+  // Arrange
+  const vitest = await stubVitest(
+    `writeFileSync(output, JSON.stringify([{ file: '/repo/src/a.test.ts' }]));`,
+  )
+  const retries: RetryVitestListingRelease[] = []
+  const signalsToGroups: (string | number | undefined)[] = []
+  const kill = process.kill.bind(process)
+  context.mock.property(process, 'platform', 'linux')
+  context.mock.method(
+    process,
+    'kill',
+    (pid: number, signal?: string | number): true => {
+      if (pid < 0 && signal !== 0) {
+        signalsToGroups.push(signal)
+        throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+      }
+      return kill(pid, signal)
+    },
+  )
+  try {
+    await listVitestTestFiles({
+      node: process.execPath,
+      program: vitest.program,
+      vitestRoot: vitest.directory,
+      filter: 'src/a.test.ts',
+      excludes: [],
+      signal: new AbortController().signal,
+      onReleaseFailed: (_failure, retryRelease) => retries.push(retryRelease),
+    }).catch(() => undefined)
+    const started = await vitest.started()
+    const directory = dirname(started.argv[2]!.slice('--json='.length))
+    const signalsOfFirstRelease = signalsToGroups.splice(0)
+
+    // Act
+    const retried = await retries[0]!().then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+    // Assert
+    assert.deepEqual(signalsOfFirstRelease, ['SIGTERM'])
+    assert.equal(retried, undefined)
+    assert.deepEqual(signalsToGroups, [])
+    await assert.rejects(stat(directory), { code: 'ENOENT' })
   } finally {
     await removeKeptListingFolder(vitest)
     await rm(vitest.directory, { recursive: true, force: true })

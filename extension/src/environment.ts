@@ -422,6 +422,7 @@ export async function createEnvironment(
             node: await configuredNodeExecutable(),
             cancellation: control.signal,
             deadlineAt: control.deadlineAt,
+            now: control.now,
             onReleaseFailed: control.onListingNotReleased,
           }),
       })

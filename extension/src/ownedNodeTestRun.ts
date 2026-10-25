@@ -36,10 +36,14 @@ import {
   type NodeTestFact,
 } from './utils/inspectNodeTestVariables'
 import { launchNodeTest } from './utils/launchNodeTest'
-import { listVitestTestFiles } from './utils/listVitestTestFiles'
+import {
+  listVitestTestFiles,
+  type RetryVitestListingRelease,
+} from './utils/listVitestTestFiles'
 import type { NodeTestExecutionPlan } from './utils/planNodeTestExecution'
 import { prepareNodeTestLaunch } from './utils/prepareNodeTestLaunch'
 import type { PreparedNodeTestLaunch } from './utils/prepareNodeTestLaunch'
+import { releaseVitestListings } from './utils/releaseVitestListings'
 import { selectCheckedNodeFrame } from './utils/selectCheckedNodeFrame'
 import { sourceImportBindings } from './utils/sourceImportBindings'
 import { thrownMessage } from './utils/thrownMessage'
@@ -98,6 +102,8 @@ export class OwnedNodeTestRun {
   /** The adapter's id for the breakpoint of the stop being awaited, from its registration receipt. */
   private ownedBreakpointId?: number
   private advancing = false
+  /** Listings whose process group could not be confirmed as ended, each with the retry that releases it; {@link releaseOwned} runs them, and a release fails while one still cannot be confirmed. */
+  private readonly unreleasedListings: RetryVitestListingRelease[] = []
 
   constructor(
     private readonly workspace: string,
@@ -222,8 +228,9 @@ export class OwnedNodeTestRun {
           node: this.node,
           signal,
           // A failed release is journaled with its group and folder. A listing that failed keeps its own reason; a listing that finished but whose process group could not be confirmed as ended refuses the run, so the test is not started.
-          onReleaseFailed: (failure) => {
+          onReleaseFailed: (failure, retryRelease) => {
             this.record('node-test.vitest-listing-not-released', failure)
+            this.unreleasedListings.push(retryRelease)
           },
         }),
       this.plan,
@@ -1027,7 +1034,7 @@ export class OwnedNodeTestRun {
   }
 
   /**
-   * Stops the run's debug sessions and releases its CDP connection, breakpoint, output terminal, test process group and private report folder; the body of {@link release}, run again after a failure, so each step is one that can be repeated.
+   * Stops the run's debug sessions and releases its CDP connection, breakpoint, output terminal, test process group, every Vitest listing that was not released and private report folder; the body of {@link release}, run again after a failure, so each step is one that can be repeated.
    * A run again stops no session that has ended, and stops one that started after the failure: the run hears of ended and of new sessions until a release has succeeded, and an ended one leaves `active`, a new one joins it. VS Code (1.120 to 1.142) stops an ended session that its debug model still lists without a refusal, but refuses one it no longer lists with "debug session not found", and it drops an ended session, and only an ended one, when a newer session of its name starts: a retry that stopped such a session again would fail for good, and every `codebook_start` would answer BUSY until a reload.
    * @throws The first debug session stop that failed, else the failure of the process release or of the report folder's removal.
    * @example await this.releaseOwned()
@@ -1048,6 +1055,13 @@ export class OwnedNodeTestRun {
     } catch (error) {
       processFailure = error
     }
+    // A listing that may still run is the run's to release: while one cannot be confirmed as ended the release fails, so the next stop tries it again and no next run starts beside it.
+    if (!processFailure)
+      await releaseVitestListings(this.unreleasedListings).catch(
+        (error: unknown) => {
+          processFailure = error
+        },
+      )
     // The private Vitest report is evidence only until the result check; nothing else reads it. A check under way finishes reading first (EN5).
     await this.completing
     if (this.launch)

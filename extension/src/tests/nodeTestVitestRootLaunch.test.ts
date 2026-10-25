@@ -467,3 +467,86 @@ test('a second config file, a config-named folder or a nearer Vitest added after
     ],
   )
 })
+
+// Value: protects=a package-mode plan whose root claim basis changed before the launch being refused with a sentence naming the change, before Vitest is asked anything, while an unchanged basis launches as planned: a root config added, a root config edited, and the root Vitest replaced each could decide the claim the other way; fails_when=the launch runs in the package although the repository now runs the test from the root (or the reverse), or an unchanged root config is refused; why_new=Cycle 0053 /ship Step 11 (Codex adversarial review: the root claim's basis was not compared again); seam=real files changed after the plan, the root claim's listing scripted; no_claim=files a root config imports (not compared)
+test('a root config added or edited, or the root Vitest replaced, after a package-mode plan refuses the launch, and an unchanged root launches', async (context) => {
+  // Arrange
+  const launchAfter = async (
+    rootConfigs: string[],
+    change: (root: string) => Promise<void>,
+  ) => {
+    const { root, configuration, calls } = await createRepository(
+      context,
+      'packages/a',
+      ['packages/a/vite.config.ts', ...rootConfigs],
+    )
+    const plan = await planNodeTestExecution({
+      root,
+      testFile: join(root, configuration.testFile),
+      declaredTestFile: configuration.testFile,
+      listRootClaim: async () => ({ outcome: 'listed', files: [] }),
+    })
+    await change(root)
+    const outcome = await prepareNodeTestLaunch(
+      root,
+      configuration,
+      (request) =>
+        listVitestTestFiles({
+          ...request,
+          node: process.execPath,
+          signal: new AbortController().signal,
+        }),
+      plan,
+    ).then(
+      async (launch) => {
+        await rm(launch.report.directory, { recursive: true, force: true })
+        return `launched in ${launch.execution.vitestRoot}`
+      },
+      (thrown: unknown) =>
+        thrown instanceof StudyError
+          ? `${thrown.code}: ${thrown.message}`
+          : String(thrown),
+    )
+    return { outcome, vitestStarts: (await calls()).length }
+  }
+  const changedPrefix =
+    "INVALID_CONFIGURATION: node-test's plan for packages/a/src/subscribable.test.ts changed while the run was preparing ("
+
+  // Act
+  const unchanged = await launchAfter(['vitest.config.ts'], async () => {})
+  const rootConfigAdded = await launchAfter([], (root) =>
+    writeFile(join(root, 'vitest.config.ts'), 'export default {}\n'),
+  )
+  const rootConfigEdited = await launchAfter(['vitest.config.ts'], (root) =>
+    writeFile(
+      join(root, 'vitest.config.ts'),
+      "export default { test: { include: ['packages/**/*.test.ts'] } }\n",
+    ),
+  )
+  const rootVitestReplaced = await launchAfter(['vitest.config.ts'], (root) =>
+    writeFile(
+      join(root, 'node_modules', 'vitest', 'package.json'),
+      JSON.stringify({ name: 'vitest', version: '5.0.3' }),
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    [unchanged, rootConfigAdded, rootConfigEdited, rootVitestReplaced],
+    [
+      { outcome: 'launched in packages/a', vitestStarts: 2 },
+      {
+        outcome: `${changedPrefix}the Vitest or Vite config files at the repository root changed after the root claim was decided); start the test again.`,
+        vitestStarts: 0,
+      },
+      {
+        outcome: `${changedPrefix}the Vitest or Vite config files at the repository root changed after the root claim was decided); start the test again.`,
+        vitestStarts: 0,
+      },
+      {
+        outcome: `${changedPrefix}the Vitest at the repository root changed after the root claim was decided); start the test again.`,
+        vitestStarts: 0,
+      },
+    ],
+  )
+})

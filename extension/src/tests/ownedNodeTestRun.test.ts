@@ -14,6 +14,7 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type {
   ListVitestTestFilesRequest,
+  RetryVitestListingRelease,
   VitestListingReleaseFailure,
 } from '../utils/listVitestTestFiles'
 
@@ -43,6 +44,7 @@ const LEARNER_BREAKPOINT_ID = 12
  * @param options.budgetMs - Replaces the 45 s per-phase budget so deadline behavior can be observed quickly.
  * @param options.acknowledgements - Uses the real breakpoint tracker instead of the stand-in: the adapter's registration reply for each owned breakpoint in the order they are armed, passed through the run's own tracker as the editor would send it.
  * @param options.listingNotReleased - The preparation asks the run for its Vitest listing, as the real one does, and the listing answers that its release failed with this report.
+ * @param options.listingRelease - The retry the failed listing hands to the run, which runs it at its release; without it the retry succeeds at once.
  * @param options.typedWhileRunning - The learner types this text into the cited source right after Codebook's continue request with this number (1 is the continue of the entry pause, 2 the first continuation of a declared stop), while the test runs to its next stop.
  * @param options.openDocumentText - The text the editor holds for the cited source `theme.ts` from the start, whose file and article text is `export const nextTheme = "dark";\n`; without it the editor has no document open until a test types into the source (`typeIntoCitedSource`).
  * @param options.closeFailures - How many first releases of the owned test process fail, each with "process group still running (close <n>)"; the later ones succeed.
@@ -72,6 +74,7 @@ async function nodeRunHarness({
   bindingReportedLater,
   bindingReadUnanswered,
   listingNotReleased,
+  listingRelease = async () => undefined,
   declaredColumn = 14,
   pausedColumn,
   verifiedByNews,
@@ -122,6 +125,7 @@ async function nodeRunHarness({
   /** The adapter never answers when it is asked where an owned breakpoint is bound. */
   bindingReadUnanswered?: boolean
   listingNotReleased?: VitestListingReleaseFailure
+  listingRelease?: RetryVitestListingRelease
   /** One-based column every stop is declared at on line 1; at column 1 the editor's breakpoint has no column of its own. */
   declaredColumn?: number
   /** The column the debugger reports for the paused frame when it is not the declared one: the debugger bound the declared line at another column. */
@@ -649,9 +653,13 @@ async function nodeRunHarness({
       },
       './utils/listVitestTestFiles': {
         listVitestTestFiles: async (request: {
-          onReleaseFailed?: (failure: VitestListingReleaseFailure) => void
+          onReleaseFailed?: (
+            failure: VitestListingReleaseFailure,
+            retryRelease: RetryVitestListingRelease,
+          ) => void
         }) => {
-          if (listingNotReleased) request.onReleaseFailed?.(listingNotReleased)
+          if (listingNotReleased)
+            request.onReleaseFailed?.(listingNotReleased, listingRelease)
           return []
         },
       },
@@ -1702,6 +1710,51 @@ test('a Vitest listing whose process group could not be released is journaled by
     )
   } finally {
     await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=a Vitest listing whose process group could not be confirmed as ended staying the run's to release: the run's release fails while the listing's retry fails, and a later release runs the retry again and succeeds; fails_when=the run releases without the listing, so its stop succeeds and a next run can start beside a listing member that may still run; why_new=Cycle 0053 /ship Step 11 (Codex adversarial review: a listing that was not released was named but owned by nobody); seam=the listing hands the run a retry that fails once; no_claim=the real retry's signals (listVitestTestFiles tests)
+test("a run's release fails while its unreleased Vitest listing cannot be released, and a later release releases it", async () => {
+  // Arrange
+  let retries = 0
+  const harness = await nodeRunHarness({
+    listingNotReleased: {
+      processGroup: 4141,
+      directory: '/tmp/codebook-vitest-list-left',
+      reason: 'Error: kill EPERM',
+    },
+    listingRelease: async () => {
+      retries++
+      if (retries === 1)
+        throw new Error(
+          "Codebook still could not confirm that the Vitest listing's process group 4141 ended (Error: kill EPERM), so a process of that group may still run, and its folder /tmp/codebook-vitest-list-left is kept. Stop the run again.",
+        )
+    },
+  })
+  try {
+    await harness.run.prepare()
+
+    // Act
+    const firstStop = await harness.run.stop().then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    const secondStop = await harness.run.stop().then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+    // Assert
+    assert.ok(firstStop instanceof Error)
+    assert.equal(
+      firstStop.message,
+      "Codebook still could not confirm that the Vitest listing's process group 4141 ended (Error: kill EPERM), so a process of that group may still run, and its folder /tmp/codebook-vitest-list-left is kept. Stop the run again.",
+    )
+    assert.equal(secondStop, undefined)
+    assert.equal(retries, 2)
+  } finally {
+    await harness.run.stop().catch(() => undefined)
     await harness.cleanup()
   }
 })

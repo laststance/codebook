@@ -135,6 +135,7 @@ async function environmentWithRepository(
 const CONTROL = {
   signal: new AbortController().signal,
   deadlineAt: Date.now() + 600_000,
+  now: Date.now,
 }
 
 /** Reads the code and message of the typed refusal the check threw; the module runs in its own context, so the error is parsed rather than compared by class. */

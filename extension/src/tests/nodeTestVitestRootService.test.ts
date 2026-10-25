@@ -436,12 +436,13 @@ test('a started test run journals its Vitest root and root claim without the hos
   }
 })
 
-// Value: protects=a root listing that may still run being named in the run's events when a learner's stop ends the start before its history, while the run still reads stopped with no error; fails_when=the stop drops the failed release, so nothing tells the agent a listing member may still run, or the run reads refused or failed; why_new=state-machine review of Cycle 0053 (a stop racing a failed release lost it); seam=the environment's check is a fake that reports the failed release and fails once the stop is under way; no_claim=the real release (listVitestTestFiles tests)
-test('a stop during a start whose root listing was not released reads stopped and names the listing in its events', async () => {
+// Value: protects=a root listing that may still run being named in the run's events when a learner's stop ends the start before its history, and released by that stop, while the run then reads stopped with no error; fails_when=the stop drops the failed release, so nothing tells the agent a listing member may still run, the stop does not run the listing's release again, or the run reads refused or failed; why_new=state-machine review of Cycle 0053 (a stop racing a failed release lost it), and its /ship Step 11 (the stop now owns the release); seam=the environment's check is a fake that reports the failed release and fails once the stop is under way; no_claim=the real release (listVitestTestFiles tests)
+test('a stop during a start whose root listing was not released releases it, reads stopped and names the listing in its events', async () => {
   // Arrange
   const { harness, service, received, start } = await nodeTestService(
     ROOT_MODE_EXECUTION_PLAN,
   )
+  let releases = 0
   let checkIsHeld = false,
     letCheckFail!: () => void
   const checkMayFail = new Promise<void>((resolve) => {
@@ -452,11 +453,16 @@ test('a stop during a start whose root listing was not released reads stopped an
     _sources,
     control,
   ) => {
-    control.onListingNotReleased?.({
-      processGroup: 4242,
-      directory: '/tmp/codebook-vitest-list-x',
-      reason: 'Error: kill EPERM',
-    })
+    control.onListingNotReleased?.(
+      {
+        processGroup: 4242,
+        directory: '/tmp/codebook-vitest-list-x',
+        reason: 'Error: kill EPERM',
+      },
+      async () => {
+        releases++
+      },
+    )
     checkIsHeld = true
     await checkMayFail
     throw new Error('The operation was aborted.')
@@ -478,6 +484,7 @@ test('a stop during a start whose root listing was not released reads stopped an
     // Assert
     assert.equal(afterStop.error, undefined)
     assert.equal(afterStop.state, 'stopped')
+    assert.equal(releases, 1)
     assert.equal(record.historyExcluded, 'stopped-before-history')
     assert.equal(received.starts, 0)
     assert.ok('text' in events)
@@ -500,11 +507,14 @@ test('a start refused for a root listing that was not released names the listing
     _sources,
     control,
   ) => {
-    control.onListingNotReleased?.({
-      processGroup: 4242,
-      directory: '/tmp/codebook-vitest-list-x',
-      reason: 'Error: kill EPERM',
-    })
+    control.onListingNotReleased?.(
+      {
+        processGroup: 4242,
+        directory: '/tmp/codebook-vitest-list-x',
+        reason: 'Error: kill EPERM',
+      },
+      async () => undefined,
+    )
     throw new Error(
       "Vitest's listing from the repository root ended, but Codebook could not confirm that its process group ended.",
     )
@@ -533,6 +543,76 @@ test('a start refused for a root listing that was not released names the listing
       service.state(record).error?.message ?? '',
       /could not confirm that its process group ended/,
     )
+    assert.equal(received.starts, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a refused start whose root listing still cannot be confirmed as ended keeping its run unstopped with the release's failure, so the next start answers BUSY instead of starting Vitest beside the listing, until a stop runs the listing's release again and frees the slot; fails_when=the run reads stopped while the listing may still run, so a second Vitest starts beside it, or no stop tries the release again, so every start answers BUSY until a reload; why_new=Cycle 0053 /ship Step 11 (Codex adversarial review: the pre-history listing was named but owned by nobody); seam=the environment's check reports a failed release whose retry fails once, then refuses the start; no_claim=the real retry (listVitestTestFiles tests)
+test('a start whose root listing still runs keeps its run unstopped and refuses the next start until a stop releases the listing', async () => {
+  // Arrange
+  const { harness, service, received, start } = await nodeTestService(
+    ROOT_MODE_EXECUTION_PLAN,
+  )
+  let releases = 0
+  service.environment.checkNodeTestFiles = async (
+    _configuration,
+    _sources,
+    control,
+  ) => {
+    control.onListingNotReleased?.(
+      {
+        processGroup: 4242,
+        directory: '/tmp/codebook-vitest-list-x',
+        reason: 'Error: kill EPERM',
+      },
+      async () => {
+        releases++
+        if (releases === 1)
+          throw new Error(
+            "Codebook still could not confirm that the Vitest listing's process group 4242 ended (Error: kill EPERM), so a process of that group may still run, and its folder /tmp/codebook-vitest-list-x is kept. Stop the run again.",
+          )
+      },
+    )
+    throw new Error(
+      "Vitest's listing from the repository root ended, but Codebook could not confirm that its process group ended.",
+    )
+  }
+  try {
+    const receipt = start('unreleased-listing-still-running')
+    const record = service.record(receipt)
+    await record.preparation
+    await waitUntil(
+      () => record.cleanupError !== undefined,
+      "the listing's first release failed",
+    )
+
+    // Act
+    const whileListingRuns = (() => {
+      try {
+        return start('next-start-while-the-listing-runs')
+      } catch (error) {
+        return error
+      }
+    })()
+    const afterStop = await service.stop({
+      instanceId: service.instanceId,
+      runId: record.id,
+    })
+    const afterRelease = start('next-start-after-the-release')
+    await service.record(afterRelease).preparation
+
+    // Assert
+    assert.ok(whileListingRuns instanceof StudyError)
+    assert.equal(whileListingRuns.code, 'BUSY')
+    assert.equal(afterStop.state, 'stopped')
+    assert.equal(afterStop.cleanupError, undefined)
+    assert.match(
+      afterStop.error?.message ?? '',
+      /could not confirm that its process group ended/,
+    )
+    assert.equal(afterRelease.accepted, true)
     assert.equal(received.starts, 0)
   } finally {
     await harness.close()

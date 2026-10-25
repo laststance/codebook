@@ -455,6 +455,7 @@ test('the environment refuses a node-test configuration whose test file changed 
   const control = {
     signal: new AbortController().signal,
     deadlineAt: Date.now() + 60_000,
+    now: Date.now,
   }
   const unchanged = await environment
     .checkNodeTestFiles?.(configuration, [], control)

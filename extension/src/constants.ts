@@ -1051,6 +1051,8 @@ export const VITEST_CONFIG_FILE_NAMES: readonly string[] = [
 ]
 /** How many folders `codebook_status` looks at for a usable Vitest (the repository root first, then breadth first) before it stops and says it did not look further ({@link searchRepositoryVitest}). */
 export const NODE_TEST_READINESS_DIRECTORY_LIMIT = 256
+/** How many folder entries `codebook_status` reads at most while it lists the folders of the next level for a Vitest; a search that reaches it says it did not look further, so a folder holding many entries cannot make a status call slow ({@link searchRepositoryVitest}). */
+export const NODE_TEST_READINESS_ENTRY_LIMIT = 20_000
 /** How many levels below the repository root `codebook_status` looks for a Vitest: a package such as `packages/query-core` lies two levels below it ({@link searchRepositoryVitest}). */
 export const NODE_TEST_READINESS_DEPTH = 2
 export const NODE_TEST_HISTORY_DIRECTORY = 'node-tests.v1'

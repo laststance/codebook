@@ -418,6 +418,43 @@ test('a test the root config selects exactly once keeps running at the root', as
   })
 })
 
+// Value: protects=a plan whose config walk stopped below the opened root keeping what its root claim was decided from (the root's config files with the SHA-256 of their bytes, its config-named entries and its own Vitest), and a plan whose walk stopped at the root keeping none; fails_when=the basis is missing, so a root config added or edited before the launch goes unnoticed, or it names no content, so an edit that changes the claim passes; why_new=Cycle 0053 /ship Step 11 (Codex adversarial review: the plan's re-verification read nothing at the root); seam=real files, a stand-in Vitest package; no_claim=the comparison before the launch (nodeTestVitestRootLaunch tests)
+test('a plan below the root keeps the root claim basis, the root config files byte for byte and the root Vitest, and a plan at the root keeps none', async (context) => {
+  // Arrange
+  const root = await claimRepository(context)
+  await write(root, 'src/theme.test.ts')
+  const withoutRootConfig = await repository(context)
+  await write(withoutRootConfig, 'packages/a/vite.config.ts')
+  await write(withoutRootConfig, 'packages/a/src/a.test.ts')
+  await installVitest(withoutRootConfig, '.', '5.0.5')
+
+  // Act
+  const claimed = await planWith(root, CLAIMED_TEST, async () => ({
+    outcome: 'listed',
+    files: [],
+  })).plan
+  const unclaimable = await planWith(
+    withoutRootConfig,
+    'packages/a/src/a.test.ts',
+  ).plan
+  const atRoot = await planWith(root, 'src/theme.test.ts').plan
+
+  // Assert
+  assert.deepEqual(claimed.rootClaimBasis, {
+    configFiles: [
+      'vitest.config.ts e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+    ],
+    refusedEntries: [],
+    vitest: `${join(root, 'node_modules/vitest')} 5.0.5`,
+  })
+  assert.deepEqual(unclaimable.rootClaimBasis, {
+    configFiles: [],
+    refusedEntries: [],
+    vitest: undefined,
+  })
+  assert.equal(atRoot.rootClaimBasis, undefined)
+})
+
 // Value: protects=the three root-claim results that leave a test in its package: zero selections, several projects, and a listing Vitest itself failed; fails_when=one of them keeps root mode, or the manifest's rootClaim does not name it; why_new=CEO review root claim (H5 package-mode cases); seam=the root listing is scripted; no_claim=the journal record of the claim (launchNodeTest tests)
 test('a root listing that selects the test zero times, under two projects or fails cleanly leaves it in its package', async (context) => {
   // Arrange

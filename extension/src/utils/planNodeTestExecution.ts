@@ -7,10 +7,8 @@ import {
 import type { RootClaimListing } from './listVitestForRootClaim'
 import type { ListVitestTestFilesRequest } from './listVitestTestFiles'
 import { partitionListedTestFiles } from './partitionListedTestFiles'
-import {
-  readVitestConfigEntries,
-  type VitestConfigEntries,
-} from './readVitestConfigEntries'
+import { readRootClaimBasis, type RootClaimBasis } from './readRootClaimBasis'
+import type { VitestConfigEntries } from './readVitestConfigEntries'
 import { repositoryPosixPath } from './repositoryPosixPath'
 import { requireOwnedVitest, type OwnedVitest } from './requireOwnedVitest'
 import {
@@ -42,6 +40,8 @@ export type NodeTestExecutionPlan = {
   /** The cited test relative to the Vitest root, POSIX form: the declared repository-relative path in root mode, exactly as today. */
   filter: string
   summary: NodeTestExecutionSummary
+  /** What the root claim was decided from, whenever the walk stopped below the opened root; absent when it stopped at the root, where no claim is made. */
+  rootClaimBasis?: RootClaimBasis
 }
 
 /** What {@link planNodeTestExecution} plans from: the repository, the cited test and the root claim's listing. */
@@ -64,6 +64,8 @@ type ChosenVitestRoot = {
   rootClaim: NodeTestRootClaim
   /** The root's own Vitest, kept when a claim keeps the run at the root. */
   rootVitest?: OwnedVitest
+  /** What the claim was decided from; absent when the walk stopped at the root. */
+  rootClaimBasis?: RootClaimBasis
 }
 
 /**
@@ -73,6 +75,7 @@ type ChosenVitestRoot = {
  * @returns
  * - The opened root, with `selected-once` and the root's Vitest, when the root listing selects the test exactly once.
  * - The walk's folder with the claim's result (`not-selected`, `several-projects`, `listing-failed`), or with `not-applicable` when no claim applies.
+ * - Below the root, either way, the {@link RootClaimBasis} the decision was made from.
  * @throws The listing's error for a cancelled, timed-out or unconfirmed root listing.
  * @example await claimFromRoot(input, walk) // => { vitestRoot: '/repo/browser-extension', entries, rootClaim: 'not-selected' }
  */
@@ -87,17 +90,16 @@ async function claimFromRoot(
     rootClaim: 'not-applicable',
   }
   if (walk.directory === root) return atWalk
-  const rootEntries = await readVitestConfigEntries(root, root, testFile)
-  // A claim lists from the root only where a root config exists and no folder or outside link there could pass for it.
-  if (!rootEntries.configFiles.length || rootEntries.refusedEntries.length)
-    return atWalk
-  // Only the root's own usable Vitest makes a claim: a missing, older or broken one skips it.
-  const rootVitest = await requireOwnedVitest(root, root, testFile).catch(
-    () => undefined,
-  )
-  if (!rootVitest) return atWalk
+  const {
+    basis: rootClaimBasis,
+    entries: rootEntries,
+    vitest: rootVitest,
+  } = await readRootClaimBasis(root, testFile)
+  const unclaimed = { ...atWalk, rootClaimBasis }
+  // A claim lists from the root only where a root config exists with no folder or outside link beside it, and the root's own Vitest is usable: a missing, older or broken one skips it.
+  if (!rootVitest) return unclaimed
   // A declared path that Vitest would read as an option is never passed to a root listing.
-  if (input.declaredTestFile.startsWith('-')) return atWalk
+  if (input.declaredTestFile.startsWith('-')) return unclaimed
   const listing = await input.listRootClaim({
     program: rootVitest.program,
     vitestRoot: root,
@@ -120,8 +122,9 @@ async function claimFromRoot(
         entries: rootEntries,
         rootClaim: decision.rootClaim,
         rootVitest,
+        rootClaimBasis,
       }
-    : { ...atWalk, rootClaim: decision.rootClaim }
+    : { ...unclaimed, rootClaim: decision.rootClaim }
 }
 
 /**
@@ -193,5 +196,6 @@ export async function planNodeTestExecution(
       vitestConfigFiles: chosen.entries.configFiles,
       skippedConfigFiles: walk.skippedConfigFiles,
     },
+    ...(chosen.rootClaimBasis && { rootClaimBasis: chosen.rootClaimBasis }),
   }
 }
