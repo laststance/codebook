@@ -111,3 +111,19 @@ test('a quoted export name holding a comma or a brace stays one import specifier
     ],
   )
 })
+
+// Value: protects=a quoted string continued onto its next line by a backslash and a Windows line break (CRLF) stays a string, so a continued line that starts with an import binds nothing; fails_when=the escape skips only the carriage return, the string ends at the line feed, and the continued line reads as an import declaration whose name another module's export then answers for (Cycle 0052 task 91); why_new=hosted CodeRabbit review of d851ae4a (Minor, blankCommentsAndTemplates.ts:95); seam=none (a pure function of the source text); no_claim=template literals, which span lines without an escape
+test('a string continued by a backslash and a CRLF line break binds no name on its next line', () => {
+  // Arrange
+  const source = [
+    "import { db } from '@/db'",
+    "const line = 'first part \\",
+    'import { fake } from "./continued"\'',
+  ].join('\r\n')
+
+  // Act
+  const bindings = sourceImportBindings(source)
+
+  // Assert
+  assert.deepEqual([...bindings], [['db', 'db']])
+})

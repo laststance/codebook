@@ -1,5 +1,5 @@
 /**
- * Blanks a module source's comments and template literals, nested templates and their `${…}` parts included, with spaces that keep every line break and character position, so that only code can read as an import declaration. Quoted strings stay, since a declaration's specifier and its quoted export names are strings. Regular expression literals are not parsed.
+ * Blanks a module source's comments, template literals (nested templates and their `${…}` parts included) and quoted strings continued onto another line, with spaces that keep every line break and character position, so that only code can read as an import declaration. Other quoted strings stay, since a declaration's specifier and its quoted export names are strings. Regular expression literals are not parsed.
  * Why: an import written in a comment or in a test's source fixture bound a name, and a nested template's inner backticks ended the masking early (Cycle 0052 tasks 87, 88).
  * Called by {@link sourceImportBindings}.
  * @param sourceText - A module's source.
@@ -58,7 +58,12 @@ function skipNonCode(
 ): number {
   const pair = text.slice(index, index + 2),
     character = text[index]
-  if (character === "'" || character === '"') return stringEnd(text, index)
+  if (character === "'" || character === '"') {
+    const end = stringEnd(text, index)
+    // A string continued onto another line could start that line with `import`; one on a single line never starts a line, and a specifier never spans lines (Cycle 0052 task 91).
+    if (text.slice(index, end).includes('\n')) spans.push([index, end])
+    return end
+  }
   const end =
     pair === '//'
       ? lineEnd(text, index)
@@ -92,8 +97,14 @@ function stringEnd(text: string, index: number): number {
     text[cursor] !== quote &&
     text[cursor] !== '\n'
   )
-    cursor += text[cursor] === '\\' ? 2 : 1
+    cursor += escapeLength(text, cursor)
   return text[cursor] === quote ? cursor + 1 : cursor
+}
+
+/** How far a string's cursor moves: past an escape and the character it escapes, a backslash and a CRLF line continuation being one escape (Cycle 0052 task 91); one character otherwise. */
+function escapeLength(text: string, cursor: number): number {
+  if (text[cursor] !== '\\') return 1
+  return text.startsWith('\r\n', cursor + 1) ? 3 : 2
 }
 
 /** The index after a template literal's closing backtick, its `${…}` parts (and the templates nested in them) passed whole; an unclosed one ends at the source's end. */

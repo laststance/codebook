@@ -304,3 +304,42 @@ test('a history page whose history is removed while its summary is read is refus
     await harness.close()
   }
 })
+
+// Value: protects=an agent reading a test history's own page while the history is removed after its summary came back (from the store's cache, or a read that ended before the removal): the resource is refused as NOT_FOUND, not answered with the summary of a history that no longer exists; fails_when=the folder is checked only when the summary is empty, so a summary returned just before the removal answers the page (Cycle 0052 task 90); why_new=hosted CodeRabbit review of d851ae4a (outside-diff, resources.ts:189-195); seam=a store whose summary read removes the history's folder after it read the summary; no_claim=a removal after the page was answered
+test('a history page whose history is removed right after its summary was read is refused as NOT_FOUND', async () => {
+  // Arrange: the summary comes back, then the history's folder is gone.
+  const { harness, store, studyId } = await serviceWithOneHistory()
+  const historyFolder = join(
+    harness.directory,
+    '.learning',
+    'node-tests.v1',
+    studyId,
+  )
+  const summarize = store.summarize.bind(store)
+  store.summarize = async (...input) => {
+    const summary = await summarize(...input)
+    await rm(historyFolder, { recursive: true, force: true })
+    return summary
+  }
+  try {
+    // Act
+    const answer = await readResource(
+      harness.service,
+      `codebook://node-history/${studyId}`,
+    ).then(
+      () => 'answered',
+      (error: unknown) =>
+        error instanceof StudyError
+          ? { code: error.code, message: error.message }
+          : String(error),
+    )
+
+    // Assert
+    assert.deepEqual(answer, {
+      code: 'NOT_FOUND',
+      message: `No Node test history ${studyId} is saved in this workspace. Read codebook://node-history and copy the studyId or historyUri of the history you mean.`,
+    })
+  } finally {
+    await harness.close()
+  }
+})

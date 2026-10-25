@@ -188,8 +188,8 @@ export async function readResource(
     // The result and the learning coverage come from the store's one summary, which Saved studies and Save read too (Design 13); only the history's own page needs them, not its events or learning material pages (F14).
     const summary = await withKnownNodeHistory(store, studyId, async () => {
       const summarized = await store.summarize(studyId)
-      // No summary because the history was removed meanwhile is an unknown history, not one with nothing summarized (Cycle 0052 task 86).
-      if (summarized === undefined && !store.holdsHistoryFolder(studyId))
+      // A history removed meanwhile is an unknown history, whether its summary came back empty or from the store's cache (Cycle 0052 tasks 86, 90).
+      if (!store.holdsHistoryFolder(studyId))
         throw unknownNodeHistoryError(studyId)
       return summarized
     })
