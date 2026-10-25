@@ -1273,6 +1273,18 @@ export async function workspaceHarness(
     | undefined
   const windowState = { focused: true, active: true },
     windowListeners = new Set<(state: typeof windowState) => void>()
+  /** How many times the extension read `vscode.window.state.focused` while the window had no focus; a test waits on it to act while the reader waits for the focus. */
+  let unfocusedWindowReads = 0
+  /** The window state the extension reads: the harness's own state, with each unfocused read counted. */
+  const windowStateForExtension = {
+    get focused(): boolean {
+      if (!windowState.focused) unfocusedWindowReads++
+      return windowState.focused
+    },
+    get active(): boolean {
+      return windowState.active
+    },
+  }
   const panelReveals: {
     kind: string
     column?: number
@@ -4573,7 +4585,7 @@ export async function workspaceHarness(
             ? saveStatus
             : createStatusItem()
         },
-        state: windowState,
+        state: windowStateForExtension,
         onDidChangeWindowState: (
           callback: (state: typeof windowState) => void,
         ) => {
@@ -5594,6 +5606,8 @@ export async function workspaceHarness(
       for (const listener of windowListeners) listener(windowState)
     },
     windowFocusListeners: () => windowListeners.size,
+    /** How many times the extension read the window's focus while it had none ({@link changeWindowFocus}); see `windowStateForExtension`. @example harness.unfocusedWindowReads() // => 3 while the reader waits for the focus */
+    unfocusedWindowReads: (): number => unfocusedWindowReads,
     delayPanelRegistration(kind: string, deferred = false) {
       delayedPanelKind = kind
       deferredPanelRegistration = deferred

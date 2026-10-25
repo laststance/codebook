@@ -1724,48 +1724,34 @@ test('a test replay opened during a same-study Reload closes the reloading brows
   }
 })
 
-// Value: protects=the reader's periodic refresh during a same-study Reload leaves the Application pane on the recording it reloads: no Live or Study content is drawn there while the summary still shows the browser replay; fails_when=refreshPresentation renders the selection during the Reload and presentApplication writes non-recording content into the pane (local CodeRabbit round 6, major); why_new=Cycle 0052 task 18's Reload mark; seam=the reload held at its debugger replacement, the reader's refresh; no_claim=the native pane's pixels
-test('a refresh during a same-study Reload keeps the Application pane on the recording', async () => {
-  // Arrange
-  const harness = await recordedReaderHarness(true)
-  let release = (): void => {}
-  try {
-    await harness.reader.openRecording(harness.studyId)
-    await harness.controller.settle()
-    const seams = readerSeams(harness)
-    const replace = seams.debuggerReplacement
-    const held = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    let entered = (): void => {}
-    const reloadWaits = new Promise<void>((resolve) => {
-      entered = resolve
-    })
-    seams.debuggerReplacement = async (signal?: AbortSignal): Promise<void> => {
-      entered()
-      await held
-      return replace(signal)
+for (const ending of ['held', 'failed'] as const) {
+  // Value: protects=the reader's periodic refresh during a same-study Reload, loading or failed, leaves the Application pane on the recording it reloads: no Live or Study content is drawn there while the summary still shows the browser replay; fails_when=refreshPresentation renders the selection during the Reload and presentApplication writes non-recording content into the pane (local CodeRabbit round 6, major); why_new=Cycle 0052 task 18's Reload mark; seam=the reload held at, or failed at, its debugger replacement, the reader's refresh; no_claim=the native pane's pixels
+  test(`a refresh during a same-study Reload${ending === 'held' ? '' : ' that failed'} keeps the Application pane on the recording`, async () => {
+    // Arrange
+    const harness = await recordedReaderHarness(true)
+    let load: Awaited<ReturnType<typeof reloadHeldOrFailed>>['load'] | undefined
+    try {
+      const reloading = await reloadHeldOrFailed(harness, ending)
+      load = reloading.load
+      const application = harness
+        .nativePanels()
+        .find((panel) => panel.kind === 'codebook.scopedBrowser')!
+      const documentBeforeRefresh = application.webview.html
+
+      // Act
+      await readerSeams(harness).refresh()
+      const documentAfterRefresh = application.webview.html
+      load.release()
+      await reloading.reload
+
+      // Assert
+      assert.equal(documentAfterRefresh, documentBeforeRefresh)
+    } finally {
+      load?.release()
+      await harness.close()
     }
-    const application = harness
-      .nativePanels()
-      .find((panel) => panel.kind === 'codebook.scopedBrowser')!
-    const reload = harness.reader.action('reload-recording')
-    await reloadWaits
-    const documentBeforeRefresh = application.webview.html
-
-    // Act
-    await readerSeams(harness).refresh()
-    const documentAfterRefresh = application.webview.html
-    release()
-    await reload
-
-    // Assert
-    assert.equal(documentAfterRefresh, documentBeforeRefresh)
-  } finally {
-    release()
-    await harness.close()
-  }
-})
+  })
+}
 
 // Value: protects=an agent's Return to Live that supersedes one test replay entry entering the summary composition and a second one waiting for its turn leaves no empty summary composition, whichever of them ends last; fails_when=the entering one skips the leave because the waiting one is still counted, and the waiting one ends at its ticket check without leaving (local CodeRabbit round 7, minor); why_new=Cycle 0052 task 12; seam=the first entry held at enterSummaryCompositionForReplay, a configured live run, the agent's returnToCurrent; no_claim=the native timing of the agent's call
 test('an agent’s Return to Live that supersedes an entering and a waiting test replay entry leaves no empty summary composition', async () => {
@@ -1835,7 +1821,7 @@ test('an agent’s Return to Live that supersedes an entering and a waiting test
   }
 })
 
-// Value: protects=Open replay made while another test replay is shown and the work window has lost the desktop focus waits for the focus before showing the summary, as an open from a closed reader does, instead of failing at once; fails_when=the entry into the standing composition reveals the summary unfocused and is told as a failed open (local CodeRabbit round 8, minor); why_new=Cycle 0052 task 14's reveal; seam=changeWindowFocus; no_claim=the native window manager
+// Value: protects=Open replay made while another test replay is shown and the work window has lost the desktop focus waits for the focus before showing the summary, as an open from a closed reader does, instead of failing at once; fails_when=the entry into the standing composition reveals the summary unfocused and is told as a failed open (local CodeRabbit round 8, minor); why_new=Cycle 0052 task 14's reveal; seam=changeWindowFocus, the harness's count of unfocused window reads; no_claim=the native window manager
 test('Open replay into a standing composition waits for the work window’s focus before showing the summary', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -1848,8 +1834,14 @@ test('Open replay into a standing composition waits for the work window’s focu
     harness.changeWindowFocus(false)
 
     // Act: the learner clicks back into the window a moment after Open replay.
+    const readsBefore = harness.unfocusedWindowReads()
     const entry = harness.reader.openLearningReplay(second.studyId)
-    setTimeout(() => harness.changeWindowFocus(true), 200) // gstack-timing-ok: the learner's click comes after the entry began waiting; the wait itself is bounded by RECORDING_WINDOW_FOCUS_WAIT_MS
+    await waitUntil(
+      () => harness.unfocusedWindowReads() > readsBefore,
+      'the entry waits for the window focus',
+      READER_RESULT_BOUND_MS,
+    )
+    harness.changeWindowFocus(true)
     await entry
     await waitUntil(
       () =>
@@ -1928,53 +1920,36 @@ test('a learner’s Return to Live that supersedes an entering test replay tells
   }
 })
 
-// Value: protects=Close ends a same-study Reload's mark, so a reader the learner opens again afterwards stands in the Study composition and not in a summary composition for a recording that is gone; fails_when=close() keeps the Reload mark and the reopened reader closes its Study pane for a browser replay nobody shows (Cycle 0052 task 18); why_new=the Reload tests only end the mark through the load or a Return, none through Close; seam=the reload held at its debugger replacement, the reader's close and open; no_claim=the native pane's pixels
-test('a reader closed during a same-study Reload opens again in the Study composition', async () => {
-  // Arrange
-  const harness = await recordedReaderHarness(true)
-  let release = (): void => {}
-  try {
-    await harness.reader.openRecording(harness.studyId)
-    await harness.controller.settle()
-    const seams = readerSeams(harness)
-    const replace = seams.debuggerReplacement
-    const held = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    let entered = (): void => {}
-    const reloadWaits = new Promise<void>((resolve) => {
-      entered = resolve
-    })
-    seams.debuggerReplacement = async (signal?: AbortSignal): Promise<void> => {
-      entered()
-      await held
-      return replace(signal)
+for (const ending of ['held', 'failed'] as const) {
+  // Value: protects=Close ends a same-study Reload's mark, loading or failed, so a reader the learner opens again afterwards stands in the Study composition and not in a summary composition for a recording that is gone; fails_when=close() keeps the Reload mark and the reopened reader closes its Study pane for a browser replay nobody shows (Cycle 0052 task 18); why_new=the Reload tests only end the mark through the load or a Return, none through Close; seam=the reload held at, or failed at, its debugger replacement, the reader's close and open; no_claim=the native pane's pixels
+  test(`a reader closed during a same-study Reload${ending === 'held' ? '' : ' that failed'} opens again in the Study composition`, async () => {
+    // Arrange
+    const harness = await recordedReaderHarness(true)
+    let load: Awaited<ReturnType<typeof reloadHeldOrFailed>>['load'] | undefined
+    try {
+      const reloading = await reloadHeldOrFailed(harness, ending)
+      load = reloading.load
+
+      // Act: the learner closes the reader during the Reload, then opens it again.
+      await harness.reader.close()
+      load.release()
+      await reloading.reload
+      await harness.reader.open()
+
+      // Assert
+      assert.deepEqual(
+        {
+          studyPane: harness.panelColumn('codebook.studyContext') !== undefined,
+          replayFamily: lastView(harness)?.replayFamily,
+        },
+        { studyPane: true, replayFamily: undefined },
+      )
+    } finally {
+      load?.release()
+      await harness.close()
     }
-    const reload = harness.reader.action('reload-recording').then(
-      () => undefined,
-      () => undefined,
-    )
-    await reloadWaits
-
-    // Act: the learner closes the reader while the Reload loads, then opens it again.
-    await harness.reader.close()
-    release()
-    await reload
-    await harness.reader.open()
-
-    // Assert
-    assert.deepEqual(
-      {
-        studyPane: harness.panelColumn('codebook.studyContext') !== undefined,
-        replayFamily: lastView(harness)?.replayFamily,
-      },
-      { studyPane: true, replayFamily: undefined },
-    )
-  } finally {
-    release()
-    await harness.close()
-  }
-})
+  })
+}
 
 // Value: protects=a test replay open that fails while an agent's presentation change is in flight tells its failure once and adds no control error: the failed open's leave of the empty summary composition waits for the presentation change, which arranges the reader itself; fails_when=leaveEmptySummaryComposition runs open() during the presentation change, which refuses as pending and reports a control error beside the told failure (Cycle 0052 task 12); why_new=the Return guard test covers returningCurrent only, none holds a presentation change; seam=readerSeams.debuggerReplacement held then failed, the agent's Restore of the Study workspace (changePresentation) admitted while the replay opens; no_claim=the native layout of the presentation change
 test('a test replay open that fails during an agent’s presentation change adds no control error', async () => {
@@ -2412,21 +2387,23 @@ function replayFreeComposition(harness: Harness) {
   }
 }
 
-// Value: protects=Close while an Open replay entry waits for the work window's focus inside the summary composition's entry leaves no summary composition behind, and the reader the learner opens again stands in the Study composition with no replay; fails_when=the entry resumes after Close and builds the composition for a closed reader, or the reopened reader still holds the replay (Cycle 0052 task 12); why_new=Close was tested against waiting entries (the notice) but not against an entry already entering; seam=changeWindowFocus(false) holding the entry in its focus wait; no_claim=the native window manager
-test('Close during an Open replay entry that waits for the window focus leaves no summary composition', async () => {
+// Value: protects=Close while an Open replay entry into a standing summary composition waits for the work window's focus ends that entry: the reader closes, the entry neither reopens it nor tells a failure, and the reader the learner opens again shows the replay it showed before Close, never the entry's; fails_when=the entry resumes after Close and reopens the closed reader, shows its own replay, or tells a failed open (Cycle 0052 task 12); why_new=Close was tested against waiting entries (the notice) but not against an entry already entering; seam=changeWindowFocus(false) holding the entry in its focus wait, the harness's count of unfocused window reads; no_claim=the native window manager
+test('Close during an Open replay entry that waits for the window focus ends the entry, and the reopened reader shows the earlier replay', async () => {
   // Arrange
   const harness = await workspaceHarness()
   try {
-    const history = await saveTwoStopNodeHistory(
+    const second = await saveTwoStopNodeHistory(
       harness.service.nodeHistoryStore!,
     )
-    await harness.reader.action('retry')
-    await harness.reader.open()
+    const first = await openByOpenReplay(harness)
     harness.changeWindowFocus(false)
-    const entry = harness.reader.openLearningReplay(history.studyId)
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 150) // gstack-timing-ok: the entry has no observable mark while it waits for the focus; the wait itself is bounded by RECORDING_WINDOW_FOCUS_WAIT_MS
-    })
+    const readsBefore = harness.unfocusedWindowReads()
+    const entry = harness.reader.openLearningReplay(second.studyId)
+    await waitUntil(
+      () => harness.unfocusedWindowReads() > readsBefore,
+      'the entry waits for the window focus',
+      READER_RESULT_BOUND_MS,
+    )
 
     // Act: the learner closes the reader while the entry waits, the window gets its focus back, and the learner opens the reader again.
     await harness.reader.close()
@@ -2444,6 +2421,8 @@ test('Close during an Open replay entry that waits for the window focus leaves n
         afterClose,
         reopened: replayFreeComposition(harness),
         testReplay: harness.reader.inspect().view?.nodeHistory?.header.studyId,
+        toldFailures: [...harness.errorMessages],
+        controlErrors: readerSeams(harness).errorLines(),
       },
       {
         afterClose: {
@@ -2453,11 +2432,13 @@ test('Close during an Open replay entry that waits for the window focus leaves n
           summaryShowsReplay: false,
         },
         reopened: {
-          studyPane: true,
+          studyPane: false,
           application: true,
-          summaryShowsReplay: false,
+          summaryShowsReplay: true,
         },
-        testReplay: undefined,
+        testReplay: first.studyId,
+        toldFailures: [],
+        controlErrors: [],
       },
     )
   } finally {
@@ -2605,6 +2586,302 @@ for (const requester of ['learner', 'agent'] as const) {
       )
     } finally {
       release()
+      await harness.close()
+    }
+  })
+}
+
+/**
+ * Says what an error thrown out of the reader reads, or `undefined` when nothing was thrown.
+ * @param operation - The reader call whose refusal is observed.
+ * @returns The error's message, `''` for a throw without one, `undefined` when the call succeeded.
+ * @example await refusalOf(() => harness.reader.select('repository/interface/theme')) // => undefined
+ */
+async function refusalOf(
+  operation: () => Promise<unknown>,
+): Promise<string | undefined> {
+  return operation().then(
+    () => undefined,
+    (error: unknown) =>
+      // The reader's errors come from its own module context, so `instanceof Error` cannot tell them.
+      typeof error === 'object' && error !== null && 'message' in error
+        ? String(error.message)
+        : '',
+  )
+}
+
+/**
+ * Reads what the browser replay shows now: the recording's readiness, whether the Learning summary draws its transport, and the replay family told.
+ * @param harness - The recorded reader harness.
+ * @returns The observations.
+ * @example browserReplayObservations(harness) // => { readiness: 'ready', transport: true, family: 'browser' }
+ */
+function browserReplayObservations(harness: RecordedHarness) {
+  return {
+    readiness: harness.controller.state().readiness,
+    transport: harness.summary.webview.html.includes(
+      'id="recording-transport"',
+    ),
+    family: lastView(harness)?.replayFamily,
+  }
+}
+
+/**
+ * Opens the Reload fixture and ends the hold, so a test can look at the browser replay once every load has ended.
+ * @param harness - The recorded reader harness.
+ * @example await settleReload(harness, reloading)
+ */
+async function settleReload(
+  harness: RecordedHarness,
+  reloading: Awaited<ReturnType<typeof reloadHeldOrFailed>>,
+): Promise<void> {
+  reloading.load.release()
+  await reloading.reload
+  await harness.controller.settle()
+}
+
+/** The Learning summary's text while the reader shows no replay. */
+const SUMMARY_PLACEHOLDER =
+  'Open saved learning from Codebook to view its summary.'
+
+// Value: protects=Reload pressed again after a same-study Reload's load failed loads the recording again, so the learner is not stuck on the failed replay with a refusal; fails_when=the Reload action refuses with "Select a recording first." because no recording is active after the failed load (Cycle 0052 task 31); why_new=the Reload mark's failed cell had no second Reload; seam=a Reload whose debugger replacement is failed once, then the Reload action again; no_claim=the native pane's pixels
+test('Reload pressed again after a failed same-study Reload loads the recording', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    const reloading = await reloadHeldOrFailed(harness, 'failed')
+
+    // Act
+    const refusal = await refusalOf(() =>
+      harness.reader.action('reload-recording'),
+    )
+    await waitUntil(
+      () => harness.controller.state().readiness === 'ready',
+      'the second Reload loads the recording',
+      READER_RESULT_BOUND_MS,
+    ).catch(() => undefined)
+    await settleReload(harness, reloading)
+
+    // Assert
+    assert.deepEqual(
+      { refusal, ...browserReplayObservations(harness) },
+      {
+        refusal: undefined,
+        readiness: 'ready',
+        transport: true,
+        family: 'browser',
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Reload pressed again while a same-study Reload still loads is not refused and restarts the load, so the recording ends loaded and shown once; fails_when=the Reload action refuses with "Select a recording first." while no recording is active, or the held first load comes back over the second (Cycle 0052 task 31); why_new=the Reload mark's loading cell had no second Reload; seam=the first load held at its debugger replacement, the Reload action again; no_claim=the native pane's pixels
+test('Reload pressed again during a same-study Reload is not refused and ends with the recording shown once', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    const reloading = await reloadHeldOrFailed(harness, 'held')
+
+    // Act
+    const refusal = await refusalOf(() =>
+      harness.reader.action('reload-recording'),
+    )
+    await settleReload(harness, reloading)
+    await waitUntil(
+      () => harness.controller.state().readiness === 'ready',
+      'the recording is loaded',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal,
+        ...browserReplayObservations(harness),
+        transportsDrawn:
+          harness.summary.webview.html.split('id="recording-transport"')
+            .length - 1,
+      },
+      {
+        refusal: undefined,
+        readiness: 'ready',
+        transport: true,
+        family: 'browser',
+        transportsDrawn: 1,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Retry storage after a same-study Reload's load failed loads the recording again and never draws a Study selection under the browser summary; fails_when=the retry renders the selection while the replay is shown, so the presentation leaves the recording tab and the recording stays failed (Cycle 0052 task 31); why_new=the Reload mark's failed cell had no Retry; seam=a Reload whose debugger replacement is failed once, the retry action; no_claim=the native pane's pixels
+test('Retry after a failed same-study Reload loads the recording and keeps the recording tab', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    const reloading = await reloadHeldOrFailed(harness, 'failed')
+
+    // Act
+    const refusal = await refusalOf(() => harness.reader.action('retry'))
+    await waitUntil(
+      () => harness.controller.state().readiness === 'ready',
+      'the retry loads the recording',
+      READER_RESULT_BOUND_MS,
+    ).catch(() => undefined)
+    await settleReload(harness, reloading)
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal,
+        ...browserReplayObservations(harness),
+        contentTab: harness.reader.presentationState().reader.contentTab,
+      },
+      {
+        refusal: undefined,
+        readiness: 'ready',
+        transport: true,
+        family: 'browser',
+        contentTab: 'recording',
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=choosing the Live tab after a same-study Reload's load failed leaves the summary composition: the Study pane is back, the summary reads its placeholder and the presentation reads the Live tab; fails_when=the tab message sees no recording and leaves the reader arranged for a browser replay that is gone (Cycle 0052 task 31); why_new=the Reload mark's failed cell had no tab choice; seam=a Reload whose debugger replacement is failed once, the Study pane's tab message; no_claim=the Live composition's native panes
+test('choosing the Live tab after a failed same-study Reload leaves the summary composition', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    await reloadHeldOrFailed(harness, 'failed')
+
+    // Act
+    harness.receive({
+      type: 'tab',
+      tab: 'live',
+      revision: harness.reader.inspect().view!.revision,
+    })
+    await waitUntil(
+      () => harness.panelColumn('codebook.studyContext') !== undefined,
+      'the Study pane is back',
+      READER_RESULT_BOUND_MS,
+    ).catch(() => undefined)
+    await harness.controller.settle()
+
+    // Assert
+    assert.deepEqual(
+      {
+        studyPane: harness.panelColumn('codebook.studyContext') !== undefined,
+        family: lastView(harness)?.replayFamily,
+        summaryPlaceholder:
+          harness.summary.webview.html.includes(SUMMARY_PLACEHOLDER),
+        contentTab: harness.reader.presentationState().reader.contentTab,
+      },
+      {
+        studyPane: true,
+        family: undefined,
+        summaryPlaceholder: true,
+        contentTab: 'live',
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an agent's Return to Live after a same-study Reload's load failed ends the failed replay: the presentation reads the Live tab, the summary its placeholder, and a step can be selected again; fails_when=the Return leaves the Reload mark, so the presentation keeps the recording tab or the step selection is still refused as not loaded (Cycle 0052 task 31); why_new=the failed cell was tested with the learner's Return only; seam=a Reload whose debugger replacement is failed once, the agent's returnToCurrent; no_claim=the Live composition's panes
+test('an agent’s Return to Live after a failed same-study Reload ends the failed replay', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    await reloadHeldOrFailed(harness, 'failed')
+    const state = harness.reader.presentationState()
+
+    // Act
+    const refusal = await refusalOf(() =>
+      harness.reader.returnToCurrent(
+        {
+          presentationId: state.presentationId,
+          expectedRevision: state.reader.contentRevision,
+        },
+        'agent',
+      ),
+    )
+    await harness.controller.settle()
+    const selectionRefusal = await refusalOf(() =>
+      harness.reader.select('repository/interface/theme'),
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal,
+        contentTab: harness.reader.presentationState().reader.contentTab,
+        readiness: harness.controller.state().readiness,
+        summaryPlaceholder:
+          harness.summary.webview.html.includes(SUMMARY_PLACEHOLDER),
+        selectionRefusal,
+      },
+      {
+        refusal: undefined,
+        contentTab: 'live',
+        readiness: 'idle',
+        summaryPlaceholder: true,
+        selectionRefusal: undefined,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+for (const requester of ['learner', 'agent'] as const) {
+  // Value: protects=a Return to Live, the learner's or an agent's, while a same-study Reload still loads cancels that load: once it is released the recording does not come back over Live; fails_when=the resumed Reload makes the recording active again after the Return (Cycle 0052 task 18); why_new=the Reload mark's loading cell was left through a Return in no test; seam=the reload held at its debugger replacement, the return-current action or returnToCurrent; no_claim=the Live composition's panes
+  test(`${requester === 'agent' ? 'an agent' : 'a learner'}’s Return to Live during a same-study Reload keeps the recording from coming back`, async () => {
+    // Arrange
+    const harness = await recordedReaderHarness(true)
+    try {
+      const reloading = await reloadHeldOrFailed(harness, 'held')
+      const state = harness.reader.presentationState()
+
+      // Act
+      const refusal = await refusalOf(() =>
+        requester === 'learner'
+          ? harness.reader.action('return-current')
+          : harness.reader.returnToCurrent(
+              {
+                presentationId: state.presentationId,
+                expectedRevision: state.reader.contentRevision,
+              },
+              'agent',
+            ),
+      )
+      // The released load's own work ends within the controller's settle: a recording that came back would be active by then.
+      await settleReload(harness, reloading)
+
+      // Assert
+      assert.deepEqual(
+        {
+          refusal,
+          readiness: harness.controller.state().readiness,
+          transport: harness.summary.webview.html.includes(
+            'id="recording-transport"',
+          ),
+          contentTab: harness.reader.presentationState().reader.contentTab,
+        },
+        {
+          refusal: undefined,
+          readiness: 'idle',
+          transport: false,
+          contentTab: 'live',
+        },
+      )
+    } finally {
       await harness.close()
     }
   })

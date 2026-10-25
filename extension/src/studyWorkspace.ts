@@ -8910,14 +8910,7 @@ export class StudyWorkspace {
       return
     }
     if (action === 'reload-recording') {
-      const studyId = this.selection.studyId
-      if (!this.recordingActive || !studyId)
-        throw new Error('Select a recording first.')
-      // Same-study Reload keeps its Summary document so a failed read can publish recovery there.
-      this.leavePlayback(true)
-      // The mark lasts until the reloaded recording is active again ({@link loadPlayback}) or a departure supersedes it; a failed load keeps it, so the summary keeps showing the recovery.
-      this.recordingReloadStudyId = studyId
-      await this.openRecording(studyId)
+      await this.reloadShownRecording()
       return
     }
     if (action === 'return-current') {
@@ -9142,8 +9135,31 @@ export class StudyWorkspace {
         this.publish()
         return
       }
+      // A same-study Reload whose recording did not load still shows its browser replay: Retry loads that recording again, as its Reload does, and renders no Study selection under the replay (Cycle 0052 task 32).
+      if (!this.recordingActive && this.browserReplayShown()) {
+        await this.reloadShownRecording()
+        return
+      }
       await this.renderSelection(true, true)
     }
+  }
+
+  /**
+   * Loads the shown browser replay's recording again (a same-study Reload): the Summary keeps its document, so a failed read can publish its recovery there, and the Reload's mark keeps the replay shown until the recording is active again ({@link loadPlayback}) or a departure supersedes it; a failed load keeps it. Called by the Reload action and by Retry while a Reload's recording has not loaded (Cycle 0052 tasks 18 and 31).
+   * @returns Once the recording's open is accepted; the load itself continues in the playback controller.
+   * @throws When no browser replay is shown, or it names no study.
+   * @example await this.reloadShownRecording()
+   */
+  private async reloadShownRecording(): Promise<void> {
+    // A Reload whose recording has not loaded (still loading, or failed) retries the recording the replay last asked for.
+    const studyId = this.recordingActive
+      ? this.selection.studyId
+      : (this.playback?.state().studyId ?? this.selection.studyId)
+    if (!this.browserReplayShown() || !studyId)
+      throw new Error('Select a recording first.')
+    this.leavePlayback(true)
+    this.recordingReloadStudyId = studyId
+    await this.openRecording(studyId)
   }
 
   /**
@@ -9175,8 +9191,7 @@ export class StudyWorkspace {
       this.pendingHistory = undefined
       // A test replay still opening is superseded by the request above and ends here with its opening marker, loading state and the summary it drew, so this Return arranges Live at once; its open finds itself superseded and changes nothing more (Cycle 0052 task 30).
       if (this.pendingNodeHistory !== undefined) {
-        if (this.summaryComposition && !this.recordingActive)
-          this.clearLearningSummary()
+        this.clearLearningSummary()
         this.pendingNodeHistory = undefined
         this.pendingNodeHistoryStudyId = undefined
         this.loading = false
@@ -23181,7 +23196,8 @@ export class StudyWorkspace {
           throw new Error('Select a saved study before opening its recording.')
         await this.openRecording(studyId)
       } else {
-        const wasRecording = this.recordingActive
+        // A same-study Reload that is loading or failed shows its browser replay too: leaving it arranges the reader again (Cycle 0052 task 32).
+        const wasRecording = this.browserReplayShown()
         this.leavePlayback()
         // Leaving Recording retires the line of a finished removal, as choosing another entry does: a refusal that told the learner to leave Recording first is no longer true under a delete button that can be used again.
         if (wasRecording) this.dismissStudyRemoval()
