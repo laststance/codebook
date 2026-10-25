@@ -51,7 +51,7 @@ test('a Node pause keeps declared nested facts without retaining unrelated local
       { path: 'listener', mode: 'value', required: true },
       { path: 'state.count', mode: 'value', required: true },
     ],
-    new Map(),
+    sourceImportBindings(''),
     AbortSignal.timeout(1_000),
   )
   // Assert
@@ -110,7 +110,7 @@ test('a Node pause does not inspect global variables when the declared local fac
     session,
     scopes,
     [{ path: 'listener', mode: 'value', required: true }],
-    new Map(),
+    sourceImportBindings(''),
     AbortSignal.timeout(1_000),
   )
   // Assert
@@ -133,7 +133,7 @@ test('a Node pause returns a required value it cannot read by name instead of fa
     session,
     scopes,
     [{ path: 'listener', mode: 'value', required: true }],
-    new Map(),
+    sourceImportBindings(''),
     AbortSignal.timeout(1_000),
   )
 
@@ -166,7 +166,7 @@ test('a Node pause keeps a declared value whose debugger type name is too long t
     session,
     scopes,
     [{ path: 'totals', mode: 'value', required: true }],
-    new Map(),
+    sourceImportBindings(''),
     AbortSignal.timeout(1_000),
   )
 
@@ -215,7 +215,7 @@ test('a Node pause reads a required value of a name the test imports from a mock
             variablesReference: 3,
           },
           {
-            name: '__vi_import_1__',
+            name: '__vi_import_0__',
             value: 'Proxy(Object)',
             variablesReference: 4,
           },
@@ -271,7 +271,9 @@ test('a Node pause reads a required value of a name the test imports from a mock
         required: true,
       },
     ],
-    sourceImportBindings("import { revalidatePath } from 'next/cache'"),
+    sourceImportBindings(
+      "import { expect } from 'vitest'\nimport { revalidatePath } from 'next/cache'",
+    ),
     AbortSignal.timeout(1_000),
   )
 
@@ -302,7 +304,7 @@ test('a Node pause reads a required value of a name the test imports from an unm
         2,
         [
           {
-            name: '__vite_ssr_import_3__',
+            name: '__vite_ssr_import_0__',
             value: 'Module',
             variablesReference: 5,
           },
@@ -348,8 +350,8 @@ test('a Node pause reads a required value of a name the test imports from an unm
   ])
 })
 
-// Value: protects=a name that two imported modules both export is not guessed: the fact stays unavailable rather than showing the value of the module the source may not mean; fails_when=the first binding's export is taken, so a fact can show another module's value (Cycle 0052 task 5); why_new=the module-binding lookup has no source map to tell which import a name came from; seam=a fake debug session with two bindings exporting the same name; no_claim=how often two imports share a name
-test('a Node pause leaves a name that two imported modules export unavailable', async () => {
+// Value: protects=an imported name is read from its own declaration's module binding, never from another imported module that exports the same name: the fact shows the value the source actually imports; fails_when=every module binding's export of the name is a candidate, so a second module's export makes the fact unavailable or, when the right binding is out of scope, answers for it (Cycle 0052 tasks 5, 96); why_new=hosted CodeRabbit review of 267e5bce (Major, inspectNodeTestVariables.ts:245-253); seam=a fake debug session whose two module bindings both export formatCurrency, and the stopped source's import declarations; no_claim=Vite's numbering itself (sourceImportBindings tests)
+test('a Node pause reads an imported name from its own import declaration module, not from another module exporting the same name', async () => {
   // Arrange
   const session = sessionAnswering(
     new Map<number, DebugProtocol.Variable[]>([
@@ -358,13 +360,13 @@ test('a Node pause leaves a name that two imported modules export unavailable', 
         2,
         [
           {
-            name: '__vite_ssr_import_1__',
-            value: 'Object',
+            name: '__vite_ssr_import_0__',
+            value: 'Module',
             variablesReference: 6,
           },
           {
-            name: '__vite_ssr_import_2__',
-            value: 'Object',
+            name: '__vite_ssr_import_1__',
+            value: 'Module',
             variablesReference: 7,
           },
         ],
@@ -372,6 +374,11 @@ test('a Node pause leaves a name that two imported modules export unavailable', 
       [
         6,
         [
+          {
+            name: 'formatDate',
+            value: 'ƒ formatDate(date)',
+            variablesReference: 0,
+          },
           {
             name: 'formatCurrency',
             value: 'ƒ formatCurrency(amount)',
@@ -397,7 +404,70 @@ test('a Node pause leaves a name that two imported modules export unavailable', 
     session,
     VITEST_SCOPES,
     [{ path: 'formatCurrency', mode: 'value', required: true }],
-    sourceImportBindings("import { formatCurrency } from './utils'"),
+    sourceImportBindings(
+      "import { formatDate } from './dates'\nimport { formatCurrency } from './utils'",
+    ),
+    AbortSignal.timeout(1_000),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { facts: result.facts, unavailable: result.unavailable },
+    {
+      facts: [
+        {
+          path: 'formatCurrency',
+          mode: 'value',
+          display: 'ƒ formatCurrency(cents)',
+        },
+      ],
+      unavailable: [],
+    },
+  )
+})
+
+// Value: protects=an imported name whose own module binding the stop's scopes do not hold stays unavailable, even when another module binding in scope exports the same name; fails_when=the other binding's export answers for it and a wrong value is saved as a required fact (Cycle 0052 task 96); why_new=hosted CodeRabbit review of 267e5bce (Major); seam=a fake debug session whose only module binding in scope belongs to another declaration and exports the name too; no_claim=which scopes V8 shows at a stop
+test('a Node pause leaves an imported name unavailable when its own module binding is out of scope, though another binding exports it', async () => {
+  // Arrange
+  const session = sessionAnswering(
+    new Map<number, DebugProtocol.Variable[]>([
+      [1, []],
+      [
+        2,
+        [
+          {
+            name: '__vite_ssr_import_0__',
+            value: 'Module',
+            variablesReference: 6,
+          },
+        ],
+      ],
+      [
+        6,
+        [
+          {
+            name: 'formatDate',
+            value: 'ƒ formatDate(date)',
+            variablesReference: 0,
+          },
+          {
+            name: 'formatCurrency',
+            value: 'ƒ formatCurrency(amount)',
+            variablesReference: 0,
+          },
+        ],
+      ],
+    ]),
+  )
+
+  // Act
+  const result = await inspectNodeTestVariables(
+    session,
+    VITEST_SCOPES,
+    [{ path: 'formatCurrency', mode: 'value', required: true }],
+    sourceImportBindings(
+      "import { formatDate } from './dates'\nimport { formatCurrency } from './utils'",
+    ),
     AbortSignal.timeout(1_000),
   )
 
@@ -405,6 +475,50 @@ test('a Node pause leaves a name that two imported modules export unavailable', 
   assert.deepEqual(
     { facts: result.facts, unavailable: result.unavailable },
     { facts: [], unavailable: ['value:formatCurrency'] },
+  )
+})
+
+// Value: protects=an import the TypeScript compiler dropped (one used only as a type, without `import type`) shifts Vite's numbering of the later declarations; the shift is caught and the name stays unavailable instead of reading the next module's export; fails_when=the numbering is trusted without checking that each earlier binding holds its own declaration's exports, so `db` is read from another module (Cycle 0052 task 96); why_new=hosted CodeRabbit review of 267e5bce (Major); seam=a fake debug session whose bindings are numbered as if the first import had been dropped; no_claim=which imports a given compiler drops
+test('a Node pause leaves an imported name unavailable when a dropped earlier import shifted the module numbering', async () => {
+  // Arrange: next/server was dropped, so binding 0 is @/db and binding 1 is another module that exports db too.
+  const session = sessionAnswering(
+    new Map<number, DebugProtocol.Variable[]>([
+      [1, []],
+      [
+        2,
+        [
+          {
+            name: '__vite_ssr_import_0__',
+            value: 'Module',
+            variablesReference: 6,
+          },
+          {
+            name: '__vite_ssr_import_1__',
+            value: 'Module',
+            variablesReference: 7,
+          },
+        ],
+      ],
+      [6, [{ name: 'db', value: 'Object', variablesReference: 0 }]],
+      [7, [{ name: 'db', value: 'OtherDatabase', variablesReference: 0 }]],
+    ]),
+  )
+
+  // Act
+  const result = await inspectNodeTestVariables(
+    session,
+    VITEST_SCOPES,
+    [{ path: 'db', mode: 'value', required: true }],
+    sourceImportBindings(
+      "import { NextRequest } from 'next/server'\nimport { db } from '@/db'",
+    ),
+    AbortSignal.timeout(1_000),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { facts: result.facts, unavailable: result.unavailable },
+    { facts: [], unavailable: ['value:db'] },
   )
 })
 
@@ -428,7 +542,7 @@ test('a Node pause reads a local variable before an imported name it shadows', a
         2,
         [
           {
-            name: '__vite_ssr_import_1__',
+            name: '__vite_ssr_import_0__',
             value: 'Object',
             variablesReference: 6,
           },
@@ -509,7 +623,7 @@ test('a Node pause reads a required value behind a lazy getter in the middle of 
     session,
     VITEST_SCOPES,
     [{ path: 'revalidatePath.mock.callCount', mode: 'value', required: true }],
-    new Map(),
+    sourceImportBindings(''),
     AbortSignal.timeout(1_000),
   )
 
@@ -581,7 +695,7 @@ test('a Node pause reports a required value behind a lazy getter the debugger ca
       { path: 'config.limit', mode: 'value', required: true },
       { path: 'status', mode: 'value', required: true },
     ],
-    new Map(),
+    sourceImportBindings(''),
     AbortSignal.timeout(1_000),
   )
 
@@ -694,7 +808,7 @@ test('a Node pause whose lazy expansion gets a malformed debugger answer fails i
     session,
     VITEST_SCOPES,
     [{ path: 'limit', mode: 'value', required: true }],
-    new Map(),
+    sourceImportBindings(''),
     AbortSignal.timeout(1_000),
   ).then(
     () => 'read',
@@ -739,7 +853,7 @@ test('a Node pause cancelled while a lazy value is expanded ends with the cancel
     session,
     VITEST_SCOPES,
     [{ path: 'limit', mode: 'value', required: true }],
-    new Map(),
+    sourceImportBindings(''),
     controller.signal,
   ).then(
     () => 'read',
@@ -857,8 +971,10 @@ test('a Node pause asks the debugger once for a reference two module bindings re
   await inspectNodeTestVariables(
     session,
     VITEST_SCOPES,
-    [{ path: 'shared', mode: 'value', required: false }],
-    sourceImportBindings("import { shared } from './shared'"),
+    [{ path: 'again', mode: 'value', required: false }],
+    sourceImportBindings(
+      "import { shared } from './a'\nimport { shared as again } from './b'",
+    ),
     AbortSignal.timeout(1_000),
   )
 
@@ -902,7 +1018,7 @@ test('a Node pause whose lazy local the debugger never answers fails with the ti
     session,
     VITEST_SCOPES,
     [{ path: 'limit', mode: 'value', required: true }],
-    new Map(),
+    sourceImportBindings(''),
     new AbortController().signal,
   ).then(
     () => 'read',
@@ -946,7 +1062,7 @@ test('a Node pause reports a required imported name whose getter the debugger ca
           2,
           [
             {
-              name: '__vite_ssr_import_3__',
+              name: '__vite_ssr_import_0__',
               value: 'Module',
               variablesReference: 5,
             },
@@ -1006,7 +1122,7 @@ test('a Node pause whose imported getter the debugger never answers fails with t
       2,
       [
         {
-          name: '__vite_ssr_import_3__',
+          name: '__vite_ssr_import_0__',
           value: 'Module',
           variablesReference: 5,
         },
@@ -1070,7 +1186,7 @@ test('a Node pause cancelled while an imported getter is expanded ends with the 
       2,
       [
         {
-          name: '__vite_ssr_import_3__',
+          name: '__vite_ssr_import_0__',
           value: 'Module',
           variablesReference: 5,
         },
@@ -1128,7 +1244,7 @@ test('a Node pause whose imported getter gets a malformed debugger answer fails 
       2,
       [
         {
-          name: '__vite_ssr_import_3__',
+          name: '__vite_ssr_import_0__',
           value: 'Module',
           variablesReference: 5,
         },
@@ -1220,7 +1336,7 @@ test('a Node pause asks again for a lazy value whose earlier expansion the debug
       { path: 'limit', mode: 'value', required: true },
       { path: 'limit', mode: 'type', required: true },
     ],
-    new Map(),
+    sourceImportBindings(''),
     AbortSignal.timeout(1_000),
   )
 
@@ -1285,7 +1401,7 @@ test('a Node pause whose module binding read fails sends the debugger no further
     session,
     VITEST_SCOPES,
     [{ path: 'db', mode: 'value', required: true }],
-    sourceImportBindings("import { db } from '@/db'"),
+    sourceImportBindings("import { a } from './a'\nimport { db } from '@/db'"),
     AbortSignal.timeout(1_000),
   ).then(
     () => 'read',
@@ -1321,7 +1437,7 @@ test('a Node pause whose scope read the debugger refuses fails with the adapter 
     session,
     VITEST_SCOPES,
     [{ path: 'status', mode: 'value', required: true }],
-    new Map(),
+    sourceImportBindings(''),
     AbortSignal.timeout(1_000),
   ).then(
     () => undefined,
@@ -1551,7 +1667,7 @@ test('a Node pause reports a lazy value the debugger expands to no single value 
       { path: 'count', mode: 'value', required: true },
       { path: 'total', mode: 'value', required: true },
     ],
-    new Map(),
+    sourceImportBindings(''),
     AbortSignal.timeout(1_000),
   )
 

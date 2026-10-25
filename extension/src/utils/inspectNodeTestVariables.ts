@@ -10,6 +10,11 @@ import {
 import type { RepositoryInspection } from '../repositoryConfigSchemas'
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 
+import type {
+  ModuleDeclarationBinding,
+  SourceImports,
+} from './sourceImportBindings'
+
 export type NodeTestFact = {
   path: string
   mode: RepositoryInspection['mode']
@@ -19,22 +24,22 @@ export type NodeTestFact = {
 
 /**
  * Reads only the declared debugger paths of a Node test stop through native DAP scopes, never evaluating an expression or retaining other local values; called by {@link OwnedNodeTestRun} at an owned source stop.
- * A path's root is the scope variable of that name, or, when none has it, a name the stopped source imports, read as the export it stands for ({@link sourceImportBindings}): Vitest binds each imported module whole ({@link NODE_TEST_MODULE_BINDING_NAME}), a mocked one as a Proxy whose exports sit under {@link DEBUGGER_PROXY_TARGET_NAME}, an unmocked one as a namespace of getters that the debugger shows lazily. A lazy value on the path (a getter, such as a Vitest spy's `mock`) is expanded once, which runs that getter in the test process as the Variables view does when the learner expands it (Cycle 0052 task 5).
+ * A path's root is the scope variable of that name, or, when none has it, a name the stopped source imports, read as the export it stands for in its own declaration's module binding ({@link sourceImportBindings}, {@link importedName}): Vitest binds each imported module whole ({@link NODE_TEST_MODULE_BINDING_NAME}), a mocked one as a Proxy whose exports sit under {@link DEBUGGER_PROXY_TARGET_NAME}, an unmocked one as a namespace of getters that the debugger shows lazily. A lazy value on the path (a getter, such as a Vitest spy's `mock`) is expanded once, which runs that getter in the test process as the Variables view does when the learner expands it (Cycle 0052 task 5).
  * @param debugSession - Verified native debug session.
  * @param scopes - Scopes of its checked source frame.
  * @param inspections - Validated requested facts.
- * @param sourceImports - The stopped source's imported names, each with the export it reads ({@link sourceImportBindings}).
+ * @param sourceImports - The stopped source's import declarations and imported names ({@link sourceImportBindings}).
  * @param signal - Run cancellation.
  * @returns The facts read; the variables they came from; and, as `<mode>:<path>`, each required fact the debugger could not read (absent, ambiguous between two imported modules, empty or longer than {@link REPOSITORY_LITERAL_LIMIT_CHARS}), which the caller reports while the stop stays accepted. An unreadable optional fact is left out, as before.
  * @example
- * await inspectNodeTestVariables(debugSession, scopes, [{ path: 'revalidatePath.mock.calls.length', mode: 'value', required: true }], new Map([['revalidatePath', 'revalidatePath']]), signal)
+ * await inspectNodeTestVariables(debugSession, scopes, [{ path: 'revalidatePath.mock.calls.length', mode: 'value', required: true }], sourceImportBindings("import { revalidatePath } from 'next/cache'"), signal)
  * // => { facts: [{ path: 'revalidatePath.mock.calls.length', mode: 'value', display: '1', type: 'number' }], variables: [...], unavailable: [] }
  */
 export async function inspectNodeTestVariables(
   debugSession: Pick<vscode.DebugSession, 'customRequest'>,
   scopes: DebugProtocol.Scope[],
   inspections: RepositoryInspection[],
-  sourceImports: ReadonlyMap<string, string>,
+  sourceImports: SourceImports,
   signal: AbortSignal,
 ): Promise<{
   facts: NodeTestFact[]
@@ -165,22 +170,22 @@ type ScopeRoot = { variable: DebugProtocol.Variable | undefined }
  * Walks one declared path, `root.segment.segment`, to its variable; called by {@link inspectNodeTestVariables}.
  * @param read - The pass's variable reader.
  * @param scopes - The stop's lexical scopes.
- * @param sourceImports - The stopped source's imported names, each with the export it reads.
+ * @param sourceImports - The stopped source's import declarations and imported names.
  * @param path - The declared path.
  * @returns The variable at the end of the path, or `undefined` when a step is missing.
- * @example await readDeclaredPath(read, scopes, new Map([['revalidatePath', 'revalidatePath']]), 'revalidatePath.mock.calls.length') // => { name: 'length', value: '1', ... }
+ * @example await readDeclaredPath(read, scopes, sourceImportBindings("import { revalidatePath } from 'next/cache'"), 'revalidatePath.mock.calls.length') // => { name: 'length', value: '1', ... }
  */
 async function readDeclaredPath(
   read: DebuggerVariableReader,
   scopes: DebugProtocol.Scope[],
-  sourceImports: ReadonlyMap<string, string>,
+  sourceImports: SourceImports,
   path: string,
 ): Promise<DebugProtocol.Variable | undefined> {
   const [root = '', ...segments] = path.split('.')
   const local = await scopeVariable(read, scopes, root)
   let variable = local
     ? local.variable
-    : await importedName(read, scopes, sourceImports.get(root))
+    : await importedName(read, scopes, sourceImports, root)
   for (const segment of segments)
     variable =
       variable &&
@@ -217,22 +222,61 @@ async function scopeVariable(
 }
 
 /**
- * Reads a name the stopped module imports, as the export the source says it stands for: that export in one of Vitest's module bindings ({@link NODE_TEST_MODULE_BINDING_NAME}) in the stop's scopes, read through a Proxy's {@link DEBUGGER_PROXY_TARGET_NAME} for a mocked module; called by {@link readDeclaredPath} when no scope variable has the root's name.
- * A name the source does not import, and a namespace import, are left unread: no binding tells which module they mean. An export that two bindings have is left unread too: without the source map's binding there is no telling which import the source means. A binding listed by two scopes counts once.
+ * Reads a name the stopped module imports, as the export its import declaration names in that declaration's own module binding: the variable Vite or Vitest binds that module to ({@link ModuleDeclarationBinding}; Vitest's numbering when the stop's scopes hold any `__vi_import_<n>__`), read through a Proxy's {@link DEBUGGER_PROXY_TARGET_NAME} for a mocked module; called by {@link readDeclaredPath} when no scope variable has the root's name.
+ * No other module binding ever answers for the name (Cycle 0052 task 96). A name the source does not import, a namespace import, a binding the stop's scopes do not hold and an export that binding lacks leave the name unread, and so does any earlier declaration whose binding the scopes hold without the exports it names: the compiler dropped an import used only as a type, which shifts the numbering. A binding listed by two scopes counts once.
  * @param read - The pass's variable reader.
  * @param scopes - The stop's lexical scopes.
- * @param exportName - The export the root's name reads ({@link sourceImportBindings}: `default` for a default import, `*` for a namespace import), or `undefined` when the source does not import the name.
- * @returns The export's variable, or `undefined` when the name is not read that way, or no binding, or more than one, exports it.
- * @example await importedName(read, scopes, 'revalidatePath') // => { name: 'revalidatePath', value: 'ƒ (...args)', ... }
+ * @param sourceImports - The stopped source's import declarations and imported names ({@link sourceImportBindings}).
+ * @param name - The root's name.
+ * @returns The export's variable, or `undefined` when the name cannot be read from its own module binding.
+ * @example await importedName(read, scopes, sourceImportBindings("import { revalidatePath } from 'next/cache'"), 'revalidatePath') // => { name: 'revalidatePath', value: 'ƒ (...args)', ... }
  */
 async function importedName(
   read: DebuggerVariableReader,
   scopes: DebugProtocol.Scope[],
-  exportName: string | undefined,
+  sourceImports: SourceImports,
+  name: string,
 ): Promise<DebugProtocol.Variable | undefined> {
-  // Only a name the source imports from one module's export is read; another module's export of the same name may hold another value (Cycle 0052 task 70).
-  if (exportName === undefined || exportName === '*') return undefined
-  // A binding that two scopes list is one import: it is read once, so it never counts as a second module.
+  const imported = sourceImports.names.get(name)
+  // Only a name the source imports from one module's export is read (Cycle 0052 task 70).
+  if (!imported || imported.exported === '*') return undefined
+  const bindings = await moduleBindingsInScope(read, scopes)
+  const isHoisted = [...bindings.keys()].some((binding) =>
+    binding.startsWith('__vi_import_'),
+  )
+  const bindingOf = (
+    declaration: ModuleDeclarationBinding | undefined,
+  ): DebugProtocol.Variable | undefined =>
+    declaration &&
+    bindings.get(isHoisted ? declaration.hoisted : declaration.plain)
+  const declarations = sourceImports.declarations.slice(
+    0,
+    imported.declaration + 1,
+  )
+  // Each declaration up to this one must find its own exports in its binding: a dropped import would shift the numbering. The bindings are independent requests, read together.
+  const hasEveryExport = await Promise.all(
+    declarations.map(async (declaration) => {
+      const binding = bindingOf(declaration)
+      if (!binding) return true
+      for (const exported of declaration.exports)
+        if (!(await moduleExport(read, binding, exported))) return false
+      return true
+    }),
+  )
+  const binding = bindingOf(declarations.at(-1))
+  if (!binding || hasEveryExport.includes(false)) return undefined
+  return settledLazy(read, await moduleExport(read, binding, imported.exported))
+}
+
+/**
+ * Lists the module bindings ({@link NODE_TEST_MODULE_BINDING_NAME}) a stop's scopes hold, by variable name; called by {@link importedName}.
+ * @returns Each binding once, the innermost scope's when two scopes list it.
+ * @example await moduleBindingsInScope(read, scopes) // => Map { '__vi_import_0__' => { name: '__vi_import_0__', value: 'Proxy(Object)', … } }
+ */
+async function moduleBindingsInScope(
+  read: DebuggerVariableReader,
+  scopes: DebugProtocol.Scope[],
+): Promise<Map<string, DebugProtocol.Variable>> {
   const bindings = new Map<string, DebugProtocol.Variable>()
   for (const scope of scopes)
     for (const binding of await read(scope.variablesReference))
@@ -241,20 +285,11 @@ async function importedName(
         !bindings.has(binding.name)
       )
         bindings.set(binding.name, binding)
-  // The bindings are independent requests, read together rather than one after another.
-  const exports = (
-    await Promise.all(
-      [...bindings.values()].map((binding) =>
-        moduleExport(read, binding, exportName),
-      ),
-    )
-  ).filter((exported) => exported !== undefined)
-  // Only one module may answer for the name; two would make the fact a guess.
-  return exports.length === 1 ? settledLazy(read, exports[0]) : undefined
+  return bindings
 }
 
 /**
- * Reads one export of a module binding: a child of that name, or, for a mocked module's Proxy, the child of that name under its target; called by {@link importedName}.
+ * Reads one export of a module binding: a child of that name, or, for a mocked module's Proxy, the child of that name under its target; called by {@link importedName} for the name and for the checks of each declaration's exports.
  * @param read - The pass's variable reader.
  * @param binding - The module binding.
  * @param name - The export's name.
