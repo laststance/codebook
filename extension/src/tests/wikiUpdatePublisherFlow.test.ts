@@ -496,6 +496,8 @@ test('Update anyway whose claim met this window’s marker turn, which ended bef
   await mkdir(join(wiki.outputDirectory, 'pages'))
   await writeFile(join(wiki.outputDirectory, 'pages', 'notes.html'), 'mine')
   const reservationWrite = wiki.hold('marker-write')
+  // Held from the act on; released in finally too, so a failed wait never leaves the start held while the window closes.
+  let claimAnswer: ReturnType<typeof wiki.hold> | undefined
   try {
     await wiki.clickUpdate()
     await agentTakesAMoment()
@@ -506,7 +508,7 @@ test('Update anyway whose claim met this window’s marker turn, which ended bef
     })
     const firstRun = await waitForStatus(wiki.status, hasEnded)
     await reservationWrite.started
-    const claimAnswer = wiki.hold('claim-answer')
+    claimAnswer = wiki.hold('claim-answer')
 
     // Act: Update anyway's claim meets the marker in change and is held before the start reads the answer; the turn then ends, and only after it the start reads the answer.
     isOverrideChosen = true
@@ -536,6 +538,7 @@ test('Update anyway whose claim met this window’s marker turn, which ended bef
     assert.equal(wiki.chatRequests.length, 2)
   } finally {
     reservationWrite.release()
+    claimAnswer?.release()
     await wiki.close()
   }
 })
