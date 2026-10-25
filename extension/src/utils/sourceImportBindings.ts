@@ -1,10 +1,14 @@
-/** A static import declaration that starts a line of code: its clause, between `import` and `from '…'`, across lines; its braces may hold quoted export names. */
-const IMPORT_CLAUSE =
-  /^[ \t]*import\s+((?:[^'";{}]|\{[^}]*\})*?)\s*\bfrom\s*['"][^'"\n]*['"]/gm
+import { blankCommentsAndTemplates } from './blankCommentsAndTemplates'
 
-/** The spans of a module source that are no code: line and block comments and template literals; quoted strings are matched too, so a comment marker inside one is left alone. */
-const NON_CODE =
-  /\/\/[^\n]*|\/\*[\s\S]*?\*\/|`(?:\\[\s\S]|[^`\\])*`|'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"/g
+/** A static import declaration that starts a line of code: its clause, between `import` and `from '…'`, across lines; its braces may hold quoted export names, a comma or a brace inside them included. */
+const IMPORT_CLAUSE =
+  /^[ \t]*import\s+((?:[^'";{}]|\{(?:'[^']*'|"[^"]*"|[^}'"])*\})*?)\s*\bfrom\s*['"][^'"\n]*['"]/gm
+
+/** An import clause's braces, whose quoted export names may hold a brace. */
+const CLAUSE_BRACES = /\{((?:'[^']*'|"[^"]*"|[^}'"])*)\}/
+
+/** One specifier between an import clause's braces: the text up to a comma outside quotes. */
+const SPECIFIER = /(?:'[^']*'|"[^"]*"|[^,'"])+/g
 
 /** One named import specifier: the export (a name or a quoted string) and its local alias, if any. */
 const NAMED_SPECIFIER =
@@ -12,7 +16,7 @@ const NAMED_SPECIFIER =
 
 /**
  * Lists the names a module's source binds by its static import declarations, each with the export it reads: the name itself for a named import (`import { a }`), the original for an alias (`import { a as b }`: `b` reads `a`), `default` for a default import and `*` for a namespace import. Type-only imports bind nothing at run time and are left out.
- * Why: Vitest binds each imported module whole, so an imported name has no variable of its own at a test stop, and only the source tells which export a local name stands for; reading the export named like the local name took another module's export for an alias (pt3 /ship Step 11, Cycle 0052 task 70). Only real declarations count: an import written in a comment or a string binds nothing (task 87).
+ * Why: Vitest binds each imported module whole, so an imported name has no variable of its own at a test stop, and only the source tells which export a local name stands for; reading the export named like the local name took another module's export for an alias (pt3 /ship Step 11, Cycle 0052 task 70). Only real declarations count: an import written in a comment or a string, nested templates included, binds nothing (tasks 87, 88), and a quoted export name keeps its comma (task 89).
  * Called by {@link OwnedNodeTestRun} with the source of each stop, for {@link inspectNodeTestVariables}.
  * @param sourceText - The stopped module's source.
  * @returns Each local name the source imports, with the export it reads.
@@ -25,11 +29,7 @@ export function sourceImportBindings(
 ): ReadonlyMap<string, string> {
   const bindings = new Map<string, string>()
   // Comments and template literals become blanks (line breaks kept), and a quoted string never starts a line, so neither can read as a declaration.
-  const code = sourceText.replace(NON_CODE, (span) =>
-    span.startsWith("'") || span.startsWith('"')
-      ? span
-      : span.replace(/[^\n]/g, ' '),
-  )
+  const code = blankCommentsAndTemplates(sourceText)
   for (const [, clause = ''] of code.matchAll(IMPORT_CLAUSE)) {
     // `import type …` binds nothing at run time.
     if (/^type\s/.test(clause)) continue
@@ -46,7 +46,7 @@ export function sourceImportBindings(
  * @example clauseBindings('db, { a as b }') // => [['db', 'default'], ['b', 'a']]
  */
 function clauseBindings(clause: string): Array<[string, string]> {
-  const named = /\{([^}]*)\}/.exec(clause)
+  const named = CLAUSE_BRACES.exec(clause)
   const outside = named ? clause.replace(named[0], '') : clause
   const bindings: Array<[string, string]> = []
   const defaultName = /^([\w$]+)/.exec(outside.trim())?.[1]
@@ -63,12 +63,14 @@ function clauseBindings(clause: string): Array<[string, string]> {
  * @example namedBindings(" a, b as c, type D, 'e-f' as g ") // => [['a', 'a'], ['c', 'b'], ['g', 'e-f']]
  */
 function namedBindings(braces: string): Array<[string, string]> {
-  // The braces hold no comments by now ({@link sourceImportBindings} blanked them), so a comma splits specifiers only.
-  return braces.split(',').flatMap((specifier): Array<[string, string]> => {
-    const parts = NAMED_SPECIFIER.exec(specifier.trim())
-    const exported = parts?.[1] ?? parts?.[2] ?? parts?.[3]
-    return parts && exported !== undefined
-      ? [[parts[4] ?? exported, exported]]
-      : []
-  })
+  // The braces hold no comments by now ({@link sourceImportBindings} blanked them), so only a comma outside quotes splits specifiers.
+  return (braces.match(SPECIFIER) ?? []).flatMap(
+    (specifier): Array<[string, string]> => {
+      const parts = NAMED_SPECIFIER.exec(specifier.trim())
+      const exported = parts?.[1] ?? parts?.[2] ?? parts?.[3]
+      return parts && exported !== undefined
+        ? [[parts[4] ?? exported, exported]]
+        : []
+    },
+  )
 }

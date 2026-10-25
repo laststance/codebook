@@ -74,3 +74,40 @@ test('an import written in a comment or a string binds no name', () => {
   // Assert
   assert.deepEqual([...bindings], [['db', 'db']])
 })
+
+// Value: protects=an import written inside a nested template literal (a template in another template's ${…}, as a fixture builder writes) binds nothing: the whole outer template is no code; fails_when=the masking ends the outer template at the inner one's opening backtick and starts again at its closing one, so the inner template's lines read as code and `fake` binds (Cycle 0052 task 88); why_new=hosted CodeRabbit review of ac852a3c (Major, sourceImportBindings.ts:7); seam=none (a pure function of the source text); no_claim=regular expression literals
+test('an import written inside a nested template literal binds no name', () => {
+  // Arrange
+  const source = [
+    "import { db } from '@/db'",
+    'const fixture = `outer ${`',
+    "import { fake } from './fixture'",
+    '`} tail`',
+  ].join('\n')
+
+  // Act
+  const bindings = sourceImportBindings(source)
+
+  // Assert
+  assert.deepEqual([...bindings], [['db', 'db']])
+})
+
+// Value: protects=a quoted export name that holds a comma or a brace stays one specifier, so its alias reads that export; fails_when=the specifiers are split at every comma, or the braces end at a brace inside quotes, so `value` binds nothing and its fact reads unavailable (Cycle 0052 task 89); why_new=hosted CodeRabbit review of ac852a3c (Minor, sourceImportBindings.ts:67); seam=none; no_claim=escaped quotes inside a quoted export name
+test('a quoted export name holding a comma or a brace stays one import specifier', () => {
+  // Arrange
+  const source =
+    "import { 'a,b' as value, 'c}d' as braced, other } from './module'"
+
+  // Act
+  const bindings = sourceImportBindings(source)
+
+  // Assert
+  assert.deepEqual(
+    [...bindings],
+    [
+      ['value', 'a,b'],
+      ['braced', 'c}d'],
+      ['other', 'other'],
+    ],
+  )
+})
