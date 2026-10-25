@@ -11926,7 +11926,7 @@ export class StudyWorkspace {
    * Only a reader that already stands in the summary composition for a test replay (another test replay was shown) is left as it is; an earlier entry that failed after it left the Live composition is opened again, so the Application, the slot and the debugger never show without a transport (F384).
    * @throws What {@link open} throws; the caller tells it.
    * @param entry - The entry's ticket ({@link nodeHistoryEntryRequest}); an entry a newer one or a Return overtook while it waited for the work window reveals nothing.
-   * @param overtaken - Aborts the wait for the work window when a newer entry, a Return or a Close supersedes the ticket, so the next entry's turn is not held for the focus bound (Cycle 0052 task 40).
+   * @param overtaken - Aborts the waits for the work window, in a standing composition and in {@link open}, when a newer entry, a Return or a Close supersedes the ticket, so the next entry's turn is not held for the focus bound (Cycle 0052 tasks 40 and 44).
    * @throws The abort's reason when the wait is overtaken; the caller ends quietly for a superseded ticket.
    * @example await this.enterSummaryCompositionForReplay(entry, overtaken)
    */
@@ -11948,7 +11948,8 @@ export class StudyWorkspace {
     }
     this.hostOpeningTestReplay = true
     try {
-      await this.open()
+      // The open's waits for the work window end too when a newer entry, a Return or a Close supersedes this one (Cycle 0052 task 44).
+      await this.open(overtaken)
     } finally {
       this.hostOpeningTestReplay = false
     }
@@ -12854,11 +12855,12 @@ export class StudyWorkspace {
       this.playback?.state().studyId ?? this.sourceView?.studyId,
       this.sourceView?.uri.toString(),
     )
-    // A departure releases the recorded viewport before the controller leaves, so the controller's clear reaches no open viewport and the Application pane never paints "Loading recorded position…" while it leaves the replay (Cycle 0052 task 38, N52); a same-study Reload keeps the clear, which reads true there.
-    if (!preserveSummary) this.dropReplayViewport()
+    // A departure releases the recorded viewport and withdraws the Learning summary before the controller leaves: the controller's clear then reaches no open viewport, so the Application pane never paints "Loading recorded position…" (Cycle 0052 task 38), and its leave publishes into no replay summary, which would redraw a departing state (task 43). Only a same-study Reload keeps the clear, which reads true there, and the reader's current Summary with its reading context.
+    if (!preserveSummary) {
+      this.dropReplayViewport()
+      this.clearLearningSummary()
+    }
     this.playback?.leave()
-    // Only same-study Reload keeps the reader's current Summary and its reading context.
-    if (!preserveSummary) this.clearLearningSummary()
     this.dropReplayViewport()
     this.recordingActive = false
     this.playbackPending = undefined
