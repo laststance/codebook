@@ -53,3 +53,24 @@ test('a multi-line import declaration with comments binds each of its names', ()
     ],
   )
 })
+
+// Value: protects=only real import declarations bind names: an import written in a line comment, a block comment, a template literal (a test's source fixture) or a quoted string binds nothing, so no module binding is read for a name the file never imports; fails_when=the declaration pattern runs over comments and strings, so `// import { fake } from './not-loaded'` binds `fake` and another module's export of that name is saved as the fact (Cycle 0052 task 87); why_new=hosted CodeRabbit review of 779c8adf (outside-diff, sourceImportBindings.ts:9-30); seam=none (a pure function of the source text); no_claim=regular expression literals that hold a quote, which the masking does not parse
+test('an import written in a comment or a string binds no name', () => {
+  // Arrange
+  const source = [
+    "// import { fake } from './not-loaded'",
+    "/* import { blocked } from './old'",
+    "   import { stillBlocked } from './old' */",
+    "import { db } from '@/db' // the real one, 'quoted' and // nested",
+    'const fixture = `',
+    "import { fromFixture } from './fixture'",
+    '`',
+    'const line = "import { fromString } from \'./string\'"',
+  ].join('\n')
+
+  // Act
+  const bindings = sourceImportBindings(source)
+
+  // Assert
+  assert.deepEqual([...bindings], [['db', 'db']])
+})
