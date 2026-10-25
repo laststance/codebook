@@ -343,3 +343,62 @@ test('a history page whose history is removed right after its summary was read i
     await harness.close()
   }
 })
+
+// Value: protects=an agent reading a test history's learning material while the history is removed right after its material was read: the resource is refused as NOT_FOUND, not answered with the material of a history that no longer exists; fails_when=the folder is checked only when no material came back, so material read just before the removal answers the page (Cycle 0052 task 94); why_new=hosted CodeRabbit review of 5551addd (outside-diff, resources.ts:170-176); seam=a store whose material read removes the history's folder after it read the material; no_claim=a removal after the page was answered
+test('a history’s learning-material resource whose history is removed right after its material was read is refused as NOT_FOUND', async () => {
+  // Arrange: the history has saved material; it comes back, then the history's folder is gone.
+  const { harness, store, studyId } = await serviceWithOneHistory()
+  await store.saveLearningMaterial(studyId, 0, {
+    question: 'Why did the selected theme become dark?',
+    title: 'Theme update',
+    summary: 'The captured output shows the run.',
+    participants: [
+      { id: 'test', label: 'Test' },
+      { id: 'theme', label: 'Theme' },
+    ],
+    steps: [
+      {
+        id: 'step-1',
+        from: 'test',
+        to: 'theme',
+        label: 'Reads the theme',
+        explanation: 'Observed at this event.',
+        evidence: 'observed',
+        reference: { type: 'output', sequence: 1, channel: 'stdout' },
+      },
+    ],
+  })
+  const historyFolder = join(
+    harness.directory,
+    '.learning',
+    'node-tests.v1',
+    studyId,
+  )
+  const readLearningMaterial = store.readLearningMaterial.bind(store)
+  store.readLearningMaterial = async (id) => {
+    const material = await readLearningMaterial(id)
+    await rm(historyFolder, { recursive: true, force: true })
+    return material
+  }
+  try {
+    // Act
+    const answer = await readResource(
+      harness.service,
+      `codebook://node-history/${studyId}/learning-material`,
+    ).then(
+      () => 'answered',
+      (error: unknown) =>
+        error instanceof StudyError
+          ? { code: error.code, message: error.message }
+          : String(error),
+    )
+
+    // Assert
+    assert.deepEqual(answer, {
+      code: 'NOT_FOUND',
+      message: `No Node test history ${studyId} is saved in this workspace. Read codebook://node-history and copy the studyId or historyUri of the history you mean.`,
+    })
+  } finally {
+    await harness.close()
+  }
+})

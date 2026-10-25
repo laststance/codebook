@@ -169,8 +169,8 @@ export async function readResource(
     ) {
       const material = await withKnownNodeHistory(store, studyId, async () => {
         const saved = await store.readLearningMaterial(studyId)
-        // No material because the history was removed meanwhile is an unknown history, not one without material (Cycle 0052 task 78).
-        if (saved === undefined && !store.holdsHistoryFolder(studyId))
+        // A history removed meanwhile is an unknown history, whether its material came back empty or was read just before the removal (Cycle 0052 tasks 78, 94).
+        if (!store.holdsHistoryFolder(studyId))
           throw unknownNodeHistoryError(studyId)
         return saved
       })
