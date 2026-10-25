@@ -787,11 +787,6 @@ function studyClient(
       })
   }
   /**
-   * Carries out a shared transport button for a test replay (DS-C): Replay from start selects the first event, Previous and Next recorded stop step by stop, and Play or Pause runs the test replay's playback; called by the page's click handler while the summary composition shows a test replay.
-   * @param control - The button's `data-playback` value.
-   * @example playTestReplayControl('start')
-   */
-  /**
    * Runs a shared transport control for the replay family the page shows (DS-C): a test replay's moves by event and stop, a browser recording's seeks and Play; called by the page's click handler for a `data-playback` button.
    * @param control - The button's `data-playback` value: `start`, `previous`, `next`, `play` or `pause`.
    * @example playTransportControl('next') // a test replay: node-history-step to the next stop
@@ -813,6 +808,11 @@ function studyClient(
       if (position !== undefined) playback('seek', position)
     } else if (control === 'play' || control === 'pause') playback(control)
   }
+  /**
+   * Carries out a shared transport button for a test replay (DS-C): Replay from start selects the first event, Previous and Next recorded stop step by stop, and Play or Pause runs the test replay's playback; called by {@link playTransportControl} while the page shows a test replay.
+   * @param control - The button's `data-playback` value.
+   * @example playTestReplayControl('start')
+   */
   const playTestReplayControl = (control: string): void => {
     if (control === 'start')
       selectTestReplayEvent(current?.nodeHistoryPlayback?.firstSequence)
@@ -2076,17 +2076,17 @@ function studyClient(
     focusHolder = undefined
     target.focus({ preventScroll: true })
   }
-  /**
-   * Gives a replay's Learning summary that the learner opens with the focus on the document body and no control ever focused in it (its first open, an empty history) its title heading, so the keyboard starts at the top of the summary and the reading position stays (DS-E); called at the window's focus event after {@link settleFocus}, which places a held control first.
-   * A summary in which the learner has used a control keeps the pane's own return rule, so a focus the learner took off a control stays off it. The Study pane and the bottom panel's pane keep their own rules.
-   * @example focusSummaryStart() // the focus on `#title` after Codebook: Show Learning Summary
-   */
   // Whether any control of this document has had the keyboard focus, which ends {@link focusSummaryStart}'s first-open rule.
   let controlEverFocused = false
   document.addEventListener('focusin', (event) => {
     if (event.target instanceof HTMLElement && event.target !== document.body)
       controlEverFocused = true
   })
+  /**
+   * Gives a replay's Learning summary that the learner opens with the focus on the document body and no control ever focused in it (its first open, an empty history) its title heading, so the keyboard starts at the top of the summary and the reading position stays (DS-E); called at the window's focus event after {@link settleFocus}, which places a held control first.
+   * A summary in which the learner has used a control keeps the pane's own return rule, so a focus the learner took off a control stays off it. The Study pane and the bottom panel's pane keep their own rules.
+   * @example focusSummaryStart() // the focus on `#title` after Codebook: Show Learning Summary
+   */
   const focusSummaryStart = (): void => {
     if (
       controlEverFocused ||
@@ -2475,12 +2475,6 @@ function studyClient(
   const isReplayInBottomPanel = (message: StudyViewMessage): boolean =>
     isBottomPanel && Boolean(replayFamilyOf(message))
   /**
-   * Names the shown test replay by its test file and title path, as Saved studies and a failed open's notification do; read by the message listener for the summary's heading (DS-B).
-   * @param message - The current Study message.
-   * @returns The test file and titles joined with ` › `, or the section's heading when the catalog does not list the replay.
-   * @example testReplayTitle(message) // => 'app/lib/data.test.ts › invoice data queries'
-   */
-  /**
    * Draws the shared transport for the replay family the summary composition shows (DS-C): a test replay's controls, or a browser recording's, which give the slider back; called on every Study message.
    * @param message - The current Study message.
    * @param isTransportShown - Whether this pane shows the transport ({@link showsTransport}).
@@ -2522,6 +2516,12 @@ function studyClient(
     text('recording-save-state', '')
     element('evidence-details').hidden = true
   }
+  /**
+   * Names the shown test replay by its test file and title path, as Saved studies and a failed open's notification do; read by {@link readerHeading} for the summary's heading (DS-B).
+   * @param message - The current Study message.
+   * @returns The test file and titles joined with ` › `, or the section's heading when the catalog does not list the replay.
+   * @example testReplayTitle(message) // => 'app/lib/data.test.ts › invoice data queries'
+   */
   const testReplayTitle = (message: StudyViewMessage): string => {
     const studyId = message.nodeHistory?.header.studyId
     const summary = message.nodeHistoryCatalog?.find(

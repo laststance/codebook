@@ -11562,7 +11562,7 @@ export class StudyWorkspace {
    * @example await workspace.openLearningReplay(studyId)
    */
   async openLearningReplay(studyId: string): Promise<void> {
-    // A test replay opens in the Study pane, not through the browser replay's controller.
+    // A test replay opens in its summary composition through its own entry, not through the browser replay's controller (Cycle 0051, DS-A).
     if (this.isTestReplayStudy(studyId))
       return this.openNodeHistoryFromHost(studyId)
     await this.openRecording(studyId)
