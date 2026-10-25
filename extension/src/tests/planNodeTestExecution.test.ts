@@ -497,6 +497,26 @@ test('a root listing that was cancelled, passed its deadline or left its process
   assert.deepEqual(results, ['refused', 'refused', 'refused'])
 })
 
+// Value: protects=a declared path that starts with "-" never reaching a root listing, where Vitest would read it as an option; the test runs in its package, whose path from there is an ordinary filter; fails_when=the root claim lists with such a filter; why_new=local CodeRabbit review of Cycle 0053 (the dash check came after the claim's listing); seam=real files, a root listing that fails the test if called; no_claim=a path that starts with "-" from its own Vitest root (refused, tested above)
+test('a declared path that starts with a dash makes no root claim and runs in its package', async (context) => {
+  // Arrange
+  const root = await repository(context)
+  await write(root, 'vitest.config.ts')
+  await write(root, '-pkg/vitest.config.ts')
+  await write(root, '-pkg/a.test.ts')
+  await installVitest(root, '.', '5.0.2')
+  const { plan, claims } = planWith(root, '-pkg/a.test.ts')
+
+  // Act
+  const planned = await plan
+
+  // Assert
+  assert.deepEqual(claims, [])
+  assert.equal(planned.summary.vitestRoot, '-pkg')
+  assert.equal(planned.summary.rootClaim, 'not-applicable')
+  assert.equal(planned.filter, 'a.test.ts')
+})
+
 // Value: protects=a root claim made only with the root's own usable Vitest; fails_when=a root Vitest below 4 is asked to list, or its refusal stops a package test that has a usable Vitest of its own; why_new=task 2 (an unusable root Vitest skips the claim); seam=real files; no_claim=a missing root Vitest (the same branch)
 test('a root Vitest older than 4 skips the root claim and leaves the test in its package', async (context) => {
   // Arrange

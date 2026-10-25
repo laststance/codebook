@@ -69,7 +69,7 @@ type ChosenVitestRoot = {
 }
 
 /**
- * Makes the root claim for a test whose config walk stopped below the opened root: where the root holds a config file (and no config-named folder or outside link) and its own Vitest is usable, the root's listing of the cited test decides ({@link decideNodeTestRootClaim}).
+ * Makes the root claim for a test whose config walk stopped below the opened root: where the root holds a config file (and no config-named folder or outside link), its own Vitest is usable and the declared path does not start with `-`, the root's listing of the cited test decides ({@link decideNodeTestRootClaim}).
  * @param input - The plan's input.
  * @param walk - Where the config walk stopped.
  * @returns
@@ -98,6 +98,8 @@ async function claimFromRoot(
     () => undefined,
   )
   if (!rootVitest) return atWalk
+  // A declared path that Vitest would read as an option is never passed to a root listing.
+  if (input.declaredTestFile.startsWith('-')) return atWalk
   const listing = await input.listRootClaim({
     program: rootVitest.program,
     vitestRoot: root,
