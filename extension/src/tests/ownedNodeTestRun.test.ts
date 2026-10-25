@@ -81,11 +81,14 @@ async function nodeRunHarness({
   outputRefusesOnceClosed = false,
   unansweredRequest,
   unavailableFacts = [],
+  duringInspection,
 }: {
   declaredStops?: number
   observedLine?: number
   /** The required facts, as `<mode>:<path>`, that the inspector reports it could not read at each stop. */
   unavailableFacts?: string[]
+  /** Runs while the inspector reads a stop's facts, after the capture's first read of the stopped source. */
+  duringInspection?: () => Promise<void>
   duringRetire?: () => void
   adapterPauseAfterContinue?: boolean
   exitAfterEntry?: boolean
@@ -686,11 +689,10 @@ async function nodeRunHarness({
         }),
       },
       './utils/inspectNodeTestVariables': {
-        inspectNodeTestVariables: async () => ({
-          variables: [],
-          facts: [],
-          unavailable: unavailableFacts,
-        }),
+        inspectNodeTestVariables: async () => {
+          await duringInspection?.()
+          return { variables: [], facts: [], unavailable: unavailableFacts }
+        },
       },
       './utils/captureReplayDebugSnapshot': {
         captureReplayDebugSnapshot: async () => ({
@@ -865,6 +867,35 @@ test('a run whose first declared stop came without an entry pause advances to it
     // Assert
     assert.equal(next.index, 1)
     assert.equal(result.exitCode, 0)
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=the imports a stop's facts are read with come from the same bytes the capture verifies: a stopped source that differs from the declared one when it is first read fails the capture, even when it is back to the declared text when the capture reads it again; fails_when=only the second read is verified, so facts read with another version's import declarations are saved beside the declared source (Cycle 0052 task 97); why_new=hosted CodeRabbit review of 657d677b (outside-diff, ownedNodeTestRun.ts:693-701); seam=the stopped source file, changed before the capture and restored while the inspector reads; no_claim=a change after the second read, which the editor-document check covers
+test('a stop whose source differs from the declared one when the capture first reads it fails the capture, though the source is restored before its second read', async () => {
+  // Arrange: the source holds another version until the inspector runs, then the declared text again.
+  let restore: () => Promise<void> = async () => {}
+  const harness = await nodeRunHarness({
+    duringInspection: () => restore(),
+  })
+  const sourceFile = join(harness.launch.workspace, 'theme.ts')
+  const declaredText = 'export const nextTheme = "dark";\n'
+  await writeFile(sourceFile, 'export const nextTheme = "light";\n')
+  restore = (): Promise<void> => writeFile(sourceFile, declaredText)
+  try {
+    // Act
+    const outcome = await harness.run.prepare().then(
+      () => 'captured',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.equal(
+      outcome,
+      'Error: Node test source changed during historical debugger capture.',
+    )
   } finally {
     await harness.run.stop()
     await harness.cleanup()

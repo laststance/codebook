@@ -690,9 +690,10 @@ export class OwnedNodeTestRun {
       throw new Error(
         'Native debugger supplied no variable scope at the source stop.',
       )
-    // The stopped module's imports tell which export each imported name reads (Cycle 0052 task 70); the source is verified again after the capture.
+    // The stopped module's imports tell which export each imported name reads (Cycle 0052 task 70); these bytes are verified with the second read after the capture (task 97).
+    const capturedSourceBytes = await readFile(selected.file)
     const sourceImports = sourceImportBindings(
-      await readFile(selected.file, 'utf8'),
+      capturedSourceBytes.toString('utf8'),
     )
     const result = await inspectNodeTestVariables(
       bound.session,
@@ -718,7 +719,11 @@ export class OwnedNodeTestRun {
     assertCurrent()
     const sourceBytes = await readFile(selected.file)
     assertCurrent()
-    if (sha256(sourceBytes) !== selected.source.hash)
+    // Both reads must be the declared source: the imports were read from the first, the snapshot cites the second.
+    if (
+      sha256(capturedSourceBytes) !== selected.source.hash ||
+      sha256(sourceBytes) !== selected.source.hash
+    )
       throw new Error(
         'Node test source changed during historical debugger capture.',
       )
