@@ -1503,7 +1503,7 @@ test('a learning material saved while the test run records is kept on the run an
   }
 })
 
-// Value: protects=codebook_explain_node_history telling a stale material revision (IDEMPOTENCY_CONFLICT) from a citation that merely names a path containing the words "revision changed" (INVALID_REFERENCE stays); fails_when=the conflict is recognized by searching the error text, so a stop in src/revision changed.ts turns INVALID_REFERENCE into IDEMPOTENCY_CONFLICT, or a real stale revision stops being a conflict; why_new=explainNodeHistory mapped the error by its text (F44); seam=the history store's save is replaced by one that throws; no_claim=the store's own revision check (nodeTestHistoryStore tests)
+// Value: protects=codebook_explain_node_history telling a stale material revision (IDEMPOTENCY_CONFLICT) from a citation that merely names a path containing the words "revision changed" (INVALID_REFERENCE stays); fails_when=the conflict is recognized by searching the error text, so a stop in src/revision changed.ts turns INVALID_REFERENCE into IDEMPOTENCY_CONFLICT, or a real stale revision stops being a conflict; why_new=explainNodeHistory mapped the error by its text (F44); seam=the history store's save is replaced by one that throws, and its folder check by one that finds the folder; no_claim=the store's own revision check (nodeTestHistoryStore tests)
 test('explain_node_history answers IDEMPOTENCY_CONFLICT for a stale revision and keeps INVALID_REFERENCE for a citation whose path says "revision changed"', async () => {
   // Arrange
   const run = await testRunHarness()
@@ -1514,6 +1514,8 @@ test('explain_node_history answers IDEMPOTENCY_CONFLICT for a stale revision and
   ])
   const input = { studyId, expectedRevision: 0, content }
   try {
+    // The store holds a folder for the id, so the save is reached (an unknown id is refused before it, Cycle 0052 task 60).
+    store.holdsHistoryFolder = () => true
     store.saveLearningMaterial = async () => {
       throw new StudyError(
         'INVALID_REFERENCE',

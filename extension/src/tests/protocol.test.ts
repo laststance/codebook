@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { request } from 'node:http'
 import { connect as connectSocket } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -11,6 +11,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { z } from 'zod'
 
 import {
+  NODE_TEST_HISTORY_DIRECTORY,
   REPOSITORY_BROWSER_PROFILE as PROFILE_ID,
   SESSION_IDLE_TIMEOUT_MS,
 } from '../constants'
@@ -1010,8 +1011,8 @@ test('Node learning material is exposed through MCP with exact workspace history
   }
 })
 
-// Value: protects=the agent's answer when a test replay's history cannot be read (its folder removed by the learner or another window): RUNTIME_FAILED whose cause reads <storage> where the file call quoted the private storage folder, through codebook_read_resource (F243); fails_when=the raw file error, with the absolute storage path, reaches the tool's structured error; why_new=the MCP answers passed an unexpected failure's String(error) through unchanged, and no test read a failed history read through MCP; seam=none; no_claim=the MCP resources/read route, which serves no node-history address; the wording of other domain errors, which carry their own sanitized causes
-test('a test replay whose history folder is gone is answered through MCP with a cause that names no storage path', async () => {
+// Value: protects=the agent's answer when a test replay's history cannot be read (its files removed by the learner or another window while its folder stays): RUNTIME_FAILED whose cause reads <storage> where the file call quoted the private storage folder, through codebook_read_resource (F243); fails_when=the raw file error, with the absolute storage path, reaches the tool's structured error; why_new=the MCP answers passed an unexpected failure's String(error) through unchanged, and no test read a failed history read through MCP; Cycle 0052 task 60 moved the case from a removed folder, which is now NOT_FOUND (nodeHistoryResources tests), to removed files, which is still an unexpected failure; seam=none; no_claim=the MCP resources/read route, which serves no node-history address; the wording of other domain errors, which carry their own sanitized causes
+test('a test replay whose history files are gone is answered through MCP with a cause that names no storage path', async () => {
   // Arrange
   const harness = await createHarness(),
     directory = await mkdtemp(join(tmpdir(), 'codebook-node-history-gone-'))
@@ -1020,6 +1021,10 @@ test('a test replay whose history folder is gone is answered through MCP with a 
     directory,
     header.workspaceKey,
   )
+  // The history's folder stays, its files are gone.
+  await mkdir(join(directory, NODE_TEST_HISTORY_DIRECTORY, header.studyId), {
+    recursive: true,
+  })
   const endpoint = await startServer(harness.service),
     connection = await connect(endpoint.descriptor)
   const historyUri = `codebook://node-history/${header.studyId}`

@@ -146,6 +146,7 @@ import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
 import { studyErrorNamingCause } from './utils/studyErrorNamingCause'
 import { systemErrorCode } from './utils/systemErrorCode'
 import { thrownMessage } from './utils/thrownMessage'
+import { unknownNodeHistoryError } from './utils/unknownNodeHistoryError'
 import { waitForNextRunState } from './utils/waitForNextRunState'
 
 /** What the run resource tells an agent after the result while no explanation of the run carries a learning summary; `codebook://help/studies` describes the step in the last entry of its sequence. */
@@ -1993,6 +1994,9 @@ export class StudyService {
         'PREREQUISITE_MISSING',
         'Workspace-bound Node history storage is unavailable.',
       )
+    // An id this workspace holds no history for is a reference to correct, as at the history's resources.
+    if (!this.nodeHistoryStore.holdsHistoryFolder(parsed.studyId))
+      throw unknownNodeHistoryError(parsed.studyId)
     try {
       const material = await this.nodeHistoryStore.saveLearningMaterial(
         parsed.studyId,

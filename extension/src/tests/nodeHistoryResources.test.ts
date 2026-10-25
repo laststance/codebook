@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { StudyError } from '../errors'
 import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
 import { readResource } from '../resources'
 
@@ -113,6 +114,71 @@ test('a history’s events and learning-material pages read no summary, and its 
         ['learningMissing', [{ kind: 'summary' }]],
       ],
     )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an agent that mistypes one character of a history's study id: the history's resources and codebook_explain_node_history refuse it as NOT_FOUND, naming the id and the catalog to copy a valid one from; fails_when=the store's raw ENOENT reaches the agent as RUNTIME_FAILED "The study operation failed." with a recovery about owned resources and clicks, as N52 saw in VS Code (Copilot Chat read 4735 for 473e in a history's id); why_new=Cycle 0052 task 60 (N52 pt3, VS Code); seam=a real store over a temporary folder that holds one other history; no_claim=a malformed id, which the URI pattern and the input schema refuse first
+test('a history resource or an explanation that names a study id this workspace holds no history for is refused as NOT_FOUND, naming the id and the catalog', async () => {
+  // Arrange: the workspace holds one history; the agent names an id of the same form that no history has.
+  const { harness } = await serviceWithOneHistory()
+  const unknownStudyId =
+    '11111111-1111-4111-8111-111111111111_22222222-2222-4222-8222-222222222222'
+  try {
+    // Act
+    const answers = await Promise.all(
+      [
+        readResource(
+          harness.service,
+          `codebook://node-history/${unknownStudyId}`,
+        ),
+        readResource(
+          harness.service,
+          `codebook://node-history/${unknownStudyId}/learning-material`,
+        ),
+        harness.service.explainNodeHistory({
+          studyId: unknownStudyId,
+          expectedRevision: 0,
+          content: {
+            question: 'Why did the selected theme become dark?',
+            title: 'Theme update',
+            summary: 'The captured stop shows the dark value.',
+            participants: [
+              { id: 'test', label: 'Test' },
+              { id: 'theme', label: 'Theme' },
+            ],
+            steps: [
+              {
+                id: 'step-1',
+                from: 'test',
+                to: 'theme',
+                label: 'Reads the theme',
+                explanation: 'Observed at this event.',
+                evidence: 'observed',
+                reference: { type: 'output', sequence: 1, channel: 'stdout' },
+              },
+            ],
+          },
+        }),
+      ].map((answer) =>
+        answer.then(
+          () => 'answered',
+          (error: unknown) =>
+            error instanceof StudyError
+              ? { code: error.code, message: error.message }
+              : String(error),
+        ),
+      ),
+    )
+
+    // Assert
+    const refusal = {
+      code: 'NOT_FOUND',
+      message:
+        'No Node test history 11111111-1111-4111-8111-111111111111_22222222-2222-4222-8222-222222222222 is saved in this workspace. Read codebook://node-history and copy the studyId or historyUri of the history you mean.',
+    }
+    assert.deepEqual(answers, [refusal, refusal, refusal])
   } finally {
     await harness.close()
   }

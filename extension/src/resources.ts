@@ -45,6 +45,7 @@ import { readRecordingResource } from './utils/readRecordingResource'
 import { readRepositoryResource } from './utils/readRepositoryResource'
 import { secondsText } from './utils/secondsText'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
+import { unknownNodeHistoryError } from './utils/unknownNodeHistoryError'
 
 /** The active-progress deadline in the whole seconds the repository-browser help names, so the help follows {@link ACTIVE_TIMEOUT_MS}. */
 const ACTIVE_TIMEOUT_SECONDS = ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND
@@ -146,6 +147,9 @@ export async function readResource(
         'NOT_FOUND',
         'Node history storage is unavailable for this workspace.',
       )
+    // An id this workspace holds no history for (mistyped, or another workspace's) is a reference to correct, not a failed study operation.
+    if (!service.nodeHistoryStore.holdsHistoryFolder(nodeHistoryMatch[1]))
+      throw unknownNodeHistoryError(nodeHistoryMatch[1])
     const history = await service.nodeHistoryStore.read(nodeHistoryMatch[1])
     const baseUri = `codebook://node-history/${nodeHistoryMatch[1]}`
     if (nodeHistoryMatch[2] === 'events')
