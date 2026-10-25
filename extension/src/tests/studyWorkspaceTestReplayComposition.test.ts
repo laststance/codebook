@@ -1660,3 +1660,64 @@ test('an agent’s Return to Live that supersedes an entering test replay leaves
     await harness.close()
   }
 })
+
+// Value: protects=a test replay opened while a same-study Reload of a browser replay still loads asks to close that browser replay first, and closing it cancels the pending load, so the load never comes back over the test replay; fails_when=the entry treats the reloading replay as gone, opens the test replay, and the resumed load retires it for the browser replay (local CodeRabbit round 5, major); why_new=Cycle 0052 task 18's Reload mark; seam=the reload held at its debugger replacement, answerWarningDialogs choosing Close browser replay; no_claim=the native notification
+test('a test replay opened during a same-study Reload closes the reloading browser replay and stays shown', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  let release = (): void => {}
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const reader = harness.reader as unknown as {
+      replaceUnavailableReplayDebugger: (signal?: AbortSignal) => Promise<void>
+    }
+    const replace = reader.replaceUnavailableReplayDebugger.bind(harness.reader)
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let entered = (): void => {}
+    const reloadWaits = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    reader.replaceUnavailableReplayDebugger = async (
+      signal?: AbortSignal,
+    ): Promise<void> => {
+      entered()
+      await held
+      return replace(signal)
+    }
+    let noticesShown = 0
+    harness.answerWarningDialogs(async () => {
+      noticesShown++
+      return 'Close browser replay'
+    })
+    const reload = harness.reader.action('reload-recording')
+    await reloadWaits
+
+    // Act: the learner opens the test replay while the Reload still loads; the load goes on afterwards.
+    const entry = harness.reader.openLearningReplay(history.studyId)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    release()
+    await Promise.all([entry, reload])
+    await harness.controller.settle()
+    await landsOn(harness, 2, 'the test replay stays on its first stop')
+
+    // Assert
+    assert.deepEqual(
+      {
+        noticesShown,
+        testReplay: harness.reader.inspect().view?.nodeHistory?.header.studyId,
+        recording: harness.controller.state().studyId,
+      },
+      { noticesShown: 1, testReplay: history.studyId, recording: undefined },
+    )
+  } finally {
+    release()
+    await harness.close()
+  }
+})

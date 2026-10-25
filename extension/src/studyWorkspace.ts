@@ -11805,7 +11805,10 @@ export class StudyWorkspace {
   private async closeBrowserReplayForTestReplay(
     entry: number,
   ): Promise<boolean> {
-    if (!this.recordingActive) return true
+    // A same-study Reload still loading is the browser replay shown (Cycle 0052 task 18).
+    const browserReplayShown = (): boolean =>
+      this.recordingActive || this.recordingReloadStudyId !== undefined
+    if (!browserReplayShown()) return true
     const studyId = this.selection.studyId,
       revision = this.playback?.state().revision
     const refusal = describeNodeLearningSave({ kind: 'open-refused' })
@@ -11818,13 +11821,13 @@ export class StudyWorkspace {
     if (
       action !== NODE_LEARNING_SAVE_ACTION.closeBrowserReplay ||
       entry !== this.nodeHistoryEntryRequest ||
-      !this.recordingActive ||
+      !browserReplayShown() ||
       this.selection.studyId !== studyId ||
       this.playback?.state().revision !== revision
     )
       return false
     await this.returnCurrentSelection('learner')
-    return !this.recordingActive
+    return !browserReplayShown()
   }
 
   /**
@@ -12758,10 +12761,18 @@ export class StudyWorkspace {
    */
   private leavePlayback(preserveSummary = false): void {
     // An explicit departure supersedes a same-study Reload that is still loading.
+    const reloading = this.recordingReloadStudyId !== undefined
     if (!preserveSummary) this.recordingReloadStudyId = undefined
     this.nodeHistoryPlaybackController?.pause()
     this.repositoryRecordingOpen = undefined
-    if (!this.recordingActive) return
+    if (!this.recordingActive) {
+      // The Reload's pending load is cancelled with the departure, so it never comes back over the reader's next choice (Cycle 0052 task 18).
+      if (reloading && !preserveSummary) {
+        this.playback?.leave()
+        this.clearLearningSummary()
+      }
+      return
+    }
     // The captured-source tabs it has now are closed once, when a test replay's slot first shows over them; tabs opened later are not (F466, F474).
     this.retiredBrowserReplayTabs = this.browserReplaySourceTabs(
       this.playback?.state().studyId ?? this.sourceView?.studyId,
@@ -23189,7 +23200,8 @@ export class StudyWorkspace {
     )
       this.publish()
     if (message.type === 'node-history') {
-      if (this.recordingActive)
+      // A same-study Reload still loading counts as the browser replay shown (Cycle 0052 task 18).
+      if (this.recordingActive || this.recordingReloadStudyId !== undefined)
         throw new Error('Close browser replay before opening a test replay.')
       // A Saved studies choice is the learner's entry: it enters the summary composition and tells a failure as Open replay does (DS-A, DS-G).
       await this.openNodeHistoryFromHost(message.studyId, message.revision)
