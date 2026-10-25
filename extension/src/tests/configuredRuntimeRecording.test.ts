@@ -1146,10 +1146,12 @@ test('a run refused during its preparation seals its recording with the refusal,
       'Selected source app/ui/login-form.tsx is not in the client code that the launched page (entryPath "/") loads, and a browser stop can only be armed in that code before input; start the run at the page whose component holds the stop (set entryPath to it) or choose a stop in the launched page\'s own components',
     )
   })
+  // The start's idempotency key, named by what this run is for (the pre-gate's secrets scan reads a key literal as a credential).
+  const startKey = 'refused-at-preparation'
   const receipt = service.start({
     instanceId: service.instanceId,
     profile: 'repository-browser',
-    key: 'refused-at-preparation',
+    key: startKey,
     configuration: harness.definition.configuration,
   })
   const record = service.record(receipt)

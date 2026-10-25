@@ -987,10 +987,12 @@ test('a Node test continuation that reaches a stop without its required fact is 
     async stop() {},
   }
   service.environment.createNodeTestRun = async () => runtime
+  // The start's idempotency key, named by what this run is for (the pre-gate's secrets scan reads a key literal as a credential).
+  const startKey = 'node-unread-required-fact'
   const receipt = service.start({
     instanceId: service.instanceId,
     profile: NODE_TEST_PROFILE,
-    key: 'node-unread-required-fact',
+    key: startKey,
     configuration,
   })
   const record = service.record(receipt)

@@ -20,17 +20,17 @@ export type NodeTestFact = {
 /**
  * Reads only the declared debugger paths of a Node test stop through native DAP scopes, never evaluating an expression or retaining other local values; called by {@link OwnedNodeTestRun} at an owned source stop.
  * A path's root is the scope variable of that name, or, when none has it, the name a module exports to the stopped module: Vitest binds each imported module whole ({@link NODE_TEST_MODULE_BINDING_NAME}), a mocked one as a Proxy whose exports sit under {@link DEBUGGER_PROXY_TARGET_NAME}, an unmocked one as a namespace of getters that the debugger shows lazily. A lazy value on the path is expanded once, as the Variables view does (Cycle 0052 task 5).
- * @param session - Verified native debug session.
+ * @param debugSession - Verified native debug session.
  * @param scopes - Scopes of its checked source frame.
  * @param inspections - Validated requested facts.
  * @param signal - Run cancellation.
  * @returns The facts read; the variables they came from; and, as `<mode>:<path>`, each required fact the debugger could not read (absent, ambiguous between two imported modules, empty or longer than {@link REPOSITORY_LITERAL_LIMIT_CHARS}), which the caller reports while the stop stays accepted. An unreadable optional fact is left out, as before.
  * @example
- * await inspectNodeTestVariables(session, scopes, [{ path: 'revalidatePath.mock.calls.length', mode: 'value', required: true }], signal)
+ * await inspectNodeTestVariables(debugSession, scopes, [{ path: 'revalidatePath.mock.calls.length', mode: 'value', required: true }], signal)
  * // => { facts: [{ path: 'revalidatePath.mock.calls.length', mode: 'value', display: '1', type: 'number' }], variables: [...], unavailable: [] }
  */
 export async function inspectNodeTestVariables(
-  session: Pick<vscode.DebugSession, 'customRequest'>,
+  debugSession: Pick<vscode.DebugSession, 'customRequest'>,
   scopes: DebugProtocol.Scope[],
   inspections: RepositoryInspection[],
   signal: AbortSignal,
@@ -39,7 +39,7 @@ export async function inspectNodeTestVariables(
   variables: DebugProtocol.Variable[]
   unavailable: string[]
 }> {
-  const read = debuggerVariableReader(session, signal)
+  const read = debuggerVariableReader(debugSession, signal)
   // Only lexical runtime scopes can supply an operation fact; global state is unrelated to this stop.
   const lexicalScopes = scopes.filter(
     (scope) => !scope.name.toLowerCase().includes('global'),
@@ -90,13 +90,13 @@ type DebuggerVariableReader = (
 
 /**
  * Makes the cached reader of debugger variable children that one inspection pass shares; called by {@link inspectNodeTestVariables}.
- * @param session - The native debug session.
+ * @param debugSession - The native debug session.
  * @param signal - Run cancellation.
  * @returns A reader answering an invalid or empty reference with no children.
- * @example const read = debuggerVariableReader(session, signal); await read(7) // => [{ name: 'count', value: '3', ... }]
+ * @example const read = debuggerVariableReader(debugSession, signal); await read(7) // => [{ name: 'count', value: '3', ... }]
  */
 function debuggerVariableReader(
-  session: Pick<vscode.DebugSession, 'customRequest'>,
+  debugSession: Pick<vscode.DebugSession, 'customRequest'>,
   signal: AbortSignal,
 ): DebuggerVariableReader {
   const cache = new Map<number, DebugProtocol.Variable[]>()
@@ -105,7 +105,9 @@ function debuggerVariableReader(
     const cached = cache.get(reference)
     if (cached) return cached
     const response = (await awaitResponse(
-      session.customRequest('variables', { variablesReference: reference }),
+      debugSession.customRequest('variables', {
+        variablesReference: reference,
+      }),
       'owned Node debugger variables',
       signal,
     )) as DebugProtocol.VariablesResponse['body']
