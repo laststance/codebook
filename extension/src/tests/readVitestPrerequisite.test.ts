@@ -27,61 +27,69 @@ async function repository(): Promise<{
   }
 }
 
-/** Writes `node_modules/vitest/package.json` with the given version field under a folder. */
+/** Writes `node_modules/vitest/package.json` with the given version field under a folder, and its program `vitest.mjs` unless told otherwise. */
 async function writeVitestPackage(
   folder: string,
   version: unknown,
+  withProgram = true,
 ): Promise<void> {
   await mkdir(join(folder, 'node_modules', 'vitest'), { recursive: true })
   await writeFile(
     join(folder, 'node_modules', 'vitest', 'package.json'),
     JSON.stringify({ name: 'vitest', version }),
   )
+  if (withProgram)
+    await writeFile(join(folder, 'node_modules', 'vitest', 'vitest.mjs'), '')
 }
 
-// Value: protects=codebook_status naming the root Vitest node-test runs before any start; fails_when=a supported root Vitest is reported missing, or its version or major is lost; why_new=the Vitest check ran only inside the launch, after the history began (X9, EN11); seam=none; no_claim=Vitest's own behavior
-test('a repository with Vitest 4 or later at its root is ready for node-test', async () => {
+// Value: protects=the Vitest node-test runs, read before any start; fails_when=a supported Vitest with its program is not usable, or its version, major, program or package folder is lost; why_new=the Vitest check ran only inside the launch, after the history began (X9, EN11); Cycle 0053 reads one directory's Vitest instead of the root's alone (task 2), so the result names its program and package folder; seam=none; no_claim=Vitest's own behavior
+test('a Vitest 4 or later with its program is usable for node-test', async () => {
   // Arrange
   const { root, cleanup } = await repository()
   try {
     await writeVitestPackage(root, '4.1.11')
 
     // Act
-    const prerequisite = await readVitestPrerequisite(root)
+    const prerequisite = await readVitestPrerequisite(root, root)
 
     // Assert
-    assert.deepEqual(prerequisite, { ready: true, version: '4.1.11', major: 4 })
+    assert.deepEqual(prerequisite, {
+      state: 'usable',
+      version: '4.1.11',
+      major: 4,
+      program: join(root, 'node_modules', 'vitest', 'vitest.mjs'),
+      packageDirectory: join(root, 'node_modules', 'vitest'),
+    })
   } finally {
     await cleanup()
   }
 })
 
-// Value: protects=the status sentence for an older root Vitest and for none, before any start; fails_when=either sentence differs from the String catalog or omits what to ask the learner; why_new=X9 getting started; seam=none; no_claim=package-root Vitest support (a later candidate)
-test('an older root Vitest and a missing one are named with what to ask the learner', async () => {
+// Value: protects=an older Vitest named with its version, and a supported one that lacks its program told apart from it, before any start; fails_when=Vitest 3 reads usable or loses its version, or a Vitest 5 without vitest.mjs reads usable; why_new=X9 getting started; Cycle 0053 moved the sentences to their callers (the start's refusals and the readiness search) and the missing-Vitest case to the walk that finds none (task 2), and usable now needs the program (Eng review); seam=none; no_claim=the sentences, pinned by requireOwnedVitest and searchRepositoryVitest tests
+test('an older Vitest names its version, and a supported one without its program is told apart', async () => {
   // Arrange
   const older = await repository()
-  const none = await repository()
+  const withoutProgram = await repository()
   try {
     await writeVitestPackage(older.root, '3.2.4')
+    await writeVitestPackage(withoutProgram.root, '5.0.2', false)
 
     // Act
-    const olderPrerequisite = await readVitestPrerequisite(older.root)
-    const nonePrerequisite = await readVitestPrerequisite(none.root)
+    const olderPrerequisite = await readVitestPrerequisite(
+      older.root,
+      older.root,
+    )
+    const withoutProgramPrerequisite = await readVitestPrerequisite(
+      withoutProgram.root,
+      withoutProgram.root,
+    )
 
     // Assert
-    assert.deepEqual(olderPrerequisite, {
-      ready: false,
-      reason:
-        'node-test needs Vitest 4 or later at the repository root; this repository has 3.2.4 (node_modules/vitest/package.json). Ask the learner to upgrade it, then call codebook_status again.',
-    })
-    assert.deepEqual(nonePrerequisite, {
-      ready: false,
-      reason:
-        'node-test needs Vitest 4 or later at the repository root; this repository has none at node_modules/vitest, and a Vitest inside a package is not supported yet. Ask the learner to install it at the root, then call codebook_status again.',
-    })
+    assert.deepEqual(olderPrerequisite, { state: 'too-old', version: '3.2.4' })
+    assert.deepEqual(withoutProgramPrerequisite, { state: 'program-missing' })
   } finally {
     await older.cleanup()
-    await none.cleanup()
+    await withoutProgram.cleanup()
   }
 })
 
@@ -96,22 +104,18 @@ test('a version that is no short semantic version is reported as an unreadable v
     )
 
     // Act
-    const prerequisite = await readVitestPrerequisite(root)
+    const prerequisite = await readVitestPrerequisite(root, root)
 
     // Assert
-    assert.equal(prerequisite.ready, false)
-    assert.ok(
-      !prerequisite.ready &&
-        prerequisite.reason.includes('an unreadable version'),
-    )
-    assert.ok(!prerequisite.ready && !prerequisite.reason.includes('Ignore'))
+    assert.deepEqual(prerequisite, { state: 'unreadable-version' })
+    assert.ok(!JSON.stringify(prerequisite).includes('Ignore'))
   } finally {
     await cleanup()
   }
 })
 
-// Value: protects=realpath containment of the Vitest package read, and the status sentence for a link that leaves the repository; fails_when=a node_modules/vitest link that leaves the repository is read as the repository's Vitest, or is reported as "none" when it is there but outside (pnpm's global virtual store); why_new=the prerequisite reads a file outside the editor's control (EN11); the sentence is Decision D15 of Cycle 0050 (F101); seam=a symlink in a temporary folder; no_claim=Windows junctions
-test('a node_modules/vitest link that leaves the repository is named as linking outside it, not as missing', async (context) => {
+// Value: protects=realpath containment of the Vitest package read, and its state for a link that leaves the repository; fails_when=a node_modules/vitest link that leaves the repository is read as the repository's Vitest, or is reported as unreadable when it is there but outside (pnpm's global virtual store); why_new=the prerequisite reads a file outside the editor's control (EN11); the state is Decision D15 of Cycle 0050 (F101), its sentence moved to the callers in Cycle 0053 (task 2); seam=a symlink in a temporary folder; no_claim=Windows junctions
+test('a node_modules/vitest link that leaves the repository is named as linking outside it, not as unreadable', async (context) => {
   // Arrange
   const { root, cleanup } = await repository()
   const outside = await repository()
@@ -130,14 +134,10 @@ test('a node_modules/vitest link that leaves the repository is named as linking 
     }
 
     // Act
-    const prerequisite = await readVitestPrerequisite(root)
+    const prerequisite = await readVitestPrerequisite(root, root)
 
     // Assert
-    assert.deepEqual(prerequisite, {
-      ready: false,
-      reason:
-        'node-test needs Vitest 4 or later inside the repository; node_modules/vitest at the repository root links outside it, which Codebook does not run. Ask the learner to install Vitest in the repository, then call codebook_status again.',
-    })
+    assert.deepEqual(prerequisite, { state: 'links-outside' })
   } finally {
     await cleanup()
     await outside.cleanup()
@@ -152,14 +152,10 @@ test('a version whose number is padded with digits is reported as an unreadable 
     await writeVitestPackage(root, `${'9'.repeat(20)}.0.0`)
 
     // Act
-    const prerequisite = await readVitestPrerequisite(root)
+    const prerequisite = await readVitestPrerequisite(root, root)
 
     // Assert
-    assert.deepEqual(prerequisite, {
-      ready: false,
-      reason:
-        'node-test needs Vitest 4 or later at the repository root; this repository has an unreadable version (node_modules/vitest/package.json). Ask the learner to upgrade it, then call codebook_status again.',
-    })
+    assert.deepEqual(prerequisite, { state: 'unreadable-version' })
   } finally {
     await cleanup()
   }
@@ -194,17 +190,13 @@ test('an oversized package file, a non-JSON one and a non-string version each re
 
     // Act
     const results = await Promise.all([
-      readVitestPrerequisite(oversized.root),
-      readVitestPrerequisite(notJson.root),
-      readVitestPrerequisite(numeric.root),
+      readVitestPrerequisite(oversized.root, oversized.root),
+      readVitestPrerequisite(notJson.root, notJson.root),
+      readVitestPrerequisite(numeric.root, numeric.root),
     ])
 
     // Assert
-    const unreadable = {
-      ready: false,
-      reason:
-        'node-test needs Vitest 4 or later at the repository root; this repository has an unreadable version (node_modules/vitest/package.json). Ask the learner to upgrade it, then call codebook_status again.',
-    }
+    const unreadable = { state: 'unreadable-version' }
     assert.deepEqual(results, [unreadable, unreadable, unreadable])
   } finally {
     await oversized.cleanup()

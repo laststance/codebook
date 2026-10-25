@@ -80,7 +80,7 @@ test('listing runs the owned Vitest in the repository with the run environment a
     const files = await listVitestTestFiles({
       node: process.execPath,
       program: vitest.program,
-      workspace,
+      vitestRoot: workspace,
       filter: 'src/a.test.ts',
       excludes: ['/repo/copy/src/a.test.ts'],
       signal: new AbortController().signal,
@@ -129,7 +129,7 @@ test('a Vitest listing that fails reports its exit code and bounded error text',
     const listing = listVitestTestFiles({
       node: process.execPath,
       program: vitest.program,
-      workspace: vitest.directory,
+      vitestRoot: vitest.directory,
       filter: 'src/a.test.ts',
       excludes: [],
       signal: new AbortController().signal,
@@ -157,7 +157,7 @@ test('a Vitest listing that does not write a list of files is refused', async ()
     const listing = listVitestTestFiles({
       node: process.execPath,
       program: vitest.program,
-      workspace: vitest.directory,
+      vitestRoot: vitest.directory,
       filter: 'src/a.test.ts',
       excludes: [],
       signal: new AbortController().signal,
@@ -180,7 +180,7 @@ test('cancelling the run stops a Vitest listing that is still working', async ()
     const listing = listVitestTestFiles({
       node: process.execPath,
       program: vitest.program,
-      workspace: vitest.directory,
+      vitestRoot: vitest.directory,
       filter: 'src/a.test.ts',
       excludes: [],
       signal: cancellation.signal,
@@ -208,7 +208,7 @@ test('a Vitest listing that outlives its deadline is stopped and reported', asyn
     const listing = listVitestTestFiles({
       node: process.execPath,
       program: vitest.program,
-      workspace: vitest.directory,
+      vitestRoot: vitest.directory,
       filter: 'src/a.test.ts',
       excludes: [],
       signal: new AbortController().signal,
@@ -247,7 +247,7 @@ test('cancelling a listing keeps the reason of the run while an exited member of
     const listing = listVitestTestFiles({
       node: process.execPath,
       program: vitest.program,
-      workspace: vitest.directory,
+      vitestRoot: vitest.directory,
       filter: 'src/a.test.ts',
       excludes: [],
       signal: cancellation.signal,
@@ -288,7 +288,7 @@ test('a finished listing still returns its files while an exited member of its g
     const outcome = await listVitestTestFiles({
       node: process.execPath,
       program: vitest.program,
-      workspace: vitest.directory,
+      vitestRoot: vitest.directory,
       filter: 'src/a.test.ts',
       excludes: [],
       signal: new AbortController().signal,
@@ -329,7 +329,7 @@ test('a finished listing whose process group does not end after SIGTERM and SIGK
     const outcome: unknown = await listVitestTestFiles({
       node: process.execPath,
       program: vitest.program,
-      workspace: vitest.directory,
+      vitestRoot: vitest.directory,
       filter: 'src/a.test.ts',
       excludes: [],
       signal: new AbortController().signal,
@@ -392,7 +392,7 @@ test('a finished listing whose process group has a member the user may not signa
     const outcome: unknown = await listVitestTestFiles({
       node: process.execPath,
       program: vitest.program,
-      workspace: vitest.directory,
+      vitestRoot: vitest.directory,
       filter: 'src/a.test.ts',
       excludes: [],
       signal: new AbortController().signal,
@@ -446,7 +446,7 @@ writeFileSync('started-helper.json', JSON.stringify({ launcher: process.pid, hel
     const listing = listVitestTestFiles({
       node: process.execPath,
       program: vitest.program,
-      workspace: vitest.directory,
+      vitestRoot: vitest.directory,
       filter: 'src/a.test.ts',
       excludes: [],
       signal: cancellation.signal,
@@ -528,7 +528,7 @@ setInterval(() => {}, 1000);
     const listing = listVitestTestFiles({
       node: process.execPath,
       program: vitest.program,
-      workspace: vitest.directory,
+      vitestRoot: vitest.directory,
       filter: 'src/a.test.ts',
       excludes: [],
       signal: cancellation.signal,

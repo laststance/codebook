@@ -1026,10 +1026,31 @@ export const NODE_TEST_LEARNING_DECISION_LIMIT_BYTES = 4_096
 export const NODE_TEST_LEARNING_MATERIAL_VERSION = 1
 export const NODE_TEST_LEARNING_MATERIAL_LIMIT_BYTES =
   LEARNING_SUMMARY_LIMITS.bytes
-/** The root Vitest's package file a node-test run reads its version from, relative to the opened repository ({@link readVitestPrerequisite}). */
+/** A Vitest installation's package folder, relative to the directory whose `node_modules` holds it ({@link requireOwnedVitest}, {@link searchRepositoryVitest}). */
+export const VITEST_PACKAGE_DIRECTORY = 'node_modules/vitest'
+/** A Vitest installation's package file, read for its version, relative to the directory whose `node_modules` holds it ({@link readVitestPrerequisite}). */
 export const VITEST_PACKAGE_PATH = 'node_modules/vitest/package.json'
-/** The root Vitest's program a node-test run starts, relative to the opened repository ({@link requireOwnedVitest}). */
+/** A Vitest installation's program a node-test run starts, relative to the directory whose `node_modules` holds it ({@link readVitestPrerequisite}). */
 export const VITEST_PROGRAM_PATH = 'node_modules/vitest/vitest.mjs'
+/** The file names Vitest looks up as its config, in Vitest's own order (`vitest.config.*` before `vite.config.*`); the nearest directory above a cited test that holds one is the test's Vitest root ({@link resolveNodeTestVitestRoot}). */
+export const VITEST_CONFIG_FILE_NAMES: readonly string[] = [
+  'vitest.config.ts',
+  'vitest.config.mts',
+  'vitest.config.cts',
+  'vitest.config.js',
+  'vitest.config.mjs',
+  'vitest.config.cjs',
+  'vite.config.ts',
+  'vite.config.mts',
+  'vite.config.cts',
+  'vite.config.js',
+  'vite.config.mjs',
+  'vite.config.cjs',
+]
+/** How many folders `codebook_status` looks at for a usable Vitest (the repository root first, then breadth first) before it stops and says it did not look further ({@link searchRepositoryVitest}). */
+export const NODE_TEST_READINESS_DIRECTORY_LIMIT = 256
+/** How many levels below the repository root `codebook_status` looks for a Vitest: a package such as `packages/query-core` lies two levels below it ({@link searchRepositoryVitest}). */
+export const NODE_TEST_READINESS_DEPTH = 2
 export const NODE_TEST_HISTORY_DIRECTORY = 'node-tests.v1'
 export const NODE_TEST_HISTORY_LIMIT_BYTES = 8_388_608
 /** The file of a test history's folder that names the editor process writing it, removed when the writer seals or is abandoned ({@link writeNodeTestWriterRecord}, {@link judgeNodeTestWriter}). */
@@ -1084,7 +1105,7 @@ export const VITEST_LIST_ERROR_LIMIT_CHARS = 2_048
 export const VITEST_REPORT_LIMIT_BYTES = 8_388_608
 /** Largest `node_modules/vitest/package.json` read for its version; Vitest's own file is a few kilobytes, and a larger one is reported as an unreadable version. */
 export const VITEST_PACKAGE_JSON_LIMIT_BYTES = 65_536
-/** The version the root Vitest's package must name before it is printed to the agent: a short semantic version (each number at most nine digits, a suffix at most 64 characters), so a package's `version` field cannot carry other text or kilobytes of digits into `codebook_status` ({@link readVitestPrerequisite}). */
+/** The version a Vitest package must name before it is printed to the agent: a short semantic version (each number at most nine digits, a suffix at most 64 characters), so a package's `version` field cannot carry other text or kilobytes of digits into `codebook_status` ({@link readVitestPrerequisite}). */
 export const PRINTABLE_VITEST_VERSION =
   /^\d{1,9}\.\d{1,9}\.\d{1,9}(?:[-+][0-9A-Za-z.-]{1,64})?$/
 /** Wait for the owned test process to report its exit after its debugger session ended early. */

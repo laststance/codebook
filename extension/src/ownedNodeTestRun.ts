@@ -37,6 +37,7 @@ import {
 } from './utils/inspectNodeTestVariables'
 import { launchNodeTest } from './utils/launchNodeTest'
 import { listVitestTestFiles } from './utils/listVitestTestFiles'
+import type { NodeTestExecutionPlan } from './utils/planNodeTestExecution'
 import { prepareNodeTestLaunch } from './utils/prepareNodeTestLaunch'
 import type { PreparedNodeTestLaunch } from './utils/prepareNodeTestLaunch'
 import { selectCheckedNodeFrame } from './utils/selectCheckedNodeFrame'
@@ -67,7 +68,7 @@ export type NodeTestSourceStop = {
   debuggerSnapshot: ReplayDebugSnapshot
 }
 
-/** Owns a checked repository Vitest process and ordered native source pauses until explicit release. Called by the Node profile runtime after citation checks. @example const run = new OwnedNodeTestRun(workspace, config, node, record, descriptor.sources); await run.prepare(); while (run.hasNextStop()) await run.advance(); await run.complete(); await run.stop() */
+/** Owns a checked repository Vitest process and ordered native source pauses until explicit release. Called by the Node profile runtime after citation checks. @example const run = new OwnedNodeTestRun(workspace, config, node, record, descriptor.sources, plan); await run.prepare(); while (run.hasNextStop()) await run.advance(); await run.complete(); await run.stop() */
 export class OwnedNodeTestRun {
   readonly id = randomUUID()
   private readonly abort = new AbortController()
@@ -105,6 +106,8 @@ export class OwnedNodeTestRun {
     private readonly record: (type: string, detail?: unknown) => unknown,
     /** The article's text of every source the selected node cites; {@link prepareOwned} refuses the run, and {@link advance} and {@link captureStop} end it at a continuation or at a stop, while the editor holds other text for one of them. A trial without an article gives none. */
     private readonly citedSources: ConfiguredDescriptor['sources'],
+    /** The execution plan of the run's pre-history check: the Vitest root, the Vitest and the filter {@link prepareOwned} compares again and launches with. */
+    private readonly plan: NodeTestExecutionPlan,
   ) {
     this.tracker = vscode.debug.registerDebugAdapterTrackerFactory('*', {
       createDebugAdapterTracker: (session) => {
@@ -223,6 +226,7 @@ export class OwnedNodeTestRun {
             this.record('node-test.vitest-listing-not-released', failure)
           },
         }),
+      this.plan,
     ))
     signal.throwIfAborted()
     this.outputTerminal = new NodeTestOutputTerminal(this.id, vscode, () => {

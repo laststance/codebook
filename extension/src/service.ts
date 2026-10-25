@@ -133,6 +133,7 @@ import type { NodeLearningCapturePart } from './utils/listMissingNodeLearning'
 import { namesLineNumber } from './utils/namesLineNumber'
 import { nodeTestResultKind } from './utils/nodeTestResultKind'
 import { numberSourceLines } from './utils/numberSourceLines'
+import type { NodeTestExecutionPlan } from './utils/planNodeTestExecution'
 import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
 import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy'
 import {
@@ -147,6 +148,7 @@ import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
 import { studyErrorNamingCause } from './utils/studyErrorNamingCause'
 import { systemErrorCode } from './utils/systemErrorCode'
 import { thrownMessage } from './utils/thrownMessage'
+import { vitestSearchField } from './utils/vitestSearchField'
 import { waitForNextRunState } from './utils/waitForNextRunState'
 import { withKnownNodeHistory } from './utils/withKnownNodeHistory'
 
@@ -231,6 +233,8 @@ export type StudyRecord = StudyRecordState &
       configuration: NodeTestConfiguration
       configurationHash: string
       descriptor: ConfiguredDescriptor
+      /** The plan of the pre-history check ({@link StudyEnvironment.checkNodeTestFiles}), kept outside `configuration` so `configurationHash` stays the agent's; the manifest names its facts. */
+      execution?: NodeTestExecutionPlan
     }
   }
 /**
@@ -642,6 +646,8 @@ export class StudyService {
             `node-test cannot start: the saved studies and test histories take ${nodeTestCapacity.taken} places of the ${nodeTestCapacity.limit} that the Saved Study Limit allows. ${fullLibraryMessage('run', nodeTestCapacity.limit, this.removalAvailability)}`,
           ]
         : []
+    // What the readiness search for a usable Vitest found; absent for an environment that does not search.
+    const vitestSearch = vitestSearchField(nodeTestPrerequisites)
     const nodeTestAdapter =
       this.environment.createNodeTestRun && this.nodeHistoryStore
         ? {
@@ -652,6 +658,7 @@ export class StudyService {
               ...nodeTestPrerequisites.missing,
               ...nodeTestCapacityMissing,
             ],
+            ...vitestSearch,
           }
         : {
             ready: false,
@@ -664,6 +671,7 @@ export class StudyService {
                 ? ['The workspace-bound Node history store is unavailable.']
                 : []),
             ],
+            ...vitestSearch,
           }
     return {
       instanceId: this.instanceId,
@@ -3230,10 +3238,16 @@ export class StudyService {
         )
         this.environment.assertWorkspace?.()
       }
-      const prerequisites = await this.environment.prerequisites()
-      // Shared Node/Chrome availability alone cannot authorize an unsupported selected profile.
+      // A node-test start waits on its own prerequisites, never on the repository-wide Vitest search: the pre-history check resolves the cited test's own Vitest.
       const selectedPrerequisites =
-        prerequisites.profiles?.[record.profile] ?? prerequisites
+        record.profile === NODE_TEST_PROFILE &&
+        this.environment.nodeTestStartPrerequisites
+          ? await this.environment.nodeTestStartPrerequisites()
+          : await this.environment.prerequisites().then(
+              // Shared Node/Chrome availability alone cannot authorize an unsupported selected profile.
+              (prerequisites) =>
+                prerequisites.profiles?.[record.profile] ?? prerequisites,
+            )
       if (!selectedPrerequisites.ready)
         throw new StudyError(
           'PREREQUISITE_MISSING',
@@ -3251,10 +3265,18 @@ export class StudyService {
             'The owned Node test adapter or durable history store is unavailable.',
           )
         // Every deterministic check refuses before the history exists, so a refused run records nothing and holds no slot (EN1).
-        await this.environment.checkNodeTestFiles?.(
-          record.nodePrepared.configuration,
-          record.nodePrepared.descriptor.sources,
-        )
+        record.nodePrepared.execution =
+          await this.environment.checkNodeTestFiles?.(
+            record.nodePrepared.configuration,
+            record.nodePrepared.descriptor.sources,
+            {
+              signal: record.cancellation.signal,
+              deadlineAt: Math.min(
+                record.deadlineAt,
+                record.createdAt + REPOSITORY_SETUP_TIMEOUT_MS,
+              ),
+            },
+          )
         if (this.stopping || record.stopping) return
         const studyId = `${this.instanceId}_${record.id}`
         record.nodeHistoryWriter = await this.nodeHistoryStore
@@ -3352,7 +3374,18 @@ export class StudyService {
                           : type === 'node-test.output-surface-closed'
                             ? { closed: true }
                             : type === 'node-test.started'
-                              ? { started: true }
+                              ? {
+                                  started: true,
+                                  // Root-relative, as the manifest names them: no host path leaves the journal.
+                                  vitestRoot:
+                                    typeof input.vitestRoot === 'string'
+                                      ? input.vitestRoot
+                                      : undefined,
+                                  rootClaim:
+                                    typeof input.rootClaim === 'string'
+                                      ? input.rootClaim
+                                      : undefined,
+                                }
                               : type === 'node-test.closed'
                                 ? { closed: true }
                                 : type === 'node-test.session-started'
@@ -3465,6 +3498,7 @@ export class StudyService {
             return historyWrite
           },
           record.nodePrepared.descriptor.sources,
+          record.nodePrepared.execution,
         )
         if (this.stopping || record.stopping) return
         const firstStop = await record.nodeRun.prepare()

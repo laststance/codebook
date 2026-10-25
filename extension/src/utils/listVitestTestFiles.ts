@@ -20,13 +20,17 @@ import { signalProcessGroup } from './signalProcessGroup'
 
 /** One test file Vitest would run; a file included by several Vitest projects appears once per project. */
 export type VitestListedFile = { file: string; projectName?: string }
-/** What {@link prepareNodeTestLaunch} asks Vitest; the caller binds the Node executable and cancellation. */
+/** What {@link prepareNodeTestLaunch} and a root claim ask Vitest; the caller binds the Node executable and cancellation. */
 export type ListVitestTestFilesRequest = {
   program: string
-  workspace: string
+  /** The Vitest root the listing runs in, its working directory: the cited test's nearest config folder, or the opened root. */
+  vitestRoot: string
+  /** The cited test file relative to {@link ListVitestTestFilesRequest.vitestRoot}, with `/` separators. */
   filter: string
   excludes: string[]
 }
+/** A listing that outlived its deadline, told apart from Vitest's own failure so that a root claim refuses the start instead of falling back ({@link listVitestForRootClaim}). */
+export class VitestListingDeadlineError extends Error {}
 /** What a listing left behind when its release failed: the group that may still have a member, the folder that was kept for it, and the release's error as text. `processGroup` is `undefined` when the listing process never started. */
 export type VitestListingReleaseFailure = {
   processGroup: number | undefined
@@ -47,19 +51,19 @@ const listedFilesSchema = z.array(
  *
  * @param request.node - External Node executable that will also run the test.
  * @param request.program - Owned `node_modules/vitest/vitest.mjs`.
- * @param request.workspace - Canonical repository root, used as the working directory.
- * @param request.filter - The cited repository-relative test file.
+ * @param request.vitestRoot - The canonical Vitest root, used as the working directory: the cited test's nearest config folder, or the repository root.
+ * @param request.filter - The cited test file relative to the Vitest root.
  * @param request.excludes - Escaped absolute paths passed as `--exclude=` globs.
  * @param request.signal - The run's cancellation.
  * @param request.timeoutMs - Listing deadline; the default fits inside the attach phase.
  * @param request.onReleaseFailed - Told once when the listing's process group could not be confirmed as ended, whatever the listing's own outcome; the owned Node test run journals it.
  * @returns Every file entry Vitest reports, in Vitest's order, once the listing's process group is confirmed as ended.
- * @throws When Vitest fails, times out, is cancelled or writes no readable list; that reason is kept also when the release fails. When a listing that finished
+ * @throws When Vitest fails, times out (a {@link VitestListingDeadlineError}), is cancelled or writes no readable list; that reason is kept also when the release fails. When a listing that finished
  * could not be released, because a signal or a probe was refused or the group did not end within its wait after SIGTERM and SIGKILL, with that failure as the
  * cause: a process of the group may still run, so the Node test run is not started and the listing's folder is kept.
  * @example
  * ```ts
- * await listVitestTestFiles({ node, program, workspace: '/repo', filter: 'src/a.test.ts', excludes: [], signal })
+ * await listVitestTestFiles({ node, program, vitestRoot: '/repo', filter: 'src/a.test.ts', excludes: [], signal })
  * // => [{ file: '/repo/src/a.test.ts' }, { file: '/repo/copy/src/a.test.ts' }]
  * ```
  */
@@ -91,7 +95,7 @@ export async function listVitestTestFiles(
         ...request.excludes.map((exclude) => `--exclude=${exclude}`),
       ],
       {
-        cwd: request.workspace,
+        cwd: request.vitestRoot,
         env: buildNodeTestEnvironment(),
         detached: true,
         stdio: ['ignore', 'ignore', 'pipe'],
@@ -157,7 +161,7 @@ export async function listVitestTestFiles(
       // The bounded wait reports a generic cancellation; name the run's actual reason instead.
       if (request.signal.aborted) throw request.signal.reason
       if (deadline.aborted)
-        throw new Error(
+        throw new VitestListingDeadlineError(
           `Vitest did not list its test files within ${timeoutMs} ms.`,
         )
       throw error

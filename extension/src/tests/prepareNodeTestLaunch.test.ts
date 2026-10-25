@@ -19,7 +19,13 @@ import type {
   ListVitestTestFilesRequest,
   VitestListedFile,
 } from '../utils/listVitestTestFiles'
+import {
+  planNodeTestExecution,
+  type NodeTestExecutionPlan,
+} from '../utils/planNodeTestExecution'
 import { prepareNodeTestLaunch } from '../utils/prepareNodeTestLaunch'
+
+import { ROOT_MODE_EXECUTION_PLAN } from './utils/rootModeExecutionPlan'
 
 /**
  * Creates a disposable repository holding one cited source, one test file and an owned Vitest of the given version.
@@ -79,6 +85,30 @@ function scriptedVitestList(answers: VitestListedFile[][]) {
   }
 }
 
+/**
+ * Makes the execution plan a start's pre-history check makes for a cited test of a repository without Vitest configs, which runs at the opened root.
+ *
+ * @param root - The repository's real root.
+ * @param testFile - The cited repository-relative test file.
+ * @returns The root-mode plan {@link prepareNodeTestLaunch} compares again before the listing.
+ * @example
+ * ```ts
+ * await rootModePlan('/repo', 'src/subscribable.test.ts') // => { vitestRoot: '/repo', filter: 'src/subscribable.test.ts', ... }
+ * ```
+ */
+async function rootModePlan(
+  root: string,
+  testFile: string,
+): Promise<NodeTestExecutionPlan> {
+  return planNodeTestExecution({
+    root,
+    testFile: await realpath(join(root, testFile)),
+    declaredTestFile: testFile,
+    listRootClaim: async () =>
+      assert.fail('a repository without Vitest configs makes no root claim'),
+  })
+}
+
 test('a cited Vitest 5 test runs only its file with a literal anchored title path and a result report', async () => {
   // Arrange
   const { root, sourceHash, testHash } = await createVitestRepository('5.0.2')
@@ -108,7 +138,12 @@ test('a cited Vitest 5 test runs only its file with a literal anchored title pat
   let reportDirectory: string | undefined
   try {
     // Act
-    const launch = await prepareNodeTestLaunch(root, configuration, vitest.list)
+    const launch = await prepareNodeTestLaunch(
+      root,
+      configuration,
+      vitest.list,
+      await rootModePlan(root, configuration.testFile),
+    )
     reportDirectory = launch.report.directory
     // Assert
     assert.equal(
@@ -129,7 +164,7 @@ test('a cited Vitest 5 test runs only its file with a literal anchored title pat
     assert.deepEqual(vitest.requests, [
       {
         program: launch.program,
-        workspace: root,
+        vitestRoot: root,
         filter: 'src/subscribable.test.ts',
         excludes: [],
       },
@@ -183,7 +218,12 @@ test('a cited Vitest 4 test joins its title path with the single space Vitest 4 
   let reportDirectory: string | undefined
   try {
     // Act
-    const launch = await prepareNodeTestLaunch(root, configuration, vitest.list)
+    const launch = await prepareNodeTestLaunch(
+      root,
+      configuration,
+      vitest.list,
+      await rootModePlan(root, configuration.testFile),
+    )
     reportDirectory = launch.report.directory
     // Assert
     assert.equal(
@@ -226,7 +266,12 @@ test('a test title that looks like a Vitest option stays inside the anchored nam
   let reportDirectory: string | undefined
   try {
     // Act
-    const launch = await prepareNodeTestLaunch(root, configuration, vitest.list)
+    const launch = await prepareNodeTestLaunch(
+      root,
+      configuration,
+      vitest.list,
+      await rootModePlan(root, configuration.testFile),
+    )
     reportDirectory = launch.report.directory
     // Assert
     // Vitest's parser does not take a separate value that begins with "-", so the pattern must share the option's token.
@@ -279,7 +324,12 @@ test('other test files that contain the cited path are excluded and Vitest must 
   let reportDirectory: string | undefined
   try {
     // Act
-    const launch = await prepareNodeTestLaunch(root, configuration, vitest.list)
+    const launch = await prepareNodeTestLaunch(
+      root,
+      configuration,
+      vitest.list,
+      await rootModePlan(root, configuration.testFile),
+    )
     reportDirectory = launch.report.directory
     // Assert
     const excludes = [
@@ -329,6 +379,7 @@ test('a Vitest selection that cannot run the cited file exactly once is refused 
   const tooMany = Array.from({ length: 65 }, (_, index) => ({
     file: join(root, `copy${index}`, 'src', 'subscribable.test.ts'),
   }))
+  const plan = await rootModePlan(root, configuration.testFile)
   try {
     // Act / Assert
     await assert.rejects(
@@ -336,6 +387,7 @@ test('a Vitest selection that cannot run the cited file exactly once is refused 
         root,
         configuration,
         scriptedVitestList([[{ file: other }]]).list,
+        plan,
       ),
       /Vitest does not select the cited test file/,
     )
@@ -349,6 +401,7 @@ test('a Vitest selection that cannot run the cited file exactly once is refused 
             { file: cited, projectName: 'browser' },
           ],
         ]).list,
+        plan,
       ),
       /belongs to 2 Vitest projects/,
     )
@@ -360,6 +413,7 @@ test('a Vitest selection that cannot run the cited file exactly once is refused 
           [{ file: cited }, { file: other }],
           [{ file: cited }, { file: other }],
         ]).list,
+        plan,
       ),
       /Vitest still selects other test files/,
     )
@@ -368,6 +422,7 @@ test('a Vitest selection that cannot run the cited file exactly once is refused 
         root,
         configuration,
         scriptedVitestList([[{ file: cited }, ...tooMany]]).list,
+        plan,
       ),
       /65 other test files/,
     )
@@ -406,6 +461,7 @@ test('a retired testName or a missing test identity is refused before any Vitest
         root,
         nodeTestConfigSchema.parse({ ...base, testName: 'subscribes once' }),
         vitest.list,
+        ROOT_MODE_EXECUTION_PLAN,
       ),
       /testName is retired.*testTitles/,
     )
@@ -414,6 +470,7 @@ test('a retired testName or a missing test identity is refused before any Vitest
         root,
         nodeTestConfigSchema.parse(base),
         vitest.list,
+        ROOT_MODE_EXECUTION_PLAN,
       ),
       /needs testTitles/,
     )
@@ -423,10 +480,10 @@ test('a retired testName or a missing test identity is refused before any Vitest
   }
 })
 
-// Value: protects=a repository whose Vitest is older than 4 being refused before any Vitest process starts; fails_when=an old Vitest is launched or the refusal comes after a process started; why_new=the Vitest prerequisite is checked at preparation; seam=a repository fixture with an old Vitest; no_claim=other package metadata
-test('a repository whose Vitest is older than 4 is refused before any Vitest process starts', async () => {
+// Value: protects=a repository whose Vitest is older than 4 at the launch being refused before any Vitest process starts; fails_when=an old Vitest is launched or the refusal comes after a process started; why_new=the Vitest prerequisite is checked at preparation; Cycle 0053 makes the older Vitest refuse first at the pre-history plan, so this launch check meets a Vitest downgraded after the plan (rule 7); seam=a repository fixture whose Vitest turns old after its plan; no_claim=other package metadata
+test('a repository whose Vitest is older than 4 at the launch is refused before any Vitest process starts', async () => {
   // Arrange
-  const { root, sourceHash, testHash } = await createVitestRepository('3.2.4')
+  const { root, sourceHash, testHash } = await createVitestRepository('5.0.2')
   const vitest = scriptedVitestList([])
   const configuration = nodeTestConfigSchema.parse({
     version: 1,
@@ -448,10 +505,15 @@ test('a repository whose Vitest is older than 4 is refused before any Vitest pro
     },
     inspections: [{ path: 'listener', mode: 'value', required: true }],
   })
+  const plan = await rootModePlan(root, configuration.testFile)
+  await writeFile(
+    join(root, 'node_modules', 'vitest', 'package.json'),
+    JSON.stringify({ name: 'vitest', version: '3.2.4' }),
+  )
   try {
     // Act / Assert
     await assert.rejects(
-      prepareNodeTestLaunch(root, configuration, vitest.list),
+      prepareNodeTestLaunch(root, configuration, vitest.list, plan),
       /Vitest 4 or later.*3\.2\.4/,
     )
     assert.equal(vitest.requests.length, 0)
@@ -505,13 +567,23 @@ test('a changed source or a symlink escaping the repository cannot start a Node 
   try {
     // Act / Assert
     await assert.rejects(
-      prepareNodeTestLaunch(root, configuration, vitest.list),
+      prepareNodeTestLaunch(
+        root,
+        configuration,
+        vitest.list,
+        ROOT_MODE_EXECUTION_PLAN,
+      ),
       /not a file in the opened repository/,
     )
     await rm(join(root, 'src', 'subscribable.test.ts'))
     await writeFile(join(root, 'src', 'subscribable.test.ts'), 'local test\n')
     await assert.rejects(
-      prepareNodeTestLaunch(root, configuration, vitest.list),
+      prepareNodeTestLaunch(
+        root,
+        configuration,
+        vitest.list,
+        ROOT_MODE_EXECUTION_PLAN,
+      ),
       /^Error: node-test preparation refused: declared stop 1 cites src\/subscribable\.ts with SHA-256 0{64}, but the file now has [0-9a-f]{64}\./,
     )
     await assert.rejects(
@@ -525,6 +597,7 @@ test('a changed source or a symlink escaping the repository cannot start a Node 
           },
         },
         vitest.list,
+        ROOT_MODE_EXECUTION_PLAN,
       ),
       /^Error: node-test preparation refused: testHash 0{64} does not match src\/subscribable\.test\.ts, which now has SHA-256 [0-9a-f]{64}\./,
     )
@@ -540,13 +613,24 @@ test('a changed source or a symlink escaping the repository cannot start a Node 
 })
 
 for (const scenario of [
-  { name: 'is missing', link: false },
-  { name: 'is a link that leaves the repository', link: true },
+  {
+    name: 'is missing',
+    link: false,
+    refusal:
+      'node-test needs the Vitest program ./node_modules/vitest/vitest.mjs for src/subscribable.test.ts; reinstall Vitest there, then start the test again.',
+  },
+  {
+    name: 'is a link that leaves the repository',
+    link: true,
+    refusal:
+      'node-test needs Vitest 4 or later inside the repository for src/subscribable.test.ts; ./node_modules/vitest links outside it (for example to a package store outside the repository), which Codebook does not run. Ask the learner to install the dependencies so that Vitest lies inside the repository, then start the test again.',
+  },
 ] as const)
-  // Value: protects=the typed refusal when the root Vitest program is not a file of the repository; fails_when=a repository whose node_modules/vitest/vitest.mjs is missing or links outside it reaches the Vitest listing, or the refusal loses its code or its reinstall advice; why_new=the PREREQUISITE_MISSING branch of prepareNodeTestLaunch was untested (F29); seam=none; no_claim=Vitest's own behavior
+  // Value: protects=the typed refusal when the Vitest program is not a file of the repository at the launch; fails_when=a repository whose node_modules/vitest/vitest.mjs is missing or links outside it reaches the Vitest listing, or the refusal loses its code, the test it names or its fix; why_new=the PREREQUISITE_MISSING branch of prepareNodeTestLaunch was untested (F29); Cycle 0053 words both per test and tells the outside link apart (task 5), and the program now goes missing after the pre-history plan, which refuses it first (rule 7); seam=none; no_claim=Vitest's own behavior
   test(`a repository whose node_modules/vitest/vitest.mjs ${scenario.name} is refused as a missing prerequisite before Vitest is asked anything`, async () => {
     // Arrange
     const { root, sourceHash, testHash } = await createVitestRepository('5.0.2')
+    const plan = await rootModePlan(root, 'src/subscribable.test.ts')
     const outside = await mkdtemp(join(tmpdir(), 'codebook-node-program-'))
     await rm(join(root, 'node_modules', 'vitest', 'vitest.mjs'))
     if (scenario.link) {
@@ -583,6 +667,7 @@ for (const scenario of [
         root,
         configuration,
         vitest.list,
+        plan,
       ).then(
         () => undefined,
         (thrown: unknown) => thrown,
@@ -591,10 +676,7 @@ for (const scenario of [
       // Assert
       assert.ok(refusal instanceof StudyError)
       assert.equal(refusal.code, 'PREREQUISITE_MISSING')
-      assert.equal(
-        refusal.message,
-        'node-test needs the root Vitest program node_modules/vitest/vitest.mjs inside the opened repository; reinstall Vitest at the repository root, then call codebook_status again.',
-      )
+      assert.equal(refusal.message, scenario.refusal)
       assert.equal(vitest.requests.length, 0)
     } finally {
       await rm(root, { recursive: true, force: true })
@@ -656,6 +738,7 @@ test('a Node test seals every declared source stop before acquiring a process', 
       configuration,
       scriptedVitestList([[{ file: join(root, 'src', 'target.test.ts') }]])
         .list,
+      await rootModePlan(root, configuration.testFile),
     )
     reportDirectory = launch.report.directory
     // Assert
@@ -676,6 +759,7 @@ test('a Node test seals every declared source stop before acquiring a process', 
           ],
         },
         scriptedVitestList([]).list,
+        ROOT_MODE_EXECUTION_PLAN,
       ),
       /declared stop 2 cites src\/target\.ts with SHA-256 0{64}/,
     )

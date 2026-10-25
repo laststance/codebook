@@ -18,6 +18,7 @@ import type {
 } from '../utils/listVitestTestFiles'
 
 import { loadModule } from './utils/loadModule'
+import { ROOT_MODE_EXECUTION_PLAN } from './utils/rootModeExecutionPlan'
 import { sourceBreakpointRequest } from './utils/sourceBreakpointRequest'
 
 /** The adapter's DAP id for Codebook's own breakpoint, as its registration receipt reports it. */
@@ -630,7 +631,7 @@ async function nodeRunHarness({
           if (listingNotReleased)
             await listTestFiles({
               program: 'vitest',
-              workspace: directory,
+              vitestRoot: directory,
               filter: 'theme.test.ts',
               excludes: [],
             })
@@ -722,6 +723,7 @@ async function nodeRunHarness({
       events.push({ type, detail })
     },
     [{ path: 'theme.ts', hash: source.hash, text: sourceText, lineCount: 2 }],
+    ROOT_MODE_EXECUTION_PLAN,
   )
   return {
     run,

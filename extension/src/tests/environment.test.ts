@@ -122,7 +122,7 @@ test('a trusted file workspace opened in WSL is accepted and its prerequisites a
   assert.equal(prerequisites.ready, true)
 })
 
-// Value: protects=codebook_status naming an older root Vitest under profiles['node-test'] before any start, while the shared prerequisites stay ready; fails_when=the node-test profile reads ready with Vitest 3, or the Vitest sentence leaks into the browser profile's prerequisites; why_new=the Vitest check ran only inside the launch (X9, EN11, AC18); seam=the editor and its settings are fakes, the repository's node_modules is real; no_claim=package-root Vitest (a later candidate)
+// Value: protects=codebook_status naming an older root Vitest under profiles['node-test'] before any start, while the shared prerequisites stay ready; fails_when=the node-test profile reads ready with Vitest 3, its vitestSearch is not unusable, or the Vitest sentence leaks into the browser profile's prerequisites; why_new=the Vitest check ran only inside the launch (X9, EN11, AC18); Cycle 0053 replaced the root-only sentence with the readiness search's (task 4, R3); seam=the editor and its settings are fakes, the repository's node_modules is real; no_claim=a Vitest in a package (searchRepositoryVitest tests)
 test('a workspace whose root Vitest is older than 4 makes the node-test profile name it before any start', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-vitest-status-'))
@@ -195,12 +195,17 @@ test('a workspace whose root Vitest is older than 4 makes the node-test profile 
   const nodeTest = prerequisites.profiles?.['node-test']
   // The module runs in its own context: its objects are copied into this one before they are compared.
   assert.deepEqual(
-    { ready: nodeTest?.ready, missing: [...(nodeTest?.missing ?? [])] },
+    {
+      ready: nodeTest?.ready,
+      missing: [...(nodeTest?.missing ?? [])],
+      vitestSearch: nodeTest?.vitestSearch,
+    },
     {
       ready: false,
       missing: [
-        'node-test needs Vitest 4 or later at the repository root; this repository has 3.2.4 (node_modules/vitest/package.json). Ask the learner to upgrade it, then call codebook_status again.',
+        "node-test needs Vitest 4 or later at the repository root or in a package one or two levels below it; the first one found, ./node_modules/vitest, is 3.2.4. Ask the learner to install or upgrade it, then call codebook_status again. A test in a deeper package can still start: the start checks that test's own package.",
       ],
+      vitestSearch: 'unusable',
     },
   )
   assert.ok(
@@ -213,7 +218,7 @@ test('a workspace whose root Vitest is older than 4 makes the node-test profile 
 /**
  * Creates the real environment over a temporary repository that holds a scheduler source and test, for the node-test profile and the preparation check.
  * @param context - The test, which removes the folder and disposes the environment when it ends.
- * @param options - The root Vitest's version (none writes no package), or a replacement for the prerequisite read that fails.
+ * @param options - The root Vitest's version (none writes no package), or a replacement for the readiness search that fails.
  * @returns The environment, the repository's folder and the scheduler's test configuration citing both files by their current hashes.
  * @example const { environment, directory } = await createNodeTestEnvironment(context, { vitestVersion: '4.1.11' })
  */
@@ -221,7 +226,7 @@ async function createNodeTestEnvironment(
   context: TestContext,
   options: {
     vitestVersion?: string
-    readVitestPrerequisite?: () => Promise<never>
+    searchRepositoryVitest?: () => Promise<never>
   },
 ): Promise<{
   environment: Awaited<ReturnType<typeof EnvironmentModule.createEnvironment>>
@@ -272,10 +277,10 @@ async function createNodeTestEnvironment(
       './utils/resolveExternalNodeExecutable': {
         resolveExternalNodeExecutable: async () => '/external/node',
       },
-      ...(options.readVitestPrerequisite
+      ...(options.searchRepositoryVitest
         ? {
-            './utils/readVitestPrerequisite': {
-              readVitestPrerequisite: options.readVitestPrerequisite,
+            './utils/searchRepositoryVitest': {
+              searchRepositoryVitest: options.searchRepositoryVitest,
             },
           }
         : {}),
@@ -356,12 +361,12 @@ test('a workspace whose root Vitest is 4 or later makes the node-test profile re
   )
 })
 
-// Value: protects=codebook_status from naming this machine's paths when the root Vitest cannot be read; fails_when=the reason carries the repository's absolute path, or the read failure is not reported as a not-ready node-test profile; why_new=the catch printed String(error) (F10) and was untested (F67); seam=the prerequisite read throws as a file system would; no_claim=other read errors
-test('a root Vitest that cannot be read is reported without the repository path', async (context) => {
+// Value: protects=codebook_status from naming this machine's paths when the Vitest search cannot read the repository; fails_when=the reason carries the repository's absolute path, or the failure is not reported as a not-ready node-test profile whose search reads incomplete; why_new=the catch printed String(error) (F10) and was untested (F67); Cycle 0053 replaced the root read with the readiness search (task 4); seam=the readiness search throws as a file system would; no_claim=other read errors
+test('a Vitest search that cannot read the repository is reported without the repository path', async (context) => {
   // Arrange
   let directoryOfRead = ''
   const { environment, directory } = await createNodeTestEnvironment(context, {
-    readVitestPrerequisite: async () => {
+    searchRepositoryVitest: async () => {
       throw new Error(
         `EACCES: permission denied, open '${directoryOfRead}/node_modules/vitest/package.json'`,
       )
@@ -375,12 +380,17 @@ test('a root Vitest that cannot be read is reported without the repository path'
   // Assert
   const nodeTest = prerequisites.profiles?.['node-test']
   assert.deepEqual(
-    { ready: nodeTest?.ready, missing: [...(nodeTest?.missing ?? [])] },
+    {
+      ready: nodeTest?.ready,
+      missing: [...(nodeTest?.missing ?? [])],
+      vitestSearch: nodeTest?.vitestSearch,
+    },
     {
       ready: false,
       missing: [
-        "node-test could not read the repository's root Vitest: EACCES: permission denied, open '<workspace>/node_modules/vitest/package.json'",
+        "node-test could not finish looking for Vitest in the repository: EACCES: permission denied, open '<workspace>/node_modules/vitest/package.json'. A start still checks the cited test's own package.",
       ],
+      vitestSearch: 'incomplete',
     },
   )
 })
@@ -390,8 +400,12 @@ test('the environment refuses a node-test configuration whose test file changed 
   // Arrange
   const { environment, directory, configuration } =
     await createNodeTestEnvironment(context, { vitestVersion: '4.1.11' })
+  const control = {
+    signal: new AbortController().signal,
+    deadlineAt: Date.now() + 60_000,
+  }
   const unchanged = await environment
-    .checkNodeTestFiles?.(configuration, [])
+    .checkNodeTestFiles?.(configuration, [], control)
     .then(
       () => 'accepted',
       (error: unknown) => String(error),
@@ -403,7 +417,7 @@ test('the environment refuses a node-test configuration whose test file changed 
 
   // Act
   const changed = await environment
-    .checkNodeTestFiles?.(configuration, [])
+    .checkNodeTestFiles?.(configuration, [], control)
     .then(
       () => 'accepted',
       (error: unknown) => String(error),

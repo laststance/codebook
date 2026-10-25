@@ -25,6 +25,7 @@ import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 
 import { createHarness } from './helpers'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
+import { ROOT_MODE_EXECUTION_PLAN } from './utils/rootModeExecutionPlan'
 
 /** The result a passing test's final continuation answers. */
 const PASSING_RESULT = {
@@ -276,7 +277,8 @@ test('a node-test start refused during its preparation records no history and fr
     }
 
     // Act
-    run.service.environment.checkNodeTestFiles = async () => undefined
+    run.service.environment.checkNodeTestFiles = async () =>
+      ROOT_MODE_EXECUTION_PLAN
     const admitted = await run.start('refused-1')
 
     // Assert
@@ -930,9 +932,10 @@ test('a test run stopped while it is still preparing records no history, and its
     letCheckFinish = resolve
   })
   // The environment's file check is the last step before the history begins: held, the run is preparing without a history.
-  run.service.environment.checkNodeTestFiles = async (): Promise<void> => {
+  run.service.environment.checkNodeTestFiles = async () => {
     checkIsHeld = true
     await checkMayFinish
+    return ROOT_MODE_EXECUTION_PLAN
   }
   try {
     // The start's idempotency key, named by what this run is for.
@@ -1003,7 +1006,7 @@ test('a learner’s stop while a test run prepares before its history reads as s
   const checkMayFail = new Promise<void>((resolve) => {
     letCheckFail = resolve
   })
-  run.service.environment.checkNodeTestFiles = async (): Promise<void> => {
+  run.service.environment.checkNodeTestFiles = async () => {
     checkIsHeld = true
     await checkMayFail
     throw new Error('The operation was aborted.')
@@ -1026,7 +1029,8 @@ test('a learner’s stop while a test run prepares before its history reads as s
     })
     letCheckFail()
     const afterStop = await stopping
-    run.service.environment.checkNodeTestFiles = async () => undefined
+    run.service.environment.checkNodeTestFiles = async () =>
+      ROOT_MODE_EXECUTION_PLAN
     const repeated = run.service.start({
       instanceId: run.service.instanceId,
       profile: NODE_TEST_PROFILE,
@@ -1099,9 +1103,10 @@ test('a test run stopped before its history began offers no read-history and fre
   const checkMayFinish = new Promise<void>((resolve) => {
     letCheckFinish = resolve
   })
-  run.service.environment.checkNodeTestFiles = async (): Promise<void> => {
+  run.service.environment.checkNodeTestFiles = async () => {
     checkIsHeld = true
     await checkMayFinish
+    return ROOT_MODE_EXECUTION_PLAN
   }
   try {
     const receipt = run.service.start({
@@ -1124,7 +1129,8 @@ test('a test run stopped before its history began offers no read-history and fre
     // Assert
     assert.equal(record.historyExcluded, 'stopped-before-history')
     assert.equal(afterStop.nextActions.includes('read-history'), false)
-    run.service.environment.checkNodeTestFiles = async () => undefined
+    run.service.environment.checkNodeTestFiles = async () =>
+      ROOT_MODE_EXECUTION_PLAN
     for (let index = 1; index <= 16; index++) {
       const other = run.service.start({
         instanceId: run.service.instanceId,
@@ -2202,7 +2208,7 @@ test('a run refused at its admission and then stopped keeps refused-at-admission
   const checkMayFail = new Promise<void>((resolve) => {
     letCheckFail = resolve
   })
-  run.service.environment.checkNodeTestFiles = async (): Promise<void> => {
+  run.service.environment.checkNodeTestFiles = async () => {
     checkIsHeld = true
     await checkMayFail
     throw new Error('The operation was aborted.')

@@ -18,6 +18,7 @@ import {
 import { verifyNodeTestInspectorOwnership } from '../utils/verifyNodeTestInspectorOwnership'
 
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
+import { ROOT_MODE_EXECUTION } from './utils/rootModeExecutionPlan'
 
 test('an owned Node test announces its own loopback debugger and releases the paused process', async () => {
   // Arrange
@@ -29,7 +30,8 @@ test('an owned Node test announces its own loopback debugger and releases the pa
   )
   const events: string[] = []
   const launch = {
-    workspace,
+    vitestRoot: workspace,
+    execution: ROOT_MODE_EXECUTION,
     program,
     sourceFile: program,
     testFile: program,
@@ -141,7 +143,8 @@ test('a Node test that exits before inspection reports the failure and still cle
   const program = join(workspace, 'runner.cjs')
   await writeFile(program, 'process.exit(7)\n')
   const launch = {
-    workspace,
+    vitestRoot: workspace,
+    execution: ROOT_MODE_EXECUTION,
     program,
     sourceFile: program,
     testFile: program,
@@ -170,7 +173,8 @@ test('closing a finished Node test resolves while macOS still answers its exited
   const program = join(workspace, 'runner.cjs')
   await writeFile(program, 'process.exit(0)\n')
   const launch = {
-    workspace,
+    vitestRoot: workspace,
+    execution: ROOT_MODE_EXECUTION,
     program,
     args: ['run', 'src/test.test.ts', '--inspect-brk'],
   }
@@ -208,7 +212,8 @@ test('a later close retries a Node test release whose first signal failed instea
   const program = join(workspace, 'runner.cjs')
   await writeFile(program, 'process.exit(0)\n')
   const launch = {
-    workspace,
+    vitestRoot: workspace,
+    execution: ROOT_MODE_EXECUTION,
     program,
     args: ['run', 'src/test.test.ts', '--inspect-brk'],
   }
@@ -253,7 +258,8 @@ test('a Node test reports its final exit and output after a long log', async () 
     "process.stdout.write('x'.repeat(40000)); process.stdout.write('\\n9 tests passed\\n'); process.exitCode = 0;\n",
   )
   const launch = {
-    workspace,
+    vitestRoot: workspace,
+    execution: ROOT_MODE_EXECUTION,
     program,
     sourceFile: program,
     testFile: program,
@@ -312,7 +318,8 @@ test('a test file still running 20 seconds after its final continuation reports 
     "setTimeout(() => { process.stdout.write('1 test passed\\n'); process.exitCode = 0; }, 300);\n",
   )
   const launch = {
-    workspace,
+    vitestRoot: workspace,
+    execution: ROOT_MODE_EXECUTION,
     program,
     sourceFile: program,
     testFile: program,
@@ -346,7 +353,8 @@ test('a Node test reports stdout and stderr separately with valid Unicode text',
     "process.stdout.write('準備完了\\n'); process.stderr.write('failed assertion\\n'); process.exitCode = 1;\n",
   )
   const launch = {
-    workspace,
+    vitestRoot: workspace,
+    execution: ROOT_MODE_EXECUTION,
     program,
     sourceFile: program,
     testFile: program,
@@ -396,7 +404,8 @@ test('output that arrives while an earlier line is still being saved reaches the
     "process.stdout.write('first line\\n'); setTimeout(() => process.stdout.write('second line\\n'), 150); setTimeout(() => { process.exitCode = 0; }, 400);\n",
   )
   const launch = {
-    workspace,
+    vitestRoot: workspace,
+    execution: ROOT_MODE_EXECUTION,
     program,
     sourceFile: program,
     testFile: program,
@@ -506,7 +515,8 @@ test('a failed Node output observer refuses capture and releases its process', a
     "process.stdout.write('test output'); setInterval(() => {}, 1000);\n",
   )
   const launch = {
-    workspace,
+    vitestRoot: workspace,
+    execution: ROOT_MODE_EXECUTION,
     program,
     sourceFile: program,
     testFile: program,
@@ -547,7 +557,8 @@ test(
       "process.stdout.write('x'.repeat(12 * 1024 * 1024)); process.stdout.write('END'); process.exitCode = 0;\n",
     )
     const launch = {
-      workspace,
+      vitestRoot: workspace,
+      execution: ROOT_MODE_EXECUTION,
       program,
       sourceFile: program,
       testFile: program,

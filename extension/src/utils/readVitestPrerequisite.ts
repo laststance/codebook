@@ -1,13 +1,15 @@
 import { readFile, realpath, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 
 import { z } from 'zod'
 
 import {
   NODE_TEST_MINIMUM_VITEST_MAJOR,
   PRINTABLE_VITEST_VERSION,
+  VITEST_PACKAGE_DIRECTORY,
   VITEST_PACKAGE_JSON_LIMIT_BYTES,
   VITEST_PACKAGE_PATH,
+  VITEST_PROGRAM_PATH,
 } from '../constants'
 
 import { isInsideFolder } from './isInsideFolder'
@@ -15,20 +17,31 @@ import { resolveOwnedRepositoryFile } from './resolveOwnedRepositoryFile'
 
 const vitestPackageSchema = z.object({ version: z.string() })
 
-/** What the repository's root Vitest allows: a supported version, or the sentence the agent reads in its place. */
-export type VitestPrerequisite =
-  | { ready: true; version: string; major: number }
-  | { ready: false; reason: string }
+/** What one Vitest installation, a directory's `node_modules/vitest`, offers node-test: a usable Vitest, or why it is not one. */
+export type VitestInstallation =
+  | {
+      state: 'usable'
+      version: string
+      major: number
+      /** The real path of its `vitest.mjs` inside the opened repository. */
+      program: string
+      /** The real path of its package folder. */
+      packageDirectory: string
+    }
+  | { state: 'too-old'; version: string }
+  | { state: 'unreadable-version' }
+  | { state: 'links-outside' }
+  | { state: 'program-missing' }
 
 /**
  * Reads the version a Vitest package file names, printing it only as a short semantic version.
  * @param file - The package file's real path.
- * @returns The version, or `undefined` for a file above {@link VITEST_PACKAGE_JSON_LIMIT_BYTES}, one that does not parse, and a version that is no short semantic version.
+ * @returns The version, or `undefined` for a file above {@link VITEST_PACKAGE_JSON_LIMIT_BYTES}, one that cannot be read or does not parse, and a version that is no short semantic version.
  * @example await printableVersion('/repo/node_modules/vitest/package.json') // => '4.1.11'
  */
 async function printableVersion(file: string): Promise<string | undefined> {
-  const entry = await stat(file)
-  if (entry.size > VITEST_PACKAGE_JSON_LIMIT_BYTES) return undefined
+  const entry = await stat(file).catch(() => undefined)
+  if (!entry || entry.size > VITEST_PACKAGE_JSON_LIMIT_BYTES) return undefined
   const parsed = vitestPackageSchema.safeParse(
     await readFile(file, 'utf8')
       .then((text): unknown => JSON.parse(text))
@@ -40,42 +53,67 @@ async function printableVersion(file: string): Promise<string | undefined> {
 }
 
 /**
- * Tells whether the opened repository has the root Vitest node-test runs, before any start: `codebook_status` names a missing or older one in `profiles['node-test'].missing`, and a start's preparation refuses with the same sentence before the run's history exists; called by the study environment's prerequisites and by {@link prepareNodeTestLaunch}.
- * The package file is read through realpath containment ({@link resolveOwnedRepositoryFile}), so a link that leaves the repository is not run and is named as such, and its version is printed only as a short semantic version ({@link PRINTABLE_VITEST_VERSION}), else as `an unreadable version`, so a package's `version` field cannot carry other text into the agent's first answer.
- * @param workspace - The opened repository's root.
- * @returns `ready` with the version and its major, or the sentence that names what is missing and what to ask the learner.
+ * Says whether a path exists and its real path lies outside the repository, so a link into a package store outside it is named as such instead of as missing.
+ * @param root - The repository's real root.
+ * @param path - The path to resolve.
+ * @returns `true` only for a path that resolves outside the root.
+ * @example await leavesRepository('/repo', '/repo/node_modules/vitest') // => true for a link into ~/.pnpm-store
+ */
+async function leavesRepository(root: string, path: string): Promise<boolean> {
+  const real = await realpath(path).catch(() => undefined)
+  return real !== undefined && real !== root && !isInsideFolder(root, real)
+}
+
+/**
+ * Tells what the Vitest installed in one directory's `node_modules/vitest` offers node-test; called for the cited test's Vitest by {@link requireOwnedVitest} and for each candidate of `codebook_status`'s readiness search by {@link searchRepositoryVitest}, which word its state into their own sentences.
+ * Its files are read through realpath containment ({@link resolveOwnedRepositoryFile}), so a link that leaves the repository is not run and is named as such, and the version is kept only as a short semantic version ({@link PRINTABLE_VITEST_VERSION}), so a package's `version` field cannot carry other text into the agent's answer.
+ * @param root - The opened repository's real root.
+ * @param directory - The real directory whose `node_modules/vitest` exists, the root or a folder inside it.
+ * @returns
+ * - `usable`: version 4 or later with its program, both inside the repository.
+ * - `links-outside`: the package folder, its package file or its program resolves outside the repository.
+ * - `unreadable-version`: the package file is missing, unreadable, too large or names no short semantic version.
+ * - `too-old`: a version below 4.
+ * - `program-missing`: a supported version without `vitest.mjs`.
  * @example
- * await readVitestPrerequisite('/repo') // => { ready: true, version: '4.1.11', major: 4 }
- * await readVitestPrerequisite('/repo-with-vitest-3')
- * // => { ready: false, reason: 'node-test needs Vitest 4 or later at the repository root; this repository has 3.2.4 (node_modules/vitest/package.json). Ask the learner to upgrade it, then call codebook_status again.' }
+ * await readVitestPrerequisite('/repo', '/repo/packages/query-core')
+ * // => { state: 'usable', version: '5.0.5', major: 5, program: '/repo/node_modules/.pnpm/vitest@5.0.5/node_modules/vitest/vitest.mjs', packageDirectory: '/repo/node_modules/.pnpm/vitest@5.0.5/node_modules/vitest' }
+ * await readVitestPrerequisite('/repo', '/repo') // => { state: 'too-old', version: '3.2.4' }
  */
 export async function readVitestPrerequisite(
-  workspace: string,
-): Promise<VitestPrerequisite> {
-  const root = await realpath(workspace)
-  const file = await resolveOwnedRepositoryFile(root, VITEST_PACKAGE_PATH)
-  if (!file) {
-    // A Vitest that exists but resolves outside the repository (pnpm's global virtual store) is not run; say so instead of "none" (F101).
-    const linked = await realpath(join(root, VITEST_PACKAGE_PATH)).catch(
-      () => undefined,
-    )
-    if (linked && !isInsideFolder(root, linked))
-      return {
-        ready: false,
-        reason: `node-test needs Vitest ${NODE_TEST_MINIMUM_VITEST_MAJOR} or later inside the repository; node_modules/vitest at the repository root links outside it, which Codebook does not run. Ask the learner to install Vitest in the repository, then call codebook_status again.`,
-      }
-    return {
-      ready: false,
-      reason: `node-test needs Vitest ${NODE_TEST_MINIMUM_VITEST_MAJOR} or later at the repository root; this repository has none at node_modules/vitest, and a Vitest inside a package is not supported yet. Ask the learner to install it at the root, then call codebook_status again.`,
-    }
-  }
-  const version = await printableVersion(file)
-  const major =
-    version === undefined ? Number.NaN : Number.parseInt(version, 10)
-  if (version !== undefined && major >= NODE_TEST_MINIMUM_VITEST_MAJOR)
-    return { ready: true, version, major }
+  root: string,
+  directory: string,
+): Promise<VitestInstallation> {
+  // A pnpm global virtual store or a shared store outside the repository is not run; say so instead of "unreadable" (F101).
+  if (await leavesRepository(root, join(directory, VITEST_PACKAGE_DIRECTORY)))
+    return { state: 'links-outside' }
+  const fromRoot = relative(root, directory)
+  const packageFile = await resolveOwnedRepositoryFile(
+    root,
+    join(fromRoot, VITEST_PACKAGE_PATH),
+  )
+  if (!packageFile)
+    return (await leavesRepository(root, join(directory, VITEST_PACKAGE_PATH)))
+      ? { state: 'links-outside' }
+      : { state: 'unreadable-version' }
+  const version = await printableVersion(packageFile)
+  if (version === undefined) return { state: 'unreadable-version' }
+  const major = Number.parseInt(version, 10)
+  if (major < NODE_TEST_MINIMUM_VITEST_MAJOR)
+    return { state: 'too-old', version }
+  const program = await resolveOwnedRepositoryFile(
+    root,
+    join(fromRoot, VITEST_PROGRAM_PATH),
+  )
+  if (!program)
+    return (await leavesRepository(root, join(directory, VITEST_PROGRAM_PATH)))
+      ? { state: 'links-outside' }
+      : { state: 'program-missing' }
   return {
-    ready: false,
-    reason: `node-test needs Vitest ${NODE_TEST_MINIMUM_VITEST_MAJOR} or later at the repository root; this repository has ${version ?? 'an unreadable version'} (node_modules/vitest/package.json). Ask the learner to upgrade it, then call codebook_status again.`,
+    state: 'usable',
+    version,
+    major,
+    program,
+    packageDirectory: dirname(packageFile),
   }
 }

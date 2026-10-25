@@ -42,9 +42,12 @@ async function availableInspectorPort(): Promise<number> {
   return address.port
 }
 
-/** Starts exactly the sealed Vitest file in an owned process group before native debugger attachment. Called by the Node test runtime after source verification. @param launch - Checked in-repository program and argv. @param node - External Node executable. @param record - Bounded process event sink. @param onOutput - Receives each stamped chunk at once, in arrival order; its promise settles when the chunk is durable. @example const testRun = await launchNodeTest(launch, '/usr/bin/node', record); await testRun.inspectorEndpoint(signal) */
+/** Starts exactly the sealed Vitest file in an owned process group, in its Vitest root, before native debugger attachment. Called by the Node test runtime after source verification. @param launch - Checked in-repository program and argv, the Vitest root it runs in and the plan's facts the start journals. @param node - External Node executable. @param record - Bounded process event sink. @param onOutput - Receives each stamped chunk at once, in arrival order; its promise settles when the chunk is durable. @example const testRun = await launchNodeTest(launch, '/usr/bin/node', record); await testRun.inspectorEndpoint(signal) */
 export async function launchNodeTest(
-  launch: Pick<PreparedNodeTestLaunch, 'workspace' | 'program' | 'args'>,
+  launch: Pick<
+    PreparedNodeTestLaunch,
+    'vitestRoot' | 'execution' | 'program' | 'args'
+  >,
   node: string,
   record: (type: string, detail?: unknown) => unknown,
   onOutput?: (event: NodeTestOutputEvent) => void | Promise<void>,
@@ -59,8 +62,9 @@ export async function launchNodeTest(
   )
     throw new Error('Node test launch has no single Inspector pause.')
   // The owned test receives basic process settings without inheriting unrelated account credentials, exactly as its file-listing preflight did.
+  // The Vitest root, as the package's own `vitest` command runs from it, so its config and its relative paths resolve as there.
   const child = spawn(node, [launch.program, ...args], {
-    cwd: launch.workspace,
+    cwd: launch.vitestRoot,
     env: buildNodeTestEnvironment(),
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -154,7 +158,9 @@ export async function launchNodeTest(
     port,
     program: launch.program,
     args,
-    cwd: launch.workspace,
+    cwd: launch.vitestRoot,
+    vitestRoot: launch.execution.vitestRoot,
+    rootClaim: launch.execution.rootClaim,
     secretEnvironmentInherited: false,
   })
   return {
