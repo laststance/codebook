@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { appendFile, readFile, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -3715,6 +3716,79 @@ test('a refused test replay control’s cause stays without the storage folder a
     )
   } finally {
     context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a test replay control refused after the runtime was released still shows its cause with the storage folder replaced, because the reader words causes with the roots it holds itself once no service names them; fails_when=the reader falls back to no storage roots after the release (`{ storage: [] }`), so a control it still serves from its own history store shows the learner's storage path (Cycle 0052 pt2 /ship Step 11, Claude adversarial pass 2); why_new=the earlier release test refused the control before the release; seam=the reader's own runtime release, then the store's saveLearningDecision rejecting with a path inside the learning directory; no_claim=the line's rendering
+test('a test replay control refused after the runtime is released shows its cause without the storage folder', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await openByOpenReplay(harness)
+    const store = harness.service.nodeHistoryStore!
+    await harness.reader.retire(harness.service)
+    context.mock.method(store, 'saveLearningDecision', async () => {
+      throw new Error(
+        `EACCES: permission denied, open '${store.learningDirectory}/decision.json'`,
+      )
+    })
+
+    // Act: the learner marks the replay understood after the release, and the write is refused.
+    harness.receivePlaybackPanel({
+      type: 'node-history-understanding',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      understood: true,
+    })
+    await waitUntil(
+      () => lastView(harness)?.nodeHistoryRefusal !== undefined,
+      'the refusal is published',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert: the view is a clone from the webview's realm, so its lines are compared as a plain array.
+    const shown = lastView(harness)
+    assert.deepEqual(
+      {
+        errors: [...(shown?.errors ?? [])],
+        refusal: shown?.nodeHistoryRefusal,
+      },
+      {
+        errors: [
+          "Error: EACCES: permission denied, open '<storage>/decision.json'",
+        ],
+        refusal: "EACCES: permission denied, open '<storage>/decision.json'",
+      },
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a failure the reader words after the runtime was released hides the storage folder, the workspace and the home directory as the released service did; fails_when=the reader falls back to the home directory alone (the former `describeFailure`) or to roots it guesses without the released service's workspace, so the learner's storage or repository path shows (Cycle 0052 pt2 /ship Step 9, delta review of the release fallback); why_new=the release tests above cover the storage folder of a refused control only; seam=the reader's own runtime release and its public describeFailure, as the Save Learning Replay command calls it; no_claim=a workspace distinct from the storage root (the harness keeps its storage in the workspace folder) and the notification's rendering
+test('a failure worded after the runtime is released hides the storage folder, the workspace and the home directory', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const storage = harness.service.nodeHistoryStore!.learningDirectory
+    const workspace = harness.service.environment.workspace
+    await harness.reader.retire(harness.service)
+
+    // Act
+    const worded = harness.reader.describeFailure(
+      new Error(
+        `EACCES: '${storage}/a.json', '${workspace}/src/b.ts', '${homedir()}/c.txt'`,
+      ),
+    )
+
+    // Assert: the harness's service keeps its storage in the workspace folder, so the released service's roots word that folder `<storage>` too.
+    assert.equal(
+      worded,
+      "EACCES: '<storage>/a.json', '<storage>/src/b.ts', '~/c.txt'",
+    )
+  } finally {
     await harness.close()
   }
 })

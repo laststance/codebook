@@ -332,7 +332,7 @@ import {
 import { recordingNotShownReason } from './utils/recordingNotShownReason'
 import { replacedTabAddresses } from './utils/replacedTabAddresses'
 import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition'
-import { sanitizeCause } from './utils/sanitizeCause'
+import { type CauseRoots, sanitizeCause } from './utils/sanitizeCause'
 import { sanitizedStack } from './utils/sanitizedStack'
 import { sanitizeNodeTestHistory } from './utils/sanitizeNodeTestHistory'
 import { savedStudyIdentityLine } from './utils/savedStudyIdentityLine'
@@ -733,6 +733,8 @@ type NodeHistoryPositionWriter = {
 /** Owns the retained learner reader while {@link StudyService} owns execution; activation constructs it before MCP-first runs. @example await workspace.open() */
 export class StudyWorkspace {
   private service?: StudyService
+  /** The private roots of the last released service ({@link retire}), so a cause the reader words after the release hides exactly what the service hid ({@link privateRoots}). */
+  private releasedCauseRoots?: CauseRoots
   private learningSaveItem?: vscode.StatusBarItem
   /** The text and tooltip {@link learningSaveItem} shows now, or `undefined` while it is hidden; {@link showLearningSaveItem} and {@link hideLearningSaveItem} touch the item only when this changes, because each assignment is a message to the status bar and the refresh publishes every 250 ms. */
   private learningSaveShown?: { text: string; tooltip: string }
@@ -8780,6 +8782,8 @@ export class StudyWorkspace {
     await this.library?.flush()
     await this.recordings?.flush()
     if (this.service === service) {
+      // The reader keeps serving its stores after the release: its causes keep the released service's roots (Cycle 0052 pt2 /ship).
+      this.releasedCauseRoots = service.causeRoots
       this.service = undefined
       clearInterval(this.timer)
       this.timer = undefined
@@ -11281,13 +11285,13 @@ export class StudyWorkspace {
   }
 
   /**
-   * Words a failure for a notice the learner reads, without the private paths it can carry: the service's roots once it is attached, else the home directory alone (F264); called by the extension's Save Learning Replay command when the save fails.
+   * Words a failure for a notice the learner reads, without the private paths it can carry: the service's roots once it is attached, else the roots the reader holds itself ({@link privateRoots}, F264); called by the extension's Save Learning Replay command when the save fails.
    * @param error - What the command threw.
    * @returns The sanitized cause.
    * @example workspace.describeFailure(new Error("ENOSPC: write '/Users/ada/Library/…/globalStorage/x/a.json'")) // => "ENOSPC: write '<storage>/a.json'"
    */
   describeFailure(error: unknown): string {
-    return sanitizeCause(error, this.service?.causeRoots ?? causeRootsFor([]))
+    return sanitizeCause(error, this.privateRoots())
   }
 
   /** Finishes the explicitly selected capture and verifies matching durable learning; called by the status-bar command. @example await workspace.saveLearningReplay(studyId) */
@@ -11594,17 +11598,36 @@ export class StudyWorkspace {
   }
 
   /**
-   * Replaces the private roots (storage folder, workspace, home directory) in a reader line and keeps the error name it starts with, so the Study pane's line reads as before apart from the roots; called by {@link report} when it stores a refused test replay control's line, while the service still names the roots, so no later publish shows them (Cycle 0052 tasks 21 and 48, and pt2 /ship Step 11: a publish after a runtime release has no roots to replace).
+   * Gives the private roots a cause the reader shows must not name: the attached service's roots; after a runtime release the released service's ({@link releasedCauseRoots}), because the reader keeps serving its stores; before any service, the ones the reader holds itself (the extension's global storage, the learning library, the test replays' learning folder, the workspace folder and the home directory) (Cycle 0052 pt2 /ship Steps 9 and 11). Read wherever the reader sanitizes a cause.
+   * @returns The roots for {@link sanitizeCause}.
+   * @example sanitizeCause(error, this.privateRoots()) // => "EACCES: permission denied, open '<storage>/decision.json'", also after the release
+   */
+  private privateRoots(): CauseRoots {
+    return (
+      this.service?.causeRoots ??
+      this.releasedCauseRoots ??
+      causeRootsFor(
+        [
+          this.context.globalStorageUri.fsPath,
+          ...(this.library ? [this.library.directory] : []),
+          ...(this.nodeHistoryStore
+            ? [this.nodeHistoryStore.learningDirectory]
+            : []),
+        ],
+        vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+      )
+    )
+  }
+
+  /**
+   * Replaces the private roots (storage folder, workspace, home directory) in a reader line and keeps the error name it starts with, so the Study pane's line reads as before apart from the roots; called by {@link report} when it stores a refused test replay control's line, so every later publish shows the stored line with the roots replaced ({@link privateRoots}; Cycle 0052 tasks 21 and 48).
    * @param line - The failure's string form, `String(error)`.
    * @returns The line with its roots replaced.
    * @example this.withoutPrivateRoots("Error: EACCES: open '/Users/ada/…/storage/a.json'") // => "Error: EACCES: open '<storage>/a.json'"
    */
   private withoutPrivateRoots(line: string): string {
     const errorName = /^[A-Za-z]*Error: /.exec(line)?.[0] ?? ''
-    return (
-      errorName +
-      sanitizeCause(line, this.service?.causeRoots ?? { storage: [] })
-    )
+    return errorName + sanitizeCause(line, this.privateRoots())
   }
 
   /**
@@ -11865,7 +11888,7 @@ export class StudyWorkspace {
       await this.tellTestReplayOpenFailure(
         studyId,
         error,
-        sanitizeCause(error, this.service?.causeRoots ?? { storage: [] }),
+        sanitizeCause(error, this.privateRoots()),
       )
       return false
     }
@@ -11927,10 +11950,7 @@ export class StudyWorkspace {
     studyId: string,
     error: unknown,
   ): Promise<'retry' | 'told'> {
-    const cause = sanitizeCause(
-      error,
-      this.service?.causeRoots ?? { storage: [] },
-    )
+    const cause = sanitizeCause(error, this.privateRoots())
     const answer = await this.resolveForeignPreviewRefusal(cause)
     if (answer === 'retry') return 'retry'
     // A failed open shows no replay in the summary composition: the Study composition comes back, with the failure on its line (DS-G). A newer entry still under way keeps that composition for its own replay (Cycle 0052 task 35).
@@ -12020,10 +12040,7 @@ export class StudyWorkspace {
     error: unknown,
     cause: string,
   ): Promise<void> {
-    const stack = sanitizedStack(
-      error,
-      this.service?.causeRoots ?? { storage: [] },
-    )
+    const stack = sanitizedStack(error, this.privateRoots())
     this.diagnostics?.log({
       surface: 'open:test-replay',
       studyId,
@@ -12187,12 +12204,7 @@ export class StudyWorkspace {
     error: unknown,
     wording: (cause: string) => string = (cause) => cause,
   ): void {
-    this.report(
-      kind,
-      wording(
-        sanitizeCause(error, this.service?.causeRoots ?? { storage: [] }),
-      ),
-    )
+    this.report(kind, wording(sanitizeCause(error, this.privateRoots())))
   }
 
   /**
@@ -19623,7 +19635,7 @@ export class StudyWorkspace {
         SUMMARY_BESIDE_CHAT_MOVE_ARGUMENT,
       )
     } catch (error) {
-      const roots = this.service?.causeRoots ?? { storage: [] }
+      const roots = this.privateRoots()
       this.diagnostics?.log({
         surface,
         cause: sanitizeCause(error, roots),
@@ -22292,7 +22304,7 @@ export class StudyWorkspace {
   private sanitizeRefusalGroups(
     groups: readonly RefusalGroupView[],
   ): RefusalGroupView[] {
-    const roots = this.service?.causeRoots ?? { storage: [] }
+    const roots = this.privateRoots()
     return groups.map((group) => ({
       ...group,
       tabs: group.tabs.map((tab) => ({
@@ -25252,10 +25264,7 @@ export class StudyWorkspace {
    * this.describeNodeHistoryMoveFailure(new Error('The presentation failed.')) // => 'The recorded moment could not be shown: The presentation failed. The last moment is still shown. Select this stop again to retry.'
    */
   private describeNodeHistoryMoveFailure(error: unknown): string {
-    const cause = sanitizeCause(
-      error,
-      this.service?.causeRoots ?? { storage: [] },
-    ).replace(/\.$/, '')
+    const cause = sanitizeCause(error, this.privateRoots()).replace(/\.$/, '')
     // Only the debugger's start keeps the restart clause; a running debugger, a closed one or another surface failing asks for the stop again.
     return error instanceof ReplayDebuggerStartError
       ? `The replay debugger could not start: ${cause}. The last moment is still shown. Select this stop or use Inspect in native debugger to restart it.`
@@ -25730,7 +25739,7 @@ export class StudyWorkspace {
     studyId: string,
     error: unknown,
   ): string {
-    const roots = this.service?.causeRoots ?? { storage: [] }
+    const roots = this.privateRoots()
     const cause = sanitizeCause(error, roots)
     const stack = sanitizedStack(error, roots)
     this.diagnostics?.log({
@@ -26243,12 +26252,12 @@ export class StudyWorkspace {
   /**
    * Keeps storage, control and renderer failures distinct in the learner-facing status: one line per kind, published at once; every failure path of the reader calls it.
    * @param kind - The line the failure replaces; {@link READER_ERROR_KINDS} says whether Retry storage / refresh or the learner's next choice answers it.
-   * @param error - The failure, shown as its string form; a refused test replay control's line ('node-history-control') is stored with the private roots replaced ({@link withoutPrivateRoots}), while the service still names them.
+   * @param error - The failure, shown as its string form; a refused test replay control's line ('node-history-control') is stored with the private roots replaced ({@link withoutPrivateRoots}).
    * @example this.report('archive', error)
    */
   private report(kind: ReaderErrorKind, error: unknown): void {
     if (CHOICE_RETIRED_ERROR_KINDS.has(kind)) this.controlRefusals++
-    // A refused test replay control's line loses the private roots now, while the service names them, so a publish after a runtime release shows none of them (Cycle 0052 tasks 21 and 48).
+    // A refused test replay control's line is stored with the private roots replaced, so no later publish shows them (Cycle 0052 tasks 21 and 48).
     this.errors.set(
       kind,
       kind === 'node-history-control'
