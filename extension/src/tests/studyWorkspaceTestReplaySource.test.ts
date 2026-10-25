@@ -754,7 +754,7 @@ test('a failed presentation is reported as itself when the return to the committ
     const outcome = assert.rejects(selecting, {
       // The move's failure carries the open path's recovery clause and names the presentation's own cause (Cycle 0051, DS-G).
       message:
-        'The replay debugger could not start: The presentation failed. The last moment is still shown. Select this stop or use Inspect in native debugger to restart it.',
+        'The recorded moment could not be shown: The presentation failed. The last moment is still shown. Select this stop again to retry.',
     })
     await held.started
 
@@ -3295,56 +3295,64 @@ test('the placeholder is revealed from its first line when an output follows a s
   }
 })
 
-// Value: protects=a CodeLens above the stopped line carries the whole label Recorded: <path>:<line> · <t> s at a verified stop and none at the placeholder; fails_when=the label exists only at the end of the line, where the editor group's edge cuts it; why_new=F207 (the end-of-line label was cut at the default layout); seam=the workspace harness's CodeLens provider; no_claim=whether both hosts draw the lens (the native check)
-test('a CodeLens above the stopped line carries the whole recorded label', async () => {
+// Value: protects=the recorded-source slot draws no CodeLens, at a stop or while a move to the next stop is pending: the editor redraws a provider's lens only after its own refresh delay (at least 250 ms in VS Code, about 300 ms in Cursor), so any lens would still name the stop a move left beside the next moment; the stop's whole label is the end-of-line label, which leaves with the highlight in the same host turn; fails_when=a CodeLens provider answers a lens for the slot (N51-V1: 2 to 3 frames in VS Code and about 9 in Cursor of `Recorded: app/lib/actions.ts:35 · 20.56 s` beside the pending target, Cycle 0052 task 1); why_new=the earlier test pinned the lens F207 added; seam=the workspace harness's CodeLens registry, which asks every provider registered for the slot's scheme; no_claim=the native frames, which N52 (b) checks
+test('the recorded-source slot draws no CodeLens at a stop or while a move to the next stop is pending', async () => {
   // Arrange
   const harness = await workspaceHarness()
   try {
-    const history = await saveOneStopNodeHistory(
+    const history = await saveTwoFileNodeHistory(
       harness.service.nodeHistoryStore!,
     )
     await openReplayAt(harness, history.studyId, 2)
     const slot = slotTabs(harness)[0]!
+    const atStop = {
+      lenses: harness.codeLensTitles(slot),
+      labels: slotLabels(harness),
+    }
+    const invalidationsBefore =
+      harness.historicalDebugInvalidationLabels().length
+    harness.useManualSlotClock()
 
-    // Act
-    const atStop = harness.codeLensTitles(slot)
-    await selectMoment(harness, history.studyId, 3)
-    const atOutput = harness.codeLensTitles(slot)
-
-    // Assert
-    assert.deepEqual(atStop, ['Recorded: src/theme.ts:1 · 0.20 s'])
-    assert.deepEqual(atOutput, [])
-  } finally {
-    await harness.close()
-  }
-})
-
-// Value: protects=the editor re-asking for the slot's CodeLens whenever the label is drawn or cleared (a moment selected, the slot retired), so a lens never stays on a line the replay left; fails_when=the reader draws or clears the label without announcing the change, or stops announcing at the retire; why_new=F373 (the fake never exercised onDidChangeCodeLenses); seam=the workspace harness's CodeLens refresh counter; no_claim=how many refreshes the editor runs for one announcement
-test('a CodeLens refresh is announced when a moment is selected and when the slot is retired', async () => {
-  // Arrange
-  const harness = await workspaceHarness()
-  try {
-    const history = await saveOneStopNodeHistory(
-      harness.service.nodeHistoryStore!,
+    // Act: Next stop starts; the slot still holds the first stop's bytes.
+    startMomentSelection(harness, history.studyId, 4)
+    await waitUntil(
+      () =>
+        harness.historicalDebugInvalidationLabels().length >
+        invalidationsBefore,
+      'the debugger leaves the first stop',
+      READER_RESULT_BOUND_MS,
     )
-    await openReplayAt(harness, history.studyId, 2)
-    const refreshesAtOpen = harness.codeLensRefreshCount()
-
-    // Act
-    await selectMoment(harness, history.studyId, 3)
-    const refreshesAfterSelect = harness.codeLensRefreshCount()
-    await harness.reader['retireNodeSourceSlot']()
+    const pending = {
+      lenses: harness.codeLensTitles(slot),
+      labels: slotLabels(harness),
+    }
+    harness.elapseSlotClock(300)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
+      'the second stop commits',
+      READER_RESULT_BOUND_MS,
+    )
 
     // Assert
-    assert.equal(refreshesAfterSelect > refreshesAtOpen, true)
-    assert.equal(harness.codeLensRefreshCount() > refreshesAfterSelect, true)
+    assert.deepEqual(
+      { atStop, pending },
+      {
+        atStop: {
+          lenses: [],
+          labels: ['  Recorded: src/theme.ts:1 · 0.20 s'],
+        },
+        pending: { lenses: [], labels: [] },
+      },
+    )
   } finally {
     await harness.close()
   }
 })
 
-// Value: protects=the fake editor asking a CodeLens provider only about documents its selector names, and one registration's second dispose removing nothing more; fails_when=a provider registered for another scheme still returns the slot's lens in a test, or a repeated dispose of another extension's registration removes the reader's provider; why_new=F373 (the fake asked every provider about every document and spliced index -1 on a second dispose); seam=the workspace harness's CodeLens registry; no_claim=the real editor's selector scoring
-test('a second dispose of another extension’s CodeLens registration keeps the slot’s CodeLens', async () => {
+// Value: protects=the fake editor's CodeLens registry, which the slot's no-lens test reads: a registration's second dispose removes nothing more, and a provider for another scheme gives the slot no lens; fails_when=a repeated dispose of another extension's registration splices another provider out, or the fake asks a provider about documents its selector does not name; why_new=F373 (the fake asked every provider about every document and spliced index -1 on a second dispose); seam=the workspace harness's CodeLens registry; no_claim=the real editor's selector scoring
+test('a second dispose of another extension’s CodeLens registration removes no other provider', async () => {
   // Arrange
   const harness = await workspaceHarness()
   try {
@@ -3361,32 +3369,7 @@ test('a second dispose of another extension’s CodeLens registration keeps the 
 
     // Assert
     assert.equal(harness.codeLensProviderCount(), providersWithReader)
-    assert.deepEqual(harness.codeLensTitles(slotTabs(harness)[0]!), [
-      'Recorded: src/theme.ts:1 · 0.20 s',
-    ])
-  } finally {
-    await harness.close()
-  }
-})
-
-// Value: protects=a recorded path that holds icon syntax such as $(trash) showing as text in the CodeLens title, so a recording cannot draw an icon of its own there; fails_when=the title carries the path unescaped and the editor draws a codicon in place of the characters; why_new=F367 (the title stripped terminal controls only; the hover was escaped in F176); seam=the workspace harness's CodeLens provider; no_claim=how the editor draws the escaped title (the native check)
-test('a CodeLens title shows a recorded path with icon syntax as text', async () => {
-  // Arrange
-  const harness = await workspaceHarness()
-  try {
-    const history = await saveTwoFileNodeHistory(
-      harness.service.nodeHistoryStore!,
-      'src/$(trash).ts',
-    )
-    await openReplayAt(harness, history.studyId, 2)
-    await selectMoment(harness, history.studyId, 4)
-    const slot = slotTabs(harness)[0]!
-
-    // Act
-    const titles = harness.codeLensTitles(slot)
-
-    // Assert
-    assert.deepEqual(titles, ['Recorded: src/\\$(trash).ts:1 · 0.30 s'])
+    assert.deepEqual(harness.codeLensTitles(slotTabs(harness)[0]!), [])
   } finally {
     await harness.close()
   }
@@ -3441,8 +3424,8 @@ test('the slot keeps the earlier stop’s bytes until the native views have redr
   }
 })
 
-// Value: protects=moving from a stop to an output announces the CodeLens refresh at the leave, answers no lens for the slot at once, and keeps the stop's bytes in the slot until the editor's lens refresh delay (300 ms) has passed, so the stale lens never stands above the placeholder (F387); fails_when=the placeholder replaces the stop's bytes while the editor may still draw the stop's lens; why_new=F387 (native frames 76 to 82 showed the stop's lens above line 1 of the placeholder for 230 ms); seam=the workspace harness's CodeLens registry with its refresh counter, the document model and the hand-driven slot clock; no_claim=when the native editor repaints the lens (the driving agent's frame recheck)
-test('the stop’s CodeLens is withdrawn at the leave and the placeholder replaces the stop’s bytes only after the editor’s lens refresh delay', async () => {
+// Value: protects=moving from a stop to an output keeps the stop's bytes in the slot for the native views' repaint delay (300 ms) and shows the placeholder only then, so the Call Stack that still draws the stop never stands beside the placeholder (F387), and no CodeLens names the stop meanwhile; fails_when=the placeholder replaces the stop's bytes in the same turn as the debugger's leave, or a lens answers for the slot; why_new=F387 (native frames 76 to 82 showed the stop's lens above line 1 of the placeholder for 230 ms); the lens is gone since Cycle 0052 task 1; seam=the workspace harness's CodeLens registry, the document model and the hand-driven slot clock; no_claim=when the native views repaint (the driving agent's frame recheck)
+test('the placeholder replaces the stop’s bytes only after the native views’ repaint delay, with no CodeLens for the slot', async () => {
   // Arrange
   const harness = await workspaceHarness()
   try {
@@ -3451,8 +3434,6 @@ test('the stop’s CodeLens is withdrawn at the leave and the placeholder replac
     )
     await openReplayAt(harness, history.studyId, 2)
     const slot = slotTabs(harness)[0]!
-    const lensBefore = harness.codeLensTitles(slot)
-    const refreshesBefore = harness.codeLensRefreshCount()
     const invalidationsBefore =
       harness.historicalDebugInvalidationLabels().length
     harness.useManualSlotClock()
@@ -3468,7 +3449,6 @@ test('the stop’s CodeLens is withdrawn at the leave and the placeholder replac
     )
     await new Promise((resolve) => setTimeout(resolve, 50))
     const lensDuringLeave = harness.codeLensTitles(slot)
-    const refreshesDuringLeave = harness.codeLensRefreshCount()
     const textDuringLeave = harness.documentTextOf(slot)
     harness.elapseSlotClock(300)
     await waitUntil(
@@ -3480,9 +3460,7 @@ test('the stop’s CodeLens is withdrawn at the leave and the placeholder replac
     )
 
     // Assert
-    assert.deepEqual(lensBefore, ['Recorded: src/theme.ts:1 · 0.20 s'])
     assert.deepEqual(lensDuringLeave, [])
-    assert.equal(refreshesDuringLeave > refreshesBefore, true)
     assert.equal(textDuringLeave, THEME_TEXT)
     assert.notEqual(harness.documentTextOf(slot), THEME_TEXT)
   } finally {
@@ -3508,7 +3486,7 @@ test('the playback time follows the pending stop and returns to the committed mo
     const outcome = assert.rejects(selecting, {
       // The move's failure carries the open path's recovery clause and names the presentation's own cause (Cycle 0051, DS-G).
       message:
-        'The replay debugger could not start: The presentation failed. The last moment is still shown. Select this stop or use Inspect in native debugger to restart it.',
+        'The recorded moment could not be shown: The presentation failed. The last moment is still shown. Select this stop again to retry.',
     })
     await held.started
 
@@ -3553,7 +3531,7 @@ test('the position line and the playback readout say the requested moment is loa
     const outcome = assert.rejects(selecting, {
       // The move's failure carries the open path's recovery clause and names the presentation's own cause (Cycle 0051, DS-G).
       message:
-        'The replay debugger could not start: The presentation failed. The last moment is still shown. Select this stop or use Inspect in native debugger to restart it.',
+        'The recorded moment could not be shown: The presentation failed. The last moment is still shown. Select this stop again to retry.',
     })
     await held.started
 

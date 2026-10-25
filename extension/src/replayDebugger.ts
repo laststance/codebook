@@ -10,6 +10,7 @@ import {
   REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS,
   REPLAY_DEBUG_TYPE,
 } from './constants'
+import { ReplayDebuggerStartError } from './errors'
 import {
   ReplayDebugAdapter,
   type ReplaySourceDocument,
@@ -754,7 +755,7 @@ export class ReplayDebugger {
    * bounded by {@link bounded}, so a presentation whose signal never aborts (a saved Node stop) cannot wait forever either.
    *
    * @param signal - The waiting presentation's cancellation.
-   * @throws The signal's reason once it aborts, the startup failure (which the next presentation retries) or the closed-debugger error after expiry.
+   * @throws The signal's reason once it aborts; otherwise a {@link ReplayDebuggerStartError} carrying the startup failure (which the next presentation retries) or the closed-debugger error after expiry.
    * @example await this.awaitSession(signal)
    */
   private async awaitSession(signal: AbortSignal): Promise<void> {
@@ -771,7 +772,11 @@ export class ReplayDebugger {
       })
       this.starting = starting
     }
-    await untilAborted(this.starting, signal)
+    await untilAborted(this.starting, signal).catch((error: unknown) => {
+      // The waiter's own cancellation is no start failure; anything else ended the start (Cycle 0052 task 17).
+      if (signal.aborted) throw error
+      throw new ReplayDebuggerStartError(error)
+    })
   }
 
   /**

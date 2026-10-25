@@ -10,6 +10,7 @@ import {
   REPLAY_DEBUG_INSPECTION_GRACE_MS,
   REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS,
 } from '../constants'
+import { ReplayDebuggerStartError } from '../errors'
 import { ReplayDebugAdapter } from '../replayDebugAdapter'
 import { ReplayDebugger } from '../replayDebugger'
 import type { ReplayDebugSnapshot } from '../replayDebugSchemas'
@@ -4106,6 +4107,39 @@ test('values served for a stop the recording has left by the time the reader wou
     assert.equal(fixture.changes(), 0)
   } finally {
     context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=a presentation whose historical session the editor refuses to start rejects with the start failure's own type and message, so a test replay move can word it as the debugger's start and any other failure as the moment's; fails_when=the refused start rejects as a plain Error, which the move then words as a failure of the moment (Cycle 0052 task 17); why_new=no test read the type of the start failure; seam=the fake editor refuses one start; no_claim=the sentence, which the workspace tests read
+test('a presentation whose session the editor refuses to start rejects as a start failure with the editor’s message', async () => {
+  // Arrange
+  const fixture = harness(undefined, undefined, 1)
+  try {
+    // Act
+    const failure = await fixture.owner
+      .present(
+        inspectedSnapshot,
+        'Recorded pause',
+        new AbortController().signal,
+      )
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+
+    // Assert
+    assert.deepEqual(
+      {
+        isStartFailure: failure instanceof ReplayDebuggerStartError,
+        message: failure instanceof Error ? failure.message : undefined,
+      },
+      {
+        isStartFailure: true,
+        message: 'The editor did not start its historical debug session.',
+      },
+    )
+  } finally {
     await fixture.owner.dispose()
   }
 })
