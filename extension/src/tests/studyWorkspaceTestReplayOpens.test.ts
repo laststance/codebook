@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -11,8 +10,8 @@ import {
   recordedReaderHarness,
   workspaceHarness,
 } from './studyWorkspaceHarness'
-import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
+import { saveOtherBrowserStudy } from './utils/saveOtherBrowserStudy'
 import { lastView, saveTwoStopNodeHistory } from './utils/twoStopNodeHistory'
 
 type Harness = Awaited<ReturnType<typeof workspaceHarness>>
@@ -861,19 +860,9 @@ test('a second Saved studies choice while the first waits for the editor area ke
   // Arrange: a second saved browser study stands in Saved studies beside the first.
   const harness = await recordedReaderHarness(true)
   try {
-    const library = await harness.reader.learningStorage(),
-      second = createConfiguredStudy(),
-      runId = randomUUID()
-    for (const observation of second.observations)
-      observation.snapshotUri = observation.snapshotUri.replace(
-        second.runId,
-        runId,
-      )
-    second.workspaceKey = library.workspaceKey
-    second.runId = runId
-    second.id = `${second.instanceId}_${runId}`
-    second.savedAt = '2026-09-20T00:00:01.000Z'
-    await library.saveStudy(second)
+    const second = await saveOtherBrowserStudy(
+      await harness.reader.learningStorage(),
+    )
     await openReplayBesideBrowserStudy(harness)
     harness.maximizePanel()
     const chooseSavedStudy = async (studyId: string): Promise<void> => {

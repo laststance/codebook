@@ -20,9 +20,9 @@ import {
   recordedReaderHarness,
   workspaceHarness,
 } from './studyWorkspaceHarness'
-import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
+import { saveOtherBrowserStudy } from './utils/saveOtherBrowserStudy'
 import { lastView, saveTwoStopNodeHistory } from './utils/twoStopNodeHistory'
 
 type Harness = Awaited<ReturnType<typeof workspaceHarness>>
@@ -2054,22 +2054,12 @@ function holdNextRecordingLoad(harness: RecordedHarness) {
  * Saves a second browser study beside the harness's recorded one, so the learner has another Saved studies entry to choose.
  * @param harness - The recorded reader harness.
  * @returns The saved study.
- * @example const other = await saveOtherBrowserStudy(harness)
+ * @example const other = await saveOtherBrowserStudyShown(harness)
  */
-async function saveOtherBrowserStudy(harness: RecordedHarness) {
-  const library = await harness.reader.learningStorage(),
-    study = createConfiguredStudy(),
-    runId = randomUUID()
-  for (const observation of study.observations)
-    observation.snapshotUri = observation.snapshotUri.replace(
-      study.runId,
-      runId,
-    )
-  study.workspaceKey = library.workspaceKey
-  study.runId = runId
-  study.id = `${study.instanceId}_${runId}`
-  study.savedAt = '2026-09-20T00:00:01.000Z'
-  await library.saveStudy(study)
+async function saveOtherBrowserStudyShown(harness: RecordedHarness) {
+  const study = await saveOtherBrowserStudy(
+    await harness.reader.learningStorage(),
+  )
   // Retry storage reloads the catalog the reader shows.
   await harness.reader.action('retry')
   return study
@@ -2111,7 +2101,7 @@ test('a Saved studies choice after a failed same-study Reload opens the chosen r
   // Arrange
   const harness = await recordedReaderHarness(true)
   try {
-    const other = await saveOtherBrowserStudy(harness)
+    const other = await saveOtherBrowserStudyShown(harness)
     await reloadHeldOrFailed(harness, 'failed')
 
     // Act
@@ -2152,7 +2142,7 @@ test('a Saved studies choice during a same-study Reload opens the chosen recordi
   const harness = await recordedReaderHarness(true)
   let load: Awaited<ReturnType<typeof reloadHeldOrFailed>>['load'] | undefined
   try {
-    const other = await saveOtherBrowserStudy(harness)
+    const other = await saveOtherBrowserStudyShown(harness)
     const held = await reloadHeldOrFailed(harness, 'held')
     load = held.load
 
@@ -3114,3 +3104,35 @@ test('a second Reload during a held Reload restarts the load and the first loadâ
     await harness.close()
   }
 })
+
+for (const ending of ['held', 'failed'] as const) {
+  // Value: protects=while a same-study Reload is loading or has failed, the views the reader sends read the browser replay with its recording state (loading, or the failure and its reason) and the recording tab, so the summary's status, failure and recovery are current; fails_when=message() projects the reader as having no recording because recordingActive is false during the Reload, so the views keep a stale recording status under the browser family (Cycle 0052 task 36, local CodeRabbit round 11, minor); why_new=the Reload tests read presentationState, not the views' message; seam=a Reload whose debugger replacement is held, or held then failed; no_claim=the webview's rendering of the status
+  test(`the views read the recording while a same-study Reload ${ending === 'held' ? 'is loading' : 'has failed'}`, async () => {
+    // Arrange
+    const harness = await recordedReaderHarness(true)
+    let release = (): void => {}
+    try {
+      // Act
+      const reloading = await reloadHeldOrFailed(harness, ending)
+      release = reloading.load.release
+
+      // Assert
+      const view = harness.reader.inspect().view
+      assert.deepEqual(
+        {
+          contentTab: view?.contentTab,
+          readiness: view?.recording?.readiness,
+          studyId: view?.recording?.studyId,
+        },
+        {
+          contentTab: 'recording',
+          readiness: ending === 'held' ? 'loading' : 'failed',
+          studyId: harness.studyId,
+        },
+      )
+    } finally {
+      release()
+      await harness.close()
+    }
+  })
+}

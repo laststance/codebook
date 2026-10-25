@@ -13323,10 +13323,10 @@ export class StudyWorkspace {
     if (!this.baselines) throw new Error('Study reader is not initialized.')
     const record = this.currentRecord(),
       live = record && this.service?.state(record)
-    const playbackState = this.recordingActive
-      ? this.playback?.state()
-      : undefined
-    const bundle = this.recordingActive
+    // A same-study Reload that is loading or failed still shows its browser replay: the views read its playback state, loading, failure and recovery (Cycle 0052 task 36).
+    const browserReplay = this.browserReplayShown()
+    const playbackState = browserReplay ? this.playback?.state() : undefined
+    const bundle = browserReplay
       ? forSource || this.playbackPresentingReady || playbackState?.cleared
         ? (this.playbackPending ?? this.playback?.bundle())
         : this.playback?.bundle()
@@ -13464,11 +13464,11 @@ export class StudyWorkspace {
     return {
       type: 'study',
       revision: this.revision,
-      model: this.recordingActive
+      model: browserReplay
         ? projectPlaybackStudy(projectionInput, bundle)
         : projectStudy(projectionInput),
       presentation: this.presentationState(),
-      contentTab: this.recordingActive ? 'recording' : this.selection.tab,
+      contentTab: browserReplay ? 'recording' : this.selection.tab,
       repositoryReturnAvailable: Boolean(
         this.controls.returnToRepository &&
         this.repositoryOrigin?.studyId === this.selection.studyId &&
@@ -13577,7 +13577,7 @@ export class StudyWorkspace {
         createdAt: study.createdAt,
         reason: study.reason,
         finalOutcome: study.finalOutcome,
-        links: this.recordingActive ? [] : study.links,
+        links: browserReplay ? [] : study.links,
         historyOutcome,
         studyOutcome,
         recordingSave: selectedState
@@ -13622,7 +13622,7 @@ export class StudyWorkspace {
         title: profile.title,
         description: profile.description,
       })),
-      canClick: !this.recordingActive && Boolean(nextAction),
+      canClick: !browserReplay && Boolean(nextAction),
       canRun:
         (!record || record.stopped) &&
         this.selection.profile !== REPOSITORY_BROWSER_PROFILE,
@@ -13648,7 +13648,7 @@ export class StudyWorkspace {
         record?.historyExcluded === 'refused-at-admission' &&
         record.error &&
         record.id !== this.answeredRunRefusalId &&
-        !this.recordingActive &&
+        !browserReplay &&
         !this.testReplayHoldsComposition()
           ? `The last run did not start: ${record.error.message}`
           : undefined,
@@ -19730,16 +19730,6 @@ export class StudyWorkspace {
   }
 
   /** Withdraws replay controls on explicit departure or close while leaving the native sidebar and other chat containers intact. @example this.clearLearningSummary() */
-  /**
-   * Gives the Learning summary view the reader's document when it holds the closed replay's placeholder, so the next publish can draw a replay there; called by {@link showLearningSummary} and by {@link loadPlayback} for a recording that loads over a retired test replay.
-   * @example this.giveSummaryItsDocument()
-   */
-  private giveSummaryItsDocument(): void {
-    if (!this.summaryView || this.summaryDocumentActive) return
-    this.summaryDocumentActive = true
-    this.summaryView.webview.html = studyHtml('context')
-  }
-
   private clearLearningSummary(): void {
     this.summaryDocumentActive = false
     // The document that reported the focus is replaced; its successor reports for itself.
@@ -19749,6 +19739,16 @@ export class StudyWorkspace {
     if (this.summaryView)
       this.summaryView.webview.html =
         '<!DOCTYPE html><html><body><p>Open saved learning from Codebook to view its summary.</p></body></html>'
+  }
+
+  /**
+   * Gives the Learning summary view the reader's document when it holds the closed replay's placeholder, so the next publish can draw a replay there; called by {@link showLearningSummary} and by {@link loadPlayback} for a recording that loads over a retired test replay.
+   * @example this.giveSummaryItsDocument()
+   */
+  private giveSummaryItsDocument(): void {
+    if (!this.summaryView || this.summaryDocumentActive) return
+    this.summaryDocumentActive = true
+    this.summaryView.webview.html = studyHtml('context')
   }
 
   /**
