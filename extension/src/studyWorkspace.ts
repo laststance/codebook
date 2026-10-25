@@ -11594,6 +11594,20 @@ export class StudyWorkspace {
   }
 
   /**
+   * Replaces the private roots (storage folder, workspace, home directory) in a stored reader line and keeps the error name it starts with, so the Study pane's line reads as before apart from the roots; called by {@link message} for a refused test replay control's line (Cycle 0052 task 48).
+   * @param line - The stored line, `String(error)`.
+   * @returns The line with its roots replaced.
+   * @example this.withoutPrivateRoots("Error: EACCES: open '/Users/ada/…/storage/a.json'") // => "Error: EACCES: open '<storage>/a.json'"
+   */
+  private withoutPrivateRoots(line: string): string {
+    const errorName = /^[A-Za-z]*Error: /.exec(line)?.[0] ?? ''
+    return (
+      errorName +
+      sanitizeCause(line, this.service?.causeRoots ?? { storage: [] })
+    )
+  }
+
+  /**
    * Words the refusal of a test replay control for the shared transport's status line: its cause with the storage folder, the workspace and the home directory replaced, as every other replay failure is published; read by {@link message}.
    * @returns The sanitized sentence, or `undefined` while no test replay control is refused.
    * @example this.publishedNodeHistoryRefusal() // => "EACCES: permission denied, open '<storage>/decision.json'"
@@ -13658,7 +13672,12 @@ export class StudyWorkspace {
           !this.replayApplicationCovered,
         ),
       errors: [
-        ...this.errors.values(),
+        // A refused test replay control's line loses the private roots, as its copy on the transport's status line does (Cycle 0052 task 48).
+        ...[...this.errors.entries()].map(([kind, line]) =>
+          kind === 'node-history-control'
+            ? this.withoutPrivateRoots(line)
+            : line,
+        ),
         // The note of a study a newer Codebook saved is no failure Retry storage can answer; the entry itself carries it.
         ...this.catalog.flatMap((entry) =>
           entry.reason && entry.format !== 'newer' ? [entry.reason] : [],

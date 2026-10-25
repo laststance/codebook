@@ -3633,3 +3633,40 @@ test('a newer Open replay asks its own notice while an earlier notice is unanswe
     await harness.close()
   }
 })
+
+// Value: protects=the Study pane's error line of a refused test replay control shows its cause with the storage folder replaced, as the transport's status line does, and keeps its error name; fails_when=the errors list carries String(error) with the learner's storage path while only nodeHistoryRefusal is sanitized (local CodeRabbit round 2 on f0c11ead, Cycle 0052 task 48); why_new=task 21's test read the transport's copy only; seam=the store's saveLearningDecision rejects with a path inside the learning directory; no_claim=the line's rendering
+test('the Study pane’s line of a refused test replay control shows its cause without the storage folder', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await openByOpenReplay(harness)
+    const store = harness.service.nodeHistoryStore!
+    context.mock.method(store, 'saveLearningDecision', async () => {
+      throw new Error(
+        `EACCES: permission denied, open '${store.learningDirectory}/decision.json'`,
+      )
+    })
+
+    // Act
+    harness.receivePlaybackPanel({
+      type: 'node-history-understanding',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      understood: true,
+    })
+    await waitUntil(
+      () => lastView(harness)?.nodeHistoryRefusal !== undefined,
+      'the refusal is published',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert: the view is a clone from the webview's realm, so its lines are compared as a plain array.
+    assert.deepEqual(
+      [...(lastView(harness)?.errors ?? [])],
+      ["Error: EACCES: permission denied, open '<storage>/decision.json'"],
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
