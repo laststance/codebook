@@ -3136,3 +3136,38 @@ for (const ending of ['held', 'failed'] as const) {
     }
   })
 }
+
+for (const ending of ['held', 'failed'] as const) {
+  // Value: protects=Focus source during a same-study Reload, loading or failed, leaves the browser replay's Application pane as it is: no Study selection is drawn there and its title is not renamed; fails_when=renderSelection reaches presentApplication, which checks only recordingActive, and the pane shows the Study selection under the replay's loading or failure (Cycle 0052 task 37, local CodeRabbit round 12, minor); why_new=the Reload tests released the runtime and refreshed, none pressed Focus source; seam=a Reload held at, or failed at, its debugger replacement, the reader's source action; no_claim=the native pane's pixels
+  test(`Focus source during a same-study Reload${ending === 'held' ? '' : ' that failed'} keeps the Application pane on the recording`, async () => {
+    // Arrange
+    const harness = await recordedReaderHarness(true)
+    let load: Awaited<ReturnType<typeof reloadHeldOrFailed>>['load'] | undefined
+    try {
+      const reloading = await reloadHeldOrFailed(harness, ending)
+      load = reloading.load
+      const application = harness
+        .nativePanels()
+        .find((panel) => panel.kind === 'codebook.scopedBrowser')!
+      const documentBefore = application.webview.html,
+        titleBefore = application.title
+
+      // Act
+      await harness.reader.action('source').catch(() => undefined)
+      const afterSource = {
+        applicationUnchanged: application.webview.html === documentBefore,
+        titleUnchanged: application.title === titleBefore,
+      }
+      await settleReload(harness, reloading)
+
+      // Assert
+      assert.deepEqual(afterSource, {
+        applicationUnchanged: true,
+        titleUnchanged: true,
+      })
+    } finally {
+      load?.release()
+      await harness.close()
+    }
+  })
+}

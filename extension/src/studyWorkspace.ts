@@ -15132,7 +15132,8 @@ export class StudyWorkspace {
    * @example this.presentApplication(message)
    */
   private presentApplication(message: StudyViewMessage): void {
-    if (this.recordingActive) return
+    // A same-study Reload that is loading or failed still shows its browser replay: no Study selection is drawn in its Application pane (Cycle 0052 task 37).
+    if (this.browserReplayShown()) return
     this.retitleApplicationAfterRecording()
     // A test replay's pane is one document per history; each later moment is posted into it (EN3).
     if (message.nodeHistoryApplication) {
