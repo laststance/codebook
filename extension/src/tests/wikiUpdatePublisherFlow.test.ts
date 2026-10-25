@@ -3,9 +3,11 @@ import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { test } from 'node:test'
 
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { WikiUpdateStatus } from '../utils/wikiUpdateRun'
 
 import { publishedWikiFixture } from './utils/publishedWikiFixture'
+import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 import {
   openWikiUpdateWindow,
   type CancellableProgress,
@@ -424,6 +426,59 @@ test('after a VS Code watch ended on a learner’s file, Update anyway on the on
     )
     assert.equal(wiki.chatRequests.length, 2)
   } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=the learner who presses Update LLM Wiki and chooses Update anyway right after a VS Code watch ended on a file of theirs, while this window still turns the ended run's marker into a stopped watch's reservation; fails_when=the start's claim meets the marker in that turn, which is this window's own, and the start is refused with "Another editor window is starting or ending an update of this Wiki", so the update does not start; why_new=Cycle 0052 task 27 (the test above failed once inside pnpm health's coverage run: under load Update anyway's start claimed while the reservation was written); seam=the write of the reservation beside the marker, which the test holds while the turn holds the claim on the marker; no_claim=another window's change of the marker, which still refuses the start
+test('Update anyway chosen while this window still turns its ended run’s marker into a reservation starts the update once the turn is made, and no refusal names another editor window', async () => {
+  // Arrange: the first run ends as a conflict; the write of its reservation, under the claim on the marker, is held.
+  let isOverrideChosen = false
+  const wiki = await openPublishedWikiWindow({
+    chooseAction: (_message, actions) =>
+      isOverrideChosen
+        ? actions.find((action) => action === 'Update anyway')
+        : undefined,
+  })
+  await mkdir(join(wiki.outputDirectory, 'pages'))
+  await writeFile(join(wiki.outputDirectory, 'pages', 'notes.html'), 'mine')
+  const reservationWrite = wiki.hold('marker-write')
+  try {
+    await wiki.clickUpdate()
+    await agentTakesAMoment()
+    const stage = await wiki.prepare()
+    await wiki.writeCandidate(stage, {
+      heading: 'Second',
+      extraPages: ['pages/notes.html'],
+    })
+    const firstRun = await waitForStatus(wiki.status, hasEnded)
+    await reservationWrite.started
+
+    // Act: the learner presses and chooses Update anyway on its refusal while the reservation is still written; Update anyway's start claims the marker; then the write ends.
+    isOverrideChosen = true
+    await wiki.runUpdateCommand()
+    const errorsAfterThePress = wiki.errors.length
+    await waitUntil(
+      () => wiki.looks.markerClaims === 2,
+      'the claim of the start of Update anyway',
+      READER_RESULT_BOUND_MS,
+    )
+    reservationWrite.release()
+    await waitUntil(
+      () =>
+        wiki.status().state === 'running' ||
+        wiki.errors.length > errorsAfterThePress,
+      'the start of Update anyway or its refusal',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(firstRun.state, 'conflict')
+    assert.deepEqual(wiki.errors.slice(errorsAfterThePress), [])
+    assert.equal(wiki.status().state, 'running')
+    assert.equal(wiki.chatRequests.length, 2)
+  } finally {
+    reservationWrite.release()
     await wiki.close()
   }
 })
