@@ -964,7 +964,7 @@ export class StudyWorkspace {
   private liveComposition = false
   /** Counts the learner's test replay entries ({@link openNodeHistoryFromHost}) in the order they were made, so the latest one wins also while an earlier one still enters the summary composition (EN19, Cycle 0051). */
   private nodeHistoryEntryRequest = 0
-  /** How many test replay entries ({@link openNodeHistoryFromHost}) are under way, the waiting ones included; a superseded entry leaves the empty summary composition it built only when no newer entry is under way to fill it (Cycle 0052 task 12). */
+  /** How many test replay entries ({@link openNodeHistoryFromHost}) are under way, the waiting ones included; the last superseded entry to end leaves the empty summary composition an earlier one built only when none is under way to fill it (Cycle 0052 task 12). */
   private nodeHistoryEntriesUnderWay = 0
   /** Settles when the test replay entry in front has entered its composition: entries take turns there, so two entries never run {@link open} at once (one would be refused as busy and leave no replay shown). */
   private nodeHistoryEntryTurn: Promise<void> = Promise.resolve()
@@ -11730,12 +11730,22 @@ export class StudyWorkspace {
       releaseTurn = resolve
     })
     this.nodeHistoryEntriesUnderWay++
+    let entered = false
     try {
       await previousTurn
-      if (!(await this.enterCompositionForEntry(studyId, entry))) return
+      entered = await this.enterCompositionForEntry(studyId, entry)
     } finally {
       this.nodeHistoryEntriesUnderWay--
       releaseTurn()
+    }
+    if (!entered) {
+      // The last superseded entry to end leaves the summary composition an earlier one built, when no entry is under way to fill it: a Return or a Close superseded them all (Cycle 0052 task 12).
+      if (
+        entry !== this.nodeHistoryEntryRequest &&
+        this.nodeHistoryEntriesUnderWay === 0
+      )
+        await this.leaveEmptySummaryComposition()
+      return
     }
     if (entry !== this.nodeHistoryEntryRequest) return
     const outcome = await this.openNodeHistory(
@@ -11790,11 +11800,7 @@ export class StudyWorkspace {
       )
       return false
     }
-    if (entry === this.nodeHistoryEntryRequest) return true
-    // A Return or a Close superseded this entry while it entered: with no newer entry under way to fill it, the summary composition it built is left (Cycle 0052 task 12).
-    if (this.nodeHistoryEntriesUnderWay === 1)
-      await this.leaveEmptySummaryComposition()
-    return false
+    return entry === this.nodeHistoryEntryRequest
   }
 
   /**

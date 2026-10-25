@@ -1773,3 +1773,69 @@ test('a refresh during a same-study Reload keeps the Application pane on the rec
     await harness.close()
   }
 })
+
+// Value: protects=an agent's Return to Live that supersedes one test replay entry entering the summary composition and a second one waiting for its turn leaves no empty summary composition, whichever of them ends last; fails_when=the entering one skips the leave because the waiting one is still counted, and the waiting one ends at its ticket check without leaving (local CodeRabbit round 7, minor); why_new=Cycle 0052 task 12; seam=the first entry held at enterSummaryCompositionForReplay, a configured live run, the agent's returnToCurrent; no_claim=the native timing of the agent's call
+test('an agent’s Return to Live that supersedes an entering and a waiting test replay entry leaves no empty summary composition', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  let release = (): void => {}
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const first = await saveTwoStopNodeHistory(store)
+    const second = await saveTwoStopNodeHistory(store)
+    await harness.reader.action('retry')
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: PROFILE_ID,
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await harness.service.record(receipt).preparation
+    await harness.reader.open()
+    const reader = harness.reader as unknown as {
+      enterSummaryCompositionForReplay: () => Promise<void>
+    }
+    const enter = reader.enterSummaryCompositionForReplay.bind(harness.reader)
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let entered = (): void => {}
+    const entering = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    reader.enterSummaryCompositionForReplay = async (): Promise<void> => {
+      entered()
+      await held
+      return enter()
+    }
+
+    // Act
+    const firstEntry = harness.reader.openLearningReplay(first.studyId)
+    await entering
+    const secondEntry = harness.reader.openLearningReplay(second.studyId)
+    const state = harness.reader.presentationState()
+    await harness.reader.returnToCurrent(
+      {
+        presentationId: state.presentationId,
+        expectedRevision: state.reader.contentRevision,
+      },
+      'agent',
+    )
+    release()
+    await Promise.all([firstEntry, secondEntry])
+
+    // Assert
+    assert.deepEqual(
+      {
+        testReplay: harness.reader.inspect().view?.nodeHistory?.header.studyId,
+        summaryPlaceholder: harness.summary.webview.html.includes(
+          'Open saved learning from Codebook to view its summary.',
+        ),
+      },
+      { testReplay: undefined, summaryPlaceholder: true },
+    )
+  } finally {
+    release()
+    await harness.close()
+  }
+})
