@@ -8,7 +8,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.8'
-export const EXTENSION_VERSION = '0.2.40'
+export const EXTENSION_VERSION = '0.2.41'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -683,8 +683,7 @@ export const NODE_SOURCE_SLOT_DIRECTORY_HASH_CHARS = 12
 export const NODE_HISTORY_TRANSITION_BOUND_MS = 1_000
 /**
  * How long a test replay's recorded-source slot keeps the earlier stop's bytes after the selection left that stop, so no native view still drawing the earlier stop sits beside the next moment's bytes (F385, F387).
- * Two native views redraw after the leave, and each repaints on a delay of its own: VS Code's Call Stack view applies the debugger's `continued` in a 50 ms scheduler (`CallStackView.onCallStackChangeScheduler`) followed by the thread and stack requests, and the editor refreshes CodeLenses `provideCodeLensDebounce` after a provider change, at least 250 ms (`LanguageFeatureDebounceService.for(codeLensProvider, 'CodeLensProvide', { min: 250 })`, 1.143.0), restarted by every content change of the document.
- * 300 ms is that 250 ms plus the time to ask the provider and paint; the bytes change once, after it.
+ * The native view that redraws after the leave is the Call Stack: VS Code's applies the debugger's `continued` in a 50 ms scheduler (`CallStackView.onCallStackChangeScheduler`) followed by the thread and stack requests, and Cursor's is slower. The value was set for the slot's CodeLens as well, which the editor refreshed at least 250 ms after a provider change (`LanguageFeatureDebounceService.for(codeLensProvider, 'CodeLensProvide', { min: 250 })`, 1.143.0); that lens is gone (Cycle 0052 task 1), and the 300 ms that N50 and N51 verified natively are kept. The bytes change once, after it.
  */
 export const NODE_HISTORY_LEAVE_SETTLE_MS = 300
 /** One deadline over a test replay's whole recorded-source show: the document's open, its show, the wait for its bytes and the close of the earlier slot tab. When it passes first, the moment reports its `history-source` row and releases Play's pending selection (closure rule 7 of #118). */

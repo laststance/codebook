@@ -100,7 +100,11 @@ import {
   SAVE_LEARNING_REPLAY_COMMAND,
 } from './constants'
 import { requireWorkspace, type StudyPresentation } from './environment'
-import { StudyError, StudyRemovedWithItsRecordingError } from './errors'
+import {
+  ReplayDebuggerStartError,
+  StudyError,
+  StudyRemovedWithItsRecordingError,
+} from './errors'
 import { learningItemSchema } from './identitySchemas'
 import {
   repositorySelectionSchema,
@@ -242,7 +246,6 @@ import { editorShowsDocument } from './utils/editorShowsDocument'
 import { editorTabInputKinds } from './utils/editorTabInputKinds'
 import { emptyFirstGroupObstacle } from './utils/emptyFirstGroupObstacle'
 import { emptyGroupsGoneSince } from './utils/emptyGroupsGoneSince'
-import { escapeCodiconSyntax } from './utils/escapeCodiconSyntax'
 import { evidenceInUseElsewhere } from './utils/evidenceInUseElsewhere'
 import { firstVerifiedStopSequence } from './utils/firstVerifiedStopSequence'
 import { focusEditorGroupCommand } from './utils/focusEditorGroupCommand'
@@ -329,7 +332,7 @@ import {
 import { recordingNotShownReason } from './utils/recordingNotShownReason'
 import { replacedTabAddresses } from './utils/replacedTabAddresses'
 import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition'
-import { sanitizeCause } from './utils/sanitizeCause'
+import { type CauseRoots, sanitizeCause } from './utils/sanitizeCause'
 import { sanitizedStack } from './utils/sanitizedStack'
 import { sanitizeNodeTestHistory } from './utils/sanitizeNodeTestHistory'
 import { savedStudyIdentityLine } from './utils/savedStudyIdentityLine'
@@ -410,6 +413,8 @@ const openRequestShape = { openRequest: openRequestNumberSchema.optional() }
 const NODE_HISTORY_READER_PAGE_SIZE = 20
 /** A saved test stop, the only journal entry with captured source and a debugger snapshot. */
 type NodeTestHistoryStop = Extract<NodeTestHistoryEntry, { type: 'stop' }>
+/** How {@link StudyWorkspace}'s return to a test replay's committed moment ended: the slot shows that moment again, a newer selection took over, or the slot could not show it (its row says why). */
+type NodeMomentReturn = 'returned' | 'superseded' | 'not-shown'
 
 /** How one selection of a test replay's moment behaves; see {@link StudyWorkspace.selectNodeHistoryEvent}. */
 type NodeHistorySelectionOptions = {
@@ -730,6 +735,8 @@ type NodeHistoryPositionWriter = {
 /** Owns the retained learner reader while {@link StudyService} owns execution; activation constructs it before MCP-first runs. @example await workspace.open() */
 export class StudyWorkspace {
   private service?: StudyService
+  /** The private roots of the last released service ({@link retire}), so a cause the reader words after the release hides exactly what the service hid ({@link privateRoots}). */
+  private releasedCauseRoots?: CauseRoots
   private learningSaveItem?: vscode.StatusBarItem
   /** The text and tooltip {@link learningSaveItem} shows now, or `undefined` while it is hidden; {@link showLearningSaveItem} and {@link hideLearningSaveItem} touch the item only when this changes, because each assignment is a message to the status bar and the refresh publishes every 250 ms. */
   private learningSaveShown?: { text: string; tooltip: string }
@@ -780,7 +787,7 @@ export class StudyWorkspace {
   private requestedNodeHistorySequence?: number
   /** The moment whose selection has left the shown one but not committed yet ({@link leaveNodeHistoryMoment}): while it equals {@link requestedNodeHistorySequence}, the Study position names that moment with no step or explanation and the Application header reads as loading (D29, F203). */
   private nodeHistoryLeftFor?: number
-  /** The wait after a selection left a stop (D29, F385, F387): the slot keeps the earlier stop's bytes until it ends, so the Call Stack and the CodeLens that still draw that stop never sit beside another moment's bytes. Started by {@link leaveNodeHistoryMoment}, awaited by {@link selectNodeHistoryEvent} and {@link returnToCommittedNodeMoment}. */
+  /** The wait after a selection left a stop (D29, F385, F387): the slot keeps the earlier stop's bytes until it ends, so the Call Stack that still draws that stop never sits beside another moment's bytes. Started by {@link leaveNodeHistoryMoment}, awaited by {@link selectNodeHistoryEvent} and {@link returnToCommittedNodeMoment}. */
   private nodeLeaveSettle?: { done: Promise<void>; cancel: () => void }
   private selectedNodeHistoryDebugAvailable = false
   /** The selected Node stop reached native Run and Debug without its values loading; the reader shows how to load them. */
@@ -928,8 +935,6 @@ export class StudyWorkspace {
   private readonly documents = new Map<string, string>()
   /** Public provider notifications retain the selected native input while {@link renderSelection} changes live or historical captured bytes. */
   private readonly sourceChanges = new vscode.EventEmitter<vscode.Uri>()
-  /** Tells the editor to ask again for the CodeLens above the recorded-source slot's stopped line. */
-  private readonly slotLensChanges = new vscode.EventEmitter<void>()
   /** Opaque native display, separate from every canonical captured hash URI; pinned copies stay frozen before a successor is allocated. */
   private sourceView?: { uri: vscode.Uri; studyId: string }
   private sourceIdentity?: vscode.TextEditorDecorationType
@@ -8779,6 +8784,8 @@ export class StudyWorkspace {
     await this.library?.flush()
     await this.recordings?.flush()
     if (this.service === service) {
+      // The reader keeps serving its stores after the release: its causes keep the released service's roots (Cycle 0052 pt2 /ship).
+      this.releasedCauseRoots = service.causeRoots
       this.service = undefined
       clearInterval(this.timer)
       this.timer = undefined
@@ -10575,7 +10582,6 @@ export class StudyWorkspace {
     this.highlight?.dispose()
     this.sourceIdentity?.dispose()
     this.sourceChanges.dispose()
-    this.slotLensChanges.dispose()
     this.treeChanges.dispose()
   }
 
@@ -11281,13 +11287,13 @@ export class StudyWorkspace {
   }
 
   /**
-   * Words a failure for a notice the learner reads, without the private paths it can carry: the service's roots once it is attached, else the home directory alone (F264); called by the extension's Save Learning Replay command when the save fails.
+   * Words a failure for a notice the learner reads, without the private paths it can carry: the service's roots once it is attached, else the roots the reader holds itself ({@link privateRoots}, F264); called by the extension's Save Learning Replay command when the save fails.
    * @param error - What the command threw.
    * @returns The sanitized cause.
    * @example workspace.describeFailure(new Error("ENOSPC: write '/Users/ada/Library/…/globalStorage/x/a.json'")) // => "ENOSPC: write '<storage>/a.json'"
    */
   describeFailure(error: unknown): string {
-    return sanitizeCause(error, this.service?.causeRoots ?? causeRootsFor([]))
+    return sanitizeCause(error, this.privateRoots())
   }
 
   /** Finishes the explicitly selected capture and verifies matching durable learning; called by the status-bar command. @example await workspace.saveLearningReplay(studyId) */
@@ -11594,6 +11600,39 @@ export class StudyWorkspace {
   }
 
   /**
+   * Gives the private roots a cause the reader shows must not name: the attached service's roots; after a runtime release the released service's ({@link releasedCauseRoots}), because the reader keeps serving its stores; before any service, the ones the reader holds itself (the extension's global storage, the learning library, the test replays' learning folder, the workspace folder and the home directory) (Cycle 0052 pt2 /ship Steps 9 and 11). Read wherever the reader sanitizes a cause.
+   * @returns The roots for {@link sanitizeCause}.
+   * @example sanitizeCause(error, this.privateRoots()) // => "EACCES: permission denied, open '<storage>/decision.json'", also after the release
+   */
+  private privateRoots(): CauseRoots {
+    return (
+      this.service?.causeRoots ??
+      this.releasedCauseRoots ??
+      causeRootsFor(
+        [
+          this.context.globalStorageUri.fsPath,
+          ...(this.library ? [this.library.directory] : []),
+          ...(this.nodeHistoryStore
+            ? [this.nodeHistoryStore.learningDirectory]
+            : []),
+        ],
+        vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+      )
+    )
+  }
+
+  /**
+   * Replaces the private roots (storage folder, workspace, home directory) in a reader line and keeps the error name it starts with, so the Study pane's line reads as before apart from the roots; called by {@link report} when it stores a refused test replay control's line, so every later publish shows the stored line with the roots replaced ({@link privateRoots}; Cycle 0052 tasks 21 and 48).
+   * @param line - The failure's string form, `String(error)`.
+   * @returns The line with its roots replaced.
+   * @example this.withoutPrivateRoots("Error: EACCES: open '/Users/ada/…/storage/a.json'") // => "Error: EACCES: open '<storage>/a.json'"
+   */
+  private withoutPrivateRoots(line: string): string {
+    const errorName = /^[A-Za-z]*Error: /.exec(line)?.[0] ?? ''
+    return errorName + sanitizeCause(line, this.privateRoots())
+  }
+
+  /**
    * Says whether a test replay is only opening: the host's open or a pane's open is under way, so its recorded-source slot is not committed yet; read by {@link presentationState}, which says "opening" for it and not "not shown" (F416).
    * @returns `true` between the start of a test replay's open and its end.
    * @example if (this.testReplayIsOpening()) reason = 'The recorded source is opening in its native pane.'
@@ -11838,7 +11877,8 @@ export class StudyWorkspace {
     await this.closeSlotTabsAwaitingArea()
     // A Close, a Return or a newer entry during the slot close owns the reader now: this entry asks nothing more (Cycle 0052 task 35).
     if (entry !== this.nodeHistoryEntryRequest) return false
-    if (!(await this.closeBrowserReplayForTestReplay(entry))) return false
+    if (!(await this.closeBrowserReplayForTestReplay(entry, overtaken)))
+      return false
     if (entry !== this.nodeHistoryEntryRequest) return false
     try {
       await this.enterSummaryCompositionForReplay(entry, overtaken)
@@ -11850,7 +11890,7 @@ export class StudyWorkspace {
       await this.tellTestReplayOpenFailure(
         studyId,
         error,
-        sanitizeCause(error, this.service?.causeRoots ?? { storage: [] }),
+        sanitizeCause(error, this.privateRoots()),
       )
       return false
     }
@@ -11860,23 +11900,35 @@ export class StudyWorkspace {
   /**
    * Answers a test replay entry made during a browser replay: one replay shows at a time, so the learner is told so and may close the browser replay first (DS10); called by {@link enterCompositionForEntry}.
    * The notice is not modal: the browser replay it names is closed only while it is still the one shown and the entry is still the latest, so an answer never closes a replay opened after the notice.
+   * The entry stops waiting for the answer once a newer entry, a Return or a Close overtakes it, so an unanswered notice never holds the next entry's turn; the notice stays on screen, and its later answer closes nothing (Cycle 0052 task 11).
    * @param entry - The entry's ticket ({@link nodeHistoryEntryRequest}).
+   * @param overtaken - Aborts when the ticket is superseded ({@link nodeHistoryEntryCancellation}).
    * @returns `true` when no browser replay is open, or the learner closed the one named; `false` when it stays open or another replay or entry took over.
-   * @example if (!(await this.closeBrowserReplayForTestReplay(entry))) return false
+   * @example if (!(await this.closeBrowserReplayForTestReplay(entry, overtaken))) return false
    */
   private async closeBrowserReplayForTestReplay(
     entry: number,
+    overtaken: AbortSignal,
   ): Promise<boolean> {
     if (!this.browserReplayShown()) return true
     const studyId = this.selection.studyId,
       revision = this.playback?.state().revision
     const refusal = describeNodeLearningSave({ kind: 'open-refused' })
-    const action = await showPlainNotice(
-      vscode.window,
-      'warning',
-      refusal.text,
-      ...(refusal.actions ?? []),
-    )
+    const action = await untilAborted(
+      Promise.resolve(
+        showPlainNotice(
+          vscode.window,
+          'warning',
+          refusal.text,
+          ...(refusal.actions ?? []),
+        ),
+      ),
+      overtaken,
+    ).catch((error: unknown) => {
+      // An overtaken entry stops waiting for its answer; the notice's own failure still reaches the caller.
+      if (overtaken.aborted) return undefined
+      throw error
+    })
     if (
       action !== NODE_LEARNING_SAVE_ACTION.closeBrowserReplay ||
       entry !== this.nodeHistoryEntryRequest ||
@@ -11900,10 +11952,7 @@ export class StudyWorkspace {
     studyId: string,
     error: unknown,
   ): Promise<'retry' | 'told'> {
-    const cause = sanitizeCause(
-      error,
-      this.service?.causeRoots ?? { storage: [] },
-    )
+    const cause = sanitizeCause(error, this.privateRoots())
     const answer = await this.resolveForeignPreviewRefusal(cause)
     if (answer === 'retry') return 'retry'
     // A failed open shows no replay in the summary composition: the Study composition comes back, with the failure on its line (DS-G). A newer entry still under way keeps that composition for its own replay (Cycle 0052 task 35).
@@ -11993,10 +12042,7 @@ export class StudyWorkspace {
     error: unknown,
     cause: string,
   ): Promise<void> {
-    const stack = sanitizedStack(
-      error,
-      this.service?.causeRoots ?? { storage: [] },
-    )
+    const stack = sanitizedStack(error, this.privateRoots())
     this.diagnostics?.log({
       surface: 'open:test-replay',
       studyId,
@@ -12160,12 +12206,7 @@ export class StudyWorkspace {
     error: unknown,
     wording: (cause: string) => string = (cause) => cause,
   ): void {
-    this.report(
-      kind,
-      wording(
-        sanitizeCause(error, this.service?.causeRoots ?? { storage: [] }),
-      ),
-    )
+    this.report(kind, wording(sanitizeCause(error, this.privateRoots())))
   }
 
   /**
@@ -12924,7 +12965,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Ends the test replay's recorded-source slot: its failure row goes, its stopped line, label and CodeLens are cleared, every slot tab Codebook may close is closed (whether or not a slot object exists: a tab an editor restart restored has none), and the documents of the slot tabs that stay (a pinned one) read the placeholder again; called by {@link retireNodeHistorySelection} and by {@link close}.
+   * Ends the test replay's recorded-source slot: its failure row goes, its stopped line and label are cleared, every slot tab Codebook may close is closed (whether or not a slot object exists: a tab an editor restart restored has none), and the documents of the slot tabs that stay (a pinned one) read the placeholder again; called by {@link retireNodeHistorySelection} and by {@link close}.
    * With the editor area hidden, the slot's tabs are kept instead and recorded in {@link nodeSourceSlotTabsAwaitingArea}, because closing the tab a group shows would bring the area back; {@link closeSlotTabsAwaitingArea} closes them when the wait ends (Cycle 0052 task 15).
    * The Study pane is published when the failure row was removed, so a Retry for a replay that is gone does not stay (F168, F192).
    * @param keepSlotTabsForHiddenArea - `true` to keep and record the slot's tabs while the editor area is hidden; `false` closes them now, with any tabs an earlier wait recorded.
@@ -12984,11 +13025,10 @@ export class StudyWorkspace {
   }
 
   /**
-   * Clears the stopped line, the label and the CodeLens from every open recorded-source slot editor of this workspace; called by {@link retireNodeSourceSlot}.
+   * Clears the stopped line and its label from every open recorded-source slot editor of this workspace; called by {@link retireNodeSourceSlot}.
    * @example this.clearNodeSourceSlotDecorations()
    */
   private clearNodeSourceSlotDecorations(): void {
-    this.slotLensChanges.fire()
     if (!this.highlight || !this.sourceIdentity) return
     for (const editor of vscode.window.visibleTextEditors) {
       const { uri } = editor.document
@@ -13356,6 +13396,8 @@ export class StudyWorkspace {
       live = record && this.service?.state(record)
     // A same-study Reload that is loading or failed still shows its browser replay: the views read its playback state, loading, failure and recovery (Cycle 0052 task 36).
     const browserReplay = this.browserReplayShown()
+    // A refused test replay control's stored line has lost the private roots already ({@link report}, Cycle 0052 tasks 21 and 48).
+    const nodeHistoryRefusal = this.errors.get('node-history-control')
     const playbackState = browserReplay ? this.playback?.state() : undefined
     const bundle = browserReplay
       ? forSource || this.playbackPresentingReady || playbackState?.cleared
@@ -13543,9 +13585,8 @@ export class StudyWorkspace {
         )
         .map((entry) => entry.sequence),
       // The host's sentence for a refused or failed test replay move, read in the shared transport's status line with the summary hidden too (DS-G).
-      nodeHistoryRefusal: this.errors
-        .get('node-history-control')
-        ?.replace(/^Error: /, ''),
+      nodeHistoryRefusal:
+        nodeHistoryRefusal && withoutErrorName(nodeHistoryRefusal),
       // The time readout and the slider follow the moment being selected, as the Study position does, until the commit (F386).
       nodeHistoryPlayback: this.nodeHistoryPlaybackController && {
         ...this.nodeHistoryPlaybackController.state(),
@@ -13635,6 +13676,7 @@ export class StudyWorkspace {
           !this.replayApplicationCovered,
         ),
       errors: [
+        // A refused test replay control's line was stored without the private roots ({@link report}, Cycle 0052 task 48).
         ...this.errors.values(),
         // The note of a study a newer Codebook saved is no failure Retry storage can answer; the entry itself carries it.
         ...this.catalog.flatMap((entry) =>
@@ -19595,7 +19637,7 @@ export class StudyWorkspace {
         SUMMARY_BESIDE_CHAT_MOVE_ARGUMENT,
       )
     } catch (error) {
-      const roots = this.service?.causeRoots ?? { storage: [] }
+      const roots = this.privateRoots()
       this.diagnostics?.log({
         surface,
         cause: sanitizeCause(error, roots),
@@ -19851,17 +19893,6 @@ export class StudyWorkspace {
         {
           onDidChange: this.sourceChanges.event,
           provideTextDocumentContent: (uri) => this.provideSource(uri),
-        },
-      ),
-    )
-    // The slot's whole label stands above its stopped line, where the editor group's right edge cannot cut it (F207).
-    this.disposables.push(
-      vscode.languages.registerCodeLensProvider(
-        { scheme: STUDY_SOURCE_SCHEME },
-        {
-          onDidChangeCodeLenses: this.slotLensChanges.event,
-          provideCodeLenses: (document) =>
-            this.provideNodeSourceSlotLenses(document),
         },
       ),
     )
@@ -22275,7 +22306,7 @@ export class StudyWorkspace {
   private sanitizeRefusalGroups(
     groups: readonly RefusalGroupView[],
   ): RefusalGroupView[] {
-    const roots = this.service?.causeRoots ?? { storage: [] }
+    const roots = this.privateRoots()
     return groups.map((group) => ({
       ...group,
       tabs: group.tabs.map((tab) => ({
@@ -25057,10 +25088,18 @@ export class StudyWorkspace {
         if (request !== this.selectedNodeHistoryRequest) return
         // The Study position stays on the moment committed before, so the slot and the debugger go back to it: no surface shows the moment whose presentation failed (F199).
         // A failed return is told on the slot's row, and the presentation's own failure still reaches the caller (F368), with the open path's recovery clause (DS-G).
-        await this.returnToCommittedNodeMoment(history, request).catch(
-          (returnError: unknown) => this.report('history-source', returnError),
+        const returned = await this.returnToCommittedNodeMoment(
+          history,
+          request,
+        ).catch((returnError: unknown): NodeMomentReturn => {
+          this.report('history-source', returnError)
+          return 'not-shown'
+        })
+        // A newer selection took over during the return and owns the status line (DS-F).
+        if (returned === 'superseded') return
+        throw new Error(
+          this.describeNodeHistoryMoveFailure(error, returned === 'returned'),
         )
-        throw new Error(this.describeNodeHistoryMoveFailure(error))
       }
     }
     // A caller that withdrew meanwhile (Pause, dispose) commits nothing, also after a slot that failed to open, which skips the debugger's own check.
@@ -25152,13 +25191,17 @@ export class StudyWorkspace {
    * @param history - The selected test replay.
    * @param request - The failed or withdrawn selection's request token; a newer selection ends the return.
    * @param presentDebugger - Whether the debugger shows the committed moment again (a withdrawal).
-   * @example await this.returnToCommittedNodeMoment(history, request)
+   * @returns
+   * - `'returned'` once the slot shows the committed moment again
+   * - `'superseded'` when a newer selection took over meanwhile
+   * - `'not-shown'` when the slot could not show it (its row says why)
+   * @example await this.returnToCommittedNodeMoment(history, request) // => 'returned'
    */
   private async returnToCommittedNodeMoment(
     history: NodeTestHistoryIndex,
     request: number,
     presentDebugger = false,
-  ): Promise<void> {
+  ): Promise<NodeMomentReturn> {
     this.replayDebugger?.invalidate()
     this.selectedNodeHistoryDebugAvailable = false
     this.selectedNodeHistoryValuesUninspected = false
@@ -25175,10 +25218,11 @@ export class StudyWorkspace {
         ? committed
         : undefined
     await this.nodeLeaveSettle?.done
-    if (request !== this.selectedNodeHistoryRequest) return
+    if (request !== this.selectedNodeHistoryRequest) return 'superseded'
     const slot = await this.showNodeSourceSlot(history, stop, request)
     // A newer selection took over, or the slot could not open and told so itself.
-    if (!slot || slot === 'failed' || !this.nodeSourceSlot) return
+    if (!slot) return 'superseded'
+    if (slot === 'failed' || !this.nodeSourceSlot) return 'not-shown'
     // A debugger the learner stopped is restarted only by the learner's own selection.
     if (
       presentDebugger &&
@@ -25190,14 +25234,15 @@ export class StudyWorkspace {
         true,
       ))
     )
-      return
-    if (request !== this.selectedNodeHistoryRequest || !this.nodeSourceSlot)
-      return
+      return 'superseded'
+    if (request !== this.selectedNodeHistoryRequest) return 'superseded'
+    if (!this.nodeSourceSlot) return 'not-shown'
     this.nodeSourceSlot = { ...this.nodeSourceSlot, stop }
     this.nodeSurfacesSequence = this.selectedNodeHistorySequence
     this.settleNodeSourceSlotRow()
     this.decorateNodeSourceSlot(true)
     if (presentDebugger) this.publish()
+    return 'returned'
   }
 
   /**
@@ -25226,17 +25271,25 @@ export class StudyWorkspace {
   }
 
   /**
-   * Words a replay debugger that did not start on a move of a test replay as the open path words its own failure, adding that the last moment is still shown (DS-G), so the transport's status line names the way back with the summary hidden too; called by {@link selectNodeHistoryEvent} when the presentation of a move fails.
+   * Words the failure of a test replay move by its cause, adding that the last moment is still shown when the slot shows it again (DS-G), so the transport's status line names the way back with the summary hidden too; called by {@link selectNodeHistoryEvent} when the presentation of a move fails.
+   * A replay debugger that did not start ({@link ReplayDebuggerStartError}) is worded as the open path words its own failure, with the restart clause; any other failure of the moment's presentation asks for the stop again (Cycle 0052 task 17). When the return to the last moment failed too, the line claims no shown moment, and the recorded-source row tells why (Cycle 0052 pt2, local CodeRabbit round 5).
    * @param error - The presentation's failure; its cause is sanitized as on the Study pane's lines.
+   * @param lastMomentShown - Whether the slot shows the committed moment again ({@link returnToCommittedNodeMoment} returned).
    * @returns The sentence the node-history control line shows.
-   * @example this.describeNodeHistoryMoveFailure(new Error('Workspace trust was declined.')) // => 'The replay debugger could not start: Workspace trust was declined. The last moment is still shown. Select this stop or use Inspect in native debugger to restart it.'
+   * @example
+   * this.describeNodeHistoryMoveFailure(new ReplayDebuggerStartError(new Error('Workspace trust was declined.')), true) // => 'The replay debugger could not start: Workspace trust was declined. The last moment is still shown. Select this stop or use Inspect in native debugger to restart it.'
+   * this.describeNodeHistoryMoveFailure(new Error('The presentation failed.'), false) // => 'The recorded moment could not be shown: The presentation failed. Select this stop again to retry.'
    */
-  private describeNodeHistoryMoveFailure(error: unknown): string {
-    const cause = sanitizeCause(
-      error,
-      this.service?.causeRoots ?? { storage: [] },
-    ).replace(/\.$/, '')
-    return `The replay debugger could not start: ${cause}. The last moment is still shown. Select this stop or use Inspect in native debugger to restart it.`
+  private describeNodeHistoryMoveFailure(
+    error: unknown,
+    lastMomentShown: boolean,
+  ): string {
+    const cause = sanitizeCause(error, this.privateRoots()).replace(/\.$/, '')
+    const shown = lastMomentShown ? ' The last moment is still shown.' : ''
+    // Only the debugger's start keeps the restart clause; a running debugger, a closed one or another surface failing asks for the stop again.
+    return error instanceof ReplayDebuggerStartError
+      ? `The replay debugger could not start: ${cause}.${shown} Select this stop or use Inspect in native debugger to restart it.`
+      : `The recorded moment could not be shown: ${cause}.${shown} Select this stop again to retry.`
   }
 
   /**
@@ -25510,7 +25563,7 @@ export class StudyWorkspace {
       // The document serves the new text from here on, so the old held bytes no longer describe it: a quick reselect of them must show again, not reuse the slot (F551).
       this.nodeSourceSlotHeld = undefined
       this.nodeSourceSlot = { studyId, uri, text }
-      this.sourceChanges.fire(uri)
+      this.announceNodeSourceSlotText(uri, verifiedStop)
       shown = this.openNodeSourceSlot(
         uri,
         earlier?.uri,
@@ -25533,6 +25586,28 @@ export class StudyWorkspace {
     } finally {
       stopNudge()
     }
+  }
+
+  /**
+   * Tells the editor that the recorded-source slot serves new bytes; called by {@link openNodeSourceSlotWithinDeadline} once the slot holds a moment's text.
+   * The placeholder goes in at the slot's first line: an editor that kept a stop's scroll draws that source's sticky-scroll header over the placeholder until it recomputes it, which N52 saw in Cursor for 11 frames (Cycle 0052 task 1). A stop's own line is revealed at its commit.
+   * @param uri - The slot's address.
+   * @param verifiedStop - The stop whose bytes the slot serves, or `undefined` for the placeholder.
+   * @example this.announceNodeSourceSlotText(uri, undefined) // the slot's editors at line 1, then the provider event
+   */
+  private announceNodeSourceSlotText(
+    uri: vscode.Uri,
+    verifiedStop: NodeTestHistoryStop | undefined,
+  ): void {
+    const address = uri.toString()
+    if (!verifiedStop)
+      for (const editor of vscode.window.visibleTextEditors)
+        if (editor.document.uri.toString() === address)
+          editor.revealRange(
+            new vscode.Range(0, 0, 0, 0),
+            vscode.TextEditorRevealType.AtTop,
+          )
+    this.sourceChanges.fire(uri)
   }
 
   /**
@@ -25685,7 +25760,7 @@ export class StudyWorkspace {
     studyId: string,
     error: unknown,
   ): string {
-    const roots = this.service?.causeRoots ?? { storage: [] }
+    const roots = this.privateRoots()
     const cause = sanitizeCause(error, roots)
     const stack = sanitizedStack(error, roots)
     this.diagnostics?.log({
@@ -25853,12 +25928,11 @@ export class StudyWorkspace {
 
   /**
    * Draws the recorded-source slot's stopped line and its label `Recorded: <path>:<line> · <t> s` at a verified stop, and clears both for the placeholder and the loading text (EN8 step 4); called by {@link selectNodeHistoryEvent}, {@link leaveNodeHistoryMoment} and when the slot's tab comes back into view.
-   * The same label is the CodeLens above the stopped line ({@link provideNodeSourceSlotLenses}), which the editor group's right edge cannot cut.
+   * The slot has no CodeLens: the editor redraws a provider's lens only after its own refresh delay (at least 250 ms in VS Code), so a lens would name the stop a move left beside the next moment; the decorations leave in the same host turn (Cycle 0052 task 1). The label's hover carries it whole where the editor group's right edge cuts it.
    * @param reveal - `true` only at a selection's commit: the stopped line scrolls into view, and a slot without a stop shows from its first line, so the placeholder is never out of view. A redraw because the tab came back keeps the learner's scroll.
    * @example this.decorateNodeSourceSlot(true)
    */
   private decorateNodeSourceSlot(reveal = false): void {
-    this.slotLensChanges.fire()
     const slot = this.nodeSourceSlot
     if (!slot || !this.highlight || !this.sourceIdentity) return
     for (const editor of vscode.window.visibleTextEditors) {
@@ -25905,37 +25979,6 @@ export class StudyWorkspace {
           vscode.TextEditorRevealType.InCenterIfOutsideViewport,
         )
     }
-  }
-
-  /**
-   * Gives the editor the CodeLens above the recorded-source slot's stopped line: the whole label `Recorded: <path>:<line> · <t> s`, where the end-of-line label may be cut at the editor group's right edge (F207). Only the slot's document at a verified stop has one; registered with the editor in {@link installReaders}.
-   * @param document - The document the editor asks about.
-   * @returns One lens above the stopped line, or none.
-   * @example this.provideNodeSourceSlotLenses(document) // => [CodeLens at line 12 titled 'Recorded: src/jobs.ts:12 · 1.23 s']
-   */
-  private provideNodeSourceSlotLenses(
-    document: vscode.TextDocument,
-  ): vscode.CodeLens[] {
-    const slot = this.nodeSourceSlot
-    const stop = slot?.stop
-    if (!slot || !stop || document.uri.toString() !== slot.uri.toString())
-      return []
-    const line = stop.frame.line - 1
-    // The command has no id: the editor draws the title as text, not as a link.
-    return [
-      new vscode.CodeLens(new vscode.Range(line, 0, line, 0), {
-        // A recorded path may hold `$(name)`, which a lens title would draw as an icon.
-        title: escapeCodiconSyntax(
-          describeNodeRecordedSource({
-            kind: 'label',
-            path: stop.source.path,
-            line: stop.frame.line,
-            elapsedMs: stop.elapsedMs,
-          }),
-        ),
-        command: '',
-      }),
-    ]
   }
 
   /**
@@ -26230,12 +26273,18 @@ export class StudyWorkspace {
   /**
    * Keeps storage, control and renderer failures distinct in the learner-facing status: one line per kind, published at once; every failure path of the reader calls it.
    * @param kind - The line the failure replaces; {@link READER_ERROR_KINDS} says whether Retry storage / refresh or the learner's next choice answers it.
-   * @param error - The failure, shown as its string form.
+   * @param error - The failure, shown as its string form; a refused test replay control's line ('node-history-control') is stored with the private roots replaced ({@link withoutPrivateRoots}).
    * @example this.report('archive', error)
    */
   private report(kind: ReaderErrorKind, error: unknown): void {
     if (CHOICE_RETIRED_ERROR_KINDS.has(kind)) this.controlRefusals++
-    this.errors.set(kind, String(error))
+    // A refused test replay control's line is stored with the private roots replaced, so no later publish shows them (Cycle 0052 tasks 21 and 48).
+    this.errors.set(
+      kind,
+      kind === 'node-history-control'
+        ? this.withoutPrivateRoots(String(error))
+        : String(error),
+    )
     if (kind === 'presentation') this.clearReadyReplayWarning()
     this.publish()
   }

@@ -10,6 +10,7 @@ import {
   REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS,
   REPLAY_DEBUG_TYPE,
 } from './constants'
+import { ReplayDebuggerStartError } from './errors'
 import {
   ReplayDebugAdapter,
   type ReplaySourceDocument,
@@ -278,7 +279,7 @@ export class ReplayDebugger {
     )
   }
 
-  /** Reports whether playback may still present history; false after the learner stops the owned session, so an explicit replay reopen replaces this owner. @example if (!debuggerView.available) await debuggerView.dispose() */
+  /** Reports whether playback may still present history; false after the learner stops the owned session or a startup or presentation bound expired, so the next explicit replay open, or an explicit selection or Inspect of a test replay's stop, replaces this owner ({@link StudyWorkspace}'s `replaceUnavailableReplayDebugger`); a seek or Play never does. @example if (!debuggerView.available) await debuggerView.dispose() */
   get available(): boolean {
     return !this.closed && !this.detached
   }
@@ -754,7 +755,7 @@ export class ReplayDebugger {
    * bounded by {@link bounded}, so a presentation whose signal never aborts (a saved Node stop) cannot wait forever either.
    *
    * @param signal - The waiting presentation's cancellation.
-   * @throws The signal's reason once it aborts, the startup failure (which the next presentation retries) or the closed-debugger error after expiry.
+   * @throws The signal's reason once it aborts; otherwise a {@link ReplayDebuggerStartError} carrying the startup failure (which the next presentation retries) or the closed-debugger error of the startup bound's expiry: the start did not finish, this owner is no longer {@link available}, and the next explicit selection replaces and starts it again, so the move's restart clause holds.
    * @example await this.awaitSession(signal)
    */
   private async awaitSession(signal: AbortSignal): Promise<void> {
@@ -771,7 +772,11 @@ export class ReplayDebugger {
       })
       this.starting = starting
     }
-    await untilAborted(this.starting, signal)
+    await untilAborted(this.starting, signal).catch((error: unknown) => {
+      // The waiter's own cancellation is no start failure; anything else ended the start (Cycle 0052 task 17).
+      if (signal.aborted) throw error
+      throw new ReplayDebuggerStartError(error)
+    })
   }
 
   /**

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { appendFile, readFile, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -10,7 +11,7 @@ import {
   STUDY_REMOVAL_REFUSALS,
   SUMMARY_PLACEMENT_OFFER,
 } from '../constants'
-import { StudyError } from '../errors'
+import { ReplayDebuggerStartError, StudyError } from '../errors'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { StudyViewMessage } from '../ui/studyHtml'
@@ -637,7 +638,7 @@ test('a refused Previous stop at the first stop shows its sentence for the trans
   }
 })
 
-// Value: protects=a move whose replay debugger does not start: the transport's sentence carries the open path's recovery clause and says the last moment is still shown, and following it (selecting that stop again) reaches the target; fails_when=the bare cause is shown, the failed moment is shown as new, or the stop cannot be reached again; why_new=Cycle 0051 DS-G (AC14), the DX review's finding; seam=the harness's held historical debug presentation, rejected as a start failure; no_claim=a real DAP failure
+// Value: protects=a move whose replay debugger does not start: the transport's sentence carries the open path's recovery clause and says the last moment is still shown, and following it (selecting that stop again) reaches the target; fails_when=the bare cause is shown, the failed moment is shown as new, or the stop cannot be reached again; why_new=Cycle 0051 DS-G (AC14), the DX review's finding; seam=the harness's held historical debug presentation, rejected with a ReplayDebuggerStartError as the real owner's session wait rejects a refused start (Cycle 0052 task 17); no_claim=a real DAP failure
 test('a move whose replay debugger does not start names the recovery and selecting that stop again reaches it', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -654,8 +655,10 @@ test('a move whose replay debugger does not start names the recovery and selecti
     })
     await held.started
 
-    // Act
-    held.reject(new Error('Workspace trust was declined.'))
+    // Act: the replay debugger's start is refused.
+    held.reject(
+      new ReplayDebuggerStartError(new Error('Workspace trust was declined.')),
+    )
     await waitUntil(
       () => lastView(harness)?.nodeHistoryRefusal !== undefined,
       'the failure reaches the transport',
@@ -3490,6 +3493,348 @@ test('a newer Open replay ends an earlier one whose Learning summary reveal wait
     )
   } finally {
     release()
+    await harness.close()
+  }
+})
+
+// Value: protects=the shared transport's status line for a refused test replay control shows its cause with the storage folder replaced by <storage>, as the replay's other failures do; fails_when=nodeHistoryRefusal publishes String(error) with the learner's storage path (Cycle 0052 task 21, /ship review); why_new=the refusal's projection only stripped "Error: "; seam=the store's saveLearningDecision rejects with a path inside the learning directory; no_claim=the status line's rendering (Reader DOM)
+test('a refused test replay control shows its cause without the storage folder', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await openByOpenReplay(harness)
+    const store = harness.service.nodeHistoryStore!
+    context.mock.method(store, 'saveLearningDecision', async () => {
+      throw new Error(
+        `EACCES: permission denied, open '${store.learningDirectory}/decision.json'`,
+      )
+    })
+
+    // Act: the learner marks the replay understood, and the write is refused.
+    harness.receivePlaybackPanel({
+      type: 'node-history-understanding',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      understood: true,
+    })
+    await waitUntil(
+      () => lastView(harness)?.nodeHistoryRefusal !== undefined,
+      'the refusal reaches the transport',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(
+      lastView(harness)?.nodeHistoryRefusal,
+      "EACCES: permission denied, open '<storage>/decision.json'",
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a test replay move whose moment fails to show for a cause other than the replay debugger's start reads that the recorded moment could not be shown and asks for the stop again, without the debugger restart clause; fails_when=every move failure is worded "The replay debugger could not start" whatever its cause (Cycle 0052 task 17, /ship review); why_new=describeNodeHistoryMoveFailure had one sentence; seam=the harness's held historical debug presentation, rejected with a plain Error as a presentation in a running debugger fails; no_claim=a real DAP failure
+test('a move whose recorded moment fails to show for another cause asks for the stop again', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await openByOpenReplay(harness)
+    harness.hideSummary()
+    const held = harness.holdHistoricalDebugPresentation(true)
+    harness.receivePlaybackPanel({
+      type: 'node-history-step',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      direction: 'next',
+      unit: 'stop',
+    })
+    await held.started
+
+    // Act: the running debugger fails to show the stop.
+    held.reject(new Error('The stop could not be shown in Run and Debug.'))
+    await waitUntil(
+      () => lastView(harness)?.nodeHistoryRefusal !== undefined,
+      'the failure reaches the transport',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        failure: lastView(harness)?.nodeHistoryRefusal,
+        shown: lastView(harness)?.nodeHistoryPosition?.sequence,
+      },
+      {
+        failure:
+          'The recorded moment could not be shown: The stop could not be shown in Run and Debug. The last moment is still shown. Select this stop again to retry.',
+        shown: 2,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a newer Open replay made while an earlier one's one-replay-at-a-time notice is still unanswered asks its own notice at once, and its answer opens its replay; the earlier notice's later answer closes nothing; fails_when=the earlier entry awaits its unanswered notice inside its turn, so every later entry waits until the learner answers it (Cycle 0052 task 11, /ship review); why_new=the overtaken-notice test answered the first notice before the second entry needed its turn; seam=recordedReaderHarness, answerWarningDialogs held per notice; no_claim=the native notification's lifetime
+test('a newer Open replay asks its own notice while an earlier notice is unanswered, and the earlier answer closes nothing', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const first = await saveTwoStopNodeHistory(store)
+    const second = await saveTwoStopNodeHistory(store)
+    await harness.reader.action('retry')
+    await harness.reader.openRecording(harness.studyId)
+    await waitUntil(
+      () => harness.controller.state().readiness === 'ready',
+      'the opened recording',
+      READER_RESULT_BOUND_MS,
+    )
+    const answers: Array<(choice: string | undefined) => void> = []
+    harness.answerWarningDialogs(
+      () =>
+        new Promise((resolve) => {
+          answers.push(resolve)
+        }),
+    )
+    const firstEntry = harness.reader.openLearningReplay(first.studyId)
+    await waitUntil(
+      () => answers.length === 1,
+      'the first notice is shown',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Act: a second Open replay while the first notice waits for its answer.
+    const secondEntry = harness.reader.openLearningReplay(second.studyId)
+    await waitUntil(
+      () => answers.length === 2,
+      'the second notice is shown while the first is unanswered',
+      READER_RESULT_BOUND_MS,
+    )
+    answers[1]!('Close browser replay')
+    await secondEntry
+    await landsOn(
+      harness,
+      2,
+      'the latest entry’s replay lands on its first stop',
+    )
+    answers[0]!('Close browser replay')
+    await firstEntry
+
+    // Assert
+    assert.deepEqual(
+      {
+        testReplay: lastView(harness)?.nodeHistory?.header.studyId,
+        recording: harness.controller.state().studyId,
+      },
+      { testReplay: second.studyId, recording: undefined },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Study pane's error line of a refused test replay control shows its cause with the storage folder replaced, as the transport's status line does, and keeps its error name; fails_when=the errors list carries String(error) with the learner's storage path while only nodeHistoryRefusal is sanitized (local CodeRabbit round 2 on f0c11ead, Cycle 0052 task 48); why_new=task 21's test read the transport's copy only; seam=the store's saveLearningDecision rejects with a path inside the learning directory; no_claim=the line's rendering
+test('the Study pane’s line of a refused test replay control shows its cause without the storage folder', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await openByOpenReplay(harness)
+    const store = harness.service.nodeHistoryStore!
+    context.mock.method(store, 'saveLearningDecision', async () => {
+      throw new Error(
+        `EACCES: permission denied, open '${store.learningDirectory}/decision.json'`,
+      )
+    })
+
+    // Act
+    harness.receivePlaybackPanel({
+      type: 'node-history-understanding',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      understood: true,
+    })
+    await waitUntil(
+      () => lastView(harness)?.nodeHistoryRefusal !== undefined,
+      'the refusal is published',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert: the view is a clone from the webview's realm, so its lines are compared as a plain array.
+    assert.deepEqual(
+      [...(lastView(harness)?.errors ?? [])],
+      ["Error: EACCES: permission denied, open '<storage>/decision.json'"],
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a refused test replay control's cause keeps the storage folder replaced after the runtime is released, on the transport's status line and on the Study pane's line, so a later publish never shows the learner's storage path; fails_when=the line is sanitized only at publish with the service's roots, so a publish after the release (no service, no roots) carries the stored `String(error)` with the path (Cycle 0052 pt2 /ship Step 11, Claude adversarial finding 2); why_new=tasks 21 and 48 published while the service was attached; seam=the store's saveLearningDecision rejects with a path inside the learning directory, then the reader's own runtime release and a direct publish standing for any later view change; no_claim=the line's rendering
+test('a refused test replay control’s cause stays without the storage folder after the runtime is released', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await openByOpenReplay(harness)
+    const store = harness.service.nodeHistoryStore!
+    context.mock.method(store, 'saveLearningDecision', async () => {
+      throw new Error(
+        `EACCES: permission denied, open '${store.learningDirectory}/decision.json'`,
+      )
+    })
+    harness.receivePlaybackPanel({
+      type: 'node-history-understanding',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      understood: true,
+    })
+    await waitUntil(
+      () => lastView(harness)?.nodeHistoryRefusal !== undefined,
+      'the refusal is published',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Act: the runtime is released, and the reader publishes again, as any later view change makes it.
+    await harness.reader.retire(harness.service)
+    harness.reader['publish']()
+
+    // Assert: the views still show the cause with the storage folder replaced; the view is a clone from the webview's realm, so its lines are compared as a plain array.
+    const shown = lastView(harness)
+    assert.deepEqual(
+      {
+        errors: [...(shown?.errors ?? [])],
+        refusal: shown?.nodeHistoryRefusal,
+      },
+      {
+        errors: [
+          "Error: EACCES: permission denied, open '<storage>/decision.json'",
+        ],
+        refusal: "EACCES: permission denied, open '<storage>/decision.json'",
+      },
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a test replay control refused after the runtime was released still shows its cause with the storage folder replaced, because the reader words causes with the roots it holds itself once no service names them; fails_when=the reader falls back to no storage roots after the release (`{ storage: [] }`), so a control it still serves from its own history store shows the learner's storage path (Cycle 0052 pt2 /ship Step 11, Claude adversarial pass 2); why_new=the earlier release test refused the control before the release; seam=the reader's own runtime release, then the store's saveLearningDecision rejecting with a path inside the learning directory; no_claim=the line's rendering
+test('a test replay control refused after the runtime is released shows its cause without the storage folder', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await openByOpenReplay(harness)
+    const store = harness.service.nodeHistoryStore!
+    await harness.reader.retire(harness.service)
+    context.mock.method(store, 'saveLearningDecision', async () => {
+      throw new Error(
+        `EACCES: permission denied, open '${store.learningDirectory}/decision.json'`,
+      )
+    })
+
+    // Act: the learner marks the replay understood after the release, and the write is refused.
+    harness.receivePlaybackPanel({
+      type: 'node-history-understanding',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      understood: true,
+    })
+    await waitUntil(
+      () => lastView(harness)?.nodeHistoryRefusal !== undefined,
+      'the refusal is published',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert: the view is a clone from the webview's realm, so its lines are compared as a plain array.
+    const shown = lastView(harness)
+    assert.deepEqual(
+      {
+        errors: [...(shown?.errors ?? [])],
+        refusal: shown?.nodeHistoryRefusal,
+      },
+      {
+        errors: [
+          "Error: EACCES: permission denied, open '<storage>/decision.json'",
+        ],
+        refusal: "EACCES: permission denied, open '<storage>/decision.json'",
+      },
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a failure the reader words after the runtime was released hides the storage folder, the workspace and the home directory as the released service did; fails_when=the reader falls back to the home directory alone (the former `describeFailure`) or to roots it guesses without the released service's workspace, so the learner's storage or repository path shows (Cycle 0052 pt2 /ship Step 9, delta review of the release fallback); why_new=the release tests above cover the storage folder of a refused control only; seam=the reader's own runtime release and its public describeFailure, as the Save Learning Replay command calls it; no_claim=a workspace distinct from the storage root (the harness keeps its storage in the workspace folder) and the notification's rendering
+test('a failure worded after the runtime is released hides the storage folder, the workspace and the home directory', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const storage = harness.service.nodeHistoryStore!.learningDirectory
+    const workspace = harness.service.environment.workspace
+    await harness.reader.retire(harness.service)
+
+    // Act
+    const worded = harness.reader.describeFailure(
+      new Error(
+        `EACCES: '${storage}/a.json', '${workspace}/src/b.ts', '${homedir()}/c.txt'`,
+      ),
+    )
+
+    // Assert: the harness's service keeps its storage in the workspace folder, so the released service's roots word that folder `<storage>` too.
+    assert.equal(
+      worded,
+      "EACCES: '<storage>/a.json', '<storage>/src/b.ts', '~/c.txt'",
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a failed move whose return to the committed moment fails too does not claim that the last moment is still shown: the line words the move's failure and its recovery, and the recorded-source row tells why the return failed; fails_when=the line says `The last moment is still shown.` while the slot could not show that moment again (local CodeRabbit round 5 on dba70b06, Major); why_new=the move-failure tests return to the committed moment successfully; seam=the harness's held historical debug presentation rejected with a plain Error, the learner's own close of the slot tab and the harness's failure of the next non-file document open; no_claim=a real DAP or editor failure
+test('a failed move whose return to the last moment fails too does not say the last moment is still shown', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await openByOpenReplay(harness)
+    harness.hideSummary()
+    const held = harness.holdHistoricalDebugPresentation(true)
+    harness.receivePlaybackPanel({
+      type: 'node-history-step',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      direction: 'next',
+      unit: 'stop',
+    })
+    await held.started
+    // The learner closes the slot's tab, and the editor will refuse to open it again.
+    const slotTab = harness.groups
+      .flatMap((group) => group.tabs)
+      .find((tab) =>
+        (
+          tab.input as { uri?: { path?: string } } | undefined
+        )?.uri?.path?.includes('/node-history-slot/'),
+      )!
+    harness.closeTabByHand(slotTab)
+    harness.failCurrentSourceOpen()
+
+    // Act: the running debugger fails to show the stop, and the return to the last moment cannot open the slot.
+    held.reject(new Error('The stop could not be shown in Run and Debug.'))
+    await waitUntil(
+      () => lastView(harness)?.nodeHistoryRefusal !== undefined,
+      'the failure reaches the transport',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(
+      lastView(harness)?.nodeHistoryRefusal,
+      'The recorded moment could not be shown: The stop could not be shown in Run and Debug. Select this stop again to retry.',
+    )
+  } finally {
+    harness.restoreCurrentSourceOpen()
     await harness.close()
   }
 })

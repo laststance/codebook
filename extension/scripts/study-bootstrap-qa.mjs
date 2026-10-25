@@ -10527,6 +10527,80 @@ async function check(page, options, collected) {
         })
       },
     )
+    // Value: protects=the drawing marks the selected step's own arrow and label also when its nodes do not stand in step order, because the renderer names each arrow and label by its step as it draws them; fails_when=the marker pairs arrows with steps by their order and labels by nextElementSibling, so a drawing whose labels stand before their arrows marks another step's label or leaves an arrow unnamed (Cycle 0052 task 19, /ship review); why_new=the drawing-mark case drew the nodes in step order only; seam=the page's Element.prototype.append, patched in this case to append each step's label before its arrow and restored after; no_claim=native pixels
+    await regionTwoCase(
+      "the drawing marks the selected step's own arrow and label also when its labels stand before their arrows",
+      async () => {
+        await freshPane('context')
+        await page.evaluate(() => {
+          const append = Element.prototype.append
+          window.originalAppend = append
+          Element.prototype.append = function (...nodes) {
+            const [first, second] = nodes
+            // Only the drawing's arrow-and-label pairs swap: the label goes in before its arrow.
+            if (
+              this instanceof SVGSVGElement &&
+              nodes.length === 2 &&
+              first instanceof SVGPathElement &&
+              first.classList.contains('sequence-arrow')
+            )
+              return append.call(this, second, first)
+            return append.apply(this, nodes)
+          }
+        })
+        let marked
+        try {
+          await publish(regionTwoAt(4))
+          marked = await page.evaluate(() =>
+            Array.from(
+              document.querySelectorAll(
+                '#node-learning-sequence [aria-current="step"]',
+              ),
+            ).map((node) =>
+              node.tagName === 'text'
+                ? `text:${node.textContent}`
+                : `${node.tagName}:${node.dataset.step}`,
+            ),
+          )
+        } finally {
+          // The page's own append comes back also when the publish or the reading threw, so no later case draws through the patch.
+          await page.evaluate(() => {
+            Element.prototype.append = window.originalAppend
+          })
+        }
+        cases.push({
+          name: "a test replay's drawing whose labels stand before their arrows marks the selected step's own label and arrow",
+          actual: marked,
+          passed:
+            JSON.stringify(marked) ===
+            JSON.stringify(['text:2. Read the rows', 'path:rows']),
+        })
+      },
+    )
+    // Value: protects=every open of a test replay starts with its clamped texts collapsed, the same replay opened again too, while a move inside the open keeps the learner's expanded text; fails_when=the expanded state of Show more lives on in the button's aria-expanded across opens, so a later open starts expanded (Cycle 0052 task 20, /ship review); why_new=the Show more case read one open only; seam=the Study message's nodeHistoryScrollToken, which names each open; no_claim=native fonts
+    await regionTwoCase(
+      'every open of a test replay starts with its clamped texts collapsed, while a move inside the open keeps an expanded text',
+      async () => {
+        await freshPane('context', { width: 298, height: 885 })
+        const summaryState = async () =>
+          (await clampReading()).find(
+            (reading) => reading.id === 'node-learning-summary',
+          ).expanded
+        await publish(longRegionTwo(4, { nodeHistoryScrollToken: 31 }))
+        await page.locator('[data-show-more="node-learning-summary"]').click()
+        // A move inside the open: the same open's token.
+        await publish(longRegionTwo(2, { nodeHistoryScrollToken: 31 }))
+        const afterMove = await summaryState()
+        // The same replay opened again: a new token.
+        await publish(longRegionTwo(4, { nodeHistoryScrollToken: 32 }))
+        const afterReopen = await summaryState()
+        cases.push({
+          name: 'a test replay opened again starts with its processing summary collapsed, and a move inside an open keeps it expanded',
+          actual: { afterMove, afterReopen },
+          passed: afterMove === 'true' && afterReopen === 'false',
+        })
+      },
+    )
     // Value: protects=the question, the processing summary and the capture reason each clamped to three lines with Show more, which shows the whole text in place and Show less takes back; fails_when=a long text pushes the moment block down unclamped, the control is missing, or it does not expand and collapse; why_new=Cycle 0051 DS-B, the Eng review's finding (schema-length texts); seam=none; no_claim=native fonts
     await regionTwoCase(
       'the question, the processing summary and the capture reason each clamped to three lines with Show more, which shows the ',

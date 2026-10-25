@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.41.0] - 2026-10-25 (development candidate)
+
+Cycle 0052 pt2 ([Issue #124](https://github.com/laststance/codebook/issues/124)), the second of three pull requests of a bug-fix cycle: a test replay's moves, notices and summary page.
+
+**Moves show no stop you moved away from.**
+
+- **The recorded-source tab draws no CodeLens.** The editor redraws a lens only after its own delay, so a lens could still name the stop you left beside the next moment. The stop's whole label stays at the end of the stopped line, and its hover carries it where a narrow group cuts the line.
+- **A move from a stop to an output or the result** shows the placeholder from its first line, with no sticky-scroll header of the stop's source above it.
+- **A move that fails is worded by its cause.** When the replay debugger cannot start, the line keeps its restart advice; when the moment fails for another cause, it reads `The recorded moment could not be shown: <cause>. The last moment is still shown. Select this stop again to retry.` The line says the last moment is still shown only when it is: when it cannot be shown again either, the recorded-source row says why.
+- **A refused or failed move shows the storage folder as `<storage>`**, on the transport's status line and in the Study pane's line, also after the runtime is released; the causes Codebook words after a release name the storage, the workspace and the home folder as `<storage>`, `<workspace>` and `~`, as before it.
+
+**Notices and the summary page.**
+
+- **A one-replay-at-a-time notice you leave unanswered never holds up your next Open replay**, which asks its own notice at once; a later answer to the earlier notice still closes nothing.
+- **Each open of a test replay starts with its question, summary and capture reason collapsed**, also when you open the same replay again; a move inside the replay keeps the text you expanded.
+- **The diagram marks the selected step on that step's own arrow and label**, also in a drawing whose labels are not in step order.
+
+**Compatibility.** The MCP API stays 1.8, the bundled skill is unchanged and no stored format changes. Tasks 5, 7 to 10, 22, 23, 26, 27 and 47 of Issue #124 follow in the cycle's third pull request.
+
 ## [0.2.40.0] - 2026-10-25 (development candidate)
 
 Cycle 0052 pt1 ([Issue #124](https://github.com/laststance/codebook/issues/124)), the first of three pull requests of a bug-fix cycle: replays leave, open and reload without stale frames, and the entries and exits behave as you chose.

@@ -521,6 +521,8 @@ function studyClient(
   let selectedContentTab: StudyViewMessage['contentTab']
   let revealedFollowedObservationId: string | undefined
   let scrolledNodeHistoryToken: number | undefined
+  // The open of a test replay whose clamped texts the learner may have expanded; another open collapses them ({@link collapseShowMoreOnOpen}).
+  let showMoreOpenToken: number | undefined
   let readerOptionsOpenedByLearner = false
   readerOptions.querySelector('summary')?.addEventListener('click', () => {
     readerOptionsOpenedByLearner = !readerOptions.hasAttribute('open')
@@ -2332,6 +2334,7 @@ function studyClient(
     },
     label: string,
     stepAction: (step: Step) => Node,
+    marksSteps = false,
   ): [visual: HTMLDivElement, steps: HTMLOListElement] => {
     const namespace = 'http://www.w3.org/2000/svg',
       diagram = document.createElementNS(namespace, 'svg')
@@ -2434,6 +2437,11 @@ function studyClient(
       )
       number.setAttribute('text-anchor', 'middle')
       writeSequenceLines(number, labelX, lines, false)
+      // A drawing that marks its steps names each arrow and label by its step as it draws them, so no marker pairs them by their order in the drawing (Cycle 0052 task 19).
+      if (marksSteps) {
+        arrow.dataset.step = step.id
+        number.dataset.step = step.id
+      }
       diagram.append(arrow, number)
       const row = document.createElement('li'),
         heading = document.createElement('strong'),
@@ -2999,8 +3007,8 @@ function studyClient(
         learning.content,
         `Sequence for ${learning.content.title}. Numbered interactions are described below.`,
         (step) => testReplayStepAction(step.id, learning, section),
+        true,
       )
-      tagTestReplayDrawing(visual, learning.content.steps)
       element('node-learning-sequence').replaceChildren(visual)
       element('node-learning-steps').replaceChildren(list)
     }
@@ -3008,26 +3016,6 @@ function studyClient(
     markTestReplayDrawing(
       message.nodeHistoryPosition?.pending ? undefined : section,
     )
-  }
-  /**
-   * Names each arrow label of a test replay's drawing by its step (`data-step`), so the selected step can be marked on the drawing that stays (DS-B); called by {@link renderTestReplayLearning} once per drawing. The shared {@link sequenceView} is unchanged, so the browser replay's diagram keeps its markup.
-   * Each step's label is the text the renderer appends right after that step's arrow.
-   * @param visual - The drawing's container.
-   * @param steps - The material's steps, in the drawing's order.
-   * @example tagTestReplayDrawing(visual, learning.content.steps)
-   */
-  const tagTestReplayDrawing = (
-    visual: HTMLElement,
-    steps: readonly { id: string }[],
-  ): void => {
-    visual.querySelectorAll('path.sequence-arrow').forEach((arrow, index) => {
-      const label = arrow.nextElementSibling
-      const step = steps[index]
-      if (label instanceof SVGElement && step) {
-        label.dataset.step = step.id
-        if (arrow instanceof SVGElement) arrow.dataset.step = step.id
-      }
-    })
   }
   /**
    * Marks the selected step on the test replay's drawing by setting `aria-current="step"` and a class on its existing arrow and label, never by drawing again, so a move keeps the diagram's scroll position and the focus (DS-B, Eng); a pending moment or an event with no step marks none. Called by {@link renderTestReplayLearning} for every Study message.
@@ -3094,6 +3082,20 @@ function studyClient(
     }
   }
   window.addEventListener('resize', offerShowMore)
+  /**
+   * Collapses every clamped text of the test replay's summary when the message names another open of a test replay than the one its texts were expanded for (another replay, or the same one opened again), so an open never starts with an earlier open's expanded texts; a move inside the open keeps them (Cycle 0052 task 20). Called for every Study message, before {@link offerShowMore}.
+   * @param message - The current Study message; its `nodeHistoryScrollToken` names the open.
+   * @example collapseShowMoreOnOpen(message) // every Show more reads aria-expanded="false" after open 8 follows open 7
+   */
+  const collapseShowMoreOnOpen = (message: StudyViewMessage): void => {
+    const token = message.nodeHistoryScrollToken
+    if (token === undefined || token === showMoreOpenToken) return
+    showMoreOpenToken = token
+    for (const control of Array.from(
+      document.querySelectorAll<HTMLButtonElement>('[data-show-more]'),
+    ))
+      control.setAttribute('aria-expanded', 'false')
+  }
   document.addEventListener('click', (event) => {
     const control =
       event.target instanceof Element
@@ -4254,6 +4256,8 @@ function studyClient(
     // Every control is in its state for this message now; a pane without the focus (the learner is in Run and Debug) waits for its next focus event.
     if (document.hasFocus()) payTransportFocus()
     offerClampedTitles()
+    // Each open of a test replay starts with every clamped text collapsed; moves inside it keep the learner's expanded texts (Cycle 0052 task 20).
+    collapseShowMoreOnOpen(message)
     // Measured once the content is shown: a hidden page has no lines to count.
     offerShowMore()
     // A newly followed pause should reveal its interpretation and facts without requiring a learner scroll past run controls.

@@ -161,6 +161,18 @@ export class NodeLearningRevisionChangedError extends Error {
   }
 }
 
+/**
+ * Marks a failure of the replay debugger's start (the editor refused or did not finish launching the historical session), so a test replay move can tell it from any other failure of the moment it presents; thrown by {@link ReplayDebugger}'s session wait and read by {@link StudyWorkspace}'s move failure sentence (Cycle 0052 task 17).
+ * The message is the start failure's own and the name stays `Error`, so every reader of the message or the string form sees what it saw before.
+ * @example throw new ReplayDebuggerStartError(new Error('The editor did not start its historical debug session.'))
+ */
+export class ReplayDebuggerStartError extends Error {
+  constructor(cause: unknown) {
+    // The name stays `Error`, so every line that shows the error's string form reads as before; only `instanceof` tells it apart.
+    super(cause instanceof Error ? cause.message : String(cause), { cause })
+  }
+}
+
 /** Normalizes unexpected failures without pretending they succeeded; called by {@link StudyService} where a failure becomes a run's error. The MCP answers use {@link StudyService.unexpectedFailure}, which also hides private paths in the cause. @example domainError(new Error('disk')).code */
 export function domainError(error: unknown): StudyError {
   return error instanceof StudyError
