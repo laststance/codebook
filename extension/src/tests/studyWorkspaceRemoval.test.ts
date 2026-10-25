@@ -4574,10 +4574,12 @@ test('after the Trash refused a removal, a run refused on the full library names
     harness.rejectTrashMoves(() => true)
     harness.answerWarningDialogs(async ([confirm]) => confirm)
     await requestRemoval(harness, earlier.id)
+    // The removal's line is read before the run: a refresh after another run became current retires it (Cycle 0052 task 92).
+    const removal = harness.reader.inspect().view!.studyRemoval?.status
     // Act
     const refused = await startRun(harness)
     // Assert
-    assert.equal(harness.reader.inspect().view!.studyRemoval?.status, 'failed')
+    assert.equal(removal, 'failed')
     assert.equal(
       refused.record.error?.message,
       `Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings before starting another run; this editor could not move a saved study to the ${TRASH} in this session. Only the learner can change the setting; an editor agent cannot. Existing learning was kept.`,
@@ -4603,6 +4605,8 @@ test('after a removal refused because another window of this machine still recor
     )
     harness.answerWarningDialogs(async ([confirm]) => confirm)
     await requestRemoval(harness, study.id)
+    // The removal's line is read before the run: a refresh after another run became current retires it (Cycle 0052 task 92).
+    const removal = harness.reader.inspect().view!.studyRemoval?.status
 
     // Act
     const refused = await startRun(harness)
@@ -4610,7 +4614,7 @@ test('after a removal refused because another window of this machine still recor
     // Assert
     assert.deepEqual(
       {
-        removal: harness.reader.inspect().view!.studyRemoval?.status,
+        removal,
         moved: harness.trashMoves,
         refusal: refused.record.error?.message,
       },
@@ -4846,10 +4850,12 @@ test('after a removal that moved the study although the Trash rejected a path th
     harness.rejectTrashMoves(isArchiveOfRemoved)
     harness.answerWarningDialogs(async ([confirm]) => confirm)
     await requestRemoval(harness, removed.id)
+    // The removal's line is read before the run: a refresh after another run became current retires it (Cycle 0052 task 92).
+    const removal = harness.reader.inspect().view!.studyRemoval?.status
     // Act
     const refused = await startRun(harness)
     // Assert
-    assert.equal(harness.reader.inspect().view!.studyRemoval?.status, 'moved')
+    assert.equal(removal, 'moved')
     assert.equal(refused.record.error?.message, FULL_LIBRARY_REFUSAL)
   } finally {
     await harness.close()

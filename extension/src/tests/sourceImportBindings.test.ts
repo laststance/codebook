@@ -127,3 +127,19 @@ test('a string continued by a backslash and a CRLF line break binds no name on i
   // Assert
   assert.deepEqual([...bindings], [['db', 'db']])
 })
+
+// Value: protects=a quoted string holding a raw U+2028 or U+2029 (line terminators a multiline pattern's ^ reads as line breaks) stays a string, so an import written after one inside it binds nothing; fails_when=only a line feed marks a multi-line string, the string stays as code, and the import after the separator reads as a declaration whose name another module's export answers for (Cycle 0052 task 93); why_new=hosted CodeRabbit review of 5551addd (Minor, blankCommentsAndTemplates.ts:64); seam=none (a pure function of the source text); no_claim=identifiers, which cannot hold these characters
+test('a string holding a raw line or paragraph separator binds no name after it', () => {
+  // Arrange
+  const source = [
+    "import { db } from '@/db'",
+    'const line = \'a\u2028import { fromLine } from "./line"\'',
+    'const paragraph = \'b\u2029import { fromParagraph } from "./paragraph"\'',
+  ].join('\n')
+
+  // Act
+  const bindings = sourceImportBindings(source)
+
+  // Assert
+  assert.deepEqual([...bindings], [['db', 'db']])
+})

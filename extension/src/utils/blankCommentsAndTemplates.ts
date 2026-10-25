@@ -1,3 +1,6 @@
+/** Every character a multiline regular expression's `^` reads as a line break: ECMAScript's line terminators. */
+const LINE_TERMINATOR = /[\n\r\u2028\u2029]/
+
 /**
  * Blanks a module source's comments, template literals (nested templates and their `${…}` parts included) and quoted strings continued onto another line, with spaces that keep every line break and character position, so that only code can read as an import declaration. Other quoted strings stay, since a declaration's specifier and its quoted export names are strings. Regular expression literals are not parsed.
  * Why: an import written in a comment or in a test's source fixture bound a name, and a nested template's inner backticks ended the masking early (Cycle 0052 tasks 87, 88).
@@ -60,8 +63,8 @@ function skipNonCode(
     character = text[index]
   if (character === "'" || character === '"') {
     const end = stringEnd(text, index)
-    // A string continued onto another line could start that line with `import`; one on a single line never starts a line, and a specifier never spans lines (Cycle 0052 task 91).
-    if (text.slice(index, end).includes('\n')) spans.push([index, end])
+    // A string continued onto another line, or holding a raw U+2028/U+2029 that a multiline `^` reads as a line break, could start that line with `import`; one on a single line never starts a line, and a specifier never spans lines (Cycle 0052 tasks 91, 93).
+    if (LINE_TERMINATOR.test(text.slice(index, end))) spans.push([index, end])
     return end
   }
   const end =
