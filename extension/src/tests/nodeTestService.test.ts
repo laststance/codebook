@@ -890,3 +890,157 @@ test('a failed advance to the next Node stop names that failure in the continuat
     await harness.close()
   }
 })
+
+// Value: protects=a live Node test run survives a required fact the debugger cannot read: the continuation that reached the stop is refused with EVIDENCE_UNAVAILABLE naming the fact, the stop is journaled with its other facts, the run stays paused there without an error, and the next codebook_continue goes on to the result; fails_when=the run ends with RUNTIME_FAILED at that stop (N51-V5: value:revalidatePath.mock.calls.length), the stop is lost, or the run cannot be continued after the refusal (Cycle 0052 task 5, O4); why_new=the inspector used to throw, which the continuation's catch turned into a failed run; seam=environment.createNodeTestRun, whose advance returns a stop that lacks its required fact; no_claim=the native debugger's reading of the fact (inspectNodeTestVariables, N52 live)
+test('a Node test continuation that reaches a stop without its required fact is refused while the run stays paused there and continues on', async () => {
+  // Arrange
+  const harness = await createHarness(),
+    { service } = harness
+  service.nodeHistoryStore = new NodeTestHistoryStore(
+    join(harness.directory, '.learning'),
+    '0'.repeat(64),
+  )
+  service.environment.build.sourceHash = 'f'.repeat(64)
+  const base = harness.configuration
+  const configuration: NodeTestConfiguration = {
+    version: 1,
+    adapter: 'vitest-node',
+    book: base.book,
+    testFile: 'src/theme.test.ts',
+    testTitles: ['theme', 'selects the dark theme'],
+    testHash: 'a'.repeat(64),
+    source: base.source,
+    inspections: base.inspections.slice(0, 1),
+    additionalStops: [
+      {
+        ...base.source,
+        anchorIndex: 0,
+        inspections: [
+          {
+            path: 'revalidatePath.mock.calls.length',
+            mode: 'value',
+            required: true,
+          },
+        ],
+      },
+    ],
+  }
+  const stopAt = (index: number, facts: unknown[], limitations: string[]) =>
+    ({
+      index,
+      runId: 'node-run',
+      sessionId: 'owned-session',
+      threadId: 7,
+      elapsedMs: 10 + index,
+      worker: {},
+      source: configuration.source,
+      frame: { id: 10 + index, name: 'notifyManager', line: 1, column: 1 },
+      variables: [{ name: 'listener', value: '() => undefined' }],
+      facts,
+      debuggerSnapshot: {
+        version: 1,
+        frames: [
+          {
+            name: 'notifyManager',
+            line: 1,
+            column: 1,
+            scopes: [{ name: 'Local', variables: [0] }],
+          },
+        ],
+        variables: [
+          { name: 'listener', value: '() => undefined', children: [] },
+        ],
+        limitations,
+      },
+    }) as unknown as NodeTestSourceStop
+  let advanced = false
+  const runtime: NodeTestRuntime = {
+    id: 'node-run',
+    async prepare() {
+      return stopAt(
+        0,
+        [{ path: 'nextTheme', mode: 'value', display: 'dark', type: 'string' }],
+        [],
+      )
+    },
+    hasNextStop() {
+      return !advanced
+    },
+    async advance() {
+      advanced = true
+      return stopAt(
+        1,
+        [],
+        [
+          'Required fact value:revalidatePath.mock.calls.length could not be read at this stop.',
+        ],
+      )
+    },
+    async complete() {
+      return {
+        exitCode: 0,
+        signal: null,
+        output: 'Tests 1 passed',
+        elapsedMs: 40,
+      }
+    },
+    async stop() {},
+  }
+  service.environment.createNodeTestRun = async () => runtime
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: NODE_TEST_PROFILE,
+    key: 'node-unread-required-fact',
+    configuration,
+  })
+  const record = service.record(receipt)
+  try {
+    await record.preparation
+    const atFirstStop = service.state(record)
+
+    // Act: the continuation reaches the second stop, whose required fact the debugger could not read.
+    const rejection = await service
+      .continue(atFirstStop.participants.server!.continueArguments!)
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+    const atSecondStop = service.state(record)
+    const afterRefusal = {
+      stopped: record.stopped,
+      error: record.error,
+      phase: record.nodePhase,
+      stops: record.nodeStops?.length,
+    }
+    const goingOn = await service.continue(
+      atSecondStop.participants.server!.continueArguments!,
+    )
+
+    // Assert
+    assert.ok(rejection instanceof StudyError)
+    assert.deepEqual(
+      {
+        code: rejection.code,
+        message: rejection.message,
+        afterRefusal,
+        goingOn: goingOn.accepted,
+        result: record.nodeResult?.exitCode,
+      },
+      {
+        code: 'EVIDENCE_UNAVAILABLE',
+        message:
+          'codebook_continue reached the stop at src/theme.ts:1, but the debugger could not read its required fact value:revalidatePath.mock.calls.length. The run stays paused at this stop with its other facts; read nodeTest.stops, then continue without it or stop the run.',
+        afterRefusal: {
+          stopped: false,
+          error: undefined,
+          phase: 'paused',
+          stops: 2,
+        },
+        goingOn: true,
+        result: 0,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})

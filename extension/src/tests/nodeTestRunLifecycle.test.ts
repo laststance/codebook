@@ -82,6 +82,10 @@ async function testRunHarness(steps: FakeRunSteps = {}) {
   service.environment.build.sourceHash = 'f'.repeat(64)
   const base = harness.configuration
   const declaredStops = steps.stops ?? 1
+  // Each stop declares the required fact its fake stop carries, as the owned run's inspector would have read it (Cycle 0052 task 5: a stop without its required fact refuses the continuation that reached it).
+  const inspections: NodeTestConfiguration['inspections'] = [
+    { path: 'delayMs', mode: 'value', required: true },
+  ]
   const configuration: NodeTestConfiguration = {
     version: 1,
     adapter: 'vitest-node',
@@ -90,14 +94,14 @@ async function testRunHarness(steps: FakeRunSteps = {}) {
     testTitles: ['job scheduler', 'runs a delayed job after its timer'],
     testHash: 'a'.repeat(64),
     source: base.source,
-    inspections: base.inspections.slice(0, 1),
+    inspections,
     ...(declaredStops === 2
       ? {
           additionalStops: [
             {
               ...base.source,
               anchorIndex: 0,
-              inspections: base.inspections.slice(0, 1),
+              inspections,
             },
           ],
         }

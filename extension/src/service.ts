@@ -1556,6 +1556,7 @@ export class StudyService {
     record: StudyRecord,
     run: NodeTestRuntime,
   ): Promise<void> {
+    let refusal: StudyError | undefined
     try {
       if (run.hasNextStop()) {
         const next = await run.advance()
@@ -1563,25 +1564,8 @@ export class StudyService {
         record.nodeStops?.push(next)
         // A deadline that passed during the advance already marked the test failed: the late stop is journaled, the phase stays (F77).
         if (record.nodePhase === 'advancing') record.nodePhase = 'paused'
-        return
-      }
-      const result = await run.complete()
-      record.nodeResult = result
-      await record.nodeHistoryWriter?.appendResult(result, result.elapsedMs)
-      // The same for a result that arrives after the deadline's failure (F77).
-      if (record.nodePhase === 'advancing') record.nodePhase = 'completed'
-      // The exit already says the test did not pass; the run's error names why Vitest's report could not confirm the cited test.
-      if (result.reportFailure !== undefined) {
-        record.error = this.sanitizedError(
-          new StudyError(
-            'RUNTIME_FAILED',
-            `${describeNodeTestResult(result)}, and Vitest's test report could not confirm the cited test: ${result.reportFailure}`,
-          ),
-        )
-        queueMicrotask(() => {
-          void this.stopRecord(record).catch(() => undefined)
-        })
-      }
+        refusal = this.unreadRequiredFactsRefusal(record, next)
+      } else await this.completeNodeTest(record, run)
     } catch (error) {
       // A stop cancelled this continuation: the run ends as stopped, without an error of its own.
       if (record.stopping || record.stopped)
@@ -1598,6 +1582,74 @@ export class StudyService {
         void this.stopRecord(record).catch(() => undefined)
       })
       throw record.error
+    }
+    // The stop is kept and the run stays paused there with its other facts; only this continuation is refused, so the agent can go on without the fact (Cycle 0052 task 5, O4).
+    if (refusal) throw refusal
+  }
+
+  /**
+   * Words the refusal of a Node test continuation that reached a stop whose required facts the debugger could not read, so the agent learns which fact is missing while the run stays paused at that stop (Cycle 0052 task 5, O4: MCP 1.8's error codes, no schema change); called by {@link StudyService.continueNodeTest} after the stop is journaled.
+   * @param record - The Node test run.
+   * @param stop - The stop the continuation reached.
+   * @returns An `EVIDENCE_UNAVAILABLE` {@link StudyError} naming each required `<mode>:<path>` the stop lacks, or `undefined` when it has them all.
+   * @example this.unreadRequiredFactsRefusal(record, stop)?.message // => 'codebook_continue reached the stop at app/lib/actions.ts:131, but the debugger could not read its required fact value:revalidatePath.mock.calls.length. …'
+   */
+  private unreadRequiredFactsRefusal(
+    record: StudyRecord,
+    stop: NodeTestSourceStop,
+  ): StudyError | undefined {
+    const configuration = record.nodePrepared?.configuration
+    if (!configuration) return undefined
+    const declared = [
+      configuration.inspections,
+      ...(configuration.additionalStops ?? []).map(
+        (additional) => additional.inspections,
+      ),
+    ][stop.index]
+    const missing = (declared ?? [])
+      .filter(
+        (inspection) =>
+          inspection.required &&
+          !stop.facts.some(
+            (fact) =>
+              fact.path === inspection.path && fact.mode === inspection.mode,
+          ),
+      )
+      .map((inspection) => `${inspection.mode}:${inspection.path}`)
+    if (missing.length === 0) return undefined
+    const named = missing.join(', ')
+    return new StudyError(
+      'EVIDENCE_UNAVAILABLE',
+      `codebook_continue reached the stop at ${stop.source.path}:${stop.frame.line}, but the debugger could not read its required ${missing.length === 1 ? 'fact' : 'facts'} ${named}. The run stays paused at this stop with its other facts; read nodeTest.stops, then continue without ${missing.length === 1 ? 'it' : 'them'} or stop the run.`,
+    )
+  }
+
+  /**
+   * Runs a Node test to its end after its last declared stop and journals the result; called by {@link StudyService.continueNodeTest} for the final continuation.
+   * @param record - The Node test run.
+   * @param run - Its owned runtime.
+   * @example await this.completeNodeTest(record, run)
+   */
+  private async completeNodeTest(
+    record: StudyRecord,
+    run: NodeTestRuntime,
+  ): Promise<void> {
+    const result = await run.complete()
+    record.nodeResult = result
+    await record.nodeHistoryWriter?.appendResult(result, result.elapsedMs)
+    // The same for a result that arrives after the deadline's failure (F77).
+    if (record.nodePhase === 'advancing') record.nodePhase = 'completed'
+    // The exit already says the test did not pass; the run's error names why Vitest's report could not confirm the cited test.
+    if (result.reportFailure !== undefined) {
+      record.error = this.sanitizedError(
+        new StudyError(
+          'RUNTIME_FAILED',
+          `${describeNodeTestResult(result)}, and Vitest's test report could not confirm the cited test: ${result.reportFailure}`,
+        ),
+      )
+      queueMicrotask(() => {
+        void this.stopRecord(record).catch(() => undefined)
+      })
     }
   }
 

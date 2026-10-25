@@ -80,9 +80,12 @@ async function nodeRunHarness({
   stopFailures = 0,
   outputRefusesOnceClosed = false,
   unansweredRequest,
+  unavailableFacts = [],
 }: {
   declaredStops?: number
   observedLine?: number
+  /** The required facts, as `<mode>:<path>`, that the inspector reports it could not read at each stop. */
+  unavailableFacts?: string[]
   duringRetire?: () => void
   adapterPauseAfterContinue?: boolean
   exitAfterEntry?: boolean
@@ -683,7 +686,11 @@ async function nodeRunHarness({
         }),
       },
       './utils/inspectNodeTestVariables': {
-        inspectNodeTestVariables: async () => ({ variables: [], facts: [] }),
+        inspectNodeTestVariables: async () => ({
+          variables: [],
+          facts: [],
+          unavailable: unavailableFacts,
+        }),
       },
       './utils/captureReplayDebugSnapshot': {
         captureReplayDebugSnapshot: async () => ({
@@ -858,6 +865,41 @@ test('a run whose first declared stop came without an entry pause advances to it
     // Assert
     assert.equal(next.index, 1)
     assert.equal(result.exitCode, 0)
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=a declared stop whose required fact the debugger cannot read is still accepted: the run keeps that stop, names the fact among its debugger limitations and stays able to finish, instead of releasing the owned test; fails_when=the stop is captured without naming the missing fact, or a missing fact releases the run (N51-V5, Cycle 0052 task 5); why_new=the inspector used to throw, and advance releases the run on any capture failure; seam=the harness's inspector reporting one unreadable required fact; no_claim=the inspector's own reading (inspectNodeTestVariables tests) and the service's refusal (nodeTestService)
+test('a declared stop whose required fact the debugger cannot read is accepted with the fact named among its limitations, and the test still finishes', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({
+    declaredStops: 2,
+    unavailableFacts: ['value:revalidatePath.mock.calls.length'],
+  })
+  try {
+    await harness.run.prepare()
+
+    // Act
+    const next = await harness.run.advance()
+    const result = await harness.run.complete()
+
+    // Assert
+    assert.deepEqual(
+      {
+        index: next.index,
+        limitations: next.debuggerSnapshot.limitations,
+        exitCode: result.exitCode,
+      },
+      {
+        index: 1,
+        limitations: [
+          'Required fact value:revalidatePath.mock.calls.length could not be read at this stop.',
+        ],
+        exitCode: 0,
+      },
+    )
   } finally {
     await harness.run.stop()
     await harness.cleanup()

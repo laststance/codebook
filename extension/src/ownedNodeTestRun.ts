@@ -540,6 +540,7 @@ export class OwnedNodeTestRun {
    *
    * A pause Codebook did not make, such as the learner's own breakpoint, is never resumed here. It is reported once as `node-test.learner-paused`,
    * and the time the test spends held there does not count against the stop budget. Called by {@link prepareOwned} and {@link advance}.
+   * A required fact the debugger cannot read fails nothing: the stop is accepted with the facts that could be read and names the missing one among its debugger limitations, and the service refuses the continuation that reached it (Cycle 0052 task 5).
    *
    * @param index - Declared stop to capture.
    * @param fromIndex - First native pause that can belong to this stop.
@@ -745,6 +746,11 @@ export class OwnedNodeTestRun {
       },
     })
     assertCurrent()
+    // A required fact the debugger could not read is named among the stop's limitations: the stop keeps its other facts and the run stays paused here (Cycle 0052 task 5).
+    for (const fact of result.unavailable)
+      debuggerSnapshot.limitations.push(
+        `Required fact ${fact} could not be read at this stop.`,
+      )
     this.acceptedPause = target.stop
     const stop = (this.acceptedStop = {
       index,

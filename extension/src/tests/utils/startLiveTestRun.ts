@@ -40,12 +40,12 @@ export async function startLiveTestRun(
       testHash: 'a'.repeat(64),
       testTitles: ['job scheduler', 'runs a delayed job after its timer'],
       source: configuration.source,
-      inspections: configuration.inspections.slice(0, 1),
+      inspections: [{ path: 'delayMs', mode: 'value', required: true }],
       additionalStops: [
         {
           ...configuration.source,
           anchorIndex: 0,
-          inspections: configuration.inspections.slice(0, 1),
+          inspections: [{ path: 'delayMs', mode: 'value', required: true }],
         },
       ],
     },
