@@ -420,10 +420,16 @@ test('a started test run journals its Vitest root and root claim without the hos
 
     // Assert
     assert.ok('text' in events)
-    assert.match(
-      events.text,
-      /"started":true,"vitestRoot":"packages\/query-core","rootClaim":"not-applicable"/,
-    )
+    const started = (
+      JSON.parse(events.text) as {
+        events: { type: string; detail: unknown }[]
+      }
+    ).events.find((event) => event.type === 'node-test.started')
+    assert.deepEqual(started?.detail, {
+      started: true,
+      vitestRoot: 'packages/query-core',
+      rootClaim: 'not-applicable',
+    })
     assert.doesNotMatch(events.text, /\/private\/workspace/)
   } finally {
     await harness.close()
@@ -479,6 +485,56 @@ test('a stop during a start whose root listing was not released reads stopped an
     assert.doesNotMatch(events.text, /codebook-vitest-list-x/)
   } finally {
     letCheckFail()
+    await harness.close()
+  }
+})
+
+// Value: protects=a root listing that may still run being named in the run's events also when the start is refused for it without a stop, the run then reading refused-at-preparation with its error; fails_when=the pre-history event is written only on the stop path, or the refusal hides it; why_new=pass-2 testing review of Cycle 0053 (only the stop path was tested); seam=the environment's check is a fake that reports the failed release and refuses; no_claim=the wording of the refusal (listVitestForRootClaim tests)
+test('a start refused for a root listing that was not released names the listing in its events', async () => {
+  // Arrange
+  const { harness, service, received, start } = await nodeTestService(
+    ROOT_MODE_EXECUTION_PLAN,
+  )
+  service.environment.checkNodeTestFiles = async (
+    _configuration,
+    _sources,
+    control,
+  ) => {
+    control.onListingNotReleased?.({
+      processGroup: 4242,
+      directory: '/tmp/codebook-vitest-list-x',
+      reason: 'Error: kill EPERM',
+    })
+    throw new Error(
+      "Vitest's listing from the repository root ended, but Codebook could not confirm that its process group ended.",
+    )
+  }
+  try {
+    const receipt = start('unreleased-listing-refused')
+    const record = service.record(receipt)
+
+    // Act
+    await record.preparation
+    const events = await readResource(service, service.state(record).eventsUri)
+
+    // Assert
+    assert.ok('text' in events)
+    const journal = (
+      JSON.parse(events.text) as {
+        events: { sequence: number; type: string }[]
+      }
+    ).events
+    assert.deepEqual(
+      journal.map((event) => [event.sequence, event.type]),
+      [[1, 'node-test.vitest-listing-not-released']],
+    )
+    assert.equal(record.historyExcluded, 'refused-at-preparation')
+    assert.match(
+      service.state(record).error?.message ?? '',
+      /could not confirm that its process group ended/,
+    )
+    assert.equal(received.starts, 0)
+  } finally {
     await harness.close()
   }
 })

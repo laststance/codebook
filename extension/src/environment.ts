@@ -17,6 +17,7 @@ import {
 import { StudyError } from './errors'
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
 import type {
+  NodeTestPreparationControl,
   RuntimeControl,
   RuntimeDefinition,
   RuntimeSnapshot,
@@ -35,7 +36,6 @@ import { checkNodeTestFiles } from './utils/checkNodeTestFiles'
 import { configuredStops } from './utils/configuredStops'
 import { createChromeExecutableLookup } from './utils/createChromeExecutableLookup'
 import { listVitestForRootClaim } from './utils/listVitestForRootClaim'
-import type { VitestListingReleaseFailure } from './utils/listVitestTestFiles'
 import {
   planNodeTestExecution,
   type NodeTestExecutionPlan,
@@ -400,11 +400,7 @@ export async function createEnvironment(
     async checkNodeTestFiles(
       configuration: NodeTestConfiguration,
       citedSources: ConfiguredDescriptor['sources'],
-      control: {
-        signal: AbortSignal
-        deadlineAt: number
-        onListingNotReleased?: (failure: VitestListingReleaseFailure) => void
-      },
+      control: NodeTestPreparationControl,
     ) {
       // The owned run's own checks, made before the history begins: a refusal leaves no zero-entry history behind (F57).
       assertConfiguredSourceDocuments(

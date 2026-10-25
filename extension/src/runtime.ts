@@ -140,6 +140,12 @@ export interface StudyRuntime {
   /** Says whether the run completed and its final save has not settled yet, during which its completion is no result (a failed save fails the run); runtimes without such a save omit it. */
   isSavingCompletion?(): boolean
 }
+/** What a node-test start's pre-history check is bound by: the start's cancellation and preparation deadline (epoch milliseconds), which bound a root claim's listing, and who hears of a root listing whose process group could not be confirmed as ended, before the run's history (or its journal) exists. */
+export type NodeTestPreparationControl = {
+  signal: AbortSignal
+  deadlineAt: number
+  onListingNotReleased?: (failure: VitestListingReleaseFailure) => void
+}
 export interface StudyEnvironment {
   readonly workspace: string
   readonly host: HostConfiguration
@@ -174,18 +180,14 @@ export interface StudyEnvironment {
   /**
    * Checks the files a node-test configuration names against the opened repository and the editor's open documents of the cited sources ({@link checkNodeTestFiles}), then plans the run ({@link planNodeTestExecution}): its Vitest root, the root claim, its Vitest and its filter, before the run's history begins; a refusal ends the run with its typed error and records nothing.
    * @param citedSources - The article's text of every source the selected node cites; an open editor document with other text refuses the start.
-   * @param control - The start's cancellation and preparation deadline (epoch milliseconds), which bound a root claim's listing, and who hears of a root listing whose process group could not be confirmed as ended.
+   * @param control - The start's cancellation, its preparation deadline and who hears of an unreleased root listing ({@link NodeTestPreparationControl}).
    * @returns The execution plan the run launches with.
    * @throws The typed refusal of a path that is not a file, a changed source or a changed test file, a cited source open in the editor with other text, and every refusal of the plan's Vitest rules.
    */
   checkNodeTestFiles?(
     configuration: NodeTestConfiguration,
     citedSources: ConfiguredDescriptor['sources'],
-    control: {
-      signal: AbortSignal
-      deadlineAt: number
-      onListingNotReleased?: (failure: VitestListingReleaseFailure) => void
-    },
+    control: NodeTestPreparationControl,
   ): Promise<NodeTestExecutionPlan>
   createNodeTestRun?(
     configuration: NodeTestConfiguration,
