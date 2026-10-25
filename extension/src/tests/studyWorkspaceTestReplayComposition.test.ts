@@ -1361,7 +1361,7 @@ test('a Saved studies choice of a test replay superseded while it enters the com
     await harness.reader.action('retry')
     await harness.reader.open()
     const reader = harness.reader as unknown as {
-      enterSummaryCompositionForReplay: () => Promise<void>
+      enterSummaryCompositionForReplay: (entry: number) => Promise<void>
       revision: number
     }
     const enter = reader.enterSummaryCompositionForReplay.bind(harness.reader)
@@ -1370,8 +1370,10 @@ test('a Saved studies choice of a test replay superseded while it enters the com
     const standsInComposition = new Promise<void>((resolve) => {
       entered = resolve
     })
-    reader.enterSummaryCompositionForReplay = async (): Promise<void> => {
-      await enter()
+    reader.enterSummaryCompositionForReplay = async (
+      entry: number,
+    ): Promise<void> => {
+      await enter(entry)
       // Another reader change lands while the entry stands in the composition.
       reader.revision++
       messagesAtSupersession = harness.playbackPanelMessages.length
@@ -1616,7 +1618,7 @@ test('an agent’s Return to Live that supersedes an entering test replay leaves
     await harness.service.record(receipt).preparation
     await harness.reader.open()
     const reader = harness.reader as unknown as {
-      enterSummaryCompositionForReplay: () => Promise<void>
+      enterSummaryCompositionForReplay: (entry: number) => Promise<void>
     }
     const enter = reader.enterSummaryCompositionForReplay.bind(harness.reader)
     const held = new Promise<void>((resolve) => {
@@ -1626,10 +1628,12 @@ test('an agent’s Return to Live that supersedes an entering test replay leaves
     const entering = new Promise<void>((resolve) => {
       entered = resolve
     })
-    reader.enterSummaryCompositionForReplay = async (): Promise<void> => {
+    reader.enterSummaryCompositionForReplay = async (
+      entry: number,
+    ): Promise<void> => {
       entered()
       await held
-      return enter()
+      return enter(entry)
     }
 
     // Act
@@ -1793,7 +1797,7 @@ test('an agent’s Return to Live that supersedes an entering and a waiting test
     await harness.service.record(receipt).preparation
     await harness.reader.open()
     const reader = harness.reader as unknown as {
-      enterSummaryCompositionForReplay: () => Promise<void>
+      enterSummaryCompositionForReplay: (entry: number) => Promise<void>
     }
     const enter = reader.enterSummaryCompositionForReplay.bind(harness.reader)
     const held = new Promise<void>((resolve) => {
@@ -1803,10 +1807,12 @@ test('an agent’s Return to Live that supersedes an entering and a waiting test
     const entering = new Promise<void>((resolve) => {
       entered = resolve
     })
-    reader.enterSummaryCompositionForReplay = async (): Promise<void> => {
+    reader.enterSummaryCompositionForReplay = async (
+      entry: number,
+    ): Promise<void> => {
       entered()
       await held
-      return enter()
+      return enter(entry)
     }
 
     // Act
@@ -1833,6 +1839,99 @@ test('an agent’s Return to Live that supersedes an entering and a waiting test
         ),
       },
       { testReplay: undefined, summaryPlaceholder: true },
+    )
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
+// Value: protects=Open replay made while another test replay is shown and the work window has lost the desktop focus waits for the focus before showing the summary, as an open from a closed reader does, instead of failing at once; fails_when=the entry into the standing composition reveals the summary unfocused and is told as a failed open (local CodeRabbit round 8, minor); why_new=Cycle 0052 task 14's reveal; seam=changeWindowFocus; no_claim=the native window manager
+test('Open replay into a standing composition waits for the work window’s focus before showing the summary', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const second = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openByOpenReplay(harness)
+    harness.hideSummary()
+    harness.changeWindowFocus(false)
+
+    // Act: the learner clicks back into the window a moment after Open replay.
+    const entry = harness.reader.openLearningReplay(second.studyId)
+    setTimeout(() => harness.changeWindowFocus(true), 200) // gstack-timing-ok: the learner's click comes after the entry began waiting; the wait itself is bounded by RECORDING_WINDOW_FOCUS_WAIT_MS
+    await entry
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistory?.header.studyId === second.studyId &&
+        !lastView(harness)?.loading,
+      'the second replay is shown',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { errors: harness.errorMessages, summaryShown: harness.summary.visible },
+      { errors: [], summaryShown: true },
+    )
+  } finally {
+    harness.changeWindowFocus(true)
+    await harness.close()
+  }
+})
+
+// Value: protects=a learner's Return to Live that supersedes a test replay entry entering the summary composition arranges the reader itself, and the superseded entry's end tells no control error; fails_when=the entry's leave of the empty composition runs open() during the Return, which refuses as busy and reports a control error the learner caused nothing for (local CodeRabbit round 8, minor); why_new=Cycle 0052 task 12; seam=the entry held at enterSummaryCompositionForReplay, a configured live run, the learner's return-current action; no_claim=the native timing
+test('a learner’s Return to Live that supersedes an entering test replay tells no control error', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  let release = (): void => {}
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: PROFILE_ID,
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await harness.service.record(receipt).preparation
+    await harness.reader.open()
+    const reader = harness.reader as unknown as {
+      enterSummaryCompositionForReplay: (entry: number) => Promise<void>
+    }
+    const enter = reader.enterSummaryCompositionForReplay.bind(harness.reader)
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let entered = (): void => {}
+    const entering = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    reader.enterSummaryCompositionForReplay = async (
+      entry: number,
+    ): Promise<void> => {
+      entered()
+      await held
+      return enter(entry)
+    }
+
+    // Act
+    const entry = harness.reader.openLearningReplay(history.studyId)
+    await entering
+    const returning = harness.reader.action('return-current')
+    release()
+    await Promise.all([entry, returning])
+
+    // Assert
+    assert.deepEqual(
+      structuredClone({
+        errors: harness.reader.inspect().view?.errors,
+        testReplay: harness.reader.inspect().view?.nodeHistory?.header.studyId,
+      }),
+      { errors: [], testReplay: undefined },
     )
   } finally {
     release()

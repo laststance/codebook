@@ -11787,7 +11787,7 @@ export class StudyWorkspace {
     if (!(await this.closeBrowserReplayForTestReplay(entry))) return false
     if (entry !== this.nodeHistoryEntryRequest) return false
     try {
-      await this.enterSummaryCompositionForReplay()
+      await this.enterSummaryCompositionForReplay(entry)
     } catch (error) {
       // A newer entry answers for the learner now.
       if (entry !== this.nodeHistoryEntryRequest) return false
@@ -11873,16 +11873,19 @@ export class StudyWorkspace {
    * Opens the summary composition for a test replay that is about to open (Cycle 0051, DS-A): a closed reader opens, and the Live composition and the Study composition give way to it, so the Study pane closes and the Learning summary takes the chat's place; called by {@link openNodeHistoryFromHost}.
    * Only a reader that already stands in the summary composition for a test replay (another test replay was shown) is left as it is; an earlier entry that failed after it left the Live composition is opened again, so the Application, the slot and the debugger never show without a transport (F384).
    * @throws What {@link open} throws; the caller tells it.
-   * @example await this.enterSummaryCompositionForReplay()
+   * @param entry - The entry's ticket ({@link nodeHistoryEntryRequest}); an entry a newer one or a Return overtook while it waited for the work window reveals nothing.
+   * @example await this.enterSummaryCompositionForReplay(entry)
    */
-  private async enterSummaryCompositionForReplay(): Promise<void> {
+  private async enterSummaryCompositionForReplay(entry: number): Promise<void> {
     if (
       this.opened &&
       this.summaryComposition &&
       !this.liveComposition &&
       !this.recordingActive
     ) {
-      // The composition stands already, but the learner may have hidden the summary and the bottom panel: the entry shows them again, so Open replay never ends with no visible replay (Cycle 0052 task 14).
+      // The composition stands already, but the learner may have hidden the summary and the bottom panel: the entry shows them again, so Open replay never ends with no visible replay (Cycle 0052 task 14). The reveal waits for the work window as open()'s does, and an entry overtaken meanwhile reveals nothing.
+      await this.waitForRecordingWindow(undefined, this.lifetime)
+      if (entry !== this.nodeHistoryEntryRequest) return
       await this.showLearningSummary(undefined, true)
       return
     }
@@ -11906,7 +11909,10 @@ export class StudyWorkspace {
       this.closing ||
       !this.summaryComposition ||
       this.recordingActive ||
-      this.testReplayHoldsComposition()
+      this.testReplayHoldsComposition() ||
+      // A Return or a presentation change under way arranges the reader itself (Cycle 0052 task 12).
+      this.returningCurrent !== undefined ||
+      this.presentationTransition !== undefined
     )
       return
     try {
