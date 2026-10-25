@@ -32,7 +32,7 @@ export const ERROR_RECOVERY = {
   RUNTIME_FAILED:
     'Read the terminal reason and captured history. Stop owned resources; do not retry the click automatically.',
   EVIDENCE_UNAVAILABLE:
-    'Inspect the evidence failure and storage availability. Do not treat missing evidence as success. When codebook_continue names a required fact the debugger could not read, the run stays paused at that stop: read nodeTest.stops, then call codebook_continue again to go on without it, or stop the run.',
+    'Inspect the evidence failure and storage availability. Do not treat missing evidence as success. When codebook_continue names a required fact the debugger could not read, the run stays paused at that stop: read nodeTest.stops and the current participants.server.continueArguments of the run resource, then call codebook_continue with those arguments to go on without it (the earlier ones now answer STALE_PAUSE), or stop the run.',
   SERVER_STOPPING:
     'Wait for the editor stop command to finish, then explicitly start and copy a new connection.',
   PREREQUISITE_MISSING:

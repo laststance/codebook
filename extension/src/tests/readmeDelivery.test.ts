@@ -36,7 +36,7 @@ test('the packaged README tells that a continuation refused for an unreadable re
 
   // Act
   const tellsPausedRun = readme.includes(
-    'A `codebook_continue` refused because the debugger could not read a required fact leaves the test run paused at that stop: read `nodeTest.stops`, then continue without the fact, or stop the run.',
+    'A `codebook_continue` refused because the debugger could not read a required fact leaves the test run paused at that stop: read `nodeTest.stops` and the current `participants.server.continueArguments`, then continue with those arguments without the fact, or stop the run.',
   )
 
   // Assert

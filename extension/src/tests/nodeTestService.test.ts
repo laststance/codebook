@@ -1034,7 +1034,7 @@ test('a Node test continuation that reaches a stop without its required fact is 
         message:
           'The continuation reached the stop at src/theme.ts:1, but the debugger could not read its required fact value:revalidatePath.mock.calls.length. The run stays paused at this stop with its other facts: continue without it, or stop the run.',
         recovery:
-          'Inspect the evidence failure and storage availability. Do not treat missing evidence as success. When codebook_continue names a required fact the debugger could not read, the run stays paused at that stop: read nodeTest.stops, then call codebook_continue again to go on without it, or stop the run.',
+          'Inspect the evidence failure and storage availability. Do not treat missing evidence as success. When codebook_continue names a required fact the debugger could not read, the run stays paused at that stop: read nodeTest.stops and the current participants.server.continueArguments of the run resource, then call codebook_continue with those arguments to go on without it (the earlier ones now answer STALE_PAUSE), or stop the run.',
         afterRefusal: {
           stopped: false,
           error: undefined,

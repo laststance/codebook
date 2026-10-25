@@ -47,7 +47,12 @@ async function waitForStatus(
 const hasEnded = (current: WikiUpdateStatus): boolean =>
   current.state !== 'running'
 
-/** Awaits a held step's start, failing with the step's name when it has not started within {@link READER_RESULT_BOUND_MS}, so a regression that never reaches the step fails the test instead of stopping it. */
+/**
+ * Awaits a held step's start, failing with the step's name when it has not started within {@link READER_RESULT_BOUND_MS}, so a regression that never reaches the step fails the test instead of stopping it; called by the Update anyway tests that hold the reservation's write and the start's claim.
+ * @param hold - The step held by the window ({@link openPublishedWikiWindow}'s `hold`).
+ * @param step - The step's name for the failure.
+ * @example await heldStepStarted(reservationWrite, 'the write of the reservation')
+ */
 async function heldStepStarted(
   hold: { started: Promise<void> },
   step: string,

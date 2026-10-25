@@ -23,7 +23,7 @@ test('a run failure with a generic sentence gets a message that names its cause,
       'Evidence buffering or persistence failed. Cause: ENOSPC: no space left on device, write',
     cause: 'Error: ENOSPC: no space left on device, write',
     recovery:
-      'Inspect the evidence failure and storage availability. Do not treat missing evidence as success. When codebook_continue names a required fact the debugger could not read, the run stays paused at that stop: read nodeTest.stops, then call codebook_continue again to go on without it, or stop the run.',
+      'Inspect the evidence failure and storage availability. Do not treat missing evidence as success. When codebook_continue names a required fact the debugger could not read, the run stays paused at that stop: read nodeTest.stops and the current participants.server.continueArguments of the run resource, then call codebook_continue with those arguments to go on without it (the earlier ones now answer STALE_PAUSE), or stop the run.',
     docs: 'codebook://help/errors',
   })
 })
