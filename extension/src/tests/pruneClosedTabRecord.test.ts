@@ -94,3 +94,34 @@ test('a closed rebuilt tab ends every stale entry of its address', () => {
   // Assert
   assert.deepEqual([...pruned], [])
 })
+
+// Value: protects=a closed tab without an address (a webview, the chat) ending no entry of the record; fails_when=an address-less close is matched against the entries' addresses and drops an unrelated entry, so a recorded slot tab stays open after its wait; why_new=Cycle 0052 /ship testing specialist: the address-less branch had no case; seam=none; no_claim=the editor's tab events
+test('a closed tab without an address leaves every entry of the record', () => {
+  // Arrange
+  const recorded: FakeTab = { address: 'codebook-source://key/a' }
+  const webview: FakeTab = {}
+  const record = new Map([[recorded, 'codebook-source://key/a']])
+
+  // Act
+  const pruned = pruneClosedTabRecord(record, [webview], new Set(), addressOf)
+
+  // Assert
+  assert.equal(pruned, record)
+})
+
+// Value: protects=a record whose tab objects the editor all still shows naming no address to close by; fails_when=a live tab's address is named and the close picks a tab the learner opened at that address; why_new=Cycle 0052 /ship testing specialist: only the mixed case had a test; seam=none; no_claim=Cursor's rebuild itself
+test('a record whose tabs are all still shown gives no address', () => {
+  // Arrange
+  const first: FakeTab = { address: 'codebook-source://key/a' }
+  const second: FakeTab = { address: 'codebook-source://key/b' }
+  const record = new Map([
+    [first, 'codebook-source://key/a'],
+    [second, 'codebook-source://key/b'],
+  ])
+
+  // Act
+  const addresses = replacedTabAddresses(record, new Set([first, second]))
+
+  // Assert
+  assert.deepEqual([...addresses], [])
+})

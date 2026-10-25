@@ -1166,3 +1166,40 @@ test('a waiting slot tab the learner closes after Cursor rebuilt the tabs and op
     await harness.close()
   }
 })
+
+// Value: protects=a refused close of the slot tabs that waited for the hidden editor area does not stop the explicit display that ended the wait: the chosen study is shown and the refusal is told on the layout line; fails_when=closeSlotTabsAwaitingArea lets the editor's refusal escape and the display rejects (Cycle 0052 task 15); why_new=the other wait tests accept every close, so the new catch is never reached; seam=refuseCloseOfTabsShowing on the slot tab, the reader's source action; no_claim=the wording of the editor's refusal
+test('a refused close of the slot tab that waited for the editor area is told and does not stop the display', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  let acceptClose = (): void => {}
+  try {
+    await chooseBrowserStudyWithPanelMaximized(harness)
+    acceptClose = harness.refuseCloseOfTabsShowing('/node-history-slot/')
+
+    // Act
+    await harness.reader.action('source')
+
+    // Assert
+    assert.deepEqual(
+      {
+        slotTabsAfter: slotTabCount(harness),
+        studyShown:
+          harness.reader.inspect().view?.model.selection.studyId ===
+          harness.studyId,
+        layoutLine: [...(harness.reader.inspect().view?.errors ?? [])].filter(
+          (line) => line.includes('previous recorded source tab'),
+        ),
+      },
+      {
+        slotTabsAfter: 1,
+        studyShown: true,
+        layoutLine: [
+          'Error: The previous recorded source tab could not close. Arrange the Codebook panes manually. Error: The editor kept an earlier recorded source tab.',
+        ],
+      },
+    )
+  } finally {
+    acceptClose()
+    await harness.close()
+  }
+})
