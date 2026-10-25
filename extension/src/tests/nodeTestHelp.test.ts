@@ -183,6 +183,25 @@ test('the node-test help tells refusals, the Vitest-root rule, failing tests and
   )
 })
 
+// Value: protects=the node-test help telling the agent, where it chooses stop lines, that additional stops are reached only in the order the test runs them, and, where it reads how a test is selected, that an unreached stop ends the run at the test's exit with an error naming the stop; fails_when=the walkthrough says nothing about stop order or testSelection says nothing about an unreached stop, so an agent declares a later stop on a line the test ran earlier and cannot tell why the run ended, as in N53; why_new=Cycle 0054 task 1 (N53-F1); seam=none; no_claim=the agent following it (N54 native check)
+test('the node-test help says additional stops are reached only in the order the test runs them', async () => {
+  // Arrange / Act
+  const { body } = await servedNodeTestHelp()
+  const chooseStops = body.walkthrough.find((step: string) =>
+    step.startsWith('codebook_sources, then codebook_source'),
+  )
+
+  // Assert
+  assert.match(
+    chooseStops ?? '',
+    /Each additional stop is a line the test runs after the previous stop; a stop on a line that ran before it is never reached, and the run ends at the test's exit\./,
+  )
+  assert.match(
+    body.testSelection,
+    /A declared stop the test does not reach after the previous one \(Vitest skipped the test, or the stop's line ran before the previous stop\) ends the run when the test exits, with an error naming that stop and the exit code\./,
+  )
+})
+
 // Value: protects=each preparation refusal the help names being listed under the error code the service actually returns: a full Saved Study Limit under PREREQUISITE_MISSING with its learner-only recovery, a test path starting with "-" and a changed plan under INVALID_CONFIGURATION; fails_when=the help files a full library under INVALID_CONFIGURATION, so the agent picks a configuration fix for a limit only the learner can raise; why_new=hosted CodeRabbit review of PR #129 (Cycle 0053's rewrite of the sentence moved the limit to the wrong code); seam=none; no_claim=the refusal's own wording (studyLibrary tests)
 test('the node-test help lists a full Saved Study Limit under PREREQUISITE_MISSING and a changed plan under INVALID_CONFIGURATION', async () => {
   // Arrange / Act

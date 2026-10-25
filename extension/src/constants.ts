@@ -1184,6 +1184,8 @@ export const REPOSITORY_STORAGE_VALUE_LIMIT_CHARS = 2_048
 export const REPOSITORY_STORAGE_LIMIT_BYTES = 16_384
 export const REPOSITORY_SETUP_TIMEOUT_MS = 90_000
 export const REPOSITORY_PAUSE_HOLD_TIMEOUT_MS = 300_000
+/** The longest private observation hold a native Node test trial accepts (`CODEBOOK_NODE_TEST_HOLD_MS`, `CODEBOOK_NODE_TEST_HOLD_AFTER_MS`), so a recording can show the state the trial reached. */
+export const NATIVE_TRIAL_HOLD_LIMIT_MS = 60_000
 /** Added to {@link ACTIVE_TIMEOUT_MS} for the wait of a `codebook_continue` sent with `answer: "next"`, counted from the acknowledged continuation: a run that ends at its own active deadline is then answered with that end, not with the bound. */
 export const CONTINUE_ANSWER_GRACE_MS = 2_000
 /** The longest a `codebook_continue` sent with `answer: "next"` may take in total, counted from the call's start. The time the runtime needs before it acknowledges the continuation (arming the next stop, the acknowledgement) is bounded by the runtime's own deadlines and counts against this budget, so the wait after it only gets shorter. Well below the smallest MCP client timeout found for a tool call (120 s idle in Cursor 3.23 and in Codebook's Cursor bridge, {@link CURSOR_MCP_BRIDGE_REQUEST_TIMEOUT_MS}; none in VS Code 1.140). */

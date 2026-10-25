@@ -35,6 +35,7 @@ const LEARNER_BREAKPOINT_ID = 12
  * @param options.duringRetire - Learner action performed while the owned breakpoint is being retired.
  * @param options.adapterPauseAfterContinue - After each Codebook continue the debug adapter pauses for a breakpoint of its own and resumes it: no `stopped`, only the `continued` it announces for its own resume, before the next declared stop.
  * @param options.exitAfterEntry - The test process exits after the entry pause, as when Vitest skips the cited test.
+ * @param options.exitAfterStop - The test process exits on the continuation from this declared stop (one-based), as when the next declared stop lies on a line the test ran before it.
  * @param options.entryPauseAbsent - js-debug reports no entry pause because the owned breakpoint lies in the test file Vitest pauses at the start of: the first `stopped` event is the owned breakpoint's own hit at the first declared stop (the DAP transcript of F155).
  * @param options.reportFailure - Error the Vitest report check raises after the process finishes.
  * @param options.reportStatus - Actual assertion result reported by Vitest, independent of the process exit code.
@@ -61,6 +62,7 @@ async function nodeRunHarness({
   duringRetire,
   adapterPauseAfterContinue,
   exitAfterEntry,
+  exitAfterStop,
   entryPauseAbsent,
   reportFailure,
   reportStatus = 'passed',
@@ -99,6 +101,7 @@ async function nodeRunHarness({
   duringRetire?: () => void
   adapterPauseAfterContinue?: boolean
   exitAfterEntry?: boolean
+  exitAfterStop?: number
   entryPauseAbsent?: boolean
   reportFailure?: Error
   reportStatus?: 'passed' | 'failed'
@@ -195,6 +198,8 @@ async function nodeRunHarness({
     boundDirectories: string[] = []
   // How often the run began to check and seal its test, the step that asks Vitest for its files: nothing of the test is listed, launched or attached before it.
   let launchPreparations = 0
+  /** The failed releases the launch's own listing callback heard of, beside the run's journal. */
+  const releaseFailuresHeardByLaunch: VitestListingReleaseFailure[] = []
   // The text the editor holds for the cited source, and the editor's open documents: the cited source's document once it has a text.
   let documentText = ''
   const textDocuments: Array<{
@@ -230,6 +235,8 @@ async function nodeRunHarness({
     pausedLine = observedLine,
     pausedFile = sourceFile
   let terminate: ((session: vscode.DebugSession) => void) | undefined
+  // Whether the test process exited after a declared stop (`exitAfterStop`), as its exit reports it.
+  let testExited = false
   let bindingReadAsked = (): void => {}
   /** Settles when the run asks an adapter that does not answer where its owned breakpoint is bound. */
   const bindingReadStarted = new Promise<void>((resolve) => {
@@ -314,6 +321,12 @@ async function nodeRunHarness({
           typeIntoCitedSource(typedWhileRunning.text)
         // A cited test that Vitest skipped never reaches the source: its process exits and the owned session ends.
         if (exitAfterEntry) {
+          queueMicrotask(() => terminate?.(session))
+          return {}
+        }
+        // The test finishes without passing the next declared stop's line again: its process exits and the owned session ends.
+        if (exitAfterStop !== undefined && continued >= exitAfterStop) {
+          testExited = true
           queueMicrotask(() => terminate?.(session))
           return {}
         }
@@ -647,6 +660,8 @@ async function nodeRunHarness({
               vitestRoot: directory,
               filter: 'theme.test.ts',
               excludes: [],
+              onReleaseFailed: (failure) =>
+                releaseFailuresHeardByLaunch.push(failure),
             })
           return launch
         },
@@ -678,7 +693,9 @@ async function nodeRunHarness({
             }
           },
           async waitForExit() {
-            return exitAfterEntry ? { exitCode: 0, signal: null } : undefined
+            return exitAfterEntry || testExited
+              ? { exitCode: 0, signal: null }
+              : undefined
           },
           async close(): Promise<void> {
             closeRequests += 1
@@ -764,6 +781,8 @@ async function nodeRunHarness({
     attachDirectories,
     boundDirectories,
     launchPreparations: (): number => launchPreparations,
+    releaseFailuresHeardByLaunch: (): VitestListingReleaseFailure[] =>
+      releaseFailuresHeardByLaunch,
     closeRequests: (): number => closeRequests,
     /** How many times the run brought its test output tab back to the front. */
     outputReveals: (): number => outputReveals,
@@ -1678,6 +1697,30 @@ test('a cited test that ends before its first declared stop fails at once with t
   }
 })
 
+// Value: protects=a continuation whose test ends before the next declared stop naming the exit, the stop it did not reach and the stop order, so the agent can tell a stop declared on a line the test ran earlier; fails_when=the continuation fails with the generic message that the debugger session ended, as at 1b2dcfa7, so the agent cannot tell why stop 2 never came; why_new=Cycle 0054 task 1 (N53-F1: N53's VS Code run declared stop 2 on a line the test ran before stop 1); seam=the fake session ends and the fake process exits with code 0 on the continuation from stop 1; no_claim=the real test process and js-debug (N54 native check)
+test('a test that exits before its next declared stop names the exit, the stop and the stop order', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({ declaredStops: 2, exitAfterStop: 1 })
+  try {
+    await harness.run.prepare()
+
+    // Act
+    const failure = await harness.run.advance().then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+    // Assert: the module runs in its own context, so its error is read by its message.
+    assert.equal(
+      (failure as { message?: unknown } | undefined)?.message,
+      'Owned Node test exited with code 0 before declared stop 2. A declared stop is reached only when the test runs its line after the previous stop; its output is in the Codebook test output. If Vitest skipped the cited test, check that testTitles names it exactly; see codebook://help/node-test.',
+    )
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
 // Cycle 0045 (AD-12, C-L2): red while a failed release of the listing reached nobody.
 test('a Vitest listing whose process group could not be released is journaled by the run with the group, the folder it left and the reason', async () => {
   // Arrange
@@ -1707,6 +1750,37 @@ test('a Vitest listing whose process group could not be released is journaled by
           },
         },
       ],
+    )
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=a failed listing release reaching the launch's own listing callback beside the run's journal, so the root claim asked again at launch refuses a clean failure whose process group may still run instead of reading it as listing-failed; fails_when=the run's listing keeps the failure to itself; why_new=Cycle 0054 task 2 (CR-OD1); seam=the launch stand-in asks for the listing with its own callback; no_claim=the launch's refusal itself (nodeTestVitestRootLaunch tests)
+test('a Vitest listing whose release failed is told to the launch that asked for it as well as journaled by the run', async () => {
+  // Arrange
+  const failure: VitestListingReleaseFailure = {
+    processGroup: 4141,
+    directory: '/tmp/codebook-vitest-list-left',
+    reason: 'Error: kill EPERM',
+  }
+  const harness = await nodeRunHarness({ listingNotReleased: failure })
+  try {
+    // Act
+    await harness.run.prepare()
+
+    // Assert
+    assert.deepEqual(
+      {
+        heardByLaunch: harness.releaseFailuresHeardByLaunch(),
+        journaled: harness.events
+          .filter(
+            (event) => event.type === 'node-test.vitest-listing-not-released',
+          )
+          .map((event) => event.detail),
+      },
+      { heardByLaunch: [failure], journaled: [failure] },
     )
   } finally {
     await harness.run.stop()

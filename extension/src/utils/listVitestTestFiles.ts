@@ -28,6 +28,11 @@ export type ListVitestTestFilesRequest = {
   /** The cited test file relative to {@link ListVitestTestFilesRequest.vitestRoot}, with `/` separators. */
   filter: string
   excludes: string[]
+  /** Also told when this listing's process group could not be confirmed as ended, beside the owner the caller binds; a launch's root claim re-check reads it to refuse instead of falling back. */
+  onReleaseFailed?: (
+    failure: VitestListingReleaseFailure,
+    retryRelease: RetryVitestListingRelease,
+  ) => void
 }
 /** A listing that outlived its deadline, told apart from Vitest's own failure so that a root claim refuses the start instead of falling back ({@link listVitestForRootClaim}). */
 export class VitestListingDeadlineError extends Error {}

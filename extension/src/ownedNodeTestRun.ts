@@ -192,7 +192,10 @@ export class OwnedNodeTestRun {
   prepare(): Promise<NodeTestSourceStop> {
     if (this.preparation) return this.preparation
     this.preparation = this.prepareOwned().catch(async (error: unknown) => {
-      const failure = await this.explainEarlyExit(error)
+      // A failure after the first stop was captured has another cause than the test's exit.
+      const failure = this.acceptedStop
+        ? error
+        : await this.explainEarlyExit(error, 1)
       await this.release()
       throw failure
     })
@@ -231,6 +234,8 @@ export class OwnedNodeTestRun {
           onReleaseFailed: (failure, retryRelease) => {
             this.record('node-test.vitest-listing-not-released', failure)
             this.unreleasedListings.push(retryRelease)
+            // The launch's root claim re-check hears of it too, so it refuses instead of reading a clean failure.
+            request.onReleaseFailed?.(failure, retryRelease)
           },
         }),
       this.plan,
@@ -541,8 +546,10 @@ export class OwnedNodeTestRun {
       )
       return await this.captureStop(previous.index + 1, fromIndex)
     } catch (error) {
+      // A test that ended before the next declared stop is named as such, with its exit, before the release ends the evidence of it.
+      const failure = await this.explainEarlyExit(error, previous.index + 2)
       await this.release()
-      throw error
+      throw failure
     } finally {
       this.advancing = false
     }
@@ -903,28 +910,31 @@ export class OwnedNodeTestRun {
   }
 
   /**
-   * Names the likely cause when the owned test process ended before its first declared stop, most often because Vitest skipped the cited test.
+   * Names the likely cause when the owned test process ended before a declared stop: for the first stop most often a test Vitest skipped, for a later one a stop on a line the test ran before the previous stop, which it never reaches again.
    *
-   * Called by {@link prepare} when preparation fails. Cancellation and failures after a captured stop keep their original error.
+   * Called by {@link prepare} when preparation fails before its first stop was captured, and by {@link advance} when the continuation to the next stop fails. Cancellation and a test that still runs keep their original error.
    *
-   * @param error - The preparation failure.
-   * @returns The original error, or one that states the exit code and points to `testTitles`.
+   * @param error - The failure of the preparation or the continuation.
+   * @param stopNumber - The one-based number of the declared stop the test did not reach.
+   * @returns The original error, or one that states the exit, the stop it did not reach and the stop order, and points to `testTitles`.
    * @example
    * ```ts
-   * await this.explainEarlyExit(new Error('Owned Node debugger session terminated or was cancelled.'))
-   * // => Error('Owned Node test exited with code 0 before declared stop 1. ...')
+   * await this.explainEarlyExit(new Error('Owned Node debugger session terminated or was cancelled.'), 2)
+   * // => Error('Owned Node test exited with code 0 before declared stop 2. A declared stop is reached only when ...')
    * ```
    */
-  private async explainEarlyExit(error: unknown): Promise<unknown> {
-    if (this.abort.signal.aborted || this.acceptedStop || !this.owned)
-      return error
+  private async explainEarlyExit(
+    error: unknown,
+    stopNumber: number,
+  ): Promise<unknown> {
+    if (this.abort.signal.aborted || !this.owned) return error
     // A still-attached session means the process is alive, so this failure has another cause.
     if (this.bound && this.active.has(this.bound.session.id)) return error
     const exit = await this.owned.waitForExit(NODE_TEST_EXIT_GRACE_MS)
     if (!exit) return error
     return new Error(
-      `Owned Node test exited with ${exit.signal ? `signal ${exit.signal}` : `code ${exit.exitCode}`} before declared stop 1. ` +
-        'Its output is in the Codebook test output. If Vitest skipped the cited test, check that testTitles names it exactly; see codebook://help/node-test.',
+      `Owned Node test exited with ${exit.signal ? `signal ${exit.signal}` : `code ${exit.exitCode}`} before declared stop ${stopNumber}. ` +
+        'A declared stop is reached only when the test runs its line after the previous stop; its output is in the Codebook test output. If Vitest skipped the cited test, check that testTitles names it exactly; see codebook://help/node-test.',
       { cause: error },
     )
   }

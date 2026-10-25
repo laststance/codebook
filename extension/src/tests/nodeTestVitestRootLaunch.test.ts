@@ -18,6 +18,8 @@ import { launchNodeTest } from '../utils/launchNodeTest'
 import type { RootClaimListing } from '../utils/listVitestForRootClaim'
 import {
   listVitestTestFiles,
+  VitestListingDeadlineError,
+  VitestListingFailedError,
   type ListVitestTestFilesRequest,
 } from '../utils/listVitestTestFiles'
 import { planNodeTestExecution } from '../utils/planNodeTestExecution'
@@ -32,13 +34,16 @@ const sha256 = (text: string) => createHash('sha256').update(text).digest('hex')
 
 /** One start of the stand-in Vitest, as it recorded its arguments and working directory. */
 type RecordedVitestCall = { argv: string[]; cwd: string }
+/** What the stand-in Vitest answers when it lists from the repository root: root-relative entries, or the exit code of a listing that fails. */
+type RootListingAnswer =
+  { files: { file: string; projectName?: string }[] } | { exitCode: number }
 
 /**
- * Builds a repository holding one cited test and its source in `folder`, a sibling copy of the test that Vitest's substring filter also selects, and a stand-in root Vitest 5 that records each start and lists both files until the copy is excluded.
+ * Builds a repository holding one cited test and its source in `folder`, a sibling copy of the test that Vitest's substring filter also selects, and a stand-in root Vitest 5 that records each start and lists both files until the copy is excluded; once a test scripts the root's answer, a listing from the repository root answers that instead.
  * @param context - Removes the repository when the test ends.
  * @param folder - The root-relative folder of the test and its source, `.` for the root.
  * @param configFiles - Root-relative config files to write.
- * @returns The real root, the test's configuration and a reader of the stand-in Vitest's starts.
+ * @returns The real root, the test's configuration, a reader of the stand-in Vitest's starts and a writer of what a listing from the root answers.
  * @example const repository = await createRepository(context, 'packages/a', ['packages/a/vite.config.ts'])
  */
 async function createRepository(
@@ -50,9 +55,11 @@ async function createRepository(
     await mkdtemp(join(tmpdir(), 'codebook-vitest-root-launch-')),
   )
   const calls = `${root}-calls.jsonl`
+  const rootAnswer = `${root}-root-answer.json`
   context.after(async () => {
     await rm(root, { recursive: true, force: true })
     await rm(calls, { force: true })
+    await rm(rootAnswer, { force: true })
   })
   const testFile =
     folder === '.'
@@ -74,13 +81,18 @@ async function createRepository(
   )
   await write(
     'node_modules/vitest/vitest.mjs',
-    `import { appendFileSync, writeFileSync } from 'node:fs';
+    `import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 const argv = process.argv.slice(2);
 appendFileSync(${JSON.stringify(calls)}, JSON.stringify({ argv, cwd: process.cwd() }) + '\\n');
 const output = argv.find((argument) => argument.startsWith('--json='))?.slice('--json='.length);
+let rootAnswer;
+try {
+  if (process.cwd() === ${JSON.stringify(root)}) rootAnswer = JSON.parse(readFileSync(${JSON.stringify(rootAnswer)}, 'utf8'));
+} catch {}
 if (argv[0] === 'list') {
+  if (rootAnswer && 'exitCode' in rootAnswer) process.exit(rootAnswer.exitCode);
   const excluded = argv.some((argument) => argument.startsWith('--exclude='));
-  writeFileSync(output, JSON.stringify(excluded ? [{ file: ${JSON.stringify(cited)} }] : [{ file: ${JSON.stringify(cited)} }, { file: ${JSON.stringify(copy)} }]));
+  writeFileSync(output, JSON.stringify(rootAnswer ? rootAnswer.files : excluded ? [{ file: ${JSON.stringify(cited)} }] : [{ file: ${JSON.stringify(cited)} }, { file: ${JSON.stringify(copy)} }]));
 }
 `,
   )
@@ -114,8 +126,46 @@ if (argv[0] === 'list') {
         .split('\n')
         .filter(Boolean)
         .map((line): RecordedVitestCall => JSON.parse(line)),
+    answerFromRoot: (answer: RootListingAnswer): Promise<void> =>
+      writeFile(
+        rootAnswer,
+        JSON.stringify(
+          'files' in answer
+            ? {
+                files: answer.files.map((entry) => ({
+                  ...entry,
+                  file: join(root, entry.file),
+                })),
+              }
+            : answer,
+        ),
+      ),
   }
 }
+
+/**
+ * Runs the real Vitest listing with this process's Node and no cancellation, as the owned run binds it.
+ * @param request - The listing's program, Vitest root, filter and excludes.
+ * @returns Every file entry the stand-in Vitest reports.
+ * @example await listWithOwnedNode({ program, vitestRoot: root, filter: 'src/a.test.ts', excludes: [] }) // => [{ file: '/repo/src/a.test.ts' }]
+ */
+const listWithOwnedNode = (request: ListVitestTestFilesRequest) =>
+  listVitestTestFiles({
+    ...request,
+    node: process.execPath,
+    signal: new AbortController().signal,
+  })
+
+/**
+ * Writes one recorded start with stable markers for the listing's output path, so a test compares where and how Vitest was asked.
+ * @param call - One start of the stand-in Vitest.
+ * @returns Its arguments with `--json=<list>`, and its working directory.
+ * @example listingCall({ argv: ['list', '--json=/tmp/x/files.json'], cwd: '/repo' }) // => [['list', '--json=<list>'], '/repo']
+ */
+const listingCall = (call: RecordedVitestCall) => [
+  call.argv.map((argument) => argument.replace(/^--json=.*$/, '--json=<list>')),
+  call.cwd,
+]
 
 /**
  * Plans, prepares and launches the cited test with the real listing and launch, as the owned run does, and journals the launch's events.
@@ -246,14 +296,15 @@ test('a test under no config starts with the same listings, argv, working direct
   assert.equal(started?.detail.cwd, root)
 })
 
-// Value: protects=a package-mode run listing and launching in its package with its path from there, excluding the other files by absolute path, and journaling its Vitest root and the root claim's clean failure; fails_when=the listing or the launch runs from the repository root, the filter stays repository-relative, the excludes change form, or node-test.started lacks vitestRoot or rootClaim; why_new=Cycle 0053 (H1, H2, and H5's journal of a clean failed root listing); seam=a stand-in Vitest program run by the real listing and launch, a scripted root claim; no_claim=Vitest's own config loading (task 1 spike)
+// Value: protects=a package-mode run asking the repository root's Vitest again from the root with the repository-relative path, then listing and launching in its package with its path from there, excluding the other files by absolute path, and journaling its Vitest root and the root claim's clean failure; fails_when=the package listing or the launch runs from the repository root, the filter stays repository-relative, the excludes change form, the root is not asked again before the package listing, or node-test.started lacks vitestRoot or rootClaim; why_new=Cycle 0053 (H1, H2, and H5's journal of a clean failed root listing); Cycle 0054 task 2 adds the root listing at launch (first recorded call), whose stand-in now fails as it did when the plan was made; seam=a stand-in Vitest program run by the real listing and launch, a scripted root claim; no_claim=Vitest's own config loading (task 1 spike)
 test('a test under a package config lists and launches in its package and journals its Vitest root and root claim', async (context) => {
   // Arrange
-  const { root, configuration, calls } = await createRepository(
+  const { root, configuration, calls, answerFromRoot } = await createRepository(
     context,
     'packages/a',
     ['vitest.config.ts', 'packages/a/vite.config.ts'],
   )
+  await answerFromRoot({ exitCode: 1 })
 
   // Act
   const { launch, events } = await planAndLaunch(
@@ -273,6 +324,15 @@ test('a test under a package config lists and launches in its package and journa
       call.cwd,
     ]),
     [
+      [
+        [
+          'list',
+          '--filesOnly',
+          '--json=<list>',
+          'packages/a/src/subscribable.test.ts',
+        ],
+        root,
+      ],
       [
         ['list', '--filesOnly', '--json=<list>', 'src/subscribable.test.ts'],
         packageFolder,
@@ -468,18 +528,19 @@ test('a second config file, a config-named folder or a nearer Vitest added after
   )
 })
 
-// Value: protects=a package-mode plan whose root claim basis changed before the launch being refused with a sentence naming the change, before Vitest is asked anything, while an unchanged basis launches as planned: a root config added, a root config edited, and the root Vitest replaced each could decide the claim the other way; fails_when=the launch runs in the package although the repository now runs the test from the root (or the reverse), or an unchanged root config is refused; why_new=Cycle 0053 /ship Step 11 (Codex adversarial review: the root claim's basis was not compared again); seam=real files changed after the plan, the root claim's listing scripted; no_claim=files a root config imports (not compared)
+// Value: protects=a package-mode plan whose root claim basis changed before the launch being refused with a sentence naming the change, before Vitest is asked anything, while an unchanged basis launches as planned: a root config added, a root config edited, and the root Vitest replaced each could decide the claim the other way; fails_when=the launch runs in the package although the repository now runs the test from the root (or the reverse), or an unchanged root config is refused; why_new=Cycle 0053 /ship Step 11 (Codex adversarial review: the root claim's basis was not compared again); Cycle 0054 task 2: the unchanged launch also asks the root again (three Vitest starts), and the root answers as at the plan; seam=real files changed after the plan, the root claim's listing scripted; no_claim=files a root config imports (not compared; the root listing at launch answers for them)
 test('a root config added or edited, or the root Vitest replaced, after a package-mode plan refuses the launch, and an unchanged root launches', async (context) => {
   // Arrange
   const launchAfter = async (
     rootConfigs: string[],
     change: (root: string) => Promise<void>,
   ) => {
-    const { root, configuration, calls } = await createRepository(
-      context,
-      'packages/a',
-      ['packages/a/vite.config.ts', ...rootConfigs],
-    )
+    const { root, configuration, calls, answerFromRoot } =
+      await createRepository(context, 'packages/a', [
+        'packages/a/vite.config.ts',
+        ...rootConfigs,
+      ])
+    await answerFromRoot({ files: [] })
     const plan = await planNodeTestExecution({
       root,
       testFile: join(root, configuration.testFile),
@@ -534,7 +595,7 @@ test('a root config added or edited, or the root Vitest replaced, after a packag
   assert.deepEqual(
     [unchanged, rootConfigAdded, rootConfigEdited, rootVitestReplaced],
     [
-      { outcome: 'launched in packages/a', vitestStarts: 2 },
+      { outcome: 'launched in packages/a', vitestStarts: 3 },
       {
         outcome: `${changedPrefix}the Vitest or Vite config files at the repository root changed after the root claim was decided); start the test again.`,
         vitestStarts: 0,
@@ -551,14 +612,15 @@ test('a root config added or edited, or the root Vitest replaced, after a packag
   )
 })
 
-// Value: protects=a root config changed while the launch's own listings run being refused once they end, before the test is launched; fails_when=the plan is compared only before the listings, so a root config that changed during them, and would now run the test from the root, is launched in the package with the stale rootClaim; why_new=Cycle 0053 Step 11 round 2 (Codex adversarial, Medium); seam=the launch's first listing edits the root config before the real listing runs; no_claim=a change after the last check, which Vitest itself reads after the launch
+// Value: protects=a root config changed while the launch's own listings run being refused once they end, before the test is launched; fails_when=the plan is compared only before the listings, so a root config that changed during them, and would now run the test from the root, is launched in the package with the stale rootClaim; why_new=Cycle 0053 Step 11 round 2 (Codex adversarial, Medium); Cycle 0054 task 2: the first listing is now the root's, asked again at launch (three Vitest starts), whose stand-in answers as at the plan; seam=the launch's first listing edits the root config before the real listing runs; no_claim=a change after the last check, which Vitest itself reads after the launch
 test('a root config changed while the launch lists its test files refuses the launch after the listings', async (context) => {
   // Arrange
-  const { root, configuration, calls } = await createRepository(
+  const { root, configuration, calls, answerFromRoot } = await createRepository(
     context,
     'packages/a',
     ['packages/a/vite.config.ts', 'vitest.config.ts'],
   )
+  await answerFromRoot({ files: [] })
   const plan = await planNodeTestExecution({
     root,
     testFile: join(root, configuration.testFile),
@@ -598,5 +660,277 @@ test('a root config changed while the launch lists its test files refuses the la
     refusal.message,
     "node-test's plan for packages/a/src/subscribable.test.ts changed while the run was preparing (the Vitest or Vite config files at the repository root changed after the root claim was decided); start the test again.",
   )
-  assert.equal((await calls()).length, 2)
+  assert.equal((await calls()).length, 3)
+})
+
+// Value: protects=a package-mode plan decided as not-selected being refused at launch once the repository root's Vitest selects the cited test once, before its package listing runs; fails_when=the launch lists and runs the test in its package although the root would now run it, the root is asked from another folder or with another filter, or the refusal does not name both answers; why_new=Cycle 0054 task 2 (CR-OD1: a config the root's projects select can change without the root config or the root Vitest changing); seam=the stand-in root Vitest answers a scripted root listing at launch; no_claim=Vitest's own projects resolution
+test('a package test the repository root now selects once is refused at launch before its package listing', async (context) => {
+  // Arrange
+  const { root, configuration, calls, answerFromRoot } = await createRepository(
+    context,
+    'packages/a',
+    ['vitest.config.ts', 'packages/a/vite.config.ts'],
+  )
+  const plan = await planNodeTestExecution({
+    root,
+    testFile: join(root, configuration.testFile),
+    declaredTestFile: configuration.testFile,
+    listRootClaim: async () => ({ outcome: 'listed', files: [] }),
+  })
+  await answerFromRoot({
+    files: [{ file: 'packages/a/src/subscribable.test.ts' }],
+  })
+
+  // Act
+  const refusal = await prepareNodeTestLaunch(
+    root,
+    configuration,
+    listWithOwnedNode,
+    plan,
+  ).then(
+    () => undefined,
+    (thrown: unknown) => thrown,
+  )
+
+  // Assert
+  assert.ok(refusal instanceof StudyError)
+  assert.deepEqual(
+    { code: refusal.code, message: refusal.message },
+    {
+      code: 'INVALID_CONFIGURATION',
+      message:
+        "node-test's plan for packages/a/src/subscribable.test.ts changed while the run was preparing (the repository root's Vitest now answers rootClaim selected-once, not not-selected); start the test again.",
+    },
+  )
+  assert.deepEqual((await calls()).map(listingCall), [
+    [
+      [
+        'list',
+        '--filesOnly',
+        '--json=<list>',
+        'packages/a/src/subscribable.test.ts',
+      ],
+      root,
+    ],
+  ])
+})
+
+// Value: protects=a package-mode plan launching in its package when the repository root's Vitest answers the same root claim at launch: none selected (not-selected), several projects (several-projects) and a failure Vitest itself reported (listing-failed); fails_when=an unchanged answer is refused, the launch does not ask the root before its package listings, or the root listing runs from the package; why_new=Cycle 0054 task 2 (CR-OD1); seam=the stand-in root Vitest answers a scripted root listing at launch; no_claim=the time the extra listing takes (measured on nsx, Issue #130)
+test('a package test whose root answers the same root claim at launch lists and launches in its package', async (context) => {
+  // Arrange
+  const cited = 'packages/a/src/subscribable.test.ts'
+  const launchWith = async (
+    planned: (root: string) => RootClaimListing,
+    atLaunch: RootListingAnswer,
+  ) => {
+    const { root, configuration, calls, answerFromRoot } =
+      await createRepository(context, 'packages/a', [
+        'vitest.config.ts',
+        'packages/a/vite.config.ts',
+      ])
+    const plan = await planNodeTestExecution({
+      root,
+      testFile: join(root, configuration.testFile),
+      declaredTestFile: configuration.testFile,
+      listRootClaim: async () => planned(root),
+    })
+    await answerFromRoot(atLaunch)
+    const launch = await prepareNodeTestLaunch(
+      root,
+      configuration,
+      listWithOwnedNode,
+      plan,
+    )
+    await rm(launch.report.directory, { recursive: true, force: true })
+    return {
+      rootClaim: launch.execution.rootClaim,
+      listedFrom: (await calls()).map((call) =>
+        call.cwd === root ? '<root>' : call.cwd.slice(root.length + 1),
+      ),
+    }
+  }
+
+  // Act
+  const notSelected = await launchWith(
+    () => ({ outcome: 'listed', files: [] }),
+    { files: [] },
+  )
+  const severalProjects = await launchWith(
+    (root) => ({
+      outcome: 'listed',
+      files: [
+        { file: join(root, cited), projectName: 'unit' },
+        { file: join(root, cited), projectName: 'browser' },
+      ],
+    }),
+    {
+      files: [
+        { file: cited, projectName: 'unit' },
+        { file: cited, projectName: 'browser' },
+      ],
+    },
+  )
+  const listingFailed = await launchWith(
+    () => ({ outcome: 'failed', error: new Error('exit code 1') }),
+    { exitCode: 1 },
+  )
+
+  // Assert
+  assert.deepEqual(
+    [notSelected, severalProjects, listingFailed],
+    [
+      {
+        rootClaim: 'not-selected',
+        listedFrom: ['<root>', 'packages/a', 'packages/a'],
+      },
+      {
+        rootClaim: 'several-projects',
+        listedFrom: ['<root>', 'packages/a', 'packages/a'],
+      },
+      {
+        rootClaim: 'listing-failed',
+        listedFrom: ['<root>', 'packages/a', 'packages/a'],
+      },
+    ],
+  )
+})
+
+// Value: protects=a package-mode plan being refused at launch, before its package listing, when the repository root's Vitest now answers a different root claim: a clean failure that now selects the test once, and none selected that now lists it under several projects; fails_when=either launch goes on in the package, or the refusal does not name both answers; why_new=Cycle 0054 task 2 (CR-OD1); seam=the stand-in root Vitest answers a scripted root listing at launch; no_claim=a selected-once plan whose root now selects the test twice (prepareNodeTestLaunch's exactly-once refusal pins it)
+test('a package test whose root now answers a different root claim is refused at launch, naming both answers', async (context) => {
+  // Arrange
+  const cited = 'packages/a/src/subscribable.test.ts'
+  const refusalOf = async (
+    planned: RootClaimListing,
+    atLaunch: RootListingAnswer,
+  ) => {
+    const { root, configuration, calls, answerFromRoot } =
+      await createRepository(context, 'packages/a', [
+        'vitest.config.ts',
+        'packages/a/vite.config.ts',
+      ])
+    const plan = await planNodeTestExecution({
+      root,
+      testFile: join(root, configuration.testFile),
+      declaredTestFile: configuration.testFile,
+      listRootClaim: async () => planned,
+    })
+    await answerFromRoot(atLaunch)
+    const message = await prepareNodeTestLaunch(
+      root,
+      configuration,
+      listWithOwnedNode,
+      plan,
+    ).then(
+      async (launch) => {
+        await rm(launch.report.directory, { recursive: true, force: true })
+        return `launched in ${launch.execution.vitestRoot}`
+      },
+      (thrown: unknown) =>
+        thrown instanceof StudyError
+          ? `${thrown.code}: ${thrown.message}`
+          : String(thrown),
+    )
+    return { message, vitestStarts: (await calls()).length }
+  }
+
+  // Act
+  const failedNowSelectedOnce = await refusalOf(
+    { outcome: 'failed', error: new Error('exit code 1') },
+    { files: [{ file: cited }] },
+  )
+  const notSelectedNowSeveralProjects = await refusalOf(
+    { outcome: 'listed', files: [] },
+    {
+      files: [
+        { file: cited, projectName: 'unit' },
+        { file: cited, projectName: 'browser' },
+      ],
+    },
+  )
+
+  // Assert
+  assert.deepEqual(
+    [failedNowSelectedOnce, notSelectedNowSeveralProjects],
+    [
+      {
+        message:
+          "INVALID_CONFIGURATION: node-test's plan for packages/a/src/subscribable.test.ts changed while the run was preparing (the repository root's Vitest now answers rootClaim selected-once, not listing-failed); start the test again.",
+        vitestStarts: 1,
+      },
+      {
+        message:
+          "INVALID_CONFIGURATION: node-test's plan for packages/a/src/subscribable.test.ts changed while the run was preparing (the repository root's Vitest now answers rootClaim several-projects, not not-selected); start the test again.",
+        vitestStarts: 1,
+      },
+    ],
+  )
+})
+
+// Value: protects=a root listing at launch that ends without a list or a clean failure refusing the launch with that listing's own error before any package listing: a listing past its deadline, and a clean failure whose process group could not be confirmed as ended, which never reads as listing-failed again; fails_when=either is decided as a root claim, wrapped in another error, or the package listing runs anyway; why_new=Cycle 0054 task 2 (CR-OD1: a root listing that did not end cleanly is never a fallback); seam=a scripted listing that answers the root request and counts the others; no_claim=the run journaling and keeping the unreleased listing's retry (ownedNodeTestRun tests)
+test('a root listing at launch that times out or cannot confirm its process group ended refuses with its own error', async (context) => {
+  // Arrange
+  const outcomeOf = async (
+    planned: RootClaimListing,
+    rootListing: (request: ListVitestTestFilesRequest) => never,
+  ) => {
+    const { root, configuration } = await createRepository(
+      context,
+      'packages/a',
+      ['vitest.config.ts', 'packages/a/vite.config.ts'],
+    )
+    const plan = await planNodeTestExecution({
+      root,
+      testFile: join(root, configuration.testFile),
+      declaredTestFile: configuration.testFile,
+      listRootClaim: async () => planned,
+    })
+    let packageListings = 0
+    const thrown = await prepareNodeTestLaunch(
+      root,
+      configuration,
+      async (request) => {
+        if (request.vitestRoot === root) rootListing(request)
+        packageListings += 1
+        return listWithOwnedNode(request)
+      },
+      plan,
+    ).then(
+      async (launch) => {
+        await rm(launch.report.directory, { recursive: true, force: true })
+        return undefined
+      },
+      (error: unknown) => error,
+    )
+    return { thrown, packageListings }
+  }
+  const deadline = new VitestListingDeadlineError(
+    'Vitest did not list its test files within 15000 ms.',
+  )
+  const failedUnreleased = new VitestListingFailedError(
+    'Vitest could not list the cited test file (exit code 1): ',
+  )
+
+  // Act
+  const pastDeadline = await outcomeOf({ outcome: 'listed', files: [] }, () => {
+    throw deadline
+  })
+  const unconfirmed = await outcomeOf(
+    { outcome: 'failed', error: new Error('exit code 1') },
+    (request) => {
+      request.onReleaseFailed?.(
+        { processGroup: 4242, directory: '/tmp/list', reason: 'EPERM' },
+        async () => {},
+      )
+      throw failedUnreleased
+    },
+  )
+
+  // Assert
+  assert.deepEqual(
+    [pastDeadline, unconfirmed],
+    [
+      { thrown: deadline, packageListings: 0 },
+      { thrown: failedUnreleased, packageListings: 0 },
+    ],
+  )
 })
