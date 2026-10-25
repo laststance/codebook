@@ -27,6 +27,7 @@ import {
   MAX_UI_TEXT_CHARS,
   NODE_TEST_MINIMUM_EXTENSION_VERSION,
   NODE_TEST_PROFILE,
+  RECORDING_REASON_LIMIT_CHARS,
   REPOSITORY_BROWSER_ACTION,
   REPOSITORY_BROWSER_PROFILE,
   REPOSITORY_CONFIG_LIMIT_BYTES,
@@ -81,6 +82,7 @@ import type {
   StudyEnvironment,
   StudyRuntime,
 } from './runtime'
+import type { RecordedEvent } from './runtimeSupport/evidence'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import {
   explainNodeHistorySchema,
@@ -146,6 +148,7 @@ import { studyErrorNamingCause } from './utils/studyErrorNamingCause'
 import { systemErrorCode } from './utils/systemErrorCode'
 import { thrownMessage } from './utils/thrownMessage'
 import { waitForNextRunState } from './utils/waitForNextRunState'
+import { withKnownNodeHistory } from './utils/withKnownNodeHistory'
 
 /** What the run resource tells an agent after the result while no explanation of the run carries a learning summary; `codebook://help/studies` describes the step in the last entry of its sequence. */
 const SAVE_LEARNING_SUMMARY_ADVICE =
@@ -1556,6 +1559,7 @@ export class StudyService {
     record: StudyRecord,
     run: NodeTestRuntime,
   ): Promise<void> {
+    let refusal: StudyError | undefined
     try {
       if (run.hasNextStop()) {
         const next = await run.advance()
@@ -1563,25 +1567,14 @@ export class StudyService {
         record.nodeStops?.push(next)
         // A deadline that passed during the advance already marked the test failed: the late stop is journaled, the phase stays (F77).
         if (record.nodePhase === 'advancing') record.nodePhase = 'paused'
-        return
-      }
-      const result = await run.complete()
-      record.nodeResult = result
-      await record.nodeHistoryWriter?.appendResult(result, result.elapsedMs)
-      // The same for a result that arrives after the deadline's failure (F77).
-      if (record.nodePhase === 'advancing') record.nodePhase = 'completed'
-      // The exit already says the test did not pass; the run's error names why Vitest's report could not confirm the cited test.
-      if (result.reportFailure !== undefined) {
-        record.error = this.sanitizedError(
-          new StudyError(
-            'RUNTIME_FAILED',
-            `${describeNodeTestResult(result)}, and Vitest's test report could not confirm the cited test: ${result.reportFailure}`,
-          ),
+        // Only a run that stays paused at the stop can tell the agent to continue without the fact; a deadline that failed it, or a stop under way, speaks through the run resource.
+        if (
+          record.nodePhase === 'paused' &&
+          !record.stopping &&
+          !record.stopped
         )
-        queueMicrotask(() => {
-          void this.stopRecord(record).catch(() => undefined)
-        })
-      }
+          refusal = this.unreadRequiredFactsRefusal(record, next)
+      } else await this.completeNodeTest(record, run)
     } catch (error) {
       // A stop cancelled this continuation: the run ends as stopped, without an error of its own.
       if (record.stopping || record.stopped)
@@ -1598,6 +1591,88 @@ export class StudyService {
         void this.stopRecord(record).catch(() => undefined)
       })
       throw record.error
+    }
+    // The stop is kept and the run stays paused there with its other facts; only this continuation is refused, so the agent can go on without the fact (Cycle 0052 task 5, O4).
+    if (refusal) throw refusal
+  }
+
+  /**
+   * Lists the required facts a journaled test stop lacks, as `<mode>:<path>`: the required inspections declared for that stop with no fact of theirs, which the debugger could not read; called by {@link StudyService.unreadRequiredFactsRefusal} and {@link StudyService.sealNodeHistory}.
+   * @param record - The Node test run.
+   * @param stop - One of its stops.
+   * @returns The unread facts in declaration order; none for a run without a prepared configuration.
+   * @example this.unreadRequiredFacts(record, stop) // => ['value:revalidatePath.mock.calls.length']
+   */
+  private unreadRequiredFacts(
+    record: StudyRecord,
+    stop: NodeTestSourceStop,
+  ): string[] {
+    const configuration = record.nodePrepared?.configuration
+    if (!configuration) return []
+    const declared = [
+      configuration.inspections,
+      ...(configuration.additionalStops ?? []).map(
+        (additional) => additional.inspections,
+      ),
+    ][stop.index]
+    return (declared ?? [])
+      .filter(
+        (inspection) =>
+          inspection.required &&
+          !stop.facts.some(
+            (fact) =>
+              fact.path === inspection.path && fact.mode === inspection.mode,
+          ),
+      )
+      .map((inspection) => `${inspection.mode}:${inspection.path}`)
+  }
+
+  /**
+   * Words the refusal of a Node test continuation that reached a stop whose required facts the debugger could not read, so the agent, or the learner who pressed Continue in the Study pane, learns which fact is missing while the run stays paused at that stop (Cycle 0052 task 5, O4: MCP 1.8's error codes, no schema change; task 73: no agent-only words, since the Study pane shows the same line); called by {@link StudyService.continueNodeTest} after the stop is journaled.
+   * @param record - The Node test run.
+   * @param stop - The stop the continuation reached.
+   * @returns An `EVIDENCE_UNAVAILABLE` {@link StudyError} naming each required `<mode>:<path>` the stop lacks, or `undefined` when it has them all.
+   * @example this.unreadRequiredFactsRefusal(record, stop)?.message // => 'The continuation reached the stop at app/lib/actions.ts:131, but the debugger could not read its required fact value:revalidatePath.mock.calls.length. …'
+   */
+  private unreadRequiredFactsRefusal(
+    record: StudyRecord,
+    stop: NodeTestSourceStop,
+  ): StudyError | undefined {
+    const missing = this.unreadRequiredFacts(record, stop)
+    if (missing.length === 0) return undefined
+    const named = missing.join(', ')
+    return new StudyError(
+      'EVIDENCE_UNAVAILABLE',
+      `The continuation reached the stop at ${stop.source.path}:${stop.frame.line}, but the debugger could not read its required ${missing.length === 1 ? 'fact' : 'facts'} ${named}. The run stays paused at this stop with its other facts: continue without ${missing.length === 1 ? 'it' : 'them'}, or stop the run.`,
+    )
+  }
+
+  /**
+   * Runs a Node test to its end after its last declared stop and journals the result; called by {@link StudyService.continueNodeTest} for the final continuation.
+   * @param record - The Node test run.
+   * @param run - Its owned runtime.
+   * @example await this.completeNodeTest(record, run)
+   */
+  private async completeNodeTest(
+    record: StudyRecord,
+    run: NodeTestRuntime,
+  ): Promise<void> {
+    const result = await run.complete()
+    record.nodeResult = result
+    await record.nodeHistoryWriter?.appendResult(result, result.elapsedMs)
+    // The same for a result that arrives after the deadline's failure (F77).
+    if (record.nodePhase === 'advancing') record.nodePhase = 'completed'
+    // The exit already says the test did not pass; the run's error names why Vitest's report could not confirm the cited test.
+    if (result.reportFailure !== undefined) {
+      record.error = this.sanitizedError(
+        new StudyError(
+          'RUNTIME_FAILED',
+          `${describeNodeTestResult(result)}, and Vitest's test report could not confirm the cited test: ${result.reportFailure}`,
+        ),
+      )
+      queueMicrotask(() => {
+        void this.stopRecord(record).catch(() => undefined)
+      })
     }
   }
 
@@ -1940,11 +2015,15 @@ export class StudyService {
         'PREREQUISITE_MISSING',
         'Workspace-bound Node history storage is unavailable.',
       )
+    const store = this.nodeHistoryStore
     try {
-      const material = await this.nodeHistoryStore.saveLearningMaterial(
-        parsed.studyId,
-        parsed.expectedRevision,
-        parsed.content,
+      // An unknown id, or a history removed while it is saved, is a reference to correct, as at the history's resources (Cycle 0052 tasks 60, 75).
+      const material = await withKnownNodeHistory(store, parsed.studyId, () =>
+        store.saveLearningMaterial(
+          parsed.studyId,
+          parsed.expectedRevision,
+          parsed.content,
+        ),
       )
       await this.cacheNodeLearning(parsed.studyId, material)
       this.presentationController?.nodeHistoryLearningMaterialSaved(
@@ -3591,6 +3670,43 @@ export class StudyService {
     return !record.stopping && record.recording?.isSealed === true
   }
 
+  /**
+   * Words why a browser run's recording ends before its run completed, for the recording's gap and its seal: the run's own failure as its `run.failed` event names it, or a release that did not complete; called by {@link StudyService.stopRecord}.
+   * A run refused during its preparation used to read "Runtime interrupted or cleanup incomplete" in its recording although nothing was interrupted (Cycle 0052 task 7a).
+   * @param failure - The run's `run.failed` event, if it has one.
+   * @param error - The run's error, whose bare cause reads better than its wrapped message ("The study operation failed. Cause: …").
+   * @returns The sentence, its cause cut so that the whole sentence fits {@link RECORDING_REASON_LIMIT_CHARS}.
+   * @example
+   * this.recordingStopReason(failedEvent, record.error) // => 'The run failed: Selected source app/ui/login-form.tsx is not in the client code … Recorded prefix retained.'
+   * this.recordingStopReason(undefined, undefined) // => 'Runtime cleanup incomplete; recorded prefix retained.'
+   */
+  private recordingStopReason(
+    failure: RecordedEvent | undefined,
+    error: StudyError | undefined,
+  ): string {
+    if (!failure) return 'Runtime cleanup incomplete; recorded prefix retained.'
+    const detail = failure.detail
+    const reason =
+      error?.causeDetail ??
+      (typeof detail === 'object' &&
+      detail !== null &&
+      'reason' in detail &&
+      typeof detail.reason === 'string'
+        ? detail.reason
+        : undefined)
+    // A failure journaled without words still says the run failed rather than that it was interrupted.
+    if (reason === undefined) return 'The run failed. Recorded prefix retained.'
+    const sentence = (cause: string): string =>
+      `The run failed: ${cause}. Recorded prefix retained.`
+    // The recording keeps RECORDING_REASON_LIMIT_CHARS of a reason: a long cause is cut, never the sentence's end (Cycle 0052 task 74).
+    return sentence(
+      cutTextToFit(
+        this.sanitizedCause(reason).replace(/\.$/, ''),
+        (cause) => sentence(cause).length <= RECORDING_REASON_LIMIT_CHARS,
+      ),
+    )
+  }
+
   /** Serializes release after acquisitions and accepted explanation writes settle. @example await this.stopRecord(record) */
   private async stopRecord(record: StudyRecord): Promise<void> {
     if (record.stopped) return
@@ -3623,7 +3739,7 @@ export class StudyService {
             if (failure || !runtime.resourcesReleased)
               record.recording.stopFrames(
                 failure?.elapsedMs ?? record.runtime.evidence.elapsedMs(),
-                'Runtime interrupted or cleanup incomplete; recorded prefix retained.',
+                this.recordingStopReason(failure, record.error),
               )
             try {
               const seal = await record.recording.finish(
@@ -3686,7 +3802,7 @@ export class StudyService {
 
   /**
    * Seals a test run's history once its release and its continuation have ended; called by {@link StudyService.stopRecord}.
-   * The seal is `complete` from the test's own facts (EN4): its last continuation completed, every declared stop was captured and the result verifiably passed. Then the run's learning coverage is counted from the stops and the result the writer wrote and the material this window saved (EN2). A seal that throws leaves the journal as an interrupted prefix and the run's `HISTORY_SEAL_FAILED`, with its sanitized cause and one Output › Codebook entry.
+   * The seal is `complete` from the test's own facts (EN4): its last continuation completed, every declared stop was captured with every required fact read, and the result verifiably passed. A run that went on without a required fact (Cycle 0052 task 5) seals partial, naming the facts (task 72). Then the run's learning coverage is counted from the stops and the result the writer wrote and the material this window saved (EN2). A seal that throws leaves the journal as an interrupted prefix and the run's `HISTORY_SEAL_FAILED`, with its sanitized cause and one Output › Codebook entry.
    * @param record - The test run.
    * @param writer - Its history writer, still recording.
    * @example await this.sealNodeHistory(record, record.nodeHistoryWriter)
@@ -3701,11 +3817,24 @@ export class StudyService {
     const passed =
       nodeTestResultKind(record.nodeResult) === 'passed' &&
       record.nodeResult?.reportFailure === undefined
-    const complete =
+    const capturedAll =
       record.nodePhase === 'completed' &&
       passed &&
       record.nodeStops?.length === expectedStops
-    const reason = complete ? undefined : this.partialHistoryReason(record)
+    const unread = (record.nodeStops ?? []).flatMap((stop) =>
+      this.unreadRequiredFacts(record, stop).map(
+        (fact) => `${fact} at ${stop.source.path}:${stop.frame.line}`,
+      ),
+    )
+    // A history whose stops lack a required fact lacks evidence the question asked for, however the test ended.
+    const complete = capturedAll && unread.length === 0
+    const reason = complete
+      ? undefined
+      : capturedAll
+        ? this.sanitizedCause(
+            `The test passed, but the debugger could not read the required ${unread.length === 1 ? 'fact' : 'facts'} ${unread.join(', ')}.`,
+          )
+        : this.partialHistoryReason(record)
     try {
       record.nodeHistoryHash = await this.finishNodeHistory(
         writer,

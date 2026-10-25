@@ -40,6 +40,7 @@ import { listVitestTestFiles } from './utils/listVitestTestFiles'
 import { prepareNodeTestLaunch } from './utils/prepareNodeTestLaunch'
 import type { PreparedNodeTestLaunch } from './utils/prepareNodeTestLaunch'
 import { selectCheckedNodeFrame } from './utils/selectCheckedNodeFrame'
+import { sourceImportBindings } from './utils/sourceImportBindings'
 import { thrownMessage } from './utils/thrownMessage'
 import { verifyVitestTestResult } from './utils/verifyVitestTestResult'
 
@@ -540,6 +541,7 @@ export class OwnedNodeTestRun {
    *
    * A pause Codebook did not make, such as the learner's own breakpoint, is never resumed here. It is reported once as `node-test.learner-paused`,
    * and the time the test spends held there does not count against the stop budget. Called by {@link prepareOwned} and {@link advance}.
+   * A required fact the debugger cannot read fails nothing: the stop is accepted with the facts that could be read and names the missing one among its debugger limitations, and the service refuses the continuation that reached it (Cycle 0052 task 5).
    *
    * @param index - Declared stop to capture.
    * @param fromIndex - First native pause that can belong to this stop.
@@ -688,10 +690,16 @@ export class OwnedNodeTestRun {
       throw new Error(
         'Native debugger supplied no variable scope at the source stop.',
       )
+    // The stopped module's imports tell which export each imported name reads (Cycle 0052 task 70); these bytes are verified with the second read after the capture (task 97).
+    const capturedSourceBytes = await readFile(selected.file)
+    const sourceImports = sourceImportBindings(
+      capturedSourceBytes.toString('utf8'),
+    )
     const result = await inspectNodeTestVariables(
       bound.session,
       scopes.scopes,
       selected.inspections,
+      sourceImports,
       signal,
     )
     signal.throwIfAborted()
@@ -711,7 +719,11 @@ export class OwnedNodeTestRun {
     assertCurrent()
     const sourceBytes = await readFile(selected.file)
     assertCurrent()
-    if (sha256(sourceBytes) !== selected.source.hash)
+    // Both reads must be the declared source: the imports were read from the first, the snapshot cites the second.
+    if (
+      sha256(capturedSourceBytes) !== selected.source.hash ||
+      sha256(sourceBytes) !== selected.source.hash
+    )
       throw new Error(
         'Node test source changed during historical debugger capture.',
       )
@@ -745,6 +757,11 @@ export class OwnedNodeTestRun {
       },
     })
     assertCurrent()
+    // A required fact the debugger could not read is named among the stop's limitations: the stop keeps its other facts and the run stays paused here (Cycle 0052 task 5).
+    for (const fact of result.unavailable)
+      debuggerSnapshot.limitations.push(
+        `Required fact ${fact} could not be read at this stop.`,
+      )
     this.acceptedPause = target.stop
     const stop = (this.acceptedStop = {
       index,

@@ -8,7 +8,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.8'
-export const EXTENSION_VERSION = '0.2.41'
+export const EXTENSION_VERSION = '0.2.42'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -1062,6 +1062,12 @@ export const TEST_OUTPUT_END_TOLERANCE_PX = 2
 export const TEST_OUTPUT_STATE_REPORT_INTERVAL_MS = 500
 /** Longest debugger type name a saved Node fact keeps; the type is supplementary, so a longer one is omitted rather than failing the run. */
 export const NODE_TEST_FACT_TYPE_LIMIT_CHARS = 256
+/**
+ * Names of the variables in which Vitest's module runner holds a whole imported module: a test file that calls `vi.mock` binds `__vi_import_<n>__`, any other module `__vite_ssr_import_<n>__` (Vite 8, Vitest 5). An imported name such as `revalidatePath` has no variable of its own; its value is an export of one of these (Cycle 0052 task 5).
+ */
+export const NODE_TEST_MODULE_BINDING_NAME = /^__vi(?:te_ssr)?_import_\d+__$/
+/** The debugger's name for the object a JavaScript Proxy wraps; a module that `vi.mock` replaces is a Proxy whose exports sit under it. */
+export const DEBUGGER_PROXY_TARGET_NAME = '[[Target]]'
 /** Oldest Vitest major whose file listing, exclusion, name matching and JSON report were verified for exact node-test selection (4.1.11 and 5.0.2). */
 export const NODE_TEST_MINIMUM_VITEST_MAJOR = 4
 /** Deepest cited title path: enclosing `describe` titles plus the test title. */

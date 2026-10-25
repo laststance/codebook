@@ -2,9 +2,11 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 
-import { recordedReaderHarness } from './studyWorkspaceHarness'
+import { readerSeams, recordedReaderHarness } from './studyWorkspaceHarness'
 import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
+import { saveOtherBrowserStudy } from './utils/saveOtherBrowserStudy'
 import { lastView, saveTwoStopNodeHistory } from './utils/twoStopNodeHistory'
 
 // Value: protects=a browser recording that loads while a test replay is selected retires the test replay (D20): the Application pane shows the recording's own pages, not the test replay's output, and the Study message carries no test replay; fails_when=loadPlayback leaves the test replay selected, so capturedAppHtml gives it the pane (the recording's loading page or "Recorded playback unavailable" never shows) and the section stays drawn beside the recording; why_new=F132 and F146: only Saved studies' choice of a browser study retired the test replay, and the recordingActive arm of Focus application's guard decided no tested outcome; seam=none; no_claim=the native placement of the pane (stand-ins: the workspace harness's recorded panels, posted messages and closeTabByHand)
@@ -1114,6 +1116,99 @@ test('Return to Live from a browser replay releases the recorded viewport withou
 
     // Assert
     assert.deepEqual(viewportCalls, ['close'])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=another saved study chosen in Saved studies during a browser replay retires the shown replay and shows the chosen study in its own composition: the chosen recording plays in the summary composition, with the Study pane closed and the browser family's transport; fails_when=the choice leaves the first recording shown, or brings the Study composition back over a replay (Cycle 0052 task 22, the state cell browser replay × another saved study); why_new=the cell had no test; seam=recordedReaderHarness, a second saved browser study and the bottom panel's history message; no_claim=the chosen study's recording content, which the saved configured study does not carry
+test('another saved study chosen during a browser replay retires it and shows the chosen study in its own composition', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    const other = await saveOtherBrowserStudy(
+      await harness.reader.learningStorage(),
+    )
+    // Retry storage reloads the catalog the reader shows.
+    await harness.reader.action('retry')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Act
+    harness.receivePlaybackPanel({
+      type: 'history',
+      revision: harness.reader.inspect().view!.revision,
+      studyId: other.id,
+    })
+    await waitUntil(
+      () => harness.controller.state().studyId === other.id,
+      'the chosen study is opened',
+      READER_RESULT_BOUND_MS,
+    )
+    await harness.controller.settle()
+
+    // Assert
+    assert.deepEqual(
+      {
+        recording: harness.controller.state().studyId,
+        studyPane: harness.panelColumn('codebook.studyContext') !== undefined,
+        application:
+          harness.panelColumn('codebook.scopedBrowser') !== undefined,
+        summary: harness.summary.visible,
+        family: lastView(harness)?.replayFamily,
+      },
+      {
+        recording: other.id,
+        studyPane: false,
+        application: true,
+        summary: true,
+        family: 'browser',
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a browser replay whose open fails is told with the load-failure notification and one Output › Codebook entry, keeps the reader's earlier state and leaves no empty summary composition; fails_when=the failure is not told, the Output entry is missing or repeated (the cell's test found it missing: Cycle 0052 task 59), or the reader stays in a summary composition with no replay (Cycle 0052 task 22, the state cell browser replay × a failed open); why_new=the cell had no test; seam=recordedReaderHarness, the reader's debugger replacement failing the next load, the reader's diagnostics; no_claim=Show details, which the notification's button runs
+test('a browser replay whose open fails is told once, keeps the Study composition and leaves no empty summary composition', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  try {
+    await harness.reader.open()
+    // The next recording load fails as a replay debugger that does not start.
+    const seams = readerSeams(harness)
+    const replace = seams.debuggerReplacement
+    seams.debuggerReplacement = async (): Promise<void> => {
+      seams.debuggerReplacement = replace
+      throw new Error('The historical debugger did not start.')
+    }
+
+    // Act
+    await harness.reader.openLearningReplay(harness.studyId)
+
+    // Assert
+    assert.deepEqual(
+      {
+        notices: [...harness.errorMessages],
+        outputEntries: logged.map((entry) => entry.surface),
+        studyPane: harness.panelColumn('codebook.studyContext') !== undefined,
+        family: lastView(harness)?.replayFamily,
+      },
+      {
+        notices: [
+          'Codebook could not open the learning replay: The historical debugger did not start.',
+        ],
+        outputEntries: ['open:recording'],
+        studyPane: true,
+        family: undefined,
+      },
+    )
   } finally {
     await harness.close()
   }

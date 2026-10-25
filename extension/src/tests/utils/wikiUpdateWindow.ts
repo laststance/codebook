@@ -1,16 +1,18 @@
+import * as fileSystem from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { setTimeout as sleepFor } from 'node:timers/promises'
 
 import * as constants from '../../constants'
 import { readDeepWikiManifest } from '../../deepWikiReader'
 import type * as ExtensionModule from '../../extension'
-import { claimWikiUpdateMarker } from '../../utils/claimWikiUpdateMarker'
+import type * as ClaimWikiUpdateMarkerModule from '../../utils/claimWikiUpdateMarker'
 import { findWikiUpdateStartBlock } from '../../utils/findWikiUpdateStartBlock'
 import {
   inspectDeepWikiFreshness,
   type WikiFreshness,
 } from '../../utils/inspectDeepWikiFreshness'
 import { listWikiCandidates } from '../../utils/listWikiCandidates'
+import { PREPARED_LOCK_SUFFIX } from '../../utils/preparedLockSuffix'
 import { readWikiPublishToken } from '../../utils/readWikiPublishToken'
 import { readWikiWatchStamp } from '../../utils/readWikiWatchStamp'
 import { startWikiChatUpdate } from '../../utils/startWikiChatUpdate'
@@ -65,7 +67,7 @@ type NumericConstantName = {
     : never
 }[keyof typeof constants]
 
-/** An awaited step of an update that a test can keep open: the freshness inspection among the start checks, VS Code's chat command that carries the request, one listing of the candidates (the next listing after `hold` is kept open once it has read the folder; later ones pass), the wait of the start check before its second look at a publish journal written a moment ago (held, it lasts until the release and no real time), a read of the publish token (the start checks read it and so does the end of a run, so a hold set after the start keeps the end open), or the change of the run's marker at its end (its removal or its turn into a reservation: held, the run's end is already recorded and told, and the run waits there). */
+/** An awaited step of an update that a test can keep open: the freshness inspection among the start checks, VS Code's chat command that carries the request, one listing of the candidates (the next listing after `hold` is kept open once it has read the folder; later ones pass), the wait of the start check before its second look at a publish journal written a moment ago (held, it lasts until the release and no real time), a read of the publish token (the start checks read it and so does the end of a run, so a hold set after the start keeps the end open), or the change of the run's marker at its end (its removal or its turn into a reservation: held, the run's end is already recorded and told, and the run waits there), or the write of the reservation that turn puts beside the marker (held, the change holds the claim on the marker while it waits, as a slow disk holds it), or the moment after a start's claim on the marker answered and before the start reads the answer (`claim-answer`). */
 export type HeldUpdateStep =
   | 'freshness-inspection'
   | 'chat-open'
@@ -73,6 +75,8 @@ export type HeldUpdateStep =
   | 'journal-wait'
   | 'publish-token-read'
   | 'marker-change'
+  | 'marker-write'
+  | 'claim-answer'
 
 /**
  * Opens an editor window (the real extension with a stubbed `vscode`) on a project whose Wiki already exists, and records everything the learner would see of an update.
@@ -101,7 +105,7 @@ export type HeldUpdateStep =
  * @param options.publishTokenReadFails - Makes the read of the publish token among the start checks reject with this message.
  * @param options.openWikiFails - Makes the command that opens the browser Wiki (the button "Open LLM Wiki" of a notification runs it) reject with this message.
  * @param options.realFreshnessCheck - Runs the real freshness check against the project on disk instead of answering what `setFreshness` was given.
- * @returns What the window showed (chat requests, every editor command the extension ran in order (`executedCommands`: its name, and for the chat request the name followed by " with the update request"), notifications by severity, the buttons each notification offered, confirmations with their detail text, progress titles, the text of every status bar entry it showed (`statusBarTexts`) and of those on screen now (`visibleStatusBarTexts`)), how often its looks read the watch stamp (`stampReads` counts the reads that began, `stampReadsDone` those that returned, so a test can wait for a look instead of for an amount of time) and listed the candidates, each change of its own update marker with what it answered (`markerChanges`), the two update entries, the state snapshot, `openWorkspace` (makes the window answer another folder as its opened project from then on), `hold` (keeps one awaited step of the next start open until `release()`, so a test can close the window in the middle of it) `openDocument`, `openTerminal` and `runTerminalCommand` (what the editor reports when a file is opened, by the chat or by the learner, a terminal opens or a command starts there), `signListenerCount` (how many listeners for these events the extension holds) and `close`.
+ * @returns What the window showed (chat requests, every editor command the extension ran in order (`executedCommands`: its name, and for the chat request the name followed by " with the update request"), notifications by severity, the buttons each notification offered, confirmations with their detail text, progress titles, the text of every status bar entry it showed (`statusBarTexts`) and of those on screen now (`visibleStatusBarTexts`)), how often its looks read the watch stamp (`stampReads` counts the reads that began, `stampReadsDone` those that returned, so a test can wait for a look instead of for an amount of time) and listed the candidates, how often a start's claim on the marker answered (`markerClaims`), each change of its own update marker with what it answered (`markerChanges`), the two update entries, the state snapshot, `openWorkspace` (makes the window answer another folder as its opened project from then on), `hold` (keeps one awaited step of the next start open until `release()`, so a test can close the window in the middle of it) `openDocument`, `openTerminal` and `runTerminalCommand` (what the editor reports when a file is opened, by the chat or by the learner, a terminal opens or a command starts there), `signListenerCount` (how many listeners for these events the extension holds) and `close`.
  *
  * @example
  * ```ts
@@ -162,6 +166,7 @@ export async function openWikiUpdateWindow(options: {
     candidateListings: number
     stampReads: number
     stampReadsDone: number
+    markerClaims: number
   }
   markerChanges: WikiMarkerChange[]
   openWorkspace(nextProjectRoot: string): void
@@ -223,7 +228,12 @@ export async function openWikiUpdateWindow(options: {
   const progressTitles: string[] = []
   const statusBarTexts: string[] = []
   const statusBarEntries: FakeStatusBarEntry[] = []
-  const looks = { candidateListings: 0, stampReads: 0, stampReadsDone: 0 }
+  const looks = {
+    candidateListings: 0,
+    stampReads: 0,
+    stampReadsDone: 0,
+    markerClaims: 0,
+  }
   const markerChanges: WikiMarkerChange[] = []
   /** Records one change of this window's marker, and what it answered once it settled. */
   const recordMarkerChange = (
@@ -320,6 +330,21 @@ export async function openWikiUpdateWindow(options: {
     resolve(__dirname, '../../extension.js'),
     Object.keys(options.constants ?? {}),
   )
+  // The real claim on the marker, whose write of a reservation beside the marker a test can hold while the change holds the claim.
+  const { claimWikiUpdateMarker } = await loadModule<
+    typeof ClaimWikiUpdateMarkerModule
+  >(resolve(__dirname, '../../utils/claimWikiUpdateMarker.js'), {
+    'node:fs/promises': {
+      ...fileSystem,
+      writeFile: async (
+        ...written: Parameters<typeof fileSystem.writeFile>
+      ) => {
+        if (String(written[0]).includes(PREPARED_LOCK_SUFFIX))
+          await passHold('marker-write')
+        return fileSystem.writeFile(...written)
+      },
+    },
+  })
   const boundary = await loadModule<typeof ExtensionModule>(
     resolve(__dirname, '../../extension.js'),
     {
@@ -467,12 +492,14 @@ export async function openWikiUpdateWindow(options: {
           return candidates
         },
       },
-      // The real claim on the marker runs; the window records each change of its marker (its removal, its turn into a stopped watch's reservation) and what that change answered, and a test can hold that change open.
+      // The real claim on the marker runs; the window counts the claims that answered, records each change of its marker (its removal, its turn into a stopped watch's reservation) and what that change answered, and a test can hold that change open.
       './utils/claimWikiUpdateMarker': {
         claimWikiUpdateMarker: async (
           ...claimed: Parameters<typeof claimWikiUpdateMarker>
         ) => {
           const claim = await claimWikiUpdateMarker(...claimed)
+          looks.markerClaims += 1
+          await passHold('claim-answer')
           if (!('release' in claim)) return claim
           return {
             release: async () => {

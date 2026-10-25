@@ -111,7 +111,7 @@ test('Show recorded output puts a closed Application pane back above the recorde
     { column: 1, tabs: ['Captured-theme.ts'] },
   ])
   assert.deepEqual(after.groups, before.groups)
-  // The Application group and the source's share the left column, and the Study pane's group stays the right column.
+  // The Application group and the source's share the left column, and the composition's third group stays the right column (the summary composition has no Study pane, Cycle 0051 DS-A).
   assert.deepEqual(after.layout, before.layout)
 })
 

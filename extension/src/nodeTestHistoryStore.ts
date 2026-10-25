@@ -630,7 +630,7 @@ export class NodeTestHistoryStore {
   }
 
   /**
-   * Says whether this workspace's history directory holds a folder for a study id, listed or not, without reading its files; read by {@link StudyService.playback}, so a test replay of an earlier session is refused before this window has listed it (F9).
+   * Says whether this workspace's history directory holds a folder for a study id, listed or not, without reading its files; read by {@link StudyService.playback}, so a test replay of an earlier session is refused before this window has listed it (F9), and by the history's resources ({@link readResource}) and {@link StudyService.explainNodeHistory}, which refuse an id without a folder as unknown ({@link unknownNodeHistoryError}).
    * Synchronous on purpose: {@link StudyService.playback} answers synchronously, and this one existence check of the editor's local storage, made once per agent playback command, takes about a microsecond (F246).
    * @param studyId - A study id an agent sent.
    * @returns `true` for a study id named like a history whose folder exists.

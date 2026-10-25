@@ -3378,6 +3378,42 @@ test('a stopped watch whose reservation could not be written because another win
   }
 })
 
+// Value: protects=the learner who presses Update again in the same window while the end of its earlier update still waits to remove that run's marker (its first attempt met another window's claim, which is free by now): the new update starts, and nothing names another editor window; fails_when=the start takes this window's own leftover marker, whose removal waits for its next attempt, for another window's update or for one in change, and refuses the press; why_new=pt3 /ship review (state machines): a start during this window's own waiting marker change had no test; seam=a claim of another machine's window on the marker, freed by the test, and the delay before the next attempt, set longer than the test; no_claim=other windows during that wait (the tests above)
+test('Update pressed again in the same window while its earlier update’s marker removal waits for its next attempt starts the update', async () => {
+  // Arrange: an update whose end could not remove its marker because a window of another machine held the claim on it; the claim is then freed, and the removal's next attempt is still far away.
+  const wiki = await openWikiWindow({
+    constants: { WIKI_UPDATE_MARKER_CHANGE_RETRY_DELAY_MS: 600_000 },
+  })
+  try {
+    const claimDirectory = await holdMarkerClaimAsAWindowOfAnotherMachine(
+      wiki.outputDirectory,
+    )
+    await wiki.clickUpdate()
+    wiki.setFreshness(CURRENT)
+    await wiki.publish('b'.repeat(64))
+    const ended = await waitForEnd(wiki.status)
+    await waitForMarkerAnswer(wiki, false)
+    await rm(claimDirectory, { recursive: true })
+    wiki.setFreshness({
+      status: 'changed',
+      changedPaths: ['src/a.ts'],
+      addedPaths: [],
+    })
+
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    assert.equal(ended.state, 'succeeded')
+    assert.deepEqual(wiki.errors, [])
+    assert.equal(wiki.status().state, 'running')
+    assert.equal(wiki.chatRequests.length, 2)
+    assert.deepEqual(wiki.markerChanges, [{ kind: 'release', answer: false }])
+  } finally {
+    await wiki.close()
+  }
+})
+
 // Value: protects=other editor windows after a window closes while the removal of its marker waits for its next attempt; fails_when=the closing window leaves that attempt to a timer that never runs, so its marker stays on disk as a running update and refuses every other window until the run's bound has passed; why_new=Cycle 0046 second ship, red team RT3; seam=the delay before the next attempt, set longer than the test
 test('a window that closes while the removal of its marker waits for its next attempt makes that attempt as it closes, and the marker leaves the disk with the window', async () => {
   // Arrange: a claim on the marker held by a window of another machine, and an update whose end could not remove its marker.

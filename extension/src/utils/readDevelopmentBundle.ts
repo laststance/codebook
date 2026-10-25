@@ -157,10 +157,10 @@ export async function readDevelopmentBundle(
   if (performance.now() >= deadline)
     throw new Error('Build discovery resource limit exceeded')
   signal?.throwIfAborted()
-  // An unchanged tracked file may still belong to a route outside the launched page.
+  // An unchanged tracked file may still belong to a route outside the launched page: the stop is armed before input, in the code the launched page loads, so the refusal names that page and where a stop can go (Cycle 0052 task 7b).
   if (bundles.length !== 1)
     throw new Error(
-      'Selected source is absent from the selected application route chunks; verify that it belongs to the launched page',
+      `Selected source ${selected.path} is not in the client code that the launched page (entryPath "${entryPath}") loads, and a browser stop can only be armed in that code before input; start the run at the page whose component holds the stop (set entryPath to it) or choose a stop in the launched page's own components`,
     )
   return {
     bundle: bundles[0]!,

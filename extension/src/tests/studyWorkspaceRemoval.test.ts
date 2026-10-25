@@ -39,6 +39,7 @@ import {
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { idleChild } from './utils/idleChild'
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
+import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 import { rewriteWriterRecord } from './utils/rewriteWriterRecord'
 
 type Harness = Awaited<ReturnType<typeof workspaceHarness>>
@@ -4573,10 +4574,12 @@ test('after the Trash refused a removal, a run refused on the full library names
     harness.rejectTrashMoves(() => true)
     harness.answerWarningDialogs(async ([confirm]) => confirm)
     await requestRemoval(harness, earlier.id)
+    // The removal's line is read before the run: a refresh after another run became current retires it (Cycle 0052 task 92).
+    const removal = harness.reader.inspect().view!.studyRemoval?.status
     // Act
     const refused = await startRun(harness)
     // Assert
-    assert.equal(harness.reader.inspect().view!.studyRemoval?.status, 'failed')
+    assert.equal(removal, 'failed')
     assert.equal(
       refused.record.error?.message,
       `Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings before starting another run; this editor could not move a saved study to the ${TRASH} in this session. Only the learner can change the setting; an editor agent cannot. Existing learning was kept.`,
@@ -4602,6 +4605,8 @@ test('after a removal refused because another window of this machine still recor
     )
     harness.answerWarningDialogs(async ([confirm]) => confirm)
     await requestRemoval(harness, study.id)
+    // The removal's line is read before the run: a refresh after another run became current retires it (Cycle 0052 task 92).
+    const removal = harness.reader.inspect().view!.studyRemoval?.status
 
     // Act
     const refused = await startRun(harness)
@@ -4609,7 +4614,7 @@ test('after a removal refused because another window of this machine still recor
     // Assert
     assert.deepEqual(
       {
-        removal: harness.reader.inspect().view!.studyRemoval?.status,
+        removal,
         moved: harness.trashMoves,
         refusal: refused.record.error?.message,
       },
@@ -4845,10 +4850,12 @@ test('after a removal that moved the study although the Trash rejected a path th
     harness.rejectTrashMoves(isArchiveOfRemoved)
     harness.answerWarningDialogs(async ([confirm]) => confirm)
     await requestRemoval(harness, removed.id)
+    // The removal's line is read before the run: a refresh after another run became current retires it (Cycle 0052 task 92).
+    const removal = harness.reader.inspect().view!.studyRemoval?.status
     // Act
     const refused = await startRun(harness)
     // Assert
-    assert.equal(harness.reader.inspect().view!.studyRemoval?.status, 'moved')
+    assert.equal(removal, 'moved')
     assert.equal(refused.record.error?.message, FULL_LIBRARY_REFUSAL)
   } finally {
     await harness.close()
@@ -5419,6 +5426,12 @@ test('the line “History not saved: …” of a study that still waits stays, w
       'the save of the second run',
       1_000,
     )
+    // The save decides about the line only once its write left the queue, after it reported 'saved': the pane is read after that decision, with the first study alone waiting (Cycle 0052 task 47).
+    await waitUntil(
+      () => readerSeams(harness).queuedStudyWrites() === 1,
+      'the end of the second run’s write',
+      READER_RESULT_BOUND_MS,
+    )
     const afterOtherSave = structuredClone({
       queued: readerSeams(harness).queuedStudyWrites(),
       errors: harness.reader.inspect().view!.errors,
@@ -5472,6 +5485,12 @@ test('the line “History not saved: …” of a study whose capture failed befo
         harness.service.state(second.record).historyOutcome.status === 'saved',
       'the save of the second run',
       1_000,
+    )
+    // The save decides about the line only once its write left the queue, after it reported 'saved': the pane is read after that decision (Cycle 0052 task 47).
+    await waitUntil(
+      () => readerSeams(harness).queuedStudyWrites() === 0,
+      'the end of the second run’s write',
+      READER_RESULT_BOUND_MS,
     )
     const afterOtherSave = structuredClone({
       queued: readerSeams(harness).queuedStudyWrites(),
@@ -5539,6 +5558,13 @@ test('a Retry storage / refresh that saved the earlier study keeps the line “H
       `${harness.service.instanceId}_${second.record.id}`,
     )
     await readerSeams(harness).refresh()
+    // The second run's save is refused while the Retry still reconciles, as the case means: a test that read the pane before that refusal was handled raced it (Cycle 0052 task 26).
+    await waitUntil(
+      () =>
+        harness.service.state(second.record).historyOutcome.status === 'failed',
+      "the refusal of the second run's save",
+      READER_RESULT_BOUND_MS,
+    )
     continueReconcile()
     await retry
     const afterRetry = structuredClone({
@@ -5616,6 +5642,13 @@ test('a Retry storage / refresh whose selection names a study without an archive
       `${harness.service.instanceId}_${second.record.id}`,
     )
     await readerSeams(harness).refresh()
+    // The second run's save is refused while the Retry still reconciles, as the case means (the same race as Cycle 0052 task 26).
+    await waitUntil(
+      () =>
+        harness.service.state(second.record).historyOutcome.status === 'failed',
+      "the refusal of the second run's save",
+      READER_RESULT_BOUND_MS,
+    )
     continueReconcile()
     await retry
     // Assert
@@ -10020,6 +10053,12 @@ async function recordRunWithFailedCapture(context: TestContext) {
         harness.service.state(second.record).historyOutcome.status === 'saved',
       'the save of the second run',
       2_000,
+    )
+    // The save reports 'saved' before it writes the recording's context and leaves the queue; a Stop before that read one queued write (Cycle 0052 task 47).
+    await waitUntil(
+      () => readerSeams(harness).queuedStudyWrites() === 0,
+      'the end of the second run’s write',
+      READER_RESULT_BOUND_MS,
     )
     failedStudyId = studyId
     await harness.reader.action('stop')

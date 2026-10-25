@@ -11562,7 +11562,7 @@ export class StudyWorkspace {
    * @example await workspace.openLearningReplay(studyId)
    */
   async openLearningReplay(studyId: string): Promise<void> {
-    // A test replay opens in the Study pane, not through the browser replay's controller.
+    // A test replay opens in its summary composition through its own entry, not through the browser replay's controller (Cycle 0051, DS-A).
     if (this.isTestReplayStudy(studyId))
       return this.openNodeHistoryFromHost(studyId)
     await this.openRecording(studyId)
@@ -11589,6 +11589,13 @@ export class StudyWorkspace {
     // A learner's preview tab that blocks the open is answered with a choice and a retry, not a toast (F158).
     const answer = await this.resolveForeignPreviewRefusal(state.reason)
     if (answer === 'retry') return this.openLearningReplay(studyId)
+    // The failure also goes to Output › Codebook, as a test replay's failed open does, so the learner can copy it into a report (Cycle 0052 task 59), also after the keep-open refusal told it (task 81).
+    this.diagnostics?.log({
+      surface: 'open:recording',
+      studyId,
+      profile: REPOSITORY_BROWSER_PROFILE,
+      cause: sanitizeCause(state.reason, this.privateRoots()),
+    })
     // The keep-open refusal has told the learner already; a second notice would repeat it.
     if (answer === 'told') return
     // The controller keeps a failure as its string form, which starts with the error's name.
@@ -20031,15 +20038,17 @@ export class StudyWorkspace {
             }
             view.webview.html = studyHtml('moments')
             // Disposed or replaced panel documents cannot send actions into a later replay.
-            view.webview.onDidReceiveMessage((message) => {
-              if (this.moments === view)
-                void this.receivePaneMessage(message, 'moments', view).catch(
-                  (error) => {
-                    if (this.moments === view)
-                      this.report(this.panelFailureKind(message), error)
-                  },
-                )
-            })
+            // The listener returns its handling, which the editor ignores, so a test can tell when a message's handling ended (Cycle 0052 task 8).
+            view.webview.onDidReceiveMessage((message) =>
+              this.moments === view
+                ? this.receivePaneMessage(message, 'moments', view).catch(
+                    (error) => {
+                      if (this.moments === view)
+                        this.report(this.panelFailureKind(message), error)
+                    },
+                  )
+                : undefined,
+            )
             view.onDidDispose(() => {
               if (this.moments === view) {
                 this.moments = undefined

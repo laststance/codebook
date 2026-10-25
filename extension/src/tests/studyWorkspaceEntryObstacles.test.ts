@@ -415,6 +415,55 @@ test('Open replay beside a non-text preview that cannot be kept tells the learne
   }
 })
 
+// Value: protects=the browser replay's Open replay refused for a non-text preview that cannot be kept: the learner is told once by the keep notice, and the refusal is still recorded in one Output › Codebook open:recording entry, as a test replay's is (F407) and as every other failed browser replay open is (Cycle 0052 task 59); fails_when=the keep notice's early return skips the Output entry, so the README's promise that a failed browser replay open writes one fails for this cause (Cycle 0052 task 81); why_new=hosted CodeRabbit on PR #127 (studyWorkspace.ts:11599); seam=addNonTextPreview behind another tab, answerWarningDialogs, the diagnostics log and the harness's error notifications; no_claim=the wording of the keep notice
+test('a browser replay Open replay refused for a non-text preview that cannot be kept tells the learner once and records the refusal in one Output entry', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  try {
+    await harness.reader.close()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.focusMutableDraft('learner-notes.ts', 1)
+    const agentChat = harness.addSeparateEditorPart()
+    const preview = harness.addNonTextPreview('diagram.png', 1, false)
+    agentChat.focus()
+    const hasMainEditorFocus = harness.reader['hasMainEditorFocus'].bind(
+      harness.reader,
+    )
+    harness.reader['hasMainEditorFocus'] = (groupCount: number): boolean =>
+      groupCount === 1 && preview.isPreview
+        ? false
+        : hasMainEditorFocus(groupCount)
+    harness.answerWarningDialogs(async () => 'Keep Tab Open')
+
+    // Act
+    await harness.reader.openLearningReplay(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert
+    assert.deepEqual(
+      {
+        notices: harness.warningDialogs.slice(1).map((dialog) => dialog.title),
+        errorMessages: harness.errorMessages,
+        outputEntries: logged.map((entry) => [entry.surface, entry.studyId]),
+      },
+      {
+        notices: [
+          'Codebook could not keep "diagram.png" open. Double-click its tab to keep it, then choose Open replay again.',
+        ],
+        errorMessages: [],
+        outputEntries: [['open:recording', harness.studyId]],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner who chose Keep Tab Open for a non-text preview that cannot be kept, when a test replay's Open replay was refused for it, being told once by the keep notice, with no second notification, and the refusal recorded in one Output › Codebook open:test-replay entry (F407); fails_when=a refused Keep Tab Open is followed by the test replay's load-failure notification, or leaves no Output entry; why_new=Cycle 0050 F394 (openNodeHistoryFromHost told the failure after the keep notice); seam=openNodeHistory answering a foreign-preview failure, addNonTextPreview behind another tab, answerWarningDialogs, the diagnostics log and the harness's error notifications; no_claim=how the replay's open meets the preview (the F158 rounds above)
 test('a test replay Open replay refused for a non-text preview that cannot be kept tells the learner once and records the refusal in one Output entry', async (context) => {
   // Arrange

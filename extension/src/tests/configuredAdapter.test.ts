@@ -167,6 +167,7 @@ for (const path of ['src/ordinary.tsx', 'components/deep/another.ts'])
     )
   })
 
+// Value: protects=a stop in another page's component is refused before browser input with a sentence that names the stop's file, the launched page and where a stop can go (the launched page's own code, or a run started at the stop's page), so the agent does not retry blind; fails_when=the refusal names neither the file nor the page and only says to verify the page, as N51's Cursor run retried three times (Cycle 0052 task 7b); why_new=the boundary stays (a browser stop is armed before input in the code the launched page loads) and its sentence now says so; seam=a development build whose root page loads another component; no_claim=a stop armed after a client-side navigation, which the profile does not support
 test('a source from another route reports the root-page mismatch before browser input', async (context) => {
   // Arrange
   const { directory, track } = await repositoryHarness(context)
@@ -200,7 +201,10 @@ test('a source from another route reports the root-page mismatch before browser 
       line: 1,
       column: 1,
     }),
-    /Selected source is absent from the selected application route chunks; verify that it belongs to the launched page/,
+    {
+      message:
+        'Selected source src/dashboard/Header.tsx is not in the client code that the launched page (entryPath "/") loads, and a browser stop can only be armed in that code before input; start the run at the page whose component holds the stop (set entryPath to it) or choose a stop in the launched page\'s own components',
+    },
   )
 })
 

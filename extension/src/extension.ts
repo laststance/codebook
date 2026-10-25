@@ -150,6 +150,13 @@ import { WikiUpdateTimeoutError } from './utils/wikiUpdateTimeoutError'
 
 let stopExtension: (() => Promise<void>) | undefined
 
+/** One change of this window's own Wiki update marker (its removal, or its turn into a stopped watch's reservation): the change, the timer of its next attempt while it waits, and the attempt while it runs. */
+type WikiMarkerChangeEntry = {
+  change: () => Promise<boolean>
+  timer?: NodeJS.Timeout
+  running?: Promise<boolean>
+}
+
 /** Registers explicit trusted commands without reading auto-run instructions from repository files. @example VS Code calls activate(context) */
 export function activate(
   context: Pick<vscode.ExtensionContext, 'extensionPath' | 'subscriptions'> & {
@@ -267,11 +274,10 @@ export function activate(
     string,
     { release: () => Promise<boolean>; timer: NodeJS.Timeout }
   >()
-  // The latest change of this window's own marker on each Wiki output (its removal, or its turn into a stopped watch's reservation), while it runs or waits for its next attempt, with the timer of that attempt.
-  const wikiMarkerChanges = new Map<
-    string,
-    { change: () => Promise<boolean>; timer?: NodeJS.Timeout }
-  >()
+  // The latest change of this window's own marker on each Wiki output (its removal, or its turn into a stopped watch's reservation), while it runs (`running`) or waits for its next attempt, with the timer of that attempt.
+  const wikiMarkerChanges = new Map<string, WikiMarkerChangeEntry>()
+  // How many attempts of this window's own marker changes have ended on each Wiki output; a start whose claim met the marker in change compares it ({@link claimWikiMarkerForStart}).
+  const endedWikiMarkerChanges = new Map<string, number>()
   /**
    * Makes a change of this window's own marker beside a Wiki (its removal, or its turn into a stopped watch's reservation), and while the change cannot be made asks for it again later; called by {@link settleWikiRunMarker} at a run's end and by {@link dropWikiReservation} at a reservation's bound or at shutdown.
    * Why: the change runs under the claim on the marker, which another window can hold longer than the change waits (a killed window of another machine leaves its claim for {@link WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS}), and the system can refuse the claim, the read of the marker under it (on Windows a scanner or an indexer can hold the file) or the change. A run's marker left as it stands counts for every other window as a running update, with no Update anyway, until the run's bound has passed. A later change of the same output, and a start that takes the marker over, replace a change that waits: they name what the marker must be now.
@@ -287,10 +293,15 @@ export function activate(
     retriesLeft = WIKI_UPDATE_MARKER_CHANGE_RETRIES,
   ): Promise<void> => {
     clearTimeout(wikiMarkerChanges.get(outputDirectory)?.timer)
-    const pending: { change: () => Promise<boolean>; timer?: NodeJS.Timeout } =
-      { change }
+    const pending: WikiMarkerChangeEntry = { change }
     wikiMarkerChanges.set(outputDirectory, pending)
-    const isChanged = await change().catch(() => false)
+    pending.running = change().catch(() => false)
+    const isChanged = await pending.running
+    pending.running = undefined
+    endedWikiMarkerChanges.set(
+      outputDirectory,
+      (endedWikiMarkerChanges.get(outputDirectory) ?? 0) + 1,
+    )
     // A later change of this output, or a start that took its marker over, replaced this one meanwhile.
     if (wikiMarkerChanges.get(outputDirectory) !== pending) return
     // A closing window keeps no timer: its shutdown makes the waiting changes once more.
@@ -1492,6 +1503,32 @@ export function activate(
     return { tokenAtStart, publicationAtStart, before }
   }
   /**
+   * Claims the Wiki's marker for a start of this window, and claims it once more after this window's own marker change that held the claim at that moment; called by {@link lookAtWikiStart} last.
+   * Why: the end of this window's previous run removes its marker, or turns it into a stopped watch's reservation, under the claim on the marker ({@link settleWikiRunMarker}). A start of this window that claims in that moment (Update anyway chosen right after the run ended, or the change slowed by the disk) meets the marker in change, which is no other window's, and would refuse itself with "Another editor window is starting or ending an update of this Wiki" (Cycle 0052 task 27).
+   * @param outputDirectory - The Wiki output the start claims.
+   * @param marker - This window's marker for the run ({@link claimWikiUpdateMarker}).
+   * @returns What the claim answered; after this window's own change ran meanwhile, what the second claim answered. A marker in change that no change of this window explains stays the first answer.
+   * @throws What {@link claimWikiUpdateMarker} throws.
+   * @example
+   * await claimWikiMarkerForStart('/repo/.codebook/wiki', { pid: process.pid, windowId, host: 'vscode', startedAtMs: Date.now() }) // => { release, reserve }
+   */
+  const claimWikiMarkerForStart = async (
+    outputDirectory: string,
+    marker: Parameters<typeof claimWikiUpdateMarker>[1],
+  ): Promise<Awaited<ReturnType<typeof claimWikiUpdateMarker>>> => {
+    const endedBefore = endedWikiMarkerChanges.get(outputDirectory) ?? 0
+    const claim = await claimWikiUpdateMarker(outputDirectory, marker)
+    if (!('heldBy' in claim) || !('isMarkerInChange' in claim.heldBy))
+      return claim
+    const running = wikiMarkerChanges.get(outputDirectory)?.running
+    // This window's own change still holds the claim: the start waits until it has ended.
+    if (running) await running
+    // No change of this window ran meanwhile, so another window changes the marker.
+    else if ((endedWikiMarkerChanges.get(outputDirectory) ?? 0) === endedBefore)
+      return claim
+    return claimWikiUpdateMarker(outputDirectory, marker)
+  }
+  /**
    * Makes the checks of a start once, for one generation of the Wiki: those of the Wiki folder ({@link inspectWikiToUpdate}), another window's marker, an earlier chat's leftover ({@link findUnacknowledgedWikiLeftover}), and last the claim of the marker; called by {@link checkWikiUpdateStart}, a second time when a publish landed while the first look ran.
    * @param projectRoot - Canonical opened project.
    * @param wikiOutput - Resolved Wiki folder and its label.
@@ -1568,7 +1605,7 @@ export function activate(
     if ((await readWikiPublishToken(outputDirectory)) !== tokenAtStart)
       return 'published-meanwhile'
     const startedAtMs = Date.now()
-    const claim = await claimWikiUpdateMarker(outputDirectory, {
+    const claim = await claimWikiMarkerForStart(outputDirectory, {
       pid: process.pid,
       windowId: wikiWindowId,
       host,

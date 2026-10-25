@@ -26,6 +26,7 @@ import {
   observeResult,
 } from './utils/configuredServiceHarness'
 import { loadModule } from './utils/loadModule'
+import { RUN_RELEASE_BOUND_MS } from './utils/runReleaseBound'
 
 const receiptSchema = z.object({
   instanceId: z.string(),
@@ -753,7 +754,7 @@ test('a run whose preparation fails and whose release then fails keeps the prepa
   await waitUntil(
     () => Boolean(record.cleanupError) && !record.stopping,
     'the failed release after the failed preparation',
-    1_000,
+    RUN_RELEASE_BOUND_MS,
   )
   const resource = await readResource(service, receipt.runUri)
   // The harness's own shutdown releases the run once the test has read it.
@@ -822,7 +823,7 @@ test('a run that the maintenance turn ends for an evidence write failure names t
   await waitUntil(
     () => Boolean(record.cleanupError) && !record.stopping,
     'the release after the evidence failure',
-    1_000,
+    RUN_RELEASE_BOUND_MS,
   )
   const resource = await readResource(service, receipt.runUri)
   // The harness's own shutdown releases the run once the test has read it.
@@ -896,7 +897,7 @@ test('a run whose saved study was removed while it ran ends at the maintenance t
   await waitUntil(
     () => Boolean(record.cleanupError) && !record.stopping,
     'the release after the evidence failure',
-    1_000,
+    RUN_RELEASE_BOUND_MS,
   )
   const resource = await readResource(service, receipt.runUri)
   // The harness's own shutdown releases the run once the test has read it.
@@ -973,7 +974,7 @@ test('a run whose saved study was removed while it ran keeps a release failure t
   await waitUntil(
     () => Boolean(record.cleanupError) && !record.stopping,
     'the release after the evidence failure',
-    1_000,
+    RUN_RELEASE_BOUND_MS,
   )
   const resource = await readResource(service, receipt.runUri)
   const retryFailure = await service
@@ -1043,7 +1044,7 @@ test('a run whose saved study was found removed after its evidence write failed 
   await waitUntil(
     () => Boolean(record.cleanupError) && !record.stopping,
     'the release after the evidence failure',
-    1_000,
+    RUN_RELEASE_BOUND_MS,
   )
   const errorNamedPathBefore = Boolean(
     record.error?.message.includes(runtime.evidence.directory),
@@ -1129,7 +1130,7 @@ test('a completed run whose release failed after its saved study was removed by 
   await waitUntil(
     () => Boolean(record.cleanupError) && !record.stopping,
     'the failed release of the completed run',
-    1_000,
+    RUN_RELEASE_BOUND_MS,
   )
   const errorBefore = {
     message: record.error?.message,
@@ -1207,7 +1208,7 @@ test("a removed study's kept run failure is served by no resource: its events an
   await waitUntil(
     () => Boolean(record.cleanupError) && !record.stopping,
     'the release after the evidence failure',
-    1_000,
+    RUN_RELEASE_BOUND_MS,
   )
   service.excludeHistory(record, 'archive-removed')
   const path = runtime.evidence.directory
@@ -1347,7 +1348,7 @@ test('a run whose study was removed during its preparation and found removed aft
   await waitUntil(
     () => !record.stopping && (record.stopped || Boolean(record.cleanupError)),
     'the release after the failed preparation',
-    1_000,
+    RUN_RELEASE_BOUND_MS,
   )
   const path = runtimes[0]!.evidence.directory
   const terminalNamedPathBefore = Boolean(
@@ -1445,7 +1446,7 @@ test('a run whose study was found removed while its preparation was failing name
   await waitUntil(
     () => !record.stopping && (record.stopped || Boolean(record.cleanupError)),
     'the release after the failed preparation',
-    1_000,
+    RUN_RELEASE_BOUND_MS,
   )
   const path = runtimes[0]!.evidence.directory
   const run = await readResource(service, receipt.runUri)

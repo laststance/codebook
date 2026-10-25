@@ -1,0 +1,202 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
+import {
+  sourceImportBindings,
+  type SourceImports,
+} from '../utils/sourceImportBindings'
+
+/** Each imported local name with the export it reads, in source order, as the tests below compare them. */
+function exportsOf(imports: SourceImports): Array<[string, string]> {
+  return [...imports.names].map(([local, { exported }]) => [local, exported])
+}
+
+// Value: protects=which export an imported name of a test stop is read as: a named import reads its own name, an alias the original export, a default import `default`, a namespace import names no one export (`*`), and type-only imports bind nothing; fails_when=an alias maps to its local name (so another module's export of that name is read, Cycle 0052 task 70), or a type-only import is taken for a runtime binding; why_new=pt3 /ship Step 11 (Claude adversarial, Codex adversarial and structured review): the inspector matched exports by the local name; seam=none (a pure function of the source text); no_claim=dynamic import() and require(), which bind no name at the import declaration
+test('an imported name of a stopped source reads the export its import declaration names', () => {
+  // Arrange
+  const source = [
+    "import db, { invoices as invoiceTable, type Invoice } from '@/db'",
+    "import * as schema from '@/db/schema'",
+    "import type { Customer } from './definitions'",
+    "import { revalidatePath } from 'next/cache'",
+    "import './setup'",
+  ].join('\n')
+
+  // Act
+  const bindings = sourceImportBindings(source)
+
+  // Assert
+  assert.deepEqual(exportsOf(bindings), [
+    ['db', 'default'],
+    ['invoiceTable', 'invoices'],
+    ['schema', '*'],
+    ['revalidatePath', 'revalidatePath'],
+  ])
+})
+
+// Value: protects=an import declaration written over several lines, with comments and a trailing comma, as formatters write long imports: each of its names is read as its export; fails_when=the clause is read on one line only, so the names of a multi-line import (nextjs-dashboard's actions.test.ts imports authenticate, createInvoice, … this way) bind nothing and their facts read unavailable; why_new=pt3 /ship Step 11 (task 70): the parser is new; seam=none; no_claim=imports inside template strings
+test('a multi-line import declaration with comments binds each of its names', () => {
+  // Arrange
+  const source = [
+    'import {',
+    '  authenticate, // signs in, then redirects',
+    '  /* the action under test */ createInvoice,',
+    "  'quoted-export' as quoted,",
+    '} from "./actions"',
+  ].join('\n')
+
+  // Act
+  const bindings = sourceImportBindings(source)
+
+  // Assert
+  assert.deepEqual(exportsOf(bindings), [
+    ['authenticate', 'authenticate'],
+    ['createInvoice', 'createInvoice'],
+    ['quoted', 'quoted-export'],
+  ])
+})
+
+// Value: protects=only real import declarations bind names: an import written in a line comment, a block comment, a template literal (a test's source fixture) or a quoted string binds nothing, so no module binding is read for a name the file never imports; fails_when=the declaration pattern runs over comments and strings, so `// import { fake } from './not-loaded'` binds `fake` and another module's export of that name is saved as the fact (Cycle 0052 task 87); why_new=hosted CodeRabbit review of 779c8adf (outside-diff, sourceImportBindings.ts:9-30); seam=none (a pure function of the source text); no_claim=regular expression literals that hold a quote, which the masking does not parse
+test('an import written in a comment or a string binds no name', () => {
+  // Arrange
+  const source = [
+    "// import { fake } from './not-loaded'",
+    "/* import { blocked } from './old'",
+    "   import { stillBlocked } from './old' */",
+    "import { db } from '@/db' // the real one, 'quoted' and // nested",
+    'const fixture = `',
+    "import { fromFixture } from './fixture'",
+    '`',
+    'const line = "import { fromString } from \'./string\'"',
+  ].join('\n')
+
+  // Act
+  const bindings = sourceImportBindings(source)
+
+  // Assert
+  assert.deepEqual(exportsOf(bindings), [['db', 'db']])
+})
+
+// Value: protects=an import written inside a nested template literal (a template in another template's ${…}, as a fixture builder writes) binds nothing: the whole outer template is no code; fails_when=the masking ends the outer template at the inner one's opening backtick and starts again at its closing one, so the inner template's lines read as code and `fake` binds (Cycle 0052 task 88); why_new=hosted CodeRabbit review of ac852a3c (Major, sourceImportBindings.ts:7); seam=none (a pure function of the source text); no_claim=regular expression literals
+test('an import written inside a nested template literal binds no name', () => {
+  // Arrange
+  const source = [
+    "import { db } from '@/db'",
+    'const fixture = `outer ${`',
+    "import { fake } from './fixture'",
+    '`} tail`',
+  ].join('\n')
+
+  // Act
+  const bindings = sourceImportBindings(source)
+
+  // Assert
+  assert.deepEqual(exportsOf(bindings), [['db', 'db']])
+})
+
+// Value: protects=a quoted export name that holds a comma or a brace stays one specifier, so its alias reads that export; fails_when=the specifiers are split at every comma, or the braces end at a brace inside quotes, so `value` binds nothing and its fact reads unavailable (Cycle 0052 task 89); why_new=hosted CodeRabbit review of ac852a3c (Minor, sourceImportBindings.ts:67); seam=none; no_claim=escaped quotes inside a quoted export name
+test('a quoted export name holding a comma or a brace stays one import specifier', () => {
+  // Arrange
+  const source =
+    "import { 'a,b' as value, 'c}d' as braced, other } from './module'"
+
+  // Act
+  const bindings = sourceImportBindings(source)
+
+  // Assert
+  assert.deepEqual(exportsOf(bindings), [
+    ['value', 'a,b'],
+    ['braced', 'c}d'],
+    ['other', 'other'],
+  ])
+})
+
+// Value: protects=a quoted string continued onto its next line by a backslash and a Windows line break (CRLF) stays a string, so a continued line that starts with an import binds nothing; fails_when=the escape skips only the carriage return, the string ends at the line feed, and the continued line reads as an import declaration whose name another module's export then answers for (Cycle 0052 task 91); why_new=hosted CodeRabbit review of d851ae4a (Minor, blankCommentsAndTemplates.ts:95); seam=none (a pure function of the source text); no_claim=template literals, which span lines without an escape
+test('a string continued by a backslash and a CRLF line break binds no name on its next line', () => {
+  // Arrange
+  const source = [
+    "import { db } from '@/db'",
+    "const line = 'first part \\",
+    'import { fake } from "./continued"\'',
+  ].join('\r\n')
+
+  // Act
+  const bindings = sourceImportBindings(source)
+
+  // Assert
+  assert.deepEqual(exportsOf(bindings), [['db', 'db']])
+})
+
+// Value: protects=a quoted string holding a raw U+2028 or U+2029 (line terminators a multiline pattern's ^ reads as line breaks) stays a string, so an import written after one inside it binds nothing; fails_when=only a line feed marks a multi-line string, the string stays as code, and the import after the separator reads as a declaration whose name another module's export answers for (Cycle 0052 task 93); why_new=hosted CodeRabbit review of 5551addd (Minor, blankCommentsAndTemplates.ts:64); seam=none (a pure function of the source text); no_claim=identifiers, which cannot hold these characters
+test('a string holding a raw line or paragraph separator binds no name after it', () => {
+  // Arrange
+  const source = [
+    "import { db } from '@/db'",
+    'const line = \'a\u2028import { fromLine } from "./line"\'',
+    'const paragraph = \'b\u2029import { fromParagraph } from "./paragraph"\'',
+  ].join('\n')
+
+  // Act
+  const bindings = sourceImportBindings(source)
+
+  // Assert
+  assert.deepEqual(exportsOf(bindings), [['db', 'db']])
+})
+
+// Value: protects=the module binding variable each declaration is read from: Vite numbers every import and re-export declaration in source order (__vite_ssr_import_<n>__), and in a file whose imports Vitest hoisted for vi.mock, the imports of other modules become __vi_import_<n>__ in order while Vitest's own import and the re-exports stay Vite's; type-only declarations take no number; fails_when=the numbering counts a type-only import or skips a side-effect import or a re-export, so a name is read from another module's binding (Cycle 0052 task 96); why_new=hosted CodeRabbit review of 267e5bce (Major): the inspector searched every binding for the name; seam=none (a pure function of the source text, matching @vitest/mocker 5's hoistMocks and Vite 8's ssrTransform); no_claim=imports the TypeScript compiler drops, which the inspector's own checks catch
+test('each run-time declaration of a stopped source names the module binding Vite or Vitest gives it', () => {
+  // Arrange
+  const source = [
+    "import { describe, vi } from 'vitest'",
+    "import type { Invoice } from './definitions'",
+    "import { type Customer } from './customers'",
+    "import './setup'",
+    "import { db } from '@/db'",
+    "export * from './shared'",
+    "export type { Row } from './rows'",
+    "import revalidate from 'next/cache'",
+  ].join('\n')
+
+  // Act
+  const { declarations, names } = sourceImportBindings(source)
+
+  // Assert
+  assert.deepEqual(
+    {
+      declarations,
+      db: names.get('db'),
+      revalidate: names.get('revalidate'),
+    },
+    {
+      declarations: [
+        {
+          plain: '__vite_ssr_import_0__',
+          hoisted: '__vite_ssr_import_0__',
+          exports: ['describe', 'vi'],
+        },
+        {
+          plain: '__vite_ssr_import_1__',
+          hoisted: '__vi_import_0__',
+          exports: [],
+        },
+        {
+          plain: '__vite_ssr_import_2__',
+          hoisted: '__vi_import_1__',
+          exports: ['db'],
+        },
+        {
+          plain: '__vite_ssr_import_3__',
+          hoisted: '__vite_ssr_import_1__',
+          exports: [],
+        },
+        {
+          plain: '__vite_ssr_import_4__',
+          hoisted: '__vi_import_2__',
+          exports: ['default'],
+        },
+      ],
+      db: { exported: 'db', declaration: 2 },
+      revalidate: { exported: 'default', declaration: 4 },
+    },
+  )
+})

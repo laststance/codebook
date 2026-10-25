@@ -28,3 +28,17 @@ test('every README section that a product message names is a heading of the pack
     [],
   )
 })
+
+// Value: protects=an agent or learner who reads the packaged README's error table for EVIDENCE_UNAVAILABLE and learns that a refused test-run continuation leaves the run paused, as the published recovery (codebook://help/errors) says; fails_when=the README's row is reworded or dropped while errors.ts keeps the paused-run advice, so the two copies of the contract disagree; why_new=pt3 /ship review pass 2 (API contract): the README is the one copy of this advice no test held; seam=none (the packaged README is read from disk); no_claim=the wording of the other rows
+test('the packaged README tells that a continuation refused for an unreadable required fact leaves the test run paused', async () => {
+  // Arrange
+  const readme = await readFile(join(__dirname, '../../README.md'), 'utf8')
+
+  // Act
+  const tellsPausedRun = readme.includes(
+    'A `codebook_continue` refused because the debugger could not read a required fact leaves the test run paused at that stop: read `nodeTest.stops` and the current `participants.server.continueArguments`, then continue with those arguments without the fact, or stop the run.',
+  )
+
+  // Assert
+  assert.equal(tellsPausedRun, true)
+})

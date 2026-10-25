@@ -59,6 +59,8 @@ type FakeRunSteps = {
   releaseFailureText?: () => string
   /** The Saved Study Limit in force and how many saved studies the library holds; the history store counts both. */
   storage?: { limit: number; savedStudies: number }
+  /** The last declared stop arrives without its required fact, as one the inspector could not read. */
+  lastStopUnread?: boolean
 }
 
 /**
@@ -82,6 +84,10 @@ async function testRunHarness(steps: FakeRunSteps = {}) {
   service.environment.build.sourceHash = 'f'.repeat(64)
   const base = harness.configuration
   const declaredStops = steps.stops ?? 1
+  // Each stop declares the required fact its fake stop carries, as the owned run's inspector would have read it (Cycle 0052 task 5: a stop without its required fact refuses the continuation that reached it).
+  const inspections: NodeTestConfiguration['inspections'] = [
+    { path: 'delayMs', mode: 'value', required: true },
+  ]
   const configuration: NodeTestConfiguration = {
     version: 1,
     adapter: 'vitest-node',
@@ -90,14 +96,14 @@ async function testRunHarness(steps: FakeRunSteps = {}) {
     testTitles: ['job scheduler', 'runs a delayed job after its timer'],
     testHash: 'a'.repeat(64),
     source: base.source,
-    inspections: base.inspections.slice(0, 1),
+    inspections,
     ...(declaredStops === 2
       ? {
           additionalStops: [
             {
               ...base.source,
               anchorIndex: 0,
-              inspections: base.inspections.slice(0, 1),
+              inspections,
             },
           ],
         }
@@ -113,9 +119,10 @@ async function testRunHarness(steps: FakeRunSteps = {}) {
     source: base.source,
     frame: { id: 10 + index, name: 'schedule', line: 1, column: 1 },
     variables: [{ name: 'delayMs', value: '5000' }],
-    facts: [
-      { path: 'delayMs', mode: 'value', display: '5000', type: 'number' },
-    ],
+    facts:
+      steps.lastStopUnread && index === declaredStops - 1
+        ? []
+        : [{ path: 'delayMs', mode: 'value', display: '5000', type: 'number' }],
     debuggerSnapshot: {
       version: 1,
       frames: [
@@ -1499,7 +1506,7 @@ test('a learning material saved while the test run records is kept on the run an
   }
 })
 
-// Value: protects=codebook_explain_node_history telling a stale material revision (IDEMPOTENCY_CONFLICT) from a citation that merely names a path containing the words "revision changed" (INVALID_REFERENCE stays); fails_when=the conflict is recognized by searching the error text, so a stop in src/revision changed.ts turns INVALID_REFERENCE into IDEMPOTENCY_CONFLICT, or a real stale revision stops being a conflict; why_new=explainNodeHistory mapped the error by its text (F44); seam=the history store's save is replaced by one that throws; no_claim=the store's own revision check (nodeTestHistoryStore tests)
+// Value: protects=codebook_explain_node_history telling a stale material revision (IDEMPOTENCY_CONFLICT) from a citation that merely names a path containing the words "revision changed" (INVALID_REFERENCE stays); fails_when=the conflict is recognized by searching the error text, so a stop in src/revision changed.ts turns INVALID_REFERENCE into IDEMPOTENCY_CONFLICT, or a real stale revision stops being a conflict; why_new=explainNodeHistory mapped the error by its text (F44); seam=the history store's save is replaced by one that throws, and its folder check by one that finds the folder; no_claim=the store's own revision check (nodeTestHistoryStore tests)
 test('explain_node_history answers IDEMPOTENCY_CONFLICT for a stale revision and keeps INVALID_REFERENCE for a citation whose path says "revision changed"', async () => {
   // Arrange
   const run = await testRunHarness()
@@ -1510,6 +1517,8 @@ test('explain_node_history answers IDEMPOTENCY_CONFLICT for a stale revision and
   ])
   const input = { studyId, expectedRevision: 0, content }
   try {
+    // The store holds a folder for the id, so the save is reached (an unknown id is refused before it, Cycle 0052 task 60).
+    store.holdsHistoryFolder = () => true
     store.saveLearningMaterial = async () => {
       throw new StudyError(
         'INVALID_REFERENCE',
@@ -2055,6 +2064,98 @@ test('a continuation that finishes after the deadline marked the test failed lea
       run.service.state(record).error?.message,
       'Study wall deadline expired; history only.',
     )
+  } finally {
+    await run.harness.close()
+  }
+})
+
+// Value: protects=an agent whose continuation reaches a stop without its required fact after the whole-run deadline already failed the test: the answer does not say the run stays paused, and the run reads failed with the deadline; fails_when=continueNodeTest refuses with EVIDENCE_UNAVAILABLE "The run stays paused at this stop" for a run that is failed and released; why_new=pt3 /ship review (state machines): the refusal was computed from the journaled stop whatever the run's phase; seam=the owned run's advance is held until the deadline passed, and its last stop carries no fact; no_claim=the real debugger's timing
+test('a continuation that reaches a stop without its required fact after the deadline failed the test does not say the run stays paused', async () => {
+  // Arrange
+  let nowMs = 1_000_000
+  let letAdvanceFinish!: () => void
+  const advanceHeld = new Promise<void>((resolve) => {
+    letAdvanceFinish = resolve
+  })
+  const run = await testRunHarness({
+    stops: 2,
+    advanceHeld,
+    now: () => nowMs,
+    lastStopUnread: true,
+  })
+  try {
+    const { record } = await run.start()
+    const advancing = continueCurrentPause(run.service, record)
+    const answer = advancing.then(
+      () => 'answered',
+      (error: unknown) =>
+        error instanceof StudyError
+          ? `${error.code}: ${error.message}`
+          : String(error),
+    )
+    await waitUntil(() => record.nodePhase === 'advancing', 'the advance')
+    nowMs = record.deadlineAt + 1
+
+    // Act
+    run.service.maintain()
+    letAdvanceFinish()
+    const continuation = await answer
+    await waitUntil(() => record.stopped, 'the run released')
+
+    // Assert: the continuation is answered as before task 5 (F77); the run resource names the deadline.
+    assert.equal(continuation, 'answered')
+    assert.equal(record.nodePhase, 'failed')
+    assert.equal(
+      run.service.state(record).error?.message,
+      'Study wall deadline expired; history only.',
+    )
+  } finally {
+    await run.harness.close()
+  }
+})
+
+// Value: protects=an agent whose continuation reaches a stop without its required fact while the learner's Stop is already under way: the answer does not say the run stays paused, and the run ends stopped; fails_when=continueNodeTest refuses with EVIDENCE_UNAVAILABLE "The run stays paused at this stop" for a run that is being stopped; why_new=pt3 /ship review pass 2 (state machines, testing): the guard's stopping branch had no test; seam=the history writer's journal write of the reached stop, held until the Stop began, and a last stop without its fact; no_claim=a stop that ends before the continuation settles, which the run's own barrier rules out
+test('a continuation that reaches a stop without its required fact while a stop is under way does not say the run stays paused', async () => {
+  // Arrange
+  const run = await testRunHarness({ stops: 2, lastStopUnread: true })
+  try {
+    const { record } = await run.start()
+    const writer = record.nodeHistoryWriter!
+    const appendStop = writer.appendStop.bind(writer)
+    let reachWrite!: () => void
+    let letWriteFinish!: () => void
+    const writeReached = new Promise<void>((resolve) => {
+      reachWrite = resolve
+    })
+    const writeMayFinish = new Promise<void>((resolve) => {
+      letWriteFinish = resolve
+    })
+    writer.appendStop = async (stop): Promise<void> => {
+      reachWrite()
+      await writeMayFinish
+      return appendStop(stop)
+    }
+    const answer = continueCurrentPause(run.service, record).then(
+      () => 'answered',
+      (error: unknown) =>
+        error instanceof StudyError
+          ? `${error.code}: ${error.message}`
+          : String(error),
+    )
+    await writeReached
+
+    // Act: the learner's Stop begins while the reached stop is being journaled.
+    const stopping = run.service
+      .stop({ instanceId: run.service.instanceId, runId: record.id })
+      .catch(() => undefined)
+    letWriteFinish()
+    const continuation = await answer
+    await stopping
+
+    // Assert
+    assert.equal(continuation, 'answered')
+    assert.equal(record.stopped, true)
+    assert.equal(record.error, undefined)
   } finally {
     await run.harness.close()
   }
