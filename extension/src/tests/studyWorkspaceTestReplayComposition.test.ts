@@ -16,6 +16,7 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { StudyViewMessage } from '../ui/studyHtml'
 
 import {
+  readerSeams,
   recordedReaderHarness,
   workspaceHarness,
 } from './studyWorkspaceHarness'
@@ -1701,7 +1702,11 @@ test('a test replay opened during a same-study Reload closes the reloading brows
 
     // Act: the learner opens the test replay while the Reload still loads; the load goes on afterwards.
     const entry = harness.reader.openLearningReplay(history.studyId)
-    await new Promise<void>((resolve) => setImmediate(resolve))
+    await waitUntil(
+      () => noticesShown === 1,
+      'the one-replay-at-a-time notice is shown',
+      READER_RESULT_BOUND_MS,
+    )
     release()
     await Promise.all([entry, reload])
     await harness.controller.settle()
@@ -1716,6 +1721,53 @@ test('a test replay opened during a same-study Reload closes the reloading brows
       },
       { noticesShown: 1, testReplay: history.studyId, recording: undefined },
     )
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
+// Value: protects=the reader's periodic refresh during a same-study Reload leaves the Application pane on the recording it reloads: no Live or Study content is drawn there while the summary still shows the browser replay; fails_when=refreshPresentation renders the selection during the Reload and presentApplication writes non-recording content into the pane (local CodeRabbit round 6, major); why_new=Cycle 0052 task 18's Reload mark; seam=the reload held at its debugger replacement, the reader's refresh; no_claim=the native pane's pixels
+test('a refresh during a same-study Reload keeps the Application pane on the recording', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  let release = (): void => {}
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const reader = harness.reader as unknown as {
+      replaceUnavailableReplayDebugger: (signal?: AbortSignal) => Promise<void>
+    }
+    const replace = reader.replaceUnavailableReplayDebugger.bind(harness.reader)
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let entered = (): void => {}
+    const reloadWaits = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    reader.replaceUnavailableReplayDebugger = async (
+      signal?: AbortSignal,
+    ): Promise<void> => {
+      entered()
+      await held
+      return replace(signal)
+    }
+    const application = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')!
+    const reload = harness.reader.action('reload-recording')
+    await reloadWaits
+    const documentBeforeRefresh = application.webview.html
+
+    // Act
+    await readerSeams(harness).refresh()
+    const documentAfterRefresh = application.webview.html
+    release()
+    await reload
+
+    // Assert
+    assert.equal(documentAfterRefresh, documentBeforeRefresh)
   } finally {
     release()
     await harness.close()

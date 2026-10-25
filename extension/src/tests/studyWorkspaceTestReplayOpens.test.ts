@@ -805,30 +805,8 @@ test('restoring the panel after a browser study was chosen from a maximized test
   // Arrange
   const harness = await recordedReaderHarness(true)
   try {
-    await openReplayBesideBrowserStudy(harness)
-    harness.maximizePanel()
-    harness.receivePlaybackPanel({
-      type: 'history',
-      revision: lastView(harness)!.revision,
-      studyId: harness.studyId,
-    })
-    await waitUntil(
-      () =>
-        harness.reader.inspect().view?.nodeHistory === undefined &&
-        harness.reader.inspect().view?.model.selection.studyId ===
-          harness.studyId &&
-        !harness.reader.inspect().view?.loading,
-      'the browser study is chosen',
-      READER_RESULT_BOUND_MS,
-    )
-
-    const slotTabCount = (): number =>
-      harness.groups
-        .flatMap((group) => group.tabs)
-        .filter((tab) =>
-          JSON.stringify(tab.input).includes('/node-history-slot/'),
-        ).length
-    const slotTabsWhileMaximized = slotTabCount()
+    await chooseBrowserStudyWithPanelMaximized(harness)
+    const slotTabsWhileMaximized = slotTabCount(harness)
 
     // Act
     harness.restorePanel()
@@ -836,7 +814,7 @@ test('restoring the panel after a browser study was chosen from a maximized test
     await waitUntil(
       () =>
         harness.panelColumn('codebook.studyContext') !== undefined &&
-        slotTabCount() === 0,
+        slotTabCount(harness) === 0,
       'the Study pane shows and the slot tab closes',
       READER_RESULT_BOUND_MS,
     )
@@ -856,22 +834,7 @@ test('a test replay opened while a chosen browser study waits for the editor are
     const second = await saveTwoStopNodeHistory(
       harness.service.nodeHistoryStore!,
     )
-    await openReplayBesideBrowserStudy(harness)
-    harness.maximizePanel()
-    harness.receivePlaybackPanel({
-      type: 'history',
-      revision: lastView(harness)!.revision,
-      studyId: harness.studyId,
-    })
-    await waitUntil(
-      () =>
-        harness.reader.inspect().view?.nodeHistory === undefined &&
-        harness.reader.inspect().view?.model.selection.studyId ===
-          harness.studyId &&
-        !harness.reader.inspect().view?.loading,
-      'the browser study is chosen',
-      READER_RESULT_BOUND_MS,
-    )
+    await chooseBrowserStudyWithPanelMaximized(harness)
 
     // Act
     await harness.reader.openLearningReplay(second.studyId)
@@ -887,14 +850,7 @@ test('a test replay opened while a chosen browser study waits for the editor are
     await readerSeams(harness).refresh()
 
     // Assert
-    assert.equal(
-      harness.groups
-        .flatMap((group) => group.tabs)
-        .filter((tab) =>
-          JSON.stringify(tab.input).includes('/node-history-slot/'),
-        ).length,
-      1,
-    )
+    assert.equal(slotTabCount(harness), 1)
   } finally {
     await harness.close()
   }

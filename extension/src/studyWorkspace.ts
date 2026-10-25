@@ -10820,6 +10820,8 @@ export class StudyWorkspace {
       if (this.selectedNodeHistory !== undefined) return 'publish'
       if (
         !this.recordingActive &&
+        // A same-study Reload keeps the recording it loads on every surface until its load ends (Cycle 0052 task 18).
+        this.recordingReloadStudyId === undefined &&
         this.repositoryNavigation === undefined &&
         !this.presentationTransition &&
         // A saved study chosen with the editor area hidden is shown by showStudyAwaitingEditorArea once the area is back.

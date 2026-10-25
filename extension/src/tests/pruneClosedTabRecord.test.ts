@@ -71,3 +71,26 @@ test('a recorded tab object the editor no longer shows gives its address', () =>
   // Assert
   assert.deepEqual([...addresses], ['codebook-source://key/b'])
 })
+
+// Value: protects=a closed rebuilt tab ending every stale entry of its address, so an entry the record took twice for one address (once per rebuilt object) never survives to close a tab opened later there; fails_when=only one of two stale entries of the address is removed (local CodeRabbit round 6, minor); why_new=Cycle 0052 task 15; seam=none; no_claim=Cursor's rebuild itself
+test('a closed rebuilt tab ends every stale entry of its address', () => {
+  // Arrange
+  const first: FakeTab = { address: 'codebook-source://key/a' }
+  const second: FakeTab = { address: 'codebook-source://key/a' }
+  const closedRebuilt: FakeTab = { address: 'codebook-source://key/a' }
+  const record = new Map([
+    [first, 'codebook-source://key/a'],
+    [second, 'codebook-source://key/a'],
+  ])
+
+  // Act
+  const pruned = pruneClosedTabRecord(
+    record,
+    [closedRebuilt],
+    new Set(),
+    addressOf,
+  )
+
+  // Assert
+  assert.deepEqual([...pruned], [])
+})
