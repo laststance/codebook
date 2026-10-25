@@ -266,3 +266,41 @@ test('a history’s learning-material resource whose history is removed while it
     await harness.close()
   }
 })
+
+// Value: protects=an agent reading a test history's own page while the history is removed (after its journal was read, before its summary was): the resource is refused as NOT_FOUND, not answered with every summary value read as none; fails_when=the summary read finds no files because the folder is gone and the page answers testResult none and learningCoverage none for a history that no longer exists (Cycle 0052 task 86); why_new=hosted CodeRabbit on PR #127 (outside-diff, resources.ts:154): tasks 75 and 78 covered the journal and the material reads only; seam=a store whose summary read removes the history's folder first; no_claim=a history whose summary cannot be verified while its folder stays, which still reads none
+test('a history page whose history is removed while its summary is read is refused as NOT_FOUND, not answered with empty summary values', async () => {
+  // Arrange: the history's folder is gone when its summary is read.
+  const { harness, store, studyId } = await serviceWithOneHistory()
+  const historyFolder = join(
+    harness.directory,
+    '.learning',
+    'node-tests.v1',
+    studyId,
+  )
+  const summarize = store.summarize.bind(store)
+  store.summarize = async (...input) => {
+    await rm(historyFolder, { recursive: true, force: true })
+    return summarize(...input)
+  }
+  try {
+    // Act
+    const answer = await readResource(
+      harness.service,
+      `codebook://node-history/${studyId}`,
+    ).then(
+      () => 'answered',
+      (error: unknown) =>
+        error instanceof StudyError
+          ? { code: error.code, message: error.message }
+          : String(error),
+    )
+
+    // Assert
+    assert.deepEqual(answer, {
+      code: 'NOT_FOUND',
+      message: `No Node test history ${studyId} is saved in this workspace. Read codebook://node-history and copy the studyId or historyUri of the history you mean.`,
+    })
+  } finally {
+    await harness.close()
+  }
+})
