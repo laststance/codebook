@@ -20031,15 +20031,17 @@ export class StudyWorkspace {
             }
             view.webview.html = studyHtml('moments')
             // Disposed or replaced panel documents cannot send actions into a later replay.
-            view.webview.onDidReceiveMessage((message) => {
-              if (this.moments === view)
-                void this.receivePaneMessage(message, 'moments', view).catch(
-                  (error) => {
-                    if (this.moments === view)
-                      this.report(this.panelFailureKind(message), error)
-                  },
-                )
-            })
+            // The listener returns its handling, which the editor ignores, so a test can tell when a message's handling ended (Cycle 0052 task 8).
+            view.webview.onDidReceiveMessage((message) =>
+              this.moments === view
+                ? this.receivePaneMessage(message, 'moments', view).catch(
+                    (error) => {
+                      if (this.moments === view)
+                        this.report(this.panelFailureKind(message), error)
+                    },
+                  )
+                : undefined,
+            )
             view.onDidDispose(() => {
               if (this.moments === view) {
                 this.moments = undefined

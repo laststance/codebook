@@ -3813,7 +3813,7 @@ export async function workspaceHarness(
     number,
     StudyViewMessage | undefined
   >()
-  const playbackPanelListeners = new Set<(message: unknown) => void>()
+  const playbackPanelListeners = new Set<(message: unknown) => unknown>()
   const playbackPanelVisibilityListeners = new Set<() => void>()
   const playbackPanelDisposeListeners = new Set<() => void>()
   const playbackPanel = {
@@ -5225,6 +5225,12 @@ export async function workspaceHarness(
     },
     receivePlaybackPanel(message: unknown): void {
       for (const listener of playbackPanelListeners) listener(message)
+    },
+    /** Sends a bottom panel message as {@link receivePlaybackPanel} does and resolves once the reader's handling of it ended, settled either way, so a test awaits that end instead of a fixed time. @example await harness.receivePlaybackPanelHandled(message) */
+    async receivePlaybackPanelHandled(message: unknown): Promise<void> {
+      await Promise.allSettled(
+        [...playbackPanelListeners].map((listener) => listener(message)),
+      )
     },
     async resolveRestoredObservedMoments(): Promise<void> {
       assert.ok(playbackPanelProvider)

@@ -858,13 +858,26 @@ test('choosing another saved test replay while the first plays with its summary 
       studyId: first.studyId,
       action: 'play',
     })
+    const firstPlayback = harness.reader['nodeHistoryPlaybackController']!
+    await waitUntil(
+      () => firstPlayback.state().mode === 'playing',
+      'the first replay plays',
+      READER_RESULT_BOUND_MS,
+    )
 
     // Act
     await harness.reader.openLearningReplay(second.studyId)
     await landsOn(harness, 2, 'the second replay lands on its first stop')
     const shownAfterOpen = lastView(harness)?.nodeHistory?.header.studyId
-    // gstack-timing-ok: a stopped timer is shown by nothing happening; 600 ms outlasts the whole 400 ms history's playback.
-    await new Promise((resolve) => setTimeout(resolve, 600))
+    // The first replay's playback is retired: its timer stops with its controller, which holds no event any more (Cycle 0052 task 8: no fixed wait).
+    await waitUntil(
+      () =>
+        firstPlayback['timer'] === undefined &&
+        firstPlayback.state().mode === 'paused' &&
+        firstPlayback.state().endMs === undefined,
+      "the first replay's playback is retired",
+      READER_RESULT_BOUND_MS,
+    )
 
     // Assert
     assert.equal(shownAfterOpen, second.studyId)
@@ -889,12 +902,25 @@ test('Return to Live while a test replay plays with its summary hidden stops its
       studyId: history.studyId,
       action: 'play',
     })
+    const playback = harness.reader['nodeHistoryPlaybackController']!
+    await waitUntil(
+      () => playback.state().mode === 'playing',
+      'the test replay plays',
+      READER_RESULT_BOUND_MS,
+    )
 
     // Act
     await harness.reader.action('return-current')
     const messagesAtReturn = harness.playbackPanelMessages.length
-    // gstack-timing-ok: a stopped timer is shown by nothing happening; 600 ms outlasts the whole 400 ms history's playback.
-    await new Promise((resolve) => setTimeout(resolve, 600))
+    // The retired replay's timer stops with its controller, which holds no event any more (Cycle 0052 task 8: no fixed wait).
+    await waitUntil(
+      () =>
+        playback['timer'] === undefined &&
+        playback.state().mode === 'paused' &&
+        playback.state().endMs === undefined,
+      "the test replay's playback is retired",
+      READER_RESULT_BOUND_MS,
+    )
 
     // Assert
     assert.equal(
@@ -1018,7 +1044,7 @@ test('moves from the bottom panel and the Learning summary while a move presents
   try {
     const history = await openByOpenReplay(harness)
     const held = harness.holdHistoricalDebugPresentation(true)
-    harness.receivePlaybackPanel({
+    const supersededMove = harness.receivePlaybackPanelHandled({
       type: 'node-history-step',
       revision: lastView(harness)!.revision,
       studyId: history.studyId,
@@ -1037,8 +1063,8 @@ test('moves from the bottom panel and the Learning summary while a move presents
     })
     await landsOn(harness, 5, 'the latest request reaches the result')
     held.reject(new Error('Historical debugger presentation was superseded.'))
-    // gstack-timing-ok: the superseded presentation's rejection settles in the next turns, and the case shows that it reports nothing.
-    await new Promise((resolve) => setTimeout(resolve, 100))
+    // The superseded move's own handling ends after its presentation's rejection (Cycle 0052 task 8: no fixed wait).
+    await supersededMove
 
     // Assert
     assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 5)
