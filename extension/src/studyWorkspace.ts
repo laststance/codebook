@@ -11594,8 +11594,8 @@ export class StudyWorkspace {
   }
 
   /**
-   * Replaces the private roots (storage folder, workspace, home directory) in a stored reader line and keeps the error name it starts with, so the Study pane's line reads as before apart from the roots; called by {@link message} for a refused test replay control's line (Cycle 0052 task 48).
-   * @param line - The stored line, `String(error)`.
+   * Replaces the private roots (storage folder, workspace, home directory) in a reader line and keeps the error name it starts with, so the Study pane's line reads as before apart from the roots; called by {@link report} when it stores a refused test replay control's line, while the service still names the roots, so no later publish shows them (Cycle 0052 tasks 21 and 48, and pt2 /ship Step 11: a publish after a runtime release has no roots to replace).
+   * @param line - The failure's string form, `String(error)`.
    * @returns The line with its roots replaced.
    * @example this.withoutPrivateRoots("Error: EACCES: open '/Users/ada/…/storage/a.json'") // => "Error: EACCES: open '<storage>/a.json'"
    */
@@ -11605,19 +11605,6 @@ export class StudyWorkspace {
       errorName +
       sanitizeCause(line, this.service?.causeRoots ?? { storage: [] })
     )
-  }
-
-  /**
-   * Words the refusal of a test replay control for the shared transport's status line: its cause with the storage folder, the workspace and the home directory replaced, as every other replay failure is published; read by {@link message}.
-   * @returns The sanitized sentence, or `undefined` while no test replay control is refused.
-   * @example this.publishedNodeHistoryRefusal() // => "EACCES: permission denied, open '<storage>/decision.json'"
-   */
-  private publishedNodeHistoryRefusal(): string | undefined {
-    const refusal = this.errors.get('node-history-control')
-    // The reader stores a refusal as the error's string form; sanitizeCause drops its error name and its private roots.
-    return refusal === undefined
-      ? undefined
-      : sanitizeCause(refusal, this.service?.causeRoots ?? { storage: [] })
   }
 
   /**
@@ -13395,6 +13382,8 @@ export class StudyWorkspace {
       live = record && this.service?.state(record)
     // A same-study Reload that is loading or failed still shows its browser replay: the views read its playback state, loading, failure and recovery (Cycle 0052 task 36).
     const browserReplay = this.browserReplayShown()
+    // A refused test replay control's stored line has lost the private roots already ({@link report}, Cycle 0052 tasks 21 and 48).
+    const nodeHistoryRefusal = this.errors.get('node-history-control')
     const playbackState = browserReplay ? this.playback?.state() : undefined
     const bundle = browserReplay
       ? forSource || this.playbackPresentingReady || playbackState?.cleared
@@ -13581,8 +13570,9 @@ export class StudyWorkspace {
           (entry) => entry.type === 'stop' && !nodeStopSourceMatches(entry),
         )
         .map((entry) => entry.sequence),
-      // The host's sentence for a refused or failed test replay move, read in the shared transport's status line with the summary hidden too (DS-G); its cause loses the private roots, as the replay's other failures do (Cycle 0052 task 21).
-      nodeHistoryRefusal: this.publishedNodeHistoryRefusal(),
+      // The host's sentence for a refused or failed test replay move, read in the shared transport's status line with the summary hidden too (DS-G).
+      nodeHistoryRefusal:
+        nodeHistoryRefusal && withoutErrorName(nodeHistoryRefusal),
       // The time readout and the slider follow the moment being selected, as the Study position does, until the commit (F386).
       nodeHistoryPlayback: this.nodeHistoryPlaybackController && {
         ...this.nodeHistoryPlaybackController.state(),
@@ -13672,12 +13662,8 @@ export class StudyWorkspace {
           !this.replayApplicationCovered,
         ),
       errors: [
-        // A refused test replay control's line loses the private roots, as its copy on the transport's status line does (Cycle 0052 task 48).
-        ...[...this.errors.entries()].map(([kind, line]) =>
-          kind === 'node-history-control'
-            ? this.withoutPrivateRoots(line)
-            : line,
-        ),
+        // A refused test replay control's line was stored without the private roots ({@link report}, Cycle 0052 task 48).
+        ...this.errors.values(),
         // The note of a study a newer Codebook saved is no failure Retry storage can answer; the entry itself carries it.
         ...this.catalog.flatMap((entry) =>
           entry.reason && entry.format !== 'newer' ? [entry.reason] : [],
@@ -26257,12 +26243,18 @@ export class StudyWorkspace {
   /**
    * Keeps storage, control and renderer failures distinct in the learner-facing status: one line per kind, published at once; every failure path of the reader calls it.
    * @param kind - The line the failure replaces; {@link READER_ERROR_KINDS} says whether Retry storage / refresh or the learner's next choice answers it.
-   * @param error - The failure, shown as its string form.
+   * @param error - The failure, shown as its string form; a refused test replay control's line ('node-history-control') is stored with the private roots replaced ({@link withoutPrivateRoots}), while the service still names them.
    * @example this.report('archive', error)
    */
   private report(kind: ReaderErrorKind, error: unknown): void {
     if (CHOICE_RETIRED_ERROR_KINDS.has(kind)) this.controlRefusals++
-    this.errors.set(kind, String(error))
+    // A refused test replay control's line loses the private roots now, while the service names them, so a publish after a runtime release shows none of them (Cycle 0052 tasks 21 and 48).
+    this.errors.set(
+      kind,
+      kind === 'node-history-control'
+        ? this.withoutPrivateRoots(String(error))
+        : String(error),
+    )
     if (kind === 'presentation') this.clearReadyReplayWarning()
     this.publish()
   }

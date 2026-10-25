@@ -3670,3 +3670,51 @@ test('the Study pane’s line of a refused test replay control shows its cause w
     await harness.close()
   }
 })
+
+// Value: protects=a refused test replay control's cause keeps the storage folder replaced after the runtime is released, on the transport's status line and on the Study pane's line, so a later publish never shows the learner's storage path; fails_when=the line is sanitized only at publish with the service's roots, so a publish after the release (no service, no roots) carries the stored `String(error)` with the path (Cycle 0052 pt2 /ship Step 11, Claude adversarial finding 2); why_new=tasks 21 and 48 published while the service was attached; seam=the store's saveLearningDecision rejects with a path inside the learning directory, then the reader's own runtime release and a direct publish standing for any later view change; no_claim=the line's rendering
+test('a refused test replay control’s cause stays without the storage folder after the runtime is released', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await openByOpenReplay(harness)
+    const store = harness.service.nodeHistoryStore!
+    context.mock.method(store, 'saveLearningDecision', async () => {
+      throw new Error(
+        `EACCES: permission denied, open '${store.learningDirectory}/decision.json'`,
+      )
+    })
+    harness.receivePlaybackPanel({
+      type: 'node-history-understanding',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      understood: true,
+    })
+    await waitUntil(
+      () => lastView(harness)?.nodeHistoryRefusal !== undefined,
+      'the refusal is published',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Act: the runtime is released, and the reader publishes again, as any later view change makes it.
+    await harness.reader.retire(harness.service)
+    harness.reader['publish']()
+
+    // Assert: the views still show the cause with the storage folder replaced; the view is a clone from the webview's realm, so its lines are compared as a plain array.
+    const shown = lastView(harness)
+    assert.deepEqual(
+      {
+        errors: [...(shown?.errors ?? [])],
+        refusal: shown?.nodeHistoryRefusal,
+      },
+      {
+        errors: [
+          "Error: EACCES: permission denied, open '<storage>/decision.json'",
+        ],
+        refusal: "EACCES: permission denied, open '<storage>/decision.json'",
+      },
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
