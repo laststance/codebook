@@ -17,6 +17,7 @@ import { readWikiPublicationIdentity } from '../../utils/readWikiPublicationIden
 import { readWikiPublishToken } from '../../utils/readWikiPublishToken'
 import { readWikiWatchStamp } from '../../utils/readWikiWatchStamp'
 import * as refreshCursorMcpCatalogModule from '../../utils/refreshCursorMcpCatalog'
+import * as runUnderAbortSignalModule from '../../utils/runUnderAbortSignal'
 import { startWikiChatUpdate } from '../../utils/startWikiChatUpdate'
 import { waitForWikiPublish } from '../../utils/waitForWikiPublish'
 import type { WikiUpdateStatus } from '../../utils/wikiUpdateRun'
@@ -248,6 +249,8 @@ export async function openWikiUpdateWindow(options: {
   outputLines: string[]
   /** How often the extension brought Output › Codebook to the front (`show()` on its channel). */
   outputShownCount(): number
+  /** How many Cursor skill steps have begun to wait under their stop and bound: a step that follows an unsettled earlier one is then at its wait for that step. */
+  skillStepsStartedCount(): number
   /** Runs one of the extension's registered commands with the arguments a menu or a row passes, as the Command Palette does. */
   runCommand(name: string, ...args: unknown[]): Promise<void>
   /** What the editor shows of the LLM Wiki view. */
@@ -340,6 +343,7 @@ export async function openWikiUpdateWindow(options: {
   const skillCalls: string[] = []
   const outputLines: string[] = []
   let outputShown = 0
+  let skillStepsStarted = 0
   let markerReleaseFailuresLeft = options.markerReleaseFailures ?? 0
   let markerReserveFailuresLeft = options.markerReserveFailures ?? 0
   const progressTitles: string[] = []
@@ -764,6 +768,17 @@ export async function openWikiUpdateWindow(options: {
           return { status: 'removed' }
         },
       },
+      // Each Cursor skill step is counted when it begins to wait under its stop and bound; the step's body has by then run up to its first wait (for an earlier step, when one has not settled).
+      './utils/runUnderAbortSignal': {
+        ...runUnderAbortSignalModule,
+        runUnderAbortSignal: <Result>(
+          run: () => Promise<Result>,
+          signal: AbortSignal,
+        ): Promise<Result> => {
+          skillStepsStarted += 1
+          return runUnderAbortSignalModule.runUnderAbortSignal(run, signal)
+        },
+      },
       // The removal's catalog step refuses at once, so a test of the skill's removal reads its warning and touches no Cursor config.
       './utils/refreshCursorMcpCatalog': {
         ...refreshCursorMcpCatalogModule,
@@ -987,6 +1002,7 @@ export async function openWikiUpdateWindow(options: {
     skillCalls,
     outputLines,
     outputShownCount: (): number => outputShown,
+    skillStepsStartedCount: (): number => skillStepsStarted,
     async runCommand(name: string, ...args: unknown[]): Promise<void> {
       const command = commands.get(name)
       if (!command) throw new Error(`The window registered no ${name}.`)

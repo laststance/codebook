@@ -5422,7 +5422,7 @@ test('a three-row diagram whose labels need no stacking keeps the label boxes of
   }
 })
 
-// Value: protects=Cycle 0056 pass 3 A4(2), the label of an edge that crosses a row; fails_when=a conditional edge from the top to the bottom node of a column puts its label on the node between them, where the node paints over it; no_claim=the connector line, which an author's grid placement decides; seam=a column of three nodes with one edge across two rows
+// Value: protects=Cycle 0056 pass 3 A4(2), the label of an edge that crosses a row; fails_when=a conditional edge from the top to the bottom node of a column puts its label on the node between them, where the node paints over it, or a node or label is not drawn at all; no_claim=the connector line, which an author's grid placement decides; seam=a column of three nodes with one edge across two rows
 test('the label of an edge across two rows stays clear of the node between them', async () => {
   // Arrange
   const root = await realpath(
@@ -5438,14 +5438,21 @@ test('the label of an edge across two rows stays clear of the node between them'
     // Act
     const boxes = diagramBoxes(await renderedDiagramHtml(root, manifest))
 
-    // Assert
-    assert.deepEqual(overlappingBoxes(boxes), [])
+    // Assert: every node and label was drawn, so no missing box passes as no overlap.
+    assert.deepEqual(
+      {
+        nodes: boxes.nodes.map(({ id }) => id).sort(),
+        labels: boxes.labels.map(({ id }) => id).sort(),
+        overlaps: overlappingBoxes(boxes),
+      },
+      { nodes: ['a', 'b', 'c'], labels: ['e1', 'e4'], overlaps: [] },
+    )
   } finally {
     await rm(root, { recursive: true, force: true })
   }
 })
 
-// Value: protects=Cycle 0056 pass 3 A4(2), a column of three rows with a stacked pair and an edge across two rows; fails_when=any label box covers a node or another label box once the label bands span every edge pair; no_claim=how a browser paints the SVG; seam=the stacked pair between the lower two nodes and the crossing edge from the top node
+// Value: protects=Cycle 0056 pass 3 A4(2), a column of three rows with a stacked pair and an edge across two rows; fails_when=any label box covers a node or another label box once the label bands span every edge pair, or a node or label is not drawn at all; no_claim=how a browser paints the SVG; seam=the stacked pair between the lower two nodes and the crossing edge from the top node
 test('a column with a stacked pair and an edge across two rows draws no label over a node or another label', async () => {
   // Arrange
   const root = await realpath(
@@ -5463,8 +5470,19 @@ test('a column with a stacked pair and an edge across two rows draws no label ov
     // Act
     const boxes = diagramBoxes(await renderedDiagramHtml(root, manifest))
 
-    // Assert
-    assert.deepEqual(overlappingBoxes(boxes), [])
+    // Assert: every node and label was drawn, so no missing box passes as no overlap.
+    assert.deepEqual(
+      {
+        nodes: boxes.nodes.map(({ id }) => id).sort(),
+        labels: boxes.labels.map(({ id }) => id).sort(),
+        overlaps: overlappingBoxes(boxes),
+      },
+      {
+        nodes: ['a', 'b', 'c'],
+        labels: ['e1', 'e2', 'e3', 'e4'],
+        overlaps: [],
+      },
+    )
   } finally {
     await rm(root, { recursive: true, force: true })
   }

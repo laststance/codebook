@@ -814,7 +814,7 @@ test('a Cursor skill verify that fails after Stop LLM Wiki Run does not go on to
   assert.deepEqual(project.skillCalls, ['verify'])
 })
 
-// Value: protects=Cycle 0056 L3, one deploy of the managed Cursor skill at a time; fails_when=a press after Stop starts another verify and deploy while the stopped step's deploy still writes the skill; no_claim=the stopped step's own end (tests above); seam=a deploy the test settles
+// Value: protects=Cycle 0056 L3, one deploy of the managed Cursor skill at a time; fails_when=a press after Stop starts another verify and deploy while the stopped step's deploy still writes the skill; no_claim=the stopped step's own end (tests above); seam=a deploy the test settles, and the harness's count of skill steps that began their wait
 test('a Generate pressed after Stop waits for the stopped deploy to settle, so two deploys never run at once', async (context) => {
   // Arrange
   let runningDeploys = 0
@@ -852,8 +852,13 @@ test('a Generate pressed after Stop waits for the stopped deploy to settle, so t
   const secondPress = project
     .runCommand(GENERATE_COMMAND)
     .catch(() => undefined)
+  // The second step has begun and stands at its wait for the stopped one, whose deploy has not settled.
+  await waitUntil(
+    () => project.skillStepsStartedCount() === 2,
+    'the second skill step’s wait for the first',
+    6_000,
+  )
   await flushQueuedReactions()
-  await new Promise((resolveWait) => setTimeout(resolveWait, 100))
   const callsWhileFirstSettles = [...project.skillCalls]
   settleDeploys[0]?.()
   await waitUntil(() => settleDeploys.length === 2, 'the second deploy', 6_000)
