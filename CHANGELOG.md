@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.2.47.0] - 2026-10-27 (development candidate)
+
+Cycle 0056 ([Issue #135](https://github.com/laststance/codebook/issues/135)), a bug-fix cycle, first of its three pull requests: the LLM Wiki run lifecycle says what happens on a joined, stopped or bounded start and releases what it claimed. The LLM Wiki view and the reader (second pull request) and the Cursor test-replay fix with the native trial N56 (third) follow.
+
+**Starting and stopping an LLM Wiki run.**
+
+- **A press that joins a start under way says so once**: a second Generate or Update LLM Wiki (or the reader's **Update**) during a start shows `Codebook is already starting an LLM Wiki <generation|update> in this window; this press joins it.`; **Generate anyway**, **Update anyway** or the offer's **Update LLM Wiki** pressed then shows `…, so this choice was not applied. If that start stops for the same reason, choose it again.`
+- **In Cursor, readying Codebook's skill is bounded and stoppable.** The skill's check and deployment run for at most 30 seconds with the Wiki's marker claimed. **Stop LLM Wiki Run** ends them at once (`The LLM Wiki <generation|update> was cancelled at <time> while Codebook readied the Cursor skill; no agent was started. Press <Generate|Update> LLM Wiki when you want to start again.`, with the time you pressed Stop), and the 30 seconds end them with `Codebook stopped readying the Cursor skill after 30 seconds; no agent was started. …`. A closing window ends them too, and a window that is already closing starts none. A new press waits for a stopped step that is still writing the skill, so two deployments never run at once; a step that never settles is named with **Developer: Reload Window** as the way out.
+- **Remove Managed Cursor Skill waits for a skill step of the window** (up to 5 seconds) so a late deployment cannot bring the skill back, says so when the step does not end in time, and a Generate or Update pressed during the removal readies no skill and starts no agent.
+- **A start never loses another window's protection.** When **Generate anyway** or **Update anyway** took over a stopped VS Code watch's reservation and the start is then refused (for example by a skill conflict in Cursor), the reservation is written back as that window's own marker text, with its own window and bound, so that window still removes it; a closing window keeps it on disk and retries a write-back that another window's claim blocked for up to 5 seconds. A reservation already gone from disk is never brought back.
+- **A marker that cannot be removed at once is removed on a retry** instead of standing until its bound.
+- **With nothing running, Stop LLM Wiki Run says** `No LLM Wiki run is going on in this window.`
+
+**Clearer sentences.**
+
+- **One verb per editor for a stop**: VS Code says `stopped watching` and Cursor says `cancelled` in every notice and Output record, including a stop after a Wiki was published.
+- **A folder that cannot take a first Wiki names what is in the way** (`The folder <folder> cannot take a new LLM Wiki: <path> is in the way. Press Update LLM Wiki for the details and the next step.`); the block's cause id moves to the Output record.
+- **The LLM Wiki view shows `Waiting for chat`** as soon as a stopped watch's reservation is written, also without a file event.
+
+**Diagrams.** The bundled skill moves to **1.0.50**: two conditional edges between the same nodes, and an edge that crosses a row, no longer draw their labels over each other or over a node.
+
+**Compatibility.** The MCP API stays 1.8; the Wiki's published format, the marker format and stored learner data do not change.
+
 ## [0.2.46.0] - 2026-10-26 (development candidate)
 
 Cycle 0055 ([Issue #132](https://github.com/laststance/codebook/issues/132)), a feature cycle, second of its two pull requests: the LLM Wiki gets its own view in Codebook's Activity Bar, and the Wiki feature area is proven again natively in VS Code and Cursor (trial N55).
