@@ -1008,17 +1008,24 @@ export function activate(
     projectRoot: string,
     outputDirectory: string,
   ): Promise<void> => {
+    // A generated page from another checkout must not masquerade as this project's Wiki.
+    if (!(await isWikiOwnedBy(projectRoot, outputDirectory)))
+      throw new Error(
+        'The DeepWiki manifest does not identify this opened project.',
+      )
+  }
+  /** Says whether the manifest of the Wiki folder names this opened project; called by {@link assertWikiOwner} and by a generation's end, which tells a manifest it cannot read apart from one of another checkout. @throws When the manifest is missing or no regular file ({@link readWikiFileToOpen}), or no JSON. @example await isWikiOwnedBy('/repo', '/repo/.codebook/wiki') // => true */
+  const isWikiOwnedBy = async (
+    projectRoot: string,
+    outputDirectory: string,
+  ): Promise<boolean> => {
     // The manifest is read as a file of the Wiki folder, never through a link and never past its bound.
     const manifestBytes = await readWikiFileToOpen(
       join(outputDirectory, WIKI_MANIFEST_FILE),
       'manifest',
     )
     const manifest: unknown = JSON.parse(manifestBytes.toString('utf8'))
-    // A generated page from another checkout must not masquerade as this project's Wiki.
-    if (!isWikiManifestOf(manifest, projectRoot))
-      throw new Error(
-        'The DeepWiki manifest does not identify this opened project.',
-      )
+    return isWikiManifestOf(manifest, projectRoot)
   }
   /** Checks the generated Wiki's owner and its entry page before the browser entry opens it, each read as a file of the Wiki folder and never through a link ({@link readWikiFileToOpen}), and only after none was found at the Wiki folder or on its path in the project (a link, a file, or a folder whose real path leaves the project; {@link assertNoLinkOnWikiPath}); an update checks the owner alone, so a deleted entry page reaches its start check. @example await currentDeepWiki() // => { projectRoot, outputDirectory, entry } */
   const currentDeepWiki = async () => {
@@ -1271,8 +1278,8 @@ export function activate(
     run.kind === 'generate' && hasNewPublication
       ? findGeneratedWikiProblem(
           {
-            assertOwner: () =>
-              assertWikiOwner(run.projectRoot, run.outputDirectory),
+            isOwnedByProject: () =>
+              isWikiOwnedBy(run.projectRoot, run.outputDirectory),
             readEntryPage: () =>
               readWikiFileToOpen(
                 join(run.outputDirectory, WIKI_ENTRY_FILE),

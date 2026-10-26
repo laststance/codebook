@@ -122,3 +122,27 @@ test('only a failure that carries the agent process’s exit code or signal yiel
     undefined,
   ])
 })
+
+// Value: protects=AC 12 on Windows, where a path's drive letter or folder may be written in another case than homedir() names it (local CodeRabbit, pt1); fails_when=the record then keeps the learner's account name in the path, or the record changes the case it was written in; no_claim=a path outside the home folder; seam=the platform and the home folder handed to the record
+test('on Windows the record shortens the home folder whatever the case of its drive letter, and keeps the rest as written', () => {
+  // Act
+  const record = wikiRunRecord(
+    {
+      state: 'cancelled',
+      host: 'cursor',
+      finishedAt: '2026-10-26T05:00:00.000Z',
+      site: 'kept',
+      outputDirectory: 'c:\\Users\\Learner\\Repo\\.codebook\\wiki',
+      outputLabel: '.codebook\\wiki',
+    },
+    { runKind: 'update', startedAt: '2026-10-26T04:00:00.000Z' },
+    'C:\\Users\\learner',
+    'win32',
+  )
+
+  // Assert
+  assert.equal(
+    record,
+    'LLM Wiki update ended: host=cursor started=2026-10-26T04:00:00.000Z ended=2026-10-26T05:00:00.000Z end=cancelled summary="stopped by the learner or the closing window" output=~\\Repo\\.codebook\\wiki',
+  )
+})

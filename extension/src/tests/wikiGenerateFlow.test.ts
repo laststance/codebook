@@ -778,3 +778,40 @@ test('a reservation another window leaves while the Generate confirmation is ope
     },
   )
 })
+
+// Value: protects=a generation whose publisher's receipt names a manifest that cannot be read (local CodeRabbit, pt1); fails_when=the end tells it as a Wiki of another checkout and sends the learner to the output setting instead of the recovery request; no_claim=the recovery itself; seam=a hand-written receipt that names a manifest of broken JSON
+test('a generation whose published manifest cannot be read fails with the recovery request, not as another checkout’s Wiki', async (context) => {
+  // Arrange: the watch's grace for a manifest it cannot read is shortened.
+  const project = await openProjectWithoutWiki({
+    constants: { WIKI_UPDATE_UNREADABLE_MANIFEST_GRACE_MS: 200 },
+  })
+  context.after(() => project.close())
+  await project.runCommand(GENERATE_COMMAND)
+
+  // Act: the receipt names a manifest whose bytes are no JSON.
+  await mkdir(project.outputDirectory, { recursive: true })
+  await writeFile(
+    join(project.outputDirectory, 'index.html'),
+    '<title>Wiki</title>',
+  )
+  const manifestText = '{"schemaVersion": 1, "repositoryRoot": '
+  await writeFile(
+    join(project.outputDirectory, 'codebook-wiki.json'),
+    manifestText,
+  )
+  await writeFile(
+    join(project.outputDirectory, 'codebook-publication.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      kind: 'published',
+      manifestSha256: createHash('sha256').update(manifestText).digest('hex'),
+    }),
+  )
+  await waitUntil(() => project.errors.length > 0, 'the failure', 6_000)
+
+  // Assert
+  assert.equal(
+    project.errors[0]?.replace(/at \S+(?: [AP]M)?:/, 'at …:'),
+    'LLM Wiki generation failed at …: An LLM Wiki was published in .codebook/wiki, but Codebook cannot read its manifest. Ask the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project".',
+  )
+})

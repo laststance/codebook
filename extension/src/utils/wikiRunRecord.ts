@@ -1,5 +1,5 @@
 import { homedir } from 'node:os'
-import { sep } from 'node:path'
+import { posix, win32 } from 'node:path'
 
 import type { WikiRunKind, WikiUpdateStatus } from './wikiUpdateRun'
 
@@ -79,13 +79,25 @@ function failureSummary(
  * Shows a path with the home folder as `~`, so a record copied into an issue does not name the learner's account; called by {@link wikiRunRecord} for the output folder.
  * @param path - An absolute path or a project-relative label.
  * @param homeDirectory - The learner's home folder; tests pass their own.
- * @returns The path with a leading home folder replaced by `~`; any other path as it is.
+ * @param platform - The system whose paths these are: Windows compares them without case (a drive letter or a folder may be written in another case than `homedir()` names it), every other system with case.
+ * @returns The path with a leading home folder replaced by `~`, the rest as written; any other path as it is.
  * @example
- * pathWithHomeShortened('/Users/learner/repo/.codebook/wiki', '/Users/learner') // => '~/repo/.codebook/wiki'
+ * pathWithHomeShortened('/Users/learner/repo/.codebook/wiki', '/Users/learner', 'darwin') // => '~/repo/.codebook/wiki'
+ * pathWithHomeShortened('c:\\Users\\Learner\\repo', 'C:\\Users\\learner', 'win32')       // => '~\\repo'
  */
-function pathWithHomeShortened(path: string, homeDirectory: string): string {
-  if (path === homeDirectory) return '~'
-  return homeDirectory !== '' && path.startsWith(homeDirectory + sep)
+function pathWithHomeShortened(
+  path: string,
+  homeDirectory: string,
+  platform: NodeJS.Platform,
+): string {
+  const isWindows = platform === 'win32'
+  const separator = isWindows ? win32.sep : posix.sep
+  // Only the comparison folds case on Windows; the record keeps the path as it was written.
+  const comparable = (value: string): string =>
+    isWindows ? value.toLowerCase() : value
+  if (comparable(path) === comparable(homeDirectory)) return '~'
+  return homeDirectory !== '' &&
+    comparable(path).startsWith(comparable(homeDirectory + separator))
     ? `~${path.slice(homeDirectory.length)}`
     : path
 }
@@ -101,6 +113,7 @@ function pathWithHomeShortened(path: string, homeDirectory: string): string {
  * @param details.startedAt - When the run started, as an ISO timestamp; absent for a refused start.
  * @param details.agentExit - The Cursor agent's exit code or signal, where its process gave one.
  * @param homeDirectory - The learner's home folder; tests pass their own.
+ * @param platform - The system whose paths these are; tests pass their own.
  * @returns One line: `LLM Wiki <kind> ended: host=… started=… ended=… end=… summary="…" [exit=…] output=…`.
  * @example
  * ```ts
@@ -116,11 +129,12 @@ export function wikiRunRecord(
     agentExit?: WikiAgentExit
   },
   homeDirectory: string = homedir(),
+  platform: NodeJS.Platform = process.platform,
 ): string {
   const host = 'host' in ended ? ended.host : 'unknown'
   // An exit names its code, or the signal that ended the process when it had none.
   const exit = details.agentExit
     ? ` exit=${details.agentExit.exitCode ?? details.agentExit.exitSignal ?? 'unknown'}`
     : ''
-  return `LLM Wiki ${details.runKind} ended: host=${host} started=${details.startedAt ?? 'not started'} ended=${ended.finishedAt} end=${ended.state} summary="${endSummary(ended)}"${exit} output=${pathWithHomeShortened(ended.outputDirectory, homeDirectory)}`
+  return `LLM Wiki ${details.runKind} ended: host=${host} started=${details.startedAt ?? 'not started'} ended=${ended.finishedAt} end=${ended.state} summary="${endSummary(ended)}"${exit} output=${pathWithHomeShortened(ended.outputDirectory, homeDirectory, platform)}`
 }
