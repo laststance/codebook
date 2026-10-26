@@ -8220,9 +8220,13 @@ export class StudyWorkspace {
       }
       if (this.liveComposition || this.summaryComposition) {
         // Live uses the host chat; disposing only our panel never closes another editor's tabs.
+        const disposedStudyPane = this.contextPanel
         this.contextPanel?.dispose()
         this.contextPanel = undefined
         this.presentationMode = 'study-workspace'
+        // A Study pane in a learner's group leaves no retired group for the arrangement to drain, yet the editor reports the group's next tab active before it closes the disposed tab; a guard armed meanwhile reads that as the learner's focus change (N55-F4 refusal 2). Every guard therefore starts after the close.
+        if (disposedStudyPane && this.hasRetiredStudyPaneTab())
+          await this.retiredStudyPaneClosed(signal)
       }
       this.opened = true
       this.closing = false

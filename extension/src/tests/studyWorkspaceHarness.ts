@@ -53,6 +53,8 @@ const NATIVE_VARIABLES_REFRESH_MS = 400
 const NATIVE_VARIABLES_FIRST_RENDER_MS = 60
 /** How long the fake editor's worker takes to close a disposed panel's tab when no layout read is answered before it runs; shorter than one poll of the reader's wait for that close. */
 const DISPOSED_TAB_CLOSE_DELAY_MS = 20
+/** How long after a pane's disposal the fake Cursor group model reports the next tab active, before it closes the disposed tab (`activateNextTabBeforeDisposedPaneTabCloses`); shorter than {@link DISPOSED_TAB_CLOSE_DELAY_MS}. */
+const NEXT_TAB_ACTIVATION_DELAY_MS = 8
 /** How long after a disposed pane's tab closed the fake editor removes the group that tab left empty, in the model of `removeEmptiedGroupsLater`: Cursor 3.23.12 removed the captured source's group 57 ms after its tab at "Codebook: Close Study Workspace", and the Study pane's 12 ms after its tab (Cycle 0046 row 66). The longer of the two is modelled: it is longer than one poll of the reader's wait for the panes' tabs, so the group is still there when that wait ends. */
 const EMPTIED_GROUP_CLOSE_DELAY_MS = 57
 /** How long after a pane's move into another group the fake editor removes the group the move left empty, in the model of `removeGroupLeftByPanelMoveLater`: VS Code 1.140.0 closes a moved webview's editor in its old group only once the open in the new group has begun (`workbench.desktop.main.js` 4037:7120 calls the old group's `closeEditor` from `onWillOpenEditor`), and that close awaits its confirmation before it removes the emptied group (1106:79300, 1106:79400, 1106:80531); in C58 round 1d the leftover was gone about 130 ms after the Application's move (frames at +0.45 s and +0.58 s, group events +513 to +571 ms of the Return; Cycle 0046 row 658). */
@@ -1086,6 +1088,10 @@ export async function workspaceHarness(
   /** The removals of groups a pane's move left empty that the fake editor has not run yet; see `removeGroupLeftByPanelMoveLater`. */
   const pendingMoveRemovals: (() => void)[] = []
   let closeDisposedPanelTabsLater = false
+  /** Whether a disposed pane that is the front tab of a group shared with other tabs first makes the next tab the active one through a tab notification, and closes its own tab later; see `activateNextTabBeforeDisposedPaneTabCloses`. */
+  let activatesNextTabBeforeDisposedPaneTabCloses = false
+  /** The next-tab notification of a disposed pane that the fake editor has not delivered yet; the first layout read after the disposal delivers it while the read is in flight. */
+  let pendingNextTabActivation: (() => void) | undefined
   // Cursor 3.23.12 keeps naming the chat's group as the active tab group after `workbench.action.focusFirstEditorGroup` gave the main editor the keyboard. Only a group event corrects the name: a whole tab-model rebuild names the active group (`workbench.desktop.main.js` 17269:31013, `extensionHostProcess.js` 131:33177), as does a group's activation (17269:28123, 131:33740); a tab notification is a tab operation, which leaves the named group as it is (131:34068), so it does not (Cycle 0046 row 673).
   let staleNamedGroup: (typeof groups)[number] | undefined
   // The tab that had the keyboard was closed while the focus was to be preserved, or its pane was disposed: no editor has the keyboard, the page body does (Cursor 3.23.12 after Close Study Workspace, Cycle 0045 obs15 P4), until something is focused again.
@@ -3381,11 +3387,29 @@ export async function workspaceHarness(
             }
           } else replaceGroupObjects()
         }
-        // VS Code closes a disposed editor from a worker with a 0 ms delay; a layout read that reached the busy window with the disposal is answered before that worker runs.
-        if (
+        // Cursor's group model selects the next tab before it closes the disposed one: `$acceptTabOperation` kind 2 reaches the extension host first, with no group event and the disposed tab still listed (Cycle 0056, N55-F4 refusal 2).
+        const sharedGroup = groups.find(
+          (group) => group.activeTab === nativeTab && group.tabs.length > 1,
+        )
+        if (activatesNextTabBeforeDisposedPaneTabCloses && sharedGroup) {
+          const nextTab = sharedGroup.tabs.find((tab) => tab !== nativeTab)!
+          // The notification arrives while the first layout read after the disposal is in flight (`pendingNextTabActivation`), or {@link NEXT_TAB_ACTIVATION_DELAY_MS} after the disposal when no read comes.
+          const activateNextTab = (): void => {
+            if (pendingNextTabActivation !== activateNextTab) return
+            pendingNextTabActivation = undefined
+            sharedGroup.activeTab = nextTab
+            for (const listener of tabChangeListeners)
+              listener({ opened: [], closed: [], changed: [nextTab] })
+          }
+          pendingNextTabActivation = activateNextTab
+          runEditorChangeLater(activateNextTab, NEXT_TAB_ACTIVATION_DELAY_MS)
+          pendingDisposedTabCloses.push(closeTab)
+          applyByItselfLater(closeTab)
+        } else if (
           closeDisposedPanelTabsLater ||
           closeDisposedPanelTabsDuringLayoutRead
         ) {
+          // VS Code closes a disposed editor from a worker with a 0 ms delay; a layout read that reached the busy window with the disposal is answered before that worker runs.
           pendingDisposedTabCloses.push(closeTab)
           // Without a layout read the worker closes the tab by itself a moment later.
           applyByItselfLater(closeTab)
@@ -4298,6 +4322,12 @@ export async function workspaceHarness(
           if (name === 'workbench.action.toggleMaximizedPanel')
             returnHiddenEditorArea()
           if (name === 'vscode.getEditorLayout') {
+            // Cursor reports the next tab active while a layout read that was armed after the disposal is in flight.
+            const deliverNextTabActivation = pendingNextTabActivation
+            if (deliverNextTabActivation) {
+              await new Promise<void>((resolve) => setImmediate(resolve))
+              deliverNextTabActivation()
+            }
             if (reactivatesPreviousGroupAtLayoutRead) {
               layoutReadsUntilReactivation -= 1
               if (layoutReadsUntilReactivation <= 0) {
@@ -5908,6 +5938,13 @@ export async function workspaceHarness(
      */
     closeDisposedPanelTabsLater(): void {
       closeDisposedPanelTabsLater = true
+    },
+    /**
+     * Makes the fake editor, when a pane that is the front tab of a group shared with other tabs is disposed, first make the group's next tab the active one through a tab notification only (no group event, the disposed tab still listed), and close the disposed tab {@link DISPOSED_TAB_CLOSE_DELAY_MS} later, as Cursor's group model does (`doCloseEditor` selects the next tab, then removes the closed one; Cycle 0056, N55-F4 refusal 2).
+     * @example harness.activateNextTabBeforeDisposedPaneTabCloses()
+     */
+    activateNextTabBeforeDisposedPaneTabCloses(): void {
+      activatesNextTabBeforeDisposedPaneTabCloses = true
     },
     /**
      * Delivers queued native tab changes after a regression changes window focus, for delayed pane-disposal checks.

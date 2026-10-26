@@ -13,6 +13,7 @@ import { ReplayDebuggerStartError, StudyError } from '../errors'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { StudyViewMessage } from '../ui/studyHtml'
+import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 
 import {
   readerSeams,
@@ -160,6 +161,67 @@ function compositionOf(harness: Harness) {
     family: lastView(harness)?.replayFamily,
   }
 }
+
+// Value: protects=N55-F4 refusal 2: a test replay chosen in a Study pane that sits in the learner's own group opens, although Cursor reports the group's next tab as active before it closes the disposed Study tab; fails_when=the entry reads the grid while the disposed Study tab is still listed and refuses with "Native pane, group or focus changed while presentation waited"; why_new=Cycle 0056 task 17 (the refusal came from Codebook's own disposal, not from the learner); seam=workspaceHarness with activateNextTabBeforeDisposedPaneTabCloses and addForeignDraft in the Study pane's group; no_claim=Cursor's own event order (N56 step 1 checks it natively)
+test('a test replay chosen in a Study pane that shares the learner’s group opens without a placement refusal', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  harness.activateNextTabBeforeDisposedPaneTabCloses()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.open()
+    const studyColumn = harness.panelColumn('codebook.studyContext')
+    assert.notEqual(studyColumn, undefined)
+    // The learner's own tab shares the Study pane's group, so the group is no one Codebook created.
+    harness.addForeignDraft(studyColumn)
+
+    // Act
+    harness.receiveContext({
+      type: 'node-history',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+    })
+    // A refusal ends the entry without a landing, so the wait ends on either result.
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 ||
+        logged.some(
+          (entry) => entry.surface === 'presentation:placement-refused',
+        ),
+      'the Saved studies choice lands on the first stop or is refused',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(
+      logged.filter(
+        (entry) => entry.surface === 'presentation:placement-refused',
+      ),
+      [],
+    )
+    await landsOn(
+      harness,
+      2,
+      'the Saved studies choice lands on the first stop',
+    )
+    assert.deepEqual(compositionOf(harness), {
+      studyPane: false,
+      application: true,
+      summary: true,
+      family: 'test',
+    })
+  } finally {
+    await harness.close()
+  }
+})
 
 for (const entry of ['Open replay', 'Saved studies'] as const) {
   // Value: protects=the learner's entry into a test replay in VS Code gives region 2's composition: the Study pane closes, the Application pane and the recorded source stay, and the Learning summary shows in the chat's place, moved beside the chat once per profile; fails_when=the Study pane stays open with the replay in its Test replay section, the summary keeps its placeholder, or the move does not run; why_new=Cycle 0051 DS-A (AC1): a test replay entered the Study composition; seam=workspaceHarness (VS Code), openLearningReplay and the Study pane's node-history message, the fake vscode.moveViews; no_claim=the native placement, which N51 (a) checks
