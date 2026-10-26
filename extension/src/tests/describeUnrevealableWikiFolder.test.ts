@@ -8,12 +8,12 @@ test('Reveal Wiki Folder names a missing folder before the remote host and lets 
   // Arrange
   const missingInRemote = {
     outputLabel: '.codebook/wiki',
-    exists: false,
+    folderKind: { kind: 'missing' } as const,
     remoteName: 'wsl',
   }
   const existingInLocal = {
     outputLabel: '.codebook/wiki',
-    exists: true,
+    folderKind: { kind: 'folder' } as const,
     remoteName: '',
   }
 
@@ -33,15 +33,18 @@ test('Reveal Wiki Folder names a missing folder before the remote host and lets 
 // Value: protects=RT2-B and D2 (each reason gives its next step; WSL is local); fails_when=a file in the folder's place is told as missing, a remote reason lacks the next step, or WSL is refused as remote; why_new=the test above covers missing and local only; seam=none; no_claim=the editor's reveal command
 test('Reveal Wiki Folder words a file, a remote host with its next step, and lets WSL reveal', () => {
   // Arrange
-  const fileInPlace = { outputLabel: 'docs/wiki', exists: false, isFile: true }
+  const fileInPlace = {
+    outputLabel: 'docs/wiki',
+    folderKind: { kind: 'file' } as const,
+  }
   const existingInSsh = {
     outputLabel: 'docs/wiki',
-    exists: true,
+    folderKind: { kind: 'folder' } as const,
     remoteName: 'ssh-remote',
   }
   const existingInWsl = {
     outputLabel: 'docs/wiki',
-    exists: true,
+    folderKind: { kind: 'folder' } as const,
     remoteName: 'wsl',
   }
 
@@ -55,7 +58,26 @@ test('Reveal Wiki Folder words a file, a remote host with its next step, and let
   // Assert
   assert.deepEqual(results, [
     'The LLM Wiki folder docs/wiki is a file, not a folder. Remove or rename that file, or change the location.',
-    'Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on ssh-remote. Open it from a terminal or file manager on ssh-remote.',
+    'Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on ssh-remote. Open it from a terminal in this window, which runs on that remote.',
     undefined,
   ])
+})
+
+// Value: protects=RT3-c (an unreadable path is not told as missing); fails_when=a path the look could not read is worded "does not exist (yet)", or the remote reason hides it; why_new=the tests above cover folder, file and missing only; seam=none; no_claim=the system call that failed
+test('Reveal Wiki Folder words an unreadable path with its error code and a next step, before the remote host', () => {
+  // Arrange
+  const unreadableInRemote = {
+    outputLabel: '.codebook/wiki',
+    folderKind: { kind: 'unreadable', code: 'EACCES' } as const,
+    remoteName: 'ssh-remote',
+  }
+
+  // Act
+  const result = describeUnrevealableWikiFolder(unreadableInRemote)
+
+  // Assert
+  assert.equal(
+    result,
+    'The LLM Wiki folder .codebook/wiki cannot be read (EACCES). Check its permissions, or change the location.',
+  )
 })

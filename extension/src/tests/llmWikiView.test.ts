@@ -1076,7 +1076,7 @@ test('Reveal Wiki Folder in a remote window says the folder is on the remote hos
     [
       [],
       [
-        'Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on ssh-remote. Open it from a terminal or file manager on ssh-remote.',
+        'Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on ssh-remote. Open it from a terminal in this window, which runs on that remote.',
       ],
     ],
   )
@@ -1114,6 +1114,28 @@ test('Reveal Wiki Folder on a file in the folder’s place says it is a file and
       [],
       [
         'The LLM Wiki folder .codebook/wiki is a file, not a folder. Remove or rename that file, or change the location.',
+      ],
+    ],
+  )
+})
+
+// Value: protects=RT3-c (an unreadable parent of the Wiki folder is not told as "does not exist (yet)"); fails_when=a path whose look fails with ENOTDIR is worded as missing, which sends the learner to Generate instead of to the path; no_claim=EACCES wording (same branch, code differs); seam=a file written where the output's parent folder should be
+test('Reveal Wiki Folder on an unreadable path says it cannot be read with the error code and reveals nothing', async (context) => {
+  // Arrange
+  const project = await openEmptyProject(context)
+  await mkdir(dirname(dirname(project.outputDirectory)), { recursive: true })
+  await writeFile(dirname(project.outputDirectory), 'not a folder')
+
+  // Act
+  await project.runCommand('codebook.revealWikiFolder')
+
+  // Assert
+  assert.deepEqual(
+    [project.executedCommands, project.notices],
+    [
+      [],
+      [
+        'The LLM Wiki folder .codebook/wiki cannot be read (ENOTDIR). Check its permissions, or change the location.',
       ],
     ],
   )

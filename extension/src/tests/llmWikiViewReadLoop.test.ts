@@ -50,6 +50,7 @@ function openView(
 ) {
   const fake = createFakeLlmWikiEditor(fakeOptions)
   const recordedFailures: string[] = []
+  const recordedCauses: unknown[] = []
   const tellings: string[] = []
   const view = createLlmWikiView({
     editor: fake.editor,
@@ -61,13 +62,16 @@ function openView(
     tellPublished: (label): void => {
       tellings.push(label)
     },
-    recordFailure: (message) => recordedFailures.push(message),
+    recordFailure: (message, cause) => {
+      recordedFailures.push(message)
+      recordedCauses.push(cause)
+    },
     debounceMs: 20,
     pollMs: 50,
     ...overrides,
   })
   context.after(() => view.dispose())
-  return { fake, view, recordedFailures, tellings }
+  return { fake, view, recordedFailures, recordedCauses, tellings }
 }
 
 const idsOf = (fake: ReturnType<typeof createFakeLlmWikiEditor>): string[] =>
@@ -825,6 +829,93 @@ test('a read failure that persists across poll ticks is recorded once in Output'
   assert.deepEqual(recordedFailures, [
     'The LLM Wiki view could not read its state',
   ])
+})
+
+// Value: protects=SM3 (a) (a failure in the row step is recorded once however many poll ticks meet it); fails_when=a read that fails in the step that makes rows clears the dedupe first, so every 30 s tick writes the same record to Output; no_claim=the 30 second value; seam=mocked timers, a run row shown, then facts whose row step throws on every read
+test('a row-step failure that persists across poll ticks is recorded once in Output', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] })
+  let isBroken = false
+  const { recordedFailures, view } = openView(context, {
+    readFacts: async () => {
+      const facts = runningFacts()
+      if (isBroken)
+        Object.defineProperty(facts, 'run', {
+          enumerable: true,
+          get(): never {
+            throw new Error('row step failed')
+          },
+        })
+      return facts
+    },
+  })
+  await view.whenIdle()
+  isBroken = true
+
+  // Act
+  await view.refresh()
+  for (let tick = 0; tick < 3; tick += 1) {
+    context.mock.timers.tick(50)
+    await view.whenIdle()
+  }
+
+  // Assert
+  assert.equal(recordedFailures.length, 1)
+})
+
+// Value: protects=SM3 (b) (a freshness check that cannot be shown is recorded once however many poll ticks meet it); fails_when=a good read clears the dedupe before the freshness result is shown, so each tick records the same freshness failure again and the view flips between the Wiki row and the error row; no_claim=the 30 second value; seam=mocked timers, a run row with a Wiki, a freshness read that returns a value the rows cannot be made from
+test('a freshness failure that persists across poll ticks is recorded once in Output', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] })
+  const { recordedFailures, view } = openView(context, {
+    readFacts: async () => ({ ...runningFacts(), wiki: publishedWiki }),
+    // A freshness answer whose status getter throws when the rows are made from it.
+    readFreshness: async () => {
+      const freshness = {}
+      Object.defineProperty(freshness, 'status', {
+        enumerable: true,
+        get(): never {
+          throw new Error('freshness rows failed')
+        },
+      })
+      return freshness as LlmWikiFreshness
+    },
+  })
+  await view.whenIdle()
+
+  // Act
+  for (let tick = 0; tick < 3; tick += 1) {
+    context.mock.timers.tick(50)
+    await view.whenIdle()
+  }
+
+  // Assert
+  assert.equal(recordedFailures.length, 1)
+})
+
+// Value: protects=RT3-b (two different failures with the same message are two records); fails_when=the dedupe keys on the message text only, so an error with the same message and another code (or a thrown non-Error with the same text) is swallowed; no_claim=the Output wording; seam=readFacts that throws the same message with two codes
+test('two failures with the same message and different error codes are recorded twice', async (context) => {
+  // Arrange
+  const outcomes = [
+    Object.assign(new Error('operation failed'), { code: 'EACCES' }),
+    Object.assign(new Error('operation failed'), { code: 'EBUSY' }),
+  ]
+  let next = 0
+  const { recordedCauses, view } = openView(context, {
+    readFacts: async () => {
+      throw outcomes[next++]
+    },
+  })
+
+  // Act
+  await view.whenIdle()
+  await view.refresh()
+
+  // Assert
+  assert.deepEqual(
+    recordedCauses.map((cause) => (cause as { code: string }).code),
+    ['EACCES', 'EBUSY'],
+  )
 })
 
 // Value: protects=RT2-A (a different failure, or one after a good read, is recorded again); fails_when=the dedupe swallows a new cause or never resets after a good read, so a later failure leaves Output silent; no_claim=the cause's wording; seam=a readFacts that throws two causes, then succeeds, then throws the first cause again

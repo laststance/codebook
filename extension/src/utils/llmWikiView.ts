@@ -17,6 +17,7 @@ import {
 import { chooseWikiWatchFolder } from './chooseWikiWatchFolder'
 import { comparableFilePath } from './comparableFilePath'
 import { describeWikiWatch } from './describeWikiWatch'
+import { failureKeyOf } from './failureKeyOf'
 import {
   LLM_WIKI_ERROR_ROW,
   LLM_WIKI_LOADING_ROW,
@@ -218,7 +219,10 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
   // The editor reports whether the view is shown now; a collapsed view runs no poll.
   isViewVisible = treeView.visible
 
-  /** Shows a model: sets the context key, the message and fires one tree change, only for what differs from what is shown. */
+  /**
+   * Shows a model: sets the context key and fires one tree change, only for what differs from what is shown.
+   * The message is not written here; the tree writes it when it next reads its root children ({@link getChildren} / the provider).
+   */
   const show = (next: LlmWikiViewModel): void => {
     // A read that finished after dispose shows nothing.
     if (isDisposed) return
@@ -416,6 +420,8 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
         wiki: { ...shown.wiki, freshness: value },
       }),
     )
+    // The freshness result is shown: the failure that stood is over.
+    recordedFailureCause = undefined
   }
 
   /** Asks for a freshness check of the shown Wiki: one runs at a time, and requests meanwhile become one re-run with the latest facts. */
@@ -532,7 +538,7 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
   const showReadFailure = (cause: unknown): void => {
     if (isDisposed) return
     // The poll reads again across the error row, so the same failure is recorded once while the row stands; a different failure is recorded too.
-    const causeText = cause instanceof Error ? cause.message : String(cause)
+    const causeText = failureKeyOf(cause)
     if (causeText !== recordedFailureCause) {
       recordedFailureCause = causeText
       try {
@@ -552,8 +558,6 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
 
   /** Shows one read: the rows with the cached or `checking` freshness, then asks for the freshness check apart. */
   const showRead = (read: LlmWikiViewFacts): void => {
-    // A good read ends the failure: the next one is recorded again.
-    recordedFailureCause = undefined
     const nextFacts = read.kind === 'ready' ? withViewState(read) : read
     if (nextFacts.kind === 'ready') noteLatePublication(nextFacts)
     const next = readLlmWikiViewState(nextFacts)
@@ -570,8 +574,13 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
       nextFacts.kind === 'ready' &&
       nextFacts.wiki &&
       next.rows.some((row) => row.id === 'wiki')
-    )
+    ) {
+      // The failure ends only when the freshness result is shown too (see checkFreshness), so a check that keeps failing is recorded once.
       requestFreshness(nextFacts)
+      return
+    }
+    // A model shown without a failure ends it: the next failure is recorded again.
+    recordedFailureCause = undefined
   }
 
   /** One read from the facts to the rows; whatever throws in it shows the error row. */
