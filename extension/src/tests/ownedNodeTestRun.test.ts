@@ -731,7 +731,7 @@ async function nodeRunHarness({
           },
           async waitForExit() {
             return exitAfterEntry || testExited
-              ? { exitCode: 0, signal: null }
+              ? { exitCode, signal: exitSignal }
               : undefined
           },
           async close(): Promise<void> {
@@ -1795,6 +1795,35 @@ test('a Vitest listing whose process group could not be released is journaled by
     )
   } finally {
     await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=a test ended by a signal before its next declared stop being named by that signal and the stop it did not reach; fails_when=the signal branch of the early-exit sentence names a code or drops the stop number; why_new=Cycle 0054 hosted CodeRabbit review (the fixture's exit was always code 0, so the signal branch had no test); seam=the harness reports the process's exit with exitCode null and SIGKILL; no_claim=which signal a real run receives
+test('a test that a signal ended before its next declared stop names the signal and the stop', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({
+    declaredStops: 2,
+    exitAfterStop: 1,
+    exitCode: null,
+    exitSignal: 'SIGKILL',
+  })
+  try {
+    await harness.run.prepare()
+
+    // Act
+    const failure = await harness.run.advance().then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+    // Assert
+    assert.match(
+      (failure as { message?: string } | undefined)?.message ?? '',
+      /^Owned Node test exited with signal SIGKILL before declared stop 2\. /,
+    )
+  } finally {
+    await harness.run.stop().catch(() => undefined)
     await harness.cleanup()
   }
 })
