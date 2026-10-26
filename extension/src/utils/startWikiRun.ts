@@ -11,6 +11,8 @@ export type WikiRunMarkerClaim<Holder> =
   | {
       release: () => Promise<boolean>
       reserve: (watchEndedAtMs: number) => Promise<boolean>
+      /** The end of the stopped watch whose reservation the claim took over; a refused start writes the reservation back with it. */
+      takenOverWatchEndedAtMs?: number
     }
   | { heldBy: Holder }
 
@@ -36,6 +38,8 @@ export type WikiGenerateStartDependencies<Holder> = {
   makeOutputParent: () => Promise<void>
   /** Readies the agent once the marker is claimed and no Wiki appeared, so a start that is refused or offers the update writes no skill: in Cursor the managed skill ({@link verifyManagedCursorSkill}, {@link deployCursorSkill}), whose conflict throws and releases the marker; nothing in VS Code. */
   prepareAgent: () => Promise<void>
+  /** Makes one change of the claimed marker (its removal, or a taken-over reservation written back) with the bounded retry every change of this window's marker has ({@link claimWikiUpdateMarker}'s answers `true` once nothing is left to change); never rejects. */
+  changeMarker: (change: () => Promise<boolean>) => Promise<void>
   /** Claims the run's marker for a generation that starts at the given time. */
   claimMarker: (startedAtMs: number) => Promise<WikiRunMarkerClaim<Holder>>
   /** The sentence of a refusal for another window that holds the marker ({@link describeOtherWikiWindow}). */
@@ -60,9 +64,29 @@ export type WikiGenerateStart = {
   publicationAtStart: string | undefined
   releaseMarker: () => Promise<boolean>
   reserveMarker: (watchEndedAtMs: number) => Promise<boolean>
+  /** The end of the stopped watch whose reservation the claim took over, where it did. */
+  takenOverWatchEndedAtMs?: number
   startedAtMs: number
   /** Whether the opened folder is in a Git repository; `undefined` when Git could not be asked. */
   hasGitRepository: boolean | undefined
+}
+
+/**
+ * Leaves the marker of a start that did not go ahead: it is removed, or, when the claim took a stopped watch's reservation over, written back with the watch's end so that chat keeps its protection; the change is retried ({@link WikiGenerateStartDependencies.changeMarker}).
+ * @param dependencies - The editor window's closures.
+ * @param claim - The run's own marker.
+ * @example await leaveClaimedMarker(dependencies, claim)
+ */
+async function leaveClaimedMarker<Holder>(
+  dependencies: WikiGenerateStartDependencies<Holder>,
+  claim: Exclude<WikiRunMarkerClaim<Holder>, { heldBy: Holder }>,
+): Promise<void> {
+  const watchEndedAtMs = claim.takenOverWatchEndedAtMs
+  await dependencies.changeMarker(
+    watchEndedAtMs === undefined
+      ? claim.release
+      : () => claim.reserve(watchEndedAtMs),
+  )
 }
 
 /**
@@ -86,13 +110,13 @@ async function beginClaimedGeneration<Holder>(
   try {
     // A Wiki that appeared between the first look and the claim is updated, never overwritten.
     if ((await dependencies.readPublishToken()) !== undefined) {
-      await claim.release().catch(() => false)
+      await leaveClaimedMarker(dependencies, claim)
       dependencies.offerUpdate()
       return undefined
     }
     // A folder without a Wiki that appeared around the claim is refused too: the publisher would refuse it after the agent's work (CodeRabbit, PR #133).
     if (await dependencies.hasOutputFolderWithoutWiki()) {
-      await claim.release().catch(() => false)
+      await leaveClaimedMarker(dependencies, claim)
       dependencies.refuse(
         describeOutputFolderWithoutWiki(dependencies.wikiOutput.outputLabel),
       )
@@ -103,10 +127,11 @@ async function beginClaimedGeneration<Holder>(
       ...begun,
       releaseMarker: claim.release,
       reserveMarker: claim.reserve,
+      takenOverWatchEndedAtMs: claim.takenOverWatchEndedAtMs,
     }
   } catch (error) {
     // A start that throws after its claim leaves no marker behind.
-    await claim.release().catch(() => false)
+    await leaveClaimedMarker(dependencies, claim)
     throw error
   }
 }

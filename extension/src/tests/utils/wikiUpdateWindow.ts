@@ -201,6 +201,8 @@ export async function openWikiUpdateWindow(options: {
   extraEditorCommands?: string[]
   /** Makes the editor refuse the file watcher of the LLM Wiki view with this message. */
   wikiWatcherFails?: string
+  /** Makes this many removals of the window's own run marker throw `EBUSY` before they work, as a scanner holding the file does on Windows; each is recorded in `markerChanges` as `threw`. */
+  markerReleaseFailures?: number
 }): Promise<{
   chatRequests: Array<{ name: string; query: string }>
   executedCommands: string[]
@@ -218,6 +220,8 @@ export async function openWikiUpdateWindow(options: {
   skillCalls: string[]
   /** Every line the extension wrote to Output › Codebook, as `info: …` or `error: …`. */
   outputLines: string[]
+  /** How often the extension brought Output › Codebook to the front (`show()` on its channel). */
+  outputShownCount(): number
   /** Runs one of the extension's registered commands with the arguments a menu or a row passes, as the Command Palette does. */
   runCommand(name: string, ...args: unknown[]): Promise<void>
   /** What the editor shows of the LLM Wiki view. */
@@ -309,6 +313,8 @@ export async function openWikiUpdateWindow(options: {
   const confirmationDetails: string[] = []
   const skillCalls: string[] = []
   const outputLines: string[] = []
+  let outputShown = 0
+  let markerReleaseFailuresLeft = options.markerReleaseFailures ?? 0
   const progressTitles: string[] = []
   const statusBarTexts: string[] = []
   const statusBarEntries: FakeStatusBarEntry[] = []
@@ -673,7 +679,9 @@ export async function openWikiUpdateWindow(options: {
           createOutputChannel: () => ({
             info: (line: string) => outputLines.push(`info: ${line}`),
             error: (line: string) => outputLines.push(`error: ${line}`),
-            show(): void {},
+            show(): void {
+              outputShown += 1
+            },
             dispose(): void {},
           }),
           showErrorMessage: (message: string, ...actions: string[]) =>
@@ -769,6 +777,18 @@ export async function openWikiUpdateWindow(options: {
           return {
             release: async () => {
               await passHold('marker-change')
+              // A removal that the system refuses for now, as a scanner or an indexer holding the file does.
+              if (markerReleaseFailuresLeft > 0) {
+                markerReleaseFailuresLeft -= 1
+                return recordMarkerChange(
+                  'release',
+                  Promise.reject(
+                    Object.assign(new Error('EBUSY: resource busy or locked'), {
+                      code: 'EBUSY',
+                    }),
+                  ),
+                )
+              }
               return recordMarkerChange('release', claim.release())
             },
             reserve: async (watchEndedAtMs: number) => {
@@ -915,6 +935,7 @@ export async function openWikiUpdateWindow(options: {
     statusBarTexts,
     skillCalls,
     outputLines,
+    outputShownCount: (): number => outputShown,
     async runCommand(name: string, ...args: unknown[]): Promise<void> {
       const command = commands.get(name)
       if (!command) throw new Error(`The window registered no ${name}.`)

@@ -931,6 +931,8 @@ export const WIKI_RUN_STARTING_SENTENCE =
 export const WIKI_UPDATE_WATCH_TIMEOUT_MS = 900_000
 /** Longest a Wiki generation runs in either host, the VS Code watch and the Cursor agent alike, before it ends as timed out: 55 minutes, set by Cycle 0055's E1 (the longest measured generation, 34 min 33 s in VS Code, × 1.5, rounded up to whole 5 minutes; Owner decision O9). A stopped VS Code generation's reservation lasts as long after its watch's end. */
 export const WIKI_GENERATE_TIMEOUT_MS = 3_300_000
+/** Longest the managed Cursor skill's verify and deploy may take while a start holds its marker: 30 seconds, after which the start ends without an agent and releases the marker (Cycle 0056 task 13). */
+export const WIKI_SKILL_STEP_TIMEOUT_MS = 30_000
 /** The longest any run of any kind and host can last ({@link longestWikiRunMs}): a VS Code generation's chat opening plus its bound. A marker file whose kind cannot be read counts this long, never the update's shorter bound. */
 export const LONGEST_WIKI_RUN_MS = Math.max(
   WIKI_GENERATE_TIMEOUT_MS,
