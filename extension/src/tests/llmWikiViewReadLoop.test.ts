@@ -1193,3 +1193,172 @@ test('an editor that reads the root inside createTreeView still gets the rows an
     [['run', 'output'], WATCHING_MESSAGE],
   )
 })
+
+// Value: protects=F1 (no freshness work while hidden, also for a check queued before the hide); fails_when=a check queued while another ran still starts after the view is hidden (full-source hashing and Git work for a collapsed view), or showing the view again queues no current check; no_claim=the answer of the check that was running; seam=a held first freshness check, a refresh that queues the second, setVisible(false) before the first is released
+test('a freshness check queued before the view is hidden does not start while it is hidden, and showing the view checks again', async (context) => {
+  // Arrange
+  const heldFirstCheck = defer<LlmWikiFreshness>()
+  let checkCount = 0
+  const { fake, view } = openView(context, {
+    readFreshness: () => {
+      checkCount += 1
+      return checkCount === 1
+        ? heldFirstCheck.promise
+        : Promise.resolve<LlmWikiFreshness>({ status: 'current' })
+    },
+  })
+  await waitUntil(() => checkCount === 1, 'the first check', 6_000)
+  await view.refresh()
+
+  // Act
+  fake.setVisible(false)
+  heldFirstCheck.resolve({ status: 'changed' })
+  await view.whenIdle()
+  await afterEventLoopTurn()
+  const checksWhileHidden = checkCount
+  fake.setVisible(true)
+  await view.whenIdle()
+
+  // Assert
+  assert.deepEqual(
+    [checksWhileHidden, checkCount, rowOf(fake, 'wiki')?.description],
+    [1, 2, 'Wiki source current'],
+  )
+})
+
+// Value: protects=F4 (a cause that cannot be read still shows the error row); fails_when=a cause whose message getter throws makes the failure key throw, so refresh rejects, the error row never shows and nothing is recorded; no_claim=the wording of the record; seam=an Error whose message getter throws, thrown by readFacts twice
+test('a failure whose message cannot be read still shows the error row, resolves refresh and is recorded once', async (context) => {
+  // Arrange
+  const unhandled = collectUnhandledRejections(context)
+  const hostileCause = new Error('hidden')
+  Object.defineProperty(hostileCause, 'message', {
+    get(): never {
+      throw new Error('message getter failed')
+    },
+  })
+  const { fake, recordedFailures, view } = openView(context, {
+    readFacts: async () => {
+      throw hostileCause
+    },
+  })
+  await view.whenIdle()
+
+  // Act
+  const outcome = await view.refresh().then(
+    () => 'resolved',
+    () => 'rejected',
+  )
+  await afterEventLoopTurn()
+
+  // Assert
+  assert.deepEqual(
+    [outcome, fake.rows().map((row) => row.label), recordedFailures, unhandled],
+    [
+      'resolved',
+      [ERROR_ROW_LABEL],
+      ['The LLM Wiki view could not read its state'],
+      [],
+    ],
+  )
+})
+
+// Value: protects=F5 (a message that embeds a changing number is one failure); fails_when=a failure whose message differs only in a number at each poll tick (a pid, a duration) is recorded at every tick, which floods Output › Codebook; no_claim=a different code with the same text (the codes test above); seam=readFacts that throws the same code with a counting number in its message
+test('a failure that differs from the recorded one only in a number of its message is recorded once', async (context) => {
+  // Arrange
+  let attempt = 0
+  const { recordedFailures, view } = openView(context, {
+    readFacts: async () => {
+      attempt += 1
+      throw Object.assign(new Error(`disk busy after ${attempt * 30} ms`), {
+        code: 'EBUSY',
+      })
+    },
+  })
+  await view.whenIdle()
+
+  // Act
+  await view.refresh()
+  await view.refresh()
+
+  // Assert
+  assert.deepEqual(recordedFailures, [
+    'The LLM Wiki view could not read its state',
+  ])
+})
+
+// Value: protects=F6 (a good read between two equal failures); fails_when=a good read that still waits for its freshness answer does not end the failure that stood, so the same failure after it is swallowed and Output stays silent for a real new failure; no_claim=the freshness answer; seam=a read that fails, a good read with a Wiki whose freshness check is held, the same failure again
+test('a failure after a good read is recorded again even while that read’s freshness check is still running', async (context) => {
+  // Arrange
+  let isFailing = true
+  const { recordedFailures, view } = openView(context, {
+    readFacts: async () => {
+      if (isFailing) throw new Error('disk busy')
+      return readyFacts({ wiki: publishedWiki })
+    },
+    // The check never answers during the test: the good read has not shown a freshness result.
+    readFreshness: () => new Promise<LlmWikiFreshness>(() => {}),
+  })
+  await view.refresh()
+  isFailing = false
+  await view.refresh()
+
+  // Act
+  isFailing = true
+  await view.refresh()
+
+  // Assert
+  assert.equal(recordedFailures.length, 2)
+})
+
+// Value: protects=F6 (a freshness check that keeps failing is recorded once, a later one after a good check again); fails_when=a failing freshness check is never written to Output (the label says unknown and nothing tells why), is written at every poll tick, or is not written again after a check succeeded; no_claim=the unknown label (the test above); seam=mocked timers, a run row with a Wiki, a freshness read that fails on three ticks, then succeeds for a new publication, then fails
+test('a freshness check that keeps failing is recorded once in Output, and again after a check succeeded', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] })
+  const freshnessOutcomes = ['fail', 'fail', 'fail', 'ok', 'fail']
+  let checkCount = 0
+  const { recordedFailures, view } = openView(context, {
+    readFacts: async () => ({
+      ...runningFacts(),
+      // The receipt changes after the third check, so the cached answer of the successful check does not serve the last one.
+      publication: checkCount >= 4 ? 'b@2' : 'a@1',
+      wiki: publishedWiki,
+    }),
+    readFreshness: async () => {
+      const outcome = freshnessOutcomes[checkCount++]
+      if (outcome === 'fail') throw new Error('git failed')
+      return { status: 'current' }
+    },
+  })
+  await view.whenIdle()
+
+  // Act
+  for (let tick = 0; tick < 4; tick += 1) {
+    context.mock.timers.tick(50)
+    await view.whenIdle()
+  }
+
+  // Assert
+  assert.deepEqual(recordedFailures, [
+    'The LLM Wiki view could not check whether the Wiki is current',
+    'The LLM Wiki view could not check whether the Wiki is current',
+  ])
+})
+
+// Value: protects=F8 (no write on a disposed tree view); fails_when=a root read after dispose writes the message on the disposed tree view; no_claim=the message before dispose; seam=a run row's message set on the model but not yet read by the tree, then dispose, then a root read
+test('a root read after dispose writes no message on the tree view', async (context) => {
+  // Arrange
+  const { fake, view } = openView(context, {
+    readFacts: async () => runningFacts(),
+  })
+  await view.whenIdle()
+  view.dispose()
+
+  // Act
+  fake.rows()
+
+  // Assert
+  assert.deepEqual(
+    [fake.renderLog(), fake.message()],
+    [['getChildren'], undefined],
+  )
+})

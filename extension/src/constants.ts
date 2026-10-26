@@ -1096,26 +1096,50 @@ export const llmWikiFolderIsFileNotice = (outputLabel: string): string =>
   `The LLM Wiki folder ${outputLabel} is a file, not a folder. Remove or rename that file, or change the location.`
 
 /**
+ * Sentence for a Wiki output path whose entry is a link to nothing, so Reveal Wiki Folder opens nothing and does not promise that Generate LLM Wiki creates it (generation refuses a link).
+ * @param outputLabel - The path as the learner reads it.
+ * @returns `The LLM Wiki folder <label> is a link whose target is missing. Remove or fix the link, or change the location.`
+ * @example llmWikiFolderDanglingLinkNotice('.codebook/wiki') // => 'The LLM Wiki folder .codebook/wiki is a link whose target is missing. Remove or fix the link, or change the location.'
+ */
+export const llmWikiFolderDanglingLinkNotice = (outputLabel: string): string =>
+  `The LLM Wiki folder ${outputLabel} is a link whose target is missing. Remove or fix the link, or change the location.`
+
+/**
  * Sentence for a Wiki output path that cannot be looked at, so Reveal Wiki Folder opens nothing and does not claim the folder is missing.
  * @param outputLabel - The path as the learner reads it.
- * @param code - The system error name of the failed look (`EACCES`, `ENOTDIR`, …).
- * @returns `The LLM Wiki folder <label> cannot be read (<code>). Check its permissions, or change the location.`
- * @example llmWikiFolderUnreadableNotice('.codebook/wiki', 'EACCES') // => 'The LLM Wiki folder .codebook/wiki cannot be read (EACCES). Check its permissions, or change the location.'
+ * @param code - The system error name of the failed look (`EACCES`, `ENOTDIR`, `ETIMEDOUT`, …).
+ * @returns `The LLM Wiki folder <label> cannot be read (<code>). Check the path and its permissions, or change the location.`
+ * @example llmWikiFolderUnreadableNotice('.codebook/wiki', 'EACCES') // => 'The LLM Wiki folder .codebook/wiki cannot be read (EACCES). Check the path and its permissions, or change the location.'
  */
 export const llmWikiFolderUnreadableNotice = (
   outputLabel: string,
   code: string,
 ): string =>
-  `The LLM Wiki folder ${outputLabel} cannot be read (${code}). Check its permissions, or change the location.`
+  `The LLM Wiki folder ${outputLabel} cannot be read (${code}). Check the path and its permissions, or change the location.`
+
+/**
+ * Sentence for a Wiki location that cannot be worked out (the setting is empty or points outside the project), so Reveal Wiki Folder does not fail without a word.
+ * @param reason - The message of the failure, as the setting check words it; one closing full stop is dropped.
+ * @returns `Reveal Wiki Folder could not find the Wiki folder (<reason>). Change the location.`
+ * @example llmWikiFolderLocationFailedNotice('Choose a nonempty local DeepWiki output directory.') // => 'Reveal Wiki Folder could not find the Wiki folder (Choose a nonempty local DeepWiki output directory). Change the location.'
+ */
+export const llmWikiFolderLocationFailedNotice = (reason: string): string =>
+  `Reveal Wiki Folder could not find the Wiki folder (${reason.replace(/\.$/, '')}). Change the location.`
+
+/** How long Reveal Wiki Folder waits for the file system to look at the Wiki output path (ms): a dead network mount never answers, and the learner is told it cannot be read instead of getting no feedback. */
+export const WIKI_FOLDER_STAT_TIMEOUT_MS = 3_000
+
+/** The cap on the text two failed reads are compared by, so a message that embeds a long dump keeps the memory of the last failure small. */
+export const FAILURE_KEY_MAX_LENGTH = 500
 
 /**
  * Sentence for a Wiki folder in a remote window, where Reveal Wiki Folder opens folders of this computer only.
  * @param remoteName - The editor's `env.remoteName`.
- * @returns `Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on <remote name>. Open it from a terminal in this window, which runs on that remote.` (the first sentence is Issue #135 task 21's; the second names the next step)
- * @example llmWikiFolderRemoteNotice('ssh-remote') // => 'Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on ssh-remote. Open it from a terminal in this window, which runs on that remote.'
+ * @returns `Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on <remote name>. Open it from a terminal in this window, which runs in that remote environment, not on this computer.` (the first sentence is Issue #135 task 21's; the second names the next step)
+ * @example llmWikiFolderRemoteNotice('ssh-remote') // => 'Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on ssh-remote. Open it from a terminal in this window, which runs in that remote environment, not on this computer.'
  */
 export const llmWikiFolderRemoteNotice = (remoteName: string): string =>
-  `Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on ${remoteName}. Open it from a terminal in this window, which runs on that remote.`
+  `Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on ${remoteName}. Open it from a terminal in this window, which runs in that remote environment, not on this computer.`
 
 /** How often the extension looks for a newly published manifest while a Wiki update is watched. */
 export const WIKI_UPDATE_WATCH_POLL_MS = 2_000

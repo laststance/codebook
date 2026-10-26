@@ -1,4 +1,5 @@
 import {
+  llmWikiFolderDanglingLinkNotice,
   llmWikiFolderIsFileNotice,
   llmWikiFolderMissingNotice,
   llmWikiFolderRemoteNotice,
@@ -20,13 +21,14 @@ import type { WikiFolderKind } from './wikiFolderKindOf'
  * @param folder.remoteName - The editor's `env.remoteName`; empty or absent for a local window. A WSL window counts as a local one, as everywhere in Codebook.
  * @returns
  * - A file in the folder's place: `The LLM Wiki folder <label> is a file, not a folder. Remove or rename that file, or change the location.`
- * - A path that cannot be read: `The LLM Wiki folder <label> cannot be read (<code>). Check its permissions, or change the location.`
+ * - A link whose target is missing: `The LLM Wiki folder <label> is a link whose target is missing. Remove or fix the link, or change the location.`
+ * - A path that cannot be read (or did not answer in time, `ETIMEDOUT`): `The LLM Wiki folder <label> cannot be read (<code>). Check the path and its permissions, or change the location.`
  * - A missing folder: `The LLM Wiki folder <label> does not exist (yet). Generate LLM Wiki creates it.`
- * - An existing folder in a remote window other than WSL: `Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on <remote name>. Open it from a terminal in this window, which runs on that remote.`
+ * - An existing folder in a remote window other than WSL: `Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on <remote name>. Open it from a terminal in this window, which runs in that remote environment, not on this computer.`
  * - Otherwise `undefined`: the folder can be revealed.
  * @example
  * describeUnrevealableWikiFolder({ outputLabel: '.codebook/wiki', folderKind: { kind: 'missing' } }) // => 'The LLM Wiki folder .codebook/wiki does not exist (yet). Generate LLM Wiki creates it.'
- * describeUnrevealableWikiFolder({ outputLabel: '.codebook/wiki', folderKind: { kind: 'folder' }, remoteName: 'ssh-remote' }) // => 'Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on ssh-remote. Open it from a terminal in this window, which runs on that remote.'
+ * describeUnrevealableWikiFolder({ outputLabel: '.codebook/wiki', folderKind: { kind: 'folder' }, remoteName: 'ssh-remote' }) // => 'Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on ssh-remote. Open it from a terminal in this window, which runs in that remote environment, not on this computer.'
  * describeUnrevealableWikiFolder({ outputLabel: '.codebook/wiki', folderKind: { kind: 'folder' }, remoteName: 'wsl' }) // => undefined
  */
 export function describeUnrevealableWikiFolder(folder: {
@@ -39,6 +41,8 @@ export function describeUnrevealableWikiFolder(folder: {
   if (folderKind.kind === 'file') return llmWikiFolderIsFileNotice(outputLabel)
   if (folderKind.kind === 'missing')
     return llmWikiFolderMissingNotice(outputLabel)
+  if (folderKind.kind === 'dangling-link')
+    return llmWikiFolderDanglingLinkNotice(outputLabel)
   if (folderKind.kind === 'unreadable')
     return llmWikiFolderUnreadableNotice(outputLabel, folderKind.code)
   // A WSL window reveals as a local one: the editor's reveal works there.

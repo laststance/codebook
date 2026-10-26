@@ -5,12 +5,18 @@
  *
  * @param error - Whatever the failed call threw.
  * @returns
- * - The error's `code` as text when it is an `Error` that carries one
- * - `''` for any other failure
+ * - The error's `code` as text when it is an `Error` whose `code` is a string or a number
+ * - `''` for any other failure (also an `Error` whose own `code` is `undefined` or `null`, which must not read as the text `undefined`)
  * @example
  * systemErrorCode(Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' })) // => 'ESRCH'
  * systemErrorCode(new Error('probe interrupted'))                            // => ''
+ * systemErrorCode(Object.assign(new Error('odd'), { code: undefined }))      // => ''
  */
 export function systemErrorCode(error: unknown): string {
-  return error instanceof Error && 'code' in error ? String(error.code) : ''
+  if (!(error instanceof Error) || !('code' in error)) return ''
+  const { code } = error
+  // Only a string or a number is a system error name; `undefined` and `null` would print as words.
+  return typeof code === 'string' || typeof code === 'number'
+    ? String(code)
+    : ''
 }

@@ -6,6 +6,7 @@ import {
   COPY_DETAILS_ACTION,
   COPY_WIKI_RECOVERY_REQUEST_COMMAND,
   LLM_WIKI_MANAGE_TRUST_FALLBACK_NOTICE,
+  llmWikiFolderLocationFailedNotice,
   LLM_WIKI_RECOVERY_REQUEST_COPIED_NOTICE,
   LLM_WIKI_ROW_ACTIONS,
   OPEN_CHAT_COMMAND,
@@ -22,6 +23,7 @@ import {
 import { describeUnrevealableWikiFolder } from './describeUnrevealableWikiFolder'
 import type { LlmWikiView } from './llmWikiView'
 import { resolveManageTrustCommand } from './resolveManageTrustCommand'
+import { thrownMessage } from './thrownMessage'
 import { wikiFolderKindOf } from './wikiFolderKindOf'
 import { wikiOutputLabel } from './wikiOutputLabel'
 import { withHomeFolderShown } from './withHomeFolderShown'
@@ -48,6 +50,8 @@ export type LlmWikiCommandOptions = {
     projectRoot: string
     outputDirectory: string
   }>
+  /** Writes a failure to Output › Codebook, as the view's own record does. */
+  recordFailure: (message: string, cause: unknown) => void
 }
 
 /**
@@ -102,7 +106,7 @@ async function manageTrust(options: LlmWikiCommandOptions): Promise<void> {
  * @param options - The window's closures ({@link LlmWikiCommandOptions}).
  * @returns The registrations, to dispose with the extension.
  * @example
- * context.subscriptions.push(...registerLlmWikiCommands({ editor: vscode, registerCommand, showNotice, view, cancelRun, findWikiLocation }))
+ * context.subscriptions.push(...registerLlmWikiCommands({ editor: vscode, registerCommand, showNotice, view, cancelRun, findWikiLocation, recordFailure }))
  */
 export function registerLlmWikiCommands(
   options: LlmWikiCommandOptions,
@@ -122,7 +126,22 @@ export function registerLlmWikiCommands(
       )
     }),
     registerCommand(REVEAL_WIKI_FOLDER_COMMAND, async () => {
-      const { projectRoot, outputDirectory } = await options.findWikiLocation()
+      let location: Awaited<ReturnType<typeof options.findWikiLocation>>
+      try {
+        location = await options.findWikiLocation()
+      } catch (cause) {
+        // A setting that names no usable folder (empty, or outside the project) would otherwise fail without a word.
+        options.recordFailure(
+          'Reveal Wiki Folder could not resolve the Wiki folder',
+          cause,
+        )
+        void options.showNotice(
+          'information',
+          llmWikiFolderLocationFailedNotice(thrownMessage(cause)),
+        )
+        return
+      }
+      const { projectRoot, outputDirectory } = location
       // The editor's reveal shows nothing for a missing folder or one on a remote host, so the learner is told instead.
       const reason = describeUnrevealableWikiFolder({
         outputLabel: wikiOutputLabel(projectRoot, outputDirectory),

@@ -1076,7 +1076,7 @@ test('Reveal Wiki Folder in a remote window says the folder is on the remote hos
     [
       [],
       [
-        'Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on ssh-remote. Open it from a terminal in this window, which runs on that remote.',
+        'Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on ssh-remote. Open it from a terminal in this window, which runs in that remote environment, not on this computer.',
       ],
     ],
   )
@@ -1135,7 +1135,61 @@ test('Reveal Wiki Folder on an unreadable path says it cannot be read with the e
     [
       [],
       [
-        'The LLM Wiki folder .codebook/wiki cannot be read (ENOTDIR). Check its permissions, or change the location.',
+        'The LLM Wiki folder .codebook/wiki cannot be read (ENOTDIR). Check the path and its permissions, or change the location.',
+      ],
+    ],
+  )
+})
+
+// Value: protects=F2 (b) (a link to nothing at the output path is not told as missing); fails_when=a dangling link is worded "does not exist (yet)" so the learner presses Generate, which refuses a link; no_claim=a link to a folder; seam=a symbolic link at the default output path whose target does not exist
+test('Reveal Wiki Folder on a link whose target is missing says so and reveals nothing', async (context) => {
+  // Arrange
+  const project = await openEmptyProject(context)
+  await mkdir(dirname(project.outputDirectory), { recursive: true })
+  await symlink(
+    join(project.projectRoot, 'nowhere'),
+    project.outputDirectory,
+    'junction',
+  )
+
+  // Act
+  await project.runCommand('codebook.revealWikiFolder')
+
+  // Assert
+  assert.deepEqual(
+    [project.executedCommands, project.notices],
+    [
+      [],
+      [
+        'The LLM Wiki folder .codebook/wiki is a link whose target is missing. Remove or fix the link, or change the location.',
+      ],
+    ],
+  )
+})
+
+// Value: protects=F7 (a Wiki location that cannot be worked out is told); fails_when=an empty output setting makes Reveal Wiki Folder reject with no notice and nothing in Output; no_claim=the wording of the setting check; seam=the output setting set to an empty text
+test('Reveal Wiki Folder with an empty output setting says the folder cannot be found, records it and reveals nothing', async (context) => {
+  // Arrange
+  const project = await openEmptyProject(context)
+  project.setOutputSetting('')
+
+  // Act
+  await project.runCommand('codebook.revealWikiFolder')
+
+  // Assert
+  assert.deepEqual(
+    [
+      project.executedCommands,
+      project.notices,
+      project.outputLines.filter((line) => line.includes('Reveal Wiki Folder')),
+    ],
+    [
+      [],
+      [
+        'Reveal Wiki Folder could not find the Wiki folder (Choose a nonempty local DeepWiki output directory). Change the location.',
+      ],
+      [
+        'error: Reveal Wiki Folder could not resolve the Wiki folder: Choose a nonempty local DeepWiki output directory.',
       ],
     ],
   )

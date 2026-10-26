@@ -3183,6 +3183,14 @@ export function activate(
   )
   // The LLM Wiki view: rows from the Wiki folder, the run state and the markers; an editor without tree views shows none.
   if (Reflect.has(vscode.window ?? {}, 'createTreeView')) {
+    /** Writes a failure of the LLM Wiki view or its commands to Output › Codebook; the view and Reveal Wiki Folder use it. */
+    const recordLlmWikiFailure = (message: string, cause: unknown): void => {
+      try {
+        output?.error(`${message}: ${thrownMessage(cause)}`)
+      } catch {
+        // A disposed channel has nowhere to write.
+      }
+    }
     const llmWikiView = createLlmWikiView({
       editor: vscode,
       host: wikiHost,
@@ -3256,13 +3264,7 @@ export function activate(
           `An LLM Wiki was published in ${outputLabel}.`,
           [OPEN_WIKI_IN_BROWSER_ACTION],
         ),
-      recordFailure: (message, cause) => {
-        try {
-          output?.error(`${message}: ${thrownMessage(cause)}`)
-        } catch {
-          // A disposed channel has nowhere to write.
-        }
-      },
+      recordFailure: recordLlmWikiFailure,
     })
     context.subscriptions.push(
       { dispose: () => llmWikiView.dispose() },
@@ -3273,6 +3275,7 @@ export function activate(
         view: llmWikiView,
         cancelRun: cancelWikiRun,
         findWikiLocation: wikiLocation,
+        recordFailure: recordLlmWikiFailure,
       }),
     )
   }

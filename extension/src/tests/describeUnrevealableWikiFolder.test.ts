@@ -58,7 +58,7 @@ test('Reveal Wiki Folder words a file, a remote host with its next step, and let
   // Assert
   assert.deepEqual(results, [
     'The LLM Wiki folder docs/wiki is a file, not a folder. Remove or rename that file, or change the location.',
-    'Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on ssh-remote. Open it from a terminal in this window, which runs on that remote.',
+    'Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on ssh-remote. Open it from a terminal in this window, which runs in that remote environment, not on this computer.',
     undefined,
   ])
 })
@@ -78,6 +78,31 @@ test('Reveal Wiki Folder words an unreadable path with its error code and a next
   // Assert
   assert.equal(
     result,
-    'The LLM Wiki folder .codebook/wiki cannot be read (EACCES). Check its permissions, or change the location.',
+    'The LLM Wiki folder .codebook/wiki cannot be read (EACCES). Check the path and its permissions, or change the location.',
   )
+})
+
+// Value: protects=F2 (b) and F3 (a link to nothing and a look that timed out have their own words); fails_when=a dangling link is worded as missing, or a timeout is worded as a permission problem only; no_claim=the system call that failed; seam=none
+test('Reveal Wiki Folder words a link whose target is missing, and a look that timed out', () => {
+  // Arrange
+  const danglingLink = {
+    outputLabel: '.codebook/wiki',
+    folderKind: { kind: 'dangling-link' } as const,
+  }
+  const timedOut = {
+    outputLabel: '.codebook/wiki',
+    folderKind: { kind: 'unreadable', code: 'ETIMEDOUT' } as const,
+  }
+
+  // Act
+  const results = [
+    describeUnrevealableWikiFolder(danglingLink),
+    describeUnrevealableWikiFolder(timedOut),
+  ]
+
+  // Assert
+  assert.deepEqual(results, [
+    'The LLM Wiki folder .codebook/wiki is a link whose target is missing. Remove or fix the link, or change the location.',
+    'The LLM Wiki folder .codebook/wiki cannot be read (ETIMEDOUT). Check the path and its permissions, or change the location.',
+  ])
 })
