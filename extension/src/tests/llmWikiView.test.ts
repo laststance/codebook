@@ -1135,6 +1135,30 @@ test('the message changes only when the tree reads the new rows, not when the ch
   )
 })
 
+// Value: protects=task 25 (row 5's click, O3); fails_when=a click on the Output row does nothing, so its description Change location is not a way to change the location; no_claim=what the settings editor shows; seam=the row's command as the editor would run it
+test('a click on the Output row opens the setting that names the Wiki folder', async (context) => {
+  // Arrange
+  const { window } = await openPublishedWiki(context)
+
+  // Act
+  const click = rowOf(window, 'output')?.command
+  await window.runCommand(click?.command ?? '')
+
+  // Assert
+  assert.deepEqual(
+    [click?.command, window.executedCommandCalls],
+    [
+      'codebook.llmWiki.changeLocation',
+      [
+        {
+          name: 'workbench.action.openSettings',
+          argument: '@id:codebook.wikiOutputDirectory',
+        },
+      ],
+    ],
+  )
+})
+
 // Value: protects=the view's folder row actions; fails_when=Open Folder runs a command other than the editor's folder dialog; no_claim=the dialog; seam=the stubbed editor's command log
 test('Open Folder runs the editor’s folder dialog command', async (context) => {
   // Arrange

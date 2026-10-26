@@ -1040,15 +1040,15 @@ export const LLM_WIKI_ROW_ACTIONS = {
   update: { command: UPDATE_DEEP_WIKI_COMMAND, title: 'Update LLM Wiki' },
   'stop-watching': {
     command: 'codebook.llmWiki.stopWatching',
-    title: 'Stop watching',
+    title: 'Stop Watching',
   },
   'cancel-run': { command: 'codebook.llmWiki.cancelRun', title: 'Cancel' },
   'open-chat': { command: 'codebook.llmWiki.openChat', title: 'Open Chat' },
   'show-output': { command: SHOW_WIKI_OUTPUT_COMMAND, title: 'Show Output' },
-  'try-again': { command: GENERATE_DEEP_WIKI_COMMAND, title: 'Try again' },
+  'try-again': { command: GENERATE_DEEP_WIKI_COMMAND, title: 'Try Again' },
   'change-location': {
     command: 'codebook.llmWiki.changeLocation',
-    title: 'Change location',
+    title: 'Change Location',
   },
   'copy-recovery': {
     command: COPY_WIKI_RECOVERY_REQUEST_COMMAND,
@@ -1778,3 +1778,11 @@ export const REFUSAL_REPORT_LABEL_CHARS = 48
 
 /** The most editor events a {@link PlacementEventLog} keeps and a placement refusal report lists, in events. */
 export const REFUSAL_REPORT_EVENTS = 24
+
+/** What the LLM Wiki view says when the editor lists none of the known ids of its Manage Workspace Trust command ({@link manageTrust}). */
+export const LLM_WIKI_MANAGE_TRUST_FALLBACK_NOTICE =
+  'Run "Workspaces: Manage Workspace Trust" from the Command Palette to trust this folder.'
+
+/** What the LLM Wiki view says once the recovery request is copied. */
+export const LLM_WIKI_RECOVERY_REQUEST_COPIED_NOTICE =
+  'Copied the recovery request. Paste it into the editor chat.'

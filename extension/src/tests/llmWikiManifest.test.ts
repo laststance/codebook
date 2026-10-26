@@ -10,7 +10,12 @@ type Manifest = {
     viewsContainers: { activitybar: Array<{ id: string; icon: string }> }
     views: { codebook: Array<{ id: string; name: string }> }
     viewsWelcome: Array<{ view: string; when: string; contents: string }>
-    commands: Array<{ command: string; title: string }>
+    commands: Array<{
+      command: string
+      title: string
+      shortTitle?: string
+      icon?: string
+    }>
     menus: Record<
       string,
       Array<{ command: string; when?: string; group?: string }>
@@ -44,7 +49,7 @@ test('the LLM Wiki view’s welcome content shows only in the none state, per ho
           "Explore this project through source-linked chapters, diagrams and questions, written by your editor's AI.",
           '[Generate LLM Wiki](command:codebook.generateDeepWiki)',
           'It runs in a new Copilot Chat session and uses your chat plan. The chat asks you to approve its commands and may ask you to Continue; keep the Chat view open.',
-          'The Wiki is written to the folder the setting codebook.wikiOutputDirectory names (default .codebook/wiki). [Change location](command:workbench.action.openSettings?%5B%22%40id%3Acodebook.wikiOutputDirectory%22%5D)',
+          'The Wiki is written to .codebook/wiki unless the setting codebook.wikiOutputDirectory names another folder. [Change location](command:workbench.action.openSettings?%5B%22%40id%3Acodebook.wikiOutputDirectory%22%5D)',
         ],
       },
       {
@@ -53,7 +58,7 @@ test('the LLM Wiki view’s welcome content shows only in the none state, per ho
           "Explore this project through source-linked chapters, diagrams and questions, written by your editor's AI.",
           '[Generate LLM Wiki](command:codebook.generateDeepWiki)',
           "It runs through Cursor's agent CLI (cursor-agent), uses your Cursor plan and can take several minutes. You can keep working.",
-          'The Wiki is written to the folder the setting codebook.wikiOutputDirectory names (default .codebook/wiki). [Change location](command:workbench.action.openSettings?%5B%22%40id%3Acodebook.wikiOutputDirectory%22%5D)',
+          'The Wiki is written to .codebook/wiki unless the setting codebook.wikiOutputDirectory names another folder. [Change location](command:workbench.action.openSettings?%5B%22%40id%3Acodebook.wikiOutputDirectory%22%5D)',
         ],
       },
     ],
@@ -159,4 +164,46 @@ test('the palette lists the commands that exist only with the LLM Wiki view only
     'codebook.copyWikiRecoveryRequest': 'codebook.llmWiki.state',
     'codebook.revealWikiFolder': 'codebook.llmWiki.state',
   })
+})
+
+// Value: protects=task 25 (view copy and icons, O3); fails_when=Try again loses its restart icon, Stop watching keeps the stop icon that Cancel keeps for stopping the agent, or an inline action's title falls back to sentence case; no_claim=how the editor draws the icons (N56 step 5); seam=the packaged manifest
+test('the LLM Wiki view’s inline actions carry the decided icons and Title Case titles', async () => {
+  // Arrange
+  const manifest = await readManifest()
+  const commandsById = new Map(
+    manifest.contributes.commands.map((command) => [command.command, command]),
+  )
+
+  // Act
+  const shown = [
+    'codebook.generateDeepWiki',
+    'codebook.llmWiki.stopWatching',
+    'codebook.llmWiki.cancelRun',
+    'codebook.llmWiki.openChat',
+    'codebook.showWikiOutput',
+    'codebook.llmWiki.changeLocation',
+    'codebook.llmWiki.openFolder',
+  ].map((id) => {
+    const command = commandsById.get(id)
+    return [id, command?.shortTitle ?? command?.title, command?.icon]
+  })
+
+  // Assert
+  assert.deepEqual(shown, [
+    ['codebook.generateDeepWiki', 'Try Again', '$(debug-restart)'],
+    ['codebook.llmWiki.stopWatching', 'Stop Watching', '$(eye-closed)'],
+    ['codebook.llmWiki.cancelRun', 'Cancel', '$(debug-stop)'],
+    ['codebook.llmWiki.openChat', 'Open Chat', '$(comment-discussion)'],
+    ['codebook.showWikiOutput', 'Show Output', '$(output)'],
+    ['codebook.llmWiki.changeLocation', 'Change Location', '$(edit)'],
+    ['codebook.llmWiki.openFolder', 'Open Folder', '$(folder-opened)'],
+  ])
+  assert.deepEqual(
+    [
+      LLM_WIKI_ROW_ACTIONS['try-again'].title,
+      LLM_WIKI_ROW_ACTIONS['stop-watching'].title,
+      LLM_WIKI_ROW_ACTIONS['change-location'].title,
+    ],
+    ['Try Again', 'Stop Watching', 'Change Location'],
+  )
 })

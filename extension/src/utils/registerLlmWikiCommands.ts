@@ -5,6 +5,8 @@ import type * as vscode from 'vscode'
 import {
   COPY_DETAILS_ACTION,
   COPY_WIKI_RECOVERY_REQUEST_COMMAND,
+  LLM_WIKI_MANAGE_TRUST_FALLBACK_NOTICE,
+  LLM_WIKI_RECOVERY_REQUEST_COPIED_NOTICE,
   LLM_WIKI_ROW_ACTIONS,
   OPEN_CHAT_COMMAND,
   OPEN_FOLDER_COMMAND,
@@ -84,7 +86,7 @@ async function manageTrust(options: LlmWikiCommandOptions): Promise<void> {
   if (commandId === undefined) {
     void options.showNotice(
       'information',
-      'Run "Workspaces: Manage Workspace Trust" from the Command Palette to trust this folder.',
+      LLM_WIKI_MANAGE_TRUST_FALLBACK_NOTICE,
     )
     return
   }
@@ -116,7 +118,7 @@ export function registerLlmWikiCommands(
       await editor.env.clipboard.writeText(WIKI_UPDATE_RECOVERY_REQUEST)
       void options.showNotice(
         'information',
-        'Copied the recovery request. Paste it into the editor chat.',
+        LLM_WIKI_RECOVERY_REQUEST_COPIED_NOTICE,
       )
     }),
     registerCommand(REVEAL_WIKI_FOLDER_COMMAND, async () => {

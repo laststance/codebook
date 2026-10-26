@@ -169,8 +169,8 @@
       {
         "command": "codebook.generateDeepWiki",
         "title": "Codebook: Generate LLM Wiki",
-        "shortTitle": "Try again",
-        "icon": "$(play)"
+        "shortTitle": "Try Again",
+        "icon": "$(debug-restart)"
       },
       {
         "command": "codebook.updateDeepWiki",
@@ -234,8 +234,8 @@
       },
       {
         "command": "codebook.llmWiki.stopWatching",
-        "title": "Stop watching",
-        "icon": "$(debug-stop)"
+        "title": "Stop Watching",
+        "icon": "$(eye-closed)"
       },
       {
         "command": "codebook.llmWiki.cancelRun",
@@ -249,7 +249,7 @@
       },
       {
         "command": "codebook.llmWiki.changeLocation",
-        "title": "Change location",
+        "title": "Change Location",
         "icon": "$(edit)"
       },
       {
@@ -349,12 +349,12 @@
       {
         "view": "codebook.llmWiki",
         "when": "codebook.llmWiki.state == none && codebook.host == vscode",
-        "contents": "Explore this project through source-linked chapters, diagrams and questions, written by your editor's AI.\n[Generate LLM Wiki](command:codebook.generateDeepWiki)\nIt runs in a new Copilot Chat session and uses your chat plan. The chat asks you to approve its commands and may ask you to Continue; keep the Chat view open.\nThe Wiki is written to the folder the setting codebook.wikiOutputDirectory names (default .codebook/wiki). [Change location](command:workbench.action.openSettings?%5B%22%40id%3Acodebook.wikiOutputDirectory%22%5D)"
+        "contents": "Explore this project through source-linked chapters, diagrams and questions, written by your editor's AI.\n[Generate LLM Wiki](command:codebook.generateDeepWiki)\nIt runs in a new Copilot Chat session and uses your chat plan. The chat asks you to approve its commands and may ask you to Continue; keep the Chat view open.\nThe Wiki is written to .codebook/wiki unless the setting codebook.wikiOutputDirectory names another folder. [Change location](command:workbench.action.openSettings?%5B%22%40id%3Acodebook.wikiOutputDirectory%22%5D)"
       },
       {
         "view": "codebook.llmWiki",
         "when": "codebook.llmWiki.state == none && codebook.host == cursor",
-        "contents": "Explore this project through source-linked chapters, diagrams and questions, written by your editor's AI.\n[Generate LLM Wiki](command:codebook.generateDeepWiki)\nIt runs through Cursor's agent CLI (cursor-agent), uses your Cursor plan and can take several minutes. You can keep working.\nThe Wiki is written to the folder the setting codebook.wikiOutputDirectory names (default .codebook/wiki). [Change location](command:workbench.action.openSettings?%5B%22%40id%3Acodebook.wikiOutputDirectory%22%5D)"
+        "contents": "Explore this project through source-linked chapters, diagrams and questions, written by your editor's AI.\n[Generate LLM Wiki](command:codebook.generateDeepWiki)\nIt runs through Cursor's agent CLI (cursor-agent), uses your Cursor plan and can take several minutes. You can keep working.\nThe Wiki is written to .codebook/wiki unless the setting codebook.wikiOutputDirectory names another folder. [Change location](command:workbench.action.openSettings?%5B%22%40id%3Acodebook.wikiOutputDirectory%22%5D)"
       },
       {
         "view": "codebook.learningOutline",
