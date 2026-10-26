@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import {
+  mkdir,
   mkdtemp,
   readFile,
   rename,
@@ -10,10 +11,11 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { WikiUpdateTimeoutError } from '../utils/wikiUpdateTimeoutError'
 
 import {
   exists,
@@ -1149,4 +1151,269 @@ test('a read that ends after the window closed creates no file watcher', async (
 
   // Assert
   assert.equal(project.liveWatcherCount(), 0)
+})
+
+// Value: protects=AC 2 row 3 (a generation that ran out of time); fails_when=the bound the run passed is not carried from the run state to the row, so a Cursor generation stopped at 55 minutes reads "stopped after 0 minutes" or no cause; no_claim=the end sentence's wording; seam=a Cursor agent that throws the timeout error; why_new=the pure-row table passes timeoutMs by hand, so only a host test proves the run state's bound reaches the row
+test('a Cursor generation that runs past its bound shows Last generation stopped after 55 minutes', async (context) => {
+  // Arrange
+  const project = await openEmptyProject(context, {
+    cursor: true,
+    cursorAgent: async () => {
+      throw new WikiUpdateTimeoutError('Cursor Agent timed out.')
+    },
+  })
+
+  // Act
+  await project.runCommand(GENERATE_COMMAND).catch(() => undefined)
+  await untilRow(project, 'last-attempt')
+
+  // Assert
+  assert.deepEqual(
+    [rowOf(project, 'last-attempt')?.description, idsOf(project)],
+    ['stopped after 55 minutes', ['last-attempt', 'output']],
+  )
+})
+
+// Value: protects=AC 2 row 3 (the last attempt belongs to the folder it ran for); fails_when=after the learner points the output setting at another folder, the stopped generation of the old folder still shows, with Try again for a folder it never touched; no_claim=the setting UI; seam=the stubbed configuration event; why_new=no test changes the folder after a stopped generation
+test('a stopped generation is forgotten when the output setting names another folder', async (context) => {
+  // Arrange
+  const project = await openEmptyProject(context, {
+    cursor: true,
+    cursorAgent: async () => {
+      throw Object.assign(new Error('The agent stopped.'), {
+        exitCode: 1,
+        exitSignal: null,
+      })
+    },
+  })
+  await project.runCommand(GENERATE_COMMAND).catch(() => undefined)
+  await untilRow(project, 'last-attempt')
+
+  // Act
+  project.setOutputSetting('docs/other-wiki')
+  await untilRow(project, 'last-attempt', false)
+
+  // Assert
+  assert.deepEqual(
+    [idsOf(project), project.llmWiki.contextKeys[STATE_KEY]],
+    [[], 'none'],
+  )
+})
+
+/** Opens a project whose generation was stopped by Stop watching, so the reservation row stands. */
+async function openProjectWithReservation(context: TestContext) {
+  const project = await openEmptyProject(context, {
+    chatReply: () => new Promise<never>(() => {}),
+  })
+  void project.runCommand(GENERATE_COMMAND)
+  await untilRow(project, 'run')
+  await project.runCommand('codebook.llmWiki.stopWatching')
+  await untilRow(project, 'reservation')
+  return project
+}
+
+/** Opens a project whose Cursor generation ended with exit code 1, so the last-attempt row stands. */
+async function openProjectWithLastAttempt(context: TestContext) {
+  const project = await openEmptyProject(context, {
+    cursor: true,
+    cursorAgent: async () => {
+      throw Object.assign(new Error('The agent stopped.'), {
+        exitCode: 1,
+        exitSignal: null,
+      })
+    },
+  })
+  await project.runCommand(GENERATE_COMMAND).catch(() => undefined)
+  await untilRow(project, 'last-attempt')
+  return project
+}
+
+/** Opens a project whose Cursor generation is running in this window, so the run row stands. */
+async function openProjectWithRun(context: TestContext) {
+  const project = await openEmptyProject(context, {
+    cursor: true,
+    cursorAgent: (_root, _prompt, signal) =>
+      new Promise<string>((_resolve, reject) =>
+        signal?.addEventListener('abort', () => reject(new Error('stopped'))),
+      ),
+  })
+  void project.runCommand(GENERATE_COMMAND)
+  await untilRow(project, 'run')
+  return project
+}
+
+/** Opens a project where another window's live generation stands, so the elsewhere row shows. */
+async function openProjectWithRunElsewhere(context: TestContext) {
+  const project = await openEmptyProject(context)
+  await mkdir(dirname(project.markerPath), { recursive: true })
+  await writeFile(
+    project.markerPath,
+    JSON.stringify({
+      pid: process.pid,
+      windowId: 'the-other-window',
+      host: 'vscode',
+      startedAtMs: Date.now() - 60_000,
+      runKind: 'generate',
+    }),
+  )
+  await project.runCommand('codebook.refreshLlmWiki')
+  await untilRow(project, 'elsewhere')
+  return project
+}
+
+/** Closes the folder, reads, opens it again, reads, and answers the row ids after each read. */
+async function idsWhileFolderIsRemoved(
+  project: Awaited<ReturnType<typeof openEmptyProject>>,
+): Promise<{ removed: string[]; restored: string[] }> {
+  project.closeFolder()
+  await project.runCommand('codebook.refreshLlmWiki')
+  const removed = idsOf(project)
+  project.reopenFolder()
+  await project.runCommand('codebook.refreshLlmWiki')
+  return { removed, restored: idsOf(project) }
+}
+
+// Value: protects=AC 2 row 2c (a reservation that ends without a publication); fails_when=a removed reservation marker leaves the Waiting for chat row, shows a Wiki row, or tells the learner a Wiki was published; no_claim=the reservation's expiry time (marker tests); seam=the marker file removed and the view refreshed; why_new=no test ends a reservation without a publication
+test('a reservation whose marker is gone leaves no Waiting for chat row, no Wiki row and no published notice', async (context) => {
+  // Arrange
+  const project = await openProjectWithReservation(context)
+  const noticesBefore = project.notices.length
+
+  // Act
+  await unlink(project.markerPath)
+  await project.runCommand('codebook.refreshLlmWiki')
+
+  // Assert
+  assert.deepEqual(
+    [idsOf(project), project.notices.length - noticesBefore],
+    [['last-attempt', 'output'], 0],
+  )
+})
+
+// Value: protects=the late-publication notice belonging to its folder; fails_when=after the learner points the output setting at a folder that already holds a Wiki, the view says a Wiki was published, though nothing waited for that folder; no_claim=the setting UI; seam=the stubbed configuration event over a Wiki published beforehand; why_new=only a reservation in one folder and a Wiki in another folder proves the memory is tied to the folder
+test('pointing the output setting at a folder that already holds a Wiki shows its rows and no published notice while a reservation stood', async (context) => {
+  // Arrange
+  const project = await openProjectWithReservation(context)
+  await publishGeneratedWiki(
+    join(project.projectRoot, 'docs', 'wiki'),
+    project.projectRoot,
+  )
+  const noticesBefore = project.notices.length
+
+  // Act
+  project.setOutputSetting('docs/wiki')
+  await untilRow(project, 'wiki')
+  await project.runCommand('codebook.refreshLlmWiki')
+
+  // Assert
+  assert.deepEqual(
+    [idsOf(project), project.notices.length - noticesBefore],
+    [['wiki', 'output'], 0],
+  )
+})
+
+// Value: protects=AC 2 row 2c and the late-publication memory across a removed folder; fails_when=a folder removed and restored loses the reservation row, shows a notice nothing caused, or forgets that a Wiki published afterwards is late; no_claim=VS Code's folder prompts; seam=the stubbed workspace folders; why_new=no test removes the folder while a reservation stands
+test('a folder removed and restored while a reservation stands shows the folder row, then the reservation again, and a later publication still shows its notice once', async (context) => {
+  // Arrange
+  const project = await openProjectWithReservation(context)
+  const noticesBefore = project.notices.length
+
+  // Act
+  const whileRemoved = await idsWhileFolderIsRemoved(project)
+  const noticesAfterRestore = project.notices.length - noticesBefore
+  // gstack-timing-ok: separates the publication's file times from the earlier read; no assertion measures the wait
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  await publishGeneratedWiki(project.outputDirectory, project.projectRoot)
+  await project.runCommand('codebook.refreshLlmWiki')
+
+  // Assert
+  assert.deepEqual(
+    [whileRemoved, noticesAfterRestore, project.notices.slice(noticesBefore)],
+    [
+      {
+        removed: ['folder'],
+        restored: ['reservation', 'last-attempt', 'output'],
+      },
+      0,
+      ['An LLM Wiki was published in .codebook/wiki.'],
+    ],
+  )
+})
+
+// Value: protects=AC 2 row 3 across a removed folder; fails_when=a folder removed and restored loses the Last generation stopped row; no_claim=VS Code's folder prompts; seam=the stubbed workspace folders; why_new=no test removes the folder while a last attempt stands
+test('a folder removed and restored while a stopped generation stands shows the folder row, then Last generation stopped again', async (context) => {
+  // Arrange
+  const project = await openProjectWithLastAttempt(context)
+
+  // Act
+  const whileRemoved = await idsWhileFolderIsRemoved(project)
+
+  // Assert
+  assert.deepEqual(whileRemoved, {
+    removed: ['folder'],
+    restored: ['last-attempt', 'output'],
+  })
+})
+
+// Value: protects=AC 2 row 2 (the plan's presence condition: this window's run, whatever folder the setting names now); fails_when=after the output setting names another folder the run row of this window's running generation disappears, so its Cancel is no longer in the view; no_claim=what the run does to the old folder; seam=the stubbed configuration event over a Cursor generation that waits; why_new=no test changes the folder while a run stands
+test('the run row stays, with its Cancel, when the output setting names another folder during the run', async (context) => {
+  // Arrange
+  const project = await openProjectWithRun(context)
+
+  // Act
+  project.setOutputSetting('docs/other-wiki')
+  await waitUntil(
+    () => rowOf(project, 'output')?.label === 'Output: docs/other-wiki',
+    'the new output folder',
+    6_000,
+  )
+
+  // Assert
+  assert.deepEqual(
+    [idsOf(project), rowOf(project, 'run')?.contextValue],
+    [['run', 'output'], '[cancel-run][show-output]'],
+  )
+})
+
+// Value: protects=AC 2 row 2 across a removed folder; fails_when=a folder removed and restored loses the run row of a running generation; no_claim=VS Code's folder prompts; seam=the stubbed workspace folders over a Cursor generation that waits; why_new=no test removes the folder while a run stands
+test('a folder removed and restored while a generation runs shows the folder row, then the run row again', async (context) => {
+  // Arrange
+  const project = await openProjectWithRun(context)
+
+  // Act
+  const whileRemoved = await idsWhileFolderIsRemoved(project)
+
+  // Assert
+  assert.deepEqual(whileRemoved, {
+    removed: ['folder'],
+    restored: ['run', 'output'],
+  })
+})
+
+// Value: protects=AC 2 row 2b (another window's run belongs to its folder); fails_when=after the output setting names another folder the Generating in another window row of the old folder still shows; no_claim=the other window's work; seam=a live marker of another window and the stubbed configuration event; why_new=no test changes the folder while another window runs
+test('the elsewhere row is gone when the output setting names another folder', async (context) => {
+  // Arrange
+  const project = await openProjectWithRunElsewhere(context)
+
+  // Act
+  project.setOutputSetting('docs/other-wiki')
+  await untilRow(project, 'elsewhere', false)
+
+  // Assert
+  assert.deepEqual(idsOf(project), [])
+})
+
+// Value: protects=AC 2 row 2b across a removed folder; fails_when=a folder removed and restored loses the row of another window's live run; no_claim=VS Code's folder prompts; seam=a live marker of another window and the stubbed workspace folders; why_new=no test removes the folder while another window runs
+test('a folder removed and restored while another window runs shows the folder row, then the elsewhere row again', async (context) => {
+  // Arrange
+  const project = await openProjectWithRunElsewhere(context)
+
+  // Act
+  const whileRemoved = await idsWhileFolderIsRemoved(project)
+
+  // Assert
+  assert.deepEqual(whileRemoved, {
+    removed: ['folder'],
+    restored: ['elsewhere', 'output'],
+  })
 })

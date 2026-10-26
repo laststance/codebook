@@ -229,6 +229,8 @@ export async function openWikiUpdateWindow(options: {
   grantTrust(): void
   /** Closes the folder: the window has none from now on. */
   closeFolder(): void
+  /** Opens the folder again after {@link closeFolder}, as the learner restores it. */
+  reopenFolder(): void
   visibleStatusBarTexts(): string[]
   looks: {
     candidateListings: number
@@ -926,6 +928,9 @@ export async function openWikiUpdateWindow(options: {
     },
     closeFolder(): void {
       isFolderOpen = false
+    },
+    reopenFolder(): void {
+      isFolderOpen = true
     },
     visibleStatusBarTexts: (): string[] =>
       statusBarEntries

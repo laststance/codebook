@@ -141,8 +141,14 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
   let shownState: string | undefined = 'loading'
   let shownKey = JSON.stringify(model)
   let facts: LlmWikiViewFacts | undefined
-  let previousRowIds: string[] = []
-  let previousPublication: string | undefined
+  /** What the last ready read showed, kept across reads that are not ready, so a publication after a removed and restored folder still counts as late. */
+  let lateWatch:
+    | {
+        outputDirectory: string
+        wasWaiting: boolean
+        publication: string | undefined
+      }
+    | undefined
   let freshnessCache: { key: string; value: LlmWikiFreshness } | undefined
   let readCount = 0
   let running: Promise<void> | undefined
@@ -319,13 +325,12 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
   const noteLatePublication = (
     nextFacts: Extract<LlmWikiViewFacts, { kind: 'ready' }>,
   ): void => {
-    const wasWaiting = previousRowIds.some(
-      (rowId) => rowId === 'reservation' || rowId === 'last-attempt',
-    )
+    // A publication in another folder than the one that was waiting is not a late one.
     if (
-      wasWaiting &&
+      lateWatch?.outputDirectory === nextFacts.outputDirectory &&
+      lateWatch.wasWaiting &&
       nextFacts.publication !== undefined &&
-      nextFacts.publication !== previousPublication &&
+      nextFacts.publication !== lateWatch.publication &&
       nextFacts.wiki
     )
       options.tellPublished(nextFacts.outputLabel)
@@ -341,7 +346,7 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
     } catch (cause) {
       if (isDisposed) return undefined
       options.recordFailure('The LLM Wiki view could not read its state', cause)
-      // previousRowIds stays: a publication after one failed read is still a late publication.
+      // lateWatch stays: a publication after one failed read is still a late publication.
       show({ state: 'other', rows: [LLM_WIKI_ERROR_ROW] })
       keepPoll()
       return undefined
@@ -378,11 +383,17 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
       if (isDisposed) return
       nextFacts = withViewState(nextFacts)
       noteLatePublication(nextFacts)
-      previousPublication = nextFacts.publication
     }
     facts = nextFacts
     const next = readLlmWikiViewState(nextFacts)
-    previousRowIds = next.rows.map((row) => row.id)
+    if (nextFacts.kind === 'ready')
+      lateWatch = {
+        outputDirectory: nextFacts.outputDirectory,
+        wasWaiting: next.rows.some(
+          (row) => row.id === 'reservation' || row.id === 'last-attempt',
+        ),
+        publication: nextFacts.publication,
+      }
     show(next)
     keepPoll()
     // No Wiki row shown (an attention cause hides it) means no freshness to read.
