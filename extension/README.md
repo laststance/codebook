@@ -178,7 +178,7 @@ To write the Wiki elsewhere, set the folder in your settings (a path inside the 
 - **Output record.** Every generation and update end writes one line to Output › Codebook (**Codebook: Show LLM Wiki Output**): the run's kind, editor, start and end time, how it ended in Codebook's words, the agent's exit code and the output folder with your home folder shown as `~`. It never holds the agent's reply, its errors or a chat's error text.
 - **Buttons of an older notice.** **Generate anyway**, **Update anyway** and the offer's **Update LLM Wiki** wait only for the start whose notice showed them; pressed while another run of the window works, they are told that a run is under way at once and start nothing when it ends.
 - **Names.** **Codebook: Open LLM Wiki in Browser** was titled **Open DeepWiki in Browser** before 0.2.45; its command id `codebook.openDeepWiki` is unchanged, so keybindings and scripts keep working. The bundled skill 1.0.49 names it in the reader's offline note.
-- **Several windows.** Update every window of a project to this version before you generate: an earlier Codebook reads a generation's marker with an update's 15 minute bounds and may start an update beside a generation that still runs (the publisher still refuses a second publish while one runs). Stop a running generation before you go back to an earlier Codebook.
+- **Several windows.** Update every window of a project to this version before you generate: an earlier Codebook reads a generation's marker with an update's 15-minute bounds and may start an update beside a generation that still runs (the publisher still refuses a second publish while one runs). Stop a running generation before you go back to an earlier Codebook.
 
 ## LLM Wiki: open and update
 

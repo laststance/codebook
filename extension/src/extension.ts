@@ -1368,14 +1368,16 @@ export function activate(
     clearTimeout(wikiReservations.get(run.outputDirectory)?.timer)
     wikiReservations.set(run.outputDirectory, {
       release: run.releaseMarker,
-      // A generation's reservation lasts as long as a generation runs; only a VS Code watch leaves one.
+      // A reservation lasts the bound of its run's kind, the one every reader of the marker uses ({@link wikiRunBoundMs}); only a VS Code watch leaves one. The bounds this module reads itself are passed, so a host test that shortens one reaches the timer.
       timer: setTimeout(
         () => {
           void dropWikiReservation(run.outputDirectory)
         },
-        run.kind === 'generate'
-          ? WIKI_GENERATE_TIMEOUT_MS
-          : WIKI_UPDATE_WATCH_TIMEOUT_MS,
+        wikiRunBoundMs(run.kind, 'vscode', {
+          generateMs: WIKI_GENERATE_TIMEOUT_MS,
+          cursorUpdateMs: WIKI_CURSOR_UPDATE_TIMEOUT_MS,
+          watchedUpdateMs: WIKI_UPDATE_WATCH_TIMEOUT_MS,
+        }),
       ).unref(),
     })
   }
@@ -2169,11 +2171,12 @@ export function activate(
           acknowledgedLeftovers,
         )
       } catch (error) {
-        // The page waits for this start; a check that threw must reach it as a failed start with the reason, not as silence.
+        // The page waits for this start; a check that threw must reach it as a failed start with the reason, not as silence, and the Output record names it as every refused start's does.
         wikiUpdateRun.refuseStart(host, wikiOutput, {
           kind: 'failed',
           reason: thrownMessage(error),
         })
+        writeWikiRunRecord({ runKind: 'update' })
         throw error
       }
       if (!start) return
@@ -2336,12 +2339,13 @@ export function activate(
     try {
       await prepareCursorWikiSkill()
     } catch (error) {
-      // A skill in the learner's way refuses the update and frees the marker the checks claimed.
+      // A skill in the learner's way refuses the update, frees the marker the checks claimed, and leaves the refused start's Output record.
       await start.releaseMarker().catch(() => undefined)
       wikiUpdateRun.refuseStart(host, wikiOutput, {
         kind: 'failed',
         reason: thrownMessage(error),
       })
+      writeWikiRunRecord({ runKind: 'update' })
       throw error
     }
   }

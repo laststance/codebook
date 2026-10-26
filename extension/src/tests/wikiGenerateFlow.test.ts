@@ -1460,3 +1460,46 @@ test('Stop LLM Wiki Run and Open LLM Wiki in Browser during a generation’s sta
     { notices: [starting, starting], generateOffered: false },
   )
 })
+
+// Value: protects=AC 12 for updates (CodeRabbit, PR #133): every refused update start leaves its Output record, also one a Cursor skill in the way refused after the checks and one whose check threw; fails_when=either refusal is told but leaves Output › Codebook empty, so a learner who reports it has no record to copy; no_claim=the record's fields (wikiRunRecord tests); seam=a learner's own Cursor skill, and a publish-token read that fails
+test('an Update refused by a learner’s own Cursor skill, and one whose start check threw, each leave one Output record of a failed update', async (context) => {
+  // Arrange: a Cursor window whose managed skill cannot be deployed, and a VS Code window whose publish-token read fails; both projects have a Wiki.
+  const cursorProject = await openProjectWithoutWiki({
+    cursor: true,
+    cursorSkill: {
+      verify: async () => {
+        throw new Error('The managed Cursor skill was changed.')
+      },
+      deploy: async () => {
+        throw new Error(
+          'A Cursor skill named codebook that Codebook does not own is in the way.',
+        )
+      },
+    },
+  })
+  context.after(() => cursorProject.close())
+  await publishGeneratedWiki(
+    cursorProject.outputDirectory,
+    cursorProject.projectRoot,
+  )
+  const vsCodeProject = await openProjectWithoutWiki({
+    publishTokenReadFails: 'EIO: i/o error, read',
+  })
+  context.after(() => vsCodeProject.close())
+
+  // Act
+  await cursorProject.runUpdateCommand().catch(() => undefined)
+  await vsCodeProject.runUpdateCommand().catch(() => undefined)
+
+  // Assert
+  assert.deepEqual(
+    [cursorProject, vsCodeProject].map((project) =>
+      project.outputLines.map((line) =>
+        /^info: LLM Wiki (\S+) ended: host=(\S+) .* end=(\S+) /
+          .exec(line)
+          ?.slice(1),
+      ),
+    ),
+    [[['update', 'cursor', 'failed']], [['update', 'vscode', 'failed']]],
+  )
+})
