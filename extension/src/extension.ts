@@ -321,6 +321,8 @@ export function activate(
   const wikiMarkerChanges = new Map<string, WikiMarkerChangeEntry>()
   // How many attempts of this window's own marker changes have ended on each Wiki output; a start whose claim met the marker in change compares it ({@link claimWikiMarkerForStart}).
   const endedWikiMarkerChanges = new Map<string, number>()
+  // Who hears that an attempt to change this window's own marker ended: the LLM Wiki view, which reads the marker's rows again then, because the run's end told it before the marker was changed and a missing file watcher reports no change of the marker.
+  const wikiMarkerChangeListeners = new Set<() => void>()
   /**
    * Makes a change of this window's own marker beside a Wiki (its removal, or its turn into a stopped watch's reservation), and while the change cannot be made asks for it again later; called by {@link settleWikiRunMarker} at a run's end and by {@link dropWikiReservation} at a reservation's bound or at shutdown.
    * Why: the change runs under the claim on the marker, which another window can hold longer than the change waits (a killed window of another machine leaves its claim for {@link WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS}), and the system can refuse the claim, the read of the marker under it (on Windows a scanner or an indexer can hold the file) or the change. A run's marker left as it stands counts for every other window as a running update, with no Update anyway, until the run's bound has passed. A later change of the same output, and a start that takes the marker over, replace a change that waits: they name what the marker must be now.
@@ -341,6 +343,14 @@ export function activate(
     pending.running = change().catch(() => false)
     const isChanged = await pending.running
     pending.running = undefined
+    for (const listener of [...wikiMarkerChangeListeners]) {
+      // A broken listener must not fail the change or hide it from the others.
+      try {
+        listener()
+      } catch {
+        // The listener's owner has nowhere to be told here.
+      }
+    }
     endedWikiMarkerChanges.set(
       outputDirectory,
       (endedWikiMarkerChanges.get(outputDirectory) ?? 0) + 1,
@@ -3089,7 +3099,15 @@ export function activate(
         }
       },
       findWatchedFolder: findNearestExistingAncestor,
-      onRunChange: (listener) => wikiUpdateRun.onDidChange(listener),
+      onRunChange: (listener) => {
+        // The view also reads again once an attempt to change the run's marker ended, so the reservation row shows without a file event.
+        const stopListeningToRun = wikiUpdateRun.onDidChange(listener)
+        wikiMarkerChangeListeners.add(listener)
+        return (): void => {
+          stopListeningToRun()
+          wikiMarkerChangeListeners.delete(listener)
+        }
+      },
       tellPublished: (outputLabel) =>
         showWikiActionNotice(
           'information',

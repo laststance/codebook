@@ -56,7 +56,7 @@ export type LlmWikiViewOptions = {
   }) => Promise<LlmWikiFreshness>
   /** Finds the nearest folder at or above the Wiki output that exists ({@link findNearestExistingAncestor}). */
   findWatchedFolder: (outputDirectory: string) => Promise<string>
-  /** Subscribes to changes of this window's run state; returns the unsubscribe function. */
+  /** Subscribes to changes of this window's run state and to the end of each attempt to change its run marker (removal, or turn into a reservation); returns the unsubscribe function. */
   onRunChange: (listener: () => void) => () => void
   /** Tells the learner that a Wiki was published after a run was stopped or a watch ended. */
   tellPublished: (outputLabel: string) => void
