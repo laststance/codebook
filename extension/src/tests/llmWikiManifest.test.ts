@@ -134,3 +134,29 @@ test('the LLM Wiki view follows Repository Wiki and every row action is a contri
     ],
   )
 })
+
+// Value: protects=the Command Palette of an editor that offers no tree view; fails_when=Refresh LLM Wiki, Copy LLM Wiki Recovery Request or Reveal LLM Wiki Folder is listed in the palette without the view that registers it (the view sets codebook.llmWiki.state), so choosing one says "command not found"; no_claim=that the editor hides them (host trial); seam=the packaged manifest
+test('the palette lists the commands that exist only with the LLM Wiki view only while the view has set its state key', async () => {
+  // Arrange
+  const manifest = await readManifest()
+  const palette = manifest.contributes.menus.commandPalette ?? []
+
+  // Act
+  const whenByCommand = Object.fromEntries(
+    [
+      'codebook.refreshLlmWiki',
+      'codebook.copyWikiRecoveryRequest',
+      'codebook.revealWikiFolder',
+    ].map((command) => [
+      command,
+      palette.find((entry) => entry.command === command)?.when,
+    ]),
+  )
+
+  // Assert
+  assert.deepEqual(whenByCommand, {
+    'codebook.refreshLlmWiki': 'codebook.llmWiki.state',
+    'codebook.copyWikiRecoveryRequest': 'codebook.llmWiki.state',
+    'codebook.revealWikiFolder': 'codebook.llmWiki.state',
+  })
+})

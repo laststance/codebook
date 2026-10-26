@@ -33,6 +33,19 @@ export type LlmWikiRowId =
   | 'loading'
   | 'error'
 
+/** The rows that show a run, whoever owns it: while one stands the view reads its state again on a timer, and the Wiki row offers no Update. */
+export const LLM_WIKI_RUN_ROW_IDS: ReadonlySet<LlmWikiRowId> = new Set([
+  'run',
+  'elsewhere',
+  'reservation',
+])
+
+/** The rows that show a start was waiting for a chat or a generation ended unpublished: a publication that follows them is a late one. */
+export const LLM_WIKI_WAITING_ROW_IDS: ReadonlySet<LlmWikiRowId> = new Set([
+  'reservation',
+  'last-attempt',
+])
+
 /** One row of the LLM Wiki view, as plain data: the view turns it into a tree item. */
 export type LlmWikiRow = {
   id: LlmWikiRowId
@@ -88,6 +101,8 @@ export type LlmWikiViewFacts =
       kind: 'ready'
       /** The editor this window runs in. */
       host: WikiUpdateHost
+      /** The absolute opened project folder the Wiki output belongs to; the freshness check inspects this project and no other. */
+      projectRoot: string
       repositoryName: string
       /** The output folder as the learner reads it ({@link wikiOutputLabel}). */
       outputLabel: string
@@ -283,9 +298,9 @@ function hostName(host: WikiUpdateHost): string {
   return host === 'cursor' ? 'Cursor' : 'VS Code'
 }
 
-/** Words a number of whole minutes as `N min`. @example minutes(12) // => '12 min' */
-function minutes(wholeMinutes: number): string {
-  return `${wholeMinutes} min`
+/** Counts the whole minutes of a duration with one rule for every number of a row, so `N min of M` rounds both numbers alike. @example wholeMinutes(750_000) // => 12 */
+function wholeMinutes(durationMs: number): number {
+  return Math.max(0, Math.floor(durationMs / MS_PER_MINUTE))
 }
 
 /**
@@ -319,6 +334,11 @@ function wikiRow(
   )
   const reasonLine =
     freshness.status === 'unknown' ? freshness.reason : undefined
+  // The description truncates in a narrow sidebar, so the caveat is also said in full here.
+  const additionLine =
+    freshness.status !== 'checking' && freshness.isAdditionUnchecked
+      ? 'No Git revision is recorded for this Wiki, so added files are not checked.'
+      : undefined
   return {
     id: 'wiki',
     label: `${facts.repositoryName} Wiki`,
@@ -326,6 +346,7 @@ function wikiRow(
     tooltip: [
       generationLine,
       reasonLine,
+      additionLine,
       'Click to open the Wiki in the browser.',
     ]
       .filter((line) => line !== undefined && line !== '')
@@ -348,15 +369,14 @@ function runRow(
   run: NonNullable<Extract<LlmWikiViewFacts, { kind: 'ready' }>['run']>,
 ): LlmWikiRow {
   const isCursor = facts.host === 'cursor'
-  const elapsed = Math.max(
-    0,
-    Math.floor((facts.nowMs - run.startedAtMs) / MS_PER_MINUTE),
-  )
-  const progress = `${minutes(elapsed)} of ${Math.round(run.timeoutMs / MS_PER_MINUTE)}`
+  // A start that could not be read leaves the minutes out rather than showing NaN.
+  const progress = Number.isFinite(run.startedAtMs)
+    ? ` · ${wholeMinutes(facts.nowMs - run.startedAtMs)} min of ${wholeMinutes(run.timeoutMs)}`
+    : ''
   let description: string
-  if (isCursor) description = `cursor-agent · ${progress}`
+  if (isCursor) description = `cursor-agent${progress}`
   else if (run.isAwaitingChat) description = 'Waiting for the chat to start'
-  else description = `In chat · ${progress}`
+  else description = `In chat${progress}`
   return {
     id: 'run',
     label: `${runWord(run.kind)}…`,
@@ -390,7 +410,9 @@ function elsewhereRow(
       elsewhere.kind === undefined
         ? 'Starting in another window'
         : `${runWord(elsewhere.kind)} in another window`,
-    description: `since ${wording.formatTime(elsewhere.startedAtMs)}`,
+    description: Number.isFinite(elsewhere.startedAtMs)
+      ? `since ${wording.formatTime(elsewhere.startedAtMs)}`
+      : undefined,
     icon: 'sync~spin',
     actions: [],
   }
@@ -412,15 +434,19 @@ function reservationRow(
   wording: LlmWikiViewWording,
 ): LlmWikiRow {
   const retryTime = wording.formatTime(reservation.retryAtMs)
-  const wholeMinutes = Math.max(
+  // The countdown rounds up so the learner never retries early, and never reads 0.
+  const minutesLeft = Math.max(
     1,
     Math.ceil((reservation.retryAtMs - facts.nowMs) / MS_PER_MINUTE),
   )
+  const startedAt = Number.isFinite(reservation.startedAtMs)
+    ? ` at ${wording.formatTime(reservation.startedAtMs)}`
+    : ''
   return {
     id: 'reservation',
     label: 'Waiting for chat',
-    description: `retry after ${retryTime} (about ${minutes(wholeMinutes)})`,
-    tooltip: `${runWord(reservation.kind)} started at ${wording.formatTime(reservation.startedAtMs)} in ${hostName(reservation.host)}. Open Chat opens the chat view; find the session in the chat history to stop it. Codebook allows a new start after ${retryTime} even if the chat stopped earlier.`,
+    description: `retry after ${retryTime} (about ${minutesLeft} min)`,
+    tooltip: `${runWord(reservation.kind)} started${startedAt} in ${hostName(reservation.host)}. Open Chat opens the chat view; find the session in the chat history to stop it. Codebook allows a new start after ${retryTime} even if the chat stopped earlier.`,
     icon: 'clock',
     actions: ['open-chat'],
   }
@@ -465,6 +491,16 @@ function lastAttemptRow(
 }
 
 /**
+ * Finds how a cause is worded and what its row offers, with the fallback for a cause added later.
+ * @param cause - The cause of a start block, a foreign manifest or a later version's cause.
+ * @returns The cause's attention row, or {@link FALLBACK_ATTENTION_ROW}.
+ * @example attentionRowOf('edited-page').label // => 'Wiki files changed by hand'
+ */
+function attentionRowOf(cause: string): AttentionRow {
+  return ATTENTION_ROWS.get(cause) ?? FALLBACK_ATTENTION_ROW
+}
+
+/**
  * Builds row 4, what blocks a start or makes the manifest unusable.
  * @param attention - The cause and the sentence of the block.
  * @returns The row; a click shows the sentence with Copy details.
@@ -475,7 +511,7 @@ function attentionRow(
     Extract<LlmWikiViewFacts, { kind: 'ready' }>['attention']
   >,
 ): LlmWikiRow {
-  const row = ATTENTION_ROWS.get(attention.cause) ?? FALLBACK_ATTENTION_ROW
+  const row = attentionRowOf(attention.cause)
   return {
     id: 'attention',
     label: row.label,
@@ -504,7 +540,7 @@ function readyRows(
 ): LlmWikiRow[] {
   const hasRunRow = Boolean(facts.run || facts.elsewhere || facts.reservation)
   const attentionRowOfCause = facts.attention
-    ? (ATTENTION_ROWS.get(facts.attention.cause) ?? FALLBACK_ATTENTION_ROW)
+    ? attentionRowOf(facts.attention.cause)
     : undefined
   // A cause that leaves the manifest unusable takes the Wiki row away; the other causes leave the published Wiki readable.
   const isWikiShown = Boolean(facts.wiki) && !attentionRowOfCause?.hidesWiki

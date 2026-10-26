@@ -7,8 +7,10 @@ import {
   COPY_WIKI_RECOVERY_REQUEST_COMMAND,
   LLM_WIKI_ROW_ACTIONS,
   OPEN_CHAT_COMMAND,
+  OPEN_FOLDER_COMMAND,
   OPEN_SETTINGS_COMMAND,
   REFRESH_LLM_WIKI_COMMAND,
+  REVEAL_FILE_IN_OS_COMMAND,
   REVEAL_WIKI_FOLDER_COMMAND,
   SHOW_LLM_WIKI_ATTENTION_COMMAND,
   WIKI_OUTPUT_SETTINGS_QUERY,
@@ -113,7 +115,7 @@ export function registerLlmWikiCommands(
     }),
     registerCommand(REVEAL_WIKI_FOLDER_COMMAND, async () =>
       editor.commands.executeCommand(
-        'revealFileInOS',
+        REVEAL_FILE_IN_OS_COMMAND,
         editor.Uri.file(await options.findOutputDirectory()),
       ),
     ),
@@ -129,7 +131,7 @@ export function registerLlmWikiCommands(
       ),
     ),
     registerCommand(LLM_WIKI_ROW_ACTIONS['open-folder'].command, () =>
-      editor.commands.executeCommand('vscode.openFolder'),
+      editor.commands.executeCommand(OPEN_FOLDER_COMMAND),
     ),
     registerCommand(LLM_WIKI_ROW_ACTIONS['manage-trust'].command, () =>
       manageTrust(options),

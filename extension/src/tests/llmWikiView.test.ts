@@ -31,8 +31,20 @@ const STATE_KEY = 'codebook.llmWiki.state'
 const GENERATE_COMMAND = 'codebook.generateDeepWiki'
 /** A debounce and a poll short enough to wait for. */
 const FAST = { LLM_WIKI_REFRESH_DEBOUNCE_MS: 40, LLM_WIKI_POLL_MS: 120 }
-const WATCHED_ENDINGS =
-  '{/codebook-wiki.json,.update-run.json,.publish-lock.json,.publish-journal.json}'
+/** The glob the view hands the editor for an output folder (given as its path from the watched folder) whose parents are `parents`: the folders themselves, the output folder, its manifest and the three markers. */
+const globFor = (parents: string[], outputName: string): string => {
+  const output = [...parents, outputName].join('/')
+  const folders = [...parents, outputName].map((_name, index, names) =>
+    names.slice(0, index + 1).join('/'),
+  )
+  return `{${[
+    ...folders,
+    `${output}/codebook-wiki.json`,
+    `${output}.update-run.json`,
+    `${output}.publish-lock.json`,
+    `${output}.publish-journal.json`,
+  ].join(',')}}`
+}
 
 const idsOf = (window: Window): string[] =>
   window.llmWiki.rows().map((row) => row.id)
@@ -522,7 +534,7 @@ test('a manifest created in the output folder shows the Wiki row after the watch
   )
 })
 
-// Value: protects=AC 2 (the trailing debounce); fails_when=a burst of events reads the state once per event, or the last event of the burst is dropped; no_claim=the 1 second value (a constant); seam=five events 10 ms apart, with the debounce shortened to 40 ms
+// Value: protects=AC 2 (the trailing debounce); fails_when=a burst of events reads the state once per event (more than the burst's read and the one follow-up read of the watcher's move), or the last event of the burst is dropped; no_claim=the 1 second value (a constant); seam=five events 10 ms apart, with the debounce shortened to 40 ms
 test('five file events inside the debounce become one read that shows the last state', async (context) => {
   // Arrange
   const project = await openEmptyProject(context)
@@ -540,7 +552,8 @@ test('five file events inside the debounce become one read that shows the last s
   await new Promise((resolve) => setTimeout(resolve, 250))
 
   // Assert
-  assert.equal(project.looks.publishTokenReads - readsAtStart, 1)
+  // Two reads: the burst's one, and the single follow-up read that the watcher's move from the project to .codebook adds once the Wiki's folders exist.
+  assert.equal(project.looks.publishTokenReads - readsAtStart, 2)
 })
 
 // Value: protects=AC 2 (refresh on the setting and on visibility); fails_when=changing codebook.wikiOutputDirectory or showing the view again does not read the state, or the watcher stays on the old folder; no_claim=VS Code's settings UI; seam=the stubbed configuration event and visibility event
@@ -573,7 +586,7 @@ test('changing the output setting and showing the view again read the state agai
       watchedAfterTheSetting?.pattern,
       window.llmWiki.contextKeys[STATE_KEY],
     ],
-    [true, join(wiki.projectRoot, 'docs'), `wiki${WATCHED_ENDINGS}`, 'none'],
+    [true, join(wiki.projectRoot, 'docs'), globFor([], 'wiki'), 'none'],
   )
 })
 
@@ -659,11 +672,11 @@ test('in a fresh project the watcher stands on the project and moves to .codeboo
     [
       {
         base: project.projectRoot,
-        pattern: `.codebook/wiki${WATCHED_ENDINGS}`,
+        pattern: globFor(['.codebook'], 'wiki'),
       },
       {
         base: join(project.projectRoot, '.codebook'),
-        pattern: `wiki${WATCHED_ENDINGS}`,
+        pattern: globFor([], 'wiki'),
       },
     ],
   )
@@ -1032,8 +1045,7 @@ test('an output folder named wiki[1] is watched with its brackets escaped in the
   // Act
   project.setOutputSetting('wiki[1]')
   await waitUntil(
-    () =>
-      project.watchedPatterns().at(-1)?.pattern.startsWith('wiki[') === true,
+    () => project.watchedPatterns().at(-1)?.pattern.includes('wiki[') === true,
     'the escaped glob',
     6_000,
   )
@@ -1041,7 +1053,7 @@ test('an output folder named wiki[1] is watched with its brackets escaped in the
   // Assert
   assert.equal(
     project.watchedPatterns().at(-1)?.pattern,
-    `wiki[[]1]${WATCHED_ENDINGS}`,
+    globFor([], 'wiki[[]1[]]'),
   )
 })
 
@@ -1418,8 +1430,8 @@ test('a folder removed and restored while another window runs shows the folder r
   })
 })
 
-// Value: protects=the late-publication notice when a read lands in the middle of a publication; fails_when=a read that sees the publisher's new receipt before the Wiki is readable overwrites the memory, so the next read that shows the Wiki tells nothing; no_claim=the notice wording; seam=a hold on the read of the publication identity, which the view reads after the manifest; why_new=the published-after-Stop-watching test publishes between reads and never lets one read straddle the publication
-test('a read that lands mid-publication does not lose the notice for the Wiki shown by the next read', async (context) => {
+// Value: protects=the late-publication notice when a read straddles a publication; fails_when=a read held at the receipt read while the Wiki is published tells nothing, tells twice, or leaves the Wiki row unshown; no_claim=the notice wording and the state between the two reads of the publisher (the facts reader's and the read-loop tests pin the order of the reads and the memory); seam=a hold on the read of the publication identity, which the facts reader makes first; why_new=the published-after-Stop-watching test publishes between reads and never lets one read straddle the publication
+test('a read held at the receipt while the Wiki is published shows the Wiki and tells the learner once', async (context) => {
   // Arrange
   const project = await openProjectWithReservation(context)
   const noticesBefore = project.notices.length
@@ -1433,18 +1445,14 @@ test('a read that lands mid-publication does not lose the notice for the Wiki sh
   await publishGeneratedWiki(project.outputDirectory, project.projectRoot)
   midPublicationRead.release()
   await readInTheMiddle
-  const idsAfterMiddleRead = idsOf(project)
+  const idsAfterHeldRead = idsOf(project)
   await project.runCommand('codebook.refreshLlmWiki')
 
   // Assert
   assert.deepEqual(
+    [idsAfterHeldRead, idsOf(project), project.notices.slice(noticesBefore)],
     [
-      idsAfterMiddleRead.includes('wiki'),
-      idsOf(project),
-      project.notices.slice(noticesBefore),
-    ],
-    [
-      false,
+      ['wiki', 'output'],
       ['wiki', 'output'],
       ['An LLM Wiki was published in .codebook/wiki.'],
     ],
@@ -1501,5 +1509,160 @@ test('a Wiki published while another window runs shows the Wiki row, the elsewhe
       project.notices.length - noticesBefore,
     ],
     [['wiki', 'elsewhere', 'output'], ['wiki', 'output'], 0],
+  )
+})
+
+// Value: protects=item 7, a Wiki folder deleted or moved as a whole; fails_when=an event that names only the output folder (the editor may report no file inside) is dropped, so a deleted or renamed Wiki keeps showing Wiki source current and the welcome never returns; no_claim=what the real editor reports for a recursive delete; seam=the fake file watching reporting the folder's path only
+test('a delete event of the output folder alone, for a deleted or a renamed Wiki folder, brings back the empty state', async (context) => {
+  // Arrange
+  const deleted = await openPublishedWiki(context)
+  const renamed = await openPublishedWiki(context)
+
+  // Act
+  await rm(deleted.wiki.outputDirectory, { recursive: true })
+  deleted.window.reportFileEvent('delete', deleted.wiki.outputDirectory)
+  await rename(
+    renamed.wiki.outputDirectory,
+    `${renamed.wiki.outputDirectory}-moved`,
+  )
+  renamed.window.reportFileEvent('delete', renamed.wiki.outputDirectory)
+  await untilRow(deleted.window, 'wiki', false)
+  await untilRow(renamed.window, 'wiki', false)
+
+  // Assert
+  assert.deepEqual(
+    [
+      deleted.window.llmWiki.contextKeys[STATE_KEY],
+      renamed.window.llmWiki.contextKeys[STATE_KEY],
+    ],
+    ['none', 'none'],
+  )
+})
+
+/** Writes a marker like the one a window of an earlier version left, naming a process that exists (pid 1), with the given reservation times. */
+async function writeSpoofedReservation(
+  markerPath: string,
+  times: { startedAtMs: number; watchEndedAtMs: number },
+): Promise<void> {
+  await mkdir(dirname(markerPath), { recursive: true })
+  await writeFile(
+    markerPath,
+    JSON.stringify({
+      pid: 1,
+      windowId: 'spoof',
+      host: 'vscode',
+      ...times,
+    }),
+  )
+}
+
+// Value: protects=item 12, Generate and Update available after a reservation ran out; fails_when=an expired reservation whose recorded owner process exists keeps Waiting for chat forever, hides the welcome and the Update action; no_claim=the start check's own refusal text; seam=a marker with watchEndedAtMs 0 naming pid 1, beside an empty output
+test('an expired reservation of a live-looking process leaves the empty state with the welcome', async (context) => {
+  // Arrange
+  const project = await openEmptyProject(context)
+  await writeSpoofedReservation(project.markerPath, {
+    startedAtMs: 0,
+    watchEndedAtMs: 0,
+  })
+
+  // Act
+  await project.runCommand('codebook.refreshLlmWiki')
+
+  // Assert
+  assert.deepEqual(
+    [project.llmWiki.rows(), project.llmWiki.contextKeys[STATE_KEY]],
+    [[], 'none'],
+  )
+})
+
+// Value: protects=item 12, the Update action beside an expired reservation; fails_when=an expired reservation beside a published Wiki adds a Waiting for chat row and takes the Update action from row 1; no_claim=the freshness label; seam=the same spoofed marker beside a published Wiki
+test('an expired reservation beside a Wiki keeps row 1 with its Update action', async (context) => {
+  // Arrange
+  const { wiki, window } = await openPublishedWiki(context)
+  await writeSpoofedReservation(`${wiki.outputDirectory}.update-run.json`, {
+    startedAtMs: 0,
+    watchEndedAtMs: 0,
+  })
+
+  // Act
+  await window.runCommand('codebook.refreshLlmWiki')
+
+  // Assert
+  assert.deepEqual(
+    [idsOf(window), rowOf(window, 'wiki')?.contextValue],
+    [['wiki', 'output'], '[update]'],
+  )
+})
+
+// Value: protects=item 12, a reservation inside its window; fails_when=the deadline check hides a reservation that still stands, so a second start looks possible; no_claim=the retry time's wording; seam=a marker whose watch ended a minute ago
+test('a reservation inside its window still shows Waiting for chat', async (context) => {
+  // Arrange
+  const project = await openEmptyProject(context)
+  await writeSpoofedReservation(project.markerPath, {
+    startedAtMs: Date.now() - 120_000,
+    watchEndedAtMs: Date.now() - 60_000,
+  })
+
+  // Act
+  await project.runCommand('codebook.refreshLlmWiki')
+
+  // Assert
+  assert.deepEqual(idsOf(project), ['reservation', 'output'])
+})
+
+// Value: protects=item 25, what the row actions hand the editor; fails_when=Change location opens the settings without the query of the output setting, or Reveal Wiki Folder reveals another folder than the output; no_claim=what the editor does with them; seam=the arguments the stubbed editor recorded
+test('Change location opens the settings searched for the output setting and Reveal Wiki Folder reveals the output folder', async (context) => {
+  // Arrange
+  const project = await openEmptyProject(context)
+
+  // Act
+  await project.runCommand('codebook.llmWiki.changeLocation')
+  await project.runCommand('codebook.revealWikiFolder')
+
+  // Assert
+  assert.deepEqual(project.executedCommandCalls, [
+    {
+      name: 'workbench.action.openSettings',
+      argument: '@id:codebook.wikiOutputDirectory',
+    },
+    {
+      name: 'revealFileInOS',
+      argument: { scheme: 'file', fsPath: project.outputDirectory },
+    },
+  ])
+})
+
+// Value: protects=item 26, Copy details only on the learner's choice; fails_when=dismissing the notice copies the sentence anyway; no_claim=the sentence; seam=a click on the attention row with no button pressed
+test('dismissing the attention notice copies nothing', async (context) => {
+  // Arrange
+  const { window } = await openPublishedWiki(
+    context,
+    { chooseAction: () => undefined },
+    async (wiki) =>
+      writeFile(join(wiki.outputDirectory, 'index.html'), '<h1>Mine</h1>'),
+  )
+  await untilRow(window, 'attention')
+  const click = rowOf(window, 'attention')?.command
+
+  // Act
+  await window.runCommand(click?.command ?? '', ...(click?.arguments ?? []))
+
+  // Assert
+  assert.deepEqual([window.warnings.length, window.clipboard], [1, []])
+})
+
+// Value: protects=item 26, a stale row id; fails_when=the details command shows a notice for an id the view no longer has; no_claim=the shown rows; seam=the command run with an unknown id and with the id of a row that is gone
+test('the details command shows nothing for an unknown or stale row id', async (context) => {
+  // Arrange
+  const project = await openEmptyProject(context)
+
+  // Act
+  await project.runCommand('codebook.showLlmWikiAttention', 'no-such-row')
+  await project.runCommand('codebook.showLlmWikiAttention', 'attention')
+
+  // Assert
+  assert.deepEqual(
+    [project.warnings, project.notices, project.errors, project.clipboard],
+    [[], [], [], []],
   )
 })

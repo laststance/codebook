@@ -21,6 +21,7 @@ function ready(overrides: Partial<ReadyFacts> = {}): ReadyFacts {
   return {
     kind: 'ready',
     host: 'vscode',
+    projectRoot: '/repo',
     repositoryName: 'nextjs-dashboard',
     outputLabel: '.codebook/wiki',
     outputDirectory: '/repo/.codebook/wiki',
@@ -580,4 +581,91 @@ test('every row shows in the fixed order and the Output row comes last with its 
     icon: 'folder',
     actions: ['change-location'],
   })
+})
+
+// Value: protects=the Wiki row's explanation of the no-Git caveat; fails_when=the tooltip of a current Wiki without a recorded Git revision omits the sentence that added files are not checked, which the description truncates in a narrow sidebar; no_claim=the description's wording (the freshness table test); seam=the pure row function
+test('the Wiki row tooltip repeats the no-Git caveat that the description may truncate', () => {
+  // Arrange
+  const facts = ready({
+    wiki: {
+      ...publishedWiki,
+      freshness: { status: 'current', isAdditionUnchecked: true },
+    },
+  })
+
+  // Act
+  const tooltip = readLlmWikiViewState(facts, wording).rows[0]?.tooltip
+
+  // Assert
+  assert.equal(
+    tooltip,
+    'Generated from 1936e41 on Oct 26, 2026\nNo Git revision is recorded for this Wiki, so added files are not checked.\nClick to open the Wiki in the browser.',
+  )
+})
+
+// Value: protects=rows against a start time that cannot be read (Date.parse gives NaN); fails_when=a run, another window's run or a reservation shows NaN, Invalid Date or a made-up number of minutes; no_claim=how the facts reader finds the start; seam=the pure row function
+test('a run, an elsewhere row and a reservation with an unknown start show no minutes and no time', () => {
+  // Arrange
+  const unknownStart = Number.NaN
+  const vscodeRun = ready({
+    run: { ...generationRun, startedAtMs: unknownStart },
+  })
+  const cursorRun = ready({
+    host: 'cursor',
+    run: { ...generationRun, startedAtMs: unknownStart },
+  })
+  const elsewhere = ready({ elsewhere: { startedAtMs: unknownStart } })
+  const reservation = ready({
+    reservation: {
+      kind: 'generate',
+      host: 'vscode',
+      startedAtMs: unknownStart,
+      retryAtMs: START_MS + 55 * MINUTE_MS,
+    },
+  })
+
+  // Act
+  const rows = [vscodeRun, cursorRun, elsewhere, reservation].map(
+    (facts) => readLlmWikiViewState(facts, wording).rows[0],
+  )
+
+  // Assert
+  assert.deepEqual(
+    rows.map((row) => [row?.description, row?.tooltip]),
+    [
+      [
+        'In chat',
+        'Codebook is watching the chat for the new Wiki. Stop watching ends Codebook’s watch, not the chat.',
+      ],
+      ['cursor-agent', 'Cursor Agent is writing the Wiki. Cancel stops it.'],
+      [undefined, undefined],
+      [
+        'retry after 12:55 (about 43 min)',
+        'Generating started in VS Code. Open Chat opens the chat view; find the session in the chat history to stop it. Codebook allows a new start after 12:55 even if the chat stopped earlier.',
+      ],
+    ],
+  )
+})
+
+// Value: protects=the Wiki row's generation line against a manifest time that cannot be read; fails_when=the tooltip says Invalid Date for a non-finite publication time; no_claim=the date's locale; seam=the pure row function
+test('a publication time that is not a number leaves the date out of the generation line', () => {
+  // Arrange
+  const facts = ready({
+    wiki: {
+      ...publishedWiki,
+      generation: {
+        revision: '1936e41913729663cc99081e3224db89bb2d8e56',
+        publishedAtMs: Number.NaN,
+      },
+    },
+  })
+
+  // Act
+  const tooltip = readLlmWikiViewState(facts, wording).rows[0]?.tooltip
+
+  // Assert
+  assert.equal(
+    tooltip,
+    'Generated from 1936e41\nClick to open the Wiki in the browser.',
+  )
 })

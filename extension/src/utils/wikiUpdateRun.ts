@@ -256,7 +256,7 @@ export class WikiUpdateRun {
 
   /**
    * Calls a listener after every change of the state; used by the LLM Wiki view, which reads its rows again when this window's run starts, advances or ends.
-   * @param listener - Called synchronously after the state changed; it must not throw.
+   * @param listener - Called synchronously after the state changed; one that throws is skipped and the others still hear the change.
    * @returns The function that removes the listener.
    * @example const stopListening = run.onDidChange(() => refreshView())
    */
@@ -270,7 +270,14 @@ export class WikiUpdateRun {
   /** Replaces the state and tells the listeners; every change of the state goes through it. @param next - The new state. @example this.#record({ state: 'idle' }) */
   #record(next: WikiUpdateStatus): void {
     this.#status = next
-    for (const listener of this.#changeListeners) listener()
+    for (const listener of [...this.#changeListeners]) {
+      // A broken listener must not hide the change from the others or fail the run's caller.
+      try {
+        listener()
+      } catch {
+        // The listener's owner has nowhere to be told here.
+      }
+    }
   }
 
   /** @returns A copy of the current state, safe to serialize. @example run.status().state // => 'idle' */

@@ -974,6 +974,14 @@ export const CODEBOOK_HOST_CONTEXT_KEY = 'codebook.host'
 export const LLM_WIKI_REFRESH_DEBOUNCE_MS = 1_000
 /** How often the LLM Wiki view reads its state again while a row of a run (this window's, another window's or a stopped watch's reservation) is shown: a marker whose window died leaves no file event. */
 export const LLM_WIKI_POLL_MS = 30_000
+/** The editor's command that sets a context key (`setContext`, key, value). */
+export const SET_CONTEXT_COMMAND = 'setContext'
+/** The editor's command that shows a file or folder in the system's file manager. */
+export const REVEAL_FILE_IN_OS_COMMAND = 'revealFileInOS'
+/** The editor's command that opens its folder dialog. */
+export const OPEN_FOLDER_COMMAND = 'vscode.openFolder'
+/** The command that updates the published LLM Wiki; the Wiki row's Update action and the notices' Update button run it. */
+export const UPDATE_DEEP_WIKI_COMMAND = 'codebook.updateDeepWiki'
 /** The command that opens the published Wiki in the browser; the Wiki row of the LLM Wiki view runs it on click. */
 export const OPEN_DEEP_WIKI_COMMAND = 'codebook.openDeepWiki'
 /** The window id the LLM Wiki view passes when it reads a run marker: one no window has, so this window's own reservation is seen as a stopped watch's too. */
@@ -999,7 +1007,7 @@ export const MANAGE_WORKSPACE_TRUST_COMMAND_IDS = [
 ] as const
 /** What one inline action of an LLM Wiki view row is: the command it runs and the words of its title. The row function names an action by its key, the manifest contributes each command with a menu entry that tests `viewItem` for the key. */
 export const LLM_WIKI_ROW_ACTIONS = {
-  update: { command: 'codebook.updateDeepWiki', title: 'Update LLM Wiki' },
+  update: { command: UPDATE_DEEP_WIKI_COMMAND, title: 'Update LLM Wiki' },
   'stop-watching': {
     command: 'codebook.llmWiki.stopWatching',
     title: 'Stop watching',

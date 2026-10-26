@@ -32,6 +32,7 @@ import {
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_FILE_MODE,
   SHOW_WIKI_OUTPUT_COMMAND,
+  UPDATE_DEEP_WIKI_COMMAND,
   UPDATE_WIKI_ACTION,
   WIKI_CHAT_OPEN_TIMEOUT_MS,
   WIKI_CHAT_SESSION_START_TIMEOUT_MS,
@@ -1162,7 +1163,7 @@ export function activate(
   /** The command each button of a generation's notice runs ({@link wikiGenerateNotice}). */
   const WIKI_NOTICE_ACTION_COMMANDS: Record<string, string> = {
     [OPEN_WIKI_IN_BROWSER_ACTION]: OPEN_DEEP_WIKI_COMMAND,
-    [UPDATE_WIKI_ACTION]: 'codebook.updateDeepWiki',
+    [UPDATE_WIKI_ACTION]: UPDATE_DEEP_WIKI_COMMAND,
     [GENERATE_WIKI_ACTION]: GENERATE_DEEP_WIKI_COMMAND,
   }
   /** Shows a notice whose buttons each start a Codebook command ({@link WIKI_NOTICE_ACTION_COMMANDS}); the pressed button's command tells the learner itself what failed. @example showWikiActionNotice('error', 'Codebook found no LLM Wiki in .codebook/wiki.', [GENERATE_WIKI_ACTION]) */
@@ -2813,7 +2814,7 @@ export function activate(
         }
       }),
     ),
-    registerCommand('codebook.updateDeepWiki', async () => {
+    registerCommand(UPDATE_DEEP_WIKI_COMMAND, async () => {
       try {
         await updateDeepWiki()
       } catch (error) {
@@ -2964,8 +2965,8 @@ export function activate(
           lastAgentExit: () => lastWikiAgentExit,
           now: () => Date.now(),
         }),
-      readFreshness: async () => {
-        const { projectRoot, outputDirectory } = await wikiLocation()
+      // The facts the rows show name the project and folder to inspect, so a setting changed meanwhile cannot make the check read another Wiki.
+      readFreshness: async ({ projectRoot, outputDirectory }) => {
         const published = await inspectPublishedWiki(
           projectRoot,
           outputDirectory,

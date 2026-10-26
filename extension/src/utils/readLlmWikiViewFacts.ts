@@ -136,6 +136,9 @@ async function readMarkerFacts(
     return held.windowId === dependencies.ownWindowId
       ? {}
       : { elsewhere: { kind: held.runKind, startedAtMs: held.startedAtMs } }
+  // A start refuses for this reservation only until its own deadline, the same one the start check uses; a live owner process does not extend it.
+  const retryAtMs = held.watchEndedAtMs + wikiRunBoundMs(held.runKind, 'vscode')
+  if (dependencies.now() >= retryAtMs) return {}
   const hasWaitEnded = await dependencies
     .hasPublishEndedWait(outputDirectory, {
       watchEndedAtMs: held.watchEndedAtMs,
@@ -148,7 +151,7 @@ async function readMarkerFacts(
       kind: held.runKind,
       host: held.host,
       startedAtMs: held.startedAtMs,
-      retryAtMs: held.watchEndedAtMs + wikiRunBoundMs(held.runKind, held.host),
+      retryAtMs,
     },
   }
 }
@@ -215,15 +218,18 @@ async function readManifestFacts(
   const { projectRoot, outputDirectory, outputLabel } = location
   const nowMs = dependencies.now()
   const block = await dependencies.findStartBlock(outputDirectory, projectRoot)
-  const token = await dependencies
-    .readPublishToken(outputDirectory)
-    .catch(() => 'unreadable')
-  const generation =
-    token === undefined
-      ? undefined
-      : await dependencies
-          .readGeneration(projectRoot, outputDirectory)
-          .catch(() => undefined)
+  // A token that cannot be read still means a manifest stands there.
+  const tokenLook = await dependencies.readPublishToken(outputDirectory).then(
+    (token) => ({ didReadFail: false, token }),
+    () => ({ didReadFail: true, token: undefined }),
+  )
+  const isManifestPresent =
+    tokenLook.didReadFail || tokenLook.token !== undefined
+  const generation = isManifestPresent
+    ? await dependencies
+        .readGeneration(projectRoot, outputDirectory)
+        .catch(() => undefined)
+    : undefined
   const wiki = generation
     ? { wiki: { freshness: { status: 'checking' as const }, generation } }
     : {}
@@ -234,7 +240,7 @@ async function readManifestFacts(
         cause: block.cause,
         sentence: sentenceOfBlock(
           block,
-          token !== undefined,
+          isManifestPresent,
           { outputDirectory, outputLabel },
           dependencies.host,
           nowMs,
@@ -242,7 +248,7 @@ async function readManifestFacts(
       },
     }
   // A manifest that stands but reads as no Wiki of this project is another checkout's, or cannot be read.
-  if (token !== undefined && !generation) {
+  if (isManifestPresent && !generation) {
     const isOwned = await dependencies
       .isWikiOwnedBy(projectRoot, outputDirectory)
       .catch(() => undefined)
@@ -282,6 +288,10 @@ export async function readLlmWikiViewFacts(
   if (!dependencies.isTrusted()) return { kind: 'untrusted' }
   const { projectRoot, outputDirectory } = await dependencies.wikiLocation()
   const outputLabel = wikiOutputLabel(projectRoot, outputDirectory)
+  // The receipt is read before the manifest: a publication between the two reads then pairs the newer manifest with the older receipt, which the next refresh corrects, and never an old Wiki with the new receipt.
+  const publication = await dependencies
+    .readPublication(outputDirectory)
+    .catch(() => undefined)
   const manifestFacts = await readManifestFacts(dependencies, {
     projectRoot,
     outputDirectory,
@@ -290,13 +300,12 @@ export async function readLlmWikiViewFacts(
   return {
     kind: 'ready',
     host: dependencies.host,
+    projectRoot,
     repositoryName: basename(projectRoot),
     outputLabel,
     outputDirectory,
     nowMs: dependencies.now(),
-    publication: await dependencies
-      .readPublication(outputDirectory)
-      .catch(() => undefined),
+    publication,
     ...manifestFacts,
     ...readRunFacts(dependencies, outputDirectory),
     ...(await readMarkerFacts(dependencies, outputDirectory)),

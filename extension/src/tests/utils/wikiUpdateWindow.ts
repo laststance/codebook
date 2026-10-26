@@ -199,6 +199,8 @@ export async function openWikiUpdateWindow(options: {
 }): Promise<{
   chatRequests: Array<{ name: string; query: string }>
   executedCommands: string[]
+  /** Every editor command the extension ran, in order, with its first argument (a `Uri` is kept as given, so a test reads its `fsPath`). */
+  executedCommandCalls: Array<{ name: string; argument: unknown }>
   notices: string[]
   warnings: string[]
   errors: string[]
@@ -273,6 +275,7 @@ export async function openWikiUpdateWindow(options: {
   let publishTokenReadFailure = options.publishTokenReadFails
   const chatRequests: Array<{ name: string; query: string }> = []
   const executedCommands: string[] = []
+  const executedCommandCalls: Array<{ name: string; argument: unknown }> = []
   const notices: string[] = []
   const warnings: string[] = []
   const errors: string[] = []
@@ -519,6 +522,7 @@ export async function openWikiUpdateWindow(options: {
             executedCommands.push(
               query === undefined ? name : `${name} with the update request`,
             )
+            executedCommandCalls.push({ name, argument })
             if (
               name === 'codebook.openDeepWiki' &&
               options.openWikiFails !== undefined
@@ -880,6 +884,7 @@ export async function openWikiUpdateWindow(options: {
   return {
     chatRequests,
     executedCommands,
+    executedCommandCalls,
     notices,
     warnings,
     errors,

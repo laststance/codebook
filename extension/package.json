@@ -385,6 +385,18 @@
           "when": "codebook.learningSummaryMovable"
         },
         {
+          "command": "codebook.refreshLlmWiki",
+          "when": "codebook.llmWiki.state"
+        },
+        {
+          "command": "codebook.copyWikiRecoveryRequest",
+          "when": "codebook.llmWiki.state"
+        },
+        {
+          "command": "codebook.revealWikiFolder",
+          "when": "codebook.llmWiki.state"
+        },
+        {
           "command": "codebook.showLlmWikiAttention",
           "when": "false"
         },

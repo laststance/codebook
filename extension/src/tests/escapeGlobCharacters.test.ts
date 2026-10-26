@@ -12,5 +12,21 @@ test('glob characters of a folder name are put in brackets and plain names stay 
   const escaped = names.map(escapeGlobCharacters)
 
   // Assert
-  assert.deepEqual(escaped, ['docs/wiki', 'wiki[[]1]', '[{]draft[}]/a[*]b[?]'])
+  assert.deepEqual(escaped, [
+    'docs/wiki',
+    'wiki[[]1[]]',
+    '[{]draft[}]/a[*]b[?]',
+  ])
+})
+
+// Value: protects=the watcher glob for a folder named with a closing bracket; fails_when=a `]` outside brackets stays raw, which the editor's glob turns into an empty character class that matches nothing; no_claim=the editor's glob engine (its source treats `]` as literal only as the first character inside brackets); seam=the pure function
+test('a closing bracket in a folder name is put in brackets too', () => {
+  // Arrange
+  const name = 'a]b'
+
+  // Act
+  const escaped = escapeGlobCharacters(name)
+
+  // Assert
+  assert.equal(escaped, 'a[]]b')
 })

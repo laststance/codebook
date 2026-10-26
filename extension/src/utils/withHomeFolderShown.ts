@@ -3,6 +3,9 @@ import { posix, win32 } from 'node:path'
 /** What may follow a home folder that ends there: a separator, the text's end, a space or quote or closing bracket, or a sentence's closing mark. */
 const HOME_FOLDER_END = String.raw`(?=[\\/]|[\s'"\x60)\]}>,;:!?]|\.(?:\s|$)|$)`
 
+/** What may stand before a home folder that starts there: the text's start, a space, a quote, `(`, `[`, `=` or the `file://` of a file link (`file:///` before a Windows drive). */
+const HOME_FOLDER_START = String.raw`(?<=^|[\s'"\x60(\[=]|file:///?)`
+
 /**
  * Shows the home folder as `~` in a text, so a sentence copied into an issue does not name the learner's account.
  *
@@ -11,8 +14,8 @@ const HOME_FOLDER_END = String.raw`(?=[\\/]|[\s'"\x60)\]}>,;:!?]|\.(?:\s|$)|$)`
  *
  * @param text - The sentence to copy.
  * @param homeDirectory - The learner's home folder; tests pass their own.
- * @param platform - The system whose paths these are; tests pass their own. On Windows the match ignores case and takes `/` or `\` for either separator.
- * @returns The text with every occurrence of the home folder as a whole path part replaced by `~`; the text itself when the home is empty or a root (`/`, `C:\`).
+ * @param platform - The system whose paths these are; tests pass their own. On Windows and macOS the match ignores case; on Windows it takes `/` or `\` for either separator.
+ * @returns The text with every occurrence of the home folder as a whole path part, not preceded by another folder name, replaced by `~`; the text itself when the home is empty or a root (`/`, `C:\`).
  * @example
  * withHomeFolderShown('Edited /Users/ada/repo/a.html', '/Users/ada') // => 'Edited ~/repo/a.html'
  * withHomeFolderShown('Edited /Users/adam/a.html', '/Users/ada')     // => 'Edited /Users/adam/a.html'
@@ -37,7 +40,11 @@ export function withHomeFolderShown(
     .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`))
     .join(isWindows ? String.raw`[\\/]+` : '/')
   return text.replace(
-    new RegExp(`${homePattern}${HOME_FOLDER_END}`, isWindows ? 'gi' : 'g'),
+    new RegExp(
+      `${HOME_FOLDER_START}${homePattern}${HOME_FOLDER_END}`,
+      // Windows and macOS disks ignore case by default, as {@link comparableFilePath} assumes.
+      isWindows || platform === 'darwin' ? 'gi' : 'g',
+    ),
     '~',
   )
 }

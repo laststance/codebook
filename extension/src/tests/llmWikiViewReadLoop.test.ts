@@ -1,0 +1,638 @@
+import assert from 'node:assert/strict'
+import { mkdtemp, mkdir, rm, symlink, realpath } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { test, type TestContext } from 'node:test'
+
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import {
+  createLlmWikiView,
+  type LlmWikiView,
+  type LlmWikiViewOptions,
+} from '../utils/llmWikiView'
+import type {
+  LlmWikiFreshness,
+  LlmWikiViewFacts,
+} from '../utils/readLlmWikiViewState'
+
+import { createFakeLlmWikiEditor } from './utils/fakeLlmWikiEditor'
+
+type ReadyFacts = Extract<LlmWikiViewFacts, { kind: 'ready' }>
+
+const WATCHED_PROJECT = '/project'
+const WATCHED_OUTPUT = '/project/.codebook/wiki'
+
+/** A promise a test settles by hand. */
+function defer<Value>() {
+  let resolve: (value: Value) => void = () => {}
+  let reject: (cause: unknown) => void = () => {}
+  const promise = new Promise<Value>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+/** Ready facts for a project with no Wiki; a test adds what it examines. */
+function readyFacts(overrides: Partial<ReadyFacts> = {}): ReadyFacts {
+  return {
+    kind: 'ready',
+    host: 'vscode',
+    projectRoot: WATCHED_PROJECT,
+    repositoryName: 'project',
+    outputLabel: '.codebook/wiki',
+    outputDirectory: WATCHED_OUTPUT,
+    nowMs: 0,
+    ...overrides,
+  }
+}
+
+const publishedWiki: ReadyFacts['wiki'] = {
+  freshness: { status: 'checking' },
+  generation: { publishedAtMs: 1_000 },
+}
+
+/** Opens the view on stand-ins that count their calls; a test overrides the closure it examines. */
+function openView(
+  context: TestContext,
+  overrides: Partial<LlmWikiViewOptions> = {},
+) {
+  const fake = createFakeLlmWikiEditor()
+  const recordedFailures: string[] = []
+  const tellings: string[] = []
+  const view = createLlmWikiView({
+    editor: fake.editor,
+    host: 'vscode',
+    readFacts: async () => readyFacts({ wiki: publishedWiki }),
+    readFreshness: async () => ({ status: 'current' }),
+    findWatchedFolder: async () => WATCHED_PROJECT,
+    onRunChange: () => (): void => {},
+    tellPublished: (label): void => {
+      tellings.push(label)
+    },
+    recordFailure: (message) => recordedFailures.push(message),
+    debounceMs: 20,
+    pollMs: 50,
+    ...overrides,
+  })
+  context.after(() => view.dispose())
+  return { fake, view, recordedFailures, tellings }
+}
+
+const idsOf = (fake: ReturnType<typeof createFakeLlmWikiEditor>): string[] =>
+  fake.rows().map((row) => row.id)
+const rowOf = (fake: ReturnType<typeof createFakeLlmWikiEditor>, id: string) =>
+  fake.rows().find((row) => row.id === id)
+
+/** Lets the event loop run so a rejection that nobody handles would surface. */
+const afterEventLoopTurn = (): Promise<void> =>
+  new Promise((resolve) => setImmediate(resolve))
+
+/** Collects the rejections nobody handled while a test runs. */
+function collectUnhandledRejections(context: TestContext): unknown[] {
+  const unhandled: unknown[] = []
+  const listener = (cause: unknown): void => {
+    unhandled.push(cause)
+  }
+  process.on('unhandledRejection', listener)
+  context.after(() => process.off('unhandledRejection', listener))
+  return unhandled
+}
+
+const ERROR_ROW_LABEL = 'Could not read the LLM Wiki state'
+
+// Value: protects=item 1, the error row for a failure after the facts were read; fails_when=a findWatchedFolder that rejects leaves the old rows, shows no error row, records nothing, or becomes an unhandled rejection; no_claim=the cause's wording; seam=a rejecting findWatchedFolder
+test('a watcher lookup that rejects shows the error row, records the failure once and leaves no unhandled rejection', async (context) => {
+  // Arrange
+  const unhandled = collectUnhandledRejections(context)
+  const { fake, view, recordedFailures } = openView(context, {
+    findWatchedFolder: async () => {
+      throw new Error('stat failed')
+    },
+  })
+
+  // Act
+  await view.whenIdle()
+  await afterEventLoopTurn()
+
+  // Assert
+  assert.deepEqual(
+    [
+      fake.rows().map((row) => row.label),
+      recordedFailures,
+      unhandled,
+      fake.contextKeys['codebook.llmWiki.state'],
+    ],
+    [
+      [ERROR_ROW_LABEL],
+      ['The LLM Wiki view could not read its state'],
+      [],
+      'other',
+    ],
+  )
+})
+
+// Value: protects=item 1, the error row for a failure in the step that turns facts into rows; fails_when=facts that make the row step throw leave the old rows, show no error row or reject unhandled; no_claim=which fact is broken; seam=ready facts with a getter that throws
+test('a failure while the rows are made shows the error row, records it once and the next good read recovers', async (context) => {
+  // Arrange
+  const unhandled = collectUnhandledRejections(context)
+  let isBroken = true
+  const { fake, view, recordedFailures } = openView(context, {
+    readFacts: async () => {
+      const facts = readyFacts({ wiki: publishedWiki })
+      // The getter is added after the facts were made, so the read succeeds and the step that makes rows from the facts throws.
+      if (isBroken)
+        Object.defineProperty(facts, 'run', {
+          enumerable: true,
+          get(): never {
+            throw new Error('row step failed')
+          },
+        })
+      return facts
+    },
+  })
+  await view.whenIdle()
+  const whileBroken = fake.rows().map((row) => row.label)
+  isBroken = false
+
+  // Act
+  await view.refresh()
+  await afterEventLoopTurn()
+
+  // Assert
+  assert.deepEqual(
+    [whileBroken, recordedFailures.length, unhandled, idsOf(fake)],
+    [[ERROR_ROW_LABEL], 1, [], ['wiki', 'output']],
+  )
+})
+
+// Value: protects=item 2, one freshness check at a time; fails_when=three refreshes during a check start three checks, whenIdle resolves while the re-run still runs, or the re-run is missing; no_claim=the check's answer; seam=a freshness read held open
+test('three refreshes during a freshness check start one check and one re-run, and the view is idle only after the re-run', async (context) => {
+  // Arrange
+  const held = [defer<LlmWikiFreshness>(), defer<LlmWikiFreshness>()]
+  let checkCount = 0
+  const { fake, view } = openView(context, {
+    readFreshness: () => held[checkCount++]?.promise ?? Promise.reject(),
+  })
+  await waitUntil(() => checkCount === 1, 'the first check', 6_000)
+
+  // Act
+  await view.refresh()
+  await view.refresh()
+  await view.refresh()
+  const checksWhileHeld = checkCount
+  let isIdle = false
+  const idle = view.whenIdle().then(() => {
+    isIdle = true
+  })
+  held[0]?.resolve({ status: 'changed' })
+  await waitUntil(() => checkCount === 2, 'the re-run', 6_000)
+  await afterEventLoopTurn()
+  const isIdleDuringReRun = isIdle
+  held[1]?.resolve({ status: 'current' })
+  await idle
+
+  // Assert
+  assert.deepEqual(
+    [
+      checksWhileHeld,
+      isIdleDuringReRun,
+      checkCount,
+      rowOf(fake, 'wiki')?.description,
+    ],
+    [1, false, 2, 'Wiki source current'],
+  )
+})
+
+// Value: protects=item 2, no work after dispose; fails_when=a re-run starts after dispose, or the answer of a running check is still shown; no_claim=the watcher's disposal; seam=a freshness read held open across dispose
+test('after dispose no freshness re-run starts and the running check’s answer is dropped', async (context) => {
+  // Arrange
+  const held = defer<LlmWikiFreshness>()
+  let checkCount = 0
+  const { fake, view } = openView(context, {
+    readFreshness: () => {
+      checkCount += 1
+      return held.promise
+    },
+  })
+  await waitUntil(() => checkCount === 1, 'the first check', 6_000)
+  await view.refresh()
+  const descriptionBefore = rowOf(fake, 'wiki')?.description
+
+  // Act
+  view.dispose()
+  held.resolve({ status: 'changed' })
+  await afterEventLoopTurn()
+  await afterEventLoopTurn()
+
+  // Assert
+  assert.deepEqual(
+    [checkCount, descriptionBefore, rowOf(fake, 'wiki')?.description],
+    [1, 'Checking freshness…', 'Checking freshness…'],
+  )
+})
+
+// Value: protects=item 2, a failed check is no answer; fails_when=a check that threw is cached as an answer, so the next read shows the unknown label as if it were known instead of Checking freshness… while it asks again; no_claim=the failure's wording; seam=a freshness read that rejects once and is then held
+test('a failed freshness check shows the unknown label once, and the next refresh reads Checking freshness… while it checks again', async (context) => {
+  // Arrange
+  const heldSecondCheck = defer<LlmWikiFreshness>()
+  let checkCount = 0
+  const { fake, view } = openView(context, {
+    readFreshness: () => {
+      checkCount += 1
+      return checkCount === 1
+        ? Promise.reject(new Error('git failed'))
+        : heldSecondCheck.promise
+    },
+  })
+  await waitUntil(
+    () =>
+      rowOf(fake, 'wiki')?.description?.startsWith('Wiki freshness unknown'),
+    'the unknown label',
+    6_000,
+  )
+  const afterFailure = rowOf(fake, 'wiki')?.description
+
+  // Act
+  await view.refresh()
+  const whileCheckingAgain = rowOf(fake, 'wiki')?.description
+  heldSecondCheck.resolve({ status: 'current' })
+  await view.whenIdle()
+
+  // Assert
+  assert.deepEqual(
+    [
+      afterFailure,
+      whileCheckingAgain,
+      checkCount,
+      rowOf(fake, 'wiki')?.description,
+    ],
+    [
+      'Wiki freshness unknown: The freshness check failed.',
+      'Checking freshness…',
+      2,
+      'Wiki source current',
+    ],
+  )
+})
+
+// Value: protects=items 2 and 4, the freshness check inspects the folder the facts name and its answer is shown for that folder only; fails_when=the check asks the setting again, or the answer of the earlier folder is shown after the rows moved to another folder; no_claim=the Git work of the check; seam=two folders and a freshness read held open
+test('a freshness check inspects the folder of the facts it was asked for and its answer is not shown for another folder', async (context) => {
+  // Arrange
+  const heldForFirstFolder = defer<LlmWikiFreshness>()
+  const requestedLocations: Array<{
+    projectRoot: string
+    outputDirectory: string
+  }> = []
+  let outputDirectory = WATCHED_OUTPUT
+  const { fake, view } = openView(context, {
+    readFacts: async () =>
+      readyFacts({
+        outputDirectory,
+        publication: outputDirectory,
+        wiki: publishedWiki,
+      }),
+    readFreshness: (location) => {
+      requestedLocations.push(location)
+      return requestedLocations.length === 1
+        ? heldForFirstFolder.promise
+        : Promise.resolve({ status: 'current' })
+    },
+    findWatchedFolder: async () => WATCHED_PROJECT,
+  })
+  await waitUntil(
+    () => requestedLocations.length === 1,
+    'the first check',
+    6_000,
+  )
+
+  // Act
+  outputDirectory = '/project/docs/wiki'
+  await view.refresh()
+  heldForFirstFolder.resolve({ status: 'changed' })
+  await view.whenIdle()
+
+  // Assert
+  assert.deepEqual(
+    [requestedLocations, rowOf(fake, 'wiki')?.description],
+    [
+      [
+        { projectRoot: WATCHED_PROJECT, outputDirectory: WATCHED_OUTPUT },
+        { projectRoot: WATCHED_PROJECT, outputDirectory: '/project/docs/wiki' },
+      ],
+      'Wiki source current',
+    ],
+  )
+})
+
+// Value: protects=item 3, a publication between the first read and the watcher's registration; fails_when=a Wiki published while the watcher lookup is held is in neither the first read nor an event, so the row never appears; no_claim=the editor's own event delivery; seam=a held findWatchedFolder
+test('a Wiki published while the watcher is being made shows without any further trigger', async (context) => {
+  // Arrange
+  const heldLookup = defer<string>()
+  let isPublished = false
+  let readCount = 0
+  const { fake, view } = openView(context, {
+    readFacts: async () => {
+      readCount += 1
+      return readyFacts(isPublished ? { wiki: publishedWiki } : {})
+    },
+    findWatchedFolder: () => heldLookup.promise,
+  })
+  await waitUntil(() => readCount === 1, 'the first read', 6_000)
+
+  // Act
+  isPublished = true
+  heldLookup.resolve(WATCHED_PROJECT)
+  await view.whenIdle()
+
+  // Assert
+  assert.deepEqual([idsOf(fake), readCount], [['wiki', 'output'], 2])
+})
+
+// Value: protects=item 3, the follow-up read is single; fails_when=a watcher that stays where it is makes every read read twice; no_claim=the number of reads at the first start; seam=a counted readFacts
+test('a read whose watcher did not move is not followed by another read', async (context) => {
+  // Arrange
+  let readCount = 0
+  const { view } = openView(context, {
+    readFacts: async () => {
+      readCount += 1
+      return readyFacts({ wiki: publishedWiki })
+    },
+  })
+  await view.whenIdle()
+  const readsAtStart = readCount
+
+  // Act
+  await view.refresh()
+  await view.refresh()
+
+  // Assert
+  assert.deepEqual([readsAtStart, readCount - readsAtStart], [2, 2])
+})
+
+// Value: protects=item 5, the mid-publication hold ends where a cause or this window's run shows; fails_when=an unreadable manifest with a new receipt freezes the memory, so the good read after this window's own generation tells a Wiki was published again; no_claim=the notice wording; seam=scripted facts across four reads
+test('an unreadable manifest with a new receipt does not freeze the memory, so a later good read after this window’s own run tells nothing', async (context) => {
+  // Arrange
+  let step: 'reservation' | 'unreadable' | 'run' | 'published' = 'reservation'
+  const reservation: ReadyFacts['reservation'] = {
+    host: 'vscode',
+    startedAtMs: 0,
+    retryAtMs: 60_000,
+  }
+  const { tellings, view } = openView(context, {
+    readFacts: async () => {
+      switch (step) {
+        case 'reservation':
+          return readyFacts({ reservation })
+        case 'unreadable':
+          return readyFacts({
+            publication: 'receipt-new',
+            attention: { cause: 'unreadable-manifest', sentence: 'x' },
+          })
+        case 'run':
+          return readyFacts({
+            publication: 'receipt-new',
+            run: {
+              kind: 'generate',
+              startedAtMs: 0,
+              timeoutMs: 3_300_000,
+              isAwaitingChat: false,
+            },
+          })
+        case 'published':
+          return readyFacts({
+            publication: 'receipt-new',
+            wiki: publishedWiki,
+          })
+      }
+    },
+  })
+  await view.whenIdle()
+
+  // Act
+  for (const next of ['unreadable', 'run', 'published'] as const) {
+    step = next
+    await view.refresh()
+  }
+  await view.whenIdle()
+
+  // Assert
+  assert.deepEqual(tellings, [])
+})
+
+// Value: protects=the late-publication notice across a read that lands mid-publication; fails_when=a read that sees the new receipt before the Wiki is readable replaces the memory, so the read that shows the Wiki tells nothing; no_claim=the notice wording; seam=scripted facts across three reads
+test('a read that lands mid-publication keeps the memory, and the read that shows the Wiki tells once', async (context) => {
+  // Arrange
+  let step: 'reservation' | 'mid' | 'published' = 'reservation'
+  const { fake, tellings, view } = openView(context, {
+    readFacts: async () => {
+      if (step === 'reservation')
+        return readyFacts({
+          reservation: { host: 'vscode', startedAtMs: 0, retryAtMs: 60_000 },
+        })
+      if (step === 'mid')
+        return readyFacts({
+          publication: 'receipt-new',
+          reservation: { host: 'vscode', startedAtMs: 0, retryAtMs: 60_000 },
+        })
+      return readyFacts({ publication: 'receipt-new', wiki: publishedWiki })
+    },
+  })
+  await view.whenIdle()
+  step = 'mid'
+  await view.refresh()
+  const idsMidPublication = idsOf(fake)
+
+  // Act
+  step = 'published'
+  await view.refresh()
+  await view.refresh()
+  await view.whenIdle()
+
+  // Assert
+  assert.deepEqual(
+    [idsMidPublication, idsOf(fake), tellings],
+    [['reservation', 'output'], ['wiki', 'output'], ['.codebook/wiki']],
+  )
+})
+
+// Value: protects=item 27's consequence for the notice; fails_when=a Wiki whose manifest appears while the receipt read still shows none tells nothing at that read and never later; no_claim=the notice wording; seam=a read that pairs the older receipt with the newer manifest
+test('a Wiki whose manifest is newer than the receipt read with it still tells the learner once', async (context) => {
+  // Arrange
+  let isPublished = false
+  const { tellings, view } = openView(context, {
+    readFacts: async () =>
+      isPublished
+        ? readyFacts({ wiki: publishedWiki })
+        : readyFacts({
+            reservation: { host: 'vscode', startedAtMs: 0, retryAtMs: 60_000 },
+          }),
+  })
+  await view.whenIdle()
+
+  // Act
+  isPublished = true
+  await view.refresh()
+  await view.refresh()
+  await view.whenIdle()
+
+  // Assert
+  assert.deepEqual(tellings, ['.codebook/wiki'])
+})
+
+/** Opens the view with a published Wiki, a folder to stand on and the events of its watcher reportable. */
+function openWatchedView(
+  context: TestContext,
+  overrides: Partial<LlmWikiViewOptions> & { facts?: Partial<ReadyFacts> } = {},
+) {
+  const { facts, ...options } = overrides
+  let readCount = 0
+  const opened = openView(context, {
+    readFacts: async () => {
+      readCount += 1
+      return readyFacts({ wiki: publishedWiki, ...facts })
+    },
+    ...options,
+  })
+  return { ...opened, readCount: () => readCount }
+}
+
+// Value: protects=item 7, a deleted or moved output folder; fails_when=a delete event of the folder itself (no file events) is dropped, so a deleted Wiki keeps showing Wiki source current; no_claim=what the real editor reports; seam=the fake file watching reporting only the folder
+test('a directory-only event of the output folder or a folder above it refreshes the view', async (context) => {
+  // Arrange
+  const { fake, readCount, view } = openWatchedView(context)
+  await view.whenIdle()
+  const kinds = ['delete', 'create'] as const
+
+  // Act
+  const readsAfterEachEvent: number[] = []
+  for (const [index, path] of [
+    WATCHED_OUTPUT,
+    '/project/.codebook',
+  ].entries()) {
+    const readsBefore = readCount()
+    fake.files.report(kinds[index] ?? 'delete', path)
+    await waitUntil(
+      () => readCount() > readsBefore,
+      'a read after the event',
+      6_000,
+    )
+    readsAfterEachEvent.push(readCount() - readsBefore)
+  }
+
+  // Assert
+  assert.deepEqual(
+    readsAfterEachEvent.map((reads) => reads > 0),
+    [true, true],
+  )
+})
+
+// Value: protects=item 7, the exact-path filter; fails_when=an event of a file that is not one of the watched files refreshes the view; no_claim=the glob; seam=the fake file watching
+test('an event of an unrelated file below the watched folder reads nothing', async (context) => {
+  // Arrange
+  const { fake, readCount, view } = openWatchedView(context)
+  await view.whenIdle()
+  const readsBefore = readCount()
+
+  // Act
+  fake.files.report('change', '/project/.codebook/wiki/index.html')
+  await new Promise((resolve) => setTimeout(resolve, 120))
+
+  // Assert
+  assert.equal(readCount() - readsBefore, 0)
+})
+
+// Value: protects=item 8, an output outside the project whose parent is missing; fails_when=the watcher walks up to an ancestor (the home folder or the root) and watches it recursively, or the Output row does not say the view refreshes on visibility and Refresh only, or the cause is recorded more than once; no_claim=the editor's cost of a recursive watch; seam=a findWatchedFolder that answers a far ancestor
+test('an output outside the project with a missing parent gets no watcher, an Output tooltip that says so and one record in Output', async (context) => {
+  // Arrange
+  const { fake, recordedFailures, view } = openWatchedView(context, {
+    facts: {
+      outputDirectory: '/elsewhere/missing/wiki',
+      outputLabel: '/elsewhere/missing/wiki',
+    },
+    findWatchedFolder: async () => '/elsewhere',
+  })
+  await view.whenIdle()
+
+  // Act
+  await view.refresh()
+  await view.refresh()
+
+  // Assert
+  assert.deepEqual(
+    [
+      fake.files.liveWatcherCount(),
+      recordedFailures,
+      rowOf(fake, 'output')?.tooltip?.includes('refreshes when it is shown'),
+    ],
+    [0, ['The LLM Wiki view could not watch the Wiki folder'], true],
+  )
+})
+
+// Value: protects=item 8, a fresh project; fails_when=a missing .codebook inside the project watches anything but the project root; no_claim=the move to .codebook once a run makes it (host test); seam=the pattern handed to the fake file watching
+test('a missing .codebook inside the project is watched from the project root', async (context) => {
+  // Arrange
+  const { fake, view } = openWatchedView(context)
+
+  // Act
+  await view.whenIdle()
+
+  // Assert
+  assert.deepEqual(
+    fake.files.watched.map(({ base }) => base),
+    [WATCHED_PROJECT],
+  )
+})
+
+// Value: protects=item 9, a project reached through a symbolic link; fails_when=an event spelled with the real path is dropped because only the linked spelling was computed; no_claim=macOS's /var versus /private/var itself; seam=a real symbolic link and the fake file watching reporting the real spelling
+test('an event spelled with the real path of a symlinked project still refreshes the view', async (context) => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-view-link-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const realProject = join(await realpath(directory), 'real')
+  const linkedProject = join(directory, 'linked')
+  await mkdir(join(realProject, '.codebook', 'wiki'), { recursive: true })
+  await symlink(realProject, linkedProject)
+  const linkedOutput = join(linkedProject, '.codebook', 'wiki')
+  const { fake, readCount, view } = openWatchedView(context, {
+    facts: { projectRoot: linkedProject, outputDirectory: linkedOutput },
+    findWatchedFolder: async () => join(linkedProject, '.codebook'),
+  })
+  await view.whenIdle()
+  const readsBefore = readCount()
+
+  // Act
+  fake.files.report(
+    'create',
+    join(linkedOutput, 'codebook-wiki.json'),
+    join(realProject, '.codebook', 'wiki', 'codebook-wiki.json'),
+  )
+  await waitUntil(
+    () => readCount() > readsBefore,
+    'a read after the event',
+    6_000,
+  )
+
+  // Assert
+  assert.equal(readCount() > readsBefore, true)
+})
+
+// Value: protects=the handle's contract; fails_when=refresh rejects for a read that failed, so the Refresh command or a timer fails; no_claim=the error row; seam=a readFacts that rejects
+test('refresh resolves even when the read failed', async (context) => {
+  // Arrange
+  const { view } = openView(context, {
+    readFacts: async () => {
+      throw new Error('disk gone')
+    },
+  })
+  const handle: LlmWikiView = view
+
+  // Act
+  const outcome = await handle.refresh().then(
+    () => 'resolved',
+    () => 'rejected',
+  )
+
+  // Assert
+  assert.equal(outcome, 'resolved')
+})

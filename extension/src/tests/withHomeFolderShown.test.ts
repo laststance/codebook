@@ -58,3 +58,34 @@ test('on Windows the home folder reads ~ whatever the drive letter case and sepa
     'Edited ~\\repo\\a.html and ~/b.md and C:\\Users\\adam\\c.md',
   )
 })
+
+// Value: protects=a path that merely contains the home path further right; fails_when=/srv/home/me/x loses its /srv prefix to ~ because the home /home/me is found inside it; no_claim=every spelling of a left boundary; seam=the pure function; why_new=the earlier tests only put the home at the start of a word
+test('a path that contains the home path after another folder stays whole, while a home after a quote, bracket, equals sign or file:// is hidden', () => {
+  // Arrange
+  const sentence =
+    'Moved /srv/home/me/x and "/home/me/a" and [/home/me/b] and root=/home/me/c and file:///home/me/d'
+
+  // Act
+  const copied = withHomeFolderShown(sentence, '/home/me', 'linux')
+
+  // Assert
+  assert.equal(
+    copied,
+    'Moved /srv/home/me/x and "~/a" and [~/b] and root=~/c and file://~/d',
+  )
+})
+
+// Value: protects=the account name in Copy details on macOS, whose disks ignore case; fails_when=a home spelled in another case stays in the copied text on darwin, or is hidden on Linux where case matters; no_claim=a real Mac; seam=the pure function with the platform passed in; why_new=only Windows ignored case
+test('on macOS the home folder reads ~ whatever its case, and on Linux a different case stays', () => {
+  // Arrange
+  const sentence = 'Edited /users/ADA/a.html'
+
+  // Act
+  const copied = [
+    withHomeFolderShown(sentence, '/Users/ada', 'darwin'),
+    withHomeFolderShown(sentence, '/Users/ada', 'linux'),
+  ]
+
+  // Assert
+  assert.deepEqual(copied, ['Edited ~/a.html', sentence])
+})

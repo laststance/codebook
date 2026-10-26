@@ -529,3 +529,20 @@ test('onDidChange reports every change of the state and nothing after the listen
   // Assert
   assert.deepEqual([changesWhileListening, changes], [4, 4])
 })
+
+// Value: protects=the run state against a listener that throws; fails_when=a throwing listener stops the listeners after it from hearing a change, or the error leaves begin() or end() so the run's caller fails; no_claim=what a listener does with the change; seam=two listeners on one WikiUpdateRun; why_new=no test registers a throwing listener
+test('a listener that throws neither hides a change from the next listener nor fails the run call', () => {
+  // Arrange
+  const run = new WikiUpdateRun(fixedClock)
+  const heardStates: string[] = []
+  run.onDidChange(() => {
+    throw new Error('a broken view')
+  })
+  run.onDidChange(() => heardStates.push(run.status().state))
+
+  // Act
+  const wasAccepted = run.begin('vscode', output, 900_000, false)
+
+  // Assert
+  assert.deepEqual([wasAccepted, heardStates], [true, ['running']])
+})

@@ -39,7 +39,9 @@ export function describeWikiGeneration(
     WIKI_SHORT_REVISION_CHARS,
   )
   const date =
-    generation.publishedAtMs === undefined
+    // A time that is not a finite number would print as "Invalid Date".
+    generation.publishedAtMs === undefined ||
+    !Number.isFinite(generation.publishedAtMs)
       ? undefined
       : formatDate(generation.publishedAtMs)
   if (fullRevision && date) return `Generated from ${fullRevision} on ${date}`
