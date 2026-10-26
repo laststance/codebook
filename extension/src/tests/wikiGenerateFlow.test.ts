@@ -90,6 +90,8 @@ async function openProjectWithoutWiki(
     projectRoot,
     outputDirectory,
     markerPath: `${outputDirectory}.update-run.json`,
+    /** Closes the editor window as the learner does, keeping the project on disk for the test's assertions; `close` still removes it. */
+    closeWindow: (): Promise<void> => window.close(),
     async close(): Promise<void> {
       await window.close()
       await rm(projectDirectory, { recursive: true, force: true })
@@ -1058,5 +1060,89 @@ test('an Update in Cursor whose managed skill cannot be deployed over a learnerâ
         'Codebook could not start the Wiki update: A Cursor skill named codebook that Codebook does not own is in the way.',
       ],
     },
+  )
+})
+
+// Value: protects=the state matrix's generate Ã— window-closing cell (/ship review pass 2, Cycle 0055 pt1): a window that closes while a VS Code generation's start is still claiming its marker; fails_when=the start goes on after the close, sends a generate request into a chat the closing window no longer watches, or leaves its marker for every other window until it expires; no_claim=a window that closes during the watch (the update's tests); seam=the claim's answer held open
+test('closing the window while a VS Code generation claims its marker sends no request and leaves no marker once the claim has answered', async (context) => {
+  // Arrange: the start's claim on the marker is held open.
+  const project = await openProjectWithoutWiki()
+  context.after(() => project.close())
+  const claim = project.hold('claim-answer')
+  const pressed = project.runCommand(GENERATE_COMMAND)
+  await claim.started
+
+  // Act: the window closes, then the claim answers.
+  await project.closeWindow()
+  claim.release()
+  await pressed.catch(() => undefined)
+
+  // Assert
+  assert.deepEqual(
+    {
+      chatRequests: project.chatRequests.length,
+      markerLeft: await exists(project.markerPath),
+    },
+    { chatRequests: 0, markerLeft: false },
+  )
+})
+
+// Value: protects=the /ship review pass 2 of Cycle 0055 pt1: a Cursor window that closes while the managed skill is deployed for a start whose marker is claimed; fails_when=the agent starts in the closing window, unattended and never stopped, or the marker stays; no_claim=the deployment itself (cursorSkillDeployment tests); seam=a skill deployment held open, for a generation and for an update
+test('closing a Cursor window while the managed skill is deployed for a generation or an update starts no agent and leaves no marker once the deployment has ended', async (context) => {
+  // Arrange: in both windows the skill check fails and its deployment is held open; the update's project has a Wiki to update.
+  let agentStarts = 0
+  const heldDeployments: Array<() => void> = []
+  const deploymentsStarted: Array<Promise<void>> = []
+  const openCursorWindow = () => {
+    let reportStarted = (): void => {}
+    deploymentsStarted.push(
+      new Promise<void>((resolveStarted) => {
+        reportStarted = resolveStarted
+      }),
+    )
+    return openProjectWithoutWiki({
+      cursor: true,
+      cursorSkill: {
+        verify: async () => {
+          throw new Error('The managed Cursor skill is missing.')
+        },
+        deploy: () =>
+          new Promise<void>((resolveDeployment) => {
+            heldDeployments.push(resolveDeployment)
+            reportStarted()
+          }),
+      },
+      cursorAgent: async () => {
+        agentStarts += 1
+        return 'Done.'
+      },
+    })
+  }
+  const generating = await openCursorWindow()
+  context.after(() => generating.close())
+  const updating = await openCursorWindow()
+  context.after(() => updating.close())
+  await publishGeneratedWiki(updating.outputDirectory, updating.projectRoot)
+  const generatePressed = generating.runCommand(GENERATE_COMMAND)
+  const updatePressed = updating.runUpdateCommand()
+  await Promise.all(deploymentsStarted)
+
+  // Act: both windows close, then the deployments end.
+  await generating.closeWindow()
+  await updating.closeWindow()
+  for (const endDeployment of heldDeployments) endDeployment()
+  await Promise.all([
+    generatePressed.catch(() => undefined),
+    updatePressed.catch(() => undefined),
+  ])
+
+  // Assert
+  assert.deepEqual(
+    {
+      agentStarts,
+      generationMarkerLeft: await exists(generating.markerPath),
+      updateMarkerLeft: await exists(updating.markerPath),
+    },
+    { agentStarts: 0, generationMarkerLeft: false, updateMarkerLeft: false },
   )
 })

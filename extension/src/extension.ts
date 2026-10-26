@@ -2104,14 +2104,14 @@ export function activate(
         throw error
       }
       if (!start) return
-      // The checks above take time (the freshness inspection hashes every source). A window that began to close meanwhile has already looked for a run to stop, so it starts none: no watch and no unattended agent.
+      // The update request names the managed skill's procedure, so Cursor's agent gets the skill once the checks passed, as a generation's does (Eng decision 73).
+      if (isCursorHost)
+        await prepareCursorSkillForUpdate(start, host, wikiOutput)
+      // The checks and the skill take time (the freshness inspection hashes every source). A window that began to close meanwhile has already looked for a run to stop, so it starts none: no watch and no unattended agent.
       if (isExtensionStopping) {
         await start.releaseMarker().catch(() => undefined)
         return
       }
-      // The update request names the managed skill's procedure, so Cursor's agent gets the skill once the checks passed, as a generation's does (Eng decision 73).
-      if (isCursorHost)
-        await prepareCursorSkillForUpdate(start, host, wikiOutput)
       const { hasGitRepository } = start
       const run = newWikiRun('update', projectRoot, wikiOutput, host, start)
       await launchWikiRun(run, () =>
