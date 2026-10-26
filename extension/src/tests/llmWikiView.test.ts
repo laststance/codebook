@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { existsSync } from 'node:fs'
 import {
   mkdir,
   mkdtemp,
@@ -551,7 +552,7 @@ test('a manifest created in the output folder shows the Wiki row after the watch
   )
 })
 
-// Value: protects=AC 2 (the trailing debounce); fails_when=a burst of events reads the state once per event (more than the burst's read and the one follow-up read of the watcher's move), or the last event of the burst is dropped; no_claim=the 1 second value (a constant); seam=five events 10 ms apart, with the debounce shortened to 40 ms
+// Value: protects=AC 2 (the trailing debounce); fails_when=a burst of events reads the state once per event (more than the burst's one read), or the last event of the burst is dropped; no_claim=the 1 second value (a constant); seam=five events 10 ms apart, with the debounce shortened to 40 ms
 test('five file events inside the debounce become one read that shows the last state', async (context) => {
   // Arrange
   const project = await openEmptyProject(context)
@@ -569,8 +570,8 @@ test('five file events inside the debounce become one read that shows the last s
   await project.llmWiki.whenIdle()
 
   // Assert
-  // Two reads: the burst's one, and the single follow-up read that the watcher's move from the project to .codebook adds once the Wiki's folders exist.
-  assert.equal(project.looks.publishTokenReads - readsAtStart, 2)
+  // One read: the burst's. The watcher stays on the project root, so the Wiki's folders appearing moves it no more and adds no follow-up read.
+  assert.equal(project.looks.publishTokenReads - readsAtStart, 1)
 })
 
 // Value: protects=AC 2 (refresh on the setting and on visibility); fails_when=changing codebook.wikiOutputDirectory or showing the view again does not read the state, or the watcher stays on the old folder; no_claim=VS Code's settings UI; seam=the stubbed configuration event and visibility event
@@ -603,7 +604,7 @@ test('changing the output setting and showing the view again read the state agai
       watchedAfterTheSetting?.pattern,
       window.llmWiki.contextKeys[STATE_KEY],
     ],
-    [true, join(wiki.projectRoot, 'docs'), globFor([], 'wiki'), 'none'],
+    [true, wiki.projectRoot, globFor(['docs'], 'wiki'), 'none'],
   )
 })
 
@@ -661,8 +662,8 @@ test('an output folder outside the project shows its Wiki with the absolute fold
   )
 })
 
-// Value: protects=AC 2 (a missing output parent) and Eng decision 78; fails_when=the watcher stands on a folder that does not exist, or is not made again on the folder a run creates; no_claim=VS Code's watcher on the root; seam=a Cursor generation whose agent waits
-test('in a fresh project the watcher stands on the project and moves to .codebook once a run makes it', async (context) => {
+// Value: protects=AC 2 (a missing output parent), Eng decision 78 and N56-F3; fails_when=the watcher stands on a folder that does not exist, or moves down onto .codebook once a run makes it, where a delete of .codebook would be unseen; why_changed=the watcher now stays on the project root instead of moving to .codebook (N56 step 2 saw a deleted .codebook unnoticed); no_claim=VS Code's watcher on the root; seam=a Cursor generation whose agent waits
+test('in a fresh project the watcher stands on the project and stays there once a run makes .codebook', async (context) => {
   // Arrange
   const project = await openEmptyProject(context, {
     cursor: true,
@@ -672,29 +673,36 @@ test('in a fresh project the watcher stands on the project and moves to .codeboo
       ),
   })
   const watchedAtStart = project.watchedPatterns().at(-1)
+  const watcherCountAtStart = project.watchedPatterns().length
 
   // Act
   void project.runCommand(GENERATE_COMMAND)
   await untilRow(project, 'run')
   await waitUntil(
-    () => project.watchedPatterns().at(-1)?.base !== watchedAtStart?.base,
-    'the watcher on .codebook',
+    () => existsSync(join(project.projectRoot, '.codebook')),
+    'the .codebook folder the run makes',
     6_000,
   )
+  await project.runCommand('codebook.refreshLlmWiki')
   await project.runCommand('codebook.llmWiki.cancelRun')
 
   // Assert
   assert.deepEqual(
-    [watchedAtStart, project.watchedPatterns().at(-1)],
+    [
+      watchedAtStart,
+      project.watchedPatterns().at(-1),
+      project.watchedPatterns().length - watcherCountAtStart,
+    ],
     [
       {
         base: project.projectRoot,
         pattern: globFor(['.codebook'], 'wiki'),
       },
       {
-        base: join(project.projectRoot, '.codebook'),
-        pattern: globFor([], 'wiki'),
+        base: project.projectRoot,
+        pattern: globFor(['.codebook'], 'wiki'),
       },
+      0,
     ],
   )
 })
@@ -1842,6 +1850,53 @@ test('a delete event of the output folder alone, for a deleted or a renamed Wiki
       renamed.window.llmWiki.contextKeys[STATE_KEY],
     ],
     ['none', 'none'],
+  )
+})
+
+// Value: protects=N56-F3, the view following a deleted .codebook folder; fails_when=the watcher stands on .codebook itself, so deleting that folder matches no planned path and the view keeps showing the deleted Wiki until Refresh; why_new=N56 step 2 saw the deleted Wiki's row for 40+ s; seam=the fake file watching, which like the editor reports nothing for the watched folder itself; no_claim=the native editor's event delivery for a recursive delete (native recheck)
+test('deleting the .codebook folder that holds the Wiki brings back the no-Wiki welcome without a Refresh', async (context) => {
+  // Arrange
+  const { wiki, window } = await openPublishedWiki(context)
+  const codebookFolder = join(wiki.projectRoot, '.codebook')
+
+  // Act
+  await rm(codebookFolder, { recursive: true })
+  window.reportFileEvent('delete', codebookFolder)
+  await untilRow(window, 'wiki', false)
+
+  // Assert
+  assert.deepEqual(
+    [window.llmWiki.contextKeys[STATE_KEY], idsOf(window)],
+    ['none', []],
+  )
+})
+
+// Value: protects=N56-F3 for an output below several folders; fails_when=the watcher stands on the output's parent, so deleting a folder between the project root and the output (or the watched one) is not seen; why_new=same defect as the .codebook case for a nested output setting; seam=the fake file watching with the setting docs/site/wiki; no_claim=the native editor's event delivery for a recursive delete (native recheck)
+test('deleting a folder between the project root and a nested Wiki output brings back the no-Wiki welcome without a Refresh', async (context) => {
+  // Arrange
+  const wiki = await publishedWikiFixture('docs/site/wiki')
+  const window = await openWikiUpdateWindow({
+    constants: FAST,
+    projectRoot: wiki.projectRoot,
+    outputSetting: 'docs/site/wiki',
+    openReader: false,
+  })
+  context.after(async () => {
+    await window.close()
+    await wiki.cleanup()
+  })
+  await untilFirstRead(window)
+  const siteFolder = join(wiki.projectRoot, 'docs', 'site')
+
+  // Act
+  await rm(siteFolder, { recursive: true })
+  window.reportFileEvent('delete', siteFolder)
+  await untilRow(window, 'wiki', false)
+
+  // Assert
+  assert.deepEqual(
+    [window.llmWiki.contextKeys[STATE_KEY], idsOf(window)],
+    ['none', []],
   )
 })
 

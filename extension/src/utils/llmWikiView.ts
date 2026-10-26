@@ -349,7 +349,7 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
   }
 
   /**
-   * Puts the watcher on the nearest existing folder of the output, and makes it again when that folder or the output changed.
+   * Puts the watcher on the folder {@link chooseWikiWatchFolder} picks (the project root for an output inside the project, so a deleted Wiki folder is seen), and makes it again when that folder or the output changed.
    * @param readyFacts - The facts just read.
    * @returns Whether a new watcher now stands, so the caller reads once more: an event between the read and the registration is in neither.
    */

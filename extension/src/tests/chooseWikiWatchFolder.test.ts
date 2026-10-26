@@ -23,6 +23,23 @@ test('a missing .codebook inside the project is watched from the project root', 
   assert.equal(folder, '/work/repo')
 })
 
+// Value: protects=N56-F3, a deleted .codebook being seen; fails_when=the watcher stands on .codebook (or a deeper folder) once it exists, where deleting that folder is an event of the watched folder itself and the editor reports none; why_new=the old choice returned the nearest existing folder; no_claim=the editor's watcher; seam=the pure function
+test('an existing .codebook inside the project is still watched from the project root', () => {
+  // Arrange
+  const choice = {
+    projectRoot: '/work/repo',
+    outputDirectory: '/work/repo/.codebook/wiki',
+    nearestExistingFolder: '/work/repo/.codebook',
+    homeDirectory: HOME,
+  }
+
+  // Act
+  const folder = chooseWikiWatchFolder(choice)
+
+  // Assert
+  assert.equal(folder, '/work/repo')
+})
+
 // Value: protects=the editor from a recursive watch of the home folder or the root; fails_when=an output outside the project whose parent does not exist is watched from the nearest existing ancestor, here the home folder; no_claim=what the view shows instead (host test); seam=the pure function
 test('an output outside the project whose parent is missing gets no watcher, even when an ancestor exists', () => {
   // Arrange
