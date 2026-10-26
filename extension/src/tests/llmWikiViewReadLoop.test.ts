@@ -544,8 +544,8 @@ const runningFacts = (): ReadyFacts =>
     },
   })
 
-// Value: protects=the debounce flush; fails_when=whenIdle resolves while the debounce of a matched event is still waiting, so the read it will make is missed by a test that proves a count; no_claim=the debounce length; seam=a matched event, the debounce of 20 ms
-test('whenIdle waits for the debounced read of a watched file’s event', async (context) => {
+// Value: protects=the debounce flush; fails_when=the view reports itself settled while the debounce of a matched event is still waiting, so the read it will make is missed by a test that proves a count; no_claim=the debounce length; seam=a matched event, the debounce of 20 ms
+test('a watched file’s event is read once after the debounce, before the view reports itself settled', async (context) => {
   // Arrange
   const { fake, readCount, view } = openWatchedView(context)
   await view.whenIdle()
@@ -617,6 +617,29 @@ test('the poll stops once a good read shows no run after the error row', async (
   assert.equal(reads - readsAfterTheGoodRead, 0)
 })
 
+// Value: protects=task 22 (one read when the view is shown); fails_when=showing a hidden view waits for the 1 s debounce, so stale rows stay on screen and the poll stays stopped for that second; no_claim=the editor's visibility semantics; seam=mocked timers with no tick after the view is shown
+test('a hidden view that is shown reads at once without waiting for the debounce', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] })
+  let reads = 0
+  const { fake, view } = openView(context, {
+    readFacts: async () => {
+      reads += 1
+      return runningFacts()
+    },
+  })
+  await view.whenIdle()
+  fake.setVisible(false)
+  const readsWhenHidden = reads
+
+  // Act
+  fake.setVisible(true)
+  await afterEventLoopTurn()
+
+  // Assert
+  assert.equal(reads - readsWhenHidden, 1)
+})
+
 // Value: protects=no background work while hidden; fails_when=a collapsed view still polls while a run row shows, or showing it again does not read once and restart the poll; no_claim=the editor's visibility semantics; seam=mocked timers, the fake view's visibility
 test('a hidden view does not poll and a shown view reads once and polls again', async (context) => {
   // Arrange
@@ -637,7 +660,6 @@ test('a hidden view does not poll and a shown view reads once and polls again', 
   await view.whenIdle()
   const readsAfterHiddenTicks = reads
   fake.setVisible(true)
-  context.mock.timers.tick(20)
   await view.whenIdle()
   const readsAfterShown = reads
   context.mock.timers.tick(50)

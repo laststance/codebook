@@ -1052,7 +1052,7 @@ export const LLM_WIKI_ROW_ACTIONS = {
   },
   'copy-recovery': {
     command: COPY_WIKI_RECOVERY_REQUEST_COMMAND,
-    title: 'Copy recovery request',
+    title: 'Copy Recovery Request',
   },
   'reveal-folder': {
     command: REVEAL_WIKI_FOLDER_COMMAND,
@@ -1068,6 +1068,33 @@ export const LLM_WIKI_ROW_ACTIONS = {
     title: 'Manage Workspace Trust',
   },
 } as const
+
+/** What the LLM Wiki view says when the editor lists none of the known ids of its Manage Workspace Trust command ({@link resolveManageTrustCommand}, run by {@link registerLlmWikiCommands}). */
+export const LLM_WIKI_MANAGE_TRUST_FALLBACK_NOTICE =
+  'Run "Workspaces: Manage Workspace Trust" from the Command Palette to trust this folder.'
+
+/** What the LLM Wiki view says once the recovery request is copied. */
+export const LLM_WIKI_RECOVERY_REQUEST_COPIED_NOTICE =
+  'Copied the recovery request. Paste it into the editor chat.'
+
+/**
+ * Sentence for a Wiki folder that does not exist, so Reveal Wiki Folder opens nothing.
+ * @param outputLabel - The folder as the learner reads it.
+ * @returns `The LLM Wiki folder <label> does not exist (yet).`
+ * @example llmWikiFolderMissingNotice('.codebook/wiki') // => 'The LLM Wiki folder .codebook/wiki does not exist (yet).'
+ */
+export const llmWikiFolderMissingNotice = (outputLabel: string): string =>
+  `The LLM Wiki folder ${outputLabel} does not exist (yet).`
+
+/**
+ * Sentence for a Wiki folder in a remote window, where Reveal Wiki Folder opens folders of this computer only.
+ * @param remoteName - The editor's `env.remoteName`.
+ * @returns `Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on <remote name>.`
+ * @example llmWikiFolderRemoteNotice('wsl') // => 'Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on wsl.'
+ */
+export const llmWikiFolderRemoteNotice = (remoteName: string): string =>
+  `Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on ${remoteName}.`
+
 /** How often the extension looks for a newly published manifest while a Wiki update is watched. */
 export const WIKI_UPDATE_WATCH_POLL_MS = 2_000
 /** How often the reader page asks for the update state while a run is active. */
@@ -1778,11 +1805,3 @@ export const REFUSAL_REPORT_LABEL_CHARS = 48
 
 /** The most editor events a {@link PlacementEventLog} keeps and a placement refusal report lists, in events. */
 export const REFUSAL_REPORT_EVENTS = 24
-
-/** What the LLM Wiki view says when the editor lists none of the known ids of its Manage Workspace Trust command ({@link manageTrust}). */
-export const LLM_WIKI_MANAGE_TRUST_FALLBACK_NOTICE =
-  'Run "Workspaces: Manage Workspace Trust" from the Command Palette to trust this folder.'
-
-/** What the LLM Wiki view says once the recovery request is copied. */
-export const LLM_WIKI_RECOVERY_REQUEST_COPIED_NOTICE =
-  'Copied the recovery request. Paste it into the editor chat.'

@@ -1071,7 +1071,11 @@ export async function openWikiUpdateWindow(options: {
       contextKeys,
       treeChangeCount: () => treeChangeCount,
       renderLog: () => [...renderLog],
-      whenIdle: async () => llmWikiView?.whenIdle(),
+      whenIdle: async (): Promise<void> => {
+        // A view that was never created has nothing to settle; an absent-read test must not pass on it.
+        if (!llmWikiView) throw new Error('The LLM Wiki view was not created')
+        await llmWikiView.whenIdle()
+      },
       setVisible(isVisible: boolean): void {
         isViewShown = isVisible
         for (const listener of [...visibilityListeners])

@@ -1,3 +1,8 @@
+import {
+  llmWikiFolderMissingNotice,
+  llmWikiFolderRemoteNotice,
+} from '../constants'
+
 /**
  * Words why Reveal Wiki Folder opens nothing, so the learner is not left with a command that does nothing visible.
  *
@@ -22,9 +27,7 @@ export function describeUnrevealableWikiFolder(folder: {
   remoteName?: string
 }): string | undefined {
   // A missing folder is the more useful answer, in a remote window too.
-  if (!folder.exists)
-    return `The LLM Wiki folder ${folder.outputLabel} does not exist (yet).`
-  if (folder.remoteName)
-    return `Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on ${folder.remoteName}.`
+  if (!folder.exists) return llmWikiFolderMissingNotice(folder.outputLabel)
+  if (folder.remoteName) return llmWikiFolderRemoteNotice(folder.remoteName)
   return undefined
 }

@@ -591,8 +591,8 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
     treeView,
     treeView.onDidChangeVisibility((event) => {
       isViewVisible = event.visible
-      // Hidden: no poll. Shown: one read, which restarts the poll and the freshness check.
-      if (event.visible) requestRefresh()
+      // Hidden: no poll. Shown: one read at once (the 1 s debounce is for file events), which restarts the poll and the freshness check.
+      if (event.visible) void refresh()
       else keepPoll()
     }),
     editor.workspace.onDidChangeConfiguration((event) => {

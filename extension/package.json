@@ -223,7 +223,7 @@
       {
         "command": "codebook.copyWikiRecoveryRequest",
         "title": "Codebook: Copy LLM Wiki Recovery Request",
-        "shortTitle": "Copy recovery request",
+        "shortTitle": "Copy Recovery Request",
         "icon": "$(copy)"
       },
       {

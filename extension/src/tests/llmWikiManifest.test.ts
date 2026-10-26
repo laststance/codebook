@@ -166,7 +166,7 @@ test('the palette lists the commands that exist only with the LLM Wiki view only
   })
 })
 
-// Value: protects=task 25 (view copy and icons, O3); fails_when=Try again loses its restart icon, Stop watching keeps the stop icon that Cancel keeps for stopping the agent, or an inline action's title falls back to sentence case; no_claim=how the editor draws the icons (N56 step 5); seam=the packaged manifest
+// Value: protects=task 25 (view copy and icons, O3); fails_when=Try again loses its restart icon, Stop watching keeps the stop icon that Cancel keeps for stopping the agent, or an inline action's title (Copy Recovery Request included) falls back to sentence case; no_claim=how the editor draws the icons (N56 step 5); seam=the packaged manifest
 test('the LLM Wiki view’s inline actions carry the decided icons and Title Case titles', async () => {
   // Arrange
   const manifest = await readManifest()
@@ -183,6 +183,7 @@ test('the LLM Wiki view’s inline actions carry the decided icons and Title Cas
     'codebook.showWikiOutput',
     'codebook.llmWiki.changeLocation',
     'codebook.llmWiki.openFolder',
+    'codebook.copyWikiRecoveryRequest',
   ].map((id) => {
     const command = commandsById.get(id)
     return [id, command?.shortTitle ?? command?.title, command?.icon]
@@ -197,13 +198,15 @@ test('the LLM Wiki view’s inline actions carry the decided icons and Title Cas
     ['codebook.showWikiOutput', 'Show Output', '$(output)'],
     ['codebook.llmWiki.changeLocation', 'Change Location', '$(edit)'],
     ['codebook.llmWiki.openFolder', 'Open Folder', '$(folder-opened)'],
+    ['codebook.copyWikiRecoveryRequest', 'Copy Recovery Request', '$(copy)'],
   ])
   assert.deepEqual(
     [
       LLM_WIKI_ROW_ACTIONS['try-again'].title,
       LLM_WIKI_ROW_ACTIONS['stop-watching'].title,
       LLM_WIKI_ROW_ACTIONS['change-location'].title,
+      LLM_WIKI_ROW_ACTIONS['copy-recovery'].title,
     ],
-    ['Try Again', 'Stop Watching', 'Change Location'],
+    ['Try Again', 'Stop Watching', 'Change Location', 'Copy Recovery Request'],
   )
 })
