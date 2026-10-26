@@ -96,6 +96,8 @@ export class OwnedNodeTestRun {
   /** Set by the first {@link release}: from then on {@link advance} and {@link complete} refuse, also while a failed release waits to be run again. */
   private releaseBegun = false
   private acceptedStop?: NodeTestSourceStop
+  /** The index of the last declared stop the test paused at as declared, set before its values are captured; {@link explainEarlyExit} explains no failure after it. */
+  private reachedStopIndex?: number
   /** The native pause event behind {@link acceptedStop}; a client resume or a different later pause revokes its continuation authority, while a same-frame stack refresh inherits it. */
   private acceptedPause?: NativePause
   private launch?: PreparedNodeTestLaunch
@@ -194,10 +196,11 @@ export class OwnedNodeTestRun {
   prepare(): Promise<NodeTestSourceStop> {
     if (this.preparation) return this.preparation
     this.preparation = this.prepareOwned().catch(async (error: unknown) => {
-      // A failure after the first stop was captured has another cause than the test's exit.
-      const failure = this.acceptedStop
-        ? error
-        : await this.explainEarlyExit(error, 1)
+      // A failure once the first stop was reached (while its values are captured, or later) has another cause than the test's exit.
+      const failure =
+        this.reachedStopIndex === undefined
+          ? await this.explainEarlyExit(error, 1)
+          : error
       await this.release()
       throw failure
     })
@@ -248,6 +251,8 @@ export class OwnedNodeTestRun {
         }),
       this.plan,
     ).finally(() => listingDeadline.cancel()))
+    // A listing budget that passed while the last listing's result was read or released ends the start, too.
+    listingSignal.throwIfAborted()
     const signal = AbortSignal.any([
       this.abort.signal,
       AbortSignal.timeout(NODE_TEST_ATTACH_TIMEOUT_MS),
@@ -564,9 +569,11 @@ export class OwnedNodeTestRun {
       // A test that ended before the next declared stop is named as such, with its exit, before the release ends the evidence of it. A refusal before the continuation (the learner resumed or stopped, a changed source, a breakpoint bound elsewhere) keeps its own words.
       // The next stop's index is previous.index + 1; its number counts from 1.
       const nextStopNumber = previous.index + 2
-      const failure = continued
-        ? await this.explainEarlyExit(error, nextStopNumber)
-        : error
+      // Only a test that ran on and did not reach the next stop ended early; a failure while a reached stop is captured keeps its own words.
+      const failure =
+        continued && this.reachedStopIndex !== previous.index + 1
+          ? await this.explainEarlyExit(error, nextStopNumber)
+          : error
       await this.release()
       throw failure
     } finally {
@@ -707,6 +714,8 @@ export class OwnedNodeTestRun {
       Number.POSITIVE_INFINITY,
       this.abort.signal,
     )
+    // The declared stop is reached: a failure while it is captured is no early exit of the test.
+    this.reachedStopIndex = index
     // Capturing gets its own budget once the stop is reached, however long the learner held the test before it.
     const signal = AbortSignal.any([
       this.abort.signal,
@@ -931,7 +940,7 @@ export class OwnedNodeTestRun {
   /**
    * Names the likely cause when the owned test process ended before a declared stop: for the first stop most often a test Vitest skipped, for a later one a stop on a line the test ran before the previous stop, which it never reaches again.
    *
-   * Called by {@link prepare} when preparation fails before its first stop was captured, and by {@link advance} when the continuation to the next stop fails after Codebook asked the test to run on. Cancellation and a test that still runs keep their original error.
+   * Called by {@link prepare} when preparation fails before its first stop was reached, and by {@link advance} when the continuation fails after Codebook asked the test to run on and before the next stop was reached. Cancellation and a test that still runs keep their original error.
    *
    * @param error - The failure of the preparation or the continuation.
    * @param stopNumber - The one-based number of the declared stop the test did not reach.

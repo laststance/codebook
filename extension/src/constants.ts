@@ -1107,8 +1107,9 @@ export const NODE_TEST_TITLE_PATH_LIMIT = 16
 export const NODE_TEST_EXCLUDED_FILE_LIMIT = 64
 /** Bound for one `vitest list --filesOnly` preflight; the whole attach phase is bounded separately. */
 export const VITEST_FILE_LIST_TIMEOUT_MS = 30_000
-/** Bound for all the Vitest listings of one owned Node test launch together (the root claim asked again, the package listing and its confirmation), each also within {@link VITEST_FILE_LIST_TIMEOUT_MS}; the attach budget starts after them. */
-export const NODE_TEST_LISTING_PHASE_TIMEOUT_MS = 60_000
+/** Bound for all the Vitest listings of one owned Node test launch together (the root claim asked again, the package listing and its confirmation), each also within {@link VITEST_FILE_LIST_TIMEOUT_MS}: room for those three at their own deadline and their releases. The attach budget starts after them. */
+export const NODE_TEST_LISTING_PHASE_TIMEOUT_MS =
+  3 * VITEST_FILE_LIST_TIMEOUT_MS + 5_000
 /** Grace period for releasing the owned Vitest listing group before escalating to SIGKILL. */
 export const VITEST_FILE_LIST_SHUTDOWN_TIMEOUT_MS = 1_000
 /** Error text kept from a failed Vitest preflight. */

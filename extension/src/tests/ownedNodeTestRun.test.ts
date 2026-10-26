@@ -49,6 +49,7 @@ const LEARNER_BREAKPOINT_ID = 12
  * @param options.endsWhileFirstStopIsRevealed - Right after the first stop was captured, its test process exits, the owned session ends and the output tab cannot be shown, so the preparation fails after its stop.
  * @param options.launchListingMs - The preparation asks the run for its Vitest listing, which takes this long and ends early only when its signal aborts, as the real one does.
  * @param options.listingPhaseMs - Replaces the shared budget of the launch's Vitest listings.
+ * @param options.afterListingMs - How long the launch's preparation still works after its last listing (reading its result, releasing it, checking the plan).
  * @param options.typedWhileRunning - The learner types this text into the cited source right after Codebook's continue request with this number (1 is the continue of the entry pause, 2 the first continuation of a declared stop), while the test runs to its next stop.
  * @param options.openDocumentText - The text the editor holds for the cited source `theme.ts` from the start, whose file and article text is `export const nextTheme = "dark";\n`; without it the editor has no document open until a test types into the source (`typeIntoCitedSource`).
  * @param options.closeFailures - How many first releases of the owned test process fail, each with "process group still running (close <n>)"; the later ones succeed.
@@ -83,6 +84,7 @@ async function nodeRunHarness({
   endsWhileFirstStopIsRevealed = false,
   launchListingMs,
   listingPhaseMs,
+  afterListingMs,
   declaredColumn = 14,
   pausedColumn,
   verifiedByNews,
@@ -138,6 +140,7 @@ async function nodeRunHarness({
   endsWhileFirstStopIsRevealed?: boolean
   launchListingMs?: number
   listingPhaseMs?: number
+  afterListingMs?: number
   /** One-based column every stop is declared at on line 1; at column 1 the editor's breakpoint has no column of its own. */
   declaredColumn?: number
   /** The column the debugger reports for the paused frame when it is not the declared one: the debugger bound the declared line at another column. */
@@ -680,6 +683,9 @@ async function nodeRunHarness({
               onReleaseFailed: (failure) =>
                 releaseFailuresHeardByLaunch.push(failure),
             })
+          // The preparation goes on after its last listing ended, ignoring the listings' signal as the real one does.
+          if (afterListingMs !== undefined)
+            await new Promise((resolve) => setTimeout(resolve, afterListingMs))
           return launch
         },
       },
@@ -1853,6 +1859,65 @@ test("a launch whose Vitest listings outlast their shared budget fails naming th
     assert.equal(
       failure,
       "Error: Timed out waiting for the test's Vitest listings",
+    )
+  } finally {
+    await harness.run.stop().catch(() => undefined)
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=the shared listing budget ending the start when it passed while the last listing's result was read or released, before the attach begins; fails_when=the expired budget is dropped once the listings returned, so an over-budget preparation launches the test; why_new=Cycle 0054 /ship Step 11 (Codex adversarial and structured review); seam=a preparation that works on after its last listing; no_claim=the real result read and release
+test('a launch whose listing budget passes after its last listing ended stops before the attach', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({
+    launchListingMs: 50,
+    afterListingMs: 300,
+    listingPhaseMs: 200,
+  })
+  try {
+    // Act
+    const failure = await harness.run.prepare().then(
+      () => 'prepared',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.equal(
+      failure,
+      "Error: Timed out waiting for the test's Vitest listings",
+    )
+    assert.equal(harness.debugStartOptions.length, 0)
+  } finally {
+    await harness.run.stop().catch(() => undefined)
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=a continuation whose next stop was reached keeping the capture's own error when the session ends while that stop's values are read; fails_when=the capture failure is reworded as the test exiting before the stop it reached; why_new=Cycle 0054 /ship Step 11 (Codex adversarial and structured review: frame-checked exact, then reported as not reached); seam=the inspection stand-in ends the session during the second stop's capture; no_claim=which capture request fails in a real session
+test('a continuation whose next stop was reached keeps the capture error when the session ends while it is captured', async () => {
+  // Arrange
+  let inspections = 0
+  const harness: Awaited<ReturnType<typeof nodeRunHarness>> =
+    await nodeRunHarness({
+      declaredStops: 2,
+      duringInspection: async () => {
+        inspections += 1
+        if (inspections === 2) harness.endSessionAsLearner()
+      },
+    })
+  try {
+    await harness.run.prepare()
+
+    // Act
+    const failure = await harness.run.advance().then(
+      () => 'advanced',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.equal(
+      failure,
+      'Error: Owned Node debugger session terminated or was cancelled.',
     )
   } finally {
     await harness.run.stop().catch(() => undefined)

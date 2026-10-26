@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -318,7 +326,7 @@ test('a native trial whose root listing release fails once releases it at its en
   })
 })
 
-// Value: protects=a root listing that is never released being named in the trial's private report with its process group and folder, while the trial ends with the plan's refusal; fails_when=the report is not written or does not name the listing, or the listing's error replaces the refusal; why_new=Cycle 0054 task 3 (CR-OD2); seam=the root listing hands a retry that always fails; no_claim=ending a listing that cannot be ended (it may still run; the report names it)
+// Value: protects=a root listing that is never released being named in the trial's private report with its process group, its folder and its release error, while the trial ends with the plan's refusal; fails_when=the report is not written, does not name the listing or loses its release error, or the listing's error replaces the refusal; why_new=Cycle 0054 task 3 (CR-OD2); seam=the root listing hands a retry that always fails; no_claim=ending a listing that cannot be ended (it may still run; the report names it)
 test('a root listing a native trial never releases is named in its report with its process group and folder', async (context) => {
   // Arrange
   let retries = 0
@@ -353,6 +361,10 @@ test('a root listing a native trial never releases is named in its report with i
       ],
     },
   )
+  assert.equal(
+    (report as { listingError?: unknown }).listingError,
+    String(STILL_RUNNING),
+  )
 })
 
 // Value: protects=a native trial whose plan is refused still writing its private report with the refusal, so the trial leaves evidence of why it ended; fails_when=a planning failure leaves no report; why_new=Cycle 0054 task 3 (CR-OD2); seam=a plan stand-in that refuses; no_claim=the refusal's wording (planNodeTestExecution tests)
@@ -384,11 +396,18 @@ test('a native trial whose plan is refused writes its report with the refusal', 
   )
 })
 
-// Value: protects=a native trial whose run fails and whose stop fails too still releasing its root listings and writing its report with the stop's error beside the run's, and ending with the run's own error; fails_when=a failing stop skips the release or the report, the report loses the stop's error behind the run's, or the stop's error replaces the run's; why_new=Cycle 0054 task 3 (CR-OD2: each cleanup step in its own try); seam=a plan made while a root listing's first retry fails, a run stand-in whose preparation and stop fail; no_claim=a real plan, which refuses a listing whose process group could not be confirmed as ended
+// Value: protects=a native trial whose run fails and whose stop fails too still releasing its root listings and writing its report with the run's error and its cause and the stop's error, and ending with the run's own error; fails_when=a failing stop skips the release or the report, the report loses the stop's error or the run error's cause, or the stop's error replaces the run's; why_new=Cycle 0054 task 3 (CR-OD2: each cleanup step in its own try); seam=a plan made while a root listing's first retry fails, a run stand-in whose preparation and stop fail; no_claim=a real plan, which refuses a listing whose process group could not be confirmed as ended
 test("a native trial whose run and stop both fail still releases its listings, writes its report and ends with the run's error", async (context) => {
   // Arrange
   let retries = 0
-  const runFailure = new Error('Owned Node test did not reach its first stop.')
+  const runFailure = new Error(
+    'Owned Node test exited with code 1 before declared stop 1.',
+    {
+      cause: new Error(
+        'Owned Node debugger session terminated or was cancelled.',
+      ),
+    },
+  )
   const stopFailure = new Error(
     'the debug adapter did not answer the terminate request',
   )
@@ -421,6 +440,10 @@ test("a native trial whose run and stop both fail still releases its listings, w
   assert.equal(
     (report as { stopError?: unknown }).stopError,
     'Error: the debug adapter did not answer the terminate request',
+  )
+  assert.equal(
+    (report as { errorCause?: unknown }).errorCause,
+    'Error: Owned Node debugger session terminated or was cancelled.',
   )
 })
 
@@ -620,4 +643,54 @@ test('a native trial started without an open folder writes its report with the r
     error: 'Error: Open the external test repository before this trial.',
     unreleasedListings: [],
   })
+})
+
+// Value: protects=a native trial whose report holds a value JSON cannot write still stopping its run and ending with the stop's error, the report's write failing in its own step; fails_when=serializing the report throws out of the trial's end and replaces the earlier error; why_new=Cycle 0054 /ship Step 11 Claude adversarial (JSON.stringify ran before the write step was settled); seam=a run stand-in whose result holds a BigInt; no_claim=which run values can hold one
+test("a native trial whose report cannot be serialized still ends with its stop's error", async (context) => {
+  // Arrange
+  const stopFailure = new Error(
+    'the debug adapter did not answer the terminate request',
+  )
+  const { bootstrap } = await loadTrial(context, {
+    OwnedNodeTestRun: class {
+      async prepare() {
+        return { line: 1 }
+      }
+      hasNextStop() {
+        return false
+      }
+      async complete() {
+        return { testResult: 'passed', elapsedNs: 1n }
+      }
+      async stop(): Promise<void> {
+        throw stopFailure
+      }
+    },
+  })
+
+  // Act
+  const outcome = await bootstrap.run().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(outcome, stopFailure)
+})
+
+// Value: protects=the private trial report being readable by its owner only, also when a report file already existed at its path with wider permissions; fails_when=the write keeps an existing file's mode, so the report's errors and paths stay readable by others; why_new=Cycle 0054 /ship Step 11 Claude adversarial (writeFile's mode applies only to a new file); seam=a report file created beforehand with mode 0644; no_claim=permissions on systems without POSIX modes
+test('a native trial makes an existing report file private when it writes its report', async (context) => {
+  // Arrange
+  const { bootstrap, folder } = await loadTrial(context, {
+    planRefusal: PLAN_REFUSAL,
+  })
+  const reportPath = join(folder, 'report.json')
+  await writeFile(reportPath, '{}')
+  await chmod(reportPath, 0o644)
+
+  // Act
+  await bootstrap.run().catch(() => undefined)
+
+  // Assert
+  assert.equal((await stat(reportPath)).mode & 0o777, 0o600)
 })

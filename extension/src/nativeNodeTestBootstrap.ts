@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises'
+import { chmod, readFile, writeFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import * as vscode from 'vscode'
@@ -150,7 +150,7 @@ function observationHoldMs(name: string, label: string): number {
 }
 
 /**
- * Ends a native trial: stops its run, releases its root listings once more and writes the private report with the trial's error, the run's stop error when the stop failed (a test process may then still run), and every listing still not confirmed as ended. Each step runs whatever the one before it did.
+ * Ends a native trial: stops its run, releases its root listings once more and writes the private report (mode 0600, also over an existing file) with the trial's error and its cause, the run's stop error and the listings' release error when they failed (a test process or a listing may then still run), and every listing still not confirmed as ended. Each step runs whatever the one before it did.
  * Called by {@link run} only, after the trial ended or failed.
  * @param trial - The trial's run, report and unreleased root listings.
  * @param reportPath - The private report file, written with mode 0600.
@@ -169,8 +169,13 @@ async function endTrial(
   )
   const trialFailure = failure ?? stopFailure ?? listingFailure
   if (trialFailure) trial.report.error = String(trialFailure.error)
-  // A failed stop is named even behind an earlier error: the test process it was to end may still run.
+  // The cause behind a wrapping error (the session end behind an early exit, for example) is kept beside it.
+  const thrown = trialFailure?.error
+  if (typeof thrown === 'object' && thrown !== null && 'cause' in thrown)
+    trial.report.errorCause = String(thrown.cause)
+  // A failed stop and a failed listing release are named even behind an earlier error: a test process or a listing may still run.
   if (stopFailure) trial.report.stopError = String(stopFailure.error)
+  if (listingFailure) trial.report.listingError = String(listingFailure.error)
   trial.report.unreleasedListings = trial.unreleasedListings.flatMap(
     (retryRelease) => {
       const listing = trial.listingFailures.get(retryRelease)
@@ -179,10 +184,14 @@ async function endTrial(
         : []
     },
   )
+  // Serialized inside the step, so a value JSON cannot hold fails the write and not the trial's end; a report file that already existed is made private again.
   const writeFailure = await settled(
-    writeFile(reportPath, JSON.stringify(trial.report, null, 2), {
-      mode: 0o600,
-    }),
+    (async () => {
+      await writeFile(reportPath, JSON.stringify(trial.report, null, 2), {
+        mode: 0o600,
+      })
+      await chmod(reportPath, 0o600)
+    })(),
   )
   const first = trialFailure ?? writeFailure
   if (first) throw first.error
