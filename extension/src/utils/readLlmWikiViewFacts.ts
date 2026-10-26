@@ -2,6 +2,7 @@ import { basename } from 'node:path'
 
 import { WIKI_UPDATE_RECOVERY_REQUEST } from '../constants'
 
+import type { WikiAgentExit } from './agentExitOf'
 import { describeWikiGenerateBlock } from './describeWikiGenerateBlock'
 import type { WikiUpdateStartBlock } from './findWikiUpdateStartBlock'
 import type { AwaitedWikiChat } from './hasWikiPublishEndedWait'
@@ -16,7 +17,6 @@ import type {
 import { wikiGenerateNotice } from './wikiGenerateNotice'
 import { wikiOutputLabel } from './wikiOutputLabel'
 import { wikiRunBoundMs } from './wikiRunBoundMs'
-import type { WikiAgentExit } from './wikiRunRecord'
 import { wikiUpdateNotice } from './wikiUpdateNotice'
 import type { WikiUpdateHost, WikiUpdateStatus } from './wikiUpdateRun'
 

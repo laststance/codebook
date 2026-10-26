@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { describeMissingWiki } from '../utils/describeMissingWiki'
 import {
-  describeMissingWiki,
   startWikiGenerate,
   type WikiGenerateStartDependencies,
 } from '../utils/startWikiRun'

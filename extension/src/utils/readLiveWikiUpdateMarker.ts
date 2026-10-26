@@ -3,6 +3,7 @@ import { lstat } from 'node:fs/promises'
 import { z } from 'zod'
 
 import {
+  LONGEST_WIKI_RUN_MS,
   WIKI_METADATA_FILE_LIMIT_BYTES,
   WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS,
   WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS,
@@ -14,14 +15,11 @@ import { canJudgeOwnerHere } from './canJudgeOwnerHere'
 import { currentStorageOwner } from './currentStorageOwner'
 import { isProcessGone } from './isProcessGone'
 import { isRecordedOwnerGone } from './isRecordedOwnerGone'
+import { longestWikiRunMs } from './longestWikiRunMs'
 import { readProcessStart, type ProcessStartReader } from './readProcessStart'
 import type { StorageOwnerIdentity } from './readRecordedOwner'
 import { readWikiRegularFile } from './readWikiRegularFile'
-import {
-  LONGEST_WIKI_RUN_MS,
-  longestWikiRunMs,
-  wikiRunBoundMs,
-} from './wikiRunBoundMs'
+import { wikiRunBoundMs } from './wikiRunBoundMs'
 
 /** What a running Wiki update writes beside the output folder: who runs it and since when. */
 const wikiUpdateMarkerSchema = z.object({

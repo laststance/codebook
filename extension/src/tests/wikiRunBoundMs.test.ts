@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import {
-  LONGEST_WIKI_RUN_MS,
-  longestWikiRunMs,
-  wikiRunBoundMs,
-} from '../utils/wikiRunBoundMs'
+import { LONGEST_WIKI_RUN_MS } from '../constants'
+import { longestWikiRunMs } from '../utils/longestWikiRunMs'
+import { wikiRunBoundMs } from '../utils/wikiRunBoundMs'
 
 // Value: protects=Eng decision 74, every place that reads a run's bound; fails_when=a generation gets an update's 15 minutes in either host, an update's bounds change, or a marker of an earlier version (no kind) is read with a generation's bound; no_claim=where each place reads it (marker, leftover and host tests); seam=none
 test('a generation is bounded at 55 minutes in both hosts, while an update keeps 15 minutes in each and a run without a kind is an update', () => {

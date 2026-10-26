@@ -72,6 +72,7 @@ import { repositoryActionSchema } from './repositoryView'
 import { startServer } from './server'
 import { StudyService } from './service'
 import { StudyWorkspace, type UnsavedStudyArchive } from './studyWorkspace'
+import { agentExitOf, type WikiAgentExit } from './utils/agentExitOf'
 import { aiChatReadyMessage } from './utils/aiChatReadyMessage'
 import {
   answerDeepWikiQuestion,
@@ -96,6 +97,8 @@ import {
 import { cursorRemovalNotice } from './utils/cursorRemovalNotice'
 import { deepWikiOpenFailureNotice } from './utils/deepWikiOpenFailureNotice'
 import { describeBrokenWikiWatch } from './utils/describeBrokenWikiWatch'
+import { describeExistingWiki } from './utils/describeExistingWiki'
+import { describeMissingWiki } from './utils/describeMissingWiki'
 import { describeOtherWikiWindow } from './utils/describeOtherWikiWindow'
 import {
   describeSecondWikiUpdateStart,
@@ -158,11 +161,7 @@ import {
   startWikiChatUpdate,
   type WikiChatStart,
 } from './utils/startWikiChatUpdate'
-import {
-  describeMissingWiki,
-  startWikiGenerate,
-  type WikiRunInTheWay,
-} from './utils/startWikiRun'
+import { startWikiGenerate, type WikiRunInTheWay } from './utils/startWikiRun'
 import { thrownMessage } from './utils/thrownMessage'
 import { unreadWikiUpdateEnd } from './utils/unreadWikiUpdateEnd'
 import { waitForWikiPublish } from './utils/waitForWikiPublish'
@@ -171,11 +170,7 @@ import { wikiGenerateNotice } from './utils/wikiGenerateNotice'
 import { wikiManifestIdentity } from './utils/wikiManifestIdentity'
 import { wikiOutputLabel } from './utils/wikiOutputLabel'
 import { wikiRunBoundMs } from './utils/wikiRunBoundMs'
-import {
-  agentExitOf,
-  wikiRunRecord,
-  type WikiAgentExit,
-} from './utils/wikiRunRecord'
+import { wikiRunRecord } from './utils/wikiRunRecord'
 import { OPEN_WIKI_ACTION, wikiUpdateNotice } from './utils/wikiUpdateNotice'
 import {
   WikiUpdateRun,
@@ -2436,7 +2431,7 @@ export function activate(
           const offeringAttempt = wikiUpdate
           void showNotice(
             'information',
-            `An LLM Wiki already exists in ${wikiOutput.outputLabel}. Update it instead?`,
+            describeExistingWiki(wikiOutput.outputLabel),
             UPDATE_WIKI_ACTION,
           ).then(
             (choice) => {

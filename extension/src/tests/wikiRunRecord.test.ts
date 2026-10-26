@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { agentExitOf, wikiRunRecord } from '../utils/wikiRunRecord'
+import { agentExitOf } from '../utils/agentExitOf'
+import { wikiRunRecord } from '../utils/wikiRunRecord'
 
 // Value: protects=AC 12 and Eng decision 81, the Output record a learner copies into an issue; fails_when=the record holds the failure's own text (an agent's reply, a chat's error reply, a thrown error), names no exit code, or shows the home folder in full; no_claim=the notice, which shows the sentence; seam=a seeded fake secret in the reason
 test('the record of a failed Cursor generation names its kind, host, times, end, a Codebook summary, the exit code and the folder under ~, and none of the failure’s text', () => {

@@ -931,6 +931,13 @@ export const WIKI_RUN_STARTING_SENTENCE =
 export const WIKI_UPDATE_WATCH_TIMEOUT_MS = 900_000
 /** Longest a Wiki generation runs in either host, the VS Code watch and the Cursor agent alike, before it ends as timed out: 55 minutes, set by Cycle 0055's E1 (the longest measured generation, 34 min 33 s in VS Code, × 1.5, rounded up to whole 5 minutes; Owner decision O9). A stopped VS Code generation's reservation lasts as long after its watch's end. */
 export const WIKI_GENERATE_TIMEOUT_MS = 3_300_000
+/** The longest any run of any kind and host can last ({@link longestWikiRunMs}): a VS Code generation's chat opening plus its bound. A marker file whose kind cannot be read counts this long, never the update's shorter bound. */
+export const LONGEST_WIKI_RUN_MS = Math.max(
+  WIKI_GENERATE_TIMEOUT_MS,
+  WIKI_CHAT_OPEN_TIMEOUT_MS + WIKI_GENERATE_TIMEOUT_MS,
+  WIKI_CURSOR_UPDATE_TIMEOUT_MS,
+  WIKI_CHAT_OPEN_TIMEOUT_MS + WIKI_UPDATE_WATCH_TIMEOUT_MS,
+)
 /** The chat request a learner can paste to generate the LLM Wiki without Codebook's entry; every generate sentence that sends the learner to the chat names it. */
 export const WIKI_GENERATE_CHAT_REQUEST =
   '/codebook Generate the LLM Wiki for this project'
