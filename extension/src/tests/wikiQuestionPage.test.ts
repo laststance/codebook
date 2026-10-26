@@ -194,7 +194,7 @@ test('a question asked on a Wiki page opened from disk tells the offline sentenc
       },
       statusAfterTheQuestion: {
         role: 'status/polite',
-        text: 'Open this Wiki through Codebook: Open DeepWiki in Browser to connect the editor model.',
+        text: 'Open this Wiki through Codebook: Open LLM Wiki in Browser to connect the editor model.',
         isShown: true,
         isInADisclosure: false,
       },

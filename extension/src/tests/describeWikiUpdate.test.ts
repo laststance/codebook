@@ -1039,3 +1039,38 @@ test('a conflict over learner files in Cursor keeps its sentence, and in VS Code
     'Update stopped at 21:10: it would overwrite your own file in the Wiki folder (notes/mine.md). The site on disk changed during the run; check the freshness label above. Move or rename the file. The VS Code chat was not stopped: answer it and it can publish, or stop it and press Update LLM Wiki, then Update anyway if Codebook still waits for it.',
   ])
 })
+
+// Value: protects=D5, the page's line beside a generation; fails_when=a generation's state shows an update's sentence ("Updated", "Update failed") on the page; no_claim=the editor's words for a generation (wikiGenerateNotice tests); seam=none
+test('a generation’s running and ended states show no update sentence on the page', () => {
+  // Act
+  const described = [
+    describeWikiUpdate(
+      {
+        state: 'running',
+        runKind: 'generate',
+        host: 'vscode',
+        startedAt: finishedAt,
+        timeoutMs: 3_300_000,
+        candidateStaged: false,
+        ...place,
+      },
+      wording,
+    ),
+    describeWikiUpdate(
+      {
+        state: 'succeeded',
+        runKind: 'generate',
+        host: 'cursor',
+        finishedAt,
+        identity: '1936e4191372+0f9e8d7c',
+        revision: '1936e4191372',
+        index: '0f9e8d7c',
+        ...place,
+      },
+      wording,
+    ),
+  ]
+
+  // Assert
+  assert.deepEqual(described, [undefined, undefined])
+})

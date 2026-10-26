@@ -450,3 +450,25 @@ test(
     }
   },
 )
+
+// Value: protects=D5, the Cursor agent's failure sentences during a generation; fails_when=a generation's failure tells the learner to update or to run the update request in Cursor chat; no_claim=the update's sentences (tests above); seam=none
+test('a generation’s unusable or unfinished Cursor reply is told with the generation’s words and its chat request', () => {
+  // Act
+  const failures = [
+    '{not json',
+    JSON.stringify({ type: 'result', subtype: 'error', is_error: true }),
+  ].map((output) => {
+    try {
+      parseCursorWikiUpdateResult(output, 'generate')
+      return 'accepted'
+    } catch (error) {
+      return thrownMessage(error)
+    }
+  })
+
+  // Assert
+  assert.deepEqual(failures, [
+    'Cursor Agent returned a result Codebook could not read. Generate again; if it repeats, run the generation in Cursor chat.',
+    'Cursor Agent ended without completing the generation. Run "/codebook Generate the LLM Wiki for this project" in Cursor chat to see its own message.',
+  ])
+})

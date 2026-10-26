@@ -82,3 +82,53 @@ test('a refusal beside a marker file that stayed unreadable longer than a write 
     `Another editor window may be updating this Wiki: Codebook cannot read the Wiki’s marker file (/repo/.codebook/wiki.update-run.json), which another program may hold open (as a scanner or an indexer can on Windows) or which this user may not read. Press Update LLM Wiki again once the file can be read; if the file stays as it is, this refusal ends at ${firstMinuteAfter1221}.`,
   )
 })
+
+// Value: protects=D5, another window's running generation; fails_when=the refusal says the other window is updating, or sends the learner to press Update on a Wiki that does not exist yet; no_claim=the update's refusal (tests above); seam=none
+test('another window’s running generation is named as generating, with Open LLM Wiki in Browser as the step once it has finished', () => {
+  // Act
+  const refusal = describeOtherWikiWindow({
+    pid: 4242,
+    windowId: '3f6c',
+    host: 'vscode',
+    startedAtMs: Date.UTC(2026, 9, 3, 12, 0),
+    runKind: 'generate',
+  })
+
+  // Assert
+  assert.equal(
+    refusal,
+    `Another editor window is generating this Wiki (VS Code, started ${formatClockTime(Date.UTC(2026, 9, 3, 12, 0), {})}). Wait for it to finish, then press Open LLM Wiki in Browser.`,
+  )
+})
+
+// Value: protects=D5, a generation's start refused for a marker that names no run yet; fails_when=the refusal tells the learner another window is updating, or names Update LLM Wiki as the step, for a start that generates; no_claim=the update's refusals (tests above); seam=none
+test('a generation’s start refused for a marker in change, one being written or one that cannot be read words the other window’s work as a run and names Generate LLM Wiki', () => {
+  // Act
+  const refusals = [
+    describeOtherWikiWindow({ isMarkerInChange: true }, 'generate'),
+    describeOtherWikiWindow(
+      { beingWrittenSinceMs: Date.UTC(2026, 9, 3, 12, 0) },
+      'generate',
+    ),
+    describeOtherWikiWindow(
+      {
+        beingWrittenSinceMs: Date.UTC(2026, 9, 3, 12, 0),
+        unreadableMarkerPath: '/repo/.codebook/wiki.update-run.json',
+        countsUntilMs: Date.UTC(2026, 9, 3, 13, 1, 30),
+      },
+      'generate',
+    ),
+  ]
+
+  // Assert
+  assert.deepEqual(refusals.slice(0, 2), [
+    'Another editor window is starting or ending a run of this Wiki. Wait a moment and try again.',
+    'Another editor window is starting a run of this Wiki. Wait a moment and try again.',
+  ])
+  assert.equal(
+    refusals[2]?.startsWith(
+      'Another editor window may be generating or updating this Wiki: Codebook cannot read the Wiki’s marker file (/repo/.codebook/wiki.update-run.json), which another program may hold open (as a scanner or an indexer can on Windows) or which this user may not read. Press Generate LLM Wiki again once the file can be read;',
+    ),
+    true,
+  )
+})

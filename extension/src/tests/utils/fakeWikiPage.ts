@@ -453,7 +453,7 @@ function buildComposer(composer: FakeWikiPageComposer): PageElement {
           ),
         ]),
         new PageElement('p', {}, [
-          'Read these pages offline. Open this Wiki through Codebook: Open DeepWiki in Browser to ask the editor model. No app or debugger is needed.',
+          'Read these pages offline. Open this Wiki through Codebook: Open LLM Wiki in Browser to ask the editor model. No app or debugger is needed.',
         ]),
       ]),
     ],

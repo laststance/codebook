@@ -1,8 +1,12 @@
-import { WIKI_UPDATE_RECOVERY_REQUEST } from '../constants'
+import {
+  WIKI_GENERATE_CHAT_REQUEST,
+  WIKI_UPDATE_RECOVERY_REQUEST,
+} from '../constants'
 
 import type { WikiFreshness } from './inspectDeepWikiFreshness'
 import type {
   WikiPublishedIdentity,
+  WikiRunKind,
   WikiUpdateEnd,
   WikiUpdateHost,
   WikiUpdateSite,
@@ -36,6 +40,12 @@ export type WikiUpdateEndFacts = {
   isFailureCodebookSentence?: boolean
   /** Set with `failure` when whoever worked on the update was not stopped and can still publish (a VS Code chat that may still hold its request, or one whose watch broke); the failed result then carries `mayBeReplacedLater`, so a reader does not say the site is kept for good. */
   mayBeReplacedLater?: boolean
+  /** What the run did; absent for an update. A generation is judged by {@link endOfFinishedGeneration}: its success needs a new publication of this project with its entry page, not a current freshness (Cycle 0055, Eng decision 75). */
+  runKind?: WikiRunKind
+  /** For a generation: the sentence of the check a new publication failed, the manifest of another checkout or an entry page that cannot be read as a file of the Wiki folder; absent when both checks passed or no new publication is there. */
+  generatedSiteProblem?: string
+  /** For a generation: the Wiki folder as the learner reads it, which its sentences name. */
+  outputLabel?: string
 }
 
 /** The remedy for each cause that keeps a new publish from being checked against the source. A retry helps only where the cause can pass by itself. */
@@ -226,6 +236,27 @@ function stoppedEnd(
 }
 
 /**
+ * Names what a stopped generation left: `replaced` only for a publication of the Codebook publisher that passed the owner and entry-page checks and whose manifest could be read, so a stop's notice offers to open nothing else; a manifest that appeared without one leaves `kept` (nothing was published); called by {@link classifyWikiUpdateEnd} for a generation the learner or its bound stopped (/ship review, Cycle 0055 pt1).
+ * @param facts - What the host observed when the run stopped.
+ * @param site - Whether the manifest changed during the run.
+ * @returns The site the stop's end records.
+ * @example
+ * generationStopSite({ ...facts, publicationAtEnd: undefined }, 'replaced') // => 'kept'
+ */
+function generationStopSite(
+  facts: WikiUpdateEndFacts,
+  site: WikiUpdateSite,
+): WikiUpdateSite {
+  const isVerifiedPublication =
+    facts.publicationAtEnd !== undefined &&
+    facts.publicationAtEnd !== facts.publicationAtStart &&
+    facts.published !== undefined &&
+    facts.generatedSiteProblem === undefined
+  // Only a verified publication counts as published; a manifest without one is nothing the learner can open.
+  return site === 'replaced' && !isVerifiedPublication ? 'kept' : site
+}
+
+/**
  * Picks the published manifest that is the run's success; called by {@link endOfFinishedRun} before any failure the agent reported is looked at.
  * @param facts - What the host observed when the run stopped.
  * @returns
@@ -380,6 +411,110 @@ function endOfFinishedRun(
 }
 
 /**
+ * Counts the source files a generation's new Wiki is behind; called by {@link endOfFinishedGeneration} for its success.
+ * @param freshness - The freshness answer of the published manifest.
+ * @returns The changed and added files for `changed`; `undefined` for `current` and `unknown`, which the reader's own label tells.
+ * @example
+ * changedSourceCountOf({ status: 'changed', changedPaths: ['src/a.ts'], addedPaths: ['src/b.ts'] }) // => 2
+ * changedSourceCountOf({ status: 'current', changedPaths: [], addedPaths: [] })                   // => undefined
+ */
+function changedSourceCountOf(freshness: WikiFreshness): number | undefined {
+  return freshness.status === 'changed'
+    ? freshness.changedPaths.length + freshness.addedPaths.length
+    : undefined
+}
+
+/**
+ * Judges the new publication a generation left; called by {@link endOfFinishedGeneration} once the publisher's receipt names a manifest that was not there at the start.
+ * @param facts - What the host observed when the run stopped.
+ * @param published - The published manifest, or `undefined` when it cannot be read.
+ * @returns
+ * - A failed owner or entry-page check ({@link WikiUpdateEndFacts.generatedSiteProblem}): `failed` with that check's sentence; a manifest of another checkout is no readable manifest of this project either, so this comes first
+ * - A manifest that cannot be read: `failed` with the recovery request
+ * - Otherwise: `succeeded`, with the count of source files that changed while it worked when its freshness says so; freshness never decides it
+ * @example
+ * generatedEnd({ ...facts, runKind: 'generate' }, published) // => { state: 'succeeded', identity: '1936e4191372+0f9e8d7c', revision: '1936e4191372', index: '0f9e8d7c' }
+ */
+function generatedEnd(
+  facts: WikiUpdateEndFacts,
+  published: WikiUpdateEndFacts['published'],
+): WikiUpdateEnd {
+  // A publication of another checkout, or one without its entry page, is no Wiki of this project to open.
+  if (facts.generatedSiteProblem !== undefined)
+    return {
+      state: 'failed',
+      reason: facts.generatedSiteProblem,
+      isCodebookSentence: true,
+      site: 'replaced',
+    }
+  if (!published)
+    return {
+      state: 'failed',
+      reason: `An LLM Wiki was published in ${facts.outputLabel ?? 'the Wiki folder'}, but Codebook cannot read its manifest. Ask the editor chat "${WIKI_UPDATE_RECOVERY_REQUEST}".`,
+      isCodebookSentence: true,
+      site: 'replaced',
+    }
+  const changedSourceCount = changedSourceCountOf(published.freshness)
+  return {
+    ...succeededEnd(published),
+    ...(changedSourceCount === undefined ? {} : { changedSourceCount }),
+  }
+}
+
+/**
+ * Words the failure of a generation that published nothing and that nothing stopped; called by {@link endOfFinishedGeneration} as its last case.
+ * @param facts - What the host observed when the run stopped.
+ * @param site - Whether a manifest appeared during the run.
+ * @returns `failed` with a sentence Codebook wrote that names the folder and the next step: a manifest that appeared without a publish of the Codebook publisher, the Cursor agent that exited without publishing, or the chat whose reply ended without publishing.
+ * @example
+ * unpublishedGenerationEnd({ ...facts, host: 'cursor', outputLabel: '.codebook/wiki' }, 'kept')
+ * // => { state: 'failed', reason: 'Cursor Agent finished without publishing an LLM Wiki in .codebook/wiki. Press Generate LLM Wiki to try again, or ask the editor chat "/codebook Generate the LLM Wiki for this project" to see what it says.', isCodebookSentence: true, site: 'kept' }
+ */
+function unpublishedGenerationEnd(
+  facts: WikiUpdateEndFacts,
+  site: WikiUpdateSite,
+): WikiUpdateEnd {
+  const folder = facts.outputLabel ?? 'the Wiki folder'
+  // Only the publisher writes a receipt that names the new manifest; a manifest anything else wrote is no generated Wiki.
+  if (site === 'replaced')
+    return {
+      state: 'failed',
+      reason: `A manifest appeared in ${folder} during the generation, but not through a publish of the Codebook publisher, so Codebook cannot call it a generated Wiki. Ask the editor chat "${WIKI_UPDATE_RECOVERY_REQUEST}".`,
+      isCodebookSentence: true,
+      site,
+    }
+  return {
+    state: 'failed',
+    reason:
+      facts.host === 'cursor'
+        ? `Cursor Agent finished without publishing an LLM Wiki in ${folder}. Press Generate LLM Wiki to try again, or ask the editor chat "${WIKI_GENERATE_CHAT_REQUEST}" to see what it says.`
+        : `The editor chat finished its reply without publishing an LLM Wiki in ${folder}. Read its reply in the Chat view, then press Generate LLM Wiki again.`,
+    isCodebookSentence: true,
+    site,
+  }
+}
+
+/**
+ * Decides how a generation ended that nobody stopped; called by {@link classifyWikiUpdateEnd} after the cancel and the bound, for a run of kind `generate`.
+ * Why: a first Wiki has nothing to keep, and a learner's edit during its up to 55 minutes does not make a usable Wiki a failure, so success is a new publication of this project with its entry page, with the freshness reported beside it (Cycle 0055, Eng decision 75).
+ * @param facts - What the host observed when the run stopped.
+ * @param site - Whether a manifest appeared during the run.
+ * @returns In this order: the end of {@link generatedEnd} for a new publication, the end of {@link blockedEnd}, the failure of {@link unpublishedGenerationEnd}.
+ * @example
+ * endOfFinishedGeneration({ ...facts, runKind: 'generate', publicationAtStart: undefined, publicationAtEnd: 'b@8', published }, 'replaced') // => { state: 'succeeded', … }
+ */
+function endOfFinishedGeneration(
+  facts: WikiUpdateEndFacts,
+  site: WikiUpdateSite,
+): WikiUpdateEnd {
+  const isNewPublication =
+    facts.publicationAtEnd !== undefined &&
+    facts.publicationAtEnd !== facts.publicationAtStart
+  if (isNewPublication) return generatedEnd(facts, facts.published)
+  return blockedEnd(facts, site) ?? unpublishedGenerationEnd(facts, site)
+}
+
+/**
  * Decides how a Wiki update run ended, in one place for VS Code and Cursor.
  *
  * Why: both hosts must report the same states for the same events, and "kept or replaced" must come from the disk (the publish token and the publication identity before and after), never from an assumption.
@@ -394,6 +529,7 @@ function endOfFinishedRun(
  * - A failure sentence from the agent or a thrown error: `failed` with that reason
  * - A changed site that is not verified current: `failed` with `site: 'replaced'` and a reason Codebook wrote, built from the freshness answer
  * - Nothing published and nothing failed: `failed` with `site: 'kept'`
+ * - A generation (`runKind: 'generate'`) that nobody stopped: {@link endOfFinishedGeneration}, whose success needs no current freshness
  *
  * @example
  * ```ts
@@ -408,5 +544,12 @@ export function classifyWikiUpdateEnd(
   if (missing) return missing
   const site: WikiUpdateSite =
     facts.tokenAtEnd === facts.tokenAtStart ? 'kept' : 'replaced'
-  return stoppedEnd(facts, site) ?? endOfFinishedRun(facts, site)
+  const stopped = stoppedEnd(
+    facts,
+    facts.runKind === 'generate' ? generationStopSite(facts, site) : site,
+  )
+  if (stopped) return stopped
+  return facts.runKind === 'generate'
+    ? endOfFinishedGeneration(facts, site)
+    : endOfFinishedRun(facts, site)
 }

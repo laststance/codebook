@@ -561,7 +561,7 @@ export function installWikiUpdateStatus(
       return {
         state: 'unreachable',
         lead: 'Lost contact with the editor',
-        rest: ', so the update status is unknown. Reopen this Wiki with “Codebook: Open DeepWiki in Browser” to see it. The pages you are reading are unchanged.',
+        rest: ', so the update status is unknown. Reopen this Wiki with “Codebook: Open LLM Wiki in Browser” to see it. The pages you are reading are unchanged.',
         ...pageOnly,
       }
     // The page cannot see the editor's confirmation, so it says what it is waiting for and never claims a refusal.

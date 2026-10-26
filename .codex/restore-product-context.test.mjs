@@ -52,7 +52,7 @@ function runHookBeside(agentsText) {
   }
 }
 
-// Value: protects=the owner's 2026-10-21 rule reaching the agent whole after every compaction (PRODUCT_GOAL.md in full and the PNG, then the Issue and AGENTS.md); fails_when=the hook prints all of AGENTS.md (Claude Code then injects only a 2,000-character preview), the rule leaves the first 2,000 characters, or a restored section differs from AGENTS.md; no_claim=that the agent actually performs the reads
+// Value: protects=the owner's 2026-10-21 rule reaching the agent whole after every compaction (PRODUCT_GOAL.md in full and the PNG, then the Issue; AGENTS.md from disk only when it is not in context or changed, owner 2026-10-26); fails_when=the hook prints all of AGENTS.md (Claude Code then injects only a 2,000-character preview), the rule leaves the first 2,000 characters, or a restored section differs from AGENTS.md; no_claim=that the agent actually performs the reads
 test('compaction restores the re-entry rule and the Mandatory entry and Owner directions sections within the inline limit', () => {
   // Arrange
   const config = JSON.parse(

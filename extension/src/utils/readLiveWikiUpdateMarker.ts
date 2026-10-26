@@ -3,14 +3,11 @@ import { lstat } from 'node:fs/promises'
 import { z } from 'zod'
 
 import {
-  WIKI_CHAT_OPEN_TIMEOUT_MS,
   WIKI_METADATA_FILE_LIMIT_BYTES,
-  WIKI_CURSOR_UPDATE_TIMEOUT_MS,
   WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS,
   WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS,
   WIKI_UPDATE_MARKER_WRITE_GRACE_MS,
   WIKI_UPDATE_RUN_MARKER_SUFFIX,
-  WIKI_UPDATE_WATCH_TIMEOUT_MS,
 } from '../constants'
 
 import { canJudgeOwnerHere } from './canJudgeOwnerHere'
@@ -20,6 +17,11 @@ import { isRecordedOwnerGone } from './isRecordedOwnerGone'
 import { readProcessStart, type ProcessStartReader } from './readProcessStart'
 import type { StorageOwnerIdentity } from './readRecordedOwner'
 import { readWikiRegularFile } from './readWikiRegularFile'
+import {
+  LONGEST_WIKI_RUN_MS,
+  longestWikiRunMs,
+  wikiRunBoundMs,
+} from './wikiRunBoundMs'
 
 /** What a running Wiki update writes beside the output folder: who runs it and since when. */
 const wikiUpdateMarkerSchema = z.object({
@@ -30,6 +32,8 @@ const wikiUpdateMarkerSchema = z.object({
   host: z.enum(['vscode', 'cursor']),
   /** When the run started (epoch milliseconds). */
   startedAtMs: z.number(),
+  /** What the run does (Cycle 0055): a generation's marker counts as long as a generation runs, and its reservation as long after its watch's end. Absent in a marker of an update and of an earlier version, and a value this version does not know reads as absent: both are an update's, with the update's bounds. An earlier version's parser drops the field, so it reads a generation's marker as an update's. */
+  runKind: z.enum(['generate', 'update']).optional().catch(undefined),
   /** Set on the reservation a stopped VS Code watch leaves in place of its run's marker: when the watch ended (epoch milliseconds). The chat may still publish until the watch bound after it; absent while the run lasts. */
   watchEndedAtMs: z.number().optional(),
   /** The two pseudonyms of the machine the update runs on ({@link deriveMachineKeys}); the marker lies in the learner's project folder and never names the computer. Absent in a marker of 0.2.29.0. */
@@ -104,21 +108,18 @@ function parseWikiUpdateMarker(bytes: Buffer): WikiUpdateMarker | undefined {
  * Limit: the bound allows the clocks of the writer and the reader to differ by {@link WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS}; a clock that moves further during an update, or a computer asleep for longer, can let a second update start beside a running one.
  * @param marker - The marker beside the Wiki.
  * @param nowMs - The present (epoch milliseconds).
- * @returns `true` for a marker of a run (no `watchEndedAtMs`) that started longer ago than the host's longest run plus {@link WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS} and the clock tolerance: the Cursor agent's bound, or the chat's opening and the watch's bound in VS Code. `false` otherwise, also for every reservation of a stopped watch, which the caller weighs against the watch bound.
+ * @returns `true` for a marker of a run (no `watchEndedAtMs`) that started longer ago than the longest run of its kind and host ({@link longestWikiRunMs}) plus {@link WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS} and the clock tolerance: the Cursor agent's bound, or the chat's opening and the watch's bound in VS Code, each a generation's for a generation's marker. `false` otherwise, also for every reservation of a stopped watch, which the caller weighs against the watch bound.
  * @example
  * isRunMarkerExpired({ pid: 4242, windowId: '3f6c', host: 'cursor', startedAtMs: 0 }, 1_261_000) // => true
  * isRunMarkerExpired({ pid: 4242, windowId: '3f6c', host: 'cursor', startedAtMs: 0 }, 1_260_000) // => false
+ * isRunMarkerExpired({ pid: 4242, windowId: '3f6c', host: 'cursor', startedAtMs: 0, runKind: 'generate' }, 1_261_000) // => false
  */
 function isRunMarkerExpired(marker: WikiUpdateMarker, nowMs: number): boolean {
-  const longestRunMs =
-    marker.host === 'cursor'
-      ? WIKI_CURSOR_UPDATE_TIMEOUT_MS
-      : WIKI_CHAT_OPEN_TIMEOUT_MS + WIKI_UPDATE_WATCH_TIMEOUT_MS
   return (
     marker.watchEndedAtMs === undefined &&
     nowMs >
       marker.startedAtMs +
-        longestRunMs +
+        longestWikiRunMs(marker.runKind, marker.host) +
         WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS +
         WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS
   )
@@ -219,19 +220,19 @@ function isFromTooFarAhead(marker: WikiUpdateMarker, nowMs: number): boolean {
 
 /**
  * Keeps a stopped VS Code watch's reservation inside its existing time bound; called by {@link mayMarkerOwnerRun} after the future-clock check, including when its process ended and a reload lost the workspace record.
- * @param marker - The host and stopped-watch time the marker records.
+ * @param marker - The host, the run's kind and the stopped-watch time the marker records.
  * @param nowMs - The asking window's current epoch milliseconds.
- * @returns `true` for a stopped VS Code watch before its bound; `false` for a running marker, another host or an expired reservation.
+ * @returns `true` for a stopped VS Code watch before the bound of its kind ({@link wikiRunBoundMs}: a generation's reservation lasts the generate bound); `false` for a running marker, another host or an expired reservation.
  * @example isStoppedWatchInsideBound({ host: 'vscode', watchEndedAtMs: 1_000 }, 1_001) // => true
  */
 function isStoppedWatchInsideBound(
-  marker: Pick<WikiUpdateMarker, 'host' | 'watchEndedAtMs'>,
+  marker: Pick<WikiUpdateMarker, 'host' | 'watchEndedAtMs' | 'runKind'>,
   nowMs: number,
 ): boolean {
   return (
     marker.host === 'vscode' &&
     marker.watchEndedAtMs !== undefined &&
-    nowMs < marker.watchEndedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS
+    nowMs < marker.watchEndedAtMs + wikiRunBoundMs(marker.runKind, marker.host)
   )
 }
 
@@ -327,16 +328,16 @@ function lookAtMarkerWithoutContent(
 
 /**
  * Names what a regular marker file within the read's limit is that could not be read at this moment; called by {@link lookAtUnreadableEntry}.
- * Why: such a file can be a running window's marker that another program holds open (on Windows a scanner or an indexer: `EBUSY`, `EPERM`) or that this user may not read (`EACCES`), and the end of that run treats it as possibly its own ({@link claimWikiUpdateMarker}). A start that took it for nobody's would remove it and run beside that update. It counts for as long as a marker written at that time can count: the longer of the two hosts' longest runs, with {@link WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS} and {@link WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS}, which also outlasts a stopped watch's reservation; after that it is nobody's, so a file that stays unreadable cannot refuse every start. Within the {@link WIKI_UPDATE_MARKER_WRITE_GRACE_MS} a write takes, the file may be one another window is writing, and the refusal asks for a moment; a file that stayed unreadable for longer, or one dated ahead of the clock (a network share's clock, a clock moved back), is named with the last moment it counts, so the refusal says which file is in the way and when it stops counting ({@link describeOtherWikiWindow}) instead of asking for a moment for 21 min 30 s, or for as long as the file's time lies ahead.
+ * Why: such a file can be a running window's marker that another program holds open (on Windows a scanner or an indexer: `EBUSY`, `EPERM`) or that this user may not read (`EACCES`), and the end of that run treats it as possibly its own ({@link claimWikiUpdateMarker}). A start that took it for nobody's would remove it and run beside that update. It counts for as long as a marker written at that time can count: the longest run of any kind and host ({@link LONGEST_WIKI_RUN_MS}, a generation's, since the file's kind cannot be read), with {@link WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS} and {@link WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS}, which also outlasts a stopped watch's reservation; after that it is nobody's, so a file that stays unreadable cannot refuse every start. Within the {@link WIKI_UPDATE_MARKER_WRITE_GRACE_MS} a write takes, the file may be one another window is writing, and the refusal asks for a moment; a file that stayed unreadable for longer, or one dated ahead of the clock (a network share's clock, a clock moved back), is named with the last moment it counts, so the refusal says which file is in the way and when it stops counting ({@link describeOtherWikiWindow}) instead of asking for a moment for 61 min 30 s, or for as long as the file's time lies ahead.
  * @param markerPath - `<output>.update-run.json`.
  * @param modifiedAtMs - When the file was last written (epoch milliseconds).
  * @param nowMs - The present (epoch milliseconds).
- * @returns `being-written` with that time while the file was written less than 21 min 30 s ago and not more than {@link WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS} ahead of now, from {@link WIKI_UPDATE_MARKER_WRITE_GRACE_MS} after its write, and while it is dated ahead of now, also with its path and the last moment it counts; `unowned` for an older one and for one written further ahead.
+ * @returns `being-written` with that time while the file was written less than 61 min 30 s ago and not more than {@link WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS} ahead of now, from {@link WIKI_UPDATE_MARKER_WRITE_GRACE_MS} after its write, and while it is dated ahead of now, also with its path and the last moment it counts; `unowned` for an older one and for one written further ahead.
  * @example
  * lookAtUnreadableMarkerFile('/repo/.codebook/wiki.update-run.json', 1_790_000_000_000, 1_790_000_001_999) // => { kind: 'being-written', heldBy: { beingWrittenSinceMs: 1_790_000_000_000 } }
- * lookAtUnreadableMarkerFile('/repo/.codebook/wiki.update-run.json', 1_790_000_000_000, 1_790_000_003_000) // => { kind: 'being-written', heldBy: { beingWrittenSinceMs: 1_790_000_000_000, unreadableMarkerPath: '/repo/.codebook/wiki.update-run.json', countsUntilMs: 1_790_001_290_000 } }
- * lookAtUnreadableMarkerFile('/repo/.codebook/wiki.update-run.json', 1_790_000_000_000, 1_789_999_999_999) // => { kind: 'being-written', heldBy: { beingWrittenSinceMs: 1_790_000_000_000, unreadableMarkerPath: '/repo/.codebook/wiki.update-run.json', countsUntilMs: 1_790_001_290_000 } }
- * lookAtUnreadableMarkerFile('/repo/.codebook/wiki.update-run.json', 1_790_000_000_000, 1_790_001_290_001) // => { kind: 'unowned' }
+ * lookAtUnreadableMarkerFile('/repo/.codebook/wiki.update-run.json', 1_790_000_000_000, 1_790_000_003_000) // => { kind: 'being-written', heldBy: { beingWrittenSinceMs: 1_790_000_000_000, unreadableMarkerPath: '/repo/.codebook/wiki.update-run.json', countsUntilMs: 1_790_003_690_000 } }
+ * lookAtUnreadableMarkerFile('/repo/.codebook/wiki.update-run.json', 1_790_000_000_000, 1_789_999_999_999) // => { kind: 'being-written', heldBy: { beingWrittenSinceMs: 1_790_000_000_000, unreadableMarkerPath: '/repo/.codebook/wiki.update-run.json', countsUntilMs: 1_790_003_690_000 } }
+ * lookAtUnreadableMarkerFile('/repo/.codebook/wiki.update-run.json', 1_790_000_000_000, 1_790_003_690_001) // => { kind: 'unowned' }
  */
 function lookAtUnreadableMarkerFile(
   markerPath: string,
@@ -345,10 +346,7 @@ function lookAtUnreadableMarkerFile(
 ): WikiUpdateMarkerLook {
   const countsUntilMs =
     modifiedAtMs +
-    Math.max(
-      WIKI_CURSOR_UPDATE_TIMEOUT_MS,
-      WIKI_CHAT_OPEN_TIMEOUT_MS + WIKI_UPDATE_WATCH_TIMEOUT_MS,
-    ) +
+    LONGEST_WIKI_RUN_MS +
     WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS +
     WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS
   const mayStillCount =

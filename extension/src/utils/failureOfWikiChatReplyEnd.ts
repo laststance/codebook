@@ -1,6 +1,7 @@
 import { describeWikiChatErrorReply } from './describeWikiChatErrorReply'
 import type { WikiPublishWait } from './waitForWikiPublish'
 import type { WikiChatReplyEnd } from './watchWikiChatReply'
+import type { WikiRunKind } from './wikiUpdateRun'
 
 /**
  * Names the failure a VS Code Wiki update ends with when its watch stopped because the chat's reply ended; called by the extension when it records the end of a watched run.
@@ -9,6 +10,7 @@ import type { WikiChatReplyEnd } from './watchWikiChatReply'
  *
  * @param watchOutcome - How the watch for the publish ended.
  * @param replyEnd - How the chat's reply ended, or `undefined` when it has not.
+ * @param runKind - Whether the run is a generation or an update; the error reply's sentence names it.
  * @returns The failure sentence, marked as Codebook's own, for a watch that ended at a reply with an error; no facts otherwise, also when a publish or a refusal was found at the look after the reply's end.
  * @example
  * failureOfWikiChatReplyEnd('reply-ended', { outcome: 'error-reply', message: 'Quota exceeded.' })
@@ -18,11 +20,12 @@ import type { WikiChatReplyEnd } from './watchWikiChatReply'
 export function failureOfWikiChatReplyEnd(
   watchOutcome: WikiPublishWait<unknown>['outcome'],
   replyEnd: WikiChatReplyEnd | undefined,
+  runKind: WikiRunKind = 'update',
 ):
   { failure: string; isFailureCodebookSentence: true } | Record<string, never> {
   return watchOutcome === 'reply-ended' && replyEnd?.outcome === 'error-reply'
     ? {
-        failure: describeWikiChatErrorReply(replyEnd.message),
+        failure: describeWikiChatErrorReply(replyEnd.message, runKind),
         isFailureCodebookSentence: true,
       }
     : {}

@@ -93,7 +93,7 @@ export type HeldUpdateStep =
  * @param options.missingEditorCommands - Commands this editor does not have: the list of its commands leaves them out, and running one throws the editor's "command not found". An editor has the chat's commands when omitted.
  * @param options.signWatchFails - Makes the editor throw this message when the extension registers its listener for opened documents.
  * @param options.editorCommand - What the editor does when the extension runs a command other than the chat request (the reveal of the chat, which is the chat command without a query, the editor's New Chat, the chat's Cancel and its "Remove All Queued", for example): it gets the command's name, and what it returns or throws is the command's result. Such a command returns nothing when omitted.
- * @param options.cursorAgent - What the Cursor agent does; it gets the project, the prompt, the run's abort signal and the bound the run would stop it at.
+ * @param options.cursorAgent - What the Cursor agent does; it gets the project, the prompt, the run's abort signal, the bound the run would stop it at and the run's kind.
  * @param options.cancellable - Collects the Cancel of each run the window shows: the Cancel button of a progress notification, and the press on a status bar entry, which runs the entry's command while the entry is on screen, as a click does; the window shows both and records their texts also when omitted.
  * @param options.declineConfirmation - Makes the learner dismiss the modal confirmation of the browser's update link.
  * @param options.watchClock - Clock and sleep handed to the watch, so a test can pass the 15 minute bound without waiting.
@@ -105,6 +105,8 @@ export type HeldUpdateStep =
  * @param options.publishTokenReadFails - Makes the read of the publish token among the start checks reject with this message.
  * @param options.openWikiFails - Makes the command that opens the browser Wiki (the button "Open LLM Wiki" of a notification runs it) reject with this message.
  * @param options.realFreshnessCheck - Runs the real freshness check against the project on disk instead of answering what `setFreshness` was given.
+ * @param options.cursorSkill - Stands in for the managed Cursor skill a generation readies ({@link verifyManagedCursorSkill}, {@link deployCursorSkill}): each resolves without touching the learner's home unless the test says otherwise; `skillCalls` records which ran.
+ * @param options.answerConfirmation - Answers a modal confirmation with the button the test chooses: it gets the confirmation's title and its buttons; the first button is chosen when omitted, none with `declineConfirmation`.
  * @returns What the window showed (chat requests, every editor command the extension ran in order (`executedCommands`: its name, and for the chat request the name followed by " with the update request"), notifications by severity, the buttons each notification offered, confirmations with their detail text, progress titles, the text of every status bar entry it showed (`statusBarTexts`) and of those on screen now (`visibleStatusBarTexts`)), how often its looks read the watch stamp (`stampReads` counts the reads that began, `stampReadsDone` those that returned, so a test can wait for a look instead of for an amount of time) and listed the candidates, how often a start's claim on the marker answered (`markerClaims`), each change of its own update marker with what it answered (`markerChanges`), the two update entries, the state snapshot, `openWorkspace` (makes the window answer another folder as its opened project from then on), `hold` (keeps one awaited step of the next start open until `release()`, so a test can close the window in the middle of it) `openDocument`, `openTerminal` and `runTerminalCommand` (what the editor reports when a file is opened, by the chat or by the learner, a terminal opens or a command starts there), `signListenerCount` (how many listeners for these events the extension holds) and `close`.
  *
  * @example
@@ -132,6 +134,7 @@ export async function openWikiUpdateWindow(options: {
     prompt: string,
     signal?: AbortSignal,
     timeoutMs?: number,
+    runKind?: string,
   ) => Promise<string>
   cancellable?: CancellableProgress[]
   declineConfirmation?: boolean
@@ -150,6 +153,14 @@ export async function openWikiUpdateWindow(options: {
   publishTokenReadFails?: string
   realFreshnessCheck?: boolean
   openWikiFails?: string
+  cursorSkill?: {
+    verify?: () => Promise<unknown>
+    deploy?: () => Promise<unknown>
+  }
+  answerConfirmation?: (
+    message: string,
+    choices: string[],
+  ) => string | undefined
 }): Promise<{
   chatRequests: Array<{ name: string; query: string }>
   executedCommands: string[]
@@ -161,6 +172,12 @@ export async function openWikiUpdateWindow(options: {
   confirmationDetails: string[]
   progressTitles: string[]
   statusBarTexts: string[]
+  /** Which of the managed Cursor skill's steps ran, in order: `verify`, `deploy`. */
+  skillCalls: string[]
+  /** Every line the extension wrote to Output › Codebook, as `info: …` or `error: …`. */
+  outputLines: string[]
+  /** Runs one of the extension's registered commands, as the Command Palette does. */
+  runCommand(name: string): Promise<void>
   visibleStatusBarTexts(): string[]
   looks: {
     candidateListings: number
@@ -225,6 +242,8 @@ export async function openWikiUpdateWindow(options: {
     []
   const confirmations: string[] = []
   const confirmationDetails: string[] = []
+  const skillCalls: string[] = []
+  const outputLines: string[] = []
   const progressTitles: string[] = []
   const statusBarTexts: string[] = []
   const statusBarEntries: FakeStatusBarEntry[] = []
@@ -444,10 +463,20 @@ export async function openWikiUpdateWindow(options: {
               return showNotification(warnings, message, choices)
             confirmations.push(message)
             confirmationDetails.push(messageOptions.detail ?? '')
+            if (options.declineConfirmation) return Promise.resolve(undefined)
             return Promise.resolve(
-              options.declineConfirmation ? undefined : choices[0],
+              options.answerConfirmation
+                ? options.answerConfirmation(message, choices)
+                : choices[0],
             )
           },
+          // Output › Codebook, as a log channel: each line is kept with its level.
+          createOutputChannel: () => ({
+            info: (line: string) => outputLines.push(`info: ${line}`),
+            error: (line: string) => outputLines.push(`error: ${line}`),
+            show(): void {},
+            dispose(): void {},
+          }),
           showErrorMessage: (message: string, ...actions: string[]) =>
             showNotification(errors, message, actions),
           onDidOpenTerminal: (listener: () => void) =>
@@ -461,6 +490,18 @@ export async function openWikiUpdateWindow(options: {
         },
       },
       './environment': { requireWorkspace: () => openedWorkspace },
+      // The managed Cursor skill a generation readies; nothing is written to the learner's home.
+      './cursorSkillDeployment': {
+        verifyManagedCursorSkill: async () => {
+          skillCalls.push('verify')
+          return options.cursorSkill?.verify?.()
+        },
+        deployCursorSkill: async () => {
+          skillCalls.push('deploy')
+          return options.cursorSkill?.deploy?.()
+        },
+        removeManagedCursorSkill: async () => undefined,
+      },
       ...(options.constants
         ? { './constants': { ...constants, ...options.constants } }
         : {}),
@@ -567,9 +608,10 @@ export async function openWikiUpdateWindow(options: {
           prompt: string,
           signal?: AbortSignal,
           timeoutMs?: number,
+          runKind?: string,
         ) =>
           options.cursorAgent
-            ? options.cursorAgent(root, prompt, signal, timeoutMs)
+            ? options.cursorAgent(root, prompt, signal, timeoutMs, runKind)
             : 'Updated',
       },
       './utils/inspectDeepWikiFreshness': {
@@ -636,6 +678,13 @@ export async function openWikiUpdateWindow(options: {
     confirmationDetails,
     progressTitles,
     statusBarTexts,
+    skillCalls,
+    outputLines,
+    async runCommand(name: string): Promise<void> {
+      const command = commands.get(name)
+      if (!command) throw new Error(`The window registered no ${name}.`)
+      await command()
+    },
     visibleStatusBarTexts: (): string[] =>
       statusBarEntries
         .filter((entry) => entry.isShown)

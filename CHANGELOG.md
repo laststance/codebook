@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.2.45.0] - 2026-10-26 (development candidate)
+
+Cycle 0055 ([Issue #132](https://github.com/laststance/codebook/issues/132)), a feature cycle, first of its two pull requests: Codebook generates a project's first LLM Wiki from its own commands. The LLM Wiki view in the Activity Bar and the native trial follow in the second.
+
+**Generate a project's first LLM Wiki from Codebook.**
+
+- **Codebook: Generate LLM Wiki** writes the first Wiki of a folder that has none through your editor's agent and the bundled skill's DeepWiki procedure: in VS Code a new Copilot Chat session gets the generate request, in Cursor the Cursor Agent CLI (`cursor-agent`) runs it. No runtime MCP connection, debugger or application is needed.
+- **A confirmation comes first** and names the folder the Wiki is written to and where the request goes; **Change location** opens the `codebook.wikiOutputDirectory` setting and starts nothing. In VS Code it says that the chat asks you to approve its commands and may ask you to Continue.
+- **Codebook waits up to 55 minutes** for the publish, in both editors, and says `LLM Wiki generated in <folder>.` with **Open in Browser**. A Wiki published while sources changed says how many files changed and offers **Update LLM Wiki** first.
+- **It never overwrites a Wiki:** a folder that already holds one gets `An LLM Wiki already exists in <folder>. Update it instead?`, also when one appears while you confirm. A folder that exists but holds no Wiki is refused before any agent starts, since the publisher writes a first Wiki only into a folder it makes itself; its files stay.
+- **In Cursor, the managed skill is readied first**, for a generation and an update alike, once the run's checks have passed: a missing or outdated skill is installed, a skill of your own named `codebook` refuses the run and stays.
+- **Every ending says what was left and the next step**: stopped, timed out, finished without publishing, a publication of another checkout, a missing entry page, a manifest that cannot be read, a publish still running. A stop names a Wiki as published only for a verified publish. The README's new troubleshooting section lists each sentence.
+
+**Stop a run and read its record.**
+
+- **Codebook: Stop LLM Wiki Run** stops this window's generation or update: in VS Code Codebook's watch (the chat may still publish, and a new start waits for it), in Cursor the agent. During a start that has not begun its run, it says that a run is starting.
+- **Codebook: Show LLM Wiki Output** opens Output › Codebook, where every generation or update writes one record: its kind, host, start and end, how it ended, the agent's exit code and the folder, with your home folder as `~`. It never holds the agent's or the chat's text.
+
+**Changed.**
+
+- **Open LLM Wiki in Browser** is the new title of Open DeepWiki in Browser (its command id is unchanged), and the reader's offline note names it.
+- **Open LLM Wiki in Browser and Update LLM Wiki in a folder without a Wiki** say `Codebook found no LLM Wiki in <folder>.` and offer **Generate LLM Wiki** instead of a chat request to retype; while a generation is under way they name it instead.
+- **The VS Code watch's status bar entry reads `Watching for the LLM Wiki · Stop watching`** (it was `· Cancel`): it stops Codebook's watch, not the chat.
+- **Generate anyway, Update anyway and "Update it instead?"** pressed while another run of the window works are told at once, instead of starting a second run when that one ends.
+- **A marker file of a run that cannot be read** counts for up to 61 minutes 30 seconds after its last write (the longest generation with its grace), not 21 minutes 30 seconds.
+- **The bundled skill moves to 1.0.49** for the reader's offline note.
+- **Several windows:** update every window of a project to this version before generating; an older Codebook reads a generation's marker as an update's and may start beside it after 15 minutes.
+
 ## [0.2.44.0] - 2026-10-26 (development candidate)
 
 Cycle 0054 ([Issue #130](https://github.com/laststance/codebook/issues/130)), a bug-fix cycle: the three defects Cycle 0053 carried.

@@ -255,7 +255,7 @@ test('a look tells a marker path that holds nothing from one that holds an entry
 })
 
 // Value: protects=a running update whose marker file another program holds open at the moment a second window starts (on Windows a scanner or an indexer: EBUSY, EPERM; a file this user may not read: EACCES); fails_when=a regular marker file that cannot be read counts as nobody's 2 s after its write, so the second window's start removes it and two agents update one Wiki, while the run's own end treats the same file as possibly its marker; why_new=Cycle 0047 row 32 (P3RT10); seam=the open of the marker file under a loaded readWikiRegularFile, which fails with EBUSY, and the clock handed to the look; no_claim=Windows' real error codes
-test('a marker file that cannot be read at this moment counts as one being written for as long as any run’s marker counts after its write (21 min 30 s), and is nobody’s afterwards', async (context) => {
+test('a marker file that cannot be read at this moment counts as one being written for as long as any run’s marker counts after its write (61 min 30 s, a generation’s), and is nobody’s afterwards', async (context) => {
   // Arrange: a marker file of another window's run, last written at the fixed present, whose every open fails as for a file another program holds open.
   const outputDirectory = await wikiWithMarkerFile(
     context,
@@ -305,9 +305,9 @@ test('a marker file that cannot be read at this moment counts as one being writt
   // Act
   const looks = {
     after3Seconds: await lookAtTheHeldMarker(NOW_MS + 3_000),
-    after21Minutes30Seconds: await lookAtTheHeldMarker(NOW_MS + 1_290_000),
-    after21Minutes30SecondsAnd1Ms: await lookAtTheHeldMarker(
-      NOW_MS + 1_290_001,
+    after61Minutes30Seconds: await lookAtTheHeldMarker(NOW_MS + 3_690_000),
+    after61Minutes30SecondsAnd1Ms: await lookAtTheHeldMarker(
+      NOW_MS + 3_690_001,
     ),
     written5MinutesAhead: await lookAtTheHeldMarker(NOW_MS - 300_000),
     writtenFurtherAhead: await lookAtTheHeldMarker(NOW_MS - 300_001),
@@ -320,25 +320,25 @@ test('a marker file that cannot be read at this moment counts as one being writt
       heldBy: {
         beingWrittenSinceMs: 1_790_000_000_000,
         unreadableMarkerPath: markerPath,
-        countsUntilMs: 1_790_001_290_000,
+        countsUntilMs: 1_790_003_690_000,
       },
     },
-    after21Minutes30Seconds: {
+    after61Minutes30Seconds: {
       kind: 'being-written',
       heldBy: {
         beingWrittenSinceMs: 1_790_000_000_000,
         unreadableMarkerPath: markerPath,
-        countsUntilMs: 1_790_001_290_000,
+        countsUntilMs: 1_790_003_690_000,
       },
     },
-    after21Minutes30SecondsAnd1Ms: { kind: 'unowned' },
+    after61Minutes30SecondsAnd1Ms: { kind: 'unowned' },
     // A file dated ahead of the clock is named as well, so its refusal does not ask to wait a moment (Cycle 0047 row 129).
     written5MinutesAhead: {
       kind: 'being-written',
       heldBy: {
         beingWrittenSinceMs: 1_790_000_000_000,
         unreadableMarkerPath: markerPath,
-        countsUntilMs: 1_790_001_290_000,
+        countsUntilMs: 1_790_003_690_000,
       },
     },
     writtenFurtherAhead: { kind: 'unowned' },
@@ -399,7 +399,7 @@ test('a marker file that cannot be read still counts as one being written, and n
     after2000Ms: await lookAtTheUnreadableMarker(NOW_MS + 2_000),
   }
 
-  // Assert: both refuse the start; only the look past the 2 s names the file and the last moment it counts, 21 min 30 s after its write.
+  // Assert: both refuse the start; only the look past the 2 s names the file and the last moment it counts, 61 min 30 s after its write.
   assert.deepEqual(looks, {
     after1999Ms: {
       kind: 'being-written',
@@ -410,7 +410,7 @@ test('a marker file that cannot be read still counts as one being written, and n
       heldBy: {
         beingWrittenSinceMs: 1_790_000_000_000,
         unreadableMarkerPath: markerPath,
-        countsUntilMs: 1_790_001_290_000,
+        countsUntilMs: 1_790_003_690_000,
       },
     },
   })
@@ -471,7 +471,7 @@ test('a marker file that cannot be read and is dated ahead of the clock names it
     dated5MinutesAhead: await lookAtTheUnreadableMarker(NOW_MS - 300_000),
   }
 
-  // Assert: all three refuse the start; only the look at the moment of the write asks to wait a moment, and the file dated ahead is named with the last moment it counts, 21 min 30 s after its modification time.
+  // Assert: all three refuse the start; only the look at the moment of the write asks to wait a moment, and the file dated ahead is named with the last moment it counts, 61 min 30 s after its modification time.
   assert.deepEqual(looks, {
     atTheMomentOfItsWrite: {
       kind: 'being-written',
@@ -482,7 +482,7 @@ test('a marker file that cannot be read and is dated ahead of the clock names it
       heldBy: {
         beingWrittenSinceMs: 1_790_000_000_000,
         unreadableMarkerPath: markerPath,
-        countsUntilMs: 1_790_001_290_000,
+        countsUntilMs: 1_790_003_690_000,
       },
     },
     dated5MinutesAhead: {
@@ -490,7 +490,7 @@ test('a marker file that cannot be read and is dated ahead of the clock names it
       heldBy: {
         beingWrittenSinceMs: 1_790_000_000_000,
         unreadableMarkerPath: markerPath,
-        countsUntilMs: 1_790_001_290_000,
+        countsUntilMs: 1_790_003_690_000,
       },
     },
   })
@@ -846,5 +846,80 @@ test('a marker whose boot is written in another form than a kernel boot id is st
       boot: undefined,
       processStart: 'win:2026-10-05T09:12:33.1234567Z',
     },
+  })
+})
+
+// Value: protects=Eng decision 74, another window's generation of up to 55 minutes; fails_when=its marker expires at an update's 21 minutes 30 seconds, so a second window starts an agent beside it, or a marker with a kind this version does not know counts longer than an update's; no_claim=a marker whose owner is judged gone (tests above); seam=the clock handed to the look
+test('a generation’s marker of another machine stays live past an update’s bound until a generation’s, and a marker of an unknown kind is an update’s', async (context) => {
+  // Arrange: two markers of a VS Code run on a machine with other digests; a generation counts for 30 s, 55 minutes, 60 s and the clock tolerance of 5 minutes.
+  const ofAnotherMachine = (runKind: string): string =>
+    JSON.stringify({
+      pid: ID_OF_NO_PROCESS,
+      windowId: 'other-window',
+      host: 'vscode',
+      startedAtMs: NOW_MS,
+      runKind,
+      machineKey: '1fb1404a9738d5ed',
+      hostKey: '5f0c1a8d2e3b4a69',
+      boot: { id: 'boot-of-the-other-machine' },
+      processStart: 'linux@4026531836:500',
+    })
+  const generation = await wikiWithMarkerFile(
+    context,
+    ofAnotherMachine('generate'),
+  )
+  const unknownKind = await wikiWithMarkerFile(
+    context,
+    ofAnotherMachine('rebuild'),
+  )
+
+  // Act
+  const looks = {
+    generationPastAnUpdatesBound: (await lookAt(generation, NOW_MS + 1_290_001))
+      .kind,
+    generationAtItsBound: (await lookAt(generation, NOW_MS + 3_690_000)).kind,
+    generationPastItsBound: (await lookAt(generation, NOW_MS + 3_690_001)).kind,
+    unknownKindPastAnUpdatesBound: (
+      await lookAt(unknownKind, NOW_MS + 1_290_001)
+    ).kind,
+  }
+
+  // Assert
+  assert.deepEqual(looks, {
+    generationPastAnUpdatesBound: 'live',
+    generationAtItsBound: 'live',
+    generationPastItsBound: 'unowned',
+    unknownKindPastAnUpdatesBound: 'unowned',
+  })
+})
+
+// Value: protects=Eng decision 74, a stopped VS Code generation whose chat may still publish for up to 55 minutes; fails_when=its reservation ends at an update's 15 minutes, so a new start sends a second chat beside it; no_claim=the publish that ends a reservation early (findUnacknowledgedWikiLeftover tests); seam=the clock handed to the look
+test('a stopped generation’s reservation lasts 55 minutes after its watch ended, past an update’s 15 minutes', async (context) => {
+  // Arrange
+  const outputDirectory = await wikiWithMarkerFile(
+    context,
+    JSON.stringify({
+      pid: ID_OF_NO_PROCESS,
+      windowId: 'stopped-window',
+      host: 'vscode',
+      startedAtMs: NOW_MS - 60_000,
+      watchEndedAtMs: NOW_MS,
+      runKind: 'generate',
+      ...THIS_WINDOW,
+    }),
+  )
+
+  // Act
+  const looks = {
+    pastAnUpdatesBound: (await lookAt(outputDirectory, NOW_MS + 900_000)).kind,
+    beforeItsBound: (await lookAt(outputDirectory, NOW_MS + 3_299_999)).kind,
+    atItsBound: (await lookAt(outputDirectory, NOW_MS + 3_300_000)).kind,
+  }
+
+  // Assert
+  assert.deepEqual(looks, {
+    pastAnUpdatesBound: 'live',
+    beforeItsBound: 'live',
+    atItsBound: 'unowned',
   })
 })

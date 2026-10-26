@@ -3,7 +3,7 @@
   "displayName": "codebook",
   "description": "Connect an external agent to source-grounded codebase studies.",
   "publisher": "laststance",
-  "version": "0.2.44",
+  "version": "0.2.45",
   "private": true,
   "engines": {
     "vscode": "^1.120.0",
@@ -164,11 +164,23 @@
       },
       {
         "command": "codebook.openDeepWiki",
-        "title": "Codebook: Open DeepWiki in Browser"
+        "title": "Codebook: Open LLM Wiki in Browser"
+      },
+      {
+        "command": "codebook.generateDeepWiki",
+        "title": "Codebook: Generate LLM Wiki"
       },
       {
         "command": "codebook.updateDeepWiki",
         "title": "Codebook: Update LLM Wiki"
+      },
+      {
+        "command": "codebook.cancelWikiRun",
+        "title": "Codebook: Stop LLM Wiki Run"
+      },
+      {
+        "command": "codebook.showWikiOutput",
+        "title": "Codebook: Show LLM Wiki Output"
       },
       {
         "command": "codebook.closeRepositoryWiki",

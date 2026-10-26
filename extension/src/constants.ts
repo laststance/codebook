@@ -8,7 +8,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.8'
-export const EXTENSION_VERSION = '0.2.44'
+export const EXTENSION_VERSION = '0.2.45'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -822,6 +822,8 @@ export const WIKI_SHELL_SCRIPT_HASHES: readonly string[] = [
   'yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=',
   // The shell since Cycle 0046 D2: its offline note goes to the question status line.
   'IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE=',
+  // The shell since Cycle 0055 3b: its offline note names Codebook: Open LLM Wiki in Browser.
+  'GoGWOnobpjAQPs0FqLJ0VBDun38ornPsvhcQ6D2WJxI=',
 ]
 /** The last code point of Unicode. A browser reads a numeric character reference past it as the replacement character; the Wiki reader reads it as this one. Neither is a letter or a colon of a scheme. */
 export const UNICODE_LAST_CODE_POINT = 0x10ffff
@@ -903,23 +905,55 @@ export const WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE =
   'This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.'
 /** What a learner does after they refused a step VS Code's chat asked them to approve, as a clause without its full stop: once the chat has asked, Codebook does not see it stop, so the watch goes on until Cancel. Handed to {@link describeWikiUpdate} as `refusedStepAdvice`, the running line of the page goes on from it with where Cancel is, the watch's status bar entry ({@link WIKI_CHAT_WATCH_STATUS_TEXT}), which names only its Cancel. */
 export const WIKI_REFUSED_STEP_ADVICE =
-  'If you refuse a step of the chat, press Cancel'
-/** The text of the status bar entry that is shown for as long as Codebook watches a VS Code Wiki update, for every entry of the update: a spinning icon, what is watched and its Cancel, which a press on the entry runs ({@link WIKI_CHAT_WATCH_CANCEL_COMMAND}). The watch shows no notification: the editor stacks notifications at the window's lower right, over the Chat view in its default place, so any other notification pushes one that lasts the whole watch over the Allow and Skip buttons of an approval the chat asks for (measured in VS Code 1.140.0 with a notification of two lines and the editor's own recommendation below it). The status bar lies below every notification. */
+  'If you refuse a step of the chat, press Stop watching'
+/** The text of the status bar entry that is shown for as long as Codebook watches a VS Code Wiki generation or update, for every entry of the run: a spinning icon, what is watched and its Stop watching (Cycle 0055 D4: it stops the watch, not the chat, so it is not called Cancel), which a press on the entry runs ({@link WIKI_CHAT_WATCH_CANCEL_COMMAND}). The watch shows no notification: the editor stacks notifications at the window's lower right, over the Chat view in its default place, so any other notification pushes one that lasts the whole watch over the Allow and Skip buttons of an approval the chat asks for (measured in VS Code 1.140.0 with a notification of two lines and the editor's own recommendation below it). The status bar lies below every notification. */
 export const WIKI_CHAT_WATCH_STATUS_TEXT =
-  '$(sync~spin) Watching for the LLM Wiki update · Cancel'
-/** The tooltip and accessible name of the watch's status bar entry ({@link WIKI_CHAT_WATCH_STATUS_TEXT}). It says what is watched and what its Cancel stops, in words that are true wherever the request went: a new chat, the chat the Chat view restored, or the chat that was open. Where the request went, when the watch ends and what to do after a refused step are said by the confirmation, the page's running line and the README. */
+  '$(sync~spin) Watching for the LLM Wiki · Stop watching'
+/** The tooltip and accessible name of the watch's status bar entry ({@link WIKI_CHAT_WATCH_STATUS_TEXT}). It says what is watched and what its Stop watching stops, in words that are true wherever the request went: a new chat, the chat the Chat view restored, or the chat that was open. Where the request went, when the watch ends and what to do after a refused step are said by the confirmation, the page's running line and the README. */
 export const WIKI_CHAT_WATCH_TOOLTIP =
-  'Watching the editor chat for the LLM Wiki update. Cancel stops watching, not the chat.'
+  'Watching the editor chat for the LLM Wiki. Stop watching stops Codebook’s watch, not the chat.'
 /** The command a press on the watch's status bar entry runs: it stops the VS Code watch this window shows, not the chat. Registered at activation and not contributed to the Command Palette: the entry is its one way in. */
 export const WIKI_CHAT_WATCH_CANCEL_COMMAND = 'codebook.cancelWikiChatWatch'
 /** The identifier of the watch's status bar entry, under which the editor keeps whether the learner hid it. */
 export const WIKI_CHAT_WATCH_STATUS_ID = 'codebook.wikiChatWatch'
 /** The name of the watch's status bar entry in the status bar's context menu. */
-export const WIKI_CHAT_WATCH_STATUS_NAME = 'Codebook LLM Wiki update'
+export const WIKI_CHAT_WATCH_STATUS_NAME = 'Codebook LLM Wiki run'
 /** Milliseconds in one minute, for naming a bound in minutes in the update request and, through {@link formatWaitEnd}, the end of a start's wait or of an unreadable marker's refusal as a whole minute. */
 export const MS_PER_MINUTE = 60_000
+/** The first character code that is no C0 control character; the LLM Wiki run's Output record escapes the codes below it ({@link wikiRunRecord}). */
+export const CONTROL_CHARACTER_CODE_LIMIT = 0x20
+/** The DEL control character's code, which the LLM Wiki run's Output record escapes too. */
+export const DELETE_CHARACTER_CODE = 0x7f
+/** What Codebook says when Stop LLM Wiki Run or a no-Wiki notice meets a run of this window that is still starting (its checks, the confirmation, the claim): nothing can be stopped yet, and its progress shows once it runs (/ship review, Cycle 0055 pt1). */
+export const WIKI_RUN_STARTING_SENTENCE =
+  'Codebook is starting an LLM Wiki run in this window. Once it runs, its progress shows and Stop LLM Wiki Run stops it.'
 /** Longest a VS Code Wiki update is watched for a published manifest before it ends as timed out. */
 export const WIKI_UPDATE_WATCH_TIMEOUT_MS = 900_000
+/** Longest a Wiki generation runs in either host, the VS Code watch and the Cursor agent alike, before it ends as timed out: 55 minutes, set by Cycle 0055's E1 (the longest measured generation, 34 min 33 s in VS Code, × 1.5, rounded up to whole 5 minutes; Owner decision O9). A stopped VS Code generation's reservation lasts as long after its watch's end. */
+export const WIKI_GENERATE_TIMEOUT_MS = 3_300_000
+/** The chat request a learner can paste to generate the LLM Wiki without Codebook's entry; every generate sentence that sends the learner to the chat names it. */
+export const WIKI_GENERATE_CHAT_REQUEST =
+  '/codebook Generate the LLM Wiki for this project'
+/** The chat request a learner can paste to see what the Cursor agent of an update said; the update sentences of a Cursor run name it. */
+export const WIKI_UPDATE_CHAT_REQUEST = '/codebook Update LLM Wiki'
+/** The command that generates the LLM Wiki of the opened project through the editor agent (Codebook: Generate LLM Wiki). */
+export const GENERATE_DEEP_WIKI_COMMAND = 'codebook.generateDeepWiki'
+/** The command that stops this window's LLM Wiki run (Codebook: Stop LLM Wiki Run): the VS Code watch, which is not the chat, or the Cursor agent. */
+export const CANCEL_WIKI_RUN_COMMAND = 'codebook.cancelWikiRun'
+/** The command that opens Output › Codebook, where each LLM Wiki generation or update writes the record of its end. */
+export const SHOW_WIKI_OUTPUT_COMMAND = 'codebook.showWikiOutput'
+/** The button of the no-Wiki notices and of a failed generation's notice that starts {@link GENERATE_DEEP_WIKI_COMMAND}. */
+export const GENERATE_WIKI_ACTION = 'Generate LLM Wiki'
+/** The button of the generation's confirmation that starts it. */
+export const GENERATE_CONFIRM_ACTION = 'Generate'
+/** The button of the generation's confirmation that opens the output setting and starts nothing. */
+export const CHANGE_WIKI_LOCATION_ACTION = 'Change location'
+/** The button of a refusal that names an earlier chat's leftover before a generation: it starts the generation with that leftover ignored. */
+export const GENERATE_ANYWAY_ACTION = 'Generate anyway'
+/** The button of the offer a Generate gives where an LLM Wiki already exists: it starts {@link WIKI_UPDATE_CHAT_REQUEST}'s update instead. */
+export const UPDATE_WIKI_ACTION = 'Update LLM Wiki'
+/** The button of a generation's notices that opens the new Wiki in the browser. */
+export const OPEN_WIKI_IN_BROWSER_ACTION = 'Open in Browser'
 /** How often the extension looks for a newly published manifest while a Wiki update is watched. */
 export const WIKI_UPDATE_WATCH_POLL_MS = 2_000
 /** How often the reader page asks for the update state while a run is active. */
