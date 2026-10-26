@@ -10462,6 +10462,11 @@ test('a recorded run whose saves cannot look at its recording folder keeps its s
         ...input: Parameters<LearningLibrary['saveStudy']>
       ) {
         const recordingDirectory = input[1]?.recordingDirectory
+        // A background refresh can save this run before its recording exists (the save names no folder, so no look would refuse it). Saved, that save would leave the study kept and every later save would skip the look this test refuses (Cycle 0056 task 14); the library cannot be written until the test says so, as it cannot look at the folder.
+        if (recordingDirectory === undefined && isLookRefused)
+          throw Object.assign(new Error('EACCES: permission denied, lstat'), {
+            code: 'EACCES',
+          })
         if (recordingDirectory === undefined)
           return await saveStudy.apply(this, input)
         savesLookingAt.set(
