@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 
 import {
   readerSeams,
@@ -1254,6 +1255,75 @@ test('a test replay entry overtaken during its slot close asks no notice for a b
     )
   } finally {
     release()
+    await harness.close()
+  }
+})
+
+// Value: protects=N55-F4's silent no-op: a refused test replay entry whose failure notification the learner has not answered writes its Output entry at once and lets the next Saved studies choice open its replay; fails_when=the next choice waits behind the unanswered notification, so no replay opens and no Output entry is written until a reload; why_new=Cycle 0056 task 17 (the refusal notice held the entry turn); seam=workspaceHarness with an error notification that never settles, the entry's composition step refused once, the diagnostics log; no_claim=Cursor keeping the notification on screen (N56 step 1 checks it natively)
+test('a Saved studies choice opens its replay while the notification of a refused earlier choice is unanswered', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.open()
+    // The learner leaves the failure notification on screen: it never settles.
+    harness.answerErrorDialogs(() => new Promise<undefined>(() => undefined))
+    // The first entry's composition step is refused once, as the editor's placement guard did natively.
+    const enterComposition = harness.reader[
+      'enterSummaryCompositionForReplay'
+    ].bind(harness.reader)
+    let isFirstEntry = true
+    harness.reader['enterSummaryCompositionForReplay'] = async (
+      ...entryArguments
+    ): Promise<void> => {
+      if (isFirstEntry) {
+        isFirstEntry = false
+        throw new Error(
+          'Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.',
+        )
+      }
+      return enterComposition(...entryArguments)
+    }
+    harness.receiveContext({
+      type: 'node-history',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+    })
+    await waitUntil(
+      () => harness.errorMessages.length === 1,
+      'the refused first choice raises its notification',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Act
+    harness.receiveContext({
+      type: 'node-history',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+    })
+
+    // Assert
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the second choice lands on the first stop behind the unanswered notification',
+      READER_RESULT_BOUND_MS,
+    )
+    assert.equal(
+      logged.filter((entry) => entry.surface === 'open:test-replay').length,
+      1,
+    )
+    assert.equal(harness.errorMessages.length, 1)
+  } finally {
     await harness.close()
   }
 })

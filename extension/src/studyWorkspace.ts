@@ -11898,7 +11898,7 @@ export class StudyWorkspace {
       if (entry !== this.nodeHistoryEntryRequest) return false
       // A refused entry is told like a failed replay open: one Output › Codebook entry and the notification, never a bare command failure (F382, F384).
       await this.leaveEmptySummaryComposition()
-      await this.tellTestReplayOpenFailure(
+      this.tellTestReplayOpenFailure(
         studyId,
         error,
         sanitizeCause(error, this.privateRoots()),
@@ -11977,7 +11977,7 @@ export class StudyWorkspace {
         profile: NODE_TEST_PROFILE,
         cause,
       })
-    else await this.tellTestReplayOpenFailure(studyId, error, cause)
+    else this.tellTestReplayOpenFailure(studyId, error, cause)
     return 'told'
   }
 
@@ -12042,17 +12042,18 @@ export class StudyWorkspace {
   }
 
   /**
-   * Tells the learner that a test replay did not open: one Output › Codebook entry and the load-failure notification, whose Show details button opens the channel; called by {@link openNodeHistoryFromHost}.
+   * Tells the learner that a test replay did not open: one Output › Codebook entry, written before this returns, and the load-failure notification, whose Show details button opens the channel; called by {@link openNodeHistoryFromHost} and {@link enterCompositionForEntry}.
+   * The notification's answer is never awaited: an error notification stays on screen until the learner answers it, and the entry that raised it holds the next entry's turn, so waiting would leave every later choice with no notice and no Output entry (N55-F4, Cycle 0056 task 17). The answer opens the channel whenever it comes.
    * @param studyId - The test replay's study id.
    * @param error - What the open threw.
    * @param cause - The sanitized cause of that error.
-   * @example await this.tellTestReplayOpenFailure(studyId, outcome.error, cause)
+   * @example this.tellTestReplayOpenFailure(studyId, outcome.error, cause)
    */
-  private async tellTestReplayOpenFailure(
+  private tellTestReplayOpenFailure(
     studyId: string,
     error: unknown,
     cause: string,
-  ): Promise<void> {
+  ): void {
     const stack = sanitizedStack(error, this.privateRoots())
     this.diagnostics?.log({
       surface: 'open:test-replay',
@@ -12071,14 +12072,21 @@ export class StudyWorkspace {
         : studyId,
       cause,
     })
-    const action = await showPlainNotice(
-      vscode.window,
-      'error',
-      failure.text,
-      ...(failure.actions ?? []),
+    // The answer is handled whenever it arrives, outside every entry's turn.
+    void Promise.resolve(
+      showPlainNotice(
+        vscode.window,
+        'error',
+        failure.text,
+        ...(failure.actions ?? []),
+      ),
+    ).then(
+      (action) => {
+        if (action === NODE_LEARNING_SAVE_ACTION.showDetails)
+          this.diagnostics?.show()
+      },
+      (error: unknown) => this.report('control', error),
     )
-    if (action === NODE_LEARNING_SAVE_ACTION.showDetails)
-      this.diagnostics?.show()
   }
 
   /**
