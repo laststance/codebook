@@ -1,4 +1,5 @@
 import {
+  LLM_WIKI_RESERVATION_MESSAGE,
   LLM_WIKI_ROW_ACTIONS,
   LLM_WIKI_WATCHING_MESSAGE,
   MS_PER_MINUTE,
@@ -580,6 +581,25 @@ function outputRow(
 }
 
 /**
+ * Chooses the wrapping message above the LLM Wiki view's rows in VS Code, where the description of a row may be cut off.
+ * @param facts - The ready facts.
+ * @returns
+ * - This window's run: the watching message (Stop watching does not stop the chat)
+ * - Only a stopped watch's reservation: that Codebook stopped watching and the chat may still publish
+ * - Cursor, or neither: no message
+ * @example watchMessageOf({ ...facts, host: 'vscode', run: undefined, reservation }) // => { message: 'Codebook stopped watching the chat, …' }
+ */
+function watchMessageOf(
+  facts: Extract<LlmWikiViewFacts, { kind: 'ready' }>,
+): Pick<LlmWikiViewModel, 'message'> {
+  if (facts.host !== 'vscode') return {}
+  // A run is a watch Codebook still keeps; a reservation alone is what a stopped watch left.
+  if (facts.run) return { message: LLM_WIKI_WATCHING_MESSAGE }
+  if (facts.reservation) return { message: LLM_WIKI_RESERVATION_MESSAGE }
+  return {}
+}
+
+/**
  * Turns one record of facts into the rows of the LLM Wiki view, in their fixed order, each present exactly when its fact holds.
  *
  * Why: the view shows a Wiki beside a run, a reservation and an attention cause, so its rows are independent axes, not one state; one pure function keeps the complexity limits met and lets one table-driven test cover the whole matrix (Eng decision 82).
@@ -591,7 +611,7 @@ function outputRow(
  * - No folder: one row that opens a folder; untrusted: one row that manages trust
  * - Otherwise the Wiki, run, elsewhere, reservation, last-attempt and attention rows that hold, then the Output row when any of them does
  * - No row at all, and state `none`, when the folder holds no Wiki and no run (the welcome content shows)
- * - A `message` while a VS Code watch is shown
+ * - A `message` in VS Code while a watch or a stopped watch's reservation is shown
  *
  * @example
  * ```ts
@@ -628,11 +648,9 @@ export function readLlmWikiViewState(
     }
   const rows = readyRows(facts, wording)
   if (rows.length === 0) return { state: 'none', rows: [] }
-  const isWatchShown =
-    facts.host === 'vscode' && Boolean(facts.run ?? facts.reservation)
   return {
     state: 'other',
     rows: [...rows, outputRow(facts)],
-    ...(isWatchShown ? { message: LLM_WIKI_WATCHING_MESSAGE } : {}),
+    ...watchMessageOf(facts),
   }
 }

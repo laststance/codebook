@@ -752,7 +752,7 @@ test('a VS Code generation shows Generating… waiting for the chat, with its th
   )
 })
 
-// Value: protects=AC 2 (row 2c) and AC 4; fails_when=Stop watching leaves no Waiting for chat row with its retry time, or the message goes with the run row; no_claim=the reservation's bound (marker tests); seam=a chat that never answers, stopped through the view's own action
+// Value: protects=AC 2 (row 2c) and AC 4; fails_when=Stop watching leaves no Waiting for chat row with its retry time, or the message still says Codebook is watching once the watch has stopped; no_claim=the reservation's bound (marker tests); seam=a chat that never answers, stopped through the view's own action
 test('Stop watching in the view ends the generation and leaves a Waiting for chat row with the retry time', async (context) => {
   // Arrange
   const project = await openEmptyProject(context, {
@@ -783,7 +783,7 @@ test('Stop watching in the view ends the generation and leaves a Waiting for cha
       true,
       '[open-chat]',
       'stopped watching',
-      'Codebook is watching the chat. Stop watching does not stop the chat; stop it in the chat.',
+      'Codebook stopped watching the chat, which may still publish this Wiki. To stop it, stop the request in the chat.',
     ],
   )
 })

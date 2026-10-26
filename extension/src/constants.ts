@@ -989,6 +989,9 @@ export const LLM_WIKI_VIEW_WINDOW_ID = '\u0000llm-wiki-view'
 /** The message above the LLM Wiki tree while a VS Code watch is shown: Stop watching ends Codebook's watch only. */
 export const LLM_WIKI_WATCHING_MESSAGE =
   'Codebook is watching the chat. Stop watching does not stop the chat; stop it in the chat.'
+/** The LLM Wiki view's wrapping message (VS Code) while only a stopped watch's reservation stands: Codebook no longer watches, the chat may still publish. */
+export const LLM_WIKI_RESERVATION_MESSAGE =
+  'Codebook stopped watching the chat, which may still publish this Wiki. To stop it, stop the request in the chat.'
 /** The command of the LLM Wiki view's title bar Refresh action. */
 export const REFRESH_LLM_WIKI_COMMAND = 'codebook.refreshLlmWiki'
 /** The command that a click on the view's attention or last-attempt row runs: it shows the row's full sentence, with Copy details. */

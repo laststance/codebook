@@ -30,3 +30,15 @@ test('a closing bracket in a folder name is put in brackets too', () => {
   // Assert
   assert.equal(escaped, 'a[]]b')
 })
+
+// Value: protects=the watcher glob for a folder named with a comma; fails_when=a `,` stays raw inside the watcher's brace list, so the editor splits `docs/wiki,old` into two alternatives and no entry matches the real manifest or markers; no_claim=the editor's glob engine (its brace split skips separators inside brackets); seam=the pure function
+test('a comma in a folder name is put in brackets so the brace list does not split it', () => {
+  // Arrange
+  const name = 'docs/wiki,old'
+
+  // Act
+  const escaped = escapeGlobCharacters(name)
+
+  // Assert
+  assert.equal(escaped, 'docs/wiki[,]old')
+})

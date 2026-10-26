@@ -80,3 +80,25 @@ test('on Windows the glob uses forward slashes and the paths keep the drive and 
     ],
   })
 })
+
+// Value: protects=the watcher of a Wiki folder whose name holds a comma; fails_when=the comma is embedded raw in the brace list, so the glob's alternatives no longer name the folder, the manifest or the markers; no_claim=the editor's glob engine; seam=the pure function with the POSIX path module
+test('a comma in the Wiki folder name stays one entry of the glob, and the paths keep the name as written', () => {
+  // Arrange
+  const watchedFolder = '/repo'
+  const outputDirectory = '/repo/wiki,old'
+
+  // Act
+  const plan = describeWikiWatch(watchedFolder, outputDirectory, posix)
+
+  // Assert
+  assert.deepEqual(plan, {
+    glob: '{wiki[,]old,wiki[,]old/codebook-wiki.json,wiki[,]old.update-run.json,wiki[,]old.publish-lock.json,wiki[,]old.publish-journal.json}',
+    paths: [
+      '/repo/wiki,old',
+      '/repo/wiki,old/codebook-wiki.json',
+      '/repo/wiki,old.update-run.json',
+      '/repo/wiki,old.publish-lock.json',
+      '/repo/wiki,old.publish-journal.json',
+    ],
+  })
+})

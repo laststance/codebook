@@ -235,8 +235,8 @@ test('a Cursor update row names cursor-agent and carries Cancel and Show Output 
   assert.equal(model.message, undefined)
 })
 
-// Value: protects=the TreeView.message while row 2 or 2c shows in VS Code; fails_when=the wrapping message is missing in VS Code during a watch, or shows in Cursor or without a run; no_claim=the editor's wrapping; seam=the pure row function
-test('the watching message shows for a VS Code run and a reservation and never in Cursor', () => {
+// Value: protects=the TreeView.message while row 2 or 2c shows in VS Code; fails_when=the wrapping message is missing in VS Code during a watch, says Codebook is watching while only a reservation stands (the watch has stopped), or shows in Cursor or without a run; no_claim=the editor's wrapping; seam=the pure row function
+test('a VS Code run shows the watching message, a reservation alone says the watch stopped and the chat may still publish, and Cursor shows neither', () => {
   // Arrange
   const reservation: ReadyFacts['reservation'] = {
     kind: 'generate',
@@ -258,7 +258,7 @@ test('the watching message shows for a VS Code run and a reservation and never i
   // Assert
   assert.deepEqual(messages, [
     'Codebook is watching the chat. Stop watching does not stop the chat; stop it in the chat.',
-    'Codebook is watching the chat. Stop watching does not stop the chat; stop it in the chat.',
+    'Codebook stopped watching the chat, which may still publish this Wiki. To stop it, stop the request in the chat.',
     undefined,
     undefined,
   ])
