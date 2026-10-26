@@ -95,9 +95,9 @@ test('a real VSIX loads outside the checkout and excludes bundled applications a
   // Assert
   assert.equal(receipt.isolatedModuleLoad, true)
   assert.equal(receipt.isolatedWikiPageWorker, true)
-  assert.equal(checked.extension.version, '0.2.45')
+  assert.equal(checked.extension.version, '0.2.46')
   assert.equal(checked.extension.apiVersion, '1.8')
-  assert.equal(checked.entries, 32)
+  assert.equal(checked.entries, 33)
   assert.equal(receipt.dependencies.length, 16)
   assert.deepEqual(
     original.get('extension/skills/codebook/SKILL.md'),
@@ -177,6 +177,30 @@ test('a real VSIX loads outside the checkout and excludes bundled applications a
     original.get('extension/src/assets/book.svg'),
     await readFile(join(repository, 'extension/src/assets/book.svg')),
   )
+  assert.deepEqual(
+    original.get('extension/src/assets/learning.svg'),
+    await readFile(join(repository, 'extension/src/assets/learning.svg')),
+  )
+})
+
+test('the packaged manifest gives the two Activity Bar containers different icon files, both shipped', () => {
+  // Arrange
+  const manifest = JSON.parse(original.get('extension/package.json'))
+
+  // Act
+  const icons = Object.fromEntries(
+    manifest.contributes.viewsContainers.activitybar.map((container) => [
+      container.id,
+      container.icon,
+    ]),
+  )
+
+  // Assert
+  assert.deepEqual(icons, {
+    codebook: 'src/assets/book.svg',
+    codebookLearning: 'src/assets/learning.svg',
+  })
+  assert.ok(original.has('extension/src/assets/learning.svg'))
 })
 
 test('a coherent SHA-256 Git revision survives real archive checking', async () => {
@@ -340,6 +364,7 @@ for (const method of ['openPromise', 'fromBufferPromise']) {
 for (const file of [
   'dist/extension.js',
   'src/assets/book.svg',
+  'src/assets/learning.svg',
   'skills/codebook/SKILL.md',
 ]) {
   test(`a VSIX missing ${file} is rejected before installation`, async () => {

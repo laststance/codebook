@@ -24,10 +24,15 @@ import {
   GENERATE_CONFIRM_ACTION,
   GENERATE_DEEP_WIKI_COMMAND,
   GENERATE_WIKI_ACTION,
+  LLM_WIKI_POLL_MS,
+  LLM_WIKI_REFRESH_DEBOUNCE_MS,
+  LLM_WIKI_VIEW_WINDOW_ID,
+  OPEN_DEEP_WIKI_COMMAND,
   OPEN_WIKI_IN_BROWSER_ACTION,
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_FILE_MODE,
   SHOW_WIKI_OUTPUT_COMMAND,
+  UPDATE_DEEP_WIKI_COMMAND,
   UPDATE_WIKI_ACTION,
   WIKI_CHAT_OPEN_TIMEOUT_MS,
   WIKI_CHAT_SESSION_START_TIMEOUT_MS,
@@ -102,6 +107,7 @@ import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
 import { endOfWikiChatStart } from './utils/endOfWikiChatStart'
 import { failureOfWikiChatReplyEnd } from './utils/failureOfWikiChatReplyEnd'
 import { findGeneratedWikiProblem } from './utils/findGeneratedWikiProblem'
+import { findNearestExistingAncestor } from './utils/findNearestExistingAncestor'
 import { findUnacknowledgedWikiLeftover } from './utils/findUnacknowledgedWikiLeftover'
 import { findWikiUpdateStartBlock } from './utils/findWikiUpdateStartBlock'
 import {
@@ -113,14 +119,17 @@ import {
   formatCodebookDiagnostic,
   type CodebookDiagnostic,
 } from './utils/formatCodebookDiagnostic'
+import { hasWikiPublishEndedWait } from './utils/hasWikiPublishEndedWait'
 import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
 import type { WikiLeftover } from './utils/isAcknowledgedWikiLeftover'
 import { isWikiManifestOf } from './utils/isWikiManifestOf'
 import { joinInFlight } from './utils/joinInFlight'
 import { listWikiCandidates } from './utils/listWikiCandidates'
+import { createLlmWikiView } from './utils/llmWikiView'
 import { mayWikiChatStillPublish } from './utils/mayWikiChatStillPublish'
 import { noticeWithSetupStep } from './utils/noticeWithSetupStep'
 import { readLiveWikiUpdateMarker } from './utils/readLiveWikiUpdateMarker'
+import { readLlmWikiViewFacts } from './utils/readLlmWikiViewFacts'
 import { readWikiFileToOpen } from './utils/readWikiFileToOpen'
 import { readWikiPublicationIdentity } from './utils/readWikiPublicationIdentity'
 import { readWikiPublishToken } from './utils/readWikiPublishToken'
@@ -130,6 +139,7 @@ import {
   refreshCursorMcpCatalog,
   removeOwnedCursorMcpCatalog,
 } from './utils/refreshCursorMcpCatalog'
+import { registerLlmWikiCommands } from './utils/registerLlmWikiCommands'
 import { registerPlainCommand } from './utils/registerPlainCommand'
 import { requestCursorWikiText } from './utils/requestCursorWikiText'
 import { resolveDeepWikiDirectory } from './utils/resolveDeepWikiDirectory'
@@ -295,6 +305,8 @@ export function activate(
   /** The output of the latest run's record, and whether the editor stored it; {@link dropWikiReservation} waits for it at shutdown before removing the reload's fallback reservation. */
   let lastWikiRunWrite:
     { outputDirectory: string; written: Promise<boolean> } | undefined
+  /** How the Cursor agent of this window's last run exited; the LLM Wiki view words a stopped generation's cause from it. */
+  let lastWikiAgentExit: WikiAgentExit | undefined
   // This window's id in the marker of a running update; another window's live marker refuses a start here.
   const wikiWindowId = randomUUID()
   // The reservation each of this window's stopped VS Code watches left on disk for other windows, by Wiki output, with the timer that removes it at that watch's bound.
@@ -1150,8 +1162,8 @@ export function activate(
   }
   /** The command each button of a generation's notice runs ({@link wikiGenerateNotice}). */
   const WIKI_NOTICE_ACTION_COMMANDS: Record<string, string> = {
-    [OPEN_WIKI_IN_BROWSER_ACTION]: 'codebook.openDeepWiki',
-    [UPDATE_WIKI_ACTION]: 'codebook.updateDeepWiki',
+    [OPEN_WIKI_IN_BROWSER_ACTION]: OPEN_DEEP_WIKI_COMMAND,
+    [UPDATE_WIKI_ACTION]: UPDATE_DEEP_WIKI_COMMAND,
     [GENERATE_WIKI_ACTION]: GENERATE_DEEP_WIKI_COMMAND,
   }
   /** Shows a notice whose buttons each start a Codebook command ({@link WIKI_NOTICE_ACTION_COMMANDS}); the pressed button's command tells the learner itself what failed. @example showWikiActionNotice('error', 'Codebook found no LLM Wiki in .codebook/wiki.', [GENERATE_WIKI_ACTION]) */
@@ -1202,7 +1214,7 @@ export function activate(
         else if (choice === OPEN_WIKI_ACTION)
           // The command's own handler tells the learner why the Wiki did not open; its rejection has nobody else to go to.
           void vscode.commands
-            .executeCommand('codebook.openDeepWiki')
+            .executeCommand(OPEN_DEEP_WIKI_COMMAND)
             .then(undefined, () => undefined)
       },
       // A notification the editor could not show has nobody to report to either.
@@ -1401,6 +1413,7 @@ export function activate(
         hasNewPublication: false,
       }),
     )
+    lastWikiAgentExit = run.agentExit
     wikiUpdateRun.end(end)
     const endedAtMs = Date.now()
     // Stopping a VS Code watch does not stop the chat, and neither does a watch that broke off or a request Codebook left in the chat at the 30 seconds; a Cursor agent is stopped with its run, and a closing window takes its chat with it. A chat whose publish is on disk has done its work, also when the watch was stopped while it read that publish or just before its next look: it leaves no chat that may still publish and no reservation.
@@ -2557,6 +2570,22 @@ export function activate(
         },
       }),
     )
+  /** Stops this window's run, or tells the learner why there is nothing to stop; called by Stop LLM Wiki Run and by the LLM Wiki view's Stop watching and Cancel. @example cancelWikiRun() */
+  const cancelWikiRun = (): void => {
+    if (activeWikiRun) {
+      activeWikiRun.controller.abort()
+      return
+    }
+    // A run that is still starting has nothing to stop yet; the learner is told so instead of "nothing is running".
+    if (wikiUpdate) {
+      void showNotice('information', WIKI_RUN_STARTING_SENTENCE)
+      return
+    }
+    void showNotice(
+      'information',
+      'No LLM Wiki generation or update is running in this window.',
+    )
+  }
   context.subscriptions.push(
     registerCommand('codebook.startAgentServer', start),
     registerCommand('codebook.stopAgentServer', stopOnRequest),
@@ -2652,7 +2681,7 @@ export function activate(
     }),
     // A second command while the first is still opening joins it: two opens in flight would each start a reader, and the failure of one would close the other's.
     registerCommand(
-      'codebook.openDeepWiki',
+      OPEN_DEEP_WIKI_COMMAND,
       joinInFlight(async () => {
         try {
           // A folder without a Wiki offers its generation instead of an error about a missing manifest (Cycle 0055, proposed change 3).
@@ -2785,7 +2814,7 @@ export function activate(
         }
       }),
     ),
-    registerCommand('codebook.updateDeepWiki', async () => {
+    registerCommand(UPDATE_DEEP_WIKI_COMMAND, async () => {
       try {
         await updateDeepWiki()
       } catch (error) {
@@ -2810,21 +2839,7 @@ export function activate(
       }
     }),
     // Stops this window's run, generation or update: a VS Code watch, also while it still waits for the chat's first sign, or the Cursor agent. The chat itself is not stopped.
-    registerCommand(CANCEL_WIKI_RUN_COMMAND, () => {
-      if (activeWikiRun) {
-        activeWikiRun.controller.abort()
-        return
-      }
-      // A run that is still starting has nothing to stop yet; the learner is told so instead of "nothing is running".
-      if (wikiUpdate) {
-        void showNotice('information', WIKI_RUN_STARTING_SENTENCE)
-        return
-      }
-      void showNotice(
-        'information',
-        'No LLM Wiki generation or update is running in this window.',
-      )
-    }),
+    registerCommand(CANCEL_WIKI_RUN_COMMAND, cancelWikiRun),
     registerCommand(SHOW_WIKI_OUTPUT_COMMAND, () => {
       diagnostics.show()
     }),
@@ -2908,6 +2923,93 @@ export function activate(
       replacingReaders = settled
     }),
   )
+  // The LLM Wiki view: rows from the Wiki folder, the run state and the markers; an editor without tree views shows none.
+  if (Reflect.has(vscode.window ?? {}, 'createTreeView')) {
+    const llmWikiView = createLlmWikiView({
+      editor: vscode,
+      host: isCursorHost ? 'cursor' : 'vscode',
+      debounceMs: LLM_WIKI_REFRESH_DEBOUNCE_MS,
+      pollMs: LLM_WIKI_POLL_MS,
+      readFacts: () =>
+        readLlmWikiViewFacts({
+          host: isCursorHost ? 'cursor' : 'vscode',
+          isFolderOpen: () =>
+            Boolean(vscode.workspace.workspaceFolders?.length),
+          isTrusted: () => vscode.workspace.isTrusted,
+          wikiLocation,
+          readPublishToken: readWikiPublishToken,
+          readPublication: readWikiPublicationIdentity,
+          findStartBlock: findWikiUpdateStartBlock,
+          readGeneration: async (projectRoot, outputDirectory) => {
+            const manifest = await readDeepWikiManifest(
+              outputDirectory,
+              projectRoot,
+            )
+            const manifestStat = await lstat(
+              join(outputDirectory, WIKI_MANIFEST_FILE),
+            ).catch(() => undefined)
+            return {
+              revision: manifest.revision,
+              publishedAtMs: manifestStat?.mtimeMs,
+            }
+          },
+          isWikiOwnedBy,
+          // A window id nobody has: this window's own reservation is seen as the stopped watch's too.
+          readMarker: (outputDirectory) =>
+            readLiveWikiUpdateMarker(outputDirectory, LLM_WIKI_VIEW_WINDOW_ID),
+          ownWindowId: wikiWindowId,
+          isStartUnderWay: () => wikiUpdate !== undefined,
+          hasPublishEndedWait: hasWikiPublishEndedWait,
+          runStatus: () => wikiUpdateRun.status(),
+          isAwaitingChat: () => activeWikiRun?.awaitsChat === true,
+          lastAgentExit: () => lastWikiAgentExit,
+          now: () => Date.now(),
+        }),
+      // The facts the rows show name the project and folder to inspect, so a setting changed meanwhile cannot make the check read another Wiki.
+      readFreshness: async ({ projectRoot, outputDirectory }) => {
+        const published = await inspectPublishedWiki(
+          projectRoot,
+          outputDirectory,
+        )
+        if (!published)
+          return {
+            status: 'unknown',
+            reason: 'The manifest could not be read.',
+          }
+        return {
+          status: published.freshness.status,
+          reason: published.freshness.reason,
+          isAdditionUnchecked: published.freshness.addedFilesUnchecked === true,
+        }
+      },
+      findWatchedFolder: findNearestExistingAncestor,
+      onRunChange: (listener) => wikiUpdateRun.onDidChange(listener),
+      tellPublished: (outputLabel) =>
+        showWikiActionNotice(
+          'information',
+          `An LLM Wiki was published in ${outputLabel}.`,
+          [OPEN_WIKI_IN_BROWSER_ACTION],
+        ),
+      recordFailure: (message, cause) => {
+        try {
+          output?.error(`${message}: ${thrownMessage(cause)}`)
+        } catch {
+          // A disposed channel has nowhere to write.
+        }
+      },
+    })
+    context.subscriptions.push(
+      { dispose: () => llmWikiView.dispose() },
+      ...registerLlmWikiCommands({
+        editor: vscode,
+        register: registerCommand,
+        showNotice,
+        view: llmWikiView,
+        cancelRun: cancelWikiRun,
+        findOutputDirectory: async () => (await wikiLocation()).outputDirectory,
+      }),
+    )
+  }
   // Register lazy readers before restored captured documents or contributed views request their providers.
   workspace()
   repository()

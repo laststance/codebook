@@ -3,7 +3,7 @@
   "displayName": "codebook",
   "description": "Connect an external agent to source-grounded codebase studies.",
   "publisher": "laststance",
-  "version": "0.2.45",
+  "version": "0.2.46",
   "private": true,
   "engines": {
     "vscode": "^1.120.0",
@@ -168,11 +168,15 @@
       },
       {
         "command": "codebook.generateDeepWiki",
-        "title": "Codebook: Generate LLM Wiki"
+        "title": "Codebook: Generate LLM Wiki",
+        "shortTitle": "Try again",
+        "icon": "$(play)"
       },
       {
         "command": "codebook.updateDeepWiki",
-        "title": "Codebook: Update LLM Wiki"
+        "title": "Codebook: Update LLM Wiki",
+        "shortTitle": "Update LLM Wiki",
+        "icon": "$(cloud-download)"
       },
       {
         "command": "codebook.cancelWikiRun",
@@ -180,7 +184,9 @@
       },
       {
         "command": "codebook.showWikiOutput",
-        "title": "Codebook: Show LLM Wiki Output"
+        "title": "Codebook: Show LLM Wiki Output",
+        "shortTitle": "Show Output",
+        "icon": "$(output)"
       },
       {
         "command": "codebook.closeRepositoryWiki",
@@ -203,6 +209,58 @@
         "command": "codebook.moveLearningSummary",
         "title": "Codebook: Move Learning Summary…",
         "icon": "$(move)"
+      },
+      {
+        "command": "codebook.refreshLlmWiki",
+        "title": "Codebook: Refresh LLM Wiki",
+        "shortTitle": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "codebook.showLlmWikiAttention",
+        "title": "Codebook: Show LLM Wiki Details"
+      },
+      {
+        "command": "codebook.copyWikiRecoveryRequest",
+        "title": "Codebook: Copy LLM Wiki Recovery Request",
+        "shortTitle": "Copy recovery request",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "codebook.revealWikiFolder",
+        "title": "Codebook: Reveal LLM Wiki Folder",
+        "shortTitle": "Reveal Wiki Folder",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "codebook.llmWiki.stopWatching",
+        "title": "Stop watching",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "codebook.llmWiki.cancelRun",
+        "title": "Cancel",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "codebook.llmWiki.openChat",
+        "title": "Open Chat",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "codebook.llmWiki.changeLocation",
+        "title": "Change location",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "codebook.llmWiki.openFolder",
+        "title": "Open Folder",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "codebook.llmWiki.manageTrust",
+        "title": "Manage Workspace Trust",
+        "icon": "$(shield)"
       }
     ],
     "configuration": {
@@ -246,7 +304,7 @@
         {
           "id": "codebookLearning",
           "title": "Learning summary",
-          "icon": "src/assets/book.svg"
+          "icon": "src/assets/learning.svg"
         }
       ],
       "panel": [
@@ -262,6 +320,10 @@
         {
           "id": "codebook.repositoryWiki",
           "name": "Repository Wiki"
+        },
+        {
+          "id": "codebook.llmWiki",
+          "name": "LLM Wiki"
         },
         {
           "id": "codebook.learningOutline",
@@ -285,6 +347,16 @@
     },
     "viewsWelcome": [
       {
+        "view": "codebook.llmWiki",
+        "when": "codebook.llmWiki.state == none && codebook.host == vscode",
+        "contents": "Explore this project through source-linked chapters, diagrams and questions, written by your editor's AI.\n[Generate LLM Wiki](command:codebook.generateDeepWiki)\nIt runs in a new Copilot Chat session and uses your chat plan. The chat asks you to approve its commands and may ask you to Continue; keep the Chat view open.\nThe Wiki is written to the folder the setting codebook.wikiOutputDirectory names (default .codebook/wiki). [Change location](command:workbench.action.openSettings?%5B%22%40id%3Acodebook.wikiOutputDirectory%22%5D)"
+      },
+      {
+        "view": "codebook.llmWiki",
+        "when": "codebook.llmWiki.state == none && codebook.host == cursor",
+        "contents": "Explore this project through source-linked chapters, diagrams and questions, written by your editor's AI.\n[Generate LLM Wiki](command:codebook.generateDeepWiki)\nIt runs through Cursor's agent CLI (cursor-agent), uses your Cursor plan and can take several minutes. You can keep working.\nThe Wiki is written to the folder the setting codebook.wikiOutputDirectory names (default .codebook/wiki). [Change location](command:workbench.action.openSettings?%5B%22%40id%3Acodebook.wikiOutputDirectory%22%5D)"
+      },
+      {
         "view": "codebook.learningOutline",
         "contents": "Connect the application screen with its actual code.\n[Open Study workspace](command:codebook.openStudyWorkspace)"
       }
@@ -300,12 +372,179 @@
           "command": "codebook.moveLearningSummary",
           "when": "view == codebook.learningSummary && codebook.learningSummaryMovable",
           "group": "navigation"
+        },
+        {
+          "command": "codebook.refreshLlmWiki",
+          "when": "view == codebook.llmWiki",
+          "group": "navigation"
         }
       ],
       "commandPalette": [
         {
           "command": "codebook.moveLearningSummary",
           "when": "codebook.learningSummaryMovable"
+        },
+        {
+          "command": "codebook.refreshLlmWiki",
+          "when": "codebook.llmWiki.state"
+        },
+        {
+          "command": "codebook.copyWikiRecoveryRequest",
+          "when": "codebook.llmWiki.state"
+        },
+        {
+          "command": "codebook.revealWikiFolder",
+          "when": "codebook.llmWiki.state"
+        },
+        {
+          "command": "codebook.showLlmWikiAttention",
+          "when": "false"
+        },
+        {
+          "command": "codebook.llmWiki.stopWatching",
+          "when": "false"
+        },
+        {
+          "command": "codebook.llmWiki.cancelRun",
+          "when": "false"
+        },
+        {
+          "command": "codebook.llmWiki.openChat",
+          "when": "false"
+        },
+        {
+          "command": "codebook.llmWiki.changeLocation",
+          "when": "false"
+        },
+        {
+          "command": "codebook.llmWiki.openFolder",
+          "when": "false"
+        },
+        {
+          "command": "codebook.llmWiki.manageTrust",
+          "when": "false"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "codebook.updateDeepWiki",
+          "when": "view == codebook.llmWiki && viewItem =~ /\\[update\\]/",
+          "group": "inline@0"
+        },
+        {
+          "command": "codebook.updateDeepWiki",
+          "when": "view == codebook.llmWiki && viewItem =~ /\\[update\\]/",
+          "group": "llmWiki@0"
+        },
+        {
+          "command": "codebook.llmWiki.stopWatching",
+          "when": "view == codebook.llmWiki && viewItem =~ /\\[stop-watching\\]/",
+          "group": "inline@1"
+        },
+        {
+          "command": "codebook.llmWiki.stopWatching",
+          "when": "view == codebook.llmWiki && viewItem =~ /\\[stop-watching\\]/",
+          "group": "llmWiki@1"
+        },
+        {
+          "command": "codebook.llmWiki.cancelRun",
+          "when": "view == codebook.llmWiki && viewItem =~ /\\[cancel-run\\]/",
+          "group": "inline@2"
+        },
+        {
+          "command": "codebook.llmWiki.cancelRun",
+          "when": "view == codebook.llmWiki && viewItem =~ /\\[cancel-run\\]/",
+          "group": "llmWiki@2"
+        },
+        {
+          "command": "codebook.llmWiki.openChat",
+          "when": "view == codebook.llmWiki && viewItem =~ /\\[open-chat\\]/",
+          "group": "inline@3"
+        },
+        {
+          "command": "codebook.llmWiki.openChat",
+          "when": "view == codebook.llmWiki && viewItem =~ /\\[open-chat\\]/",
+          "group": "llmWiki@3"
+        },
+        {
+          "command": "codebook.showWikiOutput",
+          "when": "view == codebook.llmWiki && viewItem =~ /\\[show-output\\]/",
+          "group": "inline@4"
+        },
+        {
+          "command": "codebook.showWikiOutput",
+          "when": "view == codebook.llmWiki && viewItem =~ /\\[show-output\\]/",
+          "group": "llmWiki@4"
+        },
+        {
+          "command": "codebook.generateDeepWiki",
+          "when": "view == codebook.llmWiki && viewItem =~ /\\[try-again\\]/",
+          "group": "inline@5"
+        },
+        {
+          "command": "codebook.generateDeepWiki",
+          "when": "view == codebook.llmWiki && viewItem =~ /\\[try-again\\]/",
+          "group": "llmWiki@5"
+        },
+        {
+          "command": "codebook.llmWiki.changeLocation",
+          "when": "view == codebook.llmWiki && viewItem =~ /\\[change-location\\]/",
+          "group": "inline@6"
+        },
+        {
+          "command": "codebook.llmWiki.changeLocation",
+          "when": "view == codebook.llmWiki && viewItem =~ /\\[change-location\\]/",
+          "group": "llmWiki@6"
+        },
+        {
+          "command": "codebook.copyWikiRecoveryRequest",
+          "when": "view == codebook.llmWiki && viewItem =~ /\\[copy-recovery\\]/",
+          "group": "inline@7"
+        },
+        {
+          "command": "codebook.copyWikiRecoveryRequest",
+          "when": "view == codebook.llmWiki && viewItem =~ /\\[copy-recovery\\]/",
+          "group": "llmWiki@7"
+        },
+        {
+          "command": "codebook.revealWikiFolder",
+          "when": "view == codebook.llmWiki && viewItem =~ /\\[reveal-folder\\]/",
+          "group": "inline@8"
+        },
+        {
+          "command": "codebook.revealWikiFolder",
+          "when": "view == codebook.llmWiki && viewItem =~ /\\[reveal-folder\\]/",
+          "group": "llmWiki@8"
+        },
+        {
+          "command": "codebook.refreshLlmWiki",
+          "when": "view == codebook.llmWiki && viewItem =~ /\\[refresh\\]/",
+          "group": "inline@9"
+        },
+        {
+          "command": "codebook.refreshLlmWiki",
+          "when": "view == codebook.llmWiki && viewItem =~ /\\[refresh\\]/",
+          "group": "llmWiki@9"
+        },
+        {
+          "command": "codebook.llmWiki.openFolder",
+          "when": "view == codebook.llmWiki && viewItem =~ /\\[open-folder\\]/",
+          "group": "inline@10"
+        },
+        {
+          "command": "codebook.llmWiki.openFolder",
+          "when": "view == codebook.llmWiki && viewItem =~ /\\[open-folder\\]/",
+          "group": "llmWiki@10"
+        },
+        {
+          "command": "codebook.llmWiki.manageTrust",
+          "when": "view == codebook.llmWiki && viewItem =~ /\\[manage-trust\\]/",
+          "group": "inline@11"
+        },
+        {
+          "command": "codebook.llmWiki.manageTrust",
+          "when": "view == codebook.llmWiki && viewItem =~ /\\[manage-trust\\]/",
+          "group": "llmWiki@11"
         }
       ]
     }

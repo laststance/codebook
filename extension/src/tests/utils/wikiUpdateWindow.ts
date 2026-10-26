@@ -13,6 +13,7 @@ import {
 } from '../../utils/inspectDeepWikiFreshness'
 import { listWikiCandidates } from '../../utils/listWikiCandidates'
 import { PREPARED_LOCK_SUFFIX } from '../../utils/preparedLockSuffix'
+import { readWikiPublicationIdentity } from '../../utils/readWikiPublicationIdentity'
 import { readWikiPublishToken } from '../../utils/readWikiPublishToken'
 import { readWikiWatchStamp } from '../../utils/readWikiWatchStamp'
 import { startWikiChatUpdate } from '../../utils/startWikiChatUpdate'
@@ -24,6 +25,11 @@ import { keepLocalAddress, parseFakeUri } from './fakeEditorAddresses'
 import { createFakeFileWatching, FakeRelativePattern } from './fakeFileWatching'
 import { listenTo } from './listenTo'
 import { loadModule } from './loadModule'
+
+/** How often an opening window looks whether the LLM Wiki view has shown its first read. */
+const FIRST_VIEW_READ_POLL_MS = 5
+/** How long an opening window waits for the LLM Wiki view's first read before the test fails with that cause. */
+const FIRST_VIEW_READ_LIMIT_MS = 10_000
 
 /** The Cancel of one run the window showed: the Cancel button of a progress notification (a Cursor run), or a press on the status bar entry that watches a VS Code update. */
 export type CancellableProgress = {
@@ -44,6 +50,28 @@ type FakeStatusBarEntry = {
   show(): void
   hide(): void
   dispose(): void
+}
+
+/** One row of the LLM Wiki view as the editor would draw it. */
+export type FakeLlmWikiRow = {
+  id: string
+  label: string
+  description?: string
+  tooltip?: string
+  iconId?: string
+  command?: { command: string; arguments?: unknown[] }
+  contextValue?: string
+  /** The accessible name the editor reads for the row. */
+  accessibleName?: string
+}
+
+/** The LLM Wiki view as the fake editor holds it: its rows, its message, its context keys and how often it fired a change. */
+export type FakeLlmWikiView = {
+  rows(): FakeLlmWikiRow[]
+  message(): string | undefined
+  contextKeys: Record<string, unknown>
+  treeChangeCount(): number
+  setVisible(isVisible: boolean): void
 }
 
 type UriHandler = (uri: { path: string; query: string }) => Promise<void>
@@ -67,7 +95,7 @@ type NumericConstantName = {
     : never
 }[keyof typeof constants]
 
-/** An awaited step of an update that a test can keep open: the freshness inspection among the start checks, VS Code's chat command that carries the request, one listing of the candidates (the next listing after `hold` is kept open once it has read the folder; later ones pass), the wait of the start check before its second look at a publish journal written a moment ago (held, it lasts until the release and no real time), a read of the publish token (the start checks read it and so does the end of a run, so a hold set after the start keeps the end open), or the change of the run's marker at its end (its removal or its turn into a reservation: held, the run's end is already recorded and told, and the run waits there), or the write of the reservation that turn puts beside the marker (held, the change holds the claim on the marker while it waits, as a slow disk holds it), or the moment after a start's claim on the marker answered and before the start reads the answer (`claim-answer`). */
+/** An awaited step of an update that a test can keep open: the freshness inspection among the start checks, VS Code's chat command that carries the request, one listing of the candidates (the next listing after `hold` is kept open once it has read the folder; later ones pass), the wait of the start check before its second look at a publish journal written a moment ago (held, it lasts until the release and no real time), a read of the publish token (the start checks read it and so does the end of a run, so a hold set after the start keeps the end open), or the change of the run's marker at its end (its removal or its turn into a reservation: held, the run's end is already recorded and told, and the run waits there), or the write of the reservation that turn puts beside the marker (held, the change holds the claim on the marker while it waits, as a slow disk holds it), or the moment after a start's claim on the marker answered and before the start reads the answer (`claim-answer`), or a read of the publication identity (the LLM Wiki view reads it after the manifest, so a hold keeps a read open between the two). */
 export type HeldUpdateStep =
   | 'freshness-inspection'
   | 'chat-open'
@@ -77,6 +105,8 @@ export type HeldUpdateStep =
   | 'marker-change'
   | 'marker-write'
   | 'claim-answer'
+  | 'start-block'
+  | 'publication-read'
 
 /**
  * Opens an editor window (the real extension with a stubbed `vscode`) on a project whose Wiki already exists, and records everything the learner would see of an update.
@@ -161,9 +191,21 @@ export async function openWikiUpdateWindow(options: {
     message: string,
     choices: string[],
   ) => string | undefined
+  /** Whether the editor trusts the folder; true when omitted. */
+  trusted?: boolean
+  /** Opens the window with no folder. */
+  noFolder?: boolean
+  /** Keeps these steps open from the window's activation on, so a test sees the state before the first read ends; `hold(step)` then returns the same hold. */
+  holdAtOpen?: HeldUpdateStep[]
+  /** Commands the editor lists besides the chat's (for example the id of its manage-trust command). */
+  extraEditorCommands?: string[]
+  /** Makes the editor refuse the file watcher of the LLM Wiki view with this message. */
+  wikiWatcherFails?: string
 }): Promise<{
   chatRequests: Array<{ name: string; query: string }>
   executedCommands: string[]
+  /** Every editor command the extension ran, in order, with its first argument (a `Uri` is kept as given, so a test reads its `fsPath`). */
+  executedCommandCalls: Array<{ name: string; argument: unknown }>
   notices: string[]
   warnings: string[]
   errors: string[]
@@ -176,14 +218,36 @@ export async function openWikiUpdateWindow(options: {
   skillCalls: string[]
   /** Every line the extension wrote to Output › Codebook, as `info: …` or `error: …`. */
   outputLines: string[]
-  /** Runs one of the extension's registered commands, as the Command Palette does. */
-  runCommand(name: string): Promise<void>
+  /** Runs one of the extension's registered commands with the arguments a menu or a row passes, as the Command Palette does. */
+  runCommand(name: string, ...args: unknown[]): Promise<void>
+  /** What the editor shows of the LLM Wiki view. */
+  llmWiki: FakeLlmWikiView
+  /** Reports a file event the way the editor's watchers do. */
+  reportFileEvent(
+    kind: 'change' | 'create' | 'delete',
+    fsPath: string,
+    reportedAs?: string,
+  ): void
+  /** Says how many file watchers of the extension are alive. */
+  liveWatcherCount(): number
+  /** The patterns every file watcher of the extension was created with. */
+  watchedPatterns(): Array<{ base: string; pattern: string }>
+  /** What the extension copied to the clipboard. */
+  clipboard: string[]
+  /** Changes whether the editor trusts the folder; trust is granted during a session, never revoked. */
+  grantTrust(): void
+  /** Closes the folder: the window has none from now on. */
+  closeFolder(): void
+  /** Opens the folder again after {@link closeFolder}, as the learner restores it. */
+  reopenFolder(): void
   visibleStatusBarTexts(): string[]
   looks: {
     candidateListings: number
     stampReads: number
     stampReadsDone: number
     markerClaims: number
+    /** How often the extension read the publish token: once per read of the LLM Wiki view's state, among the start checks' reads. */
+    publishTokenReads: number
   }
   markerChanges: WikiMarkerChange[]
   openWorkspace(nextProjectRoot: string): void
@@ -216,6 +280,7 @@ export async function openWikiUpdateWindow(options: {
   let publishTokenReadFailure = options.publishTokenReadFails
   const chatRequests: Array<{ name: string; query: string }> = []
   const executedCommands: string[] = []
+  const executedCommandCalls: Array<{ name: string; argument: unknown }> = []
   const notices: string[] = []
   const warnings: string[] = []
   const errors: string[] = []
@@ -252,6 +317,7 @@ export async function openWikiUpdateWindow(options: {
     stampReads: 0,
     stampReadsDone: 0,
     markerClaims: 0,
+    publishTokenReads: 0,
   }
   const markerChanges: WikiMarkerChange[] = []
   /** Records one change of this window's marker, and what it answered once it settled. */
@@ -272,11 +338,74 @@ export async function openWikiUpdateWindow(options: {
       },
     )
   }
-  const commands = new Map<string, () => Promise<void>>()
+  const commands = new Map<string, (...args: unknown[]) => Promise<void>>()
+  const fileWatching = createFakeFileWatching()
+  const clipboard: string[] = []
+  const contextKeys: Record<string, unknown> = {}
+  const configurationListeners: Array<
+    (event: { affectsConfiguration: (id: string) => boolean }) => void
+  > = []
+  const trustListeners: Array<() => void> = []
+  let isTrusted = options.trusted ?? true
+  let isFolderOpen = !options.noFolder
+  let treeProvider:
+    | {
+        getChildren(): string[]
+        getTreeItem(id: string): Record<string, unknown>
+        onDidChangeTreeData(listener: () => void): { dispose(): void }
+      }
+    | undefined
+  let treeMessage: string | undefined
+  let treeChangeCount = 0
+  const visibilityListeners: Array<(event: { visible: boolean }) => void> = []
+  const holdControls = new Map<
+    HeldUpdateStep,
+    { started: Promise<void>; release(): void }
+  >()
   const holds = new Map<
     HeldUpdateStep,
     { reached(): void; released: Promise<void> }
   >()
+  /** Makes a hold on a step, or returns the one already made, for `hold()` and `holdAtOpen`. */
+  const makeHold = (
+    step: HeldUpdateStep,
+  ): { started: Promise<void>; release(): void } => {
+    const existing = holdControls.get(step)
+    if (existing) return existing
+    let reached = (): void => {}
+    let release = (): void => {}
+    const started = new Promise<void>((resolveStarted) => {
+      reached = resolveStarted
+    })
+    const released = new Promise<void>((resolveReleased) => {
+      release = resolveReleased
+    })
+    holds.set(step, { reached, released })
+    const controls = {
+      started,
+      release(): void {
+        holds.delete(step)
+        holdControls.delete(step)
+        release()
+      },
+    }
+    holdControls.set(step, controls)
+    return controls
+  }
+  for (const step of options.holdAtOpen ?? []) makeHold(step)
+  /** Waits until the LLM Wiki view has shown its first read: its state key no longer reads `loading` (an editor without the view never sets it). */
+  const untilFirstViewRead = async (): Promise<void> => {
+    const deadline = Date.now() + FIRST_VIEW_READ_LIMIT_MS
+    while (
+      contextKeys[constants.LLM_WIKI_STATE_CONTEXT_KEY] === 'loading' &&
+      Date.now() < deadline
+    )
+      await sleepFor(FIRST_VIEW_READ_POLL_MS)
+    if (contextKeys[constants.LLM_WIKI_STATE_CONTEXT_KEY] === 'loading')
+      throw new Error(
+        `The LLM Wiki view did not show its first read within ${FIRST_VIEW_READ_LIMIT_MS} ms.`,
+      )
+  }
   /** Waits at a step a test holds open; a step nobody holds passes at once. */
   const passHold = async (step: HeldUpdateStep): Promise<void> => {
     const hold = holds.get(step)
@@ -372,7 +501,10 @@ export async function openWikiUpdateWindow(options: {
         StatusBarAlignment: { Left: 1, Right: 2 },
         RelativePattern: FakeRelativePattern,
         commands: {
-          registerCommand(name: string, action: () => Promise<void>) {
+          registerCommand(
+            name: string,
+            action: (...args: unknown[]) => Promise<void>,
+          ) {
             commands.set(name, action)
             return { dispose(): void {} }
           },
@@ -383,10 +515,20 @@ export async function openWikiUpdateWindow(options: {
               'workbench.action.chat.newChat',
               'workbench.action.chat.cancel',
               'workbench.action.chat.removeAllPendingRequests',
+              ...(options.extraEditorCommands ?? []),
             ].filter(
               (command) => !options.missingEditorCommands?.includes(command),
             ),
-          executeCommand: async (name: string, argument?: unknown) => {
+          executeCommand: async (
+            name: string,
+            argument?: unknown,
+            value?: unknown,
+          ) => {
+            // A context key is the editor's own bookkeeping, not a command the learner ran.
+            if (name === 'setContext') {
+              contextKeys[String(argument)] = value
+              return undefined
+            }
             // Only the chat command that carries a query is the request; without one it reveals the chat.
             const query =
               typeof argument === 'object' &&
@@ -398,6 +540,7 @@ export async function openWikiUpdateWindow(options: {
             executedCommands.push(
               query === undefined ? name : `${name} with the update request`,
             )
+            executedCommandCalls.push({ name, argument })
             if (
               name === 'codebook.openDeepWiki' &&
               options.openWikiFails !== undefined
@@ -424,6 +567,21 @@ export async function openWikiUpdateWindow(options: {
         workspace: {
           getConfiguration: () => ({ get: () => outputSetting }),
           onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+          onDidChangeConfiguration: (
+            listener: (event: {
+              affectsConfiguration: (id: string) => boolean
+            }) => void,
+          ) => listenTo(configurationListeners, listener),
+          onDidGrantWorkspaceTrust: (listener: () => void) =>
+            listenTo(trustListeners, listener),
+          get isTrusted() {
+            return isTrusted
+          },
+          get workspaceFolders() {
+            return isFolderOpen
+              ? [{ uri: { scheme: 'file', fsPath: openedWorkspace } }]
+              : undefined
+          },
           onDidOpenTextDocument: (
             listener: (document: FakeTextDocument) => void,
           ) => {
@@ -432,15 +590,56 @@ export async function openWikiUpdateWindow(options: {
             return listenTo(documentOpenListeners, listener)
           },
           // The opened Wiki watches the project's files; these tests report no file event.
-          createFileSystemWatcher:
-            createFakeFileWatching().createFileSystemWatcher,
+          createFileSystemWatcher: (pattern: FakeRelativePattern) => {
+            // The LLM Wiki view's own watcher can be refused; the opened Wiki's watches the project.
+            if (
+              options.wikiWatcherFails !== undefined &&
+              pattern.pattern !== '**'
+            )
+              throw new Error(options.wikiWatcherFails)
+            return fileWatching.createFileSystemWatcher(pattern)
+          },
         },
+        EventEmitter: class {
+          readonly #listeners: Array<(value: unknown) => void> = []
+          readonly event = (listener: (value: unknown) => void) =>
+            listenTo(this.#listeners, listener)
+          fire(value?: unknown): void {
+            for (const listener of [...this.#listeners]) listener(value)
+          }
+          dispose(): void {}
+        },
+        TreeItem: class {
+          id?: string
+          description?: string
+          tooltip?: string
+          accessibilityInformation?: { label: string }
+          iconPath?: unknown
+          contextValue?: string
+          command?: unknown
+          constructor(
+            readonly label: string,
+            readonly collapsibleState?: number,
+          ) {}
+        },
+        ThemeIcon: class {
+          constructor(readonly id: string) {}
+        },
+        TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
         env: {
           ...(options.cursor ? { appName: 'Cursor' } : {}),
           asExternalUri: keepLocalAddress,
           openExternal: async () => true,
+          clipboard: {
+            writeText: async (text: string) => {
+              clipboard.push(text)
+            },
+          },
         },
-        Uri: { parse: parseFakeUri },
+        Uri: {
+          parse: parseFakeUri,
+          file: (fsPath: string) => ({ scheme: 'file', fsPath }),
+        },
         window: {
           registerUriHandler: (handler: { handleUri: UriHandler }) => {
             handleUri = handler.handleUri
@@ -484,6 +683,29 @@ export async function openWikiUpdateWindow(options: {
           onDidStartTerminalShellExecution: (
             listener: (event: FakeShellExecution) => void,
           ) => listenTo(terminalCommandListeners, listener),
+          createTreeView: (
+            _id: string,
+            treeOptions: {
+              treeDataProvider: NonNullable<typeof treeProvider>
+            },
+          ) => {
+            treeProvider = treeOptions.treeDataProvider
+            treeProvider.onDidChangeTreeData(() => {
+              treeChangeCount += 1
+            })
+            return {
+              get message() {
+                return treeMessage
+              },
+              set message(next: string | undefined) {
+                treeMessage = next
+              },
+              onDidChangeVisibility: (
+                listener: (event: { visible: boolean }) => void,
+              ) => listenTo(visibilityListeners, listener),
+              dispose(): void {},
+            }
+          },
           // A real editor always has both, so every test runs the product's own way of showing a run; only collecting their Cancel is optional.
           withProgress,
           createStatusBarItem,
@@ -507,16 +729,18 @@ export async function openWikiUpdateWindow(options: {
         : {}),
       // The real start check runs; a test that holds its wait at a fresh journal decides when the second look comes, and otherwise the real time passes.
       './utils/findWikiUpdateStartBlock': {
-        findWikiUpdateStartBlock: (
+        findWikiUpdateStartBlock: async (
           outputDirectory: string,
           projectRoot: string,
-        ) =>
-          findWikiUpdateStartBlock(outputDirectory, projectRoot, {
+        ) => {
+          await passHold('start-block')
+          return findWikiUpdateStartBlock(outputDirectory, projectRoot, {
             wait: async (delayMs: number) => {
               if (holds.has('journal-wait')) await passHold('journal-wait')
               else await sleepFor(delayMs)
             },
-          }),
+          })
+        },
       },
       // The real listing runs; the window only counts how often a look parsed the candidates, and can keep one listing open after it has read the folder.
       './utils/listWikiCandidates': {
@@ -568,10 +792,17 @@ export async function openWikiUpdateWindow(options: {
       },
       './utils/readWikiPublishToken': {
         readWikiPublishToken: async (outputDirectory: string) => {
+          looks.publishTokenReads += 1
           if (publishTokenReadFailure !== undefined)
             throw new Error(publishTokenReadFailure)
           await passHold('publish-token-read')
           return readWikiPublishToken(outputDirectory)
+        },
+      },
+      './utils/readWikiPublicationIdentity': {
+        readWikiPublicationIdentity: async (outputDirectory: string) => {
+          await passHold('publication-read')
+          return readWikiPublicationIdentity(outputDirectory)
         },
       },
       './deepWikiReader': {
@@ -647,10 +878,11 @@ export async function openWikiUpdateWindow(options: {
       },
     },
   )
+  const contextSubscriptions: Array<{ dispose(): unknown }> = []
   boundary.activate({
     extensionPath: resolve(__dirname, '../../..'),
     globalStorageUri: { fsPath: projectRoot },
-    subscriptions: [],
+    subscriptions: contextSubscriptions,
     workspaceState: {
       get: (key: string) => workspaceState.get(key),
       update: async (key: string, value: unknown) => {
@@ -667,9 +899,12 @@ export async function openWikiUpdateWindow(options: {
   // The reader serves the update state, so the browser tab must be open first.
   if (options.openReader ?? true)
     await commands.get('codebook.openDeepWiki')?.()
+  // The LLM Wiki view reads the Wiki at activation, and once more after its watcher stands. A test arranges its holds on the Wiki's reads only after those, so the view never takes a hold meant for a run; a test that holds a step at open wants the loading state and waits itself.
+  if ((options.holdAtOpen ?? []).length === 0) await untilFirstViewRead()
   return {
     chatRequests,
     executedCommands,
+    executedCommandCalls,
     notices,
     warnings,
     errors,
@@ -680,10 +915,55 @@ export async function openWikiUpdateWindow(options: {
     statusBarTexts,
     skillCalls,
     outputLines,
-    async runCommand(name: string): Promise<void> {
+    async runCommand(name: string, ...args: unknown[]): Promise<void> {
       const command = commands.get(name)
       if (!command) throw new Error(`The window registered no ${name}.`)
-      await command()
+      await command(...args)
+    },
+    llmWiki: {
+      rows: () =>
+        (treeProvider?.getChildren() ?? []).map((id) => {
+          const item = treeProvider?.getTreeItem(id) ?? {}
+          const icon = item.iconPath
+          return {
+            id,
+            label: String(item.label),
+            description: item.description as string | undefined,
+            tooltip: item.tooltip as string | undefined,
+            iconId:
+              typeof icon === 'object' && icon !== null && 'id' in icon
+                ? String(icon.id)
+                : undefined,
+            command: item.command as FakeLlmWikiRow['command'],
+            contextValue: item.contextValue as string | undefined,
+            accessibleName: (
+              item.accessibilityInformation as { label: string } | undefined
+            )?.label,
+          }
+        }),
+      message: () => treeMessage,
+      contextKeys,
+      treeChangeCount: () => treeChangeCount,
+      setVisible(isVisible: boolean): void {
+        for (const listener of [...visibilityListeners])
+          listener({ visible: isVisible })
+      },
+    },
+    reportFileEvent: (kind, fsPath, reportedAs): void =>
+      fileWatching.report(kind, fsPath, reportedAs),
+    liveWatcherCount: () => fileWatching.liveWatcherCount(),
+    watchedPatterns: () =>
+      fileWatching.watched.map(({ base, pattern }) => ({ base, pattern })),
+    clipboard,
+    grantTrust(): void {
+      isTrusted = true
+      for (const listener of [...trustListeners]) listener()
+    },
+    closeFolder(): void {
+      isFolderOpen = false
+    },
+    reopenFolder(): void {
+      isFolderOpen = true
     },
     visibleStatusBarTexts: (): string[] =>
       statusBarEntries
@@ -728,6 +1008,10 @@ export async function openWikiUpdateWindow(options: {
     },
     setOutputSetting(value: string): void {
       outputSetting = value
+      for (const listener of [...configurationListeners])
+        listener({
+          affectsConfiguration: (id) => id === 'codebook.wikiOutputDirectory',
+        })
     },
     setFreshness(next: WikiFreshness): void {
       freshness = next
@@ -735,24 +1019,11 @@ export async function openWikiUpdateWindow(options: {
     breakPublishTokenRead(message: string | undefined): void {
       publishTokenReadFailure = message
     },
-    hold(step: HeldUpdateStep): { started: Promise<void>; release(): void } {
-      let reached = (): void => {}
-      let release = (): void => {}
-      const started = new Promise<void>((resolveStarted) => {
-        reached = resolveStarted
-      })
-      const released = new Promise<void>((resolveReleased) => {
-        release = resolveReleased
-      })
-      holds.set(step, { reached, released })
-      return {
-        started,
-        release(): void {
-          holds.delete(step)
-          release()
-        },
-      }
+    hold: makeHold,
+    close: async (): Promise<void> => {
+      await boundary.deactivate()
+      // The editor disposes the extension's subscriptions after deactivate; the LLM Wiki view's watcher and timers end there.
+      for (const subscription of contextSubscriptions) subscription.dispose()
     },
-    close: (): Promise<void> => boundary.deactivate(),
   }
 }

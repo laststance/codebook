@@ -1,9 +1,9 @@
+import { OPEN_CHAT_COMMAND } from '../constants'
+
 import { chatCommandReturnsInTime } from './chatCommandReturnsInTime'
 import { sleepUntilAborted } from './sleepUntilAborted'
 import type { BoundedWait } from './waitWithin'
 
-/** VS Code's command that reveals the chat a request would go to (the chat focused last when it can be shown, the Chat view otherwise) and makes it the chat focused last; with a query it sends the query as a request into that chat and, with `blockOnResponse`, returns when the response completes or waits for a confirmation. */
-const OPEN_CHAT_COMMAND = 'workbench.action.chat.open'
 /** VS Code's command "New Chat": the chat focused last gets a new, empty session; the session it showed is kept. {@link describeWikiChatHandOver} looks for it among the editor's commands to say before the press where the request will go. */
 export const NEW_CHAT_COMMAND = 'workbench.action.chat.newChat'
 

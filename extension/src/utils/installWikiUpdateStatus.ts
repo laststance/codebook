@@ -1,3 +1,4 @@
+import type { describeWikiFreshness } from './describeWikiFreshness'
 import type {
   describeWikiUpdate,
   WikiUpdateDescription,
@@ -24,6 +25,8 @@ export type WikiUpdatePageSettings = {
   pagePublication: string | undefined
   /** The one wording shared with the editor notification, embedded next to this function. */
   describeUpdate: typeof describeWikiUpdate
+  /** The one wording of the freshness label shared with the editor's LLM Wiki view, embedded next to this function ({@link describeWikiFreshness}). */
+  describeFreshness: typeof describeWikiFreshness
   /** How often the page asks for the update state while a run is active or awaited (ms). */
   statusPollMs: number
   /** How often the page asks while nothing is running and the tab is visible (ms). */
@@ -69,6 +72,7 @@ export type WikiUpdatePageSettings = {
  *   freshnessRoute: 'api/freshness',
  *   pagePublication: 'dc9d3160…@1837466',
  *   describeUpdate: describeWikiUpdate,
+ *   describeFreshness: describeWikiFreshness,
  *   statusPollMs: 2_000,
  *   idlePollMs: 15_000,
  *   freshnessMinIntervalMs: 5_000,
@@ -334,32 +338,6 @@ export function installWikiUpdateStatus(
     state === 'timed-out' ||
     state === 'conflict'
 
-  /** Words the freshness label of a check that could not decide; {@link noteFreshness} asks for it before it knows which label applies. @param reason - Why the check could not decide; empty when the answer gave none. @returns "Wiki freshness unknown", followed by the reason when there is one, shortened to the rail's limit. @example undecidedFreshnessLabel('The manifest is unreadable.') // => 'Wiki freshness unknown: The manifest is unreadable.' */
-  const undecidedFreshnessLabel = (reason: string): string => {
-    // The label sits above the outline in a narrow rail: a long reason is cut at the last space before the rail's limit and stays whole in the tooltip.
-    const lastSpace = reason.lastIndexOf(' ', settings.reasonLimitChars)
-    const shownReason =
-      reason.length > settings.reasonLimitChars
-        ? reason
-            .slice(0, lastSpace > 0 ? lastSpace : settings.reasonLimitChars)
-            .trimEnd() + '…'
-        : reason
-    return reason
-      ? 'Wiki freshness unknown: ' + shownReason
-      : 'Wiki freshness unknown'
-  }
-  /** Chooses the text of the freshness label for one answer; called by {@link noteFreshness} on every answered or failed check. @param status - The answered status, or undefined when the reader did not answer. @param undecidedLabel - The label of a check that could not decide, from {@link undecidedFreshnessLabel}. @param isAdditionUnchecked - Whether added files were not looked for. @returns The label of a changed source, of a current one (with the note on unchecked additions), or `undecidedLabel` for any other status. @example freshnessLabelText('current', 'Wiki freshness unknown', false) // => 'Wiki source current' */
-  const freshnessLabelText = (
-    status: string | undefined,
-    undecidedLabel: string,
-    isAdditionUnchecked: boolean,
-  ): string => {
-    if (status === 'changed') return 'Source changed · Update available'
-    if (status !== 'current') return undecidedLabel
-    return isAdditionUnchecked
-      ? 'Wiki source current (no Git revision recorded, so added files are not checked)'
-      : 'Wiki source current'
-  }
   /** Takes in what `api/freshness` answered and writes it into the freshness label; called by {@link readFreshness} when its check is answered or fails. @param status - The answered status, or undefined when the reader did not answer. @param reason - Why a check could not decide; empty when the answer gave none. @param isAdditionUnchecked - Whether the project has no Git repository, so added files were not looked for. @returns Nothing; the label, its `data-status` and its tooltip are written when the page has a label. @example noteFreshness('unknown', 'The manifest is unreadable.', false) // the label reads "Wiki freshness unknown: The manifest is unreadable." */
   const noteFreshness = (
     status: string | undefined,
@@ -368,12 +346,12 @@ export function installWikiUpdateStatus(
   ): void => {
     freshness = status
     if (!freshnessLabel) return
-    // A check that could not decide says why in the label itself: a tooltip needs a pointer, and a paragraph cannot take the focus.
-    const undecidedLabel = undecidedFreshnessLabel(reason)
-    freshnessLabel.textContent = freshnessLabelText(
+    // A check that could not decide says why in the label itself: a tooltip needs a pointer, and a paragraph cannot take the focus. The wording is the one the editor's LLM Wiki view shows (describeFreshness).
+    freshnessLabel.textContent = settings.describeFreshness(
       status,
-      undecidedLabel,
+      reason,
       isAdditionUnchecked,
+      settings.reasonLimitChars,
     )
     freshnessLabel.setAttribute('data-status', status ?? 'unknown')
     // The reason of an earlier look must not outlive it.

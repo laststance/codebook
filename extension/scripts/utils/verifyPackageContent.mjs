@@ -14,6 +14,7 @@ export const REQUIRED_PACKAGE_FILES = [
   'dist/wikiPageWorker.js',
   'dist/build.json',
   'src/assets/book.svg',
+  'src/assets/learning.svg',
   'skills/codebook/SKILL.md',
   'skills/codebook/publish-wiki.mjs',
   'skills/codebook/render-wiki.mjs',

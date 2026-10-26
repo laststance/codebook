@@ -8,7 +8,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.8'
-export const EXTENSION_VERSION = '0.2.45'
+export const EXTENSION_VERSION = '0.2.46'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -954,6 +954,93 @@ export const GENERATE_ANYWAY_ACTION = 'Generate anyway'
 export const UPDATE_WIKI_ACTION = 'Update LLM Wiki'
 /** The button of a generation's notices that opens the new Wiki in the browser. */
 export const OPEN_WIKI_IN_BROWSER_ACTION = 'Open in Browser'
+/** How many characters of a commit hash the generation line of the LLM Wiki view's Wiki row shows. */
+export const WIKI_SHORT_REVISION_CHARS = 7
+/** VS Code's command that reveals the chat a request would go to (the chat focused last when it can be shown, the Chat view otherwise) and makes it the chat focused last; with a query it sends the query as a request into that chat and, with `blockOnResponse`, returns when the response completes or waits for a confirmation. Without one it only reveals the chat: the LLM Wiki view's Open Chat action runs it, so a chat that waits for an approval, or never started the skill, is one click away. */
+export const OPEN_CHAT_COMMAND = 'workbench.action.chat.open'
+/** The editor's own command that opens settings, with a setting's id as its argument. */
+export const OPEN_SETTINGS_COMMAND = 'workbench.action.openSettings'
+/** The id of the setting that names the Wiki output folder. */
+export const WIKI_OUTPUT_DIRECTORY_SETTING = 'codebook.wikiOutputDirectory'
+/** The settings search that shows the setting naming the Wiki output folder, the argument of {@link OPEN_SETTINGS_COMMAND}. */
+export const WIKI_OUTPUT_SETTINGS_QUERY = `@id:${WIKI_OUTPUT_DIRECTORY_SETTING}`
+/** The id of the LLM Wiki tree view in the Activity Bar (Cycle 0055 pt2). */
+export const LLM_WIKI_VIEW_ID = 'codebook.llmWiki'
+/** The context key that says what the LLM Wiki view shows, so its welcome content shows in the empty state only: `loading` until the first read ends, `none` when the folder holds no Wiki and no run, `other` for every row. */
+export const LLM_WIKI_STATE_CONTEXT_KEY = 'codebook.llmWiki.state'
+/** The context key that names the editor host (`vscode` or `cursor`), so the welcome content words the runner of the host it runs in. */
+export const CODEBOOK_HOST_CONTEXT_KEY = 'codebook.host'
+/** How long the LLM Wiki view waits after the last event that asks for a read before it reads: events inside this time coalesce into one read, and the last event always reads. */
+export const LLM_WIKI_REFRESH_DEBOUNCE_MS = 1_000
+/** How often the LLM Wiki view reads its state again while a row of a run (this window's, another window's or a stopped watch's reservation) is shown: a marker whose window died leaves no file event. */
+export const LLM_WIKI_POLL_MS = 30_000
+/** The editor's command that sets a context key (`setContext`, key, value). */
+export const SET_CONTEXT_COMMAND = 'setContext'
+/** The editor's command that shows a file or folder in the system's file manager. */
+export const REVEAL_FILE_IN_OS_COMMAND = 'revealFileInOS'
+/** The editor's command that opens its folder dialog. */
+export const OPEN_FOLDER_COMMAND = 'vscode.openFolder'
+/** The command that updates the published LLM Wiki; the Wiki row's Update action and the notices' Update button run it. */
+export const UPDATE_DEEP_WIKI_COMMAND = 'codebook.updateDeepWiki'
+/** The command that opens the published Wiki in the browser; the Wiki row of the LLM Wiki view runs it on click. */
+export const OPEN_DEEP_WIKI_COMMAND = 'codebook.openDeepWiki'
+/** The window id the LLM Wiki view passes when it reads a run marker: one no window has, so this window's own reservation is seen as a stopped watch's too. */
+export const LLM_WIKI_VIEW_WINDOW_ID = '\u0000llm-wiki-view'
+/** The message above the LLM Wiki tree while a VS Code watch is shown: Stop watching ends Codebook's watch only. */
+export const LLM_WIKI_WATCHING_MESSAGE =
+  'Codebook is watching the chat. Stop watching does not stop the chat; stop it in the chat.'
+/** The LLM Wiki view's wrapping message (VS Code) while only a stopped watch's reservation stands: Codebook no longer watches, the chat may still publish. */
+export const LLM_WIKI_RESERVATION_MESSAGE =
+  'Codebook stopped watching the chat, which may still publish this Wiki. To stop it, stop the request in the chat.'
+/** The command of the LLM Wiki view's title bar Refresh action. */
+export const REFRESH_LLM_WIKI_COMMAND = 'codebook.refreshLlmWiki'
+/** The command that a click on the view's attention or last-attempt row runs: it shows the row's full sentence, with Copy details. */
+export const SHOW_LLM_WIKI_ATTENTION_COMMAND = 'codebook.showLlmWikiAttention'
+/** The command that copies the chat request of the publisher's recovery ({@link WIKI_UPDATE_RECOVERY_REQUEST}). */
+export const COPY_WIKI_RECOVERY_REQUEST_COMMAND =
+  'codebook.copyWikiRecoveryRequest'
+/** The command that reveals the Wiki folder in the system's file manager. */
+export const REVEAL_WIKI_FOLDER_COMMAND = 'codebook.revealWikiFolder'
+/** The button of the attention notice that copies its sentence. */
+export const COPY_DETAILS_ACTION = 'Copy details'
+/** The ids of the editor's command that manages workspace trust, in the order Codebook prefers them; the view runs the first one the editor lists (`workbench.trust.manage` is VS Code's own id; vscode-go calls `workbench.action.manageTrust`). Unverified in each host until the native trial. */
+export const MANAGE_WORKSPACE_TRUST_COMMAND_IDS = [
+  'workbench.trust.manage',
+  'workbench.action.manageTrust',
+] as const
+/** What one inline action of an LLM Wiki view row is: the command it runs and the words of its title. The row function names an action by its key, the manifest contributes each command with a menu entry that tests `viewItem` for the key. */
+export const LLM_WIKI_ROW_ACTIONS = {
+  update: { command: UPDATE_DEEP_WIKI_COMMAND, title: 'Update LLM Wiki' },
+  'stop-watching': {
+    command: 'codebook.llmWiki.stopWatching',
+    title: 'Stop watching',
+  },
+  'cancel-run': { command: 'codebook.llmWiki.cancelRun', title: 'Cancel' },
+  'open-chat': { command: 'codebook.llmWiki.openChat', title: 'Open Chat' },
+  'show-output': { command: SHOW_WIKI_OUTPUT_COMMAND, title: 'Show Output' },
+  'try-again': { command: GENERATE_DEEP_WIKI_COMMAND, title: 'Try again' },
+  'change-location': {
+    command: 'codebook.llmWiki.changeLocation',
+    title: 'Change location',
+  },
+  'copy-recovery': {
+    command: COPY_WIKI_RECOVERY_REQUEST_COMMAND,
+    title: 'Copy recovery request',
+  },
+  'reveal-folder': {
+    command: REVEAL_WIKI_FOLDER_COMMAND,
+    title: 'Reveal Wiki Folder',
+  },
+  refresh: { command: REFRESH_LLM_WIKI_COMMAND, title: 'Refresh' },
+  'open-folder': {
+    command: 'codebook.llmWiki.openFolder',
+    title: 'Open Folder',
+  },
+  'manage-trust': {
+    command: 'codebook.llmWiki.manageTrust',
+    title: 'Manage Workspace Trust',
+  },
+} as const
 /** How often the extension looks for a newly published manifest while a Wiki update is watched. */
 export const WIKI_UPDATE_WATCH_POLL_MS = 2_000
 /** How often the reader page asks for the update state while a run is active. */
