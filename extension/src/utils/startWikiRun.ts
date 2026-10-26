@@ -1,7 +1,8 @@
+import type { TakenOverWikiReservation } from './claimWikiUpdateMarker'
 import { describeOutputFolderWithoutWiki } from './describeOutputFolderWithoutWiki'
 import { describeWikiGenerateBlock } from './describeWikiGenerateBlock'
 import type { WikiUpdateStartBlock } from './findWikiUpdateStartBlock'
-import type { WikiRunKind, WikiUpdateOutput } from './wikiUpdateRun'
+import type { WikiUpdateOutput } from './wikiUpdateRun'
 
 /** Another window's running generation or update, a stopped VS Code watch's reservation or an earlier chat's leftover in the way of a new run: the sentence of the refusal and, where the learner may go on anyway, what the override starts. */
 export type WikiRunInTheWay = { reason: string; override?: () => void }
@@ -12,12 +13,13 @@ export type WikiRunMarkerClaim<Holder> =
       release: () => Promise<boolean>
       reserve: (
         watchEndedAtMs: number,
-        reservedRunKind?: WikiRunKind,
+        takenOver?: Pick<
+          TakenOverWikiReservation,
+          'runKind' | 'replacedMarker'
+        >,
       ) => Promise<boolean>
-      /** The end of the stopped watch whose reservation the claim took over; a refused start writes the reservation back with it. */
-      takenOverWatchEndedAtMs?: number
-      /** The kind of the run whose reservation the claim took over, which the written-back reservation keeps (its bound). */
-      takenOverRunKind?: WikiRunKind
+      /** The stopped watch's reservation the claim took over (its end, the kind of its run and its marker); a refused start writes it back as it was ({@link leaveMarker}). */
+      takenOver?: TakenOverWikiReservation
     }
   | { heldBy: Holder }
 
@@ -47,9 +49,9 @@ export type WikiGenerateStartDependencies<Holder> = {
   openLocationSetting: () => Promise<unknown>
   /** Makes the folder that holds the output and its marker, never the output folder itself ({@link placeStorageLock} makes no folder for the marker). */
   makeOutputParent: () => Promise<void>
-  /** Readies the agent once the marker is claimed and no Wiki appeared, so a start that is refused or offers the update writes no skill: in Cursor the managed skill ({@link verifyManagedCursorSkill}, {@link deployCursorSkill}), whose conflict throws and releases the marker; nothing in VS Code. */
+  /** Readies the agent once the marker is claimed and no Wiki appeared, so a start that is refused or offers the update writes no skill: in Cursor the managed skill ({@link verifyManagedCursorSkill}, {@link deployCursorSkill}), whose conflict throws and leaves the marker (removed, or a taken-over reservation written back); nothing in VS Code. */
   prepareAgent: () => Promise<void>
-  /** Leaves the marker of a start that did not go ahead: removes it, or writes a taken-over reservation back and keeps it counted down to its bound, with the bounded retry every change of this window's marker has ({@link claimWikiUpdateMarker}'s answers `true` once nothing is left to change); never rejects. */
+  /** Leaves the marker of a start that did not go ahead: removes it, or writes a taken-over reservation back as it was and keeps it counted down to its bound, with the bounded retry every change of this window's marker has ({@link claimWikiUpdateMarker}'s answers `true` once nothing is left to change); never rejects. */
   leaveMarker: (claim: ClaimedWikiRunMarker) => Promise<void>
   /** Claims the run's marker for a generation that starts at the given time. */
   claimMarker: (startedAtMs: number) => Promise<WikiRunMarkerClaim<Holder>>
@@ -73,41 +75,21 @@ export type WikiGenerateStartDependencies<Holder> = {
 export type WikiGenerateStart = {
   /** The publication identity at the start, `undefined` where no receipt stands; only another one at the end is the generation's publication. */
   publicationAtStart: string | undefined
-  releaseMarker: () => Promise<boolean>
-  reserveMarker: (
-    watchEndedAtMs: number,
-    reservedRunKind?: WikiRunKind,
-  ) => Promise<boolean>
-  /** The end of the stopped watch whose reservation the claim took over, where it did. */
-  takenOverWatchEndedAtMs?: number
-  /** The kind of the run whose reservation the claim took over. */
-  takenOverRunKind?: WikiRunKind
+  /** The run's own marker: its release, its turn into a reservation and the reservation the claim took over, where it did. */
+  claim: ClaimedWikiRunMarker
   startedAtMs: number
   /** Whether the opened folder is in a Git repository; `undefined` when Git could not be asked. */
   hasGitRepository: boolean | undefined
 }
 
 /**
- * Leaves the marker of a start that did not go ahead: it is removed, or, when the claim took a stopped watch's reservation over, written back with the watch's end and kind so that chat keeps its protection ({@link WikiGenerateStartDependencies.leaveMarker}).
- * @param dependencies - The editor window's closures.
- * @param claim - The run's own marker.
- * @example await leaveClaimedMarker(dependencies, claim)
- */
-async function leaveClaimedMarker<Holder>(
-  dependencies: WikiGenerateStartDependencies<Holder>,
-  claim: Exclude<WikiRunMarkerClaim<Holder>, { heldBy: Holder }>,
-): Promise<void> {
-  await dependencies.leaveMarker(claim)
-}
-
-/**
- * Looks for a Wiki once more and readies the agent for a claimed generation, and releases its marker when a step fails, so a start that throws leaves no marker; called by {@link startWikiGenerate} after the claim.
+ * Looks for a Wiki once more and readies the agent for a claimed generation, and leaves its marker when a step fails (removed, or a taken-over reservation written back; {@link WikiGenerateStartDependencies.leaveMarker}), so a start that throws leaves no marker of its own; called by {@link startWikiGenerate} after the claim.
  * Why: the agent is readied only for a start that goes ahead, so a refused start or the update's offer writes no Cursor skill, and a skill in the learner's way never hides the refusal of another window's run; the slower reads were made before the claim, so the marker stands for no run only this briefly (/ship review, Cycle 0055 pt1).
  * @param dependencies - The editor window's closures.
  * @param claim - The run's own marker.
  * @param begun - What the start read before the claim, and when the generation started.
- * @returns The start, or `undefined` after the marker was released for a Wiki that appeared between the first look and the claim (the update is offered).
- * @throws What readying the agent or the look threw (a Cursor skill in the way), after the marker was released.
+ * @returns The start, or `undefined` after the marker was left for a Wiki that appeared between the first look and the claim (the update is offered).
+ * @throws What readying the agent or the look threw (a Cursor skill in the way), after the marker was left.
  * @example await beginClaimedGeneration(dependencies, claim, { publicationAtStart: undefined, hasGitRepository: true, startedAtMs: 1_790_000_000_000 }) // => { publicationAtStart: undefined, … }
  */
 async function beginClaimedGeneration<Holder>(
@@ -121,13 +103,13 @@ async function beginClaimedGeneration<Holder>(
   try {
     // A Wiki that appeared between the first look and the claim is updated, never overwritten.
     if ((await dependencies.readPublishToken()) !== undefined) {
-      await leaveClaimedMarker(dependencies, claim)
+      await dependencies.leaveMarker(claim)
       dependencies.offerUpdate()
       return undefined
     }
     // A folder without a Wiki that appeared around the claim is refused too: the publisher would refuse it after the agent's work (CodeRabbit, PR #133).
     if (await dependencies.hasOutputFolderWithoutWiki()) {
-      await leaveClaimedMarker(dependencies, claim)
+      await dependencies.leaveMarker(claim)
       dependencies.refuse(
         describeOutputFolderWithoutWiki(dependencies.wikiOutput.outputLabel),
       )
@@ -136,14 +118,11 @@ async function beginClaimedGeneration<Holder>(
     await dependencies.prepareAgent()
     return {
       ...begun,
-      releaseMarker: claim.release,
-      reserveMarker: claim.reserve,
-      takenOverWatchEndedAtMs: claim.takenOverWatchEndedAtMs,
-      takenOverRunKind: claim.takenOverRunKind,
+      claim,
     }
   } catch (error) {
     // A start that throws after its claim leaves no marker behind.
-    await leaveClaimedMarker(dependencies, claim)
+    await dependencies.leaveMarker(claim)
     throw error
   }
 }
@@ -190,7 +169,7 @@ async function refusedForBlockOrRun<Holder>(
  * @returns The start with its claimed marker; `undefined` when the start did not go ahead and the learner was told (a refusal, an offer of the update, a dismissed confirmation, Change location).
  * @throws What the path check, the folder, the agent's preparation or the claim threw; the caller tells the learner. No marker is left.
  * @example
- * await startWikiGenerate(dependencies) // => { publicationAtStart: undefined, releaseMarker, reserveMarker, startedAtMs: 1_790_000_000_000, hasGitRepository: true }
+ * await startWikiGenerate(dependencies) // => { publicationAtStart: undefined, claim, startedAtMs: 1_790_000_000_000, hasGitRepository: true }
  */
 export async function startWikiGenerate<Holder>(
   dependencies: WikiGenerateStartDependencies<Holder>,

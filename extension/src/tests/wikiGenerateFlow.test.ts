@@ -1056,18 +1056,18 @@ test('closing a Cursor window while the managed skill is deployed for a generati
   const updating = await openCursorWindow()
   context.after(() => updating.close())
   await publishGeneratedWiki(updating.outputDirectory, updating.projectRoot)
-  const generatePressed = generating.runCommand(GENERATE_COMMAND)
-  const updatePressed = updating.runUpdateCommand()
+  // A closing window ends the skill step, so each press rejects at the close; the handlers stand from the start.
+  const generatePressed = generating
+    .runCommand(GENERATE_COMMAND)
+    .catch(() => undefined)
+  const updatePressed = updating.runUpdateCommand().catch(() => undefined)
   await Promise.all(deploymentsStarted)
 
   // Act: both windows close, then the deployments end.
   await generating.closeWindow()
   await updating.closeWindow()
   for (const endDeployment of heldDeployments) endDeployment()
-  await Promise.all([
-    generatePressed.catch(() => undefined),
-    updatePressed.catch(() => undefined),
-  ])
+  await Promise.all([generatePressed, updatePressed])
 
   // Assert
   assert.deepEqual(

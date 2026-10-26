@@ -3883,3 +3883,48 @@ test('an entry where a prepared claim folder would lie that the look calls a dir
     },
   )
 })
+
+// Value: protects=Cycle 0056 pass 1 RT1, the owner of a reservation a claim took over; fails_when=the claim does not hand out the marker it removed, or a reservation written back with it carries the claiming window's host, process and window instead of the replaced marker's, so the VS Code watch bound no longer applies; no_claim=how the extension registers the written-back reservation (host tests); seam=a reservation written by hand
+test('a reservation taken over by a Cursor claim is written back as the VS Code window’s marker it was', async () => {
+  // Arrange
+  const wiki = await createWikiFolder()
+  const watchEndedAtMs = Date.now() - 1_000
+  const reservation = {
+    pid: process.pid,
+    windowId: 'window-a',
+    host: 'vscode',
+    startedAtMs: watchEndedAtMs - 60_000,
+    runKind: 'generate',
+    watchEndedAtMs,
+  }
+  try {
+    await writeFile(wiki.markerPath, JSON.stringify(reservation))
+    const claim = await claimWikiUpdateMarker(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-b',
+        host: 'cursor',
+        startedAtMs: Date.now(),
+      },
+      AS_THIS_WINDOW,
+    )
+    assert.ok('reserve' in claim)
+    assert.ok(claim.replacedReservation)
+
+    // Act
+    const answer = await claim.reserve(
+      claim.replacedReservation.watchEndedAtMs,
+      claim.replacedReservation,
+    )
+
+    // Assert
+    assert.equal(answer, true)
+    assert.deepEqual(
+      JSON.parse(await readFile(wiki.markerPath, 'utf8')),
+      reservation,
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})

@@ -57,3 +57,20 @@ test('the longest a run lasts adds the chat’s 30 second opening in VS Code, an
     anyRun: 3_330_000,
   })
 })
+
+// Value: protects=Cycle 0056 pass 1 M4, the constant an unreadable marker file counts for; fails_when=LONGEST_WIKI_RUN_MS differs from the longest run over every kind and host (a bound or the chat's opening changed and the hand-listed constant did not); no_claim=where the constant is read (readLiveWikiUpdateMarker tests); seam=none
+test('the longest run any marker can stand for equals the longest of every kind and host', () => {
+  // Act
+  const longestOfEveryRun = Math.max(
+    longestWikiRunMs('generate', 'vscode'),
+    longestWikiRunMs('generate', 'cursor'),
+    longestWikiRunMs('update', 'vscode'),
+    longestWikiRunMs('update', 'cursor'),
+    longestWikiRunMs(undefined, 'vscode'),
+    longestWikiRunMs(undefined, 'cursor'),
+  )
+
+  // Assert
+  assert.equal(LONGEST_WIKI_RUN_MS, longestOfEveryRun)
+  assert.equal(LONGEST_WIKI_RUN_MS, 3_330_000)
+})

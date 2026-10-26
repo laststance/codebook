@@ -35,7 +35,7 @@ test('each block a folder without a Wiki can hold is told with the generation’
     '.codebook/wiki is a link or a file, not a folder of its own, so the publisher cannot write the Wiki there. Remove it, or set codebook.wikiOutputDirectory to another folder, then press Generate LLM Wiki again.',
     'A folder on the path to .codebook/wiki (.codebook) is a link or a file, or leads out of the project, so the publisher refuses to write there. Replace it with a real folder, or set codebook.wikiOutputDirectory to another folder, then press Generate LLM Wiki again.',
     '.codebook/wiki holds a link or special file (pipe), which the publisher refuses. Move it out of the folder, then press Generate LLM Wiki again.',
-    'The folder .codebook/wiki cannot take a new LLM Wiki: index.html is in the way. Press Update LLM Wiki to see what it is.',
+    'The folder .codebook/wiki cannot take a new LLM Wiki: index.html is in the way. Press Update LLM Wiki to see what is in the way.',
   ])
 })
 

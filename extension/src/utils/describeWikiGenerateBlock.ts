@@ -35,6 +35,6 @@ export function describeWikiGenerateBlock(
       // A check that named no path has nothing to point at, and the folder must not be named as the thing in its own way.
       if (block.paths.length === 0)
         return `The folder ${outputLabel} cannot take a new LLM Wiki. Press Update LLM Wiki to see what is in the way.`
-      return `The folder ${outputLabel} cannot take a new LLM Wiki: ${firstPath} is in the way. Press Update LLM Wiki to see what it is.`
+      return `The folder ${outputLabel} cannot take a new LLM Wiki: ${firstPath} is in the way. Press Update LLM Wiki to see what is in the way.`
   }
 }

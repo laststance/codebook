@@ -933,6 +933,10 @@ export const WIKI_UPDATE_WATCH_TIMEOUT_MS = 900_000
 export const WIKI_GENERATE_TIMEOUT_MS = 3_300_000
 /** Longest the managed Cursor skill's verify and deploy may take while a start holds its marker: 30 seconds, after which the start ends without an agent and releases the marker (Cycle 0056 task 13). */
 export const WIKI_SKILL_STEP_TIMEOUT_MS = 30_000
+/** The abort reason of a Cursor skill step the learner ended (Stop LLM Wiki Run) or the closing window ended; {@link describeWikiSkillStepEnd} words it. */
+export const WIKI_SKILL_STEP_STOPPED_REASON = 'stopped'
+/** The abort reason of a Cursor skill step that passed {@link WIKI_SKILL_STEP_TIMEOUT_MS}. */
+export const WIKI_SKILL_STEP_BOUND_REASON = 'bound'
 /** The longest any run of any kind and host can last ({@link longestWikiRunMs}): a VS Code generation's chat opening plus its bound. A marker file whose kind cannot be read counts this long, never the update's shorter bound. */
 export const LONGEST_WIKI_RUN_MS = Math.max(
   WIKI_GENERATE_TIMEOUT_MS,

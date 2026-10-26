@@ -796,12 +796,12 @@ export async function openWikiUpdateWindow(options: {
             },
             reserve: async (
               watchEndedAtMs: number,
-              reservedRunKind?: 'generate' | 'update',
+              takenOver?: Parameters<typeof claim.reserve>[1],
             ) => {
               await passHold('marker-change')
               return recordMarkerChange(
                 'reserve',
-                claim.reserve(watchEndedAtMs, reservedRunKind),
+                claim.reserve(watchEndedAtMs, takenOver),
               )
             },
           }

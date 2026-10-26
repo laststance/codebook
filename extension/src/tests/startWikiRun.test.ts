@@ -292,7 +292,7 @@ test('a block in the way hands its cause id to the refusal beside the learner’
   assert.deepEqual(refusals, [
     {
       reason:
-        'The folder .codebook/wiki cannot take a new LLM Wiki: index.html is in the way. Press Update LLM Wiki to see what it is.',
+        'The folder .codebook/wiki cannot take a new LLM Wiki: index.html is in the way. Press Update LLM Wiki to see what is in the way.',
       cause: 'edited-page',
     },
   ])
