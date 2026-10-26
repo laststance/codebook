@@ -2761,17 +2761,19 @@ test('a live entry from the Study layout arranges the application above the sour
 })
 
 for (const besideChat of [false, true])
-  // Value: protects=retirement before native measurement and one final arrangement measurement; fails_when=a disposed Context tab is measured or arrange repeats its initial read; why_new=Cycle 0045 SP-5 with PC-3.8, reconciled with dedicated App preparation; the tab's close held until the final arrangement began, so its wait is reached (Cycle 0050 F240); seam=passthrough native-command and arrange observers installed before the run starts, the final arrangement told by the context pane it retires (F154); no_claim=where the final arrangement runs, during preparation or at the explicit open
+  // Value: protects=retirement before native measurement and one final arrangement measurement; fails_when=a disposed Context tab is measured or arrange repeats its initial read while the chat does not hold the keyboard (a keyboard borrowed from the chat reads the layout once more within the same measurement); why_new=Cycle 0045 SP-5 with PC-3.8, reconciled with dedicated App preparation; the tab's close held until the final arrangement began, so its wait is reached (Cycle 0050 F240); seam=passthrough native-command and arrange observers installed before the run starts, the final arrangement told by the context pane it retires (F154); no_claim=where the final arrangement runs, during preparation or at the explicit open
   test(`live entry waits for retired Study tabs before measurement and measures its final arrangement once${besideChat ? ', returning the keyboard to chat' : ''}`, async () => {
     // Arrange: native tab retirement is delayed, and App preparation has its own separate measurements.
     const harness = await workspaceHarness()
     const executeCommand = harness.editor.commands.executeCommand,
       arrange = harness.reader['arrange'],
       readsWithRetiredTab: boolean[] = [],
+      chatKeyboardAtReads: boolean[] = [],
       arrangements: {
         retiresContextPane: boolean
         commands: string[]
         readsWithRetiredTab: boolean[]
+        chatKeyboardAtReads: boolean[]
       }[] = []
     try {
       harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
@@ -2782,6 +2784,8 @@ for (const besideChat of [false, true])
       harness.holdDisposedPanelTabCloses()
       // Observe actual native effects without changing their arguments, responses or timing, from before the run starts: the live entry's final arrangement can run while the run prepares, on a loaded machine before the explicit open below (F154).
       harness.editor.commands.executeCommand = async (...args) => {
+        if (args[0] === 'vscode.getEditorLayout')
+          chatKeyboardAtReads.push(chat?.focused() === true)
         if (args[0] === 'vscode.getEditorLayout')
           readsWithRetiredTab.push(
             harness.groups.some((group) =>
@@ -2797,6 +2801,7 @@ for (const besideChat of [false, true])
       harness.reader['arrange'] = async (...args): Promise<void> => {
         const start = harness.commands.length,
           readsStart = readsWithRetiredTab.length
+        if (args[5] !== undefined) chat?.focusTab() // PROBE
         const arranged = arrange.apply(harness.reader, args)
         // The arrangement that retires the context pane runs up to its wait for the tab's close in this turn; the editor closes the tab in the next one.
         if (args[5] !== undefined)
@@ -2809,6 +2814,7 @@ for (const besideChat of [false, true])
             retiresContextPane: args[5] !== undefined,
             commands: harness.commands.slice(start),
             readsWithRetiredTab: readsWithRetiredTab.slice(readsStart),
+            chatKeyboardAtReads: chatKeyboardAtReads.slice(readsStart),
           })
         }
       }
@@ -2834,18 +2840,21 @@ for (const besideChat of [false, true])
         (arrangement) => arrangement.retiresContextPane,
       )
       assert.equal(finalArrangements.length, 1)
-      const { commands, readsWithRetiredTab: finalReads } =
-        finalArrangements[0]!
+      const {
+        commands,
+        readsWithRetiredTab: finalReads,
+        chatKeyboardAtReads: finalChatKeyboardAtReads,
+      } = finalArrangements[0]!
       assert.equal(finalReads.length > 0, true)
       assert.equal(finalReads.includes(true), false)
       const batch = commands.indexOf('runCommands')
       assert.notEqual(batch, -1)
-      assert.equal(
-        commands
-          .slice(0, batch)
-          .filter((command) => command === 'vscode.getEditorLayout').length,
-        1,
-      )
+      // The measurement beside the chat's editor part reads the layout once more after it borrowed the main editor's first group (readMainEditorGrid), when the keyboard was with the chat as the measurement began; that second read belongs to the same measurement.
+      const layoutReadsBeforeBatch = commands
+        .slice(0, batch)
+        .filter((command) => command === 'vscode.getEditorLayout').length
+      const chatHadKeyboardAtFirstRead = finalChatKeyboardAtReads[0] === true
+      assert.equal(layoutReadsBeforeBatch, chatHadKeyboardAtFirstRead ? 2 : 1)
       if (chat) {
         assert.equal(chat.focused(), true)
         assert.deepEqual(
