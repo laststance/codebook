@@ -258,18 +258,27 @@ test('a start refused after its claim removes its marker on the retry when the f
   // Act
   await project.runCommand(GENERATE_COMMAND).catch(() => undefined)
   await waitUntil(
-    async () => !(await exists(project.markerPath)),
-    'the marker’s removal by the retry',
+    () => project.markerChanges.at(1)?.answer !== undefined,
+    'the retry’s answer',
     3_000,
   )
 
   // Assert
   assert.deepEqual(
-    project.markerChanges.map((change) => [change.kind, change.answer]),
-    [
-      ['release', 'threw'],
-      ['release', true],
-    ],
+    {
+      changes: project.markerChanges.map((change) => [
+        change.kind,
+        change.answer,
+      ]),
+      markerLeft: await exists(project.markerPath),
+    },
+    {
+      changes: [
+        ['release', 'threw'],
+        ['release', true],
+      ],
+      markerLeft: false,
+    },
   )
 })
 
