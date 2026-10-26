@@ -13,6 +13,7 @@ import {
 } from '../../utils/inspectDeepWikiFreshness'
 import { listWikiCandidates } from '../../utils/listWikiCandidates'
 import { PREPARED_LOCK_SUFFIX } from '../../utils/preparedLockSuffix'
+import { readWikiPublicationIdentity } from '../../utils/readWikiPublicationIdentity'
 import { readWikiPublishToken } from '../../utils/readWikiPublishToken'
 import { readWikiWatchStamp } from '../../utils/readWikiWatchStamp'
 import { startWikiChatUpdate } from '../../utils/startWikiChatUpdate'
@@ -89,7 +90,7 @@ type NumericConstantName = {
     : never
 }[keyof typeof constants]
 
-/** An awaited step of an update that a test can keep open: the freshness inspection among the start checks, VS Code's chat command that carries the request, one listing of the candidates (the next listing after `hold` is kept open once it has read the folder; later ones pass), the wait of the start check before its second look at a publish journal written a moment ago (held, it lasts until the release and no real time), a read of the publish token (the start checks read it and so does the end of a run, so a hold set after the start keeps the end open), or the change of the run's marker at its end (its removal or its turn into a reservation: held, the run's end is already recorded and told, and the run waits there), or the write of the reservation that turn puts beside the marker (held, the change holds the claim on the marker while it waits, as a slow disk holds it), or the moment after a start's claim on the marker answered and before the start reads the answer (`claim-answer`). */
+/** An awaited step of an update that a test can keep open: the freshness inspection among the start checks, VS Code's chat command that carries the request, one listing of the candidates (the next listing after `hold` is kept open once it has read the folder; later ones pass), the wait of the start check before its second look at a publish journal written a moment ago (held, it lasts until the release and no real time), a read of the publish token (the start checks read it and so does the end of a run, so a hold set after the start keeps the end open), or the change of the run's marker at its end (its removal or its turn into a reservation: held, the run's end is already recorded and told, and the run waits there), or the write of the reservation that turn puts beside the marker (held, the change holds the claim on the marker while it waits, as a slow disk holds it), or the moment after a start's claim on the marker answered and before the start reads the answer (`claim-answer`), or a read of the publication identity (the LLM Wiki view reads it after the manifest, so a hold keeps a read open between the two). */
 export type HeldUpdateStep =
   | 'freshness-inspection'
   | 'chat-open'
@@ -100,6 +101,7 @@ export type HeldUpdateStep =
   | 'marker-write'
   | 'claim-answer'
   | 'start-block'
+  | 'publication-read'
 
 /**
  * Opens an editor window (the real extension with a stubbed `vscode`) on a project whose Wiki already exists, and records everything the learner would see of an update.
@@ -773,6 +775,12 @@ export async function openWikiUpdateWindow(options: {
             throw new Error(publishTokenReadFailure)
           await passHold('publish-token-read')
           return readWikiPublishToken(outputDirectory)
+        },
+      },
+      './utils/readWikiPublicationIdentity': {
+        readWikiPublicationIdentity: async (outputDirectory: string) => {
+          await passHold('publication-read')
+          return readWikiPublicationIdentity(outputDirectory)
         },
       },
       './deepWikiReader': {

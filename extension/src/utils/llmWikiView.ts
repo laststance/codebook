@@ -336,6 +336,18 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
       options.tellPublished(nextFacts.outputLabel)
   }
 
+  /**
+   * Says whether a read landed mid-publication: the publisher's new receipt stands in the watched folder while the Wiki is not readable yet.
+   * Such a read must not replace the memory, or the read that shows the Wiki compares against the new receipt and tells nothing.
+   */
+  const isPublicationStillPending = (
+    nextFacts: Extract<LlmWikiViewFacts, { kind: 'ready' }>,
+  ): boolean =>
+    lateWatch?.outputDirectory === nextFacts.outputDirectory &&
+    nextFacts.publication !== undefined &&
+    nextFacts.publication !== lateWatch.publication &&
+    !nextFacts.wiki
+
   /** Reads the facts; a read that throws shows the error row and answers `undefined`, as does a read that ended after dispose. */
   const readFactsOrShowError = async (): Promise<
     LlmWikiViewFacts | undefined
@@ -386,7 +398,7 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
     }
     facts = nextFacts
     const next = readLlmWikiViewState(nextFacts)
-    if (nextFacts.kind === 'ready')
+    if (nextFacts.kind === 'ready' && !isPublicationStillPending(nextFacts))
       lateWatch = {
         outputDirectory: nextFacts.outputDirectory,
         wasWaiting: next.rows.some(

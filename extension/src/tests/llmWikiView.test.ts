@@ -1417,3 +1417,89 @@ test('a folder removed and restored while another window runs shows the folder r
     restored: ['elsewhere', 'output'],
   })
 })
+
+// Value: protects=the late-publication notice when a read lands in the middle of a publication; fails_when=a read that sees the publisher's new receipt before the Wiki is readable overwrites the memory, so the next read that shows the Wiki tells nothing; no_claim=the notice wording; seam=a hold on the read of the publication identity, which the view reads after the manifest; why_new=the published-after-Stop-watching test publishes between reads and never lets one read straddle the publication
+test('a read that lands mid-publication does not lose the notice for the Wiki shown by the next read', async (context) => {
+  // Arrange
+  const project = await openProjectWithReservation(context)
+  const noticesBefore = project.notices.length
+  const midPublicationRead = project.hold('publication-read')
+  const readInTheMiddle = project.runCommand('codebook.refreshLlmWiki')
+  await midPublicationRead.started
+  // gstack-timing-ok: separates the publication's file times from the earlier read; no assertion measures the wait
+  await new Promise((resolve) => setTimeout(resolve, 20))
+
+  // Act
+  await publishGeneratedWiki(project.outputDirectory, project.projectRoot)
+  midPublicationRead.release()
+  await readInTheMiddle
+  const idsAfterMiddleRead = idsOf(project)
+  await project.runCommand('codebook.refreshLlmWiki')
+
+  // Assert
+  assert.deepEqual(
+    [
+      idsAfterMiddleRead.includes('wiki'),
+      idsOf(project),
+      project.notices.slice(noticesBefore),
+    ],
+    [
+      false,
+      ['wiki', 'output'],
+      ['An LLM Wiki was published in .codebook/wiki.'],
+    ],
+  )
+})
+
+// Value: protects=AC 2 row 2 (this window's run is status-driven, not marker-driven); fails_when=deleting the run's marker file drops the run row of a generation that still runs here, with its Cancel; no_claim=the marker's own lifecycle; seam=the marker file removed under a Cursor generation that waits; why_new=no test removes the marker while this window's run stands
+test('the run row stays when its marker file is removed during the run', async (context) => {
+  // Arrange
+  const project = await openProjectWithRun(context)
+
+  // Act
+  await rm(project.markerPath, { force: true })
+  await project.runCommand('codebook.refreshLlmWiki')
+
+  // Assert
+  assert.deepEqual(
+    [idsOf(project), rowOf(project, 'run')?.contextValue],
+    [['run', 'output'], '[cancel-run][show-output]'],
+  )
+})
+
+// Value: protects=AC 2 row 3 (the last attempt is status-driven, not marker-driven); fails_when=deleting a marker file clears Last generation stopped; no_claim=the marker's own lifecycle; seam=the marker file removed after a Cursor generation that exited 1; why_new=no test removes the marker while a last attempt stands
+test('Last generation stopped stays when a marker file is removed', async (context) => {
+  // Arrange
+  const project = await openProjectWithLastAttempt(context)
+
+  // Act
+  await rm(project.markerPath, { force: true })
+  await project.runCommand('codebook.refreshLlmWiki')
+
+  // Assert
+  assert.deepEqual(idsOf(project), ['last-attempt', 'output'])
+})
+
+// Value: protects=AC 2 row 2b and the late-publication notice belonging to this window's own stopped watch; fails_when=a Wiki published while another window runs shows no Wiki row, keeps the elsewhere row after that window's marker is gone, or tells "published" though nothing of this window waited; no_claim=the other window's work; seam=a live marker of another window, then a publication and the marker removed; why_new=no test publishes while another window runs
+test('a Wiki published while another window runs shows the Wiki row, the elsewhere row goes with that marker and no published notice shows', async (context) => {
+  // Arrange
+  const project = await openProjectWithRunElsewhere(context)
+  const noticesBefore = project.notices.length
+
+  // Act
+  await publishGeneratedWiki(project.outputDirectory, project.projectRoot)
+  await project.runCommand('codebook.refreshLlmWiki')
+  const idsWhileOtherWindowRuns = idsOf(project)
+  await rm(project.markerPath, { force: true })
+  await project.runCommand('codebook.refreshLlmWiki')
+
+  // Assert
+  assert.deepEqual(
+    [
+      idsWhileOtherWindowRuns,
+      idsOf(project),
+      project.notices.length - noticesBefore,
+    ],
+    [['wiki', 'elsewhere', 'output'], ['wiki', 'output'], 0],
+  )
+})
