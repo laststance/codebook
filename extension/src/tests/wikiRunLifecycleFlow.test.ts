@@ -1899,6 +1899,58 @@ test('Remove Managed Cursor Skill tells the learner and removes nothing while a 
   )
 })
 
+// Value: protects=Cycle 0056 pass 3 (the fixer's residual race of RT3-C), a Generate pressed while Remove Managed Cursor Skill runs; fails_when=the new start verifies and deploys the skill the removal is taking away, or starts an agent, or leaves its marker; no_claim=a step that was already running when the removal began (tests above); seam=the removal held inside its skill removal
+test('a Generate pressed while Remove Managed Cursor Skill is under way readies no skill, starts no agent and says why', async (context) => {
+  // Arrange
+  let agentRuns = 0
+  let finishRemoval = (): void => {}
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    cursorSkill: {
+      verify: async () => {
+        throw new Error('The managed Cursor skill is missing.')
+      },
+      remove: () =>
+        new Promise<void>((resolveRemoval) => {
+          finishRemoval = resolveRemoval
+        }),
+    },
+    cursorAgent: async () => {
+      agentRuns += 1
+      return 'Published.'
+    },
+  })
+  context.after(() => project.close())
+  const removing = project.runCommand('codebook.removeManagedCursorSkill')
+  await waitUntil(
+    () => project.skillCalls.includes('remove'),
+    'the removal',
+    6_000,
+  )
+
+  // Act
+  await project.runCommand(GENERATE_COMMAND).catch(() => undefined)
+  finishRemoval()
+  await removing
+
+  // Assert
+  assert.deepEqual(
+    {
+      skillCalls: project.skillCalls,
+      lastError: project.errors.at(-1),
+      agentRuns,
+      markerLeft: await exists(project.markerPath),
+    },
+    {
+      skillCalls: ['remove'],
+      lastError:
+        'Codebook did not start the LLM Wiki generation: Codebook is removing the managed Cursor skill in this window; no agent was started. Press Generate LLM Wiki again when the removal has finished, and Codebook installs its skill again.',
+      agentRuns: 0,
+      markerLeft: false,
+    },
+  )
+})
+
 // Value: protects=Cycle 0056 pass 3 A2, a plain press that joins a start under way; fails_when=every further press shows the joined notice again (the README says once); no_claim=the first notice's wording (tests above); seam=the start checks held open
 test('two plain presses that join a start under way show the joined notice once', async (context) => {
   // Arrange

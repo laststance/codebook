@@ -47,6 +47,7 @@ import {
   WIKI_RUN_STARTING_SENTENCE,
   WIKI_SKILL_REMOVAL_STEP_RUNNING_SENTENCE,
   WIKI_SKILL_STEP_BOUND_REASON,
+  WIKI_SKILL_STEP_REMOVAL_END,
   WIKI_SKILL_STEP_STOPPED_REASON,
   WIKI_SKILL_STEP_TIMEOUT_MS,
   WIKI_UPDATE_LAST_RUN_STATE_KEY,
@@ -2505,6 +2506,16 @@ export function activate(
       isWaitingForEarlierStep = false
       // A step that was stopped or bounded while it waited writes nothing.
       stop.signal.throwIfAborted()
+      // A step that begins while Remove Managed Cursor Skill is under way would write back the skill it takes away; the removal waits only for the step it found running.
+      if (cursorRemoving)
+        throw new Error(
+          describeWikiSkillStepEnd(
+            WIKI_SKILL_STEP_REMOVAL_END,
+            runKind,
+            WIKI_SKILL_STEP_TIMEOUT_MS,
+            formatClockTime(Date.now()),
+          ),
+        )
       try {
         await verifyManagedCursorSkill(
           context.extensionPath,

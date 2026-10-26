@@ -942,6 +942,8 @@ export const WIKI_SKILL_STEP_EARLIER_RUNNING_END = 'earlier-step-running'
 /** What {@link WIKI_SKILL_STEP_EARLIER_RUNNING_END} says happened and what ends it, without the next press; {@link describeWikiSkillStepEnd} adds `, then press <Generate|Update> LLM Wiki again.` (Cycle 0056 RT-B). */
 export const WIKI_SKILL_STEP_EARLIER_RUNNING_SENTENCE =
   'Codebook could not ready the Cursor skill: an earlier Cursor skill step in this window is still running. Reload the window (Developer: Reload Window) to end it'
+/** How a start ended when its Cursor skill step began while Remove Managed Cursor Skill was under way in this window, so it neither verifies nor deploys the skill the removal takes away; not an abort reason, {@link describeWikiSkillStepEnd} words it (Cycle 0056 pass 3). */
+export const WIKI_SKILL_STEP_REMOVAL_END = 'skill-removal'
 /** What Codebook says when Remove Managed Cursor Skill meets a Cursor skill step of this window that is still running after the grace, so a late deploy could write the skill again; nothing is removed (Cycle 0056 RT3-C). */
 export const WIKI_SKILL_REMOVAL_STEP_RUNNING_SENTENCE =
   'Codebook did not remove the managed Cursor skill: a Cursor skill step of this window is still running and could write the skill again. Reload the window (Developer: Reload Window) to end it, then run Codebook: Remove Managed Cursor Skill again.'
