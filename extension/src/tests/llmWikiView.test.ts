@@ -105,7 +105,7 @@ test('until its first read ends the view shows Reading the LLM Wiki state and th
 
   // Act
   const whileLoading = {
-    key: project.llmWiki.contextKeys[STATE_KEY],
+    contextState: project.llmWiki.contextKeys[STATE_KEY],
     labels: project.llmWiki.rows().map((row) => row.label),
   }
   project.hold('start-block').release()
@@ -113,7 +113,7 @@ test('until its first read ends the view shows Reading the LLM Wiki state and th
 
   // Assert
   assert.deepEqual(whileLoading, {
-    key: 'loading',
+    contextState: 'loading',
     labels: ['Reading the LLM Wiki state…'],
   })
   assert.equal(project.llmWiki.contextKeys[STATE_KEY], 'none')
@@ -534,6 +534,7 @@ test('five file events inside the debounce become one read that shows the last s
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
   await untilRow(project, 'wiki')
+  // gstack-timing-ok: proves no second read follows; waits six times the shortened 40 ms debounce after the last event
   await new Promise((resolve) => setTimeout(resolve, 250))
 
   // Assert
@@ -696,6 +697,7 @@ test('Refresh with nothing new fires no tree change', async (context) => {
   // Act
   await window.runCommand('codebook.refreshLlmWiki')
   await window.runCommand('codebook.refreshLlmWiki')
+  // gstack-timing-ok: proves no tree change arrives later; waits five times the shortened 40 ms debounce
   await new Promise((resolve) => setTimeout(resolve, 200))
 
   // Assert
@@ -784,6 +786,7 @@ test('a Wiki published after Stop watching shows the notice with Open in Browser
   const noticesBefore = project.notices.length
 
   // Act
+  // gstack-timing-ok: separates the publication's file times from the earlier read; no assertion measures the wait
   await new Promise((resolve) => setTimeout(resolve, 20))
   await publishGeneratedWiki(project.outputDirectory, project.projectRoot)
   project.reportFileEvent(
@@ -1090,6 +1093,7 @@ test('a Wiki published after one failed read still shows the late-publication no
   project.openWorkspace(project.projectRoot)
 
   // Act
+  // gstack-timing-ok: separates the publication's file times from the earlier read; no assertion measures the wait
   await new Promise((resolve) => setTimeout(resolve, 20))
   await publishGeneratedWiki(project.outputDirectory, project.projectRoot)
   await project.runCommand('codebook.refreshLlmWiki')
@@ -1136,9 +1140,11 @@ test('a read that ends after the window closed creates no file watcher', async (
 
   // Act
   const closing = project.closeWindow()
+  // gstack-timing-ok: lets the close dispose the view before the held read resumes
   await new Promise((resolve) => setTimeout(resolve, 100))
   hold.release()
   await closing
+  // gstack-timing-ok: proves no watcher appears after the close; waits five times the shortened 40 ms debounce
   await new Promise((resolve) => setTimeout(resolve, 200))
 
   // Assert
