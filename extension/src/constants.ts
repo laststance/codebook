@@ -1854,3 +1854,6 @@ export const REFUSAL_REPORT_EVENTS = 24
 
 /** The most native effects Codebook itself issued (reveals, disposals, editor commands, shown documents) that a {@link PlacementEventLog} keeps for a placement refusal report, in effects. */
 export const REFUSAL_REPORT_EFFECTS = 48
+
+/** How long a new Application group's preparation waits for the editor's own report that it activated the group, in ms; Cursor sends it after the command that made the group answered (N55-F4, row 650). It ends at the report, or here when the editor sends none. */
+export const LATE_GROUP_ACTIVATION_WAIT_MS = 150

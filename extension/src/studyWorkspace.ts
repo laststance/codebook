@@ -86,6 +86,7 @@ import {
   SUMMARY_PLACEMENT_ACTION,
   FOREIGN_PREVIEW_ACTION,
   MOVE_VIEWS_COMMAND,
+  LATE_GROUP_ACTIVATION_WAIT_MS,
   REFUSAL_REPORT_EFFECTS,
   REFUSAL_REPORT_GROUP_TABS,
   SUMMARY_BESIDE_CHAT_MOVE_ARGUMENT,
@@ -15842,6 +15843,9 @@ export class StudyWorkspace {
         lockReport,
         assertCurrent,
       )
+      // The editor reports the new group's activation after the commands answered; no guard of the preparation arms before that report, which would read it as a change the learner made (N55-F4 refusal 1, H2-b).
+      await this.waitForLateGroupActivation(identity, signal)
+      assertCurrent()
       this.claimApplicationAllocation(identity, grid.groups.length + 1)
       // Decided right before the pane exists: an Open may have made one outside the queue since this transaction began (Cycle 0046 OCR1-7).
       const paneBefore = this.app
@@ -22178,6 +22182,40 @@ export class StudyWorkspace {
       }
       this.errors.delete('layout')
       this.publish()
+    })
+  }
+
+  /**
+   * Waits for the editor's own report that it activated a group Codebook allocated, so the guards that follow start after it; called by {@link reserveApplicationGroup} once the group is allocated and locked.
+   * It ends at the first tab-group event that names the group as changed, or after {@link LATE_GROUP_ACTIVATION_WAIT_MS} when the editor sends none, or when the preparation is cancelled.
+   * @param identity - The allocated group's identity ({@link editorGroupIdentities}).
+   * @param signal - The preparation's cancellation.
+   * @returns Once the report arrived, the bound passed or the signal aborted; never rejects.
+   * @example await this.waitForLateGroupActivation(identity, signal)
+   */
+  private async waitForLateGroupActivation(
+    identity: symbol,
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    await new Promise<void>((resolve) => {
+      const subscription = vscode.window.tabGroups.onDidChangeTabGroups(
+        (event) => {
+          if (
+            event.changed.some(
+              (group) => this.editorGroupIdentities.get(group) === identity,
+            )
+          )
+            done()
+        },
+      )
+      const timer = setTimeout(done, LATE_GROUP_ACTIVATION_WAIT_MS)
+      signal?.addEventListener('abort', done, { once: true })
+      function done(): void {
+        clearTimeout(timer)
+        subscription.dispose()
+        signal?.removeEventListener('abort', done)
+        resolve()
+      }
     })
   }
 
