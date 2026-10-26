@@ -207,7 +207,7 @@ function observationHoldMs(name: string, label: string): number {
 }
 
 /**
- * Ends a native trial: stops its run, releases its root listings once more and writes the private report ({@link writeReport}) with the trial's error and its cause, the run's stop error and the listings' release error when they failed (a test process or a listing may then still run), and every listing still not confirmed as ended. Each step runs whatever the one before it did.
+ * Ends a native trial: stops its run, releases its root listings once more and writes the private report ({@link writeReport}) with the trial's error and its cause, the run's stop error and the listings' release error when they failed (a test process or a listing may then still run), and every listing still not confirmed as ended, with the error of its own failed release. Each step runs whatever the one before it did.
  * Called by {@link run} only, after the trial ended or failed.
  * @param trial - The trial's run, report and unreleased root listings.
  * @param reportPath - The private report file, written with mode 0600.
@@ -236,8 +236,15 @@ async function endTrial(
   trial.report.unreleasedListings = trial.unreleasedListings.flatMap(
     (retryRelease) => {
       const listing = trial.listingFailures.get(retryRelease)
+      // Each listing keeps the error of its own failed release; listingError holds only the last retry's.
       return listing
-        ? [{ processGroup: listing.processGroup, directory: listing.directory }]
+        ? [
+            {
+              processGroup: listing.processGroup,
+              directory: listing.directory,
+              reason: listing.reason,
+            },
+          ]
         : []
     },
   )

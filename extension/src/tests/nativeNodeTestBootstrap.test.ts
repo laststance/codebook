@@ -329,8 +329,8 @@ test('a native trial whose root listing release fails once releases it at its en
   })
 })
 
-// Value: protects=a root listing that is never released being named in the trial's private report with its process group, its folder and its release error, while the trial ends with the plan's refusal; fails_when=the report is not written, does not name the listing or loses its release error, or the listing's error replaces the refusal; why_new=Cycle 0054 task 3 (CR-OD2); seam=the root listing hands a retry that always fails; no_claim=ending a listing that cannot be ended (it may still run; the report names it)
-test('a root listing a native trial never releases is named in its report with its process group and folder', async (context) => {
+// Value: protects=a root listing that is never released being named in the trial's private report with its process group, its folder and its release error, while the trial ends with the plan's refusal; fails_when=the report is not written, does not name the listing or loses its release error, or the listing's error replaces the refusal; why_new=Cycle 0054 task 3 (CR-OD2); the listing's own release error added after hosted CodeRabbit's outside-diff finding on 5e998ae2 (listingError keeps only the last retry's); seam=the root listing hands a retry that always fails; no_claim=ending a listing that cannot be ended (it may still run; the report names it)
+test('a root listing a native trial never releases is named in its report with its process group, its folder and its own release error', async (context) => {
   // Arrange
   let retries = 0
   const { bootstrap, readReport } = await loadTrial(context, {
@@ -360,7 +360,11 @@ test('a root listing a native trial never releases is named in its report with i
     {
       error: String(PLAN_REFUSAL),
       unreleasedListings: [
-        { processGroup: 4242, directory: '/tmp/codebook-vitest-list-x' },
+        {
+          processGroup: 4242,
+          directory: '/tmp/codebook-vitest-list-x',
+          reason: 'Error: kill EPERM',
+        },
       ],
     },
   )
