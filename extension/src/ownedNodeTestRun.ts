@@ -944,7 +944,7 @@ export class OwnedNodeTestRun {
    *
    * @param error - The failure of the preparation or the continuation.
    * @param stopNumber - The one-based number of the declared stop the test did not reach.
-   * @returns The original error, or one that states the exit, the stop it did not reach and the stop order, and points to `testTitles`.
+   * @returns The original error, or one that states the exit, the stop it did not reach and when that stop is reached (for stop 1 only when the test runs its line, for a later stop only when it runs after the previous stop), and points to `testTitles`.
    * @example
    * ```ts
    * await this.explainEarlyExit(new Error('Owned Node debugger session terminated or was cancelled.'), 2)
@@ -962,7 +962,11 @@ export class OwnedNodeTestRun {
     if (!exit) return error
     return new Error(
       `Owned Node test exited with ${exit.signal ? `signal ${exit.signal}` : `code ${exit.exitCode}`} before declared stop ${stopNumber}. ` +
-        'A declared stop is reached only when the test runs its line after the previous stop; its output is in the Codebook test output. If Vitest skipped the cited test, check that testTitles names it exactly; see codebook://help/node-test.',
+        // The first stop has no previous stop, so its reach depends only on the test running its line.
+        (stopNumber === 1
+          ? 'The first declared stop is reached only when the test runs its line'
+          : 'A declared stop is reached only when the test runs its line after the previous stop') +
+        '; its output is in the Codebook test output. If Vitest skipped the cited test, check that testTitles names it exactly; see codebook://help/node-test.',
       { cause: error },
     )
   }

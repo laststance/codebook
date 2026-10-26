@@ -7,8 +7,9 @@ Cycle 0054 ([Issue #130](https://github.com/laststance/codebook/issues/130)), a 
 **A test that ends before a later declared stop says so.**
 
 - **When the test exits before the next declared stop**, the continuation now answers `Owned Node test exited with code <n> (or signal <s>) before declared stop <N>.`. The sentence goes on: a declared stop is reached only when the test runs its line after the previous stop; the test's output is in the Codebook test output; and if Vitest skipped the cited test, check `testTitles`. Earlier versions said only that the debug session ended.
+- **A test that ends before its first declared stop** now adds that the first declared stop is reached only when the test runs its line.
 - **A failure that is not an early exit keeps its own words:** a refusal before the test runs on (for example after you stopped the session yourself) and a failure while a reached stop is captured.
-- **The node-test help tells the chat** that an additional stop is reached only when the test runs its line after the previous stop: a line that ran before it counts only if the test runs it again (in a loop, for example).
+- **The node-test help tells the chat** that an additional stop is reached only when the test runs its line after the previous stop: a line that ran before it counts only if the test runs it again (in a loop, for example). It names the exit code or signal of a test that ends before a stop.
 
 **A package test's launch checks the root claim again.**
 

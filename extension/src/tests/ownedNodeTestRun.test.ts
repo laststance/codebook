@@ -1739,6 +1739,28 @@ test('a cited test that ends before its first declared stop fails at once with t
   }
 })
 
+// Value: protects=a test that ends before its first declared stop being told that the first stop is reached when the test runs its line, with no previous stop it cannot have; fails_when=the sentence for stop 1 says a stop is reached only when the test runs its line after the previous stop, as at 95b155d8, which misleads the agent about a stop that has no previous one; why_new=hosted CodeRabbit outside-diff finding on PR #131 at 95b155d8; seam=the fake process exits after the entry pause; no_claim=the real test process and js-debug
+test('a test that ends before its first declared stop is told how the first stop is reached, with no previous stop', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({ exitAfterEntry: true })
+  try {
+    // Act
+    const failure = await harness.run.prepare().then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+    // Assert: the module runs in its own context, so its error is read by its message.
+    assert.equal(
+      (failure as { message?: unknown } | undefined)?.message,
+      'Owned Node test exited with code 0 before declared stop 1. The first declared stop is reached only when the test runs its line; its output is in the Codebook test output. If Vitest skipped the cited test, check that testTitles names it exactly; see codebook://help/node-test.',
+    )
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
 // Value: protects=a continuation whose test ends before the next declared stop naming the exit, the stop it did not reach and the stop order, so the agent can tell a stop declared on a line the test ran earlier; fails_when=the continuation fails with the generic message that the debugger session ended, as at 1b2dcfa7, so the agent cannot tell why stop 2 never came; why_new=Cycle 0054 task 1 (N53-F1: N53's VS Code run declared stop 2 on a line the test ran before stop 1); seam=the fake session ends and the fake process exits with code 0 on the continuation from stop 1; no_claim=the real test process and js-debug (N54 native check)
 test('a test that exits before its next declared stop names the exit, the stop and the stop order', async () => {
   // Arrange

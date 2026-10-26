@@ -198,7 +198,23 @@ test('the node-test help says additional stops are reached only in the order the
   )
   assert.match(
     body.testSelection,
-    /A declared stop the test does not reach after the previous one \(Vitest skipped the test, or the stop's line does not run again after the previous stop\) ends the run when the test exits, with an error naming that stop and the exit code\./,
+    /A declared stop the test does not reach after the previous one \(Vitest skipped the test, or the stop's line does not run again after the previous stop\) ends the run when the test exits, with an error naming that stop and the exit code or signal\./,
+  )
+})
+
+// Value: protects=the node-test help naming the exit code or the signal of a test that ends before a declared stop, as the run's error does; fails_when=testSelection names only the exit code, so an agent reading a signal in the error finds no help for it; why_new=hosted CodeRabbit finding on PR #131 at 95b155d8; seam=none; no_claim=the run's own error (ownedNodeTestRun tests)
+test('the node-test help names the exit code or signal of a test that ends before a declared stop', async () => {
+  // Arrange / Act
+  const { body } = await servedNodeTestHelp()
+
+  // Assert
+  assert.match(
+    body.testSelection,
+    /A title path that selects no test ends the run before its first declared stop with the exit code or signal\./,
+  )
+  assert.match(
+    body.testSelection,
+    /with an error naming that stop and the exit code or signal\./,
   )
 })
 
