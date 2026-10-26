@@ -8,7 +8,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.8'
-export const EXTENSION_VERSION = '0.2.46'
+export const EXTENSION_VERSION = '0.2.47'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -903,7 +903,7 @@ export const WIKI_UPDATE_LAST_RUN_STATE_KEY = 'codebook.wikiUpdateLastRun'
 /** What a VS Code Wiki update says when its output folder lies outside the opened project: in the confirmation and, handed to {@link describeWikiUpdate} as `outsideOutputApprovalsNote`, the running line of the page. The watch's status bar entry does not carry it ({@link WIKI_CHAT_WATCH_TOOLTIP}). */
 export const WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE =
   'This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.'
-/** What a learner does after they refused a step VS Code's chat asked them to approve, as a clause without its full stop: once the chat has asked, Codebook does not see it stop, so the watch goes on until Cancel. Handed to {@link describeWikiUpdate} as `refusedStepAdvice`, the running line of the page goes on from it with where Cancel is, the watch's status bar entry ({@link WIKI_CHAT_WATCH_STATUS_TEXT}), which names only its Cancel. */
+/** What a learner does after they refused a step VS Code's chat asked them to approve, as a clause without its full stop: once the chat has asked, Codebook does not see it stop, so the watch goes on until Stop watching. Handed to {@link describeWikiUpdate} as `refusedStepAdvice`, the running line of the page goes on from it with where Stop watching is, the watch's status bar entry ({@link WIKI_CHAT_WATCH_STATUS_TEXT}), which names only its Stop watching. */
 export const WIKI_REFUSED_STEP_ADVICE =
   'If you refuse a step of the chat, press Stop watching'
 /** The text of the status bar entry that is shown for as long as Codebook watches a VS Code Wiki generation or update, for every entry of the run: a spinning icon, what is watched and its Stop watching (Cycle 0055 D4: it stops the watch, not the chat, so it is not called Cancel), which a press on the entry runs ({@link WIKI_CHAT_WATCH_CANCEL_COMMAND}). The watch shows no notification: the editor stacks notifications at the window's lower right, over the Chat view in its default place, so any other notification pushes one that lasts the whole watch over the Allow and Skip buttons of an approval the chat asks for (measured in VS Code 1.140.0 with a notification of two lines and the editor's own recommendation below it). The status bar lies below every notification. */
@@ -931,6 +931,29 @@ export const WIKI_RUN_STARTING_SENTENCE =
 export const WIKI_UPDATE_WATCH_TIMEOUT_MS = 900_000
 /** Longest a Wiki generation runs in either host, the VS Code watch and the Cursor agent alike, before it ends as timed out: 55 minutes, set by Cycle 0055's E1 (the longest measured generation, 34 min 33 s in VS Code, × 1.5, rounded up to whole 5 minutes; Owner decision O9). A stopped VS Code generation's reservation lasts as long after its watch's end. */
 export const WIKI_GENERATE_TIMEOUT_MS = 3_300_000
+/** Longest the managed Cursor skill's verify and deploy may take while a start holds its marker: 30 seconds, after which the start ends without an agent and leaves the marker (removed, or a taken-over reservation written back) (Cycle 0056 task 13). */
+export const WIKI_SKILL_STEP_TIMEOUT_MS = 30_000
+/** The abort reason of a Cursor skill step the learner ended (Stop LLM Wiki Run) or the closing window ended; {@link describeWikiSkillStepEnd} words it. */
+export const WIKI_SKILL_STEP_STOPPED_REASON = 'stopped'
+/** The abort reason of a Cursor skill step that passed {@link WIKI_SKILL_STEP_TIMEOUT_MS}. */
+export const WIKI_SKILL_STEP_BOUND_REASON = 'bound'
+/** How a start's own bound ended it while it still waited for an earlier skill step of this window that never settled; not an abort reason (the abort says `bound`), {@link describeWikiSkillStepEnd} words it. */
+export const WIKI_SKILL_STEP_EARLIER_RUNNING_END = 'earlier-step-running'
+/** What {@link WIKI_SKILL_STEP_EARLIER_RUNNING_END} says happened and what ends it, without the next press; {@link describeWikiSkillStepEnd} adds `, then press <Generate|Update> LLM Wiki again.` (Cycle 0056 RT-B). */
+export const WIKI_SKILL_STEP_EARLIER_RUNNING_SENTENCE =
+  'Codebook could not ready the Cursor skill: an earlier Cursor skill step in this window is still running. Reload the window (Developer: Reload Window) to end it'
+/** How a start ended when its Cursor skill step began while Remove Managed Cursor Skill was under way in this window, so it neither verifies nor deploys the skill the removal takes away; not an abort reason, {@link describeWikiSkillStepEnd} words it (Cycle 0056 pass 3). */
+export const WIKI_SKILL_STEP_REMOVAL_END = 'skill-removal'
+/** What Codebook says when Remove Managed Cursor Skill meets a Cursor skill step of this window that is still running after the grace, so a late deploy could write the skill again; nothing is removed (Cycle 0056 RT3-C). */
+export const WIKI_SKILL_REMOVAL_STEP_RUNNING_SENTENCE =
+  'Codebook did not remove the managed Cursor skill: a Cursor skill step of this window is still running and could write the skill again. Reload the window (Developer: Reload Window) to end it, then run Codebook: Remove Managed Cursor Skill again.'
+/** The longest any run of any kind and host can last ({@link longestWikiRunMs}): a VS Code generation's chat opening plus its bound. A marker file whose kind cannot be read counts this long, never the update's shorter bound. Written from the raw bounds here because the helpers that name each bound read this module; `wikiRunBoundMs.test.ts` pins it against {@link longestWikiRunMs} over every kind and host, so a changed bound that this list misses fails there. */
+export const LONGEST_WIKI_RUN_MS = Math.max(
+  WIKI_GENERATE_TIMEOUT_MS,
+  WIKI_CHAT_OPEN_TIMEOUT_MS + WIKI_GENERATE_TIMEOUT_MS,
+  WIKI_CURSOR_UPDATE_TIMEOUT_MS,
+  WIKI_CHAT_OPEN_TIMEOUT_MS + WIKI_UPDATE_WATCH_TIMEOUT_MS,
+)
 /** The chat request a learner can paste to generate the LLM Wiki without Codebook's entry; every generate sentence that sends the learner to the chat names it. */
 export const WIKI_GENERATE_CHAT_REQUEST =
   '/codebook Generate the LLM Wiki for this project'

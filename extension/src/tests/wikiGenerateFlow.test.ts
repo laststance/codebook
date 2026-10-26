@@ -661,7 +661,7 @@ test('both no-Wiki notices, of Update LLM Wiki and of Open LLM Wiki in Browser, 
   )
 })
 
-// Value: protects=D5, a second press while a generation runs; fails_when=the refusal calls the run an update or sends the learner to a browser reader the project does not have yet; no_claim=the other places of the progress (describeSecondWikiUpdateStart tests); seam=a Cursor agent held open
+// Value: protects=D5, a second press while a generation runs; fails_when=the refusal calls the run an update or sends the learner to a browser reader the project does not have yet, or the test reads the refusal after a fixed 200 ms race instead of awaiting its notice (Cycle 0056 task 6); no_claim=the other places of the progress (describeSecondWikiUpdateStart tests); seam=a Cursor agent held open
 test('a second Generate while a Cursor generation runs is refused with the sentence that Codebook is already generating, naming the notification', async (context) => {
   // Arrange: the agent works until the test lets it end.
   let endAgent = (): void => {}
@@ -680,14 +680,13 @@ test('a second Generate while a Cursor generation runs is refused with the sente
     6_000,
   )
 
-  // Act
-  await Promise.race([
-    project.runCommand(GENERATE_COMMAND),
-    new Promise((resolveWait) => setTimeout(resolveWait, 200)),
-  ])
+  // Act: the second press joins the run and settles with it, so the refusal is awaited as a notice, never as a fixed wait.
+  const second = project.runCommand(GENERATE_COMMAND)
+  await waitUntil(() => project.notices.length > 0, 'the refusal notice', 6_000)
   const refusal = project.notices[0]
   endAgent()
   await first
+  await second
 
   // Assert
   assert.equal(
@@ -1057,18 +1056,18 @@ test('closing a Cursor window while the managed skill is deployed for a generati
   const updating = await openCursorWindow()
   context.after(() => updating.close())
   await publishGeneratedWiki(updating.outputDirectory, updating.projectRoot)
-  const generatePressed = generating.runCommand(GENERATE_COMMAND)
-  const updatePressed = updating.runUpdateCommand()
+  // A closing window ends the skill step, so each press rejects at the close; the handlers stand from the start.
+  const generatePressed = generating
+    .runCommand(GENERATE_COMMAND)
+    .catch(() => undefined)
+  const updatePressed = updating.runUpdateCommand().catch(() => undefined)
   await Promise.all(deploymentsStarted)
 
   // Act: both windows close, then the deployments end.
   await generating.closeWindow()
   await updating.closeWindow()
   for (const endDeployment of heldDeployments) endDeployment()
-  await Promise.all([
-    generatePressed.catch(() => undefined),
-    updatePressed.catch(() => undefined),
-  ])
+  await Promise.all([generatePressed, updatePressed])
 
   // Assert
   assert.deepEqual(

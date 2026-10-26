@@ -16,6 +16,8 @@ import { PREPARED_LOCK_SUFFIX } from '../../utils/preparedLockSuffix'
 import { readWikiPublicationIdentity } from '../../utils/readWikiPublicationIdentity'
 import { readWikiPublishToken } from '../../utils/readWikiPublishToken'
 import { readWikiWatchStamp } from '../../utils/readWikiWatchStamp'
+import * as refreshCursorMcpCatalogModule from '../../utils/refreshCursorMcpCatalog'
+import * as runUnderAbortSignalModule from '../../utils/runUnderAbortSignal'
 import { startWikiChatUpdate } from '../../utils/startWikiChatUpdate'
 import { waitForWikiPublish } from '../../utils/waitForWikiPublish'
 import type { WikiUpdateStatus } from '../../utils/wikiUpdateRun'
@@ -25,6 +27,25 @@ import { keepLocalAddress, parseFakeUri } from './fakeEditorAddresses'
 import { createFakeFileWatching, FakeRelativePattern } from './fakeFileWatching'
 import { listenTo } from './listenTo'
 import { loadModule } from './loadModule'
+
+/**
+ * Makes the `Date` a loaded module sees, whose `now()` answers a test's clock while `new Date(…)` stays real.
+ * @param clock - The test's present, in epoch milliseconds.
+ * @returns A `Date` subclass whose static `now` calls the clock.
+ * @example
+ * const ClockedDate = createClockedDate(() => 1_790_000_000_000)
+ * ClockedDate.now() // => 1_790_000_000_000 (a loaded module's `Date.now()` reads it)
+ */
+function createClockedDate(
+  clock: () => number,
+): new (...args: ConstructorParameters<typeof Date>) => Date {
+  class ClockedDate extends Date {
+    static override now(): number {
+      return clock()
+    }
+  }
+  return ClockedDate
+}
 
 /** How often an opening window looks whether the LLM Wiki view has shown its first read. */
 const FIRST_VIEW_READ_POLL_MS = 5
@@ -95,7 +116,7 @@ type NumericConstantName = {
     : never
 }[keyof typeof constants]
 
-/** An awaited step of an update that a test can keep open: the freshness inspection among the start checks, VS Code's chat command that carries the request, one listing of the candidates (the next listing after `hold` is kept open once it has read the folder; later ones pass), the wait of the start check before its second look at a publish journal written a moment ago (held, it lasts until the release and no real time), a read of the publish token (the start checks read it and so does the end of a run, so a hold set after the start keeps the end open), or the change of the run's marker at its end (its removal or its turn into a reservation: held, the run's end is already recorded and told, and the run waits there), or the write of the reservation that turn puts beside the marker (held, the change holds the claim on the marker while it waits, as a slow disk holds it), or the moment after a start's claim on the marker answered and before the start reads the answer (`claim-answer`), or a read of the publication identity (the LLM Wiki view reads it after the manifest, so a hold keeps a read open between the two). */
+/** An awaited step of an update that a test can keep open: the freshness inspection among the start checks, VS Code's chat command that carries the request, one listing of the candidates (the next listing after `hold` is kept open once it has read the folder; later ones pass), the wait of the start check before its second look at a publish journal written a moment ago (held, it lasts until the release and no real time), a read of the publish token (the start checks read it and so does the end of a run, so a hold set after the start keeps the end open), or the change of the run's marker at its end (its removal or its turn into a reservation: held, the run's end is already recorded and told, and the run waits there), or the write of the reservation that turn puts beside the marker (held, the change holds the claim on the marker while it waits, as a slow disk holds it), or the moment before a start's claim on the marker begins (`claim-start`, after the start looked at the marker), or the moment after a start's claim on the marker answered and before the start reads the answer (`claim-answer`), or a read of the publication identity (the LLM Wiki view reads it after the manifest, so a hold keeps a read open between the two). */
 export type HeldUpdateStep =
   | 'freshness-inspection'
   | 'chat-open'
@@ -104,6 +125,7 @@ export type HeldUpdateStep =
   | 'publish-token-read'
   | 'marker-change'
   | 'marker-write'
+  | 'claim-start'
   | 'claim-answer'
   | 'start-block'
   | 'publication-read'
@@ -186,6 +208,7 @@ export async function openWikiUpdateWindow(options: {
   cursorSkill?: {
     verify?: () => Promise<unknown>
     deploy?: () => Promise<unknown>
+    remove?: () => Promise<unknown>
   }
   answerConfirmation?: (
     message: string,
@@ -201,6 +224,12 @@ export async function openWikiUpdateWindow(options: {
   extraEditorCommands?: string[]
   /** Makes the editor refuse the file watcher of the LLM Wiki view with this message. */
   wikiWatcherFails?: string
+  /** Makes this many removals of the window's own run marker throw `EBUSY` before they work, as a scanner holding the file does on Windows; each is recorded in `markerChanges` as `threw`. */
+  markerReleaseFailures?: number
+  /** Makes this many turns of the window's own marker into a stopped watch's reservation (including a taken-over reservation written back) answer `false`, as when another window holds the claim on the marker at that moment; each is recorded in `markerChanges` with the answer `false`. */
+  markerReserveFailures?: number
+  /** Replaces `Date.now()` inside `extension.ts` itself (the utilities it requires keep the real clock), so a test can place the moment a Stop is pressed and the moment its rejection is handled in different minutes. */
+  clock?: () => number
 }): Promise<{
   chatRequests: Array<{ name: string; query: string }>
   executedCommands: string[]
@@ -218,6 +247,10 @@ export async function openWikiUpdateWindow(options: {
   skillCalls: string[]
   /** Every line the extension wrote to Output › Codebook, as `info: …` or `error: …`. */
   outputLines: string[]
+  /** How often the extension brought Output › Codebook to the front (`show()` on its channel). */
+  outputShownCount(): number
+  /** How many Cursor skill steps have begun to wait under their stop and bound: a step that follows an unsettled earlier one is then at its wait for that step. */
+  skillStepsStartedCount(): number
   /** Runs one of the extension's registered commands with the arguments a menu or a row passes, as the Command Palette does. */
   runCommand(name: string, ...args: unknown[]): Promise<void>
   /** What the editor shows of the LLM Wiki view. */
@@ -309,6 +342,10 @@ export async function openWikiUpdateWindow(options: {
   const confirmationDetails: string[] = []
   const skillCalls: string[] = []
   const outputLines: string[] = []
+  let outputShown = 0
+  let skillStepsStarted = 0
+  let markerReleaseFailuresLeft = options.markerReleaseFailures ?? 0
+  let markerReserveFailuresLeft = options.markerReserveFailures ?? 0
   const progressTitles: string[] = []
   const statusBarTexts: string[] = []
   const statusBarEntries: FakeStatusBarEntry[] = []
@@ -673,7 +710,9 @@ export async function openWikiUpdateWindow(options: {
           createOutputChannel: () => ({
             info: (line: string) => outputLines.push(`info: ${line}`),
             error: (line: string) => outputLines.push(`error: ${line}`),
-            show(): void {},
+            show(): void {
+              outputShown += 1
+            },
             dispose(): void {},
           }),
           showErrorMessage: (message: string, ...actions: string[]) =>
@@ -722,7 +761,30 @@ export async function openWikiUpdateWindow(options: {
           skillCalls.push('deploy')
           return options.cursorSkill?.deploy?.()
         },
-        removeManagedCursorSkill: async () => undefined,
+        // The removal records its call; nothing is removed from the learner's home.
+        removeManagedCursorSkill: async () => {
+          skillCalls.push('remove')
+          await options.cursorSkill?.remove?.()
+          return { status: 'removed' }
+        },
+      },
+      // Each Cursor skill step is counted when it begins to wait under its stop and bound; the step's body has by then run up to its first wait (for an earlier step, when one has not settled).
+      './utils/runUnderAbortSignal': {
+        ...runUnderAbortSignalModule,
+        runUnderAbortSignal: <Result>(
+          run: () => Promise<Result>,
+          signal: AbortSignal,
+        ): Promise<Result> => {
+          skillStepsStarted += 1
+          return runUnderAbortSignalModule.runUnderAbortSignal(run, signal)
+        },
+      },
+      // The removal's catalog step refuses at once, so a test of the skill's removal reads its warning and touches no Cursor config.
+      './utils/refreshCursorMcpCatalog': {
+        ...refreshCursorMcpCatalogModule,
+        captureOwnedCursorMcpCatalogGeneration: async () => {
+          throw new Error('No Cursor MCP catalog is used in this test.')
+        },
       },
       ...(options.constants
         ? { './constants': { ...constants, ...options.constants } }
@@ -762,20 +824,42 @@ export async function openWikiUpdateWindow(options: {
         claimWikiUpdateMarker: async (
           ...claimed: Parameters<typeof claimWikiUpdateMarker>
         ) => {
+          await passHold('claim-start')
           const claim = await claimWikiUpdateMarker(...claimed)
           looks.markerClaims += 1
           await passHold('claim-answer')
           if (!('release' in claim)) return claim
           return {
+            replacedReservation: claim.replacedReservation,
             release: async () => {
               await passHold('marker-change')
+              // A removal that the system refuses for now, as a scanner or an indexer holding the file does.
+              if (markerReleaseFailuresLeft > 0) {
+                markerReleaseFailuresLeft -= 1
+                return recordMarkerChange(
+                  'release',
+                  Promise.reject(
+                    Object.assign(new Error('EBUSY: resource busy or locked'), {
+                      code: 'EBUSY',
+                    }),
+                  ),
+                )
+              }
               return recordMarkerChange('release', claim.release())
             },
-            reserve: async (watchEndedAtMs: number) => {
+            reserve: async (
+              watchEndedAtMs: number,
+              takenOver?: Parameters<typeof claim.reserve>[1],
+            ) => {
               await passHold('marker-change')
+              // The claim on the marker could not be had at this moment: the marker stays as it was and the change is asked for again.
+              if (markerReserveFailuresLeft > 0) {
+                markerReserveFailuresLeft -= 1
+                return recordMarkerChange('reserve', Promise.resolve(false))
+              }
               return recordMarkerChange(
                 'reserve',
-                claim.reserve(watchEndedAtMs),
+                claim.reserve(watchEndedAtMs, takenOver),
               )
             },
           }
@@ -877,6 +961,8 @@ export async function openWikiUpdateWindow(options: {
           }),
       },
     },
+    // A test's clock reaches the `Date.now()` calls of `extension.ts` only; every other module keeps the real one.
+    options.clock ? { Date: createClockedDate(options.clock) } : {},
   )
   const contextSubscriptions: Array<{ dispose(): unknown }> = []
   boundary.activate({
@@ -915,6 +1001,8 @@ export async function openWikiUpdateWindow(options: {
     statusBarTexts,
     skillCalls,
     outputLines,
+    outputShownCount: (): number => outputShown,
+    skillStepsStartedCount: (): number => skillStepsStarted,
     async runCommand(name: string, ...args: unknown[]): Promise<void> {
       const command = commands.get(name)
       if (!command) throw new Error(`The window registered no ${name}.`)

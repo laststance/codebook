@@ -788,6 +788,31 @@ test('Stop watching in the view ends the generation and leaves a Waiting for cha
   )
 })
 
+// Value: protects=AC 2c (the Waiting for chat row after Stop watching shows without a file event, also when the view read before the reservation was written); fails_when=the view's only read after the run's end lands before the marker turns into a reservation and nothing reads again, so the row never shows; no_claim=the retry time's wording; seam=the change of the run's marker held open until the view read, no file event reported
+test('Stop watching shows Waiting for chat although the reservation is written after the view read the run end and no file event is reported', async (context) => {
+  // Arrange
+  const project = await openEmptyProject(context, {
+    chatReply: () => new Promise<never>(() => {}),
+    holdAtOpen: ['marker-change'],
+  })
+  const markerChange = project.hold('marker-change')
+  void project.runCommand(GENERATE_COMMAND)
+  await untilRow(project, 'run')
+
+  // Act
+  void project.runCommand('codebook.llmWiki.stopWatching')
+  await markerChange.started
+  await untilRow(project, 'run', false)
+  markerChange.release()
+  await untilRow(project, 'reservation')
+
+  // Assert
+  assert.deepEqual(
+    [idsOf(project), rowOf(project, 'reservation')?.label],
+    [['reservation', 'last-attempt', 'output'], 'Waiting for chat'],
+  )
+})
+
 // Value: protects=the late-publication notice and AC 4 (a late publication shows as published, no run claims it); fails_when=a Wiki the chat publishes after Stop watching shows no notice with Open in Browser, leaves the reservation or the last-attempt row, or shows the notice twice; no_claim=the browser opening; seam=a publication written after the watch stopped, with the watcher event
 test('a Wiki published after Stop watching shows the notice with Open in Browser and replaces the reservation and the last attempt', async (context) => {
   // Arrange

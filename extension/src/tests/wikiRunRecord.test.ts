@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { agentExitOf, wikiRunRecord } from '../utils/wikiRunRecord'
+import { agentExitOf } from '../utils/agentExitOf'
+import { wikiRunRecord } from '../utils/wikiRunRecord'
 
 // Value: protects=AC 12 and Eng decision 81, the Output record a learner copies into an issue; fails_when=the record holds the failure's own text (an agent's reply, a chat's error reply, a thrown error), names no exit code, or shows the home folder in full; no_claim=the notice, which shows the sentence; seam=a seeded fake secret in the reason
 test('the record of a failed Cursor generation names its kind, host, times, end, a Codebook summary, the exit code and the folder under ~, and none of the failure’s text', () => {
@@ -32,8 +33,8 @@ test('the record of a failed Cursor generation names its kind, host, times, end,
   )
 })
 
-// Value: protects=each end's summary in Codebook's own words; fails_when=a summary repeats a reason, or an end has no summary; no_claim=the end's classification (classify tests); seam=none
-test('each end of a run is summarized in Codebook’s own words, a refused start without a start time and a signal named where the agent had no exit code', () => {
+// Value: protects=each end's summary in Codebook's own words, also an already current Wiki, a publication that failed a check, one verb per host for a stop (Cycle 0056 tasks 7 and 9), the cause id of a block that only the Output record shows (task 10) and an output folder that is the home folder; fails_when=a summary repeats a reason, an end has no summary, a Cursor stop reads stopped or a VS Code stop reads cancelled, the cause id is lost, or the home folder is shown by name; no_claim=the end's classification (classify tests); seam=none
+test('each end of a run is summarized in Codebook’s own words: a refused start without a start time, a signal where the agent had no exit code, a Wiki already current, a publication that failed a check, one verb per host for a stop, the cause id of a block, and the home folder as ~', () => {
   // Arrange
   const shared = {
     host: 'vscode' as const,
@@ -86,6 +87,44 @@ test('each end of a run is summarized in Codebook’s own words, a refused start
       },
       '/Users/learner',
     ),
+    wikiRunRecord(
+      {
+        state: 'already-current',
+        finishedAt: shared.finishedAt,
+        outputDirectory: shared.outputDirectory,
+        outputLabel: shared.outputLabel,
+      },
+      { runKind: 'update' },
+      '/Users/learner',
+    ),
+    wikiRunRecord(
+      {
+        ...shared,
+        state: 'failed',
+        reason: 'A publication that failed a check.',
+        site: 'replaced',
+      },
+      { runKind: 'update', startedAt: '2026-10-26T04:00:00.000Z' },
+      '/Users/learner',
+    ),
+    wikiRunRecord(
+      { ...shared, state: 'cancelled', site: 'kept' },
+      { runKind: 'generate', startedAt: '2026-10-26T04:00:00.000Z' },
+      '/Users/learner',
+    ),
+    wikiRunRecord(
+      {
+        ...shared,
+        state: 'failed',
+        reason: 'The folder cannot take a new LLM Wiki.',
+        isCodebookSentence: true,
+        site: 'kept',
+        outputDirectory: '/Users/learner',
+        outputLabel: '/Users/learner',
+      },
+      { runKind: 'generate', blockCause: 'edited-page' },
+      '/Users/learner',
+    ),
   ]
 
   // Assert
@@ -94,6 +133,10 @@ test('each end of a run is summarized in Codebook’s own words, a refused start
     'LLM Wiki update ended: host=vscode started=2026-10-26T04:00:00.000Z ended=2026-10-26T05:00:00.000Z end=conflict summary="stopped by files the publisher will not overwrite (learner-file)" output=/elsewhere/wiki',
     'LLM Wiki generate ended: host=vscode started=not started ended=2026-10-26T05:00:00.000Z end=failed summary="failed; the notice names the cause" output=/elsewhere/wiki',
     'LLM Wiki generate ended: host=vscode started=2026-10-26T04:00:00.000Z ended=2026-10-26T05:00:00.000Z end=timed-out summary="stopped at its bound" exit=SIGTERM output=/elsewhere/wiki',
+    'LLM Wiki update ended: host=unknown started=not started ended=2026-10-26T05:00:00.000Z end=already-current summary="nothing to update: the Wiki matches the source" output=/elsewhere/wiki',
+    'LLM Wiki update ended: host=vscode started=2026-10-26T04:00:00.000Z ended=2026-10-26T05:00:00.000Z end=failed summary="a publication appeared but failed a check" output=/elsewhere/wiki',
+    'LLM Wiki generate ended: host=vscode started=2026-10-26T04:00:00.000Z ended=2026-10-26T05:00:00.000Z end=cancelled summary="stopped watching by the learner or the closing window" output=/elsewhere/wiki',
+    'LLM Wiki generate ended: host=vscode started=not started ended=2026-10-26T05:00:00.000Z end=failed summary="failed; the notice names the cause" cause=edited-page output=~',
   ])
 })
 
@@ -143,7 +186,7 @@ test('on Windows the record shortens the home folder whatever the case of its dr
   // Assert
   assert.equal(
     record,
-    'LLM Wiki update ended: host=cursor started=2026-10-26T04:00:00.000Z ended=2026-10-26T05:00:00.000Z end=cancelled summary="stopped by the learner or the closing window" output=~\\Repo\\.codebook\\wiki',
+    'LLM Wiki update ended: host=cursor started=2026-10-26T04:00:00.000Z ended=2026-10-26T05:00:00.000Z end=cancelled summary="cancelled by the learner or the closing window" output=~\\Repo\\.codebook\\wiki',
   )
 })
 

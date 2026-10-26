@@ -63,7 +63,11 @@ function cancelledNotice(
   if (cancelled.site === 'replaced')
     return {
       severity: 'information',
-      message: `The LLM Wiki generation was stopped at ${at}, after an LLM Wiki was published in ${cancelled.outputLabel}.`,
+      // One verb per host, as in the sibling notice below: VS Code stopped watching, Cursor cancelled.
+      message:
+        cancelled.host === 'cursor'
+          ? `The LLM Wiki generation was cancelled at ${at}, after an LLM Wiki was published in ${cancelled.outputLabel}.`
+          : `Codebook stopped watching the LLM Wiki generation at ${at}, after an LLM Wiki was published in ${cancelled.outputLabel}.`,
       actions: [OPEN_WIKI_IN_BROWSER_ACTION],
     }
   return {

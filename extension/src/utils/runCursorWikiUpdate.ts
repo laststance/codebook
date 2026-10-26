@@ -5,8 +5,6 @@ import {
   WIKI_CURSOR_SHUTDOWN_GRACE_MS,
   WIKI_CURSOR_TERMINATION_GRACE_MS,
   WIKI_CURSOR_UPDATE_OUTPUT_LIMIT_BYTES,
-  WIKI_GENERATE_CHAT_REQUEST,
-  WIKI_UPDATE_CHAT_REQUEST,
   WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON,
 } from '../constants'
 
@@ -15,36 +13,9 @@ import {
   CURSOR_AGENT_LOOKUP_DESCRIPTION,
   resolveCursorAgentExecutable,
 } from './resolveCursorAgentExecutable'
+import { WIKI_RUN_KIND_WORDS, type WikiRunKindWords } from './wikiRunKindWords'
 import type { WikiRunKind } from './wikiUpdateRun'
 import { WikiUpdateTimeoutError } from './wikiUpdateTimeoutError'
-
-/** The words a Cursor agent run's sentences use for its kind, so a generation's sentences never call it an update (Cycle 0055, D5). */
-type CursorRunWords = {
-  /** The run as a noun: `update` or `generation`. */
-  noun: string
-  /** The run as the verb of "Cursor Agent timed out … the Wiki": `updating` or `generating`. */
-  verb: string
-  /** The button the learner presses to run it again. */
-  button: string
-  /** The chat request a learner can paste in Cursor chat to see the agent's own message. */
-  chatRequest: string
-}
-
-/** {@link CursorRunWords} of each run kind. */
-const CURSOR_RUN_WORDS: Record<WikiRunKind, CursorRunWords> = {
-  update: {
-    noun: 'update',
-    verb: 'updating',
-    button: 'Update',
-    chatRequest: WIKI_UPDATE_CHAT_REQUEST,
-  },
-  generate: {
-    noun: 'generation',
-    verb: 'generating',
-    button: 'Generate',
-    chatRequest: WIKI_GENERATE_CHAT_REQUEST,
-  },
-}
 
 /** The failure of a Cursor agent process that closed without a clean exit and that Codebook did not stop, with its exit code or signal as data, so the run's Output record names them without the sentence ({@link unfinishedExitError}). */
 export class CursorAgentExitError extends Error {
@@ -74,7 +45,7 @@ export function parseCursorWikiUpdateResult(
   output: string,
   runKind: WikiRunKind = 'update',
 ): string {
-  const words = CURSOR_RUN_WORDS[runKind]
+  const words = WIKI_RUN_KIND_WORDS[runKind]
   let envelope: CursorCliResult
   try {
     envelope = JSON.parse(output.trim())
@@ -102,11 +73,11 @@ export function parseCursorWikiUpdateResult(
  * @param words - The words of the run's kind.
  * @throws A plain error saying that the Wiki update or generation was cancelled, when the signal is aborted.
  * @example
- * throwIfWikiUpdateCancelled(controller.signal, CURSOR_RUN_WORDS.update) // returns while the learner has not cancelled
+ * throwIfWikiUpdateCancelled(controller.signal, WIKI_RUN_KIND_WORDS.update) // returns while the learner has not cancelled
  */
 function throwIfWikiUpdateCancelled(
   signal: AbortSignal | undefined,
-  words: CursorRunWords,
+  words: WikiRunKindWords,
 ): void {
   if (signal?.aborted) throw new Error(`The Wiki ${words.noun} was cancelled.`)
 }
@@ -118,15 +89,15 @@ function throwIfWikiUpdateCancelled(
  * @param words - The words of the run's kind, whose chat request the sentence names.
  * @returns The error whose sentence says how the agent stopped and where its own message can be read, with the code and the signal as data; the page alone says what was kept.
  * @example
- * unfinishedExitError(1, null, CURSOR_RUN_WORDS.update).message
+ * unfinishedExitError(1, null, WIKI_RUN_KIND_WORDS.update).message
  * // => 'Cursor Agent stopped with exit code 1 before finishing. Run "/codebook Update LLM Wiki" in Cursor chat to see its own message.'
- * unfinishedExitError(null, 'SIGTERM', CURSOR_RUN_WORDS.generate).message
+ * unfinishedExitError(null, 'SIGTERM', WIKI_RUN_KIND_WORDS.generate).message
  * // => 'Cursor Agent stopped on signal SIGTERM before finishing. Run "/codebook Generate the LLM Wiki for this project" in Cursor chat to see its own message.'
  */
 function unfinishedExitError(
   code: number | null,
   exitSignal: NodeJS.Signals | null,
-  words: CursorRunWords,
+  words: WikiRunKindWords,
 ): CursorAgentExitError {
   return new CursorAgentExitError(
     `Cursor Agent stopped ${code === null ? `on signal ${exitSignal ?? 'unknown'}` : `with exit code ${code}`} before finishing. Run "${words.chatRequest}" in Cursor chat to see its own message.`,
@@ -143,7 +114,7 @@ export async function runCursorWikiUpdate(
   timeoutMs: number,
   runKind: WikiRunKind = 'update',
 ): Promise<string> {
-  const words = CURSOR_RUN_WORDS[runKind]
+  const words = WIKI_RUN_KIND_WORDS[runKind]
   if (Buffer.byteLength(prompt, 'utf8') > WIKI_CURSOR_PROMPT_LIMIT_BYTES)
     throw new Error(`The Wiki ${words.noun} request is too large.`)
   throwIfWikiUpdateCancelled(signal, words)

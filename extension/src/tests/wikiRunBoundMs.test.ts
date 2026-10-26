@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import {
-  LONGEST_WIKI_RUN_MS,
-  longestWikiRunMs,
-  wikiRunBoundMs,
-} from '../utils/wikiRunBoundMs'
+import { LONGEST_WIKI_RUN_MS } from '../constants'
+import { longestWikiRunMs } from '../utils/longestWikiRunMs'
+import { wikiRunBoundMs } from '../utils/wikiRunBoundMs'
 
 // Value: protects=Eng decision 74, every place that reads a run's bound; fails_when=a generation gets an update's 15 minutes in either host, an update's bounds change, or a marker of an earlier version (no kind) is read with a generation's bound; no_claim=where each place reads it (marker, leftover and host tests); seam=none
 test('a generation is bounded at 55 minutes in both hosts, while an update keeps 15 minutes in each and a run without a kind is an update', () => {
@@ -58,4 +56,21 @@ test('the longest a run lasts adds the chat’s 30 second opening in VS Code, an
     vsCodeUpdate: 930_000,
     anyRun: 3_330_000,
   })
+})
+
+// Value: protects=Cycle 0056 pass 1 M4, the constant an unreadable marker file counts for; fails_when=LONGEST_WIKI_RUN_MS differs from the longest run over every kind and host (a bound or the chat's opening changed and the hand-listed constant did not); no_claim=where the constant is read (readLiveWikiUpdateMarker tests); seam=none
+test('the longest run any marker can stand for equals the longest of every kind and host', () => {
+  // Act
+  const longestOfEveryRun = Math.max(
+    longestWikiRunMs('generate', 'vscode'),
+    longestWikiRunMs('generate', 'cursor'),
+    longestWikiRunMs('update', 'vscode'),
+    longestWikiRunMs('update', 'cursor'),
+    longestWikiRunMs(undefined, 'vscode'),
+    longestWikiRunMs(undefined, 'cursor'),
+  )
+
+  // Assert
+  assert.equal(LONGEST_WIKI_RUN_MS, longestOfEveryRun)
+  assert.equal(LONGEST_WIKI_RUN_MS, 3_330_000)
 })

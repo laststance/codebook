@@ -5261,6 +5261,371 @@ test('pending and success branches retain their own conditions and operations', 
   }
 })
 
+// Value: protects=two conditional edges between the same two stacked nodes keep their labels readable in a published diagram; fails_when=the labels of a Show result edge and a Show error edge share one label band, so their backing boxes overlap; no_claim=how a browser paints the SVG or the room left of the first column
+test('two branch edges from one node to the node below it draw label boxes that do not overlap', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-diagram-label-boxes-')),
+  )
+  try {
+    const manifest = await diagramInput(root),
+      diagram = manifest.pages[0].diagrams[0]
+    diagram.nodes[1].row = 1
+    diagram.nodes[1].column = 0
+    diagram.edges[0] = {
+      ...diagram.edges[0],
+      kind: 'branch',
+      label: 'Show the saved result',
+      condition: 'ready',
+    }
+    diagram.edges.push({
+      ...diagram.edges[0],
+      id: 'failure',
+      label: 'Show the failure notice',
+      condition: 'denied',
+    })
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+    const boxes = ['read', 'failure'].map((id) => {
+      const [, x, y, width, height] = edgeGroup(html, id).match(
+        /<rect x="([\d.-]+)" y="([\d.-]+)" width="([\d.]+)" height="([\d.]+)" rx="3"/,
+      )
+      return {
+        left: Number(x),
+        right: Number(x) + Number(width),
+        top: Number(y),
+        bottom: Number(y) + Number(height),
+      }
+    })
+    // Assert
+    const [first, second] = boxes
+    const doOverlap =
+      first.left < second.right &&
+      second.left < first.right &&
+      first.top < second.bottom &&
+      second.top < first.bottom
+    assert.equal(doOverlap, false)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+/** Replaces the fixture's two nodes and one edge with a column of three nodes and the given edges, each edge as `[id, from, to, label, condition]`; an edge with a condition is a branch. */
+function threeRowColumn(diagram, edges) {
+  const reference = diagram.nodes[0].sources
+  diagram.nodes = ['a', 'b', 'c'].map((id, row) => ({
+    id,
+    label: id,
+    row,
+    column: 0,
+    sources: reference,
+  }))
+  diagram.edges = edges.map(([id, from, to, label, condition]) => ({
+    id,
+    from,
+    to,
+    label,
+    kind: condition ? 'branch' : 'call',
+    ...(condition ? { condition } : {}),
+    sources: reference,
+  }))
+}
+
+/** Replaces the fixture's nodes and edges with the given grid: each node as `[id, row, column]`, each edge as `[id, from, to, label, condition]`; an edge with a condition is a branch. */
+function gridDiagram(diagram, nodes, edges) {
+  const reference = diagram.nodes[0].sources
+  diagram.nodes = nodes.map(([id, row, column]) => ({
+    id,
+    label: id,
+    row,
+    column,
+    sources: reference,
+  }))
+  diagram.edges = edges.map(([id, from, to, label, condition]) => ({
+    id,
+    from,
+    to,
+    label,
+    kind: condition ? 'branch' : 'call',
+    ...(condition ? { condition } : {}),
+    sources: reference,
+  }))
+}
+
+/** The boxes of a rendered flow diagram: each node's rectangle and each edge's label backing, by id. */
+function diagramBoxes(html) {
+  const box = ([, id, x, y, width, height]) => ({
+    id,
+    left: Number(x),
+    right: Number(x) + Number(width),
+    top: Number(y),
+    bottom: Number(y) + Number(height),
+  })
+  return {
+    nodes: [
+      ...html.matchAll(
+        /<g data-node-id="([^"]+)"><rect x="([\d.-]+)" y="([\d.-]+)" width="([\d.]+)" height="([\d.]+)"/g,
+      ),
+    ].map(box),
+    labels: [
+      ...html.matchAll(
+        /<g data-edge-id="([^"]+)"[^>]*>(?:(?!<\/g>)[\s\S])*?<rect x="([\d.-]+)" y="([\d.-]+)" width="([\d.]+)" height="([\d.]+)" rx="3"/g,
+      ),
+    ].map(box),
+  }
+}
+
+/** The pairs of boxes (a label and a node, or two labels) that cover a common area, as `label e4 × node b`. */
+function overlappingBoxes({ nodes, labels }) {
+  const overlap = (first, second) =>
+    first.left < second.right &&
+    second.left < first.right &&
+    first.top < second.bottom &&
+    second.top < first.bottom
+  return labels.flatMap((label, index) => [
+    ...nodes
+      .filter((node) => overlap(label, node))
+      .map((node) => `label ${label.id} × node ${node.id}`),
+    ...labels
+      .slice(index + 1)
+      .filter((other) => overlap(label, other))
+      .map((other) => `label ${label.id} × label ${other.id}`),
+  ])
+}
+
+/** Renders the fixture's page and returns the first page's HTML. */
+async function renderedDiagramHtml(root, manifest) {
+  return (
+    await renderWikiPages(manifest, {
+      projectRoot: root,
+      outputDirectory: join(root, '.codebook/wiki'),
+    })
+  ).get('index.html')
+}
+
+// Value: protects=Cycle 0056 pass 3 A4(1), a diagram that needs no stacked labels keeps the layout it had before the label bands grew; fails_when=widening the label bands to every node pair moves the label boxes or the rows of a diagram whose edges share no node pair, so every published diagram changes; no_claim=how a browser paints the SVG; seam=label boxes hard-coded from the renderer of the release before this change
+test('a three-row diagram whose labels need no stacking keeps the label boxes of the earlier renderer', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-diagram-unchanged-')),
+  )
+  try {
+    const manifest = await diagramInput(root)
+    threeRowColumn(manifest.pages[0].diagrams[0], [
+      ['e1', 'a', 'b', 'Read data'],
+      ['e2', 'b', 'c', 'Write the result'],
+    ])
+
+    // Act
+    const { labels } = diagramBoxes(await renderedDiagramHtml(root, manifest))
+
+    // Assert
+    assert.deepEqual(
+      labels.map(({ id, left, top, right, bottom }) => ({
+        id,
+        left: Math.round(left * 100) / 100,
+        top,
+        right: Math.round(right * 100) / 100,
+        bottom,
+      })),
+      [
+        { id: 'e1', left: 83.88, top: 145, right: 180.12, bottom: 163 },
+        { id: 'e2', left: 51.12, top: 307, right: 212.88, bottom: 325 },
+      ],
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=Cycle 0056 pass 3 A4(2), the label of an edge that crosses a row; fails_when=a conditional edge from the top to the bottom node of a column puts its label on the node between them, where the node paints over it, or a node or label is not drawn at all; no_claim=the connector line, which an author's grid placement decides; seam=a column of three nodes with one edge across two rows
+test('the label of an edge across two rows stays clear of the node between them', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-diagram-span-label-')),
+  )
+  try {
+    const manifest = await diagramInput(root)
+    threeRowColumn(manifest.pages[0].diagrams[0], [
+      ['e1', 'a', 'b', 'Read data'],
+      ['e4', 'a', 'c', 'Skip the write', 'cached'],
+    ])
+
+    // Act
+    const boxes = diagramBoxes(await renderedDiagramHtml(root, manifest))
+
+    // Assert: every node and label was drawn, so no missing box passes as no overlap.
+    assert.deepEqual(
+      {
+        nodes: boxes.nodes.map(({ id }) => id).sort(),
+        labels: boxes.labels.map(({ id }) => id).sort(),
+        overlaps: overlappingBoxes(boxes),
+      },
+      { nodes: ['a', 'b', 'c'], labels: ['e1', 'e4'], overlaps: [] },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=Cycle 0056 pass 3 A4(2), a column of three rows with a stacked pair and an edge across two rows; fails_when=any label box covers a node or another label box once the label bands span every edge pair, or a node or label is not drawn at all; no_claim=how a browser paints the SVG; seam=the stacked pair between the lower two nodes and the crossing edge from the top node
+test('a column with a stacked pair and an edge across two rows draws no label over a node or another label', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-diagram-stack-span-')),
+  )
+  try {
+    const manifest = await diagramInput(root)
+    threeRowColumn(manifest.pages[0].diagrams[0], [
+      ['e1', 'a', 'b', 'Read data'],
+      ['e2', 'b', 'c', 'Show the saved result', 'ready'],
+      ['e3', 'b', 'c', 'Show the failure notice', 'denied'],
+      ['e4', 'a', 'c', 'Skip the write', 'cached'],
+    ])
+
+    // Act
+    const boxes = diagramBoxes(await renderedDiagramHtml(root, manifest))
+
+    // Assert: every node and label was drawn, so no missing box passes as no overlap.
+    assert.deepEqual(
+      {
+        nodes: boxes.nodes.map(({ id }) => id).sort(),
+        labels: boxes.labels.map(({ id }) => id).sort(),
+        overlaps: overlappingBoxes(boxes),
+      },
+      {
+        nodes: ['a', 'b', 'c'],
+        labels: ['e1', 'e2', 'e3', 'e4'],
+        overlaps: [],
+      },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=CodeRabbit on PR #136 (render-wiki-diagrams.mjs labelBandOf), two edges whose labels share a midpoint in one gap; fails_when=an edge from the first to the third column and an edge straight down the second column, both leaving the top row, draw their labels in the same place because their bands are keyed by different column pairs; no_claim=the connector lines; seam=a two-row grid with those two edges
+test('two edges that cross the same gap at the same midpoint stack their labels instead of drawing them over each other', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-diagram-shared-midpoint-')),
+  )
+  try {
+    const manifest = await diagramInput(root)
+    gridDiagram(
+      manifest.pages[0].diagrams[0],
+      [
+        ['a', 0, 0],
+        ['b', 0, 1],
+        ['c', 1, 1],
+        ['d', 1, 2],
+      ],
+      [
+        ['e1', 'a', 'd', 'Send the order'],
+        ['e2', 'b', 'c', 'Check the stock'],
+      ],
+    )
+
+    // Act
+    const boxes = diagramBoxes(await renderedDiagramHtml(root, manifest))
+
+    // Assert
+    assert.deepEqual(
+      {
+        nodes: boxes.nodes.map(({ id }) => id).sort(),
+        labels: boxes.labels.map(({ id }) => id).sort(),
+        overlaps: overlappingBoxes(boxes),
+      },
+      { nodes: ['a', 'b', 'c', 'd'], labels: ['e1', 'e2'], overlaps: [] },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=Cycle 0056 (found with the CodeRabbit finding above), a row's horizontal label under a tall stack of labels that cross the gap above that row at the same midpoint; fails_when=the stack in the gap reaches down over the label reserved above the row; no_claim=labels at different midpoints; seam=two conditional edges down from the top row and one edge along the second row, all with one midpoint
+test('a horizontal label below a stack of labels in the gap above its row keeps clear of that stack', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-diagram-gap-and-row-')),
+  )
+  try {
+    const manifest = await diagramInput(root)
+    gridDiagram(
+      manifest.pages[0].diagrams[0],
+      [
+        ['a', 0, 0],
+        ['b', 1, 1],
+        ['x', 1, 0],
+      ],
+      [
+        ['e1', 'a', 'b', 'Save the draft', 'the form is valid'],
+        ['e2', 'a', 'b', 'Show the errors', 'the form is invalid'],
+        ['e3', 'x', 'b', 'Load the saved draft'],
+      ],
+    )
+
+    // Act
+    const boxes = diagramBoxes(await renderedDiagramHtml(root, manifest))
+
+    // Assert
+    assert.deepEqual(
+      {
+        nodes: boxes.nodes.map(({ id }) => id).sort(),
+        labels: boxes.labels.map(({ id }) => id).sort(),
+        overlaps: overlappingBoxes(boxes),
+      },
+      { nodes: ['a', 'b', 'x'], labels: ['e1', 'e2', 'e3'], overlaps: [] },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=Cycle 0056 (found with the CodeRabbit finding above), two horizontal edges of one row between different node pairs with one midpoint; fails_when=the outer and the inner pair draw their labels in the same place above the row; no_claim=the connector lines, which cross the inner nodes as the author placed them; seam=one row of four nodes with an edge from the first to the fourth and one from the second to the third
+test('two edges of one row between different nodes with one midpoint stack their labels', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-diagram-row-midpoint-')),
+  )
+  try {
+    const manifest = await diagramInput(root)
+    gridDiagram(
+      manifest.pages[0].diagrams[0],
+      [
+        ['a', 0, 0],
+        ['b', 0, 1],
+        ['c', 0, 2],
+        ['d', 0, 3],
+      ],
+      [
+        ['e1', 'a', 'd', 'Forward the receipt'],
+        ['e2', 'b', 'c', 'Count the items'],
+      ],
+    )
+
+    // Act
+    const boxes = diagramBoxes(await renderedDiagramHtml(root, manifest))
+
+    // Assert
+    assert.deepEqual(
+      {
+        nodes: boxes.nodes.map(({ id }) => id).sort(),
+        labels: boxes.labels.map(({ id }) => id).sort(),
+        overlaps: overlappingBoxes(boxes),
+      },
+      { nodes: ['a', 'b', 'c', 'd'], labels: ['e1', 'e2'], overlaps: [] },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('wrapped diagram operations preserve word boundaries and an accessible condition label', async () => {
   // Arrange
   const root = await realpath(

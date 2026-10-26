@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { describeMissingWiki } from '../utils/describeMissingWiki'
 import {
-  describeMissingWiki,
   startWikiGenerate,
   type WikiGenerateStartDependencies,
 } from '../utils/startWikiRun'
@@ -44,6 +44,10 @@ function standIns(
     },
     prepareAgent: async (): Promise<void> => {
       steps.push('agent')
+    },
+    // The window's bounded retry is its own; a stand-in releases the marker once.
+    leaveMarker: async (claim): Promise<void> => {
+      await claim.release().catch(() => false)
     },
     claimMarker: async () => {
       steps.push('claim')
@@ -265,6 +269,33 @@ test('a publish lock in the way refuses the generation before the confirmation w
       asked: false,
     },
   )
+})
+
+// Value: protects=Cycle 0056 task 10, the cause id of a block, which the learner's sentence leaves out and the Output record keeps; fails_when=the refusal gets no cause id, so a learner who reports it has only the sentence; no_claim=how the Output record prints it (wikiRunRecord tests); seam=stand-ins
+test('a block in the way hands its cause id to the refusal beside the learner’s sentence', async () => {
+  // Arrange
+  const refusals: Array<{ reason: string; cause: string | undefined }> = []
+  const dependencies = standIns([], {
+    findStartBlock: async () => ({
+      cause: 'edited-page',
+      paths: ['index.html'],
+    }),
+    refuse: (reason, _override, cause): void => {
+      refusals.push({ reason, cause })
+    },
+  })
+
+  // Act
+  await startWikiGenerate(dependencies)
+
+  // Assert
+  assert.deepEqual(refusals, [
+    {
+      reason:
+        'The folder .codebook/wiki cannot take a new LLM Wiki: index.html is in the way. Press Update LLM Wiki for the details and the next step.',
+      cause: 'edited-page',
+    },
+  ])
 })
 
 // Value: protects=the earlier chat's leftover in the way of a generation; fails_when=the refusal loses its override or is shown after the confirmation; no_claim=which leftover (findUnacknowledgedWikiLeftover tests); seam=stand-ins

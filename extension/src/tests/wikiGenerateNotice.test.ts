@@ -108,7 +108,7 @@ test('each ended generation is told in its own sentence with the next step, and 
     {
       severity: 'information',
       message:
-        'The LLM Wiki generation was stopped at 14:06, after an LLM Wiki was published in .codebook/wiki.',
+        'Codebook stopped watching the LLM Wiki generation at 14:06, after an LLM Wiki was published in .codebook/wiki.',
       actions: ['Open in Browser'],
     },
     {
@@ -193,4 +193,28 @@ test('a generation notice takes link syntax in a reason apart', () => {
     notice?.message,
     'LLM Wiki generation failed at 14:06: See [the log] (command:x).',
   )
+})
+
+// Value: protects=one verb for one stop in every notice of a generation (Cycle 0056 task 9): VS Code says Codebook stopped watching, Cursor says cancelled; fails_when=the notice of a stop after a publication says stopped in Cursor or says nothing of watching in VS Code, or the same act reads cancelled in one notice and stopped in its sibling; no_claim=the update's sentences, which keep their own words (describeWikiUpdate tests), and the bound's notice, which is no stop by the learner; seam=none
+test('a stop of a generation, with or without a publication before it, uses stopped watching in VS Code and cancelled in Cursor', () => {
+  // Arrange
+  const stops: WikiUpdateStatus[] = [
+    { ...ENDED, state: 'cancelled', site: 'kept' },
+    { ...ENDED, state: 'cancelled', site: 'replaced' },
+    { ...ENDED, host: 'cursor', state: 'cancelled', site: 'kept' },
+    { ...ENDED, host: 'cursor', state: 'cancelled', site: 'replaced' },
+  ]
+
+  // Act
+  const messages = stops.map(
+    (status) => wikiGenerateNotice(status, at)?.message,
+  )
+
+  // Assert
+  assert.deepEqual(messages, [
+    'Codebook stopped watching the LLM Wiki generation at 14:06. The chat may still publish; Codebook: Open LLM Wiki in Browser opens the Wiki once it does. To stop it, stop the request in the chat.',
+    'Codebook stopped watching the LLM Wiki generation at 14:06, after an LLM Wiki was published in .codebook/wiki.',
+    'LLM Wiki generation cancelled at 14:06. Cursor Agent was stopped; nothing was published.',
+    'The LLM Wiki generation was cancelled at 14:06, after an LLM Wiki was published in .codebook/wiki.',
+  ])
 })

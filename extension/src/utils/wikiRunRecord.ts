@@ -6,34 +6,8 @@ import {
   DELETE_CHARACTER_CODE,
 } from '../constants'
 
+import type { WikiAgentExit } from './agentExitOf'
 import type { WikiRunKind, WikiUpdateStatus } from './wikiUpdateRun'
-
-/** What an agent process's exit said, as data: the Cursor agent's exit code or signal ({@link CursorAgentExitError}); absent for a VS Code chat and for a run that ended otherwise. */
-export type WikiAgentExit = {
-  exitCode: number | null
-  exitSignal: string | null
-}
-
-/**
- * Reads the exit code or signal off a failure of the Cursor agent's process ({@link CursorAgentExitError}), by its fields, so a stand-in of the runner in a test is read as the runner is.
- * @param error - What the Cursor agent's run threw.
- * @returns The exit code and signal where the failure carries them; `undefined` for any other failure.
- * @example
- * agentExitOf(Object.assign(new Error('…'), { exitCode: 1, exitSignal: null })) // => { exitCode: 1, exitSignal: null }
- * agentExitOf(new Error('The Wiki update was cancelled.'))                    // => undefined
- */
-export function agentExitOf(error: unknown): WikiAgentExit | undefined {
-  if (typeof error !== 'object' || error === null) return undefined
-  const exitCode: unknown = Reflect.get(error, 'exitCode')
-  const exitSignal: unknown = Reflect.get(error, 'exitSignal')
-  // Only a failure that carries the process's own answer has one; a cancel, a bound or a start failure carries none.
-  if (typeof exitCode !== 'number' && typeof exitSignal !== 'string')
-    return undefined
-  return {
-    exitCode: typeof exitCode === 'number' ? exitCode : null,
-    exitSignal: typeof exitSignal === 'string' ? exitSignal : null,
-  }
-}
 
 /** One ended run as its record takes it: the state the run ended in; its start and the Cursor agent's exit come beside it in {@link wikiRunRecord}'s `details`. */
 type EndedWikiRun = Exclude<WikiUpdateStatus, { state: 'idle' | 'running' }>
@@ -54,7 +28,10 @@ function endSummary(ended: EndedWikiRun): string {
     case 'already-current':
       return 'nothing to update: the Wiki matches the source'
     case 'cancelled':
-      return 'stopped by the learner or the closing window'
+      // One verb per host, as the notices and the view say it: Codebook stops watching a VS Code chat and cancels a Cursor agent.
+      return ended.host === 'cursor'
+        ? 'cancelled by the learner or the closing window'
+        : 'stopped watching by the learner or the closing window'
     case 'timed-out':
       return 'stopped at its bound'
     case 'conflict':
@@ -133,6 +110,7 @@ function withoutControlCharacters(path: string): string {
  * @param details.runKind - The run's kind.
  * @param details.startedAt - When the run started, as an ISO timestamp; absent for a refused start.
  * @param details.agentExit - The Cursor agent's exit code or signal, where its process gave one.
+ * @param details.blockCause - The id of the block that refused a generation's start (`findWikiUpdateStartBlock`); the learner's sentence leaves it out.
  * @param homeDirectory - The learner's home folder; tests pass their own.
  * @param platform - The system whose paths these are; tests pass their own.
  * @returns One line: `LLM Wiki <kind> ended: host=… started=… ended=… end=… summary="…" [exit=…] output=…`.
@@ -148,6 +126,7 @@ export function wikiRunRecord(
     runKind: WikiRunKind
     startedAt?: string
     agentExit?: WikiAgentExit
+    blockCause?: string
   },
   homeDirectory: string = homedir(),
   platform: NodeJS.Platform = process.platform,
@@ -157,5 +136,6 @@ export function wikiRunRecord(
   const exit = details.agentExit
     ? ` exit=${details.agentExit.exitCode ?? details.agentExit.exitSignal ?? 'unknown'}`
     : ''
-  return `LLM Wiki ${details.runKind} ended: host=${host} started=${details.startedAt ?? 'not started'} ended=${ended.finishedAt} end=${ended.state} summary="${endSummary(ended)}"${exit} output=${withoutControlCharacters(pathWithHomeShortened(ended.outputDirectory, homeDirectory, platform))}`
+  const cause = details.blockCause ? ` cause=${details.blockCause}` : ''
+  return `LLM Wiki ${details.runKind} ended: host=${host} started=${details.startedAt ?? 'not started'} ended=${ended.finishedAt} end=${ended.state} summary="${endSummary(ended)}"${exit}${cause} output=${withoutControlCharacters(pathWithHomeShortened(ended.outputDirectory, homeDirectory, platform))}`
 }
