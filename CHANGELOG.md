@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.2.46.0] - 2026-10-26 (development candidate)
+
+Cycle 0055 ([Issue #132](https://github.com/laststance/codebook/issues/132)), a feature cycle, second of its two pull requests: the LLM Wiki gets its own view in Codebook's Activity Bar, and the Wiki feature area is proven again natively in VS Code and Cursor (trial N55).
+
+**The LLM Wiki view.**
+
+- **An LLM Wiki view in Codebook's Activity Bar**, below the Repository Wiki view (which lists repository articles, not the generated site), shows where the project's generated site stands and the next step. Its rows come and go with the facts they show, in a fixed order; each tooltip has the full text and each action is also in the row's context menu.
+- **In a folder with no Wiki** the view shows a welcome with a **Generate LLM Wiki** button, what runs it in your editor (Copilot Chat in VS Code, `cursor-agent` in Cursor) and the output folder with a **Change location** link. With no folder open it offers **Open Folder**; in a folder you have not trusted, **Manage Workspace Trust**.
+- **`<folder> Wiki`** opens the published Wiki in the browser. Its description is the reader page's freshness label (`Wiki source current`, `Source changed · Update available`, `Wiki freshness unknown: …`, or `Checking freshness…`), its tooltip names the generation (`Generated from <commit> on <date>`), and **Update LLM Wiki** is its action. When the Wiki records no Git revision, the tooltip says in full that added files are not checked. The row stays while a run works, so you can read the Wiki during an update.
+- **`Generating…` or `Updating…`** shows this window's run with its minutes of the bound: in VS Code `Waiting for the chat to start`, then `In chat · <N> min of <bound>`, with **Stop watching**, **Open Chat** and **Show Output**, and a message that Stop watching does not stop the chat; in Cursor `cursor-agent · <N> min of <bound>` with **Cancel** and **Show Output**. A start time that cannot be read shows no minutes.
+- **`Generating in another window`**, **`Updating in another window`** and **`Waiting for chat`** show a run of another window and the reservation a stopped VS Code watch leaves (`retry after <time>`, with **Open Chat**). Once the retry time has passed the reservation row is gone and Generate or Update is available again, whether or not the recorded process still exists. A Wiki the chat publishes meanwhile shows at once, with the notice `An LLM Wiki was published in <folder>.` and **Open in Browser**.
+- **`Last generation stopped`** says how this window's generation ended without a Wiki; a click shows the full sentence with **Copy details** (your home folder as `~`), and **Try again** starts a new one.
+- **Attention rows** name what blocks an update or makes the manifest unusable: `Publish in progress or stopped` and `Wiki manifest needs recovery` offer **Copy recovery request** (a chat request, never a shell command), `Wiki folder belongs elsewhere` offers **Change location**, and `Wiki files changed by hand` offers **Reveal Wiki Folder**.
+- **`Output: <folder>`** shows the resolved folder with **Change location**. A read that fails shows `Could not read the LLM Wiki state` with **Refresh to retry**.
+- **The view follows changes by itself:** this window's run, the Wiki's manifest and the marker files beside it (watched one second after the last change, the Wiki folder itself included, so deleting or renaming it is seen), the output setting, workspace trust, the view becoming visible, every 30 seconds while a run row shows, and **Refresh** in its title bar. The watch never stands above the project folder, on the home folder or on a file-system root; an output outside the project is watched only when its own parent exists. Without a watch the view refreshes when shown and with **Refresh**, and the Output row's tooltip says so.
+- **Codebook: Refresh LLM Wiki**, **Codebook: Copy LLM Wiki Recovery Request** and **Codebook: Reveal LLM Wiki Folder** are listed in the Command Palette in an editor that shows the view.
+
+**Changed.**
+
+- **Codebook's learning view container has its own Activity Bar icon** (an open notebook with a check mark), so the two Codebook icons are told apart.
+- **The browser reader's freshness label and the view's row share one wording**, so both say the same.
+
+**Proven natively (N55, development target `nextjs-dashboard`, both hosts).** From the empty view, Generate published a Wiki in 32 min 05 s (VS Code, Copilot Chat, GPT-6 Luna) and 4 min 27 s (Cursor, `cursor-agent`, Grok 4.6 High Fast); the reader matched the specification's region 3; 6 of 6 sampled claims per host were correct against the source; a question's citation opened the right file and line in the same editor; **?** opened the shortcut list; an update after a source edit stated the new value; Stop watching and Cancel left the states this entry describes. Saved replays were unchanged.
+
+**Compatibility.** The MCP API stays 1.8, the Wiki's published format and the stored learner data do not change, and the bundled skill stays 1.0.49.
+
 ## [0.2.45.0] - 2026-10-26 (development candidate)
 
 Cycle 0055 ([Issue #132](https://github.com/laststance/codebook/issues/132)), a feature cycle, first of its two pull requests: Codebook generates a project's first LLM Wiki from its own commands. The LLM Wiki view in the Activity Bar and the native trial follow in the second.
