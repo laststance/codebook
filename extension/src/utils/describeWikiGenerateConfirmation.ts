@@ -1,5 +1,4 @@
-import { MS_PER_MINUTE } from '../constants'
-
+import { describeMinutes } from './describeMinutes'
 import type { WikiUpdateHost } from './wikiUpdateRun'
 
 /** The confirmation every generation shows before anything starts (Cycle 0055, D2): its title and its detail. */
@@ -28,12 +27,12 @@ export function describeWikiGenerateConfirmation(options: {
   chatHandOver: string
   timeoutMs: number
 }): WikiGenerateConfirmation {
-  const minutes = Math.round(options.timeoutMs / MS_PER_MINUTE)
+  const bound = describeMinutes(options.timeoutMs)
   // Each host says where the request goes and what the learner does while it runs.
   const runner =
     options.host === 'cursor'
-      ? `It runs through Cursor’s agent CLI (cursor-agent) without further prompts and uses your Cursor plan; the agent can edit files and run commands in this project. The model is the one cursor-agent is set to use; Codebook does not choose it. Codebook waits up to ${minutes} minutes; you can keep working.`
-      : `${options.chatHandOver} The chat asks you to approve its commands and may ask you to Continue, so keep the Chat view open; it uses your chat plan. Codebook watches for up to ${minutes} minutes.`
+      ? `It runs through Cursor’s agent CLI (cursor-agent) without further prompts and uses your Cursor plan; the agent can edit files and run commands in this project. The model is the one cursor-agent is set to use; Codebook does not choose it. Codebook waits up to ${bound}; you can keep working.`
+      : `${options.chatHandOver} The chat asks you to approve its commands and may ask you to Continue, so keep the Chat view open; it uses your chat plan. Codebook watches for up to ${bound}.`
   return {
     title: `Generate the LLM Wiki of ${options.projectName}?`,
     detail: `It is written to ${options.outputDirectory}.\n\n${runner}`,

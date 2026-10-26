@@ -11,7 +11,10 @@ import {
 } from '../constants'
 
 import { terminateCursorAgentProcess } from './requestCursorWikiText'
-import { resolveCursorAgentExecutable } from './resolveCursorAgentExecutable'
+import {
+  CURSOR_AGENT_LOOKUP_DESCRIPTION,
+  resolveCursorAgentExecutable,
+} from './resolveCursorAgentExecutable'
 import type { WikiRunKind } from './wikiUpdateRun'
 import { WikiUpdateTimeoutError } from './wikiUpdateTimeoutError'
 
@@ -228,7 +231,7 @@ export async function runCursorWikiUpdate(
       failure =
         'code' in error && error.code === 'ENOENT'
           ? new Error(
-              `Cursor Agent CLI is not installed: Codebook looks for ~/.local/bin/cursor-agent, then cursor-agent on the editor's PATH. Install it and sign in, then retry the Wiki ${words.noun}, or run "${words.chatRequest}" in Cursor chat.`,
+              `Cursor Agent CLI is not installed: Codebook looks for ${CURSOR_AGENT_LOOKUP_DESCRIPTION}. Install it and sign in, then retry the Wiki ${words.noun}, or run "${words.chatRequest}" in Cursor chat.`,
             )
           : new Error(
               `Cursor Agent could not start the Wiki ${words.noun}. Check its installation and retry.`,

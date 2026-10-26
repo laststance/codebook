@@ -75,8 +75,8 @@ function standIns(
   }
 }
 
-// Value: protects=Eng decisions 72, 73 and 79 and D2, the order of a generation's start; fails_when=anything is made or claimed before the learner confirmed, the folder is made after the claim (the claim fails with ENOENT), the agent is readied before the claim and the last look for a Wiki (a refused start or the update's offer would write a Cursor skill, and a skill in the way would hide the refusal; /ship review, Cycle 0055 pt1), or the manifest is not looked at once more after the claim; no_claim=what each step does (host tests); seam=stand-ins
-test('a generation’s start checks the folder, the existing Wiki, the publisher’s blocks and other runs before it asks, then makes the folder, claims the marker, looks for a Wiki once more and only then readies the agent', async () => {
+// Value: protects=Eng decisions 72, 73 and 79 and D2, the order of a generation's start; fails_when=anything is made or claimed before the learner confirmed, the folder is made after the claim (the claim fails with ENOENT), the agent is readied before the claim and the last look for a Wiki (a refused start or the update's offer would write a Cursor skill, and a skill in the way would hide the refusal; /ship review, Cycle 0055 pt1), a slow read (the Git look) runs while the marker is claimed for no run yet (/ship review pass 3), or the manifest is not looked at once more after the claim; no_claim=what each step does (host tests); seam=stand-ins
+test('a generation’s start checks the folder, the existing Wiki, the publisher’s blocks and other runs before it asks, then makes the folder, reads the publication and Git before it claims the marker, looks for a Wiki once more and only then readies the agent', async () => {
   // Arrange
   const steps: string[] = []
 
@@ -94,13 +94,13 @@ test('a generation’s start checks the folder, the existing Wiki, the publisher
         'in-the-way',
         'confirm',
         'parent',
+        'publication',
+        'git',
         'block',
         'in-the-way',
         'claim',
         'token',
         'agent',
-        'publication',
-        'git',
       ],
       startedAtMs: 1_790_000_000_000,
       hasGit: true,
@@ -185,8 +185,8 @@ test('an agent that cannot be readied after the claim releases the marker and pa
   )
 })
 
-// Value: protects=AC 14, a start that throws after its claim (a read that fails); fails_when=the marker stays and every window is refused until it expires; no_claim=the caller's notice; seam=stand-ins
-test('a read that throws after the claim releases the marker and passes the failure on', async () => {
+// Value: protects=AC 14 and the /ship review pass 3 of Cycle 0055 pt1, a start whose read fails (the Git look); fails_when=the failure is swallowed, or the read runs after the claim, so a slow or failing read keeps a marker that stands for no run; no_claim=the caller's notice; seam=stand-ins
+test('a read that throws before the claim passes the failure on and claims no marker', async () => {
   // Arrange
   const steps: string[] = []
   const dependencies = standIns(steps, {
@@ -204,8 +204,32 @@ test('a read that throws after the claim releases the marker and passes the fail
 
   // Assert
   assert.deepEqual(
-    { failure, released: steps.includes('release') },
-    { failure: 'Git could not be asked.', released: true },
+    { failure, claimed: steps.includes('claim') },
+    { failure: 'Git could not be asked.', claimed: false },
+  )
+})
+
+// Value: protects=the state matrix's generate × link-on-path cell (/ship review pass 3, Cycle 0055 pt1): a link or a file on the Wiki folder's path in the project; fails_when=anything is read, asked, made or claimed before the path check refused it, so a cloned repository's link sends the generation outside the project; no_claim=what the path check finds (assertNoLinkOnWikiPath tests); seam=stand-ins
+test('a link on the Wiki folder’s path refuses the generation before anything is read, asked, made or claimed', async () => {
+  // Arrange
+  const steps: string[] = []
+  const dependencies = standIns(steps, {
+    assertPathHeld: async () => {
+      throw new Error('The Wiki folder .codebook/wiki is a link.')
+    },
+  })
+
+  // Act
+  const failure = await startWikiGenerate(dependencies).then(
+    () => undefined,
+    (error: unknown) =>
+      error instanceof Error ? error.message : String(error),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { failure, steps },
+    { failure: 'The Wiki folder .codebook/wiki is a link.', steps: [] },
   )
 })
 

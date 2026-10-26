@@ -30,7 +30,7 @@ export function agentExitOf(error: unknown): WikiAgentExit | undefined {
   }
 }
 
-/** One ended run as its record takes it: the state the run ended in, and when it started where the state does not say. */
+/** One ended run as its record takes it: the state the run ended in; its start and the Cursor agent's exit come beside it in {@link wikiRunRecord}'s `details`. */
 type EndedWikiRun = Exclude<WikiUpdateStatus, { state: 'idle' | 'running' }>
 
 /**

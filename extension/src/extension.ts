@@ -1037,8 +1037,8 @@ export function activate(
     await readWikiFileToOpen(entry, 'entry page')
     return { projectRoot, outputDirectory, entry }
   }
-  /** Says whether the Wiki folder holds no Wiki at all: no manifest, and nothing a publish left that a start would refuse (a publish swaps the folder with its journal beside it); called by Open LLM Wiki in Browser before it opens the Wiki. @returns The folder's label when it holds no Wiki; `undefined` otherwise. @throws The refusal of a link or a file on the folder's path in the project ({@link assertNoLinkOnWikiPath}). @example await findMissingWikiLabel() // => '.codebook/wiki' */
-  const findMissingWikiLabel = async (): Promise<string | undefined> => {
+  /** Says whether the Wiki folder holds no Wiki at all: no manifest, and nothing a publish left that a start would refuse (a publish swaps the folder with its journal beside it); called by Open LLM Wiki in Browser before it opens the Wiki. @returns The folder and its label when it holds no Wiki; `undefined` otherwise. @throws The refusal of a link or a file on the folder's path in the project ({@link assertNoLinkOnWikiPath}). @example await findMissingWiki() // => { outputDirectory: '/repo/.codebook/wiki', outputLabel: '.codebook/wiki' } */
+  const findMissingWiki = async (): Promise<WikiUpdateOutput | undefined> => {
     const { projectRoot, outputDirectory } = await wikiLocation()
     // Nothing of the Wiki is read through a link on its folder's path in the project.
     await assertNoLinkOnWikiPath(outputDirectory, projectRoot)
@@ -1050,7 +1050,59 @@ export function activate(
     // A publish in progress or stopped is no missing Wiki: the open's own failure names it.
     if (await findWikiUpdateStartBlock(outputDirectory, projectRoot))
       return undefined
-    return wikiOutputLabel(projectRoot, outputDirectory)
+    return {
+      outputDirectory,
+      outputLabel: wikiOutputLabel(projectRoot, outputDirectory),
+    }
+  }
+  /**
+   * Tells the learner that a folder holds no LLM Wiki, with Generate LLM Wiki, unless a generation is under way: this window's own run is told as a second start is ({@link showWikiUpdateRunning}), another window's run that runs or is starting by its own sentence ({@link describeOtherWikiWindow}); called by Open LLM Wiki in Browser and Update LLM Wiki for a folder without a Wiki.
+   * Why: while a first generation runs there is no Wiki yet, and a Generate button would only lead to a refusal (/ship review pass 3, Cycle 0055 pt1).
+   * @param wikiOutput - The Wiki folder, beside which another window's marker lies, and its label.
+   * @example await showMissingWikiNotice({ outputDirectory: '/repo/.codebook/wiki', outputLabel: '.codebook/wiki' })
+   */
+  const showMissingWikiNotice = async (
+    wikiOutput: WikiUpdateOutput,
+  ): Promise<void> => {
+    // This window's own generation: its progress, as a second start is told.
+    if (wikiUpdateRun.isRunning()) {
+      showWikiUpdateRunning()
+      return
+    }
+    const holder = await findWikiRunHolder(wikiOutput.outputDirectory)
+    // Another window's run that runs or starts now: its own sentence, never a Generate it would refuse.
+    if (holder) {
+      void showNotice(
+        'information',
+        describeOtherWikiWindow(holder, 'generate'),
+      )
+      return
+    }
+    showWikiActionNotice('error', describeMissingWiki(wikiOutput.outputLabel), [
+      GENERATE_WIKI_ACTION,
+    ])
+  }
+  /**
+   * Names another window's run beside a Wiki folder: a marker that is being written, or one of a run that has not stopped its watch; called by {@link showMissingWikiNotice}.
+   * @param outputDirectory - The Wiki folder.
+   * @returns The marker's holder; `undefined` for none, a stopped watch's reservation, this window's own marker or a look that failed.
+   * @example await findWikiRunHolder('/repo/.codebook/wiki') // => { pid: 4242, windowId: '3f6c', host: 'vscode', startedAtMs: 1_790_000_000_000, runKind: 'generate' }
+   */
+  const findWikiRunHolder = async (
+    outputDirectory: string,
+  ): Promise<Parameters<typeof describeOtherWikiWindow>[0] | undefined> => {
+    const markerLook = await readLiveWikiUpdateMarker(
+      outputDirectory,
+      wikiWindowId,
+    ).catch(() => undefined)
+    if (markerLook?.kind === 'being-written') return markerLook.heldBy
+    // A stopped watch's reservation is told by the Generate it refuses, with its override.
+    if (
+      markerLook?.kind === 'live' &&
+      markerLook.heldBy.watchEndedAtMs === undefined
+    )
+      return markerLook.heldBy
+    return undefined
   }
   /** Reads the published manifest's identity and its freshness against the project; undefined while it is missing, mid-replacement or invalid. @example await inspectPublishedWiki('/repo', '/repo/.codebook/wiki') // => { identity: 'a1b2c3d4e5f6+0f9e8d7c', revision: 'a1b2c3d4e5f6', index: '0f9e8d7c', freshness: { status: 'current', changedPaths: [], addedPaths: [] } } */
   const inspectPublishedWiki = async (
@@ -1587,15 +1639,19 @@ export function activate(
     return undefined
   }
   /**
-   * Starts the update again when the learner presses "Update anyway", with only the leftovers the refusals named ignored; called by the button of a refusal {@link lookAtWikiStart} words for an earlier chat's leftover.
+   * Starts the update again when the learner presses "Update anyway", with only the leftovers the refusals named ignored; called by the button of a refusal {@link lookAtWikiStart} words for an earlier chat's leftover, and by the "Update it instead?" offer of a generation.
    * @param leftovers - The leftovers of the earlier presses and of this refusal ({@link updateDeepWiki}).
+   * @param refusedAttempt - The start whose refusal or offer showed the button, which may still be unwinding at the press; another start or run of this window at the press meets the update as any press does ({@link runWikiAttempt}), never queued behind it (/ship review pass 3, Cycle 0055 pt1).
    * @returns Nothing; a start that throws is told in a notice.
    * @example
-   * startWikiUpdateAnyway([{ kind: 'last-run', endedAtMs: 1_790_000_000_000 }])
+   * startWikiUpdateAnyway([{ kind: 'last-run', endedAtMs: 1_790_000_000_000 }], refusedAttempt)
    */
-  const startWikiUpdateAnyway = (leftovers: WikiLeftover[]): void => {
+  const startWikiUpdateAnyway = (
+    leftovers: WikiLeftover[],
+    refusedAttempt?: Promise<void>,
+  ): void => {
     // The refused attempt may still be unwinding when the button is pressed; the override is a start of its own, after it.
-    Promise.resolve(wikiUpdate)
+    Promise.resolve(attemptToAwaitBeforeOverride(refusedAttempt))
       .catch(() => undefined)
       .then(() => updateDeepWiki(leftovers))
       .catch((error: unknown) => {
@@ -1651,8 +1707,8 @@ export function activate(
         site: 'missing',
       })
       writeWikiRunRecord({ runKind: 'update' })
-      // The notice offers the generation itself instead of a chat request to retype (Cycle 0055, proposed change 3).
-      showWikiActionNotice('error', noWiki, [GENERATE_WIKI_ACTION])
+      // The notice offers the generation itself instead of a chat request to retype (Cycle 0055, proposed change 3), unless another window generates it now.
+      await showMissingWikiNotice(wikiOutput)
       return undefined
     }
     const publicationAtStart =
@@ -1705,7 +1761,7 @@ export function activate(
    * @param outputDirectory - The Wiki output a run would claim.
    * @param acknowledgedLeftovers - The leftovers the override passed so far; empty for an ordinary press.
    * @param runKind - The kind of the start: each refusal names its override (`Update anyway` or `Generate anyway`), and a generation's start words a holder that names no run yet as a run.
-   * @param startAnyway - Starts the run again with the leftovers given passed; the override of a leftover's refusal calls it with this refusal's leftovers added.
+   * @param startAnyway - Starts the run again with the leftovers given passed; the override of a leftover's refusal calls it with this refusal's leftovers added and the start that was refused.
    * @returns The refusal's sentence, with the override for a leftover; `undefined` when nothing is in the way.
    * @example
    * await findWikiRunInTheWay('/repo/.codebook/wiki', [], 'update', startWikiUpdateAnyway) // => { reason: 'The VS Code chat this window asked at … may still be updating this Wiki; …', override }
@@ -1714,8 +1770,13 @@ export function activate(
     outputDirectory: string,
     acknowledgedLeftovers: readonly WikiLeftover[],
     runKind: WikiRunKind,
-    startAnyway: (leftovers: WikiLeftover[]) => void,
+    startAnyway: (
+      leftovers: WikiLeftover[],
+      refusedAttempt?: Promise<void>,
+    ) => void,
   ): Promise<WikiRunInTheWay | undefined> => {
+    // The start this look belongs to, which its override waits for, and only for it.
+    const refusedAttempt = wikiUpdate
     const markerLook = await readLiveWikiUpdateMarker(
       outputDirectory,
       wikiWindowId,
@@ -1746,7 +1807,10 @@ export function activate(
     return {
       reason: unacknowledged.reason,
       override: (): void =>
-        startAnyway([...acknowledgedLeftovers, ...unacknowledged.named]),
+        startAnyway(
+          [...acknowledgedLeftovers, ...unacknowledged.named],
+          refusedAttempt,
+        ),
     }
   }
   /**
@@ -2170,18 +2234,39 @@ export function activate(
       () => undefined,
     )
   }
-  /** Starts the generation again when the learner presses "Generate anyway", with only the leftovers the refusals named passed, after the refused attempt has settled. @param leftovers - The leftovers of the earlier presses and of this refusal. @example startWikiGenerateAnyway([{ kind: 'last-run', endedAtMs: 1_790_000_000_000 }]) */
-  const startWikiGenerateAnyway = (leftovers: WikiLeftover[]): void => {
-    Promise.resolve(wikiUpdate)
+  /** Starts the generation again when the learner presses "Generate anyway", with only the leftovers the refusals named passed, after the refused attempt has settled; another start or run of this window at the press meets it as any press does, never queued behind it. A start that throws is told and recorded as a refusal ({@link refuseThrownWikiGenerate}). @param leftovers - The leftovers of the earlier presses and of this refusal. @param refusedAttempt - The start whose refusal showed the button. @example startWikiGenerateAnyway([{ kind: 'last-run', endedAtMs: 1_790_000_000_000 }], refusedAttempt) */
+  const startWikiGenerateAnyway = (
+    leftovers: WikiLeftover[],
+    refusedAttempt?: Promise<void>,
+  ): void => {
+    Promise.resolve(attemptToAwaitBeforeOverride(refusedAttempt))
       .catch(() => undefined)
       .then(() => generateDeepWiki(leftovers))
-      .catch((error: unknown) => {
-        void showNotice(
-          'error',
-          `Codebook could not start the LLM Wiki generation: ${thrownMessage(error)}`,
-        )
-      })
+      .catch(refuseThrownWikiGenerate)
   }
+  /**
+   * Tells and records a generation's start that threw (a link on the folder's path, an unwritable folder, the Cursor skill's conflict, a read that failed) as a refusal ({@link refuseWikiGenerate}); called by Codebook: Generate LLM Wiki and by Generate anyway, so both say it in one sentence and both leave the Output record.
+   * @param error - What the start threw.
+   * @example await refuseThrownWikiGenerate(new Error('EACCES: permission denied'))
+   */
+  const refuseThrownWikiGenerate = async (error: unknown): Promise<void> => {
+    const fallbackHost: WikiUpdateHost = isCursorHost ? 'cursor' : 'vscode'
+    const { host, wikiOutput } = await wikiRunPlace().catch(() => ({
+      host: fallbackHost,
+      wikiOutput: { outputDirectory: '', outputLabel: '' },
+    }))
+    refuseWikiGenerate(host, wikiOutput, thrownMessage(error))
+  }
+  /**
+   * Names the start an override waits for before it starts its own: the refused one while it still unwinds; none when another start or run of this window holds the attempt, so the override meets that one as any press does ({@link runWikiAttempt}) instead of waiting up to its bound and then starting out of nowhere (/ship review pass 3, Cycle 0055 pt1).
+   * @param refusedAttempt - The start whose refusal or offer showed the button.
+   * @returns The attempt to await first, or `undefined`.
+   * @example attemptToAwaitBeforeOverride(refusedAttempt) // => refusedAttempt while it unwinds
+   */
+  const attemptToAwaitBeforeOverride = (
+    refusedAttempt: Promise<void> | undefined,
+  ): Promise<void> | undefined =>
+    wikiUpdate === refusedAttempt ? refusedAttempt : undefined
   /** Asks the learner to confirm a generation (Cycle 0055, D2) with the folder, the runner and the bound ({@link describeWikiGenerateConfirmation}). @returns `generate`, `change-location`, or `undefined` for a dismissal. @example await confirmWikiGenerate('/repo', wikiOutput) // => 'generate' */
   const confirmWikiGenerate = async (
     projectRoot: string,
@@ -2306,13 +2391,16 @@ export function activate(
           readWikiPublicationIdentity(outputDirectory),
         hasGitRepository: () => isInGitRepository(projectRoot, outputDirectory),
         offerUpdate: () => {
+          // The generation that offers the update, which the update waits for, and only for it.
+          const offeringAttempt = wikiUpdate
           void showNotice(
             'information',
             `An LLM Wiki already exists in ${wikiOutput.outputLabel}. Update it instead?`,
             UPDATE_WIKI_ACTION,
           ).then(
             (choice) => {
-              if (choice === UPDATE_WIKI_ACTION) startWikiUpdateAnyway([])
+              if (choice === UPDATE_WIKI_ACTION)
+                startWikiUpdateAnyway([], offeringAttempt)
             },
             () => undefined,
           )
@@ -2540,13 +2628,9 @@ export function activate(
       joinInFlight(async () => {
         try {
           // A folder without a Wiki offers its generation instead of an error about a missing manifest (Cycle 0055, proposed change 3).
-          const missingWikiLabel = await findMissingWikiLabel()
-          if (missingWikiLabel !== undefined) {
-            showWikiActionNotice(
-              'error',
-              describeMissingWiki(missingWikiLabel),
-              [GENERATE_WIKI_ACTION],
-            )
+          const missingWiki = await findMissingWiki()
+          if (missingWiki) {
+            await showMissingWikiNotice(missingWiki)
             return
           }
           const { projectRoot, outputDirectory } = await currentDeepWiki()
@@ -2692,13 +2776,8 @@ export function activate(
       try {
         await generateDeepWiki()
       } catch (error) {
-        const fallbackHost: WikiUpdateHost = isCursorHost ? 'cursor' : 'vscode'
-        const { host, wikiOutput } = await wikiRunPlace().catch(() => ({
-          host: fallbackHost,
-          wikiOutput: { outputDirectory: '', outputLabel: '' },
-        }))
         // A start that threw (a link on the folder's path, an unwritable folder, the Cursor skill's conflict) is told like a refusal, with its record.
-        refuseWikiGenerate(host, wikiOutput, thrownMessage(error))
+        await refuseThrownWikiGenerate(error)
         throw error
       }
     }),

@@ -242,7 +242,7 @@ Each entry is a sentence Codebook shows when a generation ends or does not start
 
 #### Codebook found no LLM Wiki
 
-`Codebook found no LLM Wiki in <folder>.` The folder holds no manifest. Press **Generate LLM Wiki**, or check `codebook.wikiOutputDirectory` if you expected the Wiki elsewhere.
+`Codebook found no LLM Wiki in <folder>.` The folder holds no manifest. Press **Generate LLM Wiki**, or check `codebook.wikiOutputDirectory` if you expected the Wiki elsewhere. While a first generation is under way, **Open LLM Wiki in Browser** and **Update LLM Wiki** name it instead (`Codebook is already generating this project’s LLM Wiki. …` in its window, `Another editor window is generating this Wiki (…). Wait for it to finish, then press Open LLM Wiki in Browser.` in another) and offer no second generation.
 
 #### Generation finished without publishing
 

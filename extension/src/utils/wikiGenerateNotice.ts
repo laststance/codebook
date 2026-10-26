@@ -1,11 +1,11 @@
 import {
   GENERATE_WIKI_ACTION,
-  MS_PER_MINUTE,
   OPEN_WIKI_IN_BROWSER_ACTION,
   UPDATE_WIKI_ACTION,
   WIKI_UPDATE_SHOWN_PATH_LIMIT,
 } from '../constants'
 
+import { describeMinutes } from './describeMinutes'
 import { formatClockTime } from './formatClockTime'
 import { plainNotificationText } from './plainNotificationText'
 import type { WikiUpdateStatus } from './wikiUpdateRun'
@@ -86,15 +86,15 @@ function cancelledNotice(
 function timedOutNotice(
   timedOut: Extract<WikiUpdateStatus, { state: 'timed-out' }>,
 ): WikiGenerateNotice {
-  const minutes = Math.round(timedOut.timeoutMs / MS_PER_MINUTE)
+  const bound = describeMinutes(timedOut.timeoutMs)
   // A publication that landed before the bound (the Cursor agent goes on after it publishes) is a usable Wiki, which no run claims.
   if (timedOut.site === 'replaced')
     return {
       severity: 'information',
-      message: `Codebook stopped waiting for the LLM Wiki generation after ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}, after an LLM Wiki was published in ${timedOut.outputLabel}.`,
+      message: `Codebook stopped waiting for the LLM Wiki generation after ${bound}, after an LLM Wiki was published in ${timedOut.outputLabel}.`,
       actions: [OPEN_WIKI_IN_BROWSER_ACTION],
     }
-  const lead = `Codebook stopped waiting for the LLM Wiki generation after ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}.`
+  const lead = `Codebook stopped waiting for the LLM Wiki generation after ${bound}.`
   if (timedOut.host === 'cursor')
     return {
       severity: 'error',

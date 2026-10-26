@@ -7,9 +7,11 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   realpath,
   rename,
   rm,
+  symlink,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -1144,5 +1146,223 @@ test('closing a Cursor window while the managed skill is deployed for a generati
       updateMarkerLeft: await exists(updating.markerPath),
     },
     { agentStarts: 0, generationMarkerLeft: false, updateMarkerLeft: false },
+  )
+})
+
+// Value: protects=AC 4 and O9 for VS Code (/ship review pass 3, Cycle 0055 pt1): a generation whose chat still works when Codebook's 55 minutes pass; fails_when=the watch uses the update's 15 minutes, the end is not timed out, the notice calls it an update or offers a start that would be refused, the record misses the end, or the marker is removed instead of kept as a generation's reservation for the chat that may still publish; no_claim=the chat's later publish (the update's tests); seam=the watch's clock
+test('a VS Code generation whose chat has not published when its 55 minutes pass ends as timed out, says the chat may still publish, records the end and keeps a generation reservation', async (context) => {
+  // Arrange: the watch's clock is the test's, so its 55 minutes pass at once.
+  let nowMs = 0
+  const project = await openProjectWithoutWiki({
+    watchClock: {
+      now: () => nowMs,
+      sleep: async (delayMs) => {
+        nowMs += delayMs
+      },
+    },
+  })
+  context.after(() => project.close())
+
+  // Act
+  await project.runCommand(GENERATE_COMMAND)
+  await waitUntil(
+    () => project.outputLines.length > 0,
+    'the end’s record',
+    6_000,
+  )
+  await waitUntil(
+    async () =>
+      JSON.parse(await readFile(project.markerPath, 'utf8').catch(() => '{}'))
+        .watchEndedAtMs,
+    'the reservation',
+    6_000,
+  )
+
+  // Assert
+  const marker = JSON.parse(await readFile(project.markerPath, 'utf8'))
+  assert.deepEqual(
+    {
+      errors: project.errors,
+      offered: project.offeredActions,
+      end: /end=(\S+)/.exec(project.outputLines[0] ?? '')?.[1],
+      markerRunKind: marker.runKind,
+    },
+    {
+      errors: [
+        'Codebook stopped waiting for the LLM Wiki generation after 55 minutes. The chat may still publish; Codebook: Open LLM Wiki in Browser opens the Wiki once it does. To stop it, stop the request in the chat.',
+      ],
+      offered: [],
+      end: 'timed-out',
+      markerRunKind: 'generate',
+    },
+  )
+})
+
+// Value: protects=the /ship review pass 3 of Cycle 0055 pt1: a Generate anyway whose start throws (here a read of the Wiki folder that fails); fails_when=it is told with a lead of its own ("could not start") instead of the refusal's, or it leaves no Output record, so a learner who reports it has nothing to copy; no_claim=the cause of the failing read; seam=a publish-token read that breaks at the press of the button
+test('a Generate anyway whose start throws is told and recorded as a refused generation', async (context) => {
+  // Arrange: the first generation stops watching, which leaves a reservation; at the refusal's button the folder's read starts to fail.
+  const handle: {
+    project?: Awaited<ReturnType<typeof openProjectWithoutWiki>>
+  } = {}
+  handle.project = await openProjectWithoutWiki({
+    chatReply: () => new Promise<never>(() => {}),
+    chooseAction: (_message, actions) => {
+      if (!actions.includes('Generate anyway')) return undefined
+      handle.project?.breakPublishTokenRead('EIO: i/o error, read')
+      return 'Generate anyway'
+    },
+  })
+  const opened = handle.project
+  context.after(() => opened.close())
+  const first = opened.runCommand(GENERATE_COMMAND)
+  await waitUntil(
+    () => opened.chatRequests.length > 0,
+    'the first generate request',
+    6_000,
+  )
+  await opened.runCommand('codebook.cancelWikiRun')
+  await first
+
+  // Act
+  await opened.runCommand(GENERATE_COMMAND)
+  await waitUntil(
+    () => opened.errors.length > 1,
+    'the thrown start’s notice',
+    6_000,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      thrownStart: opened.errors.at(-1),
+      recordedEnds: opened.outputLines.map(
+        (line) => /end=(\S+)/.exec(line)?.[1],
+      ),
+    },
+    {
+      thrownStart:
+        'Codebook did not start the LLM Wiki generation: EIO: i/o error, read',
+      recordedEnds: ['cancelled', 'failed', 'failed'],
+    },
+  )
+})
+
+// Value: protects=AC 5 and the /ship review pass 3 of Cycle 0055 pt1: Open LLM Wiki in Browser and Update LLM Wiki while a first generation runs; fails_when=either says that no Wiki was found and offers Generate LLM Wiki, which would only be refused, instead of naming the generation under way, in this window or another; no_claim=the other window's start time (describeOtherWikiWindow tests); seam=a chat that never answers in the generating window
+test('Open LLM Wiki in Browser and Update LLM Wiki while a first generation runs name that generation instead of offering Generate LLM Wiki, in its window and in another', async (context) => {
+  // Arrange: one window generates; its chat works on the request and has not published.
+  const generating = await openProjectWithoutWiki()
+  context.after(() => generating.close())
+  const otherWindow = await openWikiUpdateWindow({
+    projectRoot: generating.projectRoot,
+    openReader: false,
+  })
+  context.after(() => otherWindow.close())
+  await generating.runCommand(GENERATE_COMMAND)
+  await waitUntil(
+    async () => exists(generating.markerPath),
+    'the generation’s marker',
+    6_000,
+  )
+
+  // Act
+  await generating.runCommand('codebook.openDeepWiki')
+  await otherWindow.runCommand('codebook.openDeepWiki')
+  await otherWindow.runUpdateCommand()
+
+  // Assert
+  assert.deepEqual(
+    {
+      sameWindow: generating.notices,
+      otherWindow: otherWindow.notices.map((notice) =>
+        notice.replace(/started [^)]*\)/, 'started …)'),
+      ),
+      generateOffered: [
+        ...generating.offeredActions,
+        ...otherWindow.offeredActions,
+      ].some(({ actions }) => actions.includes('Generate LLM Wiki')),
+    },
+    {
+      sameWindow: [
+        'Codebook is already generating this project’s LLM Wiki. Its progress is in the status bar here.',
+      ],
+      otherWindow: [
+        'Another editor window is generating this Wiki (VS Code, started …). Wait for it to finish, then press Open LLM Wiki in Browser.',
+        'Another editor window is generating this Wiki (VS Code, started …). Wait for it to finish, then press Open LLM Wiki in Browser.',
+      ],
+      generateOffered: false,
+    },
+  )
+})
+
+// Value: protects=the state matrix's generate × link-on-path cell at the window (/ship review pass 3, Cycle 0055 pt1): a cloned repository whose `.codebook` is a link out of the project; fails_when=Generate makes a folder through the link, claims a marker there or asks the chat, instead of refusing before anything; no_claim=the path check's sentence (assertNoLinkOnWikiPath tests); seam=a symbolic link in the test's own project
+test('Generate in a project whose .codebook is a link out of it refuses before it asks, makes or claims anything', async (context) => {
+  // Arrange
+  const project = await openProjectWithoutWiki()
+  context.after(() => project.close())
+  const outside = await mkdtemp(join(tmpdir(), 'codebook-wiki-outside-'))
+  context.after(() => rm(outside, { recursive: true, force: true }))
+  await symlink(outside, join(project.projectRoot, '.codebook'))
+
+  // Act
+  await project.runCommand(GENERATE_COMMAND).catch(() => undefined)
+
+  // Assert
+  assert.deepEqual(
+    {
+      refused: project.errors.length === 1,
+      confirmations: project.confirmations.length,
+      chatRequests: project.chatRequests.length,
+      madeOutside: await readdir(outside),
+    },
+    { refused: true, confirmations: 0, chatRequests: 0, madeOutside: [] },
+  )
+})
+
+// Value: protects=the /ship review pass 3 of Cycle 0055 pt1: the button of an older notice (Generate's "Update it instead?", and so every override) pressed while another run of this window holds it (a Cursor run lasts its whole bound); fails_when=the press waits for that run and then starts a second run out of nowhere, instead of being told at once that a run is under way; no_claim=a press on the notice of the start that is still unwinding, which waits for it (other tests); seam=a button pressed later, and a Cursor agent held open
+test('an older notice’s Update LLM Wiki pressed while another Cursor run of this window works is told at once and starts no second run', async (context) => {
+  // Arrange: Generate on a folder with a Wiki offers the update, whose button is pressed later; then Update starts a run whose agent works on.
+  let pressOffer: (choice: string | undefined) => void = () => {}
+  let agentRuns = 0
+  let endAgent: () => void = () => {}
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    chooseAction: (message) =>
+      message.startsWith('An LLM Wiki already exists')
+        ? new Promise<string | undefined>((resolveChoice) => {
+            pressOffer = resolveChoice
+          })
+        : undefined,
+    cursorAgent: () => {
+      agentRuns += 1
+      return new Promise<string>((resolveAgent) => {
+        endAgent = (): void => resolveAgent('Done.')
+      })
+    },
+  })
+  context.after(() => project.close())
+  await publishGeneratedWiki(project.outputDirectory, project.projectRoot)
+  await project.runCommand(GENERATE_COMMAND)
+  const running = project.runUpdateCommand()
+  await waitUntil(() => agentRuns === 1, 'the running update', 6_000)
+
+  // Act: the older offer's button is pressed while the run works.
+  pressOffer('Update LLM Wiki')
+  await waitUntil(
+    () => project.notices.length > 1,
+    'the notice of the run under way',
+    6_000,
+  )
+  endAgent()
+  await running
+
+  // Assert
+  assert.deepEqual(
+    { notices: project.notices.slice(1), agentRuns },
+    {
+      notices: [
+        'Codebook is already updating this project’s LLM Wiki. Its progress is in the browser reader and in the notification here.',
+      ],
+      agentRuns: 1,
+    },
   )
 })

@@ -205,3 +205,25 @@ test('a generation whose publisher found files of the learner in the Wiki folder
     site: 'kept',
   })
 })
+
+// Value: protects=the state matrix's generate × stop-after-publish cell (/ship review pass 3, Cycle 0055 pt1): a generation the learner or its bound stopped after its publisher had published; fails_when=the stop is judged as a success or a failure of the publication, or the end claims the folder was kept, so its notice cannot name the published Wiki; no_claim=the notice's words for it (wikiGenerateNotice tests); seam=none
+test('a generation stopped by the learner or its bound after it published ends as cancelled or timed out with its site replaced', () => {
+  // Arrange
+  const published = publishedWith({
+    status: 'current',
+    changedPaths: [],
+    addedPaths: [],
+  })
+
+  // Act
+  const ends = {
+    cancelled: classifyWikiUpdateEnd({ ...published, cancelled: true }),
+    timedOut: classifyWikiUpdateEnd({ ...published, timedOut: true }),
+  }
+
+  // Assert
+  assert.deepEqual(ends, {
+    cancelled: { state: 'cancelled', site: 'replaced' },
+    timedOut: { state: 'timed-out', site: 'replaced' },
+  })
+})

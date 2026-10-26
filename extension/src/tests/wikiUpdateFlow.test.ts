@@ -3168,6 +3168,8 @@ test('a marker file another window is writing refuses an Update before this wind
     await wiki.clickUpdate()
     progress[0]!.cancel()
     await waitForEnd(wiki.status)
+    // The run's end is recorded before its marker turns into the reservation; the other window's marker is written after that write, never under it (a loaded machine let the reservation land last: /ship, Cycle 0055 pt1).
+    await waitForMarkerAnswer(wiki, true)
     await writeFile(markerPath, '')
     const aMomentAhead = new Date(Date.now() + 30_000)
     await utimes(markerPath, aMomentAhead, aMomentAhead)

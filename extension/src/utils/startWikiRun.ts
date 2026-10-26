@@ -72,19 +72,22 @@ export type WikiGenerateStart = {
 }
 
 /**
- * Readies the agent for a claimed generation and reads what it begins with, and releases its marker when a step fails, so a start that throws leaves no marker; called by {@link startWikiGenerate} after the claim.
- * Why: the agent is readied only for a start that goes ahead, so a refused start or the update's offer writes no Cursor skill, and a skill in the learner's way never hides the refusal of another window's run.
+ * Looks for a Wiki once more and readies the agent for a claimed generation, and releases its marker when a step fails, so a start that throws leaves no marker; called by {@link startWikiGenerate} after the claim.
+ * Why: the agent is readied only for a start that goes ahead, so a refused start or the update's offer writes no Cursor skill, and a skill in the learner's way never hides the refusal of another window's run; the slower reads were made before the claim, so the marker stands for no run only this briefly (/ship review, Cycle 0055 pt1).
  * @param dependencies - The editor window's closures.
  * @param claim - The run's own marker.
- * @param startedAtMs - When the generation started.
+ * @param begun - What the start read before the claim, and when the generation started.
  * @returns The start, or `undefined` after the marker was released for a Wiki that appeared between the first look and the claim (the update is offered).
- * @throws What readying the agent or a read threw (a Cursor skill in the way), after the marker was released.
- * @example await beginClaimedGeneration(dependencies, claim, 1_790_000_000_000) // => { publicationAtStart: undefined, … }
+ * @throws What readying the agent or the look threw (a Cursor skill in the way), after the marker was released.
+ * @example await beginClaimedGeneration(dependencies, claim, { publicationAtStart: undefined, hasGitRepository: true, startedAtMs: 1_790_000_000_000 }) // => { publicationAtStart: undefined, … }
  */
 async function beginClaimedGeneration<Holder>(
   dependencies: WikiGenerateStartDependencies<Holder>,
   claim: Exclude<WikiRunMarkerClaim<Holder>, { heldBy: Holder }>,
-  startedAtMs: number,
+  begun: Pick<
+    WikiGenerateStart,
+    'publicationAtStart' | 'hasGitRepository' | 'startedAtMs'
+  >,
 ): Promise<WikiGenerateStart | undefined> {
   try {
     // A Wiki that appeared between the first look and the claim is updated, never overwritten.
@@ -95,11 +98,9 @@ async function beginClaimedGeneration<Holder>(
     }
     await dependencies.prepareAgent()
     return {
-      publicationAtStart: await dependencies.readPublicationIdentity(),
+      ...begun,
       releaseMarker: claim.release,
       reserveMarker: claim.reserve,
-      startedAtMs,
-      hasGitRepository: await dependencies.hasGitRepository(),
     }
   } catch (error) {
     // A start that throws after its claim leaves no marker behind.
@@ -130,9 +131,9 @@ async function refusedForBlockOrRun<Holder>(
 }
 
 /**
- * Makes every check of a first LLM Wiki generation's start in one order, asks the learner, prepares the folder and the agent, and claims the marker, so no agent is asked for a run that cannot succeed and nothing is left behind by a start that did not go ahead.
+ * Makes every check of a first LLM Wiki generation's start in one order, asks the learner, prepares the folder, claims the marker and then readies the agent, so no agent is asked for a run that cannot succeed and nothing is left behind by a start that did not go ahead.
  *
- * The order: the folder's path in the project; an existing manifest, which is never overwritten and gets the update's offer; what makes the publisher refuse; another window's run, a reservation or an earlier chat's leftover; the confirmation (D2), whose Change location and dismissal start nothing; the folder that holds the output and its marker, which a fresh project lacks (Eng decision 72); the publisher's refusals and other runs once more, which may have come up while the learner read the confirmation; the marker's claim, which another window may have won meanwhile (Eng decision 79); once more the manifest, which may have appeared in between; and last the Cursor skill (Eng decision 73), so only a start that goes ahead writes it. A refused start leaves no marker and no folder of the output.
+ * The order: the folder's path in the project; an existing manifest, which is never overwritten and gets the update's offer; what makes the publisher refuse; another window's run, a reservation or an earlier chat's leftover; the confirmation (D2), whose Change location and dismissal start nothing; the folder that holds the output and its marker, which a fresh project lacks (Eng decision 72); the publication identity and the Git look, read before the claim so the claimed marker stands for no run only briefly; the publisher's refusals and other runs once more, which may have come up while the learner read the confirmation; the marker's claim, which another window may have won meanwhile (Eng decision 79); once more the manifest, which may have appeared in between; and last the Cursor skill (Eng decision 73), so only a start that goes ahead writes it. A refused start leaves no marker and no folder of the output.
  * Why: a generation is a run of the update's lifecycle (Cycle 0055, O3), whose start checks it shares; its own steps are an existing Wiki's offer, the confirmation and the folder.
  * Trigger: Codebook: Generate LLM Wiki, from the Command Palette, a no-Wiki notice's button or a failed generation's button.
  *
@@ -160,6 +161,9 @@ export async function startWikiGenerate<Holder>(
   // A dismissed confirmation starts nothing.
   if (choice !== 'generate') return undefined
   await dependencies.makeOutputParent()
+  // Read before the claim: a Git look can take a while in a large repository, and nothing may stand claimed for no run meanwhile.
+  const publicationAtStart = await dependencies.readPublicationIdentity()
+  const hasGitRepository = await dependencies.hasGitRepository()
   // The learner may have read the confirmation for minutes: another window may have begun, or left a stopped watch's reservation, which a claim would take over.
   if (await refusedForBlockOrRun(dependencies)) return undefined
   const startedAtMs = dependencies.now()
@@ -169,5 +173,9 @@ export async function startWikiGenerate<Holder>(
     dependencies.refuse(dependencies.describeHolder(claim.heldBy))
     return undefined
   }
-  return beginClaimedGeneration(dependencies, claim, startedAtMs)
+  return beginClaimedGeneration(dependencies, claim, {
+    publicationAtStart,
+    hasGitRepository,
+    startedAtMs,
+  })
 }
