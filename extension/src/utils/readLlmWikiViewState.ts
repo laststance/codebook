@@ -576,6 +576,8 @@ function outputRow(
       ? `${facts.outputDirectory}\nCodebook could not watch this folder, so the view refreshes when it is shown and with Refresh only.`
       : facts.outputDirectory,
     icon: 'folder',
+    // A click on the row changes the location too, so its description reads as the row's own action.
+    command: { command: LLM_WIKI_ROW_ACTIONS['change-location'].command },
     actions: ['change-location'],
   }
 }

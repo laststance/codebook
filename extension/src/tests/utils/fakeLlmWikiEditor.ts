@@ -17,18 +17,25 @@ export type FakeTreeRow = {
  * Why: the host harness reaches the view through the whole extension; the read-loop tests need to hold its closures open and count their calls, which only the view's own options allow.
  * Used by the read-loop tests of the LLM Wiki view.
  *
- * @returns `editor` (to pass as the view's editor), `rows` (the tree as shown now), `contextKeys`, `files` (the fake file watching, to report events), `fireConfigurationChange`.
+ * @param fakeOptions - `readsRootInsideCreateTreeView` makes the editor read the provider's root children synchronously inside `createTreeView`, as an editor that renders at once could.
+ * @returns `editor` (to pass as the view's editor), `rows` (the tree as shown now), `message` (the tree view's message), `renderLog` (`getChildren` for each root read and `message:<text>` for each message write, in order), `contextKeys`, `files` (the fake file watching, to report events), `setVisible`, `fireConfigurationChange`.
  * @example
  * const fake = createFakeLlmWikiEditor()
  * const view = createLlmWikiView({ editor: fake.editor, host: 'vscode', … })
  * fake.rows().map((row) => row.id) // => ['wiki', 'output']
  */
-export function createFakeLlmWikiEditor() {
+export function createFakeLlmWikiEditor(
+  fakeOptions: { readsRootInsideCreateTreeView?: boolean } = {},
+) {
+  const renderLog: string[] = []
+  let shownMessage: string | undefined
   const files = createFakeFileWatching()
   const contextKeys: Record<string, unknown> = {}
   const configurationListeners: Array<
     (event: { affectsConfiguration: (id: string) => boolean }) => void
   > = []
+  const visibilityListeners: Array<(event: { visible: boolean }) => void> = []
+  let isViewShown = true
   let provider:
     | {
         getChildren(element?: string): string[]
@@ -77,10 +84,29 @@ export function createFakeLlmWikiEditor() {
         _id: string,
         treeOptions: { treeDataProvider: NonNullable<typeof provider> },
       ) => {
-        provider = treeOptions.treeDataProvider
+        const viewProvider = treeOptions.treeDataProvider
+        provider = {
+          getChildren(element) {
+            if (element === undefined) renderLog.push('getChildren')
+            return viewProvider.getChildren(element)
+          },
+          getTreeItem: (id) => viewProvider.getTreeItem(id),
+        }
+        if (fakeOptions.readsRootInsideCreateTreeView) provider.getChildren()
         return {
-          message: undefined as string | undefined,
-          onDidChangeVisibility: () => ({ dispose(): void {} }),
+          get message(): string | undefined {
+            return shownMessage
+          },
+          set message(text: string | undefined) {
+            shownMessage = text
+            renderLog.push(`message:${text}`)
+          },
+          get visible(): boolean {
+            return isViewShown
+          },
+          onDidChangeVisibility: (
+            listener: (event: { visible: boolean }) => void,
+          ) => listenTo(visibilityListeners, listener),
           dispose(): void {},
         }
       },
@@ -109,6 +135,16 @@ export function createFakeLlmWikiEditor() {
       }),
     contextKeys,
     files,
+    /** The message the tree view shows now. */
+    message: (): string | undefined => shownMessage,
+    /** What the fake tree did, in order: `getChildren` for each root read and `message:<text>` for each message write. */
+    renderLog: (): string[] => [...renderLog],
+    /** Shows or hides the view as the learner expands or collapses it, and reports it to the view. */
+    setVisible(isVisible: boolean): void {
+      isViewShown = isVisible
+      for (const listener of [...visibilityListeners])
+        listener({ visible: isVisible })
+    },
     fireConfigurationChange(): void {
       for (const listener of [...configurationListeners])
         listener({ affectsConfiguration: () => true })

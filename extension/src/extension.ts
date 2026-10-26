@@ -280,6 +280,8 @@ export function activate(
   }
   const isCursorHost =
     vscode.env?.appName?.toLowerCase().includes('cursor') ?? false
+  /** The editor host as the LLM Wiki code names it ({@link WikiUpdateHost}). */
+  const wikiHost: WikiUpdateHost = isCursorHost ? 'cursor' : 'vscode'
   const setupMatchesCurrentWorkspace = () => {
     try {
       return (
@@ -2314,7 +2316,7 @@ export function activate(
         outputDirectory,
         outputLabel: wikiOutputLabel(projectRoot, outputDirectory),
       },
-      host: isCursorHost ? 'cursor' : 'vscode',
+      host: wikiHost,
     }
   }
   /** Starts a project-bound skill update from the browser or command, coalescing repeated clicks. @param acknowledgedLeftovers - Given when the learner pressed "Update anyway": the leftovers named by the refusals it was pressed on, one press after the other, which alone are ignored; every other leftover, there already or appeared since, refuses the start with a notice of its own, and another window's running update still refuses it. @param isChoiceCarried - Whether the press carries a choice (Update anyway, the offer's Update), which a start under way would not apply ({@link runWikiAttempt}). @example await updateDeepWiki() */
@@ -2434,9 +2436,8 @@ export function activate(
    * @example await refuseThrownWikiGenerate(new Error('EACCES: permission denied'))
    */
   const refuseThrownWikiGenerate = async (error: unknown): Promise<void> => {
-    const fallbackHost: WikiUpdateHost = isCursorHost ? 'cursor' : 'vscode'
     const { host, wikiOutput } = await wikiRunPlace().catch(() => ({
-      host: fallbackHost,
+      host: wikiHost,
       wikiOutput: { outputDirectory: '', outputLabel: '' },
     }))
     refuseWikiGenerate(host, wikiOutput, thrownMessage(error))
@@ -2457,7 +2458,7 @@ export function activate(
     wikiOutput: WikiUpdateOutput,
   ): Promise<'generate' | 'change-location' | undefined> => {
     const confirmation = describeWikiGenerateConfirmation({
-      host: isCursorHost ? 'cursor' : 'vscode',
+      host: wikiHost,
       projectName: basename(projectRoot),
       outputDirectory: wikiOutput.outputDirectory,
       chatHandOver: isCursorHost
@@ -3030,14 +3031,14 @@ export function activate(
                   projectRoot,
                   sources,
                   question,
-                  isCursorHost ? 'cursor' : 'vscode',
+                  wikiHost,
                   cancellation.token,
                 )
               } finally {
                 cancellation.dispose()
               }
             },
-            isCursorHost ? 'cursor' : 'vscode',
+            wikiHost,
             () => wikiUpdateRun.status(),
           )
           // A source also changes without a save in this editor (an agent's CLI and Git write files directly), so the project's files are watched for as long as the reader serves.
@@ -3182,14 +3183,22 @@ export function activate(
   )
   // The LLM Wiki view: rows from the Wiki folder, the run state and the markers; an editor without tree views shows none.
   if (Reflect.has(vscode.window ?? {}, 'createTreeView')) {
+    /** Writes a failure of the LLM Wiki view or its commands to Output › Codebook; the view and Reveal Wiki Folder use it. */
+    const recordLlmWikiFailure = (message: string, cause: unknown): void => {
+      try {
+        output?.error(`${message}: ${thrownMessage(cause)}`)
+      } catch {
+        // A disposed channel has nowhere to write.
+      }
+    }
     const llmWikiView = createLlmWikiView({
       editor: vscode,
-      host: isCursorHost ? 'cursor' : 'vscode',
+      host: wikiHost,
       debounceMs: LLM_WIKI_REFRESH_DEBOUNCE_MS,
       pollMs: LLM_WIKI_POLL_MS,
       readFacts: () =>
         readLlmWikiViewFacts({
-          host: isCursorHost ? 'cursor' : 'vscode',
+          host: wikiHost,
           isFolderOpen: () =>
             Boolean(vscode.workspace.workspaceFolders?.length),
           isTrusted: () => vscode.workspace.isTrusted,
@@ -3255,13 +3264,7 @@ export function activate(
           `An LLM Wiki was published in ${outputLabel}.`,
           [OPEN_WIKI_IN_BROWSER_ACTION],
         ),
-      recordFailure: (message, cause) => {
-        try {
-          output?.error(`${message}: ${thrownMessage(cause)}`)
-        } catch {
-          // A disposed channel has nowhere to write.
-        }
-      },
+      recordFailure: recordLlmWikiFailure,
     })
     context.subscriptions.push(
       { dispose: () => llmWikiView.dispose() },
@@ -3271,7 +3274,8 @@ export function activate(
         showNotice,
         view: llmWikiView,
         cancelRun: cancelWikiRun,
-        findOutputDirectory: async () => (await wikiLocation()).outputDirectory,
+        findWikiLocation: wikiLocation,
+        recordFailure: recordLlmWikiFailure,
       }),
     )
   }

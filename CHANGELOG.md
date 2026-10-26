@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.2.48.0] - 2026-10-27 (development candidate)
+
+Cycle 0056 ([Issue #135](https://github.com/laststance/codebook/issues/135)), a bug-fix cycle, second of its three pull requests: the LLM Wiki view and the browser reader say what is true in the states the cycle's tasks list. The Cursor test-replay fix and the native trial N56 follow in the third.
+
+**The reader.**
+
+- **A question waits with** `Asking the editor model… The editor may first ask you to allow Codebook to use it; answer there.` in both editors, since the editor may ask for consent before its model answers.
+
+**The LLM Wiki view.**
+
+- **The message above the tree changes in the same render as the rows**, so a row never shows beside the previous state's message.
+- **A collapsed or hidden view does no background work**: no 30-second poll and no freshness check (not even one that was waiting when it was hidden), and one read as soon as it is shown again.
+- **The 30-second poll goes on across an error row** that follows a run row, so the view finds the run's end after a failed read; a read failure that persists is written to Output › Codebook once (again after a good read, or for a different failure), and a freshness check that keeps failing is written there once too.
+- **Reveal Wiki Folder says why it opened nothing**:
+  - a folder that does not exist yet (`… does not exist (yet). Generate LLM Wiki creates it.`);
+  - a file in the folder's place;
+  - a link whose target is missing;
+  - a path that cannot be read (with its error code, also when the disk does not answer within 3 seconds);
+  - a folder in a remote window (`Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on <remote>. …`).
+  A WSL window reveals the folder like a local one.
+- **View actions have decided names and icons**: inline actions in Title Case (**Stop Watching** with an eye-closed icon, **Try Again** with a restart icon, **Change Location**, **Open Chat**, **Open Folder**, **Show Output**, **Copy Recovery Request**); **Cancel** keeps the stop icon because it stops the agent.
+- **The welcome names the default folder**: `The Wiki is written to .codebook/wiki unless the setting codebook.wikiOutputDirectory names another folder.` with the **Change location** link, and a click on the **Output** row opens the same setting.
+
+**Compatibility.** The MCP API stays 1.8; the Wiki's published format, the marker format, stored learner data and the bundled skill (1.0.50) do not change.
+
 ## [0.2.47.0] - 2026-10-27 (development candidate)
 
 Cycle 0056 ([Issue #135](https://github.com/laststance/codebook/issues/135)), a bug-fix cycle, first of its three pull requests: the LLM Wiki run lifecycle says what happens on a joined, stopped or bounded start and releases what it claimed. The LLM Wiki view and the reader (second pull request) and the Cursor test-replay fix with the native trial N56 (third) follow.

@@ -23,6 +23,7 @@ import {
   WIKI_PAGE_SERVE_DEADLINE_MS,
   WIKI_QUESTION_LIMIT_CHARS,
   WIKI_QUESTION_ROUTE,
+  WIKI_QUESTION_WAITING_STATUS,
   WIKI_QUESTION_STATUS_STYLE,
   WIKI_READER_FOREIGN_HOST_REFUSAL,
   WIKI_REFUSED_STEP_ADVICE,
@@ -147,7 +148,7 @@ const qaClient = `(function () {
     // The answer's region is shown and emptied now, so the answer written after the request changes a region already in the page; the progress goes to the status line, which was there before it.
     output.style.display = 'block'; output.textContent = '';
     var asked = ++questionsAsked;
-    questionStatus.textContent = 'Asking the editor model…';
+    questionStatus.textContent = ${JSON.stringify(WIKI_QUESTION_WAITING_STATUS)};
     // A hand-off or a failure can come back within the frame that showed the answer's region, which would enter the page together with that text: the sentence is the status line's, which was in the page before it, and the answer's empty disclosure leaves again. A newer question keeps its own progress and disclosure.
     var tell = function (sentence) {
       if (asked !== questionsAsked) return;

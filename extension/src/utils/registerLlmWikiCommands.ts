@@ -5,6 +5,9 @@ import type * as vscode from 'vscode'
 import {
   COPY_DETAILS_ACTION,
   COPY_WIKI_RECOVERY_REQUEST_COMMAND,
+  LLM_WIKI_MANAGE_TRUST_FALLBACK_NOTICE,
+  llmWikiFolderLocationFailedNotice,
+  LLM_WIKI_RECOVERY_REQUEST_COPIED_NOTICE,
   LLM_WIKI_ROW_ACTIONS,
   OPEN_CHAT_COMMAND,
   OPEN_FOLDER_COMMAND,
@@ -17,8 +20,12 @@ import {
   WIKI_UPDATE_RECOVERY_REQUEST,
 } from '../constants'
 
+import { describeUnrevealableWikiFolder } from './describeUnrevealableWikiFolder'
 import type { LlmWikiView } from './llmWikiView'
 import { resolveManageTrustCommand } from './resolveManageTrustCommand'
+import { thrownMessage } from './thrownMessage'
+import { wikiFolderKindOf } from './wikiFolderKindOf'
+import { wikiOutputLabel } from './wikiOutputLabel'
 import { withHomeFolderShown } from './withHomeFolderShown'
 
 /** What the commands of the LLM Wiki view ask of the window. */
@@ -38,8 +45,13 @@ export type LlmWikiCommandOptions = {
   view: LlmWikiView
   /** Stops this window's run: the VS Code watch, or the Cursor agent. */
   cancelRun: () => void
-  /** The resolved Wiki folder. */
-  findOutputDirectory: () => Promise<string>
+  /** The opened project and the resolved Wiki folder. */
+  findWikiLocation: () => Promise<{
+    projectRoot: string
+    outputDirectory: string
+  }>
+  /** Writes a failure to Output › Codebook, as the view's own record does. */
+  recordFailure: (message: string, cause: unknown) => void
 }
 
 /**
@@ -78,7 +90,7 @@ async function manageTrust(options: LlmWikiCommandOptions): Promise<void> {
   if (commandId === undefined) {
     void options.showNotice(
       'information',
-      'Run "Workspaces: Manage Workspace Trust" from the Command Palette to trust this folder.',
+      LLM_WIKI_MANAGE_TRUST_FALLBACK_NOTICE,
     )
     return
   }
@@ -94,7 +106,7 @@ async function manageTrust(options: LlmWikiCommandOptions): Promise<void> {
  * @param options - The window's closures ({@link LlmWikiCommandOptions}).
  * @returns The registrations, to dispose with the extension.
  * @example
- * context.subscriptions.push(...registerLlmWikiCommands({ editor: vscode, registerCommand, showNotice, view, cancelRun, findOutputDirectory }))
+ * context.subscriptions.push(...registerLlmWikiCommands({ editor: vscode, registerCommand, showNotice, view, cancelRun, findWikiLocation, recordFailure }))
  */
 export function registerLlmWikiCommands(
   options: LlmWikiCommandOptions,
@@ -110,15 +122,42 @@ export function registerLlmWikiCommands(
       await editor.env.clipboard.writeText(WIKI_UPDATE_RECOVERY_REQUEST)
       void options.showNotice(
         'information',
-        'Copied the recovery request. Paste it into the editor chat.',
+        LLM_WIKI_RECOVERY_REQUEST_COPIED_NOTICE,
       )
     }),
-    registerCommand(REVEAL_WIKI_FOLDER_COMMAND, async () =>
-      editor.commands.executeCommand(
+    registerCommand(REVEAL_WIKI_FOLDER_COMMAND, async () => {
+      let location: Awaited<ReturnType<typeof options.findWikiLocation>>
+      try {
+        location = await options.findWikiLocation()
+      } catch (cause) {
+        // A setting that names no usable folder (empty, or outside the project) would otherwise fail without a word.
+        options.recordFailure(
+          'Reveal Wiki Folder could not resolve the Wiki folder',
+          cause,
+        )
+        void options.showNotice(
+          'information',
+          llmWikiFolderLocationFailedNotice(thrownMessage(cause)),
+        )
+        return
+      }
+      const { projectRoot, outputDirectory } = location
+      // The editor's reveal shows nothing for a missing folder or one on a remote host, so the learner is told instead.
+      const reason = describeUnrevealableWikiFolder({
+        outputLabel: wikiOutputLabel(projectRoot, outputDirectory),
+        // One look tells a folder, a file, nothing and an unreadable path apart, each with its own sentence.
+        folderKind: await wikiFolderKindOf(outputDirectory),
+        remoteName: editor.env.remoteName,
+      })
+      if (reason !== undefined) {
+        void options.showNotice('information', reason)
+        return
+      }
+      await editor.commands.executeCommand(
         REVEAL_FILE_IN_OS_COMMAND,
-        editor.Uri.file(await options.findOutputDirectory()),
-      ),
-    ),
+        editor.Uri.file(outputDirectory),
+      )
+    }),
     registerCommand(LLM_WIKI_ROW_ACTIONS['stop-watching'].command, cancelRun),
     registerCommand(LLM_WIKI_ROW_ACTIONS['cancel-run'].command, cancelRun),
     registerCommand(LLM_WIKI_ROW_ACTIONS['open-chat'].command, () =>

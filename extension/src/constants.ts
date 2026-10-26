@@ -8,7 +8,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.8'
-export const EXTENSION_VERSION = '0.2.47'
+export const EXTENSION_VERSION = '0.2.48'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -833,6 +833,10 @@ export const WIKI_UPDATE_STATUS_ROUTE = 'api/update-status'
 export const WIKI_FRESHNESS_ROUTE = 'api/freshness'
 /** Route of the Wiki reader that takes a repository question from its own page. */
 export const WIKI_QUESTION_ROUTE = 'api/ask'
+
+/** The reader's status line while a question waits for the editor model; the editor may be asking for consent meanwhile. */
+export const WIKI_QUESTION_WAITING_STATUS =
+  'Asking the editor model… The editor may first ask you to allow Codebook to use it; answer there.'
 /** The rules of the question status line of a Wiki page (`.qa-status`, the empty `role=status` line the progress of a question is told in): the bundled `reader-shell.html` carries the same rules, and the reader's page script adds them to a page published before the shell had the line, when it adds the line there. Empty, the line takes no room. */
 export const WIKI_QUESTION_STATUS_STYLE =
   '.qa-status{font-size:.85rem;margin:.4rem 0 0;overflow-wrap:anywhere}.qa-status:empty{margin:0}'
@@ -1036,19 +1040,19 @@ export const LLM_WIKI_ROW_ACTIONS = {
   update: { command: UPDATE_DEEP_WIKI_COMMAND, title: 'Update LLM Wiki' },
   'stop-watching': {
     command: 'codebook.llmWiki.stopWatching',
-    title: 'Stop watching',
+    title: 'Stop Watching',
   },
   'cancel-run': { command: 'codebook.llmWiki.cancelRun', title: 'Cancel' },
   'open-chat': { command: 'codebook.llmWiki.openChat', title: 'Open Chat' },
   'show-output': { command: SHOW_WIKI_OUTPUT_COMMAND, title: 'Show Output' },
-  'try-again': { command: GENERATE_DEEP_WIKI_COMMAND, title: 'Try again' },
+  'try-again': { command: GENERATE_DEEP_WIKI_COMMAND, title: 'Try Again' },
   'change-location': {
     command: 'codebook.llmWiki.changeLocation',
-    title: 'Change location',
+    title: 'Change Location',
   },
   'copy-recovery': {
     command: COPY_WIKI_RECOVERY_REQUEST_COMMAND,
-    title: 'Copy recovery request',
+    title: 'Copy Recovery Request',
   },
   'reveal-folder': {
     command: REVEAL_WIKI_FOLDER_COMMAND,
@@ -1064,6 +1068,79 @@ export const LLM_WIKI_ROW_ACTIONS = {
     title: 'Manage Workspace Trust',
   },
 } as const
+
+/** What the LLM Wiki view says when the editor lists none of the known ids of its Manage Workspace Trust command ({@link resolveManageTrustCommand}, run by {@link registerLlmWikiCommands}). */
+export const LLM_WIKI_MANAGE_TRUST_FALLBACK_NOTICE =
+  'Run "Workspaces: Manage Workspace Trust" from the Command Palette to trust this folder.'
+
+/** What the LLM Wiki view says once the recovery request is copied. */
+export const LLM_WIKI_RECOVERY_REQUEST_COPIED_NOTICE =
+  'Copied the recovery request. Paste it into the editor chat.'
+
+/**
+ * Sentence for a Wiki folder that does not exist, so Reveal Wiki Folder opens nothing.
+ * @param outputLabel - The folder as the learner reads it.
+ * @returns `The LLM Wiki folder <label> does not exist (yet). Generate LLM Wiki creates it.` (the first sentence is Issue #135 task 21's; the second names the next step)
+ * @example llmWikiFolderMissingNotice('.codebook/wiki') // => 'The LLM Wiki folder .codebook/wiki does not exist (yet). Generate LLM Wiki creates it.'
+ */
+export const llmWikiFolderMissingNotice = (outputLabel: string): string =>
+  `The LLM Wiki folder ${outputLabel} does not exist (yet). Generate LLM Wiki creates it.`
+
+/**
+ * Sentence for a Wiki output path where a file stands, so Reveal Wiki Folder opens nothing.
+ * @param outputLabel - The path as the learner reads it.
+ * @returns `The LLM Wiki folder <label> is a file, not a folder. Remove or rename that file, or change the location.`
+ * @example llmWikiFolderIsFileNotice('.codebook/wiki') // => 'The LLM Wiki folder .codebook/wiki is a file, not a folder. Remove or rename that file, or change the location.'
+ */
+export const llmWikiFolderIsFileNotice = (outputLabel: string): string =>
+  `The LLM Wiki folder ${outputLabel} is a file, not a folder. Remove or rename that file, or change the location.`
+
+/**
+ * Sentence for a Wiki output path whose entry is a link to nothing, so Reveal Wiki Folder opens nothing and does not promise that Generate LLM Wiki creates it (generation refuses a link).
+ * @param outputLabel - The path as the learner reads it.
+ * @returns `The LLM Wiki folder <label> is a link whose target is missing. Remove or fix the link, or change the location.`
+ * @example llmWikiFolderDanglingLinkNotice('.codebook/wiki') // => 'The LLM Wiki folder .codebook/wiki is a link whose target is missing. Remove or fix the link, or change the location.'
+ */
+export const llmWikiFolderDanglingLinkNotice = (outputLabel: string): string =>
+  `The LLM Wiki folder ${outputLabel} is a link whose target is missing. Remove or fix the link, or change the location.`
+
+/**
+ * Sentence for a Wiki output path that cannot be looked at, so Reveal Wiki Folder opens nothing and does not claim the folder is missing.
+ * @param outputLabel - The path as the learner reads it.
+ * @param code - The system error name of the failed look (`EACCES`, `ENOTDIR`, `ETIMEDOUT`, …).
+ * @returns `The LLM Wiki folder <label> cannot be read (<code>). Check the path and its permissions, or change the location.`
+ * @example llmWikiFolderUnreadableNotice('.codebook/wiki', 'EACCES') // => 'The LLM Wiki folder .codebook/wiki cannot be read (EACCES). Check the path and its permissions, or change the location.'
+ */
+export const llmWikiFolderUnreadableNotice = (
+  outputLabel: string,
+  code: string,
+): string =>
+  `The LLM Wiki folder ${outputLabel} cannot be read (${code}). Check the path and its permissions, or change the location.`
+
+/**
+ * Sentence for a Wiki location that cannot be worked out (the setting is empty or points outside the project), so Reveal Wiki Folder does not fail without a word.
+ * @param reason - The message of the failure, as the setting check words it; one closing full stop is dropped.
+ * @returns `Reveal Wiki Folder could not find the Wiki folder (<reason>). Change the location.`
+ * @example llmWikiFolderLocationFailedNotice('Choose a nonempty local DeepWiki output directory.') // => 'Reveal Wiki Folder could not find the Wiki folder (Choose a nonempty local DeepWiki output directory). Change the location.'
+ */
+export const llmWikiFolderLocationFailedNotice = (reason: string): string =>
+  `Reveal Wiki Folder could not find the Wiki folder (${reason.replace(/\.$/, '')}). Change the location.`
+
+/** How long Reveal Wiki Folder waits for the file system to look at the Wiki output path (ms): a dead network mount never answers, and the learner is told it cannot be read instead of getting no feedback. */
+export const WIKI_FOLDER_STAT_TIMEOUT_MS = 3_000
+
+/** The cap on the text two failed reads are compared by, so a message that embeds a long dump keeps the memory of the last failure small. */
+export const FAILURE_KEY_MAX_LENGTH = 500
+
+/**
+ * Sentence for a Wiki folder in a remote window, where Reveal Wiki Folder opens folders of this computer only.
+ * @param remoteName - The editor's `env.remoteName`.
+ * @returns `Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on <remote name>. Open it from a terminal in this window, which runs in that remote environment, not on this computer.` (the first sentence is Issue #135 task 21's; the second names the next step)
+ * @example llmWikiFolderRemoteNotice('ssh-remote') // => 'Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on ssh-remote. Open it from a terminal in this window, which runs in that remote environment, not on this computer.'
+ */
+export const llmWikiFolderRemoteNotice = (remoteName: string): string =>
+  `Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on ${remoteName}. Open it from a terminal in this window, which runs in that remote environment, not on this computer.`
+
 /** How often the extension looks for a newly published manifest while a Wiki update is watched. */
 export const WIKI_UPDATE_WATCH_POLL_MS = 2_000
 /** How often the reader page asks for the update state while a run is active. */

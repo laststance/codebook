@@ -34,7 +34,7 @@ export function describeWikiGeneration(
     new Date(epochMs).toLocaleDateString(),
 ): string | undefined {
   // A revision is kept only as a full commit hash, as the freshness check keeps it.
-  const fullRevision = fullCommitHash(generation.revision)?.slice(
+  const shortRevision = fullCommitHash(generation.revision)?.slice(
     0,
     WIKI_SHORT_REVISION_CHARS,
   )
@@ -44,8 +44,8 @@ export function describeWikiGeneration(
     !Number.isFinite(generation.publishedAtMs)
       ? undefined
       : formatDate(generation.publishedAtMs)
-  if (fullRevision && date) return `Generated from ${fullRevision} on ${date}`
+  if (shortRevision && date) return `Generated from ${shortRevision} on ${date}`
   if (date) return `Generated on ${date} (no Git revision)`
-  if (fullRevision) return `Generated from ${fullRevision}`
+  if (shortRevision) return `Generated from ${shortRevision}`
   return undefined
 }

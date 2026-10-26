@@ -546,7 +546,7 @@ for (const attentionCase of ATTENTION_CASES) {
   })
 }
 
-// Value: protects=AC 2 (fixed order of rows and row 5's presence); fails_when=the rows come in another order, or the Output row shows in the empty state or lacks Change location and the watcher note; no_claim=the settings command; seam=the pure row function
+// Value: protects=AC 2 (fixed order of rows and row 5's presence); fails_when=the rows come in another order, or the Output row shows in the empty state or lacks Change location, its click command and the watcher note; no_claim=what the settings editor shows; seam=the pure row function
 test('every row shows in the fixed order and the Output row comes last with its Change location action and watcher note', () => {
   // Arrange
   const facts = ready({
@@ -579,6 +579,7 @@ test('every row shows in the fixed order and the Output row comes last with its 
     tooltip:
       '/repo/.codebook/wiki\nCodebook could not watch this folder, so the view refreshes when it is shown and with Refresh only.',
     icon: 'folder',
+    command: { command: 'codebook.llmWiki.changeLocation' },
     actions: ['change-location'],
   })
 })
