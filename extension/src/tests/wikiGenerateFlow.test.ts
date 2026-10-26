@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { writeFileSync } from 'node:fs'
 import {
   access,
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -446,6 +447,63 @@ test('Stop LLM Wiki Run during the chat’s first-sign wait ends the generation 
   )
 })
 
+// Value: protects=the only way out of a generation's reservation, the Generate anyway button; fails_when=pressing the button starts nothing, starts an update's request instead of a generation's, or leaves the stopped watch's reservation in place so the new chat runs unprotected; why_new=the refusals are tested (above, below) but no test presses the override; no_claim=the wait the refusal names; seam=a chat command that never answers, then a chooseAction that presses the button
+test('pressing Generate anyway on the refusal beside a stopped generation watch starts a second generate request and replaces the reservation with a running marker', async (context) => {
+  // Arrange: a first generation stops watching its chat, which leaves a reservation; the next refusal's button is pressed.
+  let isOverrideChosen = false
+  const project = await openProjectWithoutWiki({
+    chatReply: () => new Promise<never>(() => {}),
+    chooseAction: (_message, actions) =>
+      isOverrideChosen
+        ? actions.find((action) => action === 'Generate anyway')
+        : undefined,
+  })
+  context.after(() => project.close())
+  const pressed = project.runCommand(GENERATE_COMMAND)
+  await waitUntil(
+    () => project.chatRequests.length > 0,
+    'the first generate request',
+    6_000,
+  )
+  await project.runCommand('codebook.cancelWikiRun')
+  await pressed
+  await waitUntil(
+    async () =>
+      JSON.parse(await readFile(project.markerPath, 'utf8').catch(() => '{}'))
+        .watchEndedAtMs,
+    'the reservation',
+    6_000,
+  )
+  isOverrideChosen = true
+
+  // Act
+  await project.runCommand(GENERATE_COMMAND)
+  await waitUntil(
+    () => project.chatRequests.length > 1,
+    'the second generate request',
+    6_000,
+  )
+
+  // Assert
+  const marker = JSON.parse(await readFile(project.markerPath, 'utf8'))
+  assert.deepEqual(
+    {
+      chatRequests: project.chatRequests.length,
+      secondRequestIsGenerate: project.chatRequests[1]?.query.includes(
+        'Generate the LLM Wiki',
+      ),
+      markerRunKind: marker.runKind,
+      markerStillReservation: 'watchEndedAtMs' in marker,
+    },
+    {
+      chatRequests: 2,
+      secondRequestIsGenerate: true,
+      markerRunKind: 'generate',
+      markerStillReservation: false,
+    },
+  )
+})
+
 // Value: protects=AC 1 and 14 for Cursor, and Eng decision 73: the first Generate in Cursor without the managed skill; fails_when=the agent runs before the managed skill is readied, an installed skill is redeployed, the agent gets the update's bound or the update's words, or the progress notification names an update; no_claim=the real skill deployment (cursorSkillDeployment tests); seam=the stubbed skill steps and agent
 test('Generate LLM Wiki in Cursor readies the missing managed skill, then runs cursor-agent with the generate request and the 55 minute bound, and ends as generated once it published', async (context) => {
   // Arrange: no managed skill is installed, so its check fails and the deployment installs it.
@@ -813,5 +871,192 @@ test('a generation whose published manifest cannot be read fails with the recove
   assert.equal(
     project.errors[0]?.replace(/at \S+(?: [AP]M)?:/, 'at …:'),
     'LLM Wiki generation failed at …: An LLM Wiki was published in .codebook/wiki, but Codebook cannot read its manifest. Ask the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project".',
+  )
+})
+
+// Value: protects=AC 14 and the plan's start failures, a VS Code whose chat cannot be opened (Copilot Chat missing or disabled); fails_when=the generation is told as an update, names no next action, or leaves its marker so the next Generate is refused beside a run that never started; no_claim=the chat's own setup; seam=a chat command that throws
+test('a VS Code Generate whose chat cannot be opened fails with the generation’s sentence and leaves no marker', async (context) => {
+  // Arrange
+  const project = await openProjectWithoutWiki({
+    chatFails: 'command not found',
+  })
+  context.after(() => project.close())
+
+  // Act
+  await project.runCommand(GENERATE_COMMAND).catch(() => undefined)
+  await waitUntil(() => project.errors.length > 0, 'the failed start', 6_000)
+
+  // Assert
+  assert.deepEqual(
+    {
+      errors: project.errors.map((message) =>
+        message.replace(/at \S+(?: [AP]M)?:/, 'at …:'),
+      ),
+      markerLeft: await exists(project.markerPath),
+    },
+    {
+      errors: [
+        'LLM Wiki generation failed at …: The editor chat could not be opened (command not found). Install or enable GitHub Copilot Chat, then press Generate LLM Wiki again.',
+      ],
+      markerLeft: false,
+    },
+  )
+})
+
+// Value: protects=AC 14 and the plan's start failures, a Cursor without the Cursor Agent CLI; fails_when=the sentence that says where Codebook looks for the CLI is lost or called an update, or the marker stays so the next Generate is refused; no_claim=the CLI lookup itself (runCursorWikiUpdate tests); seam=a stubbed agent that fails as the runner does when it finds no CLI
+test('a Cursor Generate without the Cursor Agent CLI fails with the sentence that says where Codebook looks for it and leaves no marker', async (context) => {
+  // Arrange
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    cursorAgent: async () => {
+      throw new Error(
+        'Cursor Agent CLI is not installed: Codebook looks for ~/.local/bin/cursor-agent, then cursor-agent on the editor\'s PATH. Install it and sign in, then retry the Wiki generation, or run "/codebook Generate the LLM Wiki for this project" in Cursor chat.',
+      )
+    },
+  })
+  context.after(() => project.close())
+
+  // Act
+  await project.runCommand(GENERATE_COMMAND).catch(() => undefined)
+
+  // Assert
+  assert.deepEqual(
+    {
+      errors: project.errors.map((message) =>
+        message.replace(/at \S+(?: [AP]M)?:/, 'at …:'),
+      ),
+      markerLeft: await exists(project.markerPath),
+    },
+    {
+      errors: [
+        'LLM Wiki generation failed at …: Cursor Agent CLI is not installed: Codebook looks for ~/.local/bin/cursor-agent, then cursor-agent on the editor\'s PATH. Install it and sign in, then retry the Wiki generation, or run "/codebook Generate the LLM Wiki for this project" in Cursor chat.',
+      ],
+      markerLeft: false,
+    },
+  )
+})
+
+// Value: protects=Eng decision 72, a project whose folder Codebook may not write; fails_when=the generation hands a request to the chat although its marker cannot be claimed, the refusal hides the cause, or a marker or an output folder is left; no_claim=the wording of the system's error; seam=a project folder without write permission (skipped for root, whom permissions do not stop)
+test(
+  'a Generate in a project folder Codebook may not write refuses with the cause, sends no request and leaves no marker',
+  {
+    skip: process.getuid?.() === 0,
+  },
+  async (context) => {
+    // Arrange
+    const project = await openProjectWithoutWiki()
+    context.after(async () => {
+      await chmod(project.projectRoot, 0o755)
+      await project.close()
+    })
+    await chmod(project.projectRoot, 0o555)
+
+    // Act
+    await project.runCommand(GENERATE_COMMAND).catch(() => undefined)
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal: project.errors.map((message) =>
+          message.replace(project.projectRoot, '<project>'),
+        ),
+        chatRequests: project.chatRequests.length,
+        codebookFolderMade: await exists(
+          join(project.projectRoot, '.codebook'),
+        ),
+      },
+      {
+        refusal: [
+          "Codebook did not start the LLM Wiki generation: EACCES: permission denied, mkdir '<project>/.codebook'",
+        ],
+        chatRequests: 0,
+        codebookFolderMade: false,
+      },
+    )
+  },
+)
+
+// Value: protects=AC 5 in Cursor and Eng decision 73, the /ship review of Cycle 0055 pt1 (probe 003): the managed skill is readied only for an update that will run; fails_when=an Update on a folder with no Wiki writes the managed skill, or a learner's own same-name skill refuses it with the skill conflict instead of the no-Wiki notice and its Generate LLM Wiki button; no_claim=the skill's deployment (cursorSkillDeployment tests); seam=stubbed skill steps that would refuse with a learner's own skill
+test('an Update in Cursor on a folder with no Wiki says so and offers Generate LLM Wiki without readying the managed skill, also while a learner’s own skill is in the way', async (context) => {
+  // Arrange
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    cursorSkill: {
+      verify: async () => {
+        throw new Error('The managed Cursor skill is missing.')
+      },
+      deploy: async () => {
+        throw new Error(
+          'A Cursor skill named codebook that Codebook does not own is in the way.',
+        )
+      },
+    },
+  })
+  context.after(() => project.close())
+
+  // Act
+  await project.runUpdateCommand()
+
+  // Assert
+  assert.deepEqual(
+    {
+      skillCalls: project.skillCalls,
+      offered: project.offeredActions,
+    },
+    {
+      skillCalls: [],
+      offered: [
+        {
+          message: 'Codebook found no LLM Wiki in .codebook/wiki.',
+          actions: ['Generate LLM Wiki'],
+        },
+      ],
+    },
+  )
+})
+
+// Value: protects=Eng decision 73 for an update: a learner's own same-name skill refuses the update once its checks passed; fails_when=the agent runs anyway, or the marker the checks claimed stays, so every window is refused until it expires; no_claim=the conflict's sentence (cursorSkillDeployment tests); seam=stubbed skill steps and agent
+test('an Update in Cursor whose managed skill cannot be deployed over a learner’s own skill refuses with the deployment’s sentence, runs no agent and releases the marker', async (context) => {
+  // Arrange: a project with a Wiki and a stale freshness answer, so the update's checks pass.
+  let agentRuns = 0
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    cursorSkill: {
+      verify: async () => {
+        throw new Error('The managed Cursor skill was changed.')
+      },
+      deploy: async () => {
+        throw new Error(
+          'A Cursor skill named codebook that Codebook does not own is in the way.',
+        )
+      },
+    },
+    cursorAgent: async () => {
+      agentRuns += 1
+      return 'Done.'
+    },
+  })
+  context.after(() => project.close())
+  await publishGeneratedWiki(project.outputDirectory, project.projectRoot)
+
+  // Act
+  await project.runUpdateCommand().catch(() => undefined)
+
+  // Assert
+  assert.deepEqual(
+    {
+      skillCalls: project.skillCalls,
+      agentRuns,
+      markerLeft: await exists(project.markerPath),
+      refusal: project.errors,
+    },
+    {
+      skillCalls: ['verify', 'deploy'],
+      agentRuns: 0,
+      markerLeft: false,
+      refusal: [
+        'Codebook could not start the Wiki update: A Cursor skill named codebook that Codebook does not own is in the way.',
+      ],
+    },
   )
 })

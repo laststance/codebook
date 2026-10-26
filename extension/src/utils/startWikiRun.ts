@@ -43,7 +43,7 @@ export type WikiGenerateStartDependencies<Holder> = {
   openLocationSetting: () => Promise<unknown>
   /** Makes the folder that holds the output and its marker, never the output folder itself ({@link placeStorageLock} makes no folder for the marker). */
   makeOutputParent: () => Promise<void>
-  /** Readies the agent before the marker is claimed: in Cursor the managed skill ({@link verifyManagedCursorSkill}, {@link deployCursorSkill}); nothing in VS Code. */
+  /** Readies the agent once the marker is claimed and no Wiki appeared, so a start that is refused or offers the update writes no skill: in Cursor the managed skill ({@link verifyManagedCursorSkill}, {@link deployCursorSkill}), whose conflict throws and releases the marker; nothing in VS Code. */
   prepareAgent: () => Promise<void>
   /** Claims the run's marker for a generation that starts at the given time. */
   claimMarker: (startedAtMs: number) => Promise<WikiRunMarkerClaim<Holder>>
@@ -72,12 +72,13 @@ export type WikiGenerateStart = {
 }
 
 /**
- * Reads what a claimed generation begins with, and releases its marker when a read fails, so a start that throws leaves no marker; called by {@link startWikiGenerate} after the claim.
+ * Readies the agent for a claimed generation and reads what it begins with, and releases its marker when a step fails, so a start that throws leaves no marker; called by {@link startWikiGenerate} after the claim.
+ * Why: the agent is readied only for a start that goes ahead, so a refused start or the update's offer writes no Cursor skill, and a skill in the learner's way never hides the refusal of another window's run.
  * @param dependencies - The editor window's closures.
  * @param claim - The run's own marker.
  * @param startedAtMs - When the generation started.
  * @returns The start, or `undefined` after the marker was released for a Wiki that appeared between the first look and the claim (the update is offered).
- * @throws What a read threw, after the marker was released.
+ * @throws What readying the agent or a read threw (a Cursor skill in the way), after the marker was released.
  * @example await beginClaimedGeneration(dependencies, claim, 1_790_000_000_000) // => { publicationAtStart: undefined, … }
  */
 async function beginClaimedGeneration<Holder>(
@@ -92,6 +93,7 @@ async function beginClaimedGeneration<Holder>(
       dependencies.offerUpdate()
       return undefined
     }
+    await dependencies.prepareAgent()
     return {
       publicationAtStart: await dependencies.readPublicationIdentity(),
       releaseMarker: claim.release,
@@ -130,7 +132,7 @@ async function refusedForBlockOrRun<Holder>(
 /**
  * Makes every check of a first LLM Wiki generation's start in one order, asks the learner, prepares the folder and the agent, and claims the marker, so no agent is asked for a run that cannot succeed and nothing is left behind by a start that did not go ahead.
  *
- * The order: the folder's path in the project; an existing manifest, which is never overwritten and gets the update's offer; what makes the publisher refuse; another window's run, a reservation or an earlier chat's leftover; the confirmation (D2), whose Change location and dismissal start nothing; the folder that holds the output and its marker, which a fresh project lacks (Eng decision 72); the Cursor skill (Eng decision 73); the publisher's refusals and other runs once more, which may have come up while the learner read the confirmation; the marker's claim, which another window may have won meanwhile (Eng decision 79); and once more the manifest, which may have appeared in between. A refused start leaves no marker and no folder of the output.
+ * The order: the folder's path in the project; an existing manifest, which is never overwritten and gets the update's offer; what makes the publisher refuse; another window's run, a reservation or an earlier chat's leftover; the confirmation (D2), whose Change location and dismissal start nothing; the folder that holds the output and its marker, which a fresh project lacks (Eng decision 72); the publisher's refusals and other runs once more, which may have come up while the learner read the confirmation; the marker's claim, which another window may have won meanwhile (Eng decision 79); once more the manifest, which may have appeared in between; and last the Cursor skill (Eng decision 73), so only a start that goes ahead writes it. A refused start leaves no marker and no folder of the output.
  * Why: a generation is a run of the update's lifecycle (Cycle 0055, O3), whose start checks it shares; its own steps are an existing Wiki's offer, the confirmation and the folder.
  * Trigger: Codebook: Generate LLM Wiki, from the Command Palette, a no-Wiki notice's button or a failed generation's button.
  *
@@ -158,7 +160,6 @@ export async function startWikiGenerate<Holder>(
   // A dismissed confirmation starts nothing.
   if (choice !== 'generate') return undefined
   await dependencies.makeOutputParent()
-  await dependencies.prepareAgent()
   // The learner may have read the confirmation for minutes: another window may have begun, or left a stopped watch's reservation, which a claim would take over.
   if (await refusedForBlockOrRun(dependencies)) return undefined
   const startedAtMs = dependencies.now()

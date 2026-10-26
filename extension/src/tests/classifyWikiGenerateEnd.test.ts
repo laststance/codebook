@@ -188,3 +188,20 @@ test('a generation whose agent reported a failure ends as failed with that failu
     site: 'kept',
   })
 })
+
+// Value: protects=the state matrix's generate × conflict cell (/ship review of Cycle 0055 pt1): a generation whose publisher found learner files in the Wiki folder; fails_when=the end is told as a generation that published nothing, or as generated, instead of the conflict that names the files; no_claim=the conflict's attention row (pt2's LLM Wiki view); seam=none
+test('a generation whose publisher found files of the learner in the Wiki folder ends as a conflict that names them, never as generated', () => {
+  // Act
+  const end = classifyWikiUpdateEnd({
+    ...NOTHING_PUBLISHED,
+    blockingPaths: ['.codebook/wiki/notes.md'],
+  })
+
+  // Assert
+  assert.deepEqual(end, {
+    state: 'conflict',
+    paths: ['.codebook/wiki/notes.md'],
+    cause: 'learner-file',
+    site: 'kept',
+  })
+})

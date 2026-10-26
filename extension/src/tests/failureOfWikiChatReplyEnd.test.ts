@@ -34,3 +34,20 @@ test('a complete reply names no failure, and a reply with an error names none wh
   // Assert
   assert.deepEqual([complete, cancelled, stillOpen], [{}, {}, {}])
 })
+
+// Value: protects=the run kind reaching the sentence of a watched generation whose chat stopped with an error; fails_when=failureOfWikiChatReplyEnd stops passing runKind on, so the generation is told to answer the update request and press Update LLM Wiki; why_new=the sentence builder is tested with 'generate' but not this wiring; no_claim=the update's sentence (tests above); seam=none
+test('a watched generation whose chat ended at a reply with an error names the generate request and Generate LLM Wiki', () => {
+  // Act
+  const facts = failureOfWikiChatReplyEnd(
+    'reply-ended',
+    { outcome: 'error-reply', message: 'Quota exceeded.' },
+    'generate',
+  )
+
+  // Assert
+  assert.deepEqual(facts, {
+    failure:
+      'The editor chat answered the generate request with an error and stopped (Quota exceeded.). Read its message in the Chat view, then press Generate LLM Wiki again.',
+    isFailureCodebookSentence: true,
+  })
+})

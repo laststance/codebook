@@ -75,8 +75,8 @@ function standIns(
   }
 }
 
-// Value: protects=Eng decisions 72, 73 and 79 and D2, the order of a generation's start; fails_when=anything is made or claimed before the learner confirmed, the folder is made after the claim (the claim fails with ENOENT), the agent is readied after the claim (a conflict would leave a marker), or the manifest is not looked at once more after the claim; no_claim=what each step does (host tests); seam=stand-ins
-test('a generation’s start checks the folder, the existing Wiki, the publisher’s blocks and other runs before it asks, then makes the folder and readies the agent before it claims the marker, and looks for a Wiki once more after the claim', async () => {
+// Value: protects=Eng decisions 72, 73 and 79 and D2, the order of a generation's start; fails_when=anything is made or claimed before the learner confirmed, the folder is made after the claim (the claim fails with ENOENT), the agent is readied before the claim and the last look for a Wiki (a refused start or the update's offer would write a Cursor skill, and a skill in the way would hide the refusal; /ship review, Cycle 0055 pt1), or the manifest is not looked at once more after the claim; no_claim=what each step does (host tests); seam=stand-ins
+test('a generation’s start checks the folder, the existing Wiki, the publisher’s blocks and other runs before it asks, then makes the folder, claims the marker, looks for a Wiki once more and only then readies the agent', async () => {
   // Arrange
   const steps: string[] = []
 
@@ -94,16 +94,93 @@ test('a generation’s start checks the folder, the existing Wiki, the publisher
         'in-the-way',
         'confirm',
         'parent',
-        'agent',
         'block',
         'in-the-way',
         'claim',
         'token',
+        'agent',
         'publication',
         'git',
       ],
       startedAtMs: 1_790_000_000_000,
       hasGit: true,
+    },
+  )
+})
+
+// Value: protects=Eng decision 73 and the /ship review of Cycle 0055 pt1: the agent is readied only for a start that goes ahead; fails_when=a refusal after the confirmation or the update's offer after the claim readies the agent, which in Cursor writes the managed skill for a start that runs nothing and lets a skill in the way hide the refusal; no_claim=the skill's deployment (cursorSkillDeployment tests); seam=stand-ins
+test('a generation refused after the confirmation, or whose Wiki appeared before the claim was checked, readies no agent', async () => {
+  // Arrange: another window began while the confirmation was open; in the other start a Wiki appeared right before the claim.
+  const refusedSteps: string[] = []
+  let looks = 0
+  const refused = standIns(refusedSteps, {
+    findRunInTheWay: async () => {
+      looks += 1
+      return looks === 1
+        ? undefined
+        : { reason: 'Another editor window is generating this Wiki.' }
+    },
+  })
+  const offeredSteps: string[] = []
+  let tokenReads = 0
+  const offered = standIns(offeredSteps, {
+    readPublishToken: async () => {
+      tokenReads += 1
+      return tokenReads === 1 ? undefined : 'b@8'
+    },
+  })
+
+  // Act
+  const refusedStart = await startWikiGenerate(refused)
+  const offeredStart = await startWikiGenerate(offered)
+
+  // Assert
+  assert.deepEqual(
+    {
+      refusedStart,
+      refusedReadiedAgent: refusedSteps.includes('agent'),
+      refusal: refusedSteps.at(-1),
+      offeredStart,
+      offeredReadiedAgent: offeredSteps.includes('agent'),
+      offeredLastSteps: offeredSteps.slice(-2),
+    },
+    {
+      refusedStart: undefined,
+      refusedReadiedAgent: false,
+      refusal: 'refuse: Another editor window is generating this Wiki.',
+      offeredStart: undefined,
+      offeredReadiedAgent: false,
+      offeredLastSteps: ['release', 'offer-update'],
+    },
+  )
+})
+
+// Value: protects=Eng decision 73, a Cursor skill in the learner's way; fails_when=the conflict leaves the claimed marker, so every window is refused for 55 minutes, or the conflict is swallowed and the agent runs; no_claim=the conflict's sentence (cursorSkillDeployment tests); seam=stand-ins
+test('an agent that cannot be readied after the claim releases the marker and passes its refusal on', async () => {
+  // Arrange
+  const steps: string[] = []
+  const dependencies = standIns(steps, {
+    prepareAgent: async () => {
+      throw new Error(
+        'A Cursor skill named codebook that Codebook does not own is in the way.',
+      )
+    },
+  })
+
+  // Act
+  const failure = await startWikiGenerate(dependencies).then(
+    () => undefined,
+    (error: unknown) =>
+      error instanceof Error ? error.message : String(error),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { failure, lastSteps: steps.slice(-2) },
+    {
+      failure:
+        'A Cursor skill named codebook that Codebook does not own is in the way.',
+      lastSteps: ['token', 'release'],
     },
   )
 })

@@ -2089,8 +2089,6 @@ export function activate(
       const { projectRoot, wikiOutput, host } = await wikiRunPlace()
       let start: WikiUpdateStart | undefined
       try {
-        // The update request names the managed skill's procedure, so Cursor's agent gets the skill first, as a generation's does (Eng decision 73).
-        if (isCursorHost) await prepareCursorWikiSkill()
         start = await checkWikiUpdateStart(
           projectRoot,
           wikiOutput,
@@ -2111,6 +2109,9 @@ export function activate(
         await start.releaseMarker().catch(() => undefined)
         return
       }
+      // The update request names the managed skill's procedure, so Cursor's agent gets the skill once the checks passed, as a generation's does (Eng decision 73).
+      if (isCursorHost)
+        await prepareCursorSkillForUpdate(start, host, wikiOutput)
       const { hasGitRepository } = start
       const run = newWikiRun('update', projectRoot, wikiOutput, host, start)
       await launchWikiRun(run, () =>
@@ -2222,6 +2223,32 @@ export function activate(
         context.extensionPath,
         context.globalStorageUri.fsPath,
       )
+    }
+  }
+  /**
+   * Readies the managed Cursor skill for an update whose start checks passed and whose marker is claimed ({@link prepareCursorWikiSkill}); called by {@link updateDeepWiki} in Cursor right before the agent's launch.
+   * Why: a press that starts no agent (no Wiki, a current Wiki, another window's run) writes no skill, and a skill in the learner's way never hides what the checks found.
+   * @param start - The passed start, whose marker is released when the skill cannot be readied.
+   * @param host - The editor host that was asked.
+   * @param wikiOutput - The Wiki folder and its label, which the refused start records.
+   * @throws The deployment's refusal, after the marker was released and the refused start recorded.
+   * @example await prepareCursorSkillForUpdate(start, 'cursor', wikiOutput)
+   */
+  const prepareCursorSkillForUpdate = async (
+    start: WikiUpdateStart,
+    host: WikiUpdateHost,
+    wikiOutput: WikiUpdateOutput,
+  ): Promise<void> => {
+    try {
+      await prepareCursorWikiSkill()
+    } catch (error) {
+      // A skill in the learner's way refuses the update and frees the marker the checks claimed.
+      await start.releaseMarker().catch(() => undefined)
+      wikiUpdateRun.refuseStart(host, wikiOutput, {
+        kind: 'failed',
+        reason: thrownMessage(error),
+      })
+      throw error
     }
   }
   /** Says whether the opened folder is inside a Git repository, by the freshness check's own Git look with no sources ({@link inspectDeepWikiFreshness}); the generate request names only the conditions that can hold in it. @example await isInGitRepository('/repo', '/repo/.codebook/wiki') // => true */

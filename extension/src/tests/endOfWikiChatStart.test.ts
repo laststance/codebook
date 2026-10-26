@@ -109,3 +109,44 @@ test('a start without a sign whose request Codebook left in the chat ends the ru
     isFailureCodebookSentence: true,
   })
 })
+
+// Value: protects=the run kind reaching the three failed-start sentences of a generation; fails_when=endOfWikiChatStart stops passing runKind on, so a generation whose chat cannot open, shows no sign or answers with an error is told to press Update LLM Wiki in a folder that has no Wiki; why_new=the sentence builders are tested with 'generate' but not this wiring; no_claim=the update's sentences (tests above); seam=none
+test('a generation whose chat start failed ends with the generation’s sentence for a thrown command, a start without a sign and an error reply', () => {
+  // Act
+  const thrown = endOfWikiChatStart(
+    { outcome: 'failed', error: new Error('command not found') },
+    30_000,
+    false,
+    'generate',
+  )
+  const withoutSign = endOfWikiChatStart(
+    { outcome: 'unanswered', session: 'own', request: 'left' },
+    30_000,
+    false,
+    'generate',
+  )
+  const errorReply = endOfWikiChatStart(
+    { outcome: 'error-reply', message: 'Quota exceeded.' },
+    30_000,
+    false,
+    'generate',
+  )
+
+  // Assert
+  assert.deepEqual(thrown, {
+    failure:
+      'The editor chat could not be opened (command not found). Install or enable GitHub Copilot Chat, then press Generate LLM Wiki again.',
+    isFailureCodebookSentence: true,
+  })
+  assert.deepEqual(withoutSign, {
+    failure:
+      'Codebook saw no sign of the generation in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Generate anyway if Codebook still waits for that chat.',
+    isFailureCodebookSentence: true,
+    mayBeReplacedLater: true,
+  })
+  assert.deepEqual(errorReply, {
+    failure:
+      'The editor chat answered the generate request with an error and stopped (Quota exceeded.). Read its message in the Chat view, then press Generate LLM Wiki again.',
+    isFailureCodebookSentence: true,
+  })
+})
