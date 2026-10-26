@@ -35,7 +35,7 @@ const LEARNER_BREAKPOINT_ID = 12
  * @param options.duringRetire - Learner action performed while the owned breakpoint is being retired.
  * @param options.adapterPauseAfterContinue - After each Codebook continue the debug adapter pauses for a breakpoint of its own and resumes it: no `stopped`, only the `continued` it announces for its own resume, before the next declared stop.
  * @param options.exitAfterEntry - The test process exits after the entry pause, as when Vitest skips the cited test.
- * @param options.exitAfterStop - The test process exits on the continuation from this declared stop (one-based), as when the next declared stop lies on a line the test ran before it.
+ * @param options.exitAfterStop - The test process exits on the continuation from this declared stop (one-based), as when the next declared stop lies on a line the test ran before it and does not run again.
  * @param options.entryPauseAbsent - js-debug reports no entry pause because the owned breakpoint lies in the test file Vitest pauses at the start of: the first `stopped` event is the owned breakpoint's own hit at the first declared stop (the DAP transcript of F155).
  * @param options.reportFailure - Error the Vitest report check raises after the process finishes.
  * @param options.reportStatus - Actual assertion result reported by Vitest, independent of the process exit code.

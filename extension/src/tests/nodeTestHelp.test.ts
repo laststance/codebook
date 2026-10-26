@@ -194,11 +194,11 @@ test('the node-test help says additional stops are reached only in the order the
   // Assert
   assert.match(
     chooseStops ?? '',
-    /Each additional stop is a line the test runs after the previous stop; a stop on a line that ran before it is never reached, and the run ends at the test's exit\./,
+    /Each additional stop is a line the test runs after the previous stop: a line the test ran before it is reached only if the test runs it again \(in a loop, for example\), and a stop whose line does not run after the previous stop is never reached, so the run ends at the test's exit\./,
   )
   assert.match(
     body.testSelection,
-    /A declared stop the test does not reach after the previous one \(Vitest skipped the test, or the stop's line ran before the previous stop\) ends the run when the test exits, with an error naming that stop and the exit code\./,
+    /A declared stop the test does not reach after the previous one \(Vitest skipped the test, or the stop's line does not run again after the previous stop\) ends the run when the test exits, with an error naming that stop and the exit code\./,
   )
 })
 

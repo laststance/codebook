@@ -938,7 +938,7 @@ export class OwnedNodeTestRun {
   }
 
   /**
-   * Names the likely cause when the owned test process ended before a declared stop: for the first stop most often a test Vitest skipped, for a later one a stop on a line the test ran before the previous stop, which it never reaches again.
+   * Names the likely cause when the owned test process ended before a declared stop: for the first stop most often a test Vitest skipped, for a later one a stop on a line the test ran before the previous stop and does not run again after it.
    *
    * Called by {@link prepare} when preparation fails before its first stop was reached, and by {@link advance} when the continuation fails after Codebook asked the test to run on and before the next stop was reached. Cancellation and a test that still runs keep their original error.
    *
