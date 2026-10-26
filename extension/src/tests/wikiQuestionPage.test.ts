@@ -45,7 +45,7 @@ function questionStatusOf(page: FakeWikiPage) {
     : 'no question status line'
 }
 
-// Value: protects=a screen reader user who asks a question on a served Wiki published before this build: "Asking the editor model…" is written into a status line that was in the page, drawn and empty, before the question, and the answer into an answer region that was shown and empty before the answer; fails_when=the reader writes the progress sentence into the answer's status region in the same handler that shows its hidden, closed disclosure, so the region enters the page together with its first text and is not announced; why_new=D2; seam=openFakeWikiPage with the 0.2.29.0 shell's script and the served codebook-qa.js, the composer of a Wiki published before the question status line, holdNext('api/ask'); no_claim=what a given screen reader announces, and the timing of a browser's accessibility tree
+// Value: protects=a screen reader user who asks a question on a served Wiki published before this build: "Asking the editor model… The editor may first ask you to allow Codebook to use it; answer there." is written into a status line that was in the page, drawn and empty, before the question, and the answer into an answer region that was shown and empty before the answer; fails_when=the reader writes the progress sentence into the answer's status region in the same handler that shows its hidden, closed disclosure, so the region enters the page together with its first text and is not announced; why_new=D2; seam=openFakeWikiPage with the 0.2.29.0 shell's script and the served codebook-qa.js, the composer of a Wiki published before the question status line, holdNext('api/ask'); no_claim=what a given screen reader announces, and the timing of a browser's accessibility tree
 test('a question asked on a served Wiki published before this build is announced from a status line the reader added, which was in the page, drawn and empty, before the question', async () => {
   // Arrange: the page of a Wiki published by 0.2.29.0 runs that shell's own script before the reader's.
   const script = `${await shellScriptOf('scripts/fixtures/reader-shell-0.2.29.0.txt')}\n${await readServedWikiScript()}`
@@ -96,7 +96,7 @@ test('a question asked on a served Wiki published before this build is announced
       },
       statusWhileAsking: {
         role: 'status/polite',
-        text: 'Asking the editor model…',
+        text: 'Asking the editor model… The editor may first ask you to allow Codebook to use it; answer there.',
         isShown: true,
         isInADisclosure: false,
       },
@@ -115,7 +115,7 @@ test('a question asked on a served Wiki published before this build is announced
   )
 })
 
-// Value: protects=a screen reader user who asks a question on a Wiki this build publishes: the reader writes "Asking the editor model…" into the shell's own question status line, in the page and empty before the question, and adds no second line; fails_when=the reader keeps writing the progress sentence into the answer region it shows in the same handler, or adds a line of its own beside the shell's, so the progress is not announced or is announced twice; why_new=D2; seam=openFakeWikiPage with the bundled shell's script and the served codebook-qa.js, the current shell's composer, holdNext('api/ask'); no_claim=what a given screen reader announces
+// Value: protects=a screen reader user who asks a question on a Wiki this build publishes: the reader writes "Asking the editor model… The editor may first ask you to allow Codebook to use it; answer there." into the shell's own question status line, in the page and empty before the question, and adds no second line; fails_when=the reader keeps writing the progress sentence into the answer region it shows in the same handler, or adds a line of its own beside the shell's, so the progress is not announced or is announced twice; why_new=D2; seam=openFakeWikiPage with the bundled shell's script and the served codebook-qa.js, the current shell's composer, holdNext('api/ask'); no_claim=what a given screen reader announces
 test('a question asked on a served Wiki of this build is announced from the shell’s own status line, and the reader adds no second one', async () => {
   // Arrange: the page runs the bundled shell's script before the reader's.
   const script = `${await shellScriptOf('skills/codebook/reader-shell.html')}\n${await readServedWikiScript()}`
@@ -151,7 +151,7 @@ test('a question asked on a served Wiki of this build is announced from the shel
       },
       statusWhileAsking: {
         role: 'status/polite',
-        text: 'Asking the editor model…',
+        text: 'Asking the editor model… The editor may first ask you to allow Codebook to use it; answer there.',
         isShown: true,
         isInADisclosure: false,
       },

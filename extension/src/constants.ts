@@ -833,6 +833,10 @@ export const WIKI_UPDATE_STATUS_ROUTE = 'api/update-status'
 export const WIKI_FRESHNESS_ROUTE = 'api/freshness'
 /** Route of the Wiki reader that takes a repository question from its own page. */
 export const WIKI_QUESTION_ROUTE = 'api/ask'
+
+/** The reader's status line while a question waits for the editor model; the editor may be asking for consent meanwhile. */
+export const WIKI_QUESTION_WAITING_STATUS =
+  'Asking the editor model… The editor may first ask you to allow Codebook to use it; answer there.'
 /** The rules of the question status line of a Wiki page (`.qa-status`, the empty `role=status` line the progress of a question is told in): the bundled `reader-shell.html` carries the same rules, and the reader's page script adds them to a page published before the shell had the line, when it adds the line there. Empty, the line takes no room. */
 export const WIKI_QUESTION_STATUS_STYLE =
   '.qa-status{font-size:.85rem;margin:.4rem 0 0;overflow-wrap:anywhere}.qa-status:empty{margin:0}'
