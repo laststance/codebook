@@ -247,10 +247,30 @@ function refusalReason(
 export class WikiUpdateRun {
   #status: WikiUpdateStatus = { state: 'idle' }
   readonly #now: () => Date
+  readonly #changeListeners = new Set<() => void>()
 
   /** @param now - Clock for result timestamps; tests pass a fixed one. */
   constructor(now: () => Date = () => new Date()) {
     this.#now = now
+  }
+
+  /**
+   * Calls a listener after every change of the state; used by the LLM Wiki view, which reads its rows again when this window's run starts, advances or ends.
+   * @param listener - Called synchronously after the state changed; it must not throw.
+   * @returns The function that removes the listener.
+   * @example const stopListening = run.onDidChange(() => refreshView())
+   */
+  onDidChange(listener: () => void): () => void {
+    this.#changeListeners.add(listener)
+    return (): void => {
+      this.#changeListeners.delete(listener)
+    }
+  }
+
+  /** Replaces the state and tells the listeners; every change of the state goes through it. @param next - The new state. @example this.#record({ state: 'idle' }) */
+  #record(next: WikiUpdateStatus): void {
+    this.#status = next
+    for (const listener of this.#changeListeners) listener()
   }
 
   /** @returns A copy of the current state, safe to serialize. @example run.status().state // => 'idle' */
@@ -272,7 +292,7 @@ export class WikiUpdateRun {
     runKind: WikiRunKind = 'update',
   ): boolean {
     if (this.isRunning()) return false
-    this.#status = {
+    this.#record({
       state: 'running',
       host,
       startedAt: this.#now().toISOString(),
@@ -281,14 +301,14 @@ export class WikiUpdateRun {
       ...(isOutputOutsideProject ? { isOutputOutsideProject: true } : {}),
       ...(runKind === 'generate' ? { runKind } : {}),
       ...output,
-    }
+    })
     return true
   }
 
   /** Notes that the agent has staged a candidate site, so the page can say work is under way. Ignored when no run is active. @example run.markCandidateStaged() */
   markCandidateStaged(): void {
     if (this.#status.state !== 'running') return
-    this.#status = { ...this.#status, candidateStaged: true }
+    this.#record({ ...this.#status, candidateStaged: true })
   }
 
   /**
@@ -305,7 +325,7 @@ export class WikiUpdateRun {
    */
   end(result: WikiUpdateEnd): void {
     if (this.#status.state !== 'running') return
-    this.#status = endedStatus(this.#status, this.#now().toISOString(), result)
+    this.#record(endedStatus(this.#status, this.#now().toISOString(), result))
   }
 
   /** Records that nothing needed updating; no run starts. @param output - Resolved Wiki folder and its label. @param published - What the current site is called. @param areAddedFilesUnchecked - Whether the project has no Git repository, so "current" covers the indexed sources only; the state then says so. @example run.alreadyCurrent({ outputDirectory: '/repo/.codebook/wiki', outputLabel: '.codebook/wiki' }, { identity: 'a1b2c3d4e5f6+0f9e8d7c', revision: 'a1b2c3d4e5f6', index: '0f9e8d7c' }, false) */
@@ -315,13 +335,13 @@ export class WikiUpdateRun {
     areAddedFilesUnchecked: boolean,
   ): void {
     if (this.isRunning()) return
-    this.#status = {
+    this.#record({
       state: 'already-current',
       finishedAt: this.#now().toISOString(),
       ...(areAddedFilesUnchecked ? { addedFilesUnchecked: true } : {}),
       ...published,
       ...output,
-    }
+    })
   }
 
   /** Records a start that was refused before any agent ran, so the page shows why; nothing was replaced. Ignored while a run is active. @param host - Editor host that was asked. @param output - Resolved Wiki folder and its label. @param refusal - The block found before the start. @example run.refuseStart('vscode', output, { kind: 'conflict', paths: ['index.html'], cause: 'edited-page' }) */
@@ -332,7 +352,7 @@ export class WikiUpdateRun {
   ): void {
     if (this.isRunning()) return
     const finishedAt = this.#now().toISOString()
-    this.#status =
+    this.#record(
       refusal.kind === 'conflict' && refusal.paths.length > 0
         ? {
             state: 'conflict',
@@ -349,6 +369,7 @@ export class WikiUpdateRun {
             finishedAt,
             ...refusalReason(refusal),
             ...output,
-          }
+          },
+    )
   }
 }
