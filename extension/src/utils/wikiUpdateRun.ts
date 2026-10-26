@@ -3,6 +3,12 @@ import { WIKI_UPDATE_UNNAMED_BLOCK_REASON } from '../constants'
 /** Editor host that runs a Wiki update. */
 export type WikiUpdateHost = 'vscode' | 'cursor'
 
+/** What a run does: `generate` writes the first LLM Wiki of a folder that has none, `update` refreshes an existing one. Both share one lifecycle (start checks, marker, watch or agent, end); only the request, the bound and the words differ (Cycle 0055, O3). */
+export type WikiRunKind = 'generate' | 'update'
+
+/** The mark a run's state carries when it is a generation; an update's state carries none, as before Cycle 0055, so a reader that does not know the field reads an update. */
+type GenerateMark = { runKind?: 'generate' }
+
 /** Whether the published site was the same when a run ended (`kept`), was replaced during it (`replaced`), or was not there to be called either (`missing`: a publish that was stopped inside its swap, a start refused because the folder holds no Wiki, or a run whose end could not be read from the disk, {@link unreadWikiUpdateEnd}); a reader says nothing of the site for `missing`. */
 export type WikiUpdateSite = 'kept' | 'replaced' | 'missing'
 
@@ -43,6 +49,8 @@ export type WikiPublishedIdentity = {
  * `addedFilesUnchecked` is set on `already-current` when the project has no Git repository: every indexed source matches, and added files were not looked for.
  * `isCodebookSentence` marks a failure `reason` that Codebook wrote itself with its next step; a reader shows it whole and shortens only a reason an agent, the CLI or a thrown error supplied.
  * `mayBeReplacedLater` marks a failure with a kept site after which somebody Codebook did not stop can still publish (a VS Code chat that may still hold its request or that lost its watch, another window's update, an earlier chat the start waits for); a reader then says what held at that time, not that the site is kept.
+ * `runKind: 'generate'` marks the states of a generation (Cycle 0055); the page shows no line for them, since a Wiki page exists only once a generation published, and the editor words them itself ({@link wikiGenerateNotice}).
+ * `changedSourceCount` is set on a generation's `succeeded` when sources changed while it worked: the Wiki was published, and is behind that many files.
  * Additive fields may appear; a reader must ignore fields it does not know and treat an unknown `state` as "status unknown".
  */
 export type WikiUpdateStatus =
@@ -54,12 +62,15 @@ export type WikiUpdateStatus =
       timeoutMs: number
       candidateStaged: boolean
       isOutputOutsideProject?: true
-    } & WikiUpdateOutput)
+    } & GenerateMark &
+      WikiUpdateOutput)
   | ({
       state: 'succeeded'
       host: WikiUpdateHost
       finishedAt: string
-    } & WikiPublishedIdentity &
+      changedSourceCount?: number
+    } & GenerateMark &
+      WikiPublishedIdentity &
       WikiUpdateOutput)
   | ({
       state: 'already-current'
@@ -75,20 +86,23 @@ export type WikiUpdateStatus =
       isCodebookSentence?: true
       mayBeReplacedLater?: true
       site: WikiUpdateSite
-    } & WikiUpdateOutput)
+    } & GenerateMark &
+      WikiUpdateOutput)
   | ({
       state: 'cancelled'
       host: WikiUpdateHost
       finishedAt: string
       site: WikiUpdateSite
-    } & WikiUpdateOutput)
+    } & GenerateMark &
+      WikiUpdateOutput)
   | ({
       state: 'timed-out'
       host: WikiUpdateHost
       finishedAt: string
       timeoutMs: number
       site: WikiUpdateSite
-    } & WikiUpdateOutput)
+    } & GenerateMark &
+      WikiUpdateOutput)
   | ({
       state: 'conflict'
       host: WikiUpdateHost
@@ -96,7 +110,8 @@ export type WikiUpdateStatus =
       paths: string[]
       cause: WikiUpdateConflictCause
       site: WikiUpdateSite
-    } & WikiUpdateOutput)
+    } & GenerateMark &
+      WikiUpdateOutput)
 
 /** A start that was refused before any agent ran: nothing was replaced. A `failed` refusal marks a sentence Codebook wrote itself with `isCodebookSentence`, a folder that holds no Wiki with `site: 'missing'`, so nothing claims a site was kept, and a refusal because somebody else is still updating the Wiki with `mayBeReplacedLater`, so nothing claims the site is kept for good. */
 export type WikiUpdateRefusal =
@@ -111,7 +126,10 @@ export type WikiUpdateRefusal =
 
 /** How a run ended, without the fields the run itself knows (host, time, output, bound); {@link classifyWikiUpdateEnd} builds it and {@link WikiUpdateRun.end} records it. */
 export type WikiUpdateEnd =
-  | (Pick<Extract<WikiUpdateStatus, { state: 'succeeded' }>, 'state'> &
+  | (Pick<
+      Extract<WikiUpdateStatus, { state: 'succeeded' }>,
+      'state' | 'changedSourceCount'
+    > &
       WikiPublishedIdentity)
   | Pick<
       Extract<WikiUpdateStatus, { state: 'failed' }>,
@@ -145,6 +163,8 @@ function endedStatus(
   const ended = {
     host: running.host,
     finishedAt,
+    // A generation's end stays a generation's, so its words never call it an update.
+    ...(running.runKind ? { runKind: running.runKind } : {}),
     outputDirectory: running.outputDirectory,
     outputLabel: running.outputLabel,
   }
@@ -243,12 +263,13 @@ export class WikiUpdateRun {
     return this.#status.state === 'running'
   }
 
-  /** Starts a run unless one is active. @param host - Editor host that runs it. @param output - Resolved Wiki folder and its label. @param timeoutMs - Bound after which the run ends as timed out; shown to the learner. @param isOutputOutsideProject - Whether the Wiki folder lies outside the opened project; the running line of a VS Code update then says that the chat asks to approve each step. @returns False when a run is already active. @example run.begin('cursor', { outputDirectory: '/repo/.codebook/wiki', outputLabel: '.codebook/wiki' }, 900_000, false) */
+  /** Starts a run unless one is active. @param host - Editor host that runs it. @param output - Resolved Wiki folder and its label. @param timeoutMs - Bound after which the run ends as timed out; shown to the learner. @param isOutputOutsideProject - Whether the Wiki folder lies outside the opened project; the running line of a VS Code update then says that the chat asks to approve each step. @param runKind - Whether the run generates the first Wiki or updates one; a generation's states carry `runKind: 'generate'`. @returns False when a run is already active. @example run.begin('cursor', { outputDirectory: '/repo/.codebook/wiki', outputLabel: '.codebook/wiki' }, 900_000, false) */
   begin(
     host: WikiUpdateHost,
     output: WikiUpdateOutput,
     timeoutMs: number,
     isOutputOutsideProject: boolean,
+    runKind: WikiRunKind = 'update',
   ): boolean {
     if (this.isRunning()) return false
     this.#status = {
@@ -258,6 +279,7 @@ export class WikiUpdateRun {
       timeoutMs,
       candidateStaged: false,
       ...(isOutputOutsideProject ? { isOutputOutsideProject: true } : {}),
+      ...(runKind === 'generate' ? { runKind } : {}),
       ...output,
     }
     return true

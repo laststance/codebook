@@ -7,7 +7,7 @@ Single operational entry point for every coding agent; Codex and Claude Code (v2
 Before planning, implementation or runtime trials:
 
 1. New session, or PRODUCT_GOAL.md changed: read [PRODUCT_GOAL.md](PRODUCT_GOAL.md) in full except `## Final acceptance protocol`; open [the approved PNG](docs/designs/assets/codebook-product-spec-v9.png) with an image tool; read the active cycle Issue (open, label `cycle`) with comments (`gh issue view <N> --comments`).
-2. After every context compaction, before any other work, whatever the task: read PRODUCT_GOAL.md in full, every line; open the PNG with an image tool and check its identity; then read the active cycle Issue with comments and this file in full. Owner's most important rule (2026-10-21): the goal and the image are the final product every token is spent for; a plan or change made without them is waste. A compacted summary, the restore hook's text or an earlier read is no substitute.
+2. After every context compaction, before any other work, whatever the task: read PRODUCT_GOAL.md in full, every line; open the PNG with an image tool and check its identity; then read the active cycle Issue with comments. This file is loaded into context automatically as project instructions (Claude Code and Codex): read it from disk again only when its text is not in your context or it changed on disk since the session began (owner, 2026-10-26). Owner's most important rule (2026-10-21): the goal and the image are the final product every token is spent for; a plan or change made without them is waste. A compacted summary, the restore hook's text or an earlier read is no substitute.
 3. Final acceptance selected: read [`## Final acceptance protocol`](PRODUCT_GOAL.md#final-acceptance-protocol).
 
 The PNG is the product to build:
@@ -402,7 +402,7 @@ Single-context: one root `GLOSSARY.md` and `docs/adr/`, created lazily. See `doc
 
 [`.codex/hooks.json`](.codex/hooks.json) registers only `SessionStart` with `^compact$` (startup and resume ignored). Claude Code runs the same command from `.claude/settings.json`, the only shared Claude file (`compact` matcher, 5 s timeout).
 
-- The command (Node, Git, POSIX shell) prints ≤ 10,000 characters: the owner's re-entry rule first (PRODUCT_GOAL.md in full + the PNG, then the Issue and this file in full), the scope and pause sentence, then this file's `## Mandatory entry` and `## Owner directions in force` verbatim. Why: Claude Code injects longer hook context only as a 2,000-character preview + file path; printing this whole file once cut the restore order.
+- The command (Node, Git, POSIX shell) prints ≤ 10,000 characters: the owner's re-entry rule first (PRODUCT_GOAL.md in full + the PNG, then the Issue; this file from disk only when it is not in context or changed), the scope and pause sentence, then this file's `## Mandatory entry` and `## Owner directions in force` verbatim. Why: Claude Code injects longer hook context only as a 2,000-character preview + file path; printing this whole file once cut the restore order.
 - Sections outgrowing the limit → it prints the rule and points to this file.
 - Missing or renamed section (CRLF line ends and trailing spaces after a heading tolerated) → rule still printed; names what is missing on stderr; exit 0.
 - Restores no editing gate or Stop continuation.

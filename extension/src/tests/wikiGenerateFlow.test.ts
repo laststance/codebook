@@ -1,0 +1,780 @@
+import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { writeFileSync } from 'node:fs'
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { basename, join } from 'node:path'
+import { test } from 'node:test'
+
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import type { WikiFreshness } from '../utils/inspectDeepWikiFreshness'
+
+import { openWikiUpdateWindow } from './utils/wikiUpdateWindow'
+
+const CURRENT: WikiFreshness = {
+  status: 'current',
+  changedPaths: [],
+  addedPaths: [],
+}
+
+const GENERATE_COMMAND = 'codebook.generateDeepWiki'
+
+/** Says whether a path exists on disk. */
+const exists = (path: string): Promise<boolean> =>
+  access(path).then(
+    () => true,
+    () => false,
+  )
+
+/** Publishes a first Wiki the way the publisher would: its entry page, then the manifest of this project and the receipt that names the manifest's hash, each moved into place. */
+async function publishGeneratedWiki(
+  outputDirectory: string,
+  projectRoot: string,
+  repositoryRoot = projectRoot,
+): Promise<void> {
+  await mkdir(outputDirectory, { recursive: true })
+  await writeFile(join(outputDirectory, 'index.html'), '<title>Wiki</title>')
+  const manifestText = JSON.stringify({
+    schemaVersion: 1,
+    repositoryRoot,
+    generated: { revision: '1936e41913729663cc99081e3224db89bb2d8e56' },
+    pages: [],
+    assets: [],
+    excludedPaths: [],
+    includedSources: [{ path: 'src/a.ts', sha256: 'a'.repeat(64) }],
+  })
+  const manifestPath = join(outputDirectory, 'codebook-wiki.json')
+  await writeFile(`${manifestPath}.next`, manifestText)
+  await rename(`${manifestPath}.next`, manifestPath)
+  const receiptPath = join(outputDirectory, 'codebook-publication.json')
+  await writeFile(
+    `${receiptPath}.next`,
+    JSON.stringify({
+      schemaVersion: 1,
+      kind: 'published',
+      manifestSha256: createHash('sha256').update(manifestText).digest('hex'),
+    }),
+  )
+  await rename(`${receiptPath}.next`, receiptPath)
+}
+
+/** Opens a window on a project that has no Wiki and no `.codebook` folder yet, the ordinary first use; the browser reader is not opened, since there is nothing to serve. */
+async function openProjectWithoutWiki(
+  options: Omit<
+    Parameters<typeof openWikiUpdateWindow>[0],
+    'projectRoot' | 'openReader'
+  > = {},
+) {
+  const projectDirectory = await mkdtemp(
+    join(tmpdir(), 'codebook-wiki-generate-'),
+  )
+  const projectRoot = await realpath(projectDirectory)
+  const window = await openWikiUpdateWindow({
+    ...options,
+    projectRoot,
+    openReader: false,
+  })
+  const outputDirectory = join(projectRoot, '.codebook', 'wiki')
+  return {
+    ...window,
+    projectRoot,
+    outputDirectory,
+    markerPath: `${outputDirectory}.update-run.json`,
+    async close(): Promise<void> {
+      await window.close()
+      await rm(projectDirectory, { recursive: true, force: true })
+    },
+  }
+}
+
+// Value: protects=AC 1 and 14, the first Generate from Codebook's entry in VS Code in a project without `.codebook`; fails_when=Generate starts without the confirmation that names the resolved folder and the chat hand-over, sends no generate request, fails to claim its marker because the folder that holds it is missing (`placeStorageLock` makes no folder), writes no `runKind` into the marker, or makes the output folder itself; no_claim=the chat's own work and its publish (later tests); seam=the stubbed editor
+test('Generate LLM Wiki in VS Code confirms the folder and the chat hand-over, then hands a generate request to a new chat and claims a generation marker, in a project without .codebook', async (context) => {
+  // Arrange
+  const project = await openProjectWithoutWiki()
+  context.after(() => project.close())
+
+  // Act
+  await project.runCommand(GENERATE_COMMAND)
+
+  // Assert
+  const marker = JSON.parse(await readFile(project.markerPath, 'utf8'))
+  assert.deepEqual(
+    {
+      confirmations: project.confirmations,
+      detailStartsWithFolder: project.confirmationDetails[0]?.startsWith(
+        `It is written to ${project.outputDirectory}.\n\nCopilot Chat receives the generate request for this project in a new chat;`,
+      ),
+      detailAsksForApprovals: project.confirmationDetails[0]?.includes(
+        'The chat asks you to approve its commands and may ask you to Continue, so keep the Chat view open; it uses your chat plan. Codebook watches for up to 55 minutes.',
+      ),
+      requestStart: project.chatRequests[0]?.query.slice(0, 200),
+      requestNamesTheBound: project.chatRequests[0]?.query.includes(
+        'once you publish within 55 minutes',
+      ),
+      markerRunKind: marker.runKind,
+      outputFolderMade: await exists(project.outputDirectory),
+    },
+    {
+      confirmations: [
+        `Generate the LLM Wiki of ${basename(project.projectRoot)}?`,
+      ],
+      detailStartsWithFolder: true,
+      detailAsksForApprovals: true,
+      requestStart:
+        `/codebook Generate the LLM Wiki for this opened repository into ${JSON.stringify(project.outputDirectory)}, following the installed Codebook skill's DeepWiki generation procedure. Inspect the actual source and publish thro`.slice(
+          0,
+          200,
+        ),
+      requestNamesTheBound: true,
+      markerRunKind: 'generate',
+      outputFolderMade: false,
+    },
+  )
+})
+
+// Value: protects=AC 4's success and AC 12, a generation the chat publishes; fails_when=the end needs a current freshness, waits out the bound after the publish, calls the result an update, offers no Open in Browser, leaves the marker, or writes no Output record or one with the folder under the home folder in full; no_claim=the reader's pages (N55); seam=the stubbed editor, a hand-written publication with its receipt
+test('a VS Code generation whose chat publishes ends as generated at once, offers Open in Browser, removes its marker and writes one allowlisted Output record', async (context) => {
+  // Arrange
+  const project = await openProjectWithoutWiki()
+  context.after(() => project.close())
+  project.setFreshness(CURRENT)
+  await project.runCommand(GENERATE_COMMAND)
+
+  // Act: the notice comes in the turn the end is recorded; the marker is removed right after it.
+  await publishGeneratedWiki(project.outputDirectory, project.projectRoot)
+  await waitUntil(
+    () => project.notices.length > 0,
+    'the generation notice',
+    6_000,
+  )
+  await waitUntil(
+    async () => !(await exists(project.markerPath)),
+    'the marker’s removal',
+    6_000,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      notices: project.notices,
+      actions: project.offeredActions,
+      markerLeft: await exists(project.markerPath),
+      recordShape: project.outputLines.map((line) =>
+        line.replace(/started=\S+ ended=\S+/, 'started=… ended=…'),
+      ),
+    },
+    {
+      notices: ['LLM Wiki generated in .codebook/wiki.'],
+      actions: [
+        {
+          message: 'LLM Wiki generated in .codebook/wiki.',
+          actions: ['Open in Browser'],
+        },
+      ],
+      markerLeft: false,
+      recordShape: [
+        `info: LLM Wiki generate ended: host=vscode started=… ended=… end=succeeded summary="published" output=${project.outputDirectory}`,
+      ],
+    },
+  )
+})
+
+// Value: protects=Eng decision 75, a learner who edits a file while a generation of up to 55 minutes runs; fails_when=a usable new Wiki that is behind the source ends as a failure, or its notice hides that sources changed and offers no Update; no_claim=which files changed (the reader's freshness label names them); seam=the stubbed freshness answer
+test('a generation that publishes while sources change ends as generated, says how many source files changed while it was written and offers Update LLM Wiki first', async (context) => {
+  // Arrange: the freshness answer says one indexed source changed.
+  const project = await openProjectWithoutWiki()
+  context.after(() => project.close())
+  project.setFreshness({
+    status: 'changed',
+    changedPaths: ['src/a.ts'],
+    addedPaths: [],
+  })
+  await project.runCommand(GENERATE_COMMAND)
+
+  // Act
+  await publishGeneratedWiki(project.outputDirectory, project.projectRoot)
+  await waitUntil(
+    () => project.notices.length > 0,
+    'the generation notice',
+    6_000,
+  )
+
+  // Assert
+  assert.deepEqual(project.offeredActions, [
+    {
+      message:
+        'LLM Wiki generated in .codebook/wiki. 1 source file changed while it was written.',
+      actions: ['Update LLM Wiki', 'Open in Browser'],
+    },
+  ])
+})
+
+// Value: protects=AC 4, a publication of another checkout in the generation's folder; fails_when=a manifest that names another repository is reported as this project's generated Wiki; no_claim=the attention row (pt2); seam=a hand-written publication
+test('a generation whose publication names another checkout fails with the sentence that it does not identify this project and claims nothing', async (context) => {
+  // Arrange: the watch reads the foreign manifest as one it cannot read, and its grace for such a manifest is shortened.
+  const project = await openProjectWithoutWiki({
+    constants: { WIKI_UPDATE_UNREADABLE_MANIFEST_GRACE_MS: 200 },
+  })
+  context.after(() => project.close())
+  project.setFreshness(CURRENT)
+  await project.runCommand(GENERATE_COMMAND)
+
+  // Act
+  await publishGeneratedWiki(
+    project.outputDirectory,
+    project.projectRoot,
+    '/another/checkout',
+  )
+  await waitUntil(() => project.errors.length > 0, 'the failure', 6_000)
+
+  // Assert
+  assert.equal(
+    project.errors[0]?.replace(/at \S+(?: [AP]M)?:/, 'at …:'),
+    'LLM Wiki generation failed at …: The LLM Wiki published in .codebook/wiki does not identify this opened project. Set codebook.wikiOutputDirectory to a folder of this project, then press Generate LLM Wiki again.',
+  )
+})
+
+// Value: protects=AC 3 and O5, a Generate on a folder that holds a Wiki; fails_when=Generate overwrites or regenerates an existing Wiki, asks for the confirmation, claims a marker or sends a request; no_claim=the update the offer starts (update flow tests); seam=a hand-written publication
+test('Generate on a folder that already holds an LLM Wiki offers Update instead, without a confirmation, a marker or a chat request', async (context) => {
+  // Arrange
+  const project = await openProjectWithoutWiki()
+  context.after(() => project.close())
+  await publishGeneratedWiki(project.outputDirectory, project.projectRoot)
+
+  // Act
+  await project.runCommand(GENERATE_COMMAND)
+
+  // Assert
+  assert.deepEqual(
+    {
+      offers: project.offeredActions,
+      confirmations: project.confirmations,
+      chatRequests: project.chatRequests,
+      markerLeft: await exists(project.markerPath),
+    },
+    {
+      offers: [
+        {
+          message:
+            'An LLM Wiki already exists in .codebook/wiki. Update it instead?',
+          actions: ['Update LLM Wiki'],
+        },
+      ],
+      confirmations: [],
+      chatRequests: [],
+      markerLeft: false,
+    },
+  )
+})
+
+// Value: protects=AC 3, a Wiki published by the learner's own chat between Generate's first look and its claim; fails_when=Generate goes on over the new Wiki, or leaves its marker behind; no_claim=a publish after the hand-over (a late publication); seam=the held moment after the claim answered
+test('a Wiki that appears between the first look and the marker claim releases the marker and offers Update instead of generating over it', async (context) => {
+  // Arrange: the moment after the claim answered is held open.
+  const project = await openProjectWithoutWiki()
+  context.after(() => project.close())
+  const claimAnswer = project.hold('claim-answer')
+
+  // Act
+  const pressed = project.runCommand(GENERATE_COMMAND)
+  await claimAnswer.started
+  await publishGeneratedWiki(project.outputDirectory, project.projectRoot)
+  claimAnswer.release()
+  await pressed
+
+  // Assert
+  assert.deepEqual(
+    {
+      offers: project.offeredActions.map(({ message }) => message),
+      chatRequests: project.chatRequests,
+      markerLeft: await exists(project.markerPath),
+    },
+    {
+      offers: [
+        'An LLM Wiki already exists in .codebook/wiki. Update it instead?',
+      ],
+      chatRequests: [],
+      markerLeft: false,
+    },
+  )
+})
+
+// Value: protects=AC 5b, the learner who dismisses the confirmation; fails_when=a dismissed confirmation makes the folder, claims a marker or sends a request; no_claim=Change location (next test); seam=the stubbed modal
+test('a dismissed Generate confirmation starts nothing: no folder, no marker and no chat request', async (context) => {
+  // Arrange
+  const project = await openProjectWithoutWiki({ declineConfirmation: true })
+  context.after(() => project.close())
+
+  // Act
+  await project.runCommand(GENERATE_COMMAND)
+
+  // Assert
+  assert.deepEqual(
+    {
+      confirmations: project.confirmations.length,
+      codebookFolderMade: await exists(join(project.projectRoot, '.codebook')),
+      chatRequests: project.chatRequests,
+    },
+    { confirmations: 1, codebookFolderMade: false, chatRequests: [] },
+  )
+})
+
+// Value: protects=AC 5b and D2, Change location in the confirmation; fails_when=Change location starts a generation, leaves a marker, or does not open the output setting; no_claim=the setting's editor; seam=the stubbed modal and editor commands
+test('Change location in the Generate confirmation opens the output setting and starts nothing', async (context) => {
+  // Arrange
+  const project = await openProjectWithoutWiki({
+    answerConfirmation: (_message, choices) =>
+      choices.find((choice) => choice === 'Change location'),
+  })
+  context.after(() => project.close())
+
+  // Act
+  await project.runCommand(GENERATE_COMMAND)
+
+  // Assert
+  assert.deepEqual(
+    {
+      executedCommands: project.executedCommands,
+      markerLeft: await exists(project.markerPath),
+      chatRequests: project.chatRequests,
+    },
+    {
+      executedCommands: ['workbench.action.openSettings'],
+      markerLeft: false,
+      chatRequests: [],
+    },
+  )
+})
+
+// Value: protects=Eng decision 79, another window that claims the marker while this window's learner reads the confirmation; fails_when=the lost claim shows an error, starts a second agent beside the other window's or removes that window's marker; no_claim=the other window's run; seam=a marker of a live process written during the confirmation
+test('a second window that claims the marker while the confirmation is open makes Generate refuse with that window’s sentence, never an error, and its marker stays', async (context) => {
+  // Arrange: while the learner reads the confirmation, a window of this machine begins a generation of the same Wiki.
+  let otherMarkerPath = ''
+  const project = await openProjectWithoutWiki({
+    answerConfirmation: (_message, choices) => {
+      writeFileSync(
+        otherMarkerPath,
+        JSON.stringify({
+          pid: process.pid,
+          windowId: 'the-other-window',
+          host: 'cursor',
+          startedAtMs: Date.now(),
+          runKind: 'generate',
+        }),
+      )
+      return choices[0]
+    },
+  })
+  context.after(() => project.close())
+  otherMarkerPath = project.markerPath
+  await mkdir(join(project.projectRoot, '.codebook'))
+
+  // Act
+  await project.runCommand(GENERATE_COMMAND)
+
+  // Assert
+  const marker = JSON.parse(await readFile(project.markerPath, 'utf8'))
+  assert.deepEqual(
+    {
+      refusal: project.errors[0]?.replace(/started [^)]+\)/, 'started …)'),
+      markerWindow: marker.windowId,
+      chatRequests: project.chatRequests,
+    },
+    {
+      refusal:
+        'Codebook did not start the LLM Wiki generation: Another editor window is generating this Wiki (Cursor, started …). Wait for it to finish, then press Open LLM Wiki in Browser.',
+      markerWindow: 'the-other-window',
+      chatRequests: [],
+    },
+  )
+})
+
+// Value: protects=AC 4 and the reservation contract, Stop LLM Wiki Run while the VS Code chat has given no first sign; fails_when=the command cannot stop the opening, the run is reported as generated or failed, the marker is removed although the chat may still publish, or a new Generate starts beside that chat without its override; no_claim=the chat itself, which Codebook does not stop; seam=a chat command that never answers
+test('Stop LLM Wiki Run during the chat’s first-sign wait ends the generation as stopped watching, keeps a generation reservation and refuses a new Generate with Generate anyway', async (context) => {
+  // Arrange: the chat takes the request and never answers.
+  const project = await openProjectWithoutWiki({
+    chatReply: () => new Promise<never>(() => {}),
+  })
+  context.after(() => project.close())
+  const pressed = project.runCommand(GENERATE_COMMAND)
+  await waitUntil(
+    () => project.chatRequests.length > 0,
+    'the generate request',
+    6_000,
+  )
+
+  // Act
+  await project.runCommand('codebook.cancelWikiRun')
+  await pressed
+  await waitUntil(
+    async () =>
+      JSON.parse(await readFile(project.markerPath, 'utf8').catch(() => '{}'))
+        .watchEndedAtMs,
+    'the reservation',
+    6_000,
+  )
+  await project.runCommand(GENERATE_COMMAND)
+
+  // Assert
+  const reservation = JSON.parse(await readFile(project.markerPath, 'utf8'))
+  assert.deepEqual(
+    {
+      stopNotice: project.notices[0]?.replace(/at \S+(?: [AP]M)?\./, 'at ….'),
+      reservationRunKind: reservation.runKind,
+      secondPressOffers: project.offeredActions.at(-1)?.actions,
+      secondPressNamesTheGeneration: project.errors
+        .at(-1)
+        ?.includes('may still be generating this Wiki'),
+      chatRequests: project.chatRequests.length,
+    },
+    {
+      stopNotice:
+        'Codebook stopped watching the LLM Wiki generation at …. The chat may still publish; Codebook: Open LLM Wiki in Browser opens the Wiki once it does. To stop it, stop the request in the chat.',
+      reservationRunKind: 'generate',
+      secondPressOffers: ['Generate anyway'],
+      secondPressNamesTheGeneration: true,
+      chatRequests: 1,
+    },
+  )
+})
+
+// Value: protects=AC 1 and 14 for Cursor, and Eng decision 73: the first Generate in Cursor without the managed skill; fails_when=the agent runs before the managed skill is readied, an installed skill is redeployed, the agent gets the update's bound or the update's words, or the progress notification names an update; no_claim=the real skill deployment (cursorSkillDeployment tests); seam=the stubbed skill steps and agent
+test('Generate LLM Wiki in Cursor readies the missing managed skill, then runs cursor-agent with the generate request and the 55 minute bound, and ends as generated once it published', async (context) => {
+  // Arrange: no managed skill is installed, so its check fails and the deployment installs it.
+  const agentCalls: Array<{
+    prompt: string
+    timeoutMs?: number
+    runKind?: string
+  }> = []
+  let outputDirectory = ''
+  let projectRoot = ''
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    cursorSkill: {
+      verify: async () => {
+        throw new Error('The managed Cursor skill is missing.')
+      },
+    },
+    cursorAgent: async (_root, prompt, _signal, timeoutMs, runKind) => {
+      agentCalls.push({ prompt, timeoutMs, runKind })
+      await publishGeneratedWiki(outputDirectory, projectRoot)
+      return 'Published.'
+    },
+  })
+  context.after(() => project.close())
+  ;({ outputDirectory, projectRoot } = project)
+  project.setFreshness(CURRENT)
+
+  // Act
+  await project.runCommand(GENERATE_COMMAND)
+
+  // Assert
+  assert.deepEqual(
+    {
+      skillCalls: project.skillCalls,
+      progressTitles: project.progressTitles,
+      agentBound: agentCalls[0]?.timeoutMs,
+      agentRunKind: agentCalls[0]?.runKind,
+      requestIsGenerate: agentCalls[0]?.prompt.startsWith(
+        '/codebook Generate the LLM Wiki for this opened repository into',
+      ),
+      requestAsksForNoReport: agentCalls[0]?.prompt.includes(
+        'Then report the chapters you published.',
+      ),
+      notices: project.notices,
+      markerLeft: await exists(project.markerPath),
+    },
+    {
+      skillCalls: ['verify', 'deploy'],
+      progressTitles: ['Generating the LLM Wiki in cursor-agent…'],
+      agentBound: 3_300_000,
+      agentRunKind: 'generate',
+      requestIsGenerate: true,
+      requestAsksForNoReport: false,
+      notices: ['LLM Wiki generated in .codebook/wiki.'],
+      markerLeft: false,
+    },
+  )
+})
+
+// Value: protects=Eng decision 73, a learner's own or edited same-name skill in Cursor; fails_when=Generate overwrites that skill, runs the agent anyway or leaves a marker; no_claim=the deployment's own conflict rules (cursorSkillDeployment tests); seam=the stubbed skill steps
+test('a Cursor Generate whose managed skill cannot be deployed over a learner’s own skill refuses with the deployment’s sentence, runs no agent and leaves no marker', async (context) => {
+  // Arrange
+  let agentRuns = 0
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    cursorSkill: {
+      verify: async () => {
+        throw new Error('The managed Cursor skill was changed.')
+      },
+      deploy: async () => {
+        throw new Error(
+          'A Cursor skill named codebook that Codebook does not own is in the way.',
+        )
+      },
+    },
+    cursorAgent: async () => {
+      agentRuns += 1
+      return 'Published.'
+    },
+  })
+  context.after(() => project.close())
+
+  // Act
+  await project.runCommand(GENERATE_COMMAND).catch(() => undefined)
+
+  // Assert
+  assert.deepEqual(
+    {
+      errors: project.errors,
+      agentRuns,
+      markerLeft: await exists(project.markerPath),
+    },
+    {
+      errors: [
+        'Codebook did not start the LLM Wiki generation: A Cursor skill named codebook that Codebook does not own is in the way.',
+      ],
+      agentRuns: 0,
+      markerLeft: false,
+    },
+  )
+})
+
+// Value: protects=AC 4, a Cursor agent that exits cleanly without publishing; fails_when=the end says generated, calls the run an update, offers no Generate button, or leaves the marker; no_claim=the agent's own reply, which is shown nowhere; seam=the stubbed agent
+test('a Cursor generation whose agent exits without publishing fails with the sentence that names the folder and offers Generate LLM Wiki', async (context) => {
+  // Arrange
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    cursorAgent: async () => 'I could not finish.',
+  })
+  context.after(() => project.close())
+
+  // Act
+  await project.runCommand(GENERATE_COMMAND)
+
+  // Assert
+  assert.deepEqual(
+    {
+      failure: project.offeredActions.map(({ message, actions }) => ({
+        message: message.replace(/at \S+(?: [AP]M)?:/, 'at …:'),
+        actions,
+      })),
+      markerLeft: await exists(project.markerPath),
+    },
+    {
+      failure: [
+        {
+          message:
+            'LLM Wiki generation failed at …: Cursor Agent finished without publishing an LLM Wiki in .codebook/wiki. Press Generate LLM Wiki to try again, or ask the editor chat "/codebook Generate the LLM Wiki for this project" to see what it says.',
+          actions: ['Generate LLM Wiki'],
+        },
+      ],
+      markerLeft: false,
+    },
+  )
+})
+
+// Value: protects=AC 12 and Eng decision 81, private text an agent or a chat may print; fails_when=the Output record holds the Cursor agent's failure text or a chat's error reply, or names no exit code; no_claim=the notice, which shows the failure sentence to the learner; seam=a seeded fake secret in the agent's failure and in the chat's error reply
+test('the Output record of a failed generation names the agent’s exit code and holds no text of the agent or the chat, in Cursor and in VS Code', async (context) => {
+  // Arrange: both failures carry a seeded fake secret.
+  const cursorProject = await openProjectWithoutWiki({
+    cursor: true,
+    cursorAgent: async () => {
+      throw Object.assign(
+        new Error(
+          'Cursor Agent stopped with exit code 1 before finishing. token=SEEDED-SECRET-CURSOR',
+        ),
+        { exitCode: 1, exitSignal: null },
+      )
+    },
+  })
+  context.after(() => cursorProject.close())
+  const vsCodeProject = await openProjectWithoutWiki({
+    chatReply: async () => ({
+      errorDetails: { message: 'Quota exceeded for SEEDED-SECRET-CHAT.' },
+    }),
+  })
+  context.after(() => vsCodeProject.close())
+
+  // Act
+  await cursorProject.runCommand(GENERATE_COMMAND)
+  await vsCodeProject.runCommand(GENERATE_COMMAND)
+  await waitUntil(
+    () => vsCodeProject.outputLines.length > 0,
+    'the VS Code record',
+    6_000,
+  )
+
+  // Assert
+  const records = [...cursorProject.outputLines, ...vsCodeProject.outputLines]
+  assert.deepEqual(
+    {
+      cursorExit: cursorProject.outputLines[0]?.includes(' exit=1 '),
+      holdsSecret: records.some((line) => line.includes('SEEDED-SECRET')),
+      endStates: records.map((line) => /end=(\S+)/.exec(line)?.[1]),
+    },
+    { cursorExit: true, holdsSecret: false, endStates: ['failed', 'failed'] },
+  )
+})
+
+// Value: protects=AC 5, the learner who presses Update LLM Wiki or Open LLM Wiki in Browser before any Wiki exists; fails_when=either notice sends the learner to retype a chat request instead of offering Generate LLM Wiki, or the button starts something other than the generation; no_claim=the generation the button starts (other tests); seam=the stubbed notifications
+test('both no-Wiki notices, of Update LLM Wiki and of Open LLM Wiki in Browser, offer Generate LLM Wiki, which runs the generate command', async (context) => {
+  // Arrange: the learner presses the notices' button.
+  const project = await openProjectWithoutWiki({
+    chooseAction: (_message, actions) =>
+      actions.find((action) => action === 'Generate LLM Wiki'),
+  })
+  context.after(() => project.close())
+
+  // Act
+  await project.runUpdateCommand()
+  await project.runCommand('codebook.openDeepWiki')
+  await waitUntil(
+    () =>
+      project.executedCommands.filter((name) => name === GENERATE_COMMAND)
+        .length === 2,
+    'both presses',
+    6_000,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      offers: project.offeredActions,
+      executedCommands: project.executedCommands,
+    },
+    {
+      offers: [
+        {
+          message: 'Codebook found no LLM Wiki in .codebook/wiki.',
+          actions: ['Generate LLM Wiki'],
+        },
+        {
+          message: 'Codebook found no LLM Wiki in .codebook/wiki.',
+          actions: ['Generate LLM Wiki'],
+        },
+      ],
+      executedCommands: [GENERATE_COMMAND, GENERATE_COMMAND],
+    },
+  )
+})
+
+// Value: protects=D5, a second press while a generation runs; fails_when=the refusal calls the run an update or sends the learner to a browser reader the project does not have yet; no_claim=the other places of the progress (describeSecondWikiUpdateStart tests); seam=a Cursor agent held open
+test('a second Generate while a Cursor generation runs is refused with the sentence that Codebook is already generating, naming the notification', async (context) => {
+  // Arrange: the agent works until the test lets it end.
+  let endAgent = (): void => {}
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    cursorAgent: () =>
+      new Promise<string>((resolveAgent) => {
+        endAgent = (): void => resolveAgent('Done.')
+      }),
+  })
+  context.after(() => project.close())
+  const first = project.runCommand(GENERATE_COMMAND)
+  await waitUntil(
+    () => project.progressTitles.length > 0,
+    'the running generation',
+    6_000,
+  )
+
+  // Act
+  await Promise.race([
+    project.runCommand(GENERATE_COMMAND),
+    new Promise((resolveWait) => setTimeout(resolveWait, 200)),
+  ])
+  const refusal = project.notices[0]
+  endAgent()
+  await first
+
+  // Assert
+  assert.equal(
+    refusal,
+    'Codebook is already generating this project’s LLM Wiki. Its progress is in the notification here.',
+  )
+})
+
+// Value: protects=Eng decision 73 for both run kinds, an update in Cursor whose managed skill is missing; fails_when=the update asks cursor-agent for the skill's procedure before the skill is readied; no_claim=the deployment itself (cursorSkillDeployment tests); seam=the stubbed skill steps and agent
+test('an Update in Cursor readies the missing managed skill before cursor-agent runs, as a generation does', async (context) => {
+  // Arrange: a project with a Wiki, a stale freshness answer so the update runs, and no managed skill installed.
+  const steps: string[] = []
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    cursorSkill: {
+      verify: async () => {
+        steps.push('verify')
+        throw new Error('The managed Cursor skill is missing.')
+      },
+      deploy: async () => {
+        steps.push('deploy')
+      },
+    },
+    cursorAgent: async () => {
+      steps.push('agent')
+      return 'Done.'
+    },
+  })
+  context.after(() => project.close())
+  await publishGeneratedWiki(project.outputDirectory, project.projectRoot)
+
+  // Act
+  await project.runUpdateCommand()
+
+  // Assert
+  assert.deepEqual(steps, ['verify', 'deploy', 'agent'])
+})
+
+// Value: protects=the review's finding 3, another window's stopped generation that leaves a reservation while this window's learner reads the confirmation; fails_when=the claim takes the reservation over (a claim reads a reservation as no run), so a second chat generates beside the first; no_claim=a reservation that is there before the press (Stop LLM Wiki Run test); seam=a reservation written during the confirmation
+test('a reservation another window leaves while the Generate confirmation is open refuses the generation with Generate anyway, and the reservation stays', async (context) => {
+  // Arrange: while the learner reads the confirmation, another window's VS Code generation stops watching its chat.
+  let otherMarkerPath = ''
+  const project = await openProjectWithoutWiki({
+    answerConfirmation: (_message, choices) => {
+      writeFileSync(
+        otherMarkerPath,
+        JSON.stringify({
+          pid: process.pid,
+          windowId: 'the-other-window',
+          host: 'vscode',
+          startedAtMs: Date.now() - 60_000,
+          watchEndedAtMs: Date.now(),
+          runKind: 'generate',
+        }),
+      )
+      return choices[0]
+    },
+  })
+  context.after(() => project.close())
+  otherMarkerPath = project.markerPath
+  await mkdir(join(project.projectRoot, '.codebook'))
+
+  // Act
+  await project.runCommand(GENERATE_COMMAND)
+
+  // Assert
+  const marker = JSON.parse(await readFile(project.markerPath, 'utf8'))
+  assert.deepEqual(
+    {
+      namesTheOtherChat: project.errors[0]?.includes(
+        'The VS Code chat another editor window asked at',
+      ),
+      offers: project.offeredActions.at(-1)?.actions,
+      markerWindow: marker.windowId,
+      chatRequests: project.chatRequests,
+    },
+    {
+      namesTheOtherChat: true,
+      offers: ['Generate anyway'],
+      markerWindow: 'the-other-window',
+      chatRequests: [],
+    },
+  )
+})

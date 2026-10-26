@@ -14,6 +14,8 @@ export const wikiLastRunSchema = z.object({
   mayAgentStillWork: z.boolean(),
   /** Folder names of the candidates the run's looks saw that were written since its start; the next start tells the chat's own publish by them ({@link hasWikiPublishEndedWait}). Absent in a record an earlier version kept, which then counts as a run that saw none. */
   candidateNames: z.array(z.string()).optional(),
+  /** What the run did (Cycle 0055): a generation's stopped watch is waited for as long as a generation runs. Absent in an update's record and in one an earlier version kept, and a value this version does not know reads as absent: both are an update's. */
+  runKind: z.enum(['generate', 'update']).optional().catch(undefined),
 })
 
 /** The record {@link wikiLastRunSchema} describes. */

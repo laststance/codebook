@@ -2552,7 +2552,7 @@ test('a start in a second window whose open of the running window’s marker fai
           heldBy: {
             beingWrittenSinceMs: 1_790_000_000_000,
             unreadableMarkerPath: wiki.markerPath,
-            countsUntilMs: 1_790_001_290_000,
+            countsUntilMs: 1_790_003_690_000,
           },
         },
         markerAfterTheStart: 'window-a',

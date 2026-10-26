@@ -6118,8 +6118,8 @@ test('a published page carries a Content-Security-Policy that lets only the shel
         scripts: page.match(/<script\b/g)?.length,
       },
       {
-        head: "<!doctype html>\n<html lang=\"en\" data-codebook-reader=\"2\">\n<head>\n<meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src 'self' data: file:; media-src 'self' file:; style-src 'self' 'unsafe-inline' file:; font-src 'self' file:; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='; object-src 'none'; base-uri 'none'\">\n",
-        scriptHash: 'IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE=',
+        head: "<!doctype html>\n<html lang=\"en\" data-codebook-reader=\"2\">\n<head>\n<meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src 'self' data: file:; media-src 'self' file:; style-src 'self' 'unsafe-inline' file:; font-src 'self' file:; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-GoGWOnobpjAQPs0FqLJ0VBDun38ornPsvhcQ6D2WJxI='; object-src 'none'; base-uri 'none'\">\n",
+        scriptHash: 'GoGWOnobpjAQPs0FqLJ0VBDun38ornPsvhcQ6D2WJxI=',
         scripts: 1,
       },
     )
@@ -6163,8 +6163,8 @@ test('a page rendered from a reader shell with CRLF line endings is written with
       {
         hasCarriageReturn: false,
         policy:
-          "default-src 'none'; img-src 'self' data: file:; media-src 'self' file:; style-src 'self' 'unsafe-inline' file:; font-src 'self' file:; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='; object-src 'none'; base-uri 'none'",
-        scriptHash: 'IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE=',
+          "default-src 'none'; img-src 'self' data: file:; media-src 'self' file:; style-src 'self' 'unsafe-inline' file:; font-src 'self' file:; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-GoGWOnobpjAQPs0FqLJ0VBDun38ornPsvhcQ6D2WJxI='; object-src 'none'; base-uri 'none'",
+        scriptHash: 'GoGWOnobpjAQPs0FqLJ0VBDun38ornPsvhcQ6D2WJxI=',
       },
     )
   } finally {

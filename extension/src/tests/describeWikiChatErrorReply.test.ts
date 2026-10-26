@@ -37,3 +37,15 @@ test('a long message of the chat is cut inside the sentence, and an error withou
     'The editor chat answered the update request with an error and stopped (no message). Read its message in the Chat view, then press Update LLM Wiki again.',
   )
 })
+
+// Value: protects=D5, a generation the VS Code chat answers with an error; fails_when=its sentence names the update request or sends the learner to Update LLM Wiki in a folder that has no Wiki; no_claim=the update's sentence (tests above); seam=none
+test('a generation’s chat error reply names the generate request and Generate LLM Wiki', () => {
+  // Act
+  const sentence = describeWikiChatErrorReply('Quota exceeded.', 'generate')
+
+  // Assert
+  assert.equal(
+    sentence,
+    'The editor chat answered the generate request with an error and stopped (Quota exceeded.). Read its message in the Chat view, then press Generate LLM Wiki again.',
+  )
+})

@@ -2,7 +2,7 @@ import { findLinkOnWikiPath } from './findLinkOnWikiPath'
 import { WikiPathRefusedError } from './wikiPathRefusedError'
 
 /**
- * Refuses to read a Wiki whose folder, or a folder on its path in the project, is a link or a file, which the publisher refuses to write through too; called by the extension's "Open DeepWiki in Browser" before it reads the manifest to check the Wiki's owner, and by {@link readDeepWikiManifest} before every read of the reader.
+ * Refuses to read a Wiki whose folder, or a folder on its path in the project, is a link or a file, which the publisher refuses to write through too; called by the extension's "Open LLM Wiki in Browser" before it reads the manifest to check the Wiki's owner, and by {@link readDeepWikiManifest} before every read of the reader.
  *
  * Why: a cloned repository can carry `.codebook/wiki`, `.codebook` or another folder on the Wiki folder's path as a link to a folder outside the project. Read by its path, the Wiki behind it would be opened and served, although no publish of this project can have written it there.
  * The refusal is three short sentences that end with their own step (`…, then open the Wiki again.`), and it is a {@link WikiPathRefusedError}, so the open command shows it as it is: its step for a missing Wiki (`Generate it through /codebook in this project, then retry.`) would contradict this one.

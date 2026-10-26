@@ -1,6 +1,7 @@
 import type { WikiChatSession } from './handWikiRequestToChat'
 import { secondsText } from './secondsText'
 import type { UnansweredWikiRequest } from './sortUnansweredWikiRequest'
+import type { WikiRunKind } from './wikiUpdateRun'
 
 /** What became of a request the chat had not answered with a reply when Codebook looked: a request the chat answered with a reply in the moment after the bound (`replied`) is answered by that reply, a complete one, one with an error, or one that waits for a confirmation ({@link startWikiChatUpdate}), so no sentence of a start without a sign is worded for it. */
 type UnrepliedWikiRequest = Exclude<UnansweredWikiRequest, 'replied'>
@@ -30,6 +31,7 @@ const UNANSWERED_ENDINGS: Record<
  * @param request - Whether the chat ever held the request; never `replied`, a request the chat answered with a reply.
  * @param session - Where the request was sent: a chat session of Codebook's own, or the one the learner had open.
  * @param timeoutMs - The bound of the first sign, a whole number of seconds.
+ * @param runKind - Whether the run is a generation or an update: a generation's sentence names the generation and its override, Generate anyway (Cycle 0055, D5).
  * @returns
  * - `not-sent`: no sign, the chat holds no request of the update, no update running
  * - `left` in a session of its own: no sign, the request left in the chat with no chat command run on it, so it may still be there and is stopped there before a retry; Codebook waits for that chat as after a stopped watch, so the retry is answered with Update anyway, which the sentence names in words that are true whether the request is in the chat or not
@@ -44,6 +46,14 @@ export function describeUnansweredWikiChat(
   request: UnrepliedWikiRequest,
   session: WikiChatSession,
   timeoutMs: number,
+  runKind: WikiRunKind = 'update',
 ): string {
-  return `Codebook saw no sign of the update in the editor chat within ${secondsText(timeoutMs)}${UNANSWERED_ENDINGS[session][request]}`
+  const sentence = `Codebook saw no sign of the update in the editor chat within ${secondsText(timeoutMs)}${UNANSWERED_ENDINGS[session][request]}`
+  // A generation's sentence names the run and its override as a generation's.
+  return runKind === 'generate'
+    ? sentence
+        .replace('no sign of the update', 'no sign of the generation')
+        .replace('no update is running', 'no generation is running')
+        .replace('with Update anyway', 'with Generate anyway')
+    : sentence
 }

@@ -43,3 +43,18 @@ test('an update without a sign whose request the chat never held says that the c
     'Codebook saw no sign of the update in the editor chat within 30 seconds and the chat holds no request of it, so no update is running. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.',
   )
 })
+
+// Value: protects=D5, a generation the chat gave no sign of within its bound; fails_when=its sentence speaks of an update or offers Update anyway, which a generation's refusal never shows; no_claim=the update's sentences (tests above); seam=none
+test('a generation without a sign names the generation and Generate anyway, in its own and in a shared session', () => {
+  // Act
+  const sentences = [
+    describeUnansweredWikiChat('left', 'own', 30_000, 'generate'),
+    describeUnansweredWikiChat('not-sent', 'shared', 30_000, 'generate'),
+  ]
+
+  // Assert
+  assert.deepEqual(sentences, [
+    'Codebook saw no sign of the generation in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Generate anyway if Codebook still waits for that chat.',
+    'Codebook saw no sign of the generation in the editor chat within 30 seconds and the chat holds no request of it, so no generation is running. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.',
+  ])
+})

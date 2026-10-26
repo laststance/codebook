@@ -47,3 +47,26 @@ test('the confirmation of an editor with New Chat names the Chat view that has n
   )
   assert.equal(withoutNewChat.includes('restores'), false)
 })
+
+// Value: protects=D5 and D2, the confirmation of a generation in VS Code; fails_when=a generation's request is called the update request in either editor; no_claim=the update's sentences (tests above); seam=none
+test('the hand-over of a generation names the generate request, in an editor with and without New Chat', () => {
+  // Act
+  const handOvers = {
+    newChat: describeWikiChatHandOver(
+      ['workbench.action.chat.open', 'workbench.action.chat.newChat'],
+      'generate',
+    ),
+    openChat: describeWikiChatHandOver(
+      ['workbench.action.chat.open'],
+      'generate',
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(handOvers, {
+    newChat:
+      'Copilot Chat receives the generate request for this project in a new chat; the chat you have open keeps its place in the chat list. If the Chat view has not been opened in this window yet, the request may go into the chat it restores. A draft you typed into an empty chat is replaced by the request; a draft in a chat with messages stays with that chat.',
+    openChat:
+      'Copilot Chat receives the generate request for this project in the chat that is open, like a message you typed: it waits behind a request in progress, a request that waits for your confirmation is cancelled, and a draft in the chat’s input is replaced by the request.',
+  })
+})

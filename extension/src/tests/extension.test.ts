@@ -1179,6 +1179,12 @@ test('Cursor Wiki update starts its project-bound agent without leaving an unsen
           async dispose(): Promise<void> {}
         },
       },
+      // The managed Cursor skill an update readies first; nothing is written to the learner's home.
+      './cursorSkillDeployment': {
+        verifyManagedCursorSkill: async () => ({ status: 'current' }),
+        deployCursorSkill: async () => ({ status: 'current' }),
+        removeManagedCursorSkill: async () => undefined,
+      },
       './utils/runCursorWikiUpdate': {
         runCursorWikiUpdate: async (root: string, prompt: string) => {
           agentRuns.push({ root, prompt })
@@ -1966,6 +1972,12 @@ test('a Cursor Wiki update that leaves source changed reports a failure instead 
           async dispose(): Promise<void> {}
         },
       },
+      // The managed Cursor skill an update readies first; nothing is written to the learner's home.
+      './cursorSkillDeployment': {
+        verifyManagedCursorSkill: async () => ({ status: 'current' }),
+        deployCursorSkill: async () => ({ status: 'current' }),
+        removeManagedCursorSkill: async () => undefined,
+      },
       './utils/runCursorWikiUpdate': {
         runCursorWikiUpdate: async (root: string) => {
           agentRuns.push(root)
@@ -2109,6 +2121,12 @@ test('a browser Wiki update link starts no Cursor Agent unless the learner confi
           async dispose(): Promise<void> {}
         },
       },
+      // The managed Cursor skill an update readies first; nothing is written to the learner's home.
+      './cursorSkillDeployment': {
+        verifyManagedCursorSkill: async () => ({ status: 'current' }),
+        deployCursorSkill: async () => ({ status: 'current' }),
+        removeManagedCursorSkill: async () => undefined,
+      },
       './utils/runCursorWikiUpdate': {
         runCursorWikiUpdate: async (root: string) => {
           agentRuns.push(root)
@@ -2149,9 +2167,14 @@ test('a browser Wiki update link starts no Cursor Agent unless the learner confi
 
 // Value: protects=the editor's own notification for a rejected command showing plain text; fails_when=a command registered by activation rejects with its raw error, whose quoted setting or path the editor renders as a command link when the command ran from a keybinding, a menu or the status bar; why_new=Cycle 0045 (SEC-3); seam=vscode.commands.registerCommand stub
 test('a failed Codebook command rejects with a message the editor cannot turn into a link', async () => {
-  // Arrange: the setting `codebook.wikiOutputDirectory` carries link syntax, and no Wiki exists in the folder it names.
+  // Arrange: the setting `codebook.wikiOutputDirectory` carries link syntax, and the folder it names holds this project's manifest without its entry page. (Changed in Cycle 0055: a folder without any Wiki no longer fails the open but offers Generate LLM Wiki, so the failure comes from the missing entry page.)
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-command-rejection-')),
+  )
+  await mkdir(join(projectRoot, '[Open](command:x)'))
+  await writeFile(
+    join(projectRoot, '[Open](command:x)', 'codebook-wiki.json'),
+    JSON.stringify({ schemaVersion: 1, repositoryRoot: projectRoot }),
   )
   const commands = new Map<string, () => Promise<void>>()
   const boundary = await loadModule<typeof ExtensionModule>(
@@ -2202,7 +2225,7 @@ test('a failed Codebook command rejects with a message the editor cannot turn in
     assert.ok(rejection instanceof Error)
     assert.equal(
       rejection.message,
-      `No Wiki was found at ${projectRoot}/[Open] (command:x): its manifest (codebook-wiki.json) does not exist`,
+      `No Wiki was found at ${projectRoot}/[Open] (command:x): its entry page (index.html) does not exist`,
     )
     assert.equal(rejection.message.includes(']('), false)
   } finally {
@@ -2802,7 +2825,7 @@ test('Update LLM Wiki without a Wiki, in an output folder named like a command l
 
     // Assert
     assert.deepEqual(errors, [
-      'Codebook found no LLM Wiki in [Open] (command:x). Ask the editor chat "/codebook Generate the LLM Wiki for this project", then update it.',
+      'Codebook found no LLM Wiki in [Open] (command:x).',
     ])
     assert.equal(errors[0]!.includes(']('), false)
   } finally {
@@ -2954,10 +2977,15 @@ test('a failed Open Repository Wiki whose error quotes a command link shows no c
   }
 })
 
-test('a failed Open DeepWiki in Browser whose error quotes a command link shows no clickable link', async () => {
-  // Arrange: the setting `codebook.wikiOutputDirectory` carries link syntax, and no Wiki exists in the folder it names.
+test('a failed Open LLM Wiki in Browser whose error quotes a command link shows no clickable link', async () => {
+  // Arrange: the setting `codebook.wikiOutputDirectory` carries link syntax, and the folder it names holds this project's manifest without its entry page. (Changed in Cycle 0055: a folder without any Wiki no longer fails the open but offers Generate LLM Wiki, so the failure comes from the missing entry page.)
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-open-wiki-notice-')),
+  )
+  await mkdir(join(projectRoot, '[Open](command:x)'))
+  await writeFile(
+    join(projectRoot, '[Open](command:x)', 'codebook-wiki.json'),
+    JSON.stringify({ schemaVersion: 1, repositoryRoot: projectRoot }),
   )
   const commands = new Map<string, () => Promise<void>>(),
     errors: string[] = []
@@ -3007,7 +3035,7 @@ test('a failed Open DeepWiki in Browser whose error quotes a command link shows 
 
     // Assert
     assert.deepEqual(errors, [
-      `Codebook could not open DeepWiki: Error: No Wiki was found at ${projectRoot}/[Open] (command:x): its manifest (codebook-wiki.json) does not exist. Generate it through /codebook in this project, then retry.`,
+      `Codebook could not open DeepWiki: Error: No Wiki was found at ${projectRoot}/[Open] (command:x): its entry page (index.html) does not exist. Generate it through /codebook in this project, then retry.`,
     ])
     assert.equal(errors[0]!.includes(']('), false)
   } finally {
@@ -3071,7 +3099,7 @@ test('a failed Update LLM Wiki whose error quotes a command link shows no clicka
 
     // Assert
     assert.deepEqual(errors, [
-      'Codebook found no LLM Wiki in [Open cited line] (x). Ask the editor chat "/codebook Generate the LLM Wiki for this project", then update it.',
+      'Codebook found no LLM Wiki in [Open cited line] (x).',
     ])
     assert.equal(errors[0]!.includes(']('), false)
   } finally {

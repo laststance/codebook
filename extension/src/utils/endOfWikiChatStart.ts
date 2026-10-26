@@ -3,6 +3,7 @@ import { describeWikiChatErrorReply } from './describeWikiChatErrorReply'
 import { describeWikiChatOpenFailure } from './describeWikiChatOpenFailure'
 import type { WikiChatStartOutcome } from './startWikiChatUpdate'
 import { thrownMessage } from './thrownMessage'
+import type { WikiRunKind } from './wikiUpdateRun'
 
 /** What the extension records when the start of a VS Code update already ended the run: a failure sentence of Codebook's own (marked `mayBeReplacedLater` when the chat may still hold the request and so can still publish), a cancel, or nothing more than "the run stopped" (the end then says what is on disk). */
 export type WikiChatStartEnd =
@@ -18,6 +19,7 @@ export type WikiChatStartEnd =
  * Words the failure of a start that did not bring the chat to work; called by {@link endOfWikiChatStart}.
  * @param start - How the start ended.
  * @param answerTimeoutMs - The bound of the first sign, which the sentence of a start without one names.
+ * @param runKind - Whether the run is a generation or an update; each sentence names it.
  * @returns
  * - `failed` (the chat command threw): the sentence of {@link describeWikiChatOpenFailure}
  * - `unanswered`: the sentence of {@link describeUnansweredWikiChat}
@@ -30,17 +32,19 @@ export type WikiChatStartEnd =
 function failureOfWikiChatStart(
   start: WikiChatStartOutcome,
   answerTimeoutMs: number,
+  runKind: WikiRunKind,
 ): string | undefined {
   if (start.outcome === 'failed')
-    return describeWikiChatOpenFailure(thrownMessage(start.error))
+    return describeWikiChatOpenFailure(thrownMessage(start.error), runKind)
   if (start.outcome === 'unanswered')
     return describeUnansweredWikiChat(
       start.request,
       start.session,
       answerTimeoutMs,
+      runKind,
     )
   return start.outcome === 'error-reply'
-    ? describeWikiChatErrorReply(start.message)
+    ? describeWikiChatErrorReply(start.message, runKind)
     : undefined
 }
 
@@ -86,6 +90,7 @@ function mayChatStillHoldRequest(start: WikiChatStartOutcome): boolean {
  * @param start - How the start ended.
  * @param answerTimeoutMs - The bound of the first sign.
  * @param isWindowClosing - Whether the window began to close meanwhile.
+ * @param runKind - Whether the run is a generation or an update; a failure's sentence names it.
  * @returns The facts to end the run with (a failure is marked `mayBeReplacedLater` when the chat may still hold the request, {@link mayChatStillHoldRequest}), or `undefined` when the chat works on the request and the watch starts.
  * @example
  * endOfWikiChatStart({ outcome: 'working' }, 30_000, false) // => undefined
@@ -97,8 +102,9 @@ export function endOfWikiChatStart(
   start: WikiChatStartOutcome,
   answerTimeoutMs: number,
   isWindowClosing: boolean,
+  runKind: WikiRunKind = 'update',
 ): WikiChatStartEnd | undefined {
-  const failure = failureOfWikiChatStart(start, answerTimeoutMs)
+  const failure = failureOfWikiChatStart(start, answerTimeoutMs, runKind)
   if (failure === undefined)
     return endWithoutFailure(start.outcome, isWindowClosing)
   // A request left in the chat can still be worked on and published: the mark also makes the run leave the reservation of a stopped watch.

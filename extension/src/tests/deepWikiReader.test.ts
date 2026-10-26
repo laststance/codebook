@@ -1294,12 +1294,12 @@ test('every page the reader serves lets only script files of its own origin and 
     {
       overview: {
         policy:
-          "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='; object-src 'none'; base-uri 'none'",
+          "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE=' 'sha256-GoGWOnobpjAQPs0FqLJ0VBDun38ornPsvhcQ6D2WJxI='; object-src 'none'; base-uri 'none'",
         page: '<!doctype html><body><article><img src="x.png" onerror="fetch(\'api/ask\')"><a data-codebook-unlinked="javascript:run()">Run</a></article><script>\nthemeButton()\n</script><script src="CLIENT"></script></body>',
       },
       asset: {
         policy:
-          "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='; object-src 'none'; base-uri 'none'",
+          "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE=' 'sha256-GoGWOnobpjAQPs0FqLJ0VBDun38ornPsvhcQ6D2WJxI='; object-src 'none'; base-uri 'none'",
         page: '<!doctype html><body><article></article><script>run()</script><script src="CLIENT"></script></body>',
       },
     },
@@ -1308,7 +1308,7 @@ test('every page the reader serves lets only script files of its own origin and 
 
 /** The policy every page the reader serves carries, the reader's own script's hashes included. */
 const SERVED_PAGE_POLICY =
-  "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='; object-src 'none'; base-uri 'none'"
+  "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE=' 'sha256-GoGWOnobpjAQPs0FqLJ0VBDun38ornPsvhcQ6D2WJxI='; object-src 'none'; base-uri 'none'"
 
 // Value: protects=the editor's extension host, where every extension of the window stops while the Wiki reader prepares a page on the host's own thread, against a page in the Wiki folder built to make the HTML parser slow (nothing limits a page's size); fails_when=the reader prepares a page in its request handler again, so the host's event loop stands still for seconds to minutes, or it serves a page whose preparation passed the deadline, or its answer then lacks the status, the sentence, the link to this reader's overview or the page policy; why_new=Cycle 0046 second /ship PERF1 residual: pages on which parse5 itself takes time that grows with the square of the page took 13 s to over a minute for 1 MB; P2D2 the link to the overview; Cycle 0047 row 15 (P3D1): the refused page is one other than the overview, whose own refusal page has no link to itself; seam=the reader loaded with loadModule and a constants module whose WIKI_PAGE_SERVE_DEADLINE_MS is 2,000 ms; no_claim=the native editor (the test process's event loop stands for the host's)
 test('a page built to make the HTML parser slow is answered within about the deadline with status 503 and a sentence for the learner under the page policy, while the event loop of the host runs on', async (context) => {
@@ -5189,14 +5189,14 @@ test('a script file of the Wiki folder is served as plain text, a page that poin
         type: 'text/html; charset=utf-8',
         sniffing: 'nosniff',
         policy:
-          "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='; object-src 'none'; base-uri 'none'",
+          "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE=' 'sha256-GoGWOnobpjAQPs0FqLJ0VBDun38ornPsvhcQ6D2WJxI='; object-src 'none'; base-uri 'none'",
         body: '<!doctype html><body><article><script src="assets/planted.js"></script></article><script src="CLIENT"></script></body>',
       },
       openTag: {
         type: 'text/html; charset=utf-8',
         sniffing: 'nosniff',
         policy:
-          "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='; object-src 'none'; base-uri 'none'",
+          "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE=' 'sha256-GoGWOnobpjAQPs0FqLJ0VBDun38ornPsvhcQ6D2WJxI='; object-src 'none'; base-uri 'none'",
         body: '<!doctype html><body><article></article><script src="planted.js" </body><script src="CLIENT"></script>',
       },
       ownScript: {
@@ -5266,11 +5266,11 @@ test('the reader’s policy names the hash of the one script the shell of this b
     },
     {
       scriptHashes: [
-        ['IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='],
+        ['GoGWOnobpjAQPs0FqLJ0VBDun38ornPsvhcQ6D2WJxI='],
         ['yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='],
       ],
       policy:
-        "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='; object-src 'none'; base-uri 'none'",
+        "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE=' 'sha256-GoGWOnobpjAQPs0FqLJ0VBDun38ornPsvhcQ6D2WJxI='; object-src 'none'; base-uri 'none'",
     },
   )
 })

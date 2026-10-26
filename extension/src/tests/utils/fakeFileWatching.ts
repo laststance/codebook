@@ -40,7 +40,7 @@ function isUnderFolder(base: string, fsPath: string): boolean {
  * Stands in for `vscode.workspace.createFileSystemWatcher` in tests that activate the extension, so a test can report a file event the way the editor does.
  *
  * Why: the opened Wiki watches the project's files; a `vscode` stub without a watcher cannot open it.
- * Used by the tests that run "Codebook: Open DeepWiki in Browser"; a test that reports nothing takes only `createFileSystemWatcher`.
+ * Used by the tests that run "Codebook: Open LLM Wiki in Browser"; a test that reports nothing takes only `createFileSystemWatcher`.
  *
  * As in the editor, a listener whose registration was disposed gets no further event although its watcher lives on, and a watcher gets only the files under its folder. The glob under that folder is not evaluated: every file below the folder is delivered.
  *

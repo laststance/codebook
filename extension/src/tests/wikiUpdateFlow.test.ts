@@ -192,7 +192,7 @@ test('cancelling a VS Code Wiki update with its status bar entry stops watching 
     )
     assert.deepEqual(wiki.executedCommands, commandsBeforeTheCancel)
     assert.deepEqual(wiki.statusBarTexts, [
-      '$(sync~spin) Watching for the LLM Wiki update · Cancel',
+      '$(sync~spin) Watching for the LLM Wiki · Stop watching',
     ])
     assert.deepEqual(wiki.visibleStatusBarTexts(), [])
     assert.deepEqual(wiki.progressTitles, [])
@@ -267,7 +267,7 @@ test('while Codebook watches a VS Code update no notification of the watch stays
     assert.deepEqual(whileWatching, {
       state: 'running',
       notifications: [],
-      statusBar: ['$(sync~spin) Watching for the LLM Wiki update · Cancel'],
+      statusBar: ['$(sync~spin) Watching for the LLM Wiki · Stop watching'],
     })
     assert.equal(ended.state, 'succeeded')
     assert.deepEqual(wiki.progressTitles, [])
@@ -304,7 +304,7 @@ test('every Wiki update shows the one place that can cancel it, also when nobody
     // Assert
     assert.deepEqual(
       [vsCodeWiki.statusBarTexts, vsCodeWiki.progressTitles],
-      [['$(sync~spin) Watching for the LLM Wiki update · Cancel'], []],
+      [['$(sync~spin) Watching for the LLM Wiki · Stop watching'], []],
     )
     assert.deepEqual(
       [cursorWiki.statusBarTexts, cursorWiki.progressTitles],
@@ -764,7 +764,7 @@ test('a second start from the browser link while the watch is shown in the statu
 
     // Assert
     assert.deepEqual(watchShown, [
-      '$(sync~spin) Watching for the LLM Wiki update · Cancel',
+      '$(sync~spin) Watching for the LLM Wiki · Stop watching',
     ])
     assert.equal(wiki.confirmations.length, 1)
     assert.deepEqual(wiki.notices, [
@@ -800,7 +800,7 @@ test('a second start from the browser link before the chat’s first sign names 
     assert.deepEqual(shownBeforeTheFirstSign, [])
     assert.equal(wiki.confirmations.length, 1)
     assert.deepEqual(noticesBeforeTheFirstSign, [
-      'Codebook is already updating this project’s LLM Wiki. Its progress is in the browser reader. Codebook is waiting for the editor chat to take up the request; once it has, the status bar here shows the watch and its Cancel.',
+      'Codebook is already updating this project’s LLM Wiki. Its progress is in the browser reader. Codebook is waiting for the editor chat to take up the request; once it has, the status bar here shows the watch and its Stop watching.',
     ])
   } finally {
     await wiki.close()
@@ -827,7 +827,7 @@ test('the update command and the browser link pressed while the first start is s
       ['workbench.action.chat.open'],
     )
     assert.deepEqual(wiki.statusBarTexts, [
-      '$(sync~spin) Watching for the LLM Wiki update · Cancel',
+      '$(sync~spin) Watching for the LLM Wiki · Stop watching',
     ])
     assert.equal(wiki.status().state, 'running')
     assert.deepEqual(wiki.errors, [])
@@ -847,7 +847,7 @@ test('updating before any Wiki exists says to generate one first instead of show
 
     // Assert
     assert.deepEqual(wiki.errors, [
-      'Codebook found no LLM Wiki in .codebook/wiki. Ask the editor chat "/codebook Generate the LLM Wiki for this project", then update it.',
+      'Codebook found no LLM Wiki in .codebook/wiki.',
     ])
     const status = wiki.status()
     assert.equal(status.state, 'failed')
@@ -855,11 +855,7 @@ test('updating before any Wiki exists says to generate one first instead of show
       status.state === 'failed'
         ? [status.reason, status.isCodebookSentence, status.site]
         : [],
-      [
-        'Codebook found no LLM Wiki in .codebook/wiki. Ask the editor chat "/codebook Generate the LLM Wiki for this project", then update it.',
-        true,
-        'missing',
-      ],
+      ['Codebook found no LLM Wiki in .codebook/wiki.', true, 'missing'],
     )
     assert.deepEqual(wiki.chatRequests, [])
   } finally {
@@ -2128,7 +2124,7 @@ test('a chat whose reply waits for a confirmation in the moment the 30 second bo
     assert.equal(wiki.status().state, 'running')
     assert.deepEqual(wiki.errors, [])
     assert.deepEqual(wiki.visibleStatusBarTexts(), [
-      '$(sync~spin) Watching for the LLM Wiki update · Cancel',
+      '$(sync~spin) Watching for the LLM Wiki · Stop watching',
     ])
     assert.deepEqual(wiki.executedCommands, [
       'workbench.action.chat.open',
@@ -2557,7 +2553,7 @@ test('a chat whose reply waits for a confirmation 20 seconds after it took the r
     assert.equal(wiki.status().state, 'running')
     assert.deepEqual(wiki.errors, [])
     assert.deepEqual(wiki.visibleStatusBarTexts(), [
-      '$(sync~spin) Watching for the LLM Wiki update · Cancel',
+      '$(sync~spin) Watching for the LLM Wiki · Stop watching',
     ])
   } finally {
     await wiki.close()
@@ -4553,9 +4549,9 @@ test('the watch of a VS Code update is the same status bar entry, and no notific
         window.progressTitles,
       ]),
       [
-        [['$(sync~spin) Watching for the LLM Wiki update · Cancel'], []],
-        [['$(sync~spin) Watching for the LLM Wiki update · Cancel'], []],
-        [['$(sync~spin) Watching for the LLM Wiki update · Cancel'], []],
+        [['$(sync~spin) Watching for the LLM Wiki · Stop watching'], []],
+        [['$(sync~spin) Watching for the LLM Wiki · Stop watching'], []],
+        [['$(sync~spin) Watching for the LLM Wiki · Stop watching'], []],
       ],
     )
   } finally {
@@ -4605,7 +4601,7 @@ test('the confirmation of an update whose output lies outside the project says t
     ] as const) {
       assert.deepEqual(
         [window.statusBarTexts, window.progressTitles],
-        [['$(sync~spin) Watching for the LLM Wiki update · Cancel'], []],
+        [['$(sync~spin) Watching for the LLM Wiki · Stop watching'], []],
       )
       assert.equal(
         running.state === 'running' ? running.isOutputOutsideProject : false,

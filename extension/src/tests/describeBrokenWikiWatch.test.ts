@@ -19,3 +19,15 @@ test('a watch that broke off says that Codebook stopped watching and why, that t
     `Codebook stopped watching the update because of an error (${'x'.repeat(120)}…). The VS Code chat was not stopped and can still publish: let it finish (the Wiki page says when it has), or stop it in the chat.`,
   )
 })
+
+// Value: protects=D5, a generation whose watch broke off; fails_when=its sentence calls the run an update or points to a Wiki page the project does not have yet; no_claim=the update's sentence (tests above); seam=none
+test('a generation’s broken watch names the generation and Open LLM Wiki in Browser, not a Wiki page', () => {
+  // Act
+  const sentence = describeBrokenWikiWatch('EIO: i/o error', 'generate')
+
+  // Assert
+  assert.equal(
+    sentence,
+    'Codebook stopped watching the generation because of an error (EIO: i/o error). The VS Code chat was not stopped and can still publish: let it finish (Codebook: Open LLM Wiki in Browser opens the Wiki once it has), or stop it in the chat.',
+  )
+})

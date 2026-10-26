@@ -20,8 +20,30 @@ test('the refusal of a second Wiki update start names the status bar for a VS Co
     notification:
       'Codebook is already updating this project’s LLM Wiki. Its progress is in the browser reader and in the notification here.',
     awaitedChat:
-      'Codebook is already updating this project’s LLM Wiki. Its progress is in the browser reader. Codebook is waiting for the editor chat to take up the request; once it has, the status bar here shows the watch and its Cancel.',
+      'Codebook is already updating this project’s LLM Wiki. Its progress is in the browser reader. Codebook is waiting for the editor chat to take up the request; once it has, the status bar here shows the watch and its Stop watching.',
     readerOnly:
       'Codebook is already updating this project’s LLM Wiki. Its progress is in the browser reader.',
+  })
+})
+
+// Value: protects=D5, a second press while a generation runs; fails_when=the refusal calls the generation an update, sends the learner to a browser reader the project does not have yet, or names a Cancel the VS Code watch does not have; no_claim=the update's refusal (test above); seam=none
+test('the refusal of a second start while a generation runs says Codebook is already generating, names only the editor’s own place and never a browser reader', () => {
+  // Act
+  const refusals = {
+    statusBar: describeSecondWikiUpdateStart('status-bar', 'generate'),
+    notification: describeSecondWikiUpdateStart('notification', 'generate'),
+    awaitedChat: describeSecondWikiUpdateStart('awaited-chat', 'generate'),
+    readerOnly: describeSecondWikiUpdateStart('reader-only', 'generate'),
+  }
+
+  // Assert
+  assert.deepEqual(refusals, {
+    statusBar:
+      'Codebook is already generating this project’s LLM Wiki. Its progress is in the status bar here.',
+    notification:
+      'Codebook is already generating this project’s LLM Wiki. Its progress is in the notification here.',
+    awaitedChat:
+      'Codebook is already generating this project’s LLM Wiki. It is waiting for the editor chat to take up the request; once it has, the status bar here shows the watch and its Stop watching.',
+    readerOnly: 'Codebook is already generating this project’s LLM Wiki.',
   })
 })

@@ -50,7 +50,7 @@ type WikiOpeningWindow = {
 }
 
 /**
- * Opens an editor window (the real extension with a stubbed `vscode`) on a temporary project with a one-page Wiki, with stand-in readers, so a test can drive "Codebook: Open DeepWiki in Browser" and see what the window does around a reader.
+ * Opens an editor window (the real extension with a stubbed `vscode`) on a temporary project with a one-page Wiki, with stand-in readers, so a test can drive "Codebook: Open LLM Wiki in Browser" and see what the window does around a reader.
  *
  * Why: opening spans the command, the reader's start, the editor's address forwarding, the file watcher and the question handler; the reader itself has its own tests.
  * Used by the Wiki opening tests.

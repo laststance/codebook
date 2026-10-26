@@ -626,3 +626,63 @@ test('the refusal for this window’s stopped chat with a candidate its watch sa
     await rm(wiki.parent, { recursive: true, force: true })
   }
 })
+
+// Value: protects=Eng decision 74 and D5, a generation's stopped watch in the way of the next start; fails_when=a stopped generation is waited for only an update's 15 minutes, its sentence says the chat may still be updating, or it names Update anyway for a generation's start; no_claim=a candidate's own wait (tests above); seam=the clock and the listing of the candidates, handed over
+test('another window’s and this window’s own stopped generation are waited for 55 minutes, named as generating, and a generation’s start names Generate anyway', async () => {
+  // Arrange: both watches stopped at 12:00; it is 12:30, past an update's bound and inside a generation's.
+  const wiki = await makeUnpublishedWiki()
+  const look = {
+    nowMs: at(12, 30),
+    watchTimeoutMs: WATCH_TIMEOUT_MS,
+    acknowledged: [],
+    listCandidates: () => Promise.resolve([]),
+    runKind: 'generate' as const,
+  }
+  try {
+    // Act
+    const otherWindows = await findUnacknowledgedWikiLeftover(
+      wiki.outputDirectory,
+      {
+        ...look,
+        otherWindow: {
+          pid: 4242,
+          windowId: 'other-window',
+          host: 'vscode',
+          startedAtMs: at(11, 50),
+          watchEndedAtMs: at(12, 0),
+          runKind: 'generate',
+        },
+        lastRun: undefined,
+      },
+    )
+    const ownWindows = await findUnacknowledgedWikiLeftover(
+      wiki.outputDirectory,
+      {
+        ...look,
+        otherWindow: undefined,
+        lastRun: {
+          outputDirectory: wiki.outputDirectory,
+          startedAtMs: at(11, 50),
+          endedAtMs: at(12, 0),
+          mayAgentStillWork: true,
+          candidateNames: [],
+          runKind: 'generate',
+        },
+      },
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        otherWindows: otherWindows?.reason,
+        ownWindows: ownWindows?.reason,
+      },
+      {
+        otherWindows: `The VS Code chat another editor window asked at ${clockTime(11, 50)} may still be generating this Wiki; that window stopped watching it at ${clockTime(12, 0)} and Codebook waits for it until ${clockTime(12, 55)}. If that chat was stopped, choose Generate anyway in the editor’s notification.`,
+        ownWindows: `The VS Code chat this window asked at ${clockTime(11, 50)} may still be generating this Wiki; Codebook stopped watching it at ${clockTime(12, 0)} and waits for it until ${clockTime(12, 55)}. If that chat was stopped, choose Generate anyway in the editor’s notification.`,
+      },
+    )
+  } finally {
+    await rm(wiki.parent, { recursive: true, force: true })
+  }
+})

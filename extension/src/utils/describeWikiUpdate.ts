@@ -51,7 +51,7 @@ type WikiUpdateStatusOf<State extends WikiUpdateStatus['state']> = Extract<
  * @param status - Update run state from the extension.
  * @param wording - Time format, the bounds of the sentence, the minute length, the recovery request, the note on approvals outside the project, where the freshness label is and whether the reading page is older than the site.
  * @returns
- * - Idle: undefined (nothing to show)
+ * - Idle, and any state of a generation (`runKind: 'generate'`): undefined (nothing to show; the editor words a generation, {@link wikiGenerateNotice})
  * - A state this version does not know: "Update status unknown.", with the output line only when that state names an output; none of its other fields is read
  * - Otherwise: the lead words, the rest of the sentence, shortened detail and the output line
  *
@@ -68,7 +68,12 @@ export function describeWikiUpdate(
   status: WikiUpdateStatus,
   wording: WikiUpdateWording,
 ): WikiUpdateDescription | undefined {
-  if (status.state === 'idle') return undefined
+  // A generation's states are the editor's to tell: a Wiki page exists only once a generation published (Cycle 0055).
+  if (
+    status.state === 'idle' ||
+    ('runKind' in status && status.runKind === 'generate')
+  )
+    return undefined
   /**
    * Words the output line of a state; called once by {@link describeWikiUpdate}, before anything else of the state is read.
    * @param place - The label and the folder the state names; a state of a newer extension may name neither.

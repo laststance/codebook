@@ -346,8 +346,8 @@ test('Open LLM Wiki does not open a Wiki whose manifest or entry page is a link 
   )
 })
 
-// Value: protects=the learner who runs "Open LLM Wiki" before any Wiki was generated, the ordinary first use; fails_when=the notice is the one of an entry that is there and is refused, and tells the learner to remove a link, a folder or a pipe at a path that holds nothing (row 231); why_new=Cycle 0046 row 231: a missing file has a sentence of its own; seam=none
-test('Open LLM Wiki in a project without a Wiki says that no Wiki was found at its folder and how to generate one, and names nothing to remove', async (context) => {
+// Value: protects=the learner who runs "Open LLM Wiki in Browser" before any Wiki was generated, the ordinary first use; fails_when=the notice is the one of an entry that is there and is refused, and tells the learner to remove a link, a folder or a pipe at a path that holds nothing (row 231), or it sends the learner to the chat instead of naming the folder (Cycle 0055, proposed change 3: the notice offers Generate LLM Wiki); why_new=Cycle 0046 row 231: a missing file has a sentence of its own; changed in Cycle 0055: a folder without a Wiki says only that no Wiki was found there, beside its Generate button, while a Wiki without its entry page keeps the open's own refusal; no_claim=the Generate button's run (startWikiGenerate tests); seam=none
+test('Open LLM Wiki in a project without a Wiki says that no Wiki was found at its folder and names nothing to remove', async (context) => {
   // Arrange: two windows; the first project has no Wiki folder at all, the second has a Wiki whose entry page is gone.
   const withoutAWiki = await openWikiOpeningWindow()
   context.after(() => withoutAWiki.close())
@@ -373,9 +373,7 @@ test('Open LLM Wiki in a project without a Wiki says that no Wiki was found at i
       withoutAnEntryPage: withoutAnEntryPage.errors,
     },
     {
-      withoutAWiki: [
-        `Codebook could not open DeepWiki: Error: No Wiki was found at ${wikiOfTheFirst}: its manifest (codebook-wiki.json) does not exist. Generate it through /codebook in this project, then retry.`,
-      ],
+      withoutAWiki: ['Codebook found no LLM Wiki in .codebook/wiki.'],
       withoutAnEntryPage: [
         `Codebook could not open DeepWiki: Error: No Wiki was found at ${wikiOfTheSecond}: its entry page (index.html) does not exist. Generate it through /codebook in this project, then retry.`,
       ],

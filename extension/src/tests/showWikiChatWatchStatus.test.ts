@@ -81,13 +81,13 @@ test('the watch of a VS Code update is one shown status bar entry on the right t
       isShown: created[0]?.entry.isShown,
     },
     {
-      name: 'Codebook LLM Wiki update',
-      text: '$(sync~spin) Watching for the LLM Wiki update · Cancel',
+      name: 'Codebook LLM Wiki run',
+      text: '$(sync~spin) Watching for the LLM Wiki · Stop watching',
       tooltip:
-        'Watching the editor chat for the LLM Wiki update. Cancel stops watching, not the chat.',
+        'Watching the editor chat for the LLM Wiki. Stop watching stops Codebook’s watch, not the chat.',
       accessibilityInformation: {
         label:
-          'Watching the editor chat for the LLM Wiki update. Cancel stops watching, not the chat.',
+          'Watching the editor chat for the LLM Wiki. Stop watching stops Codebook’s watch, not the chat.',
         role: 'button',
       },
       command: 'codebook.cancelWikiChatWatch',

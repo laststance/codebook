@@ -53,7 +53,7 @@ async function restoreProductContext() {
   const rule = [
     'CODEBOOK: RESTORE PRODUCT CONTEXT AFTER COMPACTION',
     `Repository root: ${root}`,
-    "The owner's most important rule: before any other work after this compaction, whatever the task, read PRODUCT_GOAL.md in full, every line, and open the approved PNG (docs/designs/assets/codebook-product-spec-v9.png) with an image-viewing tool and check its identity against PRODUCT_GOAL.md's Design target; then read the active cycle Issue (the open Issue with the label `cycle`) with its comments and AGENTS.md in full from disk. A compacted summary or this reminder is not evidence of those reads or of the image inspection.",
+    "The owner's most important rule: before any other work after this compaction, whatever the task, read PRODUCT_GOAL.md in full, every line, and open the approved PNG (docs/designs/assets/codebook-product-spec-v9.png) with an image-viewing tool and check its identity against PRODUCT_GOAL.md's Design target; then read the active cycle Issue (the open Issue with the label `cycle`) with its comments. AGENTS.md is loaded into context automatically as project instructions; read it from disk only when its text is not in your context or it changed on disk since the session began. A compacted summary or this reminder is not evidence of those reads or of the image inspection.",
     'Reconcile the current source and affected acceptance gaps, then resume the latest owner-authorized task. Preserve pending owner instructions and any explicit pause; this reminder grants no additional work scope.',
   ]
   const found = RESTORED_SECTIONS.map((heading) => ({
@@ -73,7 +73,7 @@ async function restoreProductContext() {
   const full = [
     ...rule,
     ...missingNote,
-    'These AGENTS.md sections follow verbatim; read the whole file on disk and resolve its relative links from the repository root:',
+    'These AGENTS.md sections follow verbatim; the whole file is in your project instructions (read it on disk when it is not), and its relative links resolve from the repository root:',
     ...sections,
   ].join('\n\n')
   // A grown AGENTS.md must never push the rule out of the inline context: keep the rule and point to the file.
