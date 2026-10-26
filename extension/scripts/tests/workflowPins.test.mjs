@@ -900,6 +900,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/src/utils/judgeLeftEmpty.ts',
     'extension/src/utils/listFolderTreeWithoutFollowing.ts',
     'extension/src/utils/listPlacedClaims.ts',
+    'extension/src/utils/longestWikiRunMs.ts',
     'extension/src/utils/modifiedAtMsOf.ts',
     'extension/src/utils/namesMachineInClear.ts',
     'extension/src/utils/newStagedConfigPath.ts',
