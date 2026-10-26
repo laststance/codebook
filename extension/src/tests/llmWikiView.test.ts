@@ -999,3 +999,148 @@ test('reading the state of a project without a Wiki makes no folder', async (con
   // Assert
   assert.equal(await exists(join(project.projectRoot, '.codebook')), false)
 })
+
+// Value: protects=AC 2 (refresh on a change of the Wiki files) on Windows and macOS, where the editor may spell a path in another case; fails_when=an event whose path differs from the computed one only in case is dropped, so the view refreshes on poll, visibility and Refresh only; no_claim=the Windows drive-letter form (comparableFilePath tests); seam=the fake file watching reporting another spelling
+test(
+  'a watcher event that spells the manifest path in another case still refreshes the view',
+  { skip: process.platform === 'linux' },
+  async (context) => {
+    // Arrange
+    const project = await openEmptyProject(context)
+    await publishGeneratedWiki(project.outputDirectory, project.projectRoot)
+    const manifestPath = join(project.outputDirectory, 'codebook-wiki.json')
+
+    // Act
+    project.reportFileEvent('create', manifestPath, manifestPath.toUpperCase())
+    await untilRow(project, 'wiki')
+
+    // Assert
+    assert.deepEqual(idsOf(project), ['wiki', 'output'])
+  },
+)
+
+// Value: protects=AC 2 (a Wiki folder whose name holds glob characters); fails_when=the watcher's glob embeds `wiki[1]` raw, so the editor reads it as a character class and never reports the manifest; no_claim=the editor's glob engine; seam=the pattern the view hands to createFileSystemWatcher
+test('an output folder named wiki[1] is watched with its brackets escaped in the glob', async (context) => {
+  // Arrange
+  const project = await openEmptyProject(context)
+
+  // Act
+  project.setOutputSetting('wiki[1]')
+  await waitUntil(
+    () =>
+      project.watchedPatterns().at(-1)?.pattern.startsWith('wiki[') === true,
+    'the escaped glob',
+    6_000,
+  )
+
+  // Assert
+  assert.equal(
+    project.watchedPatterns().at(-1)?.pattern,
+    `wiki[[]1]${WATCHED_ENDINGS}`,
+  )
+})
+
+// Value: protects=the accessible name of each row (label plus description); fails_when=a row's accessibility label is missing, so the editor reads the tooltip instead, or it drops the description; no_claim=what a screen reader says; seam=the tree item the view hands to the stubbed editor
+test('each row of the view has the accessible name label plus description, and the label alone without a description', async (context) => {
+  // Arrange
+  const { window } = await openPublishedWiki(context, {}, async (wiki) =>
+    writeFile(join(wiki.outputDirectory, 'index.html'), '<h1>Mine</h1>'),
+  )
+  await untilRow(window, 'attention')
+  await untilFreshness(window)
+  const noFolder = await openWikiUpdateWindow({
+    projectRoot: tmpdir(),
+    openReader: false,
+    noFolder: true,
+    constants: FAST,
+  })
+  context.after(() => noFolder.close())
+  await untilFirstRead(noFolder)
+
+  // Act
+  const names = [...window.llmWiki.rows(), ...noFolder.llmWiki.rows()].map(
+    (row) => [row.id, row.accessibleName],
+  )
+
+  // Assert
+  assert.deepEqual(names, [
+    [
+      'wiki',
+      `${rowOf(window, 'wiki')?.label}, ${rowOf(window, 'wiki')?.description}`,
+    ],
+    ['attention', 'Wiki files changed by hand, page edited by hand'],
+    ['output', 'Output: .codebook/wiki, Change location'],
+    ['folder', 'Open a folder to use the LLM Wiki'],
+  ])
+})
+
+// Value: protects=the late-publication notice after one transient read error; fails_when=a failed read forgets that a reservation or failed generation stood, so the publication that follows shows no notice; no_claim=the notice wording; seam=a workspace folder that disappears for one read
+test('a Wiki published after one failed read still shows the late-publication notice', async (context) => {
+  // Arrange
+  const project = await openEmptyProject(context, {
+    chatReply: () => new Promise<never>(() => {}),
+  })
+  void project.runCommand(GENERATE_COMMAND)
+  await untilRow(project, 'run')
+  await project.runCommand('codebook.llmWiki.stopWatching')
+  await untilRow(project, 'reservation')
+  const noticesBefore = project.notices.length
+  project.openWorkspace(join(project.projectRoot, 'does-not-exist'))
+  await project.runCommand('codebook.refreshLlmWiki')
+  project.openWorkspace(project.projectRoot)
+
+  // Act
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  await publishGeneratedWiki(project.outputDirectory, project.projectRoot)
+  await project.runCommand('codebook.refreshLlmWiki')
+
+  // Assert
+  assert.deepEqual(project.notices.slice(noticesBefore), [
+    'An LLM Wiki was published in .codebook/wiki.',
+  ])
+})
+
+// Value: protects=the freshness check running only for a shown Wiki row; fails_when=a manifest that needs recovery hides the Wiki row and the view still runs the Git freshness check for it; no_claim=the check's answer; seam=a freshness inspection held open and watched
+test('a manifest that needs recovery runs no freshness check because no Wiki row is shown', async (context) => {
+  // Arrange
+  const { window } = await openPublishedWiki(
+    context,
+    { holdAtOpen: ['freshness-inspection'] },
+    async (wiki) => {
+      const manifestPath = join(wiki.outputDirectory, 'codebook-wiki.json')
+      await writeFile(manifestPath, `${await readFile(manifestPath, 'utf8')}\n`)
+    },
+  )
+  await untilRow(window, 'attention')
+
+  // Act
+  const didCheckStart = await Promise.race([
+    window.hold('freshness-inspection').started.then(() => true),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 300)),
+  ])
+
+  // Assert
+  assert.equal(didCheckStart, false)
+})
+
+// Value: protects=deactivation during a read; fails_when=a read that passed readFacts before dispose still creates a file watcher, which then leaks for the life of the editor; no_claim=the rows; seam=the first read held open at the start check, then the window closed
+test('a read that ends after the window closed creates no file watcher', async (context) => {
+  // Arrange
+  const project = await openProjectWithoutWiki({
+    constants: FAST,
+    holdAtOpen: ['start-block'],
+  })
+  context.after(() => project.close())
+  const hold = project.hold('start-block')
+  await hold.started
+
+  // Act
+  const closing = project.closeWindow()
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  hold.release()
+  await closing
+  await new Promise((resolve) => setTimeout(resolve, 200))
+
+  // Assert
+  assert.equal(project.liveWatcherCount(), 0)
+})

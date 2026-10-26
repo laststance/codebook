@@ -15,6 +15,8 @@ import {
   WIKI_UPDATE_RUN_MARKER_SUFFIX,
 } from '../constants'
 
+import { comparableFilePath } from './comparableFilePath'
+import { escapeGlobCharacters } from './escapeGlobCharacters'
 import {
   LLM_WIKI_ERROR_ROW,
   LLM_WIKI_LOADING_ROW,
@@ -101,7 +103,7 @@ function watchedFilesOf(outputDirectory: string): string[] {
  * Makes a glob, relative to the watched folder, that matches the four watched files and nothing else.
  * @param watchedFolder - The nearest existing folder at or above the output.
  * @param outputDirectory - The resolved Wiki folder.
- * @returns A glob such as `wiki{/codebook-wiki.json,.update-run.json,…}` with forward slashes.
+ * @returns A glob such as `wiki{/codebook-wiki.json,.update-run.json,…}` with forward slashes; glob characters in the folder names are put in brackets ({@link escapeGlobCharacters}).
  * @example globOfWatchedFiles('/repo/.codebook', '/repo/.codebook/wiki') // => 'wiki{/codebook-wiki.json,.update-run.json,.publish-lock.json,.publish-journal.json}'
  */
 function globOfWatchedFiles(
@@ -112,7 +114,7 @@ function globOfWatchedFiles(
     .split(sep)
     .join('/')
   const endings = [`/${WIKI_MANIFEST_FILE}`, ...WATCHED_SUFFIXES]
-  return `${outputFromFolder}{${endings.join(',')}}`
+  return `${escapeGlobCharacters(outputFromFolder)}{${endings.join(',')}}`
 }
 
 /**
@@ -179,6 +181,12 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
         item.id = row.id
         item.description = row.description
         item.tooltip = row.tooltip
+        // A string tooltip would be read as the accessible name, so the name is set apart: the label, then the description.
+        item.accessibilityInformation = {
+          label: row.description
+            ? `${row.label}, ${row.description}`
+            : row.label,
+        }
         item.iconPath = new editor.ThemeIcon(row.icon)
         item.contextValue = row.actions.map((key) => `[${key}]`).join('')
         if (row.command)
@@ -194,6 +202,8 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
 
   /** Shows a model: sets the context key, the message and fires one tree change, only for what differs from what is shown. */
   const show = (next: LlmWikiViewModel): void => {
+    // A read that finished after dispose shows nothing.
+    if (isDisposed) return
     const nextKey = JSON.stringify(next)
     if (nextKey === shownKey && next.state === shownState) return
     const didStateChange = next.state !== shownState
@@ -212,6 +222,7 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
 
   /** Keeps the poll timer running exactly while a run row is shown. */
   const keepPoll = (): void => {
+    if (isDisposed) return
     const isRunShown = model.rows.some((row) => RUN_ROW_IDS.has(row.id))
     if (!isRunShown) {
       clearInterval(pollTimer)
@@ -237,6 +248,8 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
   const keepWatcher = async (outputDirectory: string): Promise<void> => {
     // The markers lie beside the output folder, so its parent is the first folder to stand on.
     const folder = await options.findWatchedFolder(dirname(outputDirectory))
+    // A read that finished after dispose must leave no watcher behind.
+    if (isDisposed) return
     if (
       watcher?.folder === folder &&
       watcher.outputDirectory === outputDirectory
@@ -251,9 +264,12 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
           globOfWatchedFiles(folder, outputDirectory),
         ),
       )
-      const watchedFiles = new Set(watchedFilesOf(outputDirectory))
+      // The editor may spell the drive letter or the case of a path differently, so both sides are compared in one form.
+      const watchedFiles = new Set(
+        watchedFilesOf(outputDirectory).map((path) => comparableFilePath(path)),
+      )
       const onEvent = (file: vscode.Uri): void => {
-        if (watchedFiles.has(file.fsPath)) requestRefresh()
+        if (watchedFiles.has(comparableFilePath(file.fsPath))) requestRefresh()
       }
       const subscriptions = [
         fileWatcher.onDidCreate(onEvent),
@@ -315,37 +331,52 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
       options.tellPublished(nextFacts.outputLabel)
   }
 
+  /** Reads the facts; a read that throws shows the error row and answers `undefined`, as does a read that ended after dispose. */
+  const readFactsOrShowError = async (): Promise<
+    LlmWikiViewFacts | undefined
+  > => {
+    try {
+      const read = await options.readFacts()
+      return isDisposed ? undefined : read
+    } catch (cause) {
+      if (isDisposed) return undefined
+      options.recordFailure('The LLM Wiki view could not read its state', cause)
+      // previousRowIds stays: a publication after one failed read is still a late publication.
+      show({ state: 'other', rows: [LLM_WIKI_ERROR_ROW] })
+      keepPoll()
+      return undefined
+    }
+  }
+
+  /** Adds what the view knows beside the read: whether the watcher is broken, and the cached or `checking` freshness. */
+  const withViewState = (
+    readyFacts: Extract<LlmWikiViewFacts, { kind: 'ready' }>,
+  ): Extract<LlmWikiViewFacts, { kind: 'ready' }> => ({
+    ...readyFacts,
+    ...(isWatcherBroken ? { isWatcherBroken: true as const } : {}),
+    ...(readyFacts.wiki
+      ? {
+          wiki: {
+            ...readyFacts.wiki,
+            freshness:
+              freshnessCache?.key === freshnessKeyOf(readyFacts)
+                ? freshnessCache.value
+                : { status: 'checking' as const },
+          },
+        }
+      : {}),
+  })
+
   /** One read: the facts, the watcher, the rows with the cached or `checking` freshness, then the freshness check apart. */
   const readOnce = async (): Promise<void> => {
     readCount += 1
     const readNumber = readCount
-    let nextFacts: LlmWikiViewFacts
-    try {
-      nextFacts = await options.readFacts()
-    } catch (cause) {
-      options.recordFailure('The LLM Wiki view could not read its state', cause)
-      show({ state: 'other', rows: [LLM_WIKI_ERROR_ROW] })
-      previousRowIds = ['error']
-      keepPoll()
-      return
-    }
+    let nextFacts = await readFactsOrShowError()
+    if (!nextFacts) return
     if (nextFacts.kind === 'ready') {
       await keepWatcher(nextFacts.outputDirectory)
-      nextFacts = {
-        ...nextFacts,
-        ...(isWatcherBroken ? { isWatcherBroken: true as const } : {}),
-        ...(nextFacts.wiki
-          ? {
-              wiki: {
-                ...nextFacts.wiki,
-                freshness:
-                  freshnessCache?.key === freshnessKeyOf(nextFacts)
-                    ? freshnessCache.value
-                    : { status: 'checking' as const },
-              },
-            }
-          : {}),
-      }
+      if (isDisposed) return
+      nextFacts = withViewState(nextFacts)
       noteLatePublication(nextFacts)
       previousPublication = nextFacts.publication
     }
@@ -354,7 +385,12 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
     previousRowIds = next.rows.map((row) => row.id)
     show(next)
     keepPoll()
-    if (nextFacts.kind === 'ready' && nextFacts.wiki) {
+    // No Wiki row shown (an attention cause hides it) means no freshness to read.
+    if (
+      nextFacts.kind === 'ready' &&
+      nextFacts.wiki &&
+      next.rows.some((row) => row.id === 'wiki')
+    ) {
       const readyFacts = nextFacts
       pendingFreshness = checkFreshness(readNumber, readyFacts).finally(() => {
         pendingFreshness = undefined

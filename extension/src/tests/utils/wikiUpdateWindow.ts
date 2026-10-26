@@ -55,6 +55,8 @@ export type FakeLlmWikiRow = {
   iconId?: string
   command?: { command: string; arguments?: unknown[] }
   contextValue?: string
+  /** The accessible name the editor reads for the row. */
+  accessibleName?: string
 }
 
 /** The LLM Wiki view as the fake editor holds it: its rows, its message, its context keys and how often it fired a change. */
@@ -212,7 +214,11 @@ export async function openWikiUpdateWindow(options: {
   /** What the editor shows of the LLM Wiki view. */
   llmWiki: FakeLlmWikiView
   /** Reports a file event the way the editor's watchers do. */
-  reportFileEvent(kind: 'change' | 'create' | 'delete', fsPath: string): void
+  reportFileEvent(
+    kind: 'change' | 'create' | 'delete',
+    fsPath: string,
+    reportedAs?: string,
+  ): void
   /** Says how many file watchers of the extension are alive. */
   liveWatcherCount(): number
   /** The patterns every file watcher of the extension was created with. */
@@ -581,6 +587,7 @@ export async function openWikiUpdateWindow(options: {
           id?: string
           description?: string
           tooltip?: string
+          accessibilityInformation?: { label: string }
           iconPath?: unknown
           contextValue?: string
           command?: unknown
@@ -839,10 +846,11 @@ export async function openWikiUpdateWindow(options: {
       },
     },
   )
+  const contextSubscriptions: Array<{ dispose(): unknown }> = []
   boundary.activate({
     extensionPath: resolve(__dirname, '../../..'),
     globalStorageUri: { fsPath: projectRoot },
-    subscriptions: [],
+    subscriptions: contextSubscriptions,
     workspaceState: {
       get: (key: string) => workspaceState.get(key),
       update: async (key: string, value: unknown) => {
@@ -893,6 +901,9 @@ export async function openWikiUpdateWindow(options: {
                 : undefined,
             command: item.command as FakeLlmWikiRow['command'],
             contextValue: item.contextValue as string | undefined,
+            accessibleName: (
+              item.accessibilityInformation as { label: string } | undefined
+            )?.label,
           }
         }),
       message: () => treeMessage,
@@ -903,7 +914,8 @@ export async function openWikiUpdateWindow(options: {
           listener({ visible: isVisible })
       },
     },
-    reportFileEvent: (kind, fsPath): void => fileWatching.report(kind, fsPath),
+    reportFileEvent: (kind, fsPath, reportedAs): void =>
+      fileWatching.report(kind, fsPath, reportedAs),
     liveWatcherCount: () => fileWatching.liveWatcherCount(),
     watchedPatterns: () =>
       fileWatching.watched.map(({ base, pattern }) => ({ base, pattern })),
@@ -970,6 +982,10 @@ export async function openWikiUpdateWindow(options: {
       publishTokenReadFailure = message
     },
     hold: makeHold,
-    close: (): Promise<void> => boundary.deactivate(),
+    close: async (): Promise<void> => {
+      await boundary.deactivate()
+      // The editor disposes the extension's subscriptions after deactivate; the LLM Wiki view's watcher and timers end there.
+      for (const subscription of contextSubscriptions) subscription.dispose()
+    },
   }
 }

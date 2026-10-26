@@ -44,7 +44,7 @@ function isUnderFolder(base: string, fsPath: string): boolean {
  *
  * As in the editor, a listener whose registration was disposed gets no further event although its watcher lives on, and a watcher gets only the files under its folder. The glob under that folder is not evaluated: every file below the folder is delivered.
  *
- * @returns `createFileSystemWatcher` for the stub's `workspace`; `watched` (the pattern of every watcher created so far); `report` (fires one event of a kind at the listeners of every watcher that is not disposed and whose folder contains the file); `liveWatcherCount`.
+ * @returns `createFileSystemWatcher` for the stub's `workspace`; `watched` (the pattern of every watcher created so far); `report` (fires one event of a kind at the listeners of every watcher that is not disposed and whose folder contains the file; `reportedAs` is the spelling the listeners get when the editor spells the path in another case or drive letter than the folder check does); `liveWatcherCount`.
  *
  * @example
  * ```ts
@@ -61,7 +61,7 @@ export function createFakeFileWatching(): {
     dispose(): void
   }
   watched: FakeRelativePattern[]
-  report(kind: FileEventKind, fsPath: string): void
+  report(kind: FileEventKind, fsPath: string, reportedAs?: string): void
   liveWatcherCount(): number
 } {
   const watched: FakeRelativePattern[] = []
@@ -94,11 +94,12 @@ export function createFakeFileWatching(): {
       }
     },
     watched,
-    report(kind, fsPath): void {
+    report(kind, fsPath, reportedAs = fsPath): void {
       for (const watcher of liveWatchers) {
         // A watcher hears only of files under the folder it watches.
         if (!isUnderFolder(watcher.pattern.base, fsPath)) continue
-        for (const listener of watcher.listeners[kind]) listener({ fsPath })
+        for (const listener of watcher.listeners[kind])
+          listener({ fsPath: reportedAs })
       }
     },
     liveWatcherCount: () => liveWatchers.size,
