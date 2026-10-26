@@ -28,7 +28,7 @@ export type WikiUpdateWording = {
   recoveryRequest: string
   /** Why VS Code's chat asks to approve each step of an update whose output lies outside the project, as the editor's confirmation says it ({@link WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE}); the function is embedded into the page and cannot import the constant. */
   outsideOutputApprovalsNote: string
-  /** What a learner does after they refused a step of VS Code's chat ({@link WIKI_REFUSED_STEP_ADVICE}), without its full stop; the running line of a VS Code update goes on from it with where Cancel is and what happens otherwise. The function is embedded into the page and cannot import the constant. */
+  /** What a learner does after they refused a step of VS Code's chat ({@link WIKI_REFUSED_STEP_ADVICE}), without its full stop; the running line of a VS Code update goes on from it with where Stop watching is and what happens otherwise. The function is embedded into the page and cannot import the constant. */
   refusedStepAdvice: string
   /** Where the reader finds the freshness label, as the end of "check the freshness label …": `above` on the page, `in the browser reader` in an editor notification. */
   freshnessLabelPlace: string
@@ -59,7 +59,7 @@ type WikiUpdateStatusOf<State extends WikiUpdateStatus['state']> = Extract<
  * ```ts
  * describeWikiUpdate(
  *   { state: 'cancelled', host: 'cursor', finishedAt: '2026-10-03T12:10:00.000Z', site: 'kept', outputDirectory: '/repo/.codebook/wiki', outputLabel: '.codebook/wiki' },
- *   { formatTime: () => '21:10', pathLimit: 3, reasonLimitChars: 200, msPerMinute: 60_000, recoveryRequest: '/codebook Recover the unfinished LLM Wiki publish for this project', outsideOutputApprovalsNote: 'This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.', refusedStepAdvice: 'If you refuse a step of the chat, press Cancel', freshnessLabelPlace: 'above' },
+ *   { formatTime: () => '21:10', pathLimit: 3, reasonLimitChars: 200, msPerMinute: 60_000, recoveryRequest: '/codebook Recover the unfinished LLM Wiki publish for this project', outsideOutputApprovalsNote: 'This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.', refusedStepAdvice: 'If you refuse a step of the chat, press Stop watching', freshnessLabelPlace: 'above' },
  * )
  * // => { lead: 'Update cancelled', rest: ' at 21:10. Cursor Agent was stopped. The last usable site is kept.', detail: [], output: 'Output: .codebook/wiki', offerReload: false }
  * ```
@@ -161,7 +161,7 @@ export function describeWikiUpdate(
         (running.isOutputOutsideProject
           ? ' ' + wording.outsideOutputApprovalsNote
           : '') +
-        // Once the chat asked for an approval Codebook does not see it stop: a learner who refused a step and stays on this page would wait out the bound. The watch's Cancel is its entry in the status bar.
+        // Once the chat asked for an approval Codebook does not see it stop: a learner who refused a step and stays on this page would wait out the bound. The watch's Stop watching is its entry in the status bar.
         ' ' +
         wording.refusedStepAdvice +
         ' in the editor’s status bar; otherwise Codebook keeps watching for the whole ' +

@@ -48,8 +48,8 @@ export type WikiGenerateStartDependencies<Holder> = {
   hasOutputFolderWithoutWiki: () => Promise<boolean>
   /** Offers the update where a Wiki already stands: `An LLM Wiki already exists in <folder>. Update it instead?` */
   offerUpdate: () => void
-  /** Tells the learner why the generation did not start, with the override where there is one. */
-  refuse: (reason: string, override?: () => void) => void
+  /** Tells the learner why the generation did not start, with the override where there is one; `cause` is the id of a block, which only the Output record shows. */
+  refuse: (reason: string, override?: () => void, cause?: string) => void
   /** The present (epoch milliseconds). */
   now: () => number
 }
@@ -122,8 +122,11 @@ async function refusedForBlockOrRun<Holder>(
 ): Promise<boolean> {
   const block = await dependencies.findStartBlock()
   if (block) {
+    // The cause id goes to the Output record beside the learner's sentence.
     dependencies.refuse(
       describeWikiGenerateBlock(block, dependencies.wikiOutput.outputLabel),
+      undefined,
+      block.cause,
     )
     return true
   }

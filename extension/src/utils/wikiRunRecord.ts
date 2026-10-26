@@ -28,7 +28,10 @@ function endSummary(ended: EndedWikiRun): string {
     case 'already-current':
       return 'nothing to update: the Wiki matches the source'
     case 'cancelled':
-      return 'stopped by the learner or the closing window'
+      // One verb per host, as the notices and the view say it: Codebook stops watching a VS Code chat and cancels a Cursor agent.
+      return ended.host === 'cursor'
+        ? 'cancelled by the learner or the closing window'
+        : 'stopped watching at the learner’s or the closing window’s request'
     case 'timed-out':
       return 'stopped at its bound'
     case 'conflict':
@@ -107,6 +110,7 @@ function withoutControlCharacters(path: string): string {
  * @param details.runKind - The run's kind.
  * @param details.startedAt - When the run started, as an ISO timestamp; absent for a refused start.
  * @param details.agentExit - The Cursor agent's exit code or signal, where its process gave one.
+ * @param details.blockCause - The id of the block that refused a generation's start (`findWikiUpdateStartBlock`); the learner's sentence leaves it out.
  * @param homeDirectory - The learner's home folder; tests pass their own.
  * @param platform - The system whose paths these are; tests pass their own.
  * @returns One line: `LLM Wiki <kind> ended: host=… started=… ended=… end=… summary="…" [exit=…] output=…`.
@@ -122,6 +126,7 @@ export function wikiRunRecord(
     runKind: WikiRunKind
     startedAt?: string
     agentExit?: WikiAgentExit
+    blockCause?: string
   },
   homeDirectory: string = homedir(),
   platform: NodeJS.Platform = process.platform,
@@ -131,5 +136,6 @@ export function wikiRunRecord(
   const exit = details.agentExit
     ? ` exit=${details.agentExit.exitCode ?? details.agentExit.exitSignal ?? 'unknown'}`
     : ''
-  return `LLM Wiki ${details.runKind} ended: host=${host} started=${details.startedAt ?? 'not started'} ended=${ended.finishedAt} end=${ended.state} summary="${endSummary(ended)}"${exit} output=${withoutControlCharacters(pathWithHomeShortened(ended.outputDirectory, homeDirectory, platform))}`
+  const cause = details.blockCause ? ` cause=${details.blockCause}` : ''
+  return `LLM Wiki ${details.runKind} ended: host=${host} started=${details.startedAt ?? 'not started'} ended=${ended.finishedAt} end=${ended.state} summary="${endSummary(ended)}"${exit}${cause} output=${withoutControlCharacters(pathWithHomeShortened(ended.outputDirectory, homeDirectory, platform))}`
 }

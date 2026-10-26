@@ -2216,6 +2216,7 @@ export function activate(
    * @param wikiOutput - The Wiki folder and its label.
    * @param reason - The refusal's sentence.
    * @param override - Starts the generation with the refusal's leftovers passed (Generate anyway).
+   * @param cause - The id of the block that refused the start; the Output record shows it, the sentence does not.
    * @example refuseWikiGenerate('vscode', wikiOutput, 'Another editor window is generating this Wiki …')
    */
   const refuseWikiGenerate = (
@@ -2223,6 +2224,7 @@ export function activate(
     wikiOutput: WikiUpdateOutput,
     reason: string,
     override?: () => void,
+    cause?: string,
   ): void => {
     try {
       output?.info(
@@ -2237,7 +2239,7 @@ export function activate(
             site: 'kept',
             ...wikiOutput,
           },
-          { runKind: 'generate' },
+          { runKind: 'generate', blockCause: cause },
         ),
       )
     } catch {
@@ -2441,8 +2443,8 @@ export function activate(
             () => undefined,
           )
         },
-        refuse: (reason, override) =>
-          refuseWikiGenerate(host, wikiOutput, reason, override),
+        refuse: (reason, override, cause) =>
+          refuseWikiGenerate(host, wikiOutput, reason, override, cause),
         now: Date.now,
       })
       if (!start) return

@@ -267,6 +267,33 @@ test('a publish lock in the way refuses the generation before the confirmation w
   )
 })
 
+// Value: protects=Cycle 0056 task 10, the cause id of a block, which the learner's sentence leaves out and the Output record keeps; fails_when=the refusal gets no cause id, so a learner who reports it has only the sentence; no_claim=how the Output record prints it (wikiRunRecord tests); seam=stand-ins
+test('a block in the way hands its cause id to the refusal beside the learner’s sentence', async () => {
+  // Arrange
+  const refusals: Array<{ reason: string; cause: string | undefined }> = []
+  const dependencies = standIns([], {
+    findStartBlock: async () => ({
+      cause: 'edited-page',
+      paths: ['index.html'],
+    }),
+    refuse: (reason, _override, cause): void => {
+      refusals.push({ reason, cause })
+    },
+  })
+
+  // Act
+  await startWikiGenerate(dependencies)
+
+  // Assert
+  assert.deepEqual(refusals, [
+    {
+      reason:
+        'The folder .codebook/wiki cannot take a new LLM Wiki: index.html is in the way. Press Update LLM Wiki to see what it is.',
+      cause: 'edited-page',
+    },
+  ])
+})
+
 // Value: protects=the earlier chat's leftover in the way of a generation; fails_when=the refusal loses its override or is shown after the confirmation; no_claim=which leftover (findUnacknowledgedWikiLeftover tests); seam=stand-ins
 test('another run in the way refuses the generation with its sentence and hands its override to the refusal', async () => {
   // Arrange

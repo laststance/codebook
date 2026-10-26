@@ -31,6 +31,7 @@ export function describeWikiGenerateBlock(
     case 'special-file':
       return `${outputLabel} holds a link or special file (${firstPath}), which the publisher refuses. Move it out of the folder, then press Generate LLM Wiki again.`
     default:
-      return `The folder ${outputLabel} cannot take a new LLM Wiki (${block.cause}: ${firstPath}). Press Update LLM Wiki to see what is in the way.`
+      // A cause that needs a manifest names no cause id here; the Output record keeps it.
+      return `The folder ${outputLabel} cannot take a new LLM Wiki: ${firstPath} is in the way. Press Update LLM Wiki to see what it is.`
   }
 }
