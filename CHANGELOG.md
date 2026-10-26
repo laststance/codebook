@@ -10,6 +10,7 @@ Cycle 0054 ([Issue #130](https://github.com/laststance/codebook/issues/130)), a 
 - **A test that ends before its first declared stop** now adds that the first declared stop is reached only when the test runs its line.
 - **A failure that is not an early exit keeps its own words:** a refusal before the test runs on (for example after you stopped the session yourself) and a failure while a reached stop is captured.
 - **The node-test help tells the chat** that an additional stop is reached only when the test runs its line after the previous stop: a line that ran before it counts only if the test runs it again (in a loop, for example). It names the exit code or signal of a test that ends before a stop.
+- **A run that ends with an error before its first stop** is no longer described as one that did not run its test. The node-test help and the bundled skill (1.0.48) now say that such a run reached no stop and explains nothing: a refusal before the launch ran no test, and a test that exited before that stop names its exit code or signal.
 
 **A package test's launch checks the root claim again.**
 
@@ -21,7 +22,7 @@ Cycle 0054 ([Issue #130](https://github.com/laststance/codebook/issues/130)), a 
   - the attach to the debugger gets its own budget after them.
 - **A start stopped while a listing is being released starts no further listing.**
 
-**Compatibility.** The MCP API stays 1.8, no input or stored format changes, and the bundled skill is unchanged (1.0.47).
+**Compatibility.** The MCP API stays 1.8 and no input or stored format changes. The bundled skill moves to 1.0.48, one sentence changed.
 
 ## [0.2.43.0] - 2026-10-26 (development candidate)
 
