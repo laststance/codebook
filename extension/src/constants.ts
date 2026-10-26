@@ -1105,13 +1105,14 @@ export const NODE_TEST_MINIMUM_VITEST_MAJOR = 4
 export const NODE_TEST_TITLE_PATH_LIMIT = 16
 /** Other test files Vitest's substring file filter may add before Codebook refuses instead of excluding each one. */
 export const NODE_TEST_EXCLUDED_FILE_LIMIT = 64
-/** Bound for one `vitest list --filesOnly` preflight; the whole attach phase is bounded separately. */
+/** Bound for one `vitest list --filesOnly` preflight; all the listings of one launch share {@link NODE_TEST_LISTING_PHASE_TIMEOUT_MS}, and the attach budget ({@link NODE_TEST_ATTACH_TIMEOUT_MS}) starts after them. */
 export const VITEST_FILE_LIST_TIMEOUT_MS = 30_000
-/** Bound for all the Vitest listings of one owned Node test launch together (the root claim asked again, the package listing and its confirmation), each also within {@link VITEST_FILE_LIST_TIMEOUT_MS}: room for those three at their own deadline and their releases. The attach budget starts after them. */
-export const NODE_TEST_LISTING_PHASE_TIMEOUT_MS =
-  3 * VITEST_FILE_LIST_TIMEOUT_MS + 5_000
 /** Grace period for releasing the owned Vitest listing group before escalating to SIGKILL. */
 export const VITEST_FILE_LIST_SHUTDOWN_TIMEOUT_MS = 1_000
+/** Bound for all the Vitest listings of one owned Node test launch together (the root claim asked again, the package listing and its confirmation): room for those three at their own deadline ({@link VITEST_FILE_LIST_TIMEOUT_MS}) and their releases, each a close and a group wait after SIGTERM and again after SIGKILL ({@link VITEST_FILE_LIST_SHUTDOWN_TIMEOUT_MS} each). The attach budget starts after them. */
+export const NODE_TEST_LISTING_PHASE_TIMEOUT_MS =
+  3 * (VITEST_FILE_LIST_TIMEOUT_MS + 4 * VITEST_FILE_LIST_SHUTDOWN_TIMEOUT_MS) +
+  5_000
 /** Error text kept from a failed Vitest preflight. */
 export const VITEST_LIST_ERROR_LIMIT_CHARS = 2_048
 /** Largest Vitest JSON report read to confirm which test ran. */

@@ -9,10 +9,11 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import type * as ListVitestTestFilesModule from '../utils/listVitestTestFiles'
 import {
   listVitestTestFiles,
   type RetryVitestListingRelease,
@@ -20,6 +21,7 @@ import {
 } from '../utils/listVitestTestFiles'
 
 import { keptListingFolderOf } from './utils/keptListingFolderOf'
+import { loadModule } from './utils/loadModule'
 
 /**
  * Writes a stand-in Vitest CLI that records how it was started, then behaves as the given script body.
@@ -826,4 +828,42 @@ setInterval(() => {}, 1000);
         } catch {}
     await rm(vitest.directory, { recursive: true, force: true })
   }
+})
+
+// Value: protects=a listing asked to start after its run was stopped (while the previous listing was released, for example) starting no Vitest process, so a stopped run never runs the repository's config again; fails_when=the listing spawns Vitest before it reads its signal; why_new=Cycle 0054 /ship Step 11 round 2 (Codex adversarial: after a stop during the root listing's release, the package listing was spawned); seam=a spawn stand-in that counts its calls; no_claim=a stop that lands after the spawn (the listing's wait and release handle it)
+test('a listing asked to start after its run was stopped starts no Vitest process', async () => {
+  // Arrange
+  let spawns = 0
+  const listing = await loadModule<typeof ListVitestTestFilesModule>(
+    resolve(__dirname, '../utils/listVitestTestFiles.js'),
+    {
+      'node:child_process': {
+        spawn: () => {
+          spawns += 1
+          throw new Error('Vitest was started.')
+        },
+      },
+    },
+  )
+  const stopped = new Error('The run was stopped.')
+  const run = new AbortController()
+  run.abort(stopped)
+
+  // Act
+  const outcome = await listing
+    .listVitestTestFiles({
+      node: process.execPath,
+      program: '/repo/node_modules/vitest/vitest.mjs',
+      vitestRoot: '/repo',
+      filter: 'src/a.test.ts',
+      excludes: [],
+      signal: run.signal,
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+  // Assert
+  assert.deepEqual({ outcome, spawns }, { outcome: stopped, spawns: 0 })
 })

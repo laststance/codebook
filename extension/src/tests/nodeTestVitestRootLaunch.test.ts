@@ -9,7 +9,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative, sep } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { StudyError } from '../errors'
@@ -744,8 +744,8 @@ test('a package test whose root answers the same root claim at launch lists and 
     await rm(launch.report.directory, { recursive: true, force: true })
     return {
       rootClaim: launch.execution.rootClaim,
-      listedFrom: (await calls()).map((call) =>
-        call.cwd === root ? '<root>' : call.cwd.slice(root.length + 1),
+      listedFrom: (await calls()).map(
+        (call) => relative(root, call.cwd).split(sep).join('/') || '<root>',
       ),
     }
   }
@@ -1005,8 +1005,8 @@ test('a package test whose plan made no root claim launches without listing from
   assert.deepEqual(
     {
       rootClaim: launch.execution.rootClaim,
-      listedFrom: (await calls()).map((call) =>
-        call.cwd === root ? '<root>' : call.cwd.slice(root.length + 1),
+      listedFrom: (await calls()).map(
+        (call) => relative(root, call.cwd).split(sep).join('/') || '<root>',
       ),
     },
     { rootClaim: 'not-applicable', listedFrom: ['packages/a', 'packages/a'] },

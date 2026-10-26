@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
 import {
   chmod,
+  link,
+  lstat,
   mkdtemp,
   readFile,
   realpath,
   rm,
   stat,
+  symlink,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -645,13 +648,13 @@ test('a native trial started without an open folder writes its report with the r
   })
 })
 
-// Value: protects=a native trial whose report holds a value JSON cannot write still stopping its run and ending with the stop's error, the report's write failing in its own step; fails_when=serializing the report throws out of the trial's end and replaces the earlier error; why_new=Cycle 0054 /ship Step 11 Claude adversarial (JSON.stringify ran before the write step was settled); seam=a run stand-in whose result holds a BigInt; no_claim=which run values can hold one
-test("a native trial whose report cannot be serialized still ends with its stop's error", async (context) => {
+// Value: protects=a native trial whose report holds a value JSON cannot write still stopping its run, ending with the stop's error and writing a report of its errors alone; fails_when=serializing the report throws out of the trial's end and replaces the earlier error, or no report says why the trial ended; why_new=Cycle 0054 /ship Step 11 Claude adversarial (JSON.stringify ran before the write step was settled); seam=a run stand-in whose result holds a BigInt; no_claim=which run values can hold one
+test("a native trial whose report cannot be serialized still ends with its stop's error and reports its errors", async (context) => {
   // Arrange
   const stopFailure = new Error(
     'the debug adapter did not answer the terminate request',
   )
-  const { bootstrap } = await loadTrial(context, {
+  const { bootstrap, readReport } = await loadTrial(context, {
     OwnedNodeTestRun: class {
       async prepare() {
         return { line: 1 }
@@ -675,11 +678,30 @@ test("a native trial whose report cannot be serialized still ends with its stop'
   )
 
   // Assert
+  const report = (await readReport()) as Record<string, unknown>
   assert.equal(outcome, stopFailure)
+  assert.deepEqual(
+    {
+      error: report.error,
+      stopError: report.stopError,
+      result: report.result,
+      reportError: report.reportError,
+    },
+    {
+      error: 'Error: the debug adapter did not answer the terminate request',
+      stopError:
+        'Error: the debug adapter did not answer the terminate request',
+      result: undefined,
+      reportError:
+        "The trial's report held a value JSON cannot write (TypeError: Do not know how to serialize a BigInt), so only its errors, its unreleased listings and its events are kept.",
+    },
+  )
 })
 
 // Value: protects=the private trial report being readable by its owner only, also when a report file already existed at its path with wider permissions; fails_when=the write keeps an existing file's mode, so the report's errors and paths stay readable by others; why_new=Cycle 0054 /ship Step 11 Claude adversarial (writeFile's mode applies only to a new file); seam=a report file created beforehand with mode 0644; no_claim=permissions on systems without POSIX modes
 test('a native trial makes an existing report file private when it writes its report', async (context) => {
+  // Windows keeps no owner, group and other permission bits, so the mode cannot be compared there.
+  if (process.platform === 'win32') return context.skip('POSIX file modes')
   // Arrange
   const { bootstrap, folder } = await loadTrial(context, {
     planRefusal: PLAN_REFUSAL,
@@ -693,4 +715,81 @@ test('a native trial makes an existing report file private when it writes its re
 
   // Assert
   assert.equal((await stat(reportPath)).mode & 0o777, 0o600)
+})
+
+// Value: protects=a native trial putting its new report in place of an earlier one instead of writing into it, so a reader of the earlier file, a hard link to it or a link planted at the report path never receives the new report; fails_when=the report is written into the existing file, so its earlier readers and links see the new private content; why_new=Cycle 0054 /ship Step 11 round 2 (Codex adversarial and Claude adversarial: overwrite then chmod); seam=a hard link to the earlier report; no_claim=an open descriptor (the same inode the hard link names)
+test('a native trial puts its report in place of an earlier one without writing into it', async (context) => {
+  // Arrange
+  const { bootstrap, folder, readReport } = await loadTrial(context, {
+    planRefusal: PLAN_REFUSAL,
+  })
+  const reportPath = join(folder, 'report.json')
+  const earlierCopy = join(folder, 'earlier-report.json')
+  await writeFile(reportPath, '{"earlier":true}')
+  await link(reportPath, earlierCopy)
+
+  // Act
+  await bootstrap.run().catch(() => undefined)
+
+  // Assert
+  assert.deepEqual(
+    {
+      earlier: await readFile(earlierCopy, 'utf8'),
+      error: ((await readReport()) as { error?: unknown }).error,
+    },
+    { earlier: '{"earlier":true}', error: String(PLAN_REFUSAL) },
+  )
+})
+
+// Value: protects=a link planted at the report path being replaced by the report instead of the report being written through it into another file; fails_when=the trial follows the link and writes its private report into the linked file; why_new=Cycle 0054 /ship Step 11 round 2 (Claude adversarial: writeFile and chmod follow a planted link); seam=a symbolic link at the report path; no_claim=Windows links (skipped there)
+test('a native trial replaces a link at its report path instead of writing through it', async (context) => {
+  // Windows needs a privilege to create symbolic links.
+  if (process.platform === 'win32') return context.skip('symbolic links')
+  // Arrange
+  const { bootstrap, folder } = await loadTrial(context, {
+    planRefusal: PLAN_REFUSAL,
+  })
+  const reportPath = join(folder, 'report.json')
+  const linkedFile = join(folder, 'linked.json')
+  await writeFile(linkedFile, '{"linked":true}')
+  await symlink(linkedFile, reportPath)
+
+  // Act
+  await bootstrap.run().catch(() => undefined)
+
+  // Assert
+  assert.deepEqual(
+    {
+      linked: await readFile(linkedFile, 'utf8'),
+      reportIsFile: (await lstat(reportPath)).isFile(),
+    },
+    { linked: '{"linked":true}', reportIsFile: true },
+  )
+})
+
+// Value: protects=a native trial whose run threw a value with no string form still writing its report and ending with that value; fails_when=wording the value throws in the trial's end, so no report is written and the run's own value is replaced; why_new=Cycle 0054 /ship pass 4 red team and Step 11 round 2 (String() outside the settled steps); seam=a run stand-in that throws a null-prototype object; no_claim=which real failures have no string form
+test('a native trial whose run throws a value without a string form still writes its report', async (context) => {
+  // Arrange
+  const unprintable: unknown = Object.create(null)
+  const { bootstrap, readReport } = await loadTrial(context, {
+    OwnedNodeTestRun: class {
+      async prepare(): Promise<void> {
+        throw unprintable
+      }
+      async stop(): Promise<void> {}
+    },
+  })
+
+  // Act
+  const outcome = await bootstrap.run().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(outcome, unprintable)
+  assert.equal(
+    ((await readReport()) as { error?: unknown }).error,
+    '[object Object]',
+  )
 })
