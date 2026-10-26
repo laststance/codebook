@@ -106,7 +106,7 @@ test('an unreadable Node history folder is reported while the saved-study reader
   }
 })
 
-// Value: protects=a saved test replay opens in the Study reader beside browser studies, pages its events, sends each selected stop's recorded values and sealed source to the native debugger through the replay's one recorded-source slot (PR-B2, DS5; counts follow recorded-stop presentations, as the debugger also starts on the "Not recorded" thread), and shows in the Application pane exactly the recorded output up to the selected event; fails_when=the reader enters browser playback, the Application pane shows output recorded after the selected event or no recorded output document, or a reopened store loses the selected moment; why_new=PR-B1 moved the recorded output from the Study pane's block to the Application pane (Design 3, AC5); seam=the workspace harness's posted messages and native panels; no_claim=the document's pixels or its in-place updates in a real webview; why_changed=a move leaves the earlier moment for 300 ms before it commits (F385, F387), so the wait also requires the position not to be pending
+// Value: protects=a saved test replay opens in the Study reader beside browser studies, pages its events, sends each selected stop's recorded values and sealed source to the native debugger through the replay's one recorded-source slot (PR-B2, DS5; counts follow recorded-stop presentations, as the debugger also starts on the "Not recorded" thread), and shows in the Application pane exactly the recorded output up to the selected event; fails_when=the reader enters browser playback, the Application pane shows output recorded after the selected event or no recorded output document, or a reopened store loses the selected moment; why_new=PR-B1 moved the recorded output from the Study pane's block to the Application pane (Design 3, AC5); seam=the workspace harness's posted messages and native panels; no_claim=the document's pixels or its in-place updates in a real webview; why_changed=a move leaves the earlier moment for 300 ms before it commits (F385, F387), so the wait also requires the position not to be pending; why_changed(task 30)=the reopen waited only for stop 25 on disk, which an earlier visit had already written, so a reader write of stop 24 landing late made the fresh store open at 24 (red 3/3 with that write held); it now also waits for the reader's position write loop to end
 test('saved Node history is selectable in the reader without entering browser playback', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -683,7 +683,12 @@ test('saved Node history is selectable in the reader without entering browser pl
       'second stop is selected in the reader before reopening its history',
       READER_RESULT_BOUND_MS,
     )
-    // The reader writes the chosen stop to its store after the commit; the new store reads it from disk, so the reopen waits for that write (F231).
+    // The reader writes each chosen stop to its store after the commit, never awaited and one write at a time (F197), so the disk can still hold an earlier visit's stop 25 while the writes of stops 24 and 26 run; a fresh store reads the last write, so the reopen waits for the reader's write loop to end and then for the chosen stop on disk (F231, task 30).
+    await waitUntil(
+      () => harness.reader['nodeHistoryPositionWrites'].size === 0,
+      'the reader has written every chosen stop to its history store',
+      READER_RESULT_BOUND_MS,
+    )
     await waitUntil(
       async () => (await store.readReaderPosition(header.studyId)) === 25,
       'the chosen stop written to the history store',
@@ -787,7 +792,12 @@ test('saved Node history is selectable in the reader without entering browser pl
     assert.doesNotMatch(shownTestOutput(harness), /Tests 1 passed/)
     const presentationsBeforeOutputRestore =
       recordedStopPresentations(harness).length
-    // As above: the output-only position reaches the disk after its commit (F231).
+    // As above: the output-only position reaches the disk after its commit (F231), and the reopen waits for the reader's write loop to end first, so a later queued write cannot land after the check (task 30).
+    await waitUntil(
+      () => harness.reader['nodeHistoryPositionWrites'].size === 0,
+      'the reader has written the output-only position to its history store',
+      READER_RESULT_BOUND_MS,
+    )
     await waitUntil(
       async () => (await store.readReaderPosition(header.studyId)) === 24,
       'the output-only position written to the history store',
