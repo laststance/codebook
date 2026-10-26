@@ -46,6 +46,26 @@ type FakeStatusBarEntry = {
   dispose(): void
 }
 
+/** One row of the LLM Wiki view as the editor would draw it. */
+export type FakeLlmWikiRow = {
+  id: string
+  label: string
+  description?: string
+  tooltip?: string
+  iconId?: string
+  command?: { command: string; arguments?: unknown[] }
+  contextValue?: string
+}
+
+/** The LLM Wiki view as the fake editor holds it: its rows, its message, its context keys and how often it fired a change. */
+export type FakeLlmWikiView = {
+  rows(): FakeLlmWikiRow[]
+  message(): string | undefined
+  contextKeys: Record<string, unknown>
+  treeChangeCount(): number
+  setVisible(isVisible: boolean): void
+}
+
 type UriHandler = (uri: { path: string; query: string }) => Promise<void>
 
 /** A document the fake editor reports as opened: only the address the extension looks at. */
@@ -161,6 +181,12 @@ export async function openWikiUpdateWindow(options: {
     message: string,
     choices: string[],
   ) => string | undefined
+  /** Whether the editor trusts the folder; true when omitted. */
+  trusted?: boolean
+  /** Commands the editor lists besides the chat's (for example the id of its manage-trust command). */
+  extraEditorCommands?: string[]
+  /** Makes the editor refuse the file watcher of the LLM Wiki view with this message. */
+  wikiWatcherFails?: string
 }): Promise<{
   chatRequests: Array<{ name: string; query: string }>
   executedCommands: string[]
@@ -176,8 +202,22 @@ export async function openWikiUpdateWindow(options: {
   skillCalls: string[]
   /** Every line the extension wrote to Output › Codebook, as `info: …` or `error: …`. */
   outputLines: string[]
-  /** Runs one of the extension's registered commands, as the Command Palette does. */
-  runCommand(name: string): Promise<void>
+  /** Runs one of the extension's registered commands with the arguments a menu or a row passes, as the Command Palette does. */
+  runCommand(name: string, ...args: unknown[]): Promise<void>
+  /** What the editor shows of the LLM Wiki view. */
+  llmWiki: FakeLlmWikiView
+  /** Reports a file event the way the editor's watchers do. */
+  reportFileEvent(kind: 'change' | 'create' | 'delete', fsPath: string): void
+  /** Says how many file watchers of the extension are alive. */
+  liveWatcherCount(): number
+  /** The patterns every file watcher of the extension was created with. */
+  watchedPatterns(): Array<{ base: string; pattern: string }>
+  /** What the extension copied to the clipboard. */
+  clipboard: string[]
+  /** Changes whether the editor trusts the folder; trust is granted during a session, never revoked. */
+  grantTrust(): void
+  /** Closes the folder: the window has none from now on. */
+  closeFolder(): void
   visibleStatusBarTexts(): string[]
   looks: {
     candidateListings: number
@@ -272,7 +312,26 @@ export async function openWikiUpdateWindow(options: {
       },
     )
   }
-  const commands = new Map<string, () => Promise<void>>()
+  const commands = new Map<string, (...args: unknown[]) => Promise<void>>()
+  const fileWatching = createFakeFileWatching()
+  const clipboard: string[] = []
+  const contextKeys: Record<string, unknown> = {}
+  const configurationListeners: Array<
+    (event: { affectsConfiguration: (id: string) => boolean }) => void
+  > = []
+  const trustListeners: Array<() => void> = []
+  let isTrusted = options.trusted ?? true
+  let isFolderOpen = true
+  let treeProvider:
+    | {
+        getChildren(): string[]
+        getTreeItem(id: string): Record<string, unknown>
+        onDidChangeTreeData(listener: () => void): { dispose(): void }
+      }
+    | undefined
+  let treeMessage: string | undefined
+  let treeChangeCount = 0
+  const visibilityListeners: Array<(event: { visible: boolean }) => void> = []
   const holds = new Map<
     HeldUpdateStep,
     { reached(): void; released: Promise<void> }
@@ -372,7 +431,10 @@ export async function openWikiUpdateWindow(options: {
         StatusBarAlignment: { Left: 1, Right: 2 },
         RelativePattern: FakeRelativePattern,
         commands: {
-          registerCommand(name: string, action: () => Promise<void>) {
+          registerCommand(
+            name: string,
+            action: (...args: unknown[]) => Promise<void>,
+          ) {
             commands.set(name, action)
             return { dispose(): void {} }
           },
@@ -383,10 +445,20 @@ export async function openWikiUpdateWindow(options: {
               'workbench.action.chat.newChat',
               'workbench.action.chat.cancel',
               'workbench.action.chat.removeAllPendingRequests',
+              ...(options.extraEditorCommands ?? []),
             ].filter(
               (command) => !options.missingEditorCommands?.includes(command),
             ),
-          executeCommand: async (name: string, argument?: unknown) => {
+          executeCommand: async (
+            name: string,
+            argument?: unknown,
+            value?: unknown,
+          ) => {
+            // A context key is the editor's own bookkeeping, not a command the learner ran.
+            if (name === 'setContext') {
+              contextKeys[String(argument)] = value
+              return undefined
+            }
             // Only the chat command that carries a query is the request; without one it reveals the chat.
             const query =
               typeof argument === 'object' &&
@@ -424,6 +496,21 @@ export async function openWikiUpdateWindow(options: {
         workspace: {
           getConfiguration: () => ({ get: () => outputSetting }),
           onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+          onDidChangeConfiguration: (
+            listener: (event: {
+              affectsConfiguration: (id: string) => boolean
+            }) => void,
+          ) => listenTo(configurationListeners, listener),
+          onDidGrantWorkspaceTrust: (listener: () => void) =>
+            listenTo(trustListeners, listener),
+          get isTrusted() {
+            return isTrusted
+          },
+          get workspaceFolders() {
+            return isFolderOpen
+              ? [{ uri: { scheme: 'file', fsPath: openedWorkspace } }]
+              : undefined
+          },
           onDidOpenTextDocument: (
             listener: (document: FakeTextDocument) => void,
           ) => {
@@ -432,15 +519,55 @@ export async function openWikiUpdateWindow(options: {
             return listenTo(documentOpenListeners, listener)
           },
           // The opened Wiki watches the project's files; these tests report no file event.
-          createFileSystemWatcher:
-            createFakeFileWatching().createFileSystemWatcher,
+          createFileSystemWatcher: (pattern: FakeRelativePattern) => {
+            // The LLM Wiki view's own watcher can be refused; the opened Wiki's watches the project.
+            if (
+              options.wikiWatcherFails !== undefined &&
+              pattern.pattern !== '**'
+            )
+              throw new Error(options.wikiWatcherFails)
+            return fileWatching.createFileSystemWatcher(pattern)
+          },
         },
+        EventEmitter: class {
+          readonly #listeners: Array<(value: unknown) => void> = []
+          readonly event = (listener: (value: unknown) => void) =>
+            listenTo(this.#listeners, listener)
+          fire(value?: unknown): void {
+            for (const listener of [...this.#listeners]) listener(value)
+          }
+          dispose(): void {}
+        },
+        TreeItem: class {
+          id?: string
+          description?: string
+          tooltip?: string
+          iconPath?: unknown
+          contextValue?: string
+          command?: unknown
+          constructor(
+            readonly label: string,
+            readonly collapsibleState?: number,
+          ) {}
+        },
+        ThemeIcon: class {
+          constructor(readonly id: string) {}
+        },
+        TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
         env: {
           ...(options.cursor ? { appName: 'Cursor' } : {}),
           asExternalUri: keepLocalAddress,
           openExternal: async () => true,
+          clipboard: {
+            writeText: async (text: string) => {
+              clipboard.push(text)
+            },
+          },
         },
-        Uri: { parse: parseFakeUri },
+        Uri: {
+          parse: parseFakeUri,
+          file: (fsPath: string) => ({ scheme: 'file', fsPath }),
+        },
         window: {
           registerUriHandler: (handler: { handleUri: UriHandler }) => {
             handleUri = handler.handleUri
@@ -484,6 +611,29 @@ export async function openWikiUpdateWindow(options: {
           onDidStartTerminalShellExecution: (
             listener: (event: FakeShellExecution) => void,
           ) => listenTo(terminalCommandListeners, listener),
+          createTreeView: (
+            _id: string,
+            treeOptions: {
+              treeDataProvider: NonNullable<typeof treeProvider>
+            },
+          ) => {
+            treeProvider = treeOptions.treeDataProvider
+            treeProvider.onDidChangeTreeData(() => {
+              treeChangeCount += 1
+            })
+            return {
+              get message() {
+                return treeMessage
+              },
+              set message(next: string | undefined) {
+                treeMessage = next
+              },
+              onDidChangeVisibility: (
+                listener: (event: { visible: boolean }) => void,
+              ) => listenTo(visibilityListeners, listener),
+              dispose(): void {},
+            }
+          },
           // A real editor always has both, so every test runs the product's own way of showing a run; only collecting their Cancel is optional.
           withProgress,
           createStatusBarItem,
@@ -680,10 +830,48 @@ export async function openWikiUpdateWindow(options: {
     statusBarTexts,
     skillCalls,
     outputLines,
-    async runCommand(name: string): Promise<void> {
+    async runCommand(name: string, ...args: unknown[]): Promise<void> {
       const command = commands.get(name)
       if (!command) throw new Error(`The window registered no ${name}.`)
-      await command()
+      await command(...args)
+    },
+    llmWiki: {
+      rows: () =>
+        (treeProvider?.getChildren() ?? []).map((id) => {
+          const item = treeProvider?.getTreeItem(id) ?? {}
+          const icon = item.iconPath
+          return {
+            id,
+            label: String(item.label),
+            description: item.description as string | undefined,
+            tooltip: item.tooltip as string | undefined,
+            iconId:
+              typeof icon === 'object' && icon !== null && 'id' in icon
+                ? String(icon.id)
+                : undefined,
+            command: item.command as FakeLlmWikiRow['command'],
+            contextValue: item.contextValue as string | undefined,
+          }
+        }),
+      message: () => treeMessage,
+      contextKeys,
+      treeChangeCount: () => treeChangeCount,
+      setVisible(isVisible: boolean): void {
+        for (const listener of [...visibilityListeners])
+          listener({ visible: isVisible })
+      },
+    },
+    reportFileEvent: (kind, fsPath): void => fileWatching.report(kind, fsPath),
+    liveWatcherCount: () => fileWatching.liveWatcherCount(),
+    watchedPatterns: () =>
+      fileWatching.watched.map(({ base, pattern }) => ({ base, pattern })),
+    clipboard,
+    grantTrust(): void {
+      isTrusted = true
+      for (const listener of [...trustListeners]) listener()
+    },
+    closeFolder(): void {
+      isFolderOpen = false
     },
     visibleStatusBarTexts: (): string[] =>
       statusBarEntries
@@ -728,6 +916,10 @@ export async function openWikiUpdateWindow(options: {
     },
     setOutputSetting(value: string): void {
       outputSetting = value
+      for (const listener of [...configurationListeners])
+        listener({
+          affectsConfiguration: (id) => id === 'codebook.wikiOutputDirectory',
+        })
     },
     setFreshness(next: WikiFreshness): void {
       freshness = next
