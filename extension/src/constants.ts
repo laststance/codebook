@@ -920,6 +920,13 @@ export const WIKI_CHAT_WATCH_STATUS_ID = 'codebook.wikiChatWatch'
 export const WIKI_CHAT_WATCH_STATUS_NAME = 'Codebook LLM Wiki run'
 /** Milliseconds in one minute, for naming a bound in minutes in the update request and, through {@link formatWaitEnd}, the end of a start's wait or of an unreadable marker's refusal as a whole minute. */
 export const MS_PER_MINUTE = 60_000
+/** The first character code that is no C0 control character; the LLM Wiki run's Output record escapes the codes below it ({@link wikiRunRecord}). */
+export const CONTROL_CHARACTER_CODE_LIMIT = 0x20
+/** The DEL control character's code, which the LLM Wiki run's Output record escapes too. */
+export const DELETE_CHARACTER_CODE = 0x7f
+/** What Codebook says when Stop LLM Wiki Run or a no-Wiki notice meets a run of this window that is still starting (its checks, the confirmation, the claim): nothing can be stopped yet, and its progress shows once it runs (/ship review, Cycle 0055 pt1). */
+export const WIKI_RUN_STARTING_SENTENCE =
+  'Codebook is starting an LLM Wiki run in this window. Once it runs, its progress shows and Stop LLM Wiki Run stops it.'
 /** Longest a VS Code Wiki update is watched for a published manifest before it ends as timed out. */
 export const WIKI_UPDATE_WATCH_TIMEOUT_MS = 900_000
 /** Longest a Wiki generation runs in either host, the VS Code watch and the Cursor agent alike, before it ends as timed out: 55 minutes, set by Cycle 0055's E1 (the longest measured generation, 34 min 33 s in VS Code, × 1.5, rounded up to whole 5 minutes; Owner decision O9). A stopped VS Code generation's reservation lasts as long after its watch's end. */

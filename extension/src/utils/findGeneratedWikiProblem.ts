@@ -1,4 +1,7 @@
-import { WIKI_GENERATE_CHAT_REQUEST } from '../constants'
+import {
+  WIKI_GENERATE_CHAT_REQUEST,
+  WIKI_UPDATE_RECOVERY_REQUEST,
+} from '../constants'
 
 /**
  * Checks the new publication a generation left: that its manifest names this opened project and that its entry page can be opened, each read as a file of the Wiki folder.
@@ -7,7 +10,7 @@ import { WIKI_GENERATE_CHAT_REQUEST } from '../constants'
  * @param checks.isOwnedByProject - Answers whether the manifest names this opened project ({@link isWikiManifestOf}); rejects for a manifest that cannot be read as one (no regular file, no JSON), which is no other checkout's but a publish to recover.
  * @param checks.readEntryPage - Throws for an entry page that is missing, a link or no regular file ({@link readWikiFileToOpen}).
  * @param outputLabel - The Wiki folder as the learner reads it.
- * @returns The sentence of the first check that failed, with its next step; `undefined` when both passed, and for a manifest that cannot be read, which the end tells with the recovery request ({@link classifyWikiUpdateEnd}).
+ * @returns The sentence of the first check that failed, with its next step: a manifest that cannot be read now gets the recovery request, never a success (a manifest read earlier, as the VS Code watch keeps it, may be gone or broken since; /ship review, Cycle 0055 pt1); `undefined` when both checks passed.
  * @example
  * await findGeneratedWikiProblem({ isOwnedByProject: async () => true, readEntryPage: async () => { throw new Error('missing') } }, '.codebook/wiki')
  * // => 'The LLM Wiki published in .codebook/wiki has no entry page Codebook can open (index.html). Ask the editor chat "/codebook Generate the LLM Wiki for this project" to publish it again.'
@@ -20,8 +23,9 @@ export async function findGeneratedWikiProblem(
   outputLabel: string,
 ): Promise<string | undefined> {
   const isOwned = await checks.isOwnedByProject().catch(() => undefined)
-  // A manifest that cannot be read is a publish to recover, not another checkout's: the end tells it with the recovery request.
-  if (isOwned === undefined) return undefined
+  // A manifest that cannot be read is a publish to recover, not another checkout's, and never a success.
+  if (isOwned === undefined)
+    return `An LLM Wiki was published in ${outputLabel}, but Codebook cannot read its manifest. Ask the editor chat "${WIKI_UPDATE_RECOVERY_REQUEST}".`
   if (!isOwned)
     return `The LLM Wiki published in ${outputLabel} does not identify this opened project. Set codebook.wikiOutputDirectory to a folder of this project, then press Generate LLM Wiki again.`
   try {

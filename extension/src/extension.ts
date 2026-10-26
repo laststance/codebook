@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import {
   chmod,
+  lstat,
   mkdir,
   readFile,
   realpath,
@@ -37,6 +38,7 @@ import {
   WIKI_GENERATE_TIMEOUT_MS,
   WIKI_MANIFEST_FILE,
   WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE,
+  WIKI_RUN_STARTING_SENTENCE,
   WIKI_UPDATE_LAST_RUN_STATE_KEY,
   WIKI_UPDATE_MARKER_CHANGE_RETRIES,
   WIKI_UPDATE_MARKER_CHANGE_RETRY_DELAY_MS,
@@ -1059,14 +1061,21 @@ export function activate(
    * Tells the learner that a folder holds no LLM Wiki, with Generate LLM Wiki, unless a generation is under way: this window's own run is told as a second start is ({@link showWikiUpdateRunning}), another window's run that runs or is starting by its own sentence ({@link describeOtherWikiWindow}); called by Open LLM Wiki in Browser and Update LLM Wiki for a folder without a Wiki.
    * Why: while a first generation runs there is no Wiki yet, and a Generate button would only lead to a refusal (/ship review pass 3, Cycle 0055 pt1).
    * @param wikiOutput - The Wiki folder, beside which another window's marker lies, and its label.
+   * @param isStartUnderWay - Whether a start of this window is under way that has not begun its run; Update LLM Wiki's own check passes none, since that start is its own.
    * @example await showMissingWikiNotice({ outputDirectory: '/repo/.codebook/wiki', outputLabel: '.codebook/wiki' })
    */
   const showMissingWikiNotice = async (
     wikiOutput: WikiUpdateOutput,
+    isStartUnderWay = false,
   ): Promise<void> => {
     // This window's own generation: its progress, as a second start is told.
     if (wikiUpdateRun.isRunning()) {
       showWikiUpdateRunning()
+      return
+    }
+    // A start of this window that has not begun its run yet (its checks, the confirmation, the claim) is told as starting, never offered once more.
+    if (isStartUnderWay) {
+      void showNotice('information', WIKI_RUN_STARTING_SENTENCE)
       return
     }
     const holder = await findWikiRunHolder(wikiOutput.outputDirectory)
@@ -2340,12 +2349,18 @@ export function activate(
   const isInGitRepository = async (
     projectRoot: string,
     outputDirectory: string,
-  ): Promise<boolean> =>
-    !(
-      await inspectDeepWikiFreshness(projectRoot, [], undefined, [], {
-        outputDirectory,
-      })
-    ).addedFilesUnchecked
+  ): Promise<boolean | undefined> => {
+    const look = await inspectDeepWikiFreshness(
+      projectRoot,
+      [],
+      undefined,
+      [],
+      { outputDirectory },
+    )
+    // Git that is missing or did not answer leaves the question open: the request then asks for a revision only where Git answers (/ship review, Cycle 0055 pt1).
+    if (look.status === 'unknown') return undefined
+    return !look.addedFilesUnchecked
+  }
   /**
    * Starts a first LLM Wiki generation from Codebook's entry (Codebook: Generate LLM Wiki), coalescing repeated presses: the start's checks, the confirmation, the folder, the agent and the marker ({@link startWikiGenerate}), then the run of kind `generate` ({@link launchWikiRun}) with the generate request ({@link buildWikiGeneratePrompt}).
    * @param acknowledgedLeftovers - Given when the learner pressed "Generate anyway": the leftovers named by the refusals it was pressed on, which alone are ignored.
@@ -2390,6 +2405,15 @@ export function activate(
         readPublicationIdentity: () =>
           readWikiPublicationIdentity(outputDirectory),
         hasGitRepository: () => isInGitRepository(projectRoot, outputDirectory),
+        // A link or a file there was refused by the path check; only a folder of its own without a manifest counts, and one that holds a Wiki gets the update's offer.
+        hasOutputFolderWithoutWiki: async () =>
+          (await lstat(outputDirectory).then(
+            (stat) => stat.isDirectory(),
+            () => false,
+          )) &&
+          (await readWikiPublishToken(outputDirectory).catch(
+            () => 'unreadable',
+          )) === undefined,
         offerUpdate: () => {
           // The generation that offers the update, which the update waits for, and only for it.
           const offeringAttempt = wikiUpdate
@@ -2630,7 +2654,7 @@ export function activate(
           // A folder without a Wiki offers its generation instead of an error about a missing manifest (Cycle 0055, proposed change 3).
           const missingWiki = await findMissingWiki()
           if (missingWiki) {
-            await showMissingWikiNotice(missingWiki)
+            await showMissingWikiNotice(missingWiki, wikiUpdate !== undefined)
             return
           }
           const { projectRoot, outputDirectory } = await currentDeepWiki()
@@ -2785,6 +2809,11 @@ export function activate(
     registerCommand(CANCEL_WIKI_RUN_COMMAND, () => {
       if (activeWikiRun) {
         activeWikiRun.controller.abort()
+        return
+      }
+      // A run that is still starting has nothing to stop yet; the learner is told so instead of "nothing is running".
+      if (wikiUpdate) {
+        void showNotice('information', WIKI_RUN_STARTING_SENTENCE)
         return
       }
       void showNotice(

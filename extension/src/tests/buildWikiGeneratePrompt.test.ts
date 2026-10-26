@@ -75,3 +75,20 @@ test('a one-minute bound is named in the singular', () => {
   // Assert
   assert.equal(prompt.includes('once you publish within 1 minute;'), true)
 })
+
+// Value: protects=Step 11 of the /ship review of Cycle 0055 pt1 (Claude adversarial): Git that is missing or did not answer; fails_when=the request asks for the full commit hash of HEAD that the agent cannot get, so the generation fails at its publish up to 55 minutes later, or claims the folder has no repository; no_claim=how the extension looks at Git (wikiGenerateFlow tests); seam=none
+test('a generate request where Git could not be asked asks for a revision only where Git answers', () => {
+  // Act
+  const prompt = buildWikiGeneratePrompt({
+    outputDirectory: '/repo/docs/wiki',
+    timeoutMs: 3_300_000,
+    isReplyRead: false,
+    hasGitRepository: undefined,
+  })
+
+  // Assert
+  assert.match(
+    prompt,
+    /the published manifest must match the source at that moment: every includedSources sha256 equals the file on disk\. Codebook could not ask Git about this folder: record generated\.revision only if Git gives you the full commit hash of HEAD, and do not create a repository\. File names/,
+  )
+})

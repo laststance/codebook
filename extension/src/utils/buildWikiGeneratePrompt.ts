@@ -10,7 +10,7 @@ import { describeMinutes } from './describeMinutes'
  * @param options.outputDirectory - Absolute resolved Wiki folder, which may not exist yet.
  * @param options.timeoutMs - Bound of the run; named to the agent in whole minutes.
  * @param options.isReplyRead - Whether somebody reads the agent's reply (VS Code's chat: yes; the Cursor CLI: no, so the report of chapters is not asked for).
- * @param options.hasGitRepository - Whether the opened folder is inside a Git repository; without one the revision and the added-file condition are not asked for.
+ * @param options.hasGitRepository - Whether the opened folder is inside a Git repository; without one the revision and the added-file condition are not asked for; `undefined` when Git could not be asked ({@link describeMatchingManifest}).
  * @returns The one-paragraph request, starting with `/codebook Generate the LLM Wiki`.
  *
  * @example
@@ -23,7 +23,7 @@ export function buildWikiGeneratePrompt(options: {
   outputDirectory: string
   timeoutMs: number
   isReplyRead: boolean
-  hasGitRepository: boolean
+  hasGitRepository: boolean | undefined
 }): string {
   return [
     `/codebook Generate the LLM Wiki for this opened repository into ${JSON.stringify(options.outputDirectory)}, following the installed Codebook skill's DeepWiki generation procedure.`,

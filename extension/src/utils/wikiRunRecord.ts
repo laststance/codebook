@@ -1,6 +1,11 @@
 import { homedir } from 'node:os'
 import { posix, win32 } from 'node:path'
 
+import {
+  CONTROL_CHARACTER_CODE_LIMIT,
+  DELETE_CHARACTER_CODE,
+} from '../constants'
+
 import type { WikiRunKind, WikiUpdateStatus } from './wikiUpdateRun'
 
 /** What an agent process's exit said, as data: the Cursor agent's exit code or signal ({@link CursorAgentExitError}); absent for a VS Code chat and for a run that ended otherwise. */
@@ -103,6 +108,22 @@ function pathWithHomeShortened(
 }
 
 /**
+ * Writes the control characters of a path as `\u` escapes, so a folder name with a line break cannot add a line to the one-line record (a workspace setting names the folder; /ship review, Cycle 0055 pt1).
+ * @param path - The path as the record shows it.
+ * @returns The path with every control character escaped.
+ * @example withoutControlCharacters('/repo/a\nb') // => '/repo/a\\u000ab'
+ */
+function withoutControlCharacters(path: string): string {
+  return Array.from(path, (character) => {
+    const code = character.charCodeAt(0)
+    // C0 controls and DEL are written as escapes; every other character stays as it is.
+    return code < CONTROL_CHARACTER_CODE_LIMIT || code === DELETE_CHARACTER_CODE
+      ? `\\u${code.toString(16).padStart(4, '0')}`
+      : character
+  }).join('')
+}
+
+/**
  * Writes the one Output › Codebook record of an LLM Wiki generation or update that ended, from an allowlist of fields.
  *
  * Why: a learner who reports a stuck or failed run needs its kind, host, times, end and exit without reading the agent's work, and the agent's stdout, stderr, reply and a chat's error text may carry private source or credentials (Cycle 0055, Eng decision 81). So the record holds only fields Codebook knows as data and a summary in Codebook's own words; the output folder shows the home folder as `~`.
@@ -136,5 +157,5 @@ export function wikiRunRecord(
   const exit = details.agentExit
     ? ` exit=${details.agentExit.exitCode ?? details.agentExit.exitSignal ?? 'unknown'}`
     : ''
-  return `LLM Wiki ${details.runKind} ended: host=${host} started=${details.startedAt ?? 'not started'} ended=${ended.finishedAt} end=${ended.state} summary="${endSummary(ended)}"${exit} output=${pathWithHomeShortened(ended.outputDirectory, homeDirectory, platform)}`
+  return `LLM Wiki ${details.runKind} ended: host=${host} started=${details.startedAt ?? 'not started'} ended=${ended.finishedAt} end=${ended.state} summary="${endSummary(ended)}"${exit} output=${withoutControlCharacters(pathWithHomeShortened(ended.outputDirectory, homeDirectory, platform))}`
 }

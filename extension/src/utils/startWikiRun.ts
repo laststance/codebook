@@ -1,3 +1,4 @@
+import { describeOutputFolderWithoutWiki } from './describeOutputFolderWithoutWiki'
 import { describeWikiGenerateBlock } from './describeWikiGenerateBlock'
 import type { WikiUpdateStartBlock } from './findWikiUpdateStartBlock'
 import type { WikiUpdateOutput } from './wikiUpdateRun'
@@ -52,7 +53,9 @@ export type WikiGenerateStartDependencies<Holder> = {
   /** The publication identity of the folder ({@link readWikiPublicationIdentity}). */
   readPublicationIdentity: () => Promise<string | undefined>
   /** Whether the opened folder is inside a Git repository; the request names only the conditions that can hold in it. */
-  hasGitRepository: () => Promise<boolean>
+  hasGitRepository: () => Promise<boolean | undefined>
+  /** Whether the output folder already exists as a folder that holds no manifest; the publisher refuses to write a first Wiki into one ({@link describeOutputFolderWithoutWiki}). A folder with a Wiki that appeared meanwhile is not one: the look after the claim offers its update. */
+  hasOutputFolderWithoutWiki: () => Promise<boolean>
   /** Offers the update where a Wiki already stands: `An LLM Wiki already exists in <folder>. Update it instead?` */
   offerUpdate: () => void
   /** Tells the learner why the generation did not start, with the override where there is one. */
@@ -68,7 +71,8 @@ export type WikiGenerateStart = {
   releaseMarker: () => Promise<boolean>
   reserveMarker: (watchEndedAtMs: number) => Promise<boolean>
   startedAtMs: number
-  hasGitRepository: boolean
+  /** Whether the opened folder is in a Git repository; `undefined` when Git could not be asked. */
+  hasGitRepository: boolean | undefined
 }
 
 /**
@@ -125,6 +129,13 @@ async function refusedForBlockOrRun<Holder>(
     )
     return true
   }
+  // An existing folder without a Wiki is refused by the publisher, so no agent is started for it.
+  if (await dependencies.hasOutputFolderWithoutWiki()) {
+    dependencies.refuse(
+      describeOutputFolderWithoutWiki(dependencies.wikiOutput.outputLabel),
+    )
+    return true
+  }
   const inTheWay = await dependencies.findRunInTheWay()
   if (inTheWay) dependencies.refuse(inTheWay.reason, inTheWay.override)
   return inTheWay !== undefined
@@ -133,7 +144,7 @@ async function refusedForBlockOrRun<Holder>(
 /**
  * Makes every check of a first LLM Wiki generation's start in one order, asks the learner, prepares the folder, claims the marker and then readies the agent, so no agent is asked for a run that cannot succeed and nothing is left behind by a start that did not go ahead.
  *
- * The order: the folder's path in the project; an existing manifest, which is never overwritten and gets the update's offer; what makes the publisher refuse; another window's run, a reservation or an earlier chat's leftover; the confirmation (D2), whose Change location and dismissal start nothing; the folder that holds the output and its marker, which a fresh project lacks (Eng decision 72); the publication identity and the Git look, read before the claim so the claimed marker stands for no run only briefly; the publisher's refusals and other runs once more, which may have come up while the learner read the confirmation; the marker's claim, which another window may have won meanwhile (Eng decision 79); once more the manifest, which may have appeared in between; and last the Cursor skill (Eng decision 73), so only a start that goes ahead writes it. A refused start leaves no marker and no folder of the output.
+ * The order: the folder's path in the project; an existing manifest, which is never overwritten and gets the update's offer; what makes the publisher refuse, an existing output folder without a Wiki included; another window's run, a reservation or an earlier chat's leftover; the confirmation (D2), whose Change location and dismissal start nothing; the folder's path once more, since a link may have been put on it while the confirmation stood open; the folder that holds the output and its marker, which a fresh project lacks (Eng decision 72); the publication identity and the Git look, read before the claim so the claimed marker stands for no run only briefly; the publisher's refusals and other runs once more, which may have come up while the learner read the confirmation; the marker's claim, which another window may have won meanwhile (Eng decision 79); once more the manifest, which may have appeared in between; and last the Cursor skill (Eng decision 73), so only a start that goes ahead writes it. A refused start leaves no marker and no folder of the output.
  * Why: a generation is a run of the update's lifecycle (Cycle 0055, O3), whose start checks it shares; its own steps are an existing Wiki's offer, the confirmation and the folder.
  * Trigger: Codebook: Generate LLM Wiki, from the Command Palette, a no-Wiki notice's button or a failed generation's button.
  *
@@ -160,6 +171,8 @@ export async function startWikiGenerate<Holder>(
   }
   // A dismissed confirmation starts nothing.
   if (choice !== 'generate') return undefined
+  // The confirmation may have stood open for minutes: a link put on the path meanwhile is refused before anything is made through it.
+  await dependencies.assertPathHeld()
   await dependencies.makeOutputParent()
   // Read before the claim: a Git look can take a while in a large repository, and nothing may stand claimed for no run meanwhile.
   const publicationAtStart = await dependencies.readPublicationIdentity()

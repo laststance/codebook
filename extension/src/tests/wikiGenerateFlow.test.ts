@@ -1366,3 +1366,97 @@ test('an older notice’s Update LLM Wiki pressed while another Cursor run of th
     },
   )
 })
+
+// Value: protects=Step 11 of the /ship review of Cycle 0055 pt1 (Claude adversarial): a generation where Git is missing or does not answer; fails_when=the request asks the agent for the full commit hash of HEAD it cannot get, as if the folder were a repository Git answered for, so the generation fails at its publish up to 55 minutes later; no_claim=the agent's own Git; seam=the freshness look answers that Git could not be asked
+test('a generation where Git could not be asked hands a request that asks for a revision only where Git answers', async (context) => {
+  // Arrange
+  const project = await openProjectWithoutWiki()
+  context.after(() => project.close())
+  project.setFreshness({
+    status: 'unknown',
+    unknownCause: 'git-missing',
+    reason: 'Git is not installed.',
+    changedPaths: [],
+    addedPaths: [],
+  })
+
+  // Act
+  await project.runCommand(GENERATE_COMMAND)
+
+  // Assert
+  assert.deepEqual(
+    {
+      asksRevisionOnlyWhereGitAnswers: project.chatRequests[0]?.query.includes(
+        'Codebook could not ask Git about this folder: record generated.revision only if Git gives you the full commit hash of HEAD',
+      ),
+      asksHeadOutright: project.chatRequests[0]?.query.includes(
+        'generated.revision is the full commit hash of HEAD',
+      ),
+    },
+    { asksRevisionOnlyWhereGitAnswers: true, asksHeadOutright: false },
+  )
+})
+
+// Value: protects=Step 11 of the /ship review of Cycle 0055 pt1 (both Codex passes) and E1-F3's root cause: an output folder that exists without a Wiki, which the publisher refuses; fails_when=Generate asks to confirm, starts the chat for a publish that is sure to be refused, or touches the learner's files in the folder; no_claim=the publisher's refusal itself; seam=a folder the test makes with a file of the learner in it
+test('Generate on an output folder that exists without a Wiki refuses before it asks, starts nothing and leaves the folder’s files', async (context) => {
+  // Arrange
+  const project = await openProjectWithoutWiki()
+  context.after(() => project.close())
+  await mkdir(project.outputDirectory, { recursive: true })
+  await writeFile(join(project.outputDirectory, 'notes.md'), 'mine')
+
+  // Act
+  await project.runCommand(GENERATE_COMMAND)
+
+  // Assert
+  assert.deepEqual(
+    {
+      errors: project.errors,
+      confirmations: project.confirmations.length,
+      chatRequests: project.chatRequests.length,
+      learnerFile: await readFile(
+        join(project.outputDirectory, 'notes.md'),
+        'utf8',
+      ),
+      markerLeft: await exists(project.markerPath),
+    },
+    {
+      errors: [
+        'Codebook did not start the LLM Wiki generation: The folder .codebook/wiki already exists but holds no LLM Wiki, and the publisher writes a first Wiki only into a folder it makes itself. Move what you keep in it elsewhere and remove the folder, or set codebook.wikiOutputDirectory to a folder that does not exist yet, then press Generate LLM Wiki again.',
+      ],
+      confirmations: 0,
+      chatRequests: 0,
+      learnerFile: 'mine',
+      markerLeft: false,
+    },
+  )
+})
+
+// Value: protects=Step 11 of the /ship review of Cycle 0055 pt1 (Claude adversarial): Stop LLM Wiki Run and Open LLM Wiki in Browser while this window's generation is still starting (its claim, its Git look, Cursor's skill); fails_when=Stop says that nothing is running, or Open says that no Wiki was found and offers a second Generate that would join the first in silence; no_claim=a start that runs (other tests); seam=the claim's answer held open
+test('Stop LLM Wiki Run and Open LLM Wiki in Browser during a generation’s start say that a run is starting, and offer no second Generate', async (context) => {
+  // Arrange: the start's claim on the marker is held open.
+  const project = await openProjectWithoutWiki()
+  context.after(() => project.close())
+  const claim = project.hold('claim-answer')
+  const pressed = project.runCommand(GENERATE_COMMAND)
+  await claim.started
+
+  // Act
+  await project.runCommand('codebook.cancelWikiRun')
+  await project.runCommand('codebook.openDeepWiki')
+  claim.release()
+  await pressed
+
+  // Assert
+  const starting =
+    'Codebook is starting an LLM Wiki run in this window. Once it runs, its progress shows and Stop LLM Wiki Run stops it.'
+  assert.deepEqual(
+    {
+      notices: project.notices,
+      generateOffered: project.offeredActions.some(({ actions }) =>
+        actions.includes('Generate LLM Wiki'),
+      ),
+    },
+    { notices: [starting, starting], generateOffered: false },
+  )
+})

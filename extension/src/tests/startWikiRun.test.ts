@@ -64,6 +64,10 @@ function standIns(
       steps.push('git')
       return true
     },
+    hasOutputFolderWithoutWiki: async () => {
+      steps.push('folder')
+      return false
+    },
     offerUpdate: (): void => {
       steps.push('offer-update')
     },
@@ -75,8 +79,8 @@ function standIns(
   }
 }
 
-// Value: protects=Eng decisions 72, 73 and 79 and D2, the order of a generation's start; fails_when=anything is made or claimed before the learner confirmed, the folder is made after the claim (the claim fails with ENOENT), the agent is readied before the claim and the last look for a Wiki (a refused start or the update's offer would write a Cursor skill, and a skill in the way would hide the refusal; /ship review, Cycle 0055 pt1), a slow read (the Git look) runs while the marker is claimed for no run yet (/ship review pass 3), or the manifest is not looked at once more after the claim; no_claim=what each step does (host tests); seam=stand-ins
-test('a generation’s start checks the folder, the existing Wiki, the publisher’s blocks and other runs before it asks, then makes the folder, reads the publication and Git before it claims the marker, looks for a Wiki once more and only then readies the agent', async () => {
+// Value: protects=Eng decisions 72, 73 and 79 and D2, the order of a generation's start; fails_when=anything is made or claimed before the learner confirmed, the folder is made after the claim (the claim fails with ENOENT), the agent is readied before the claim and the last look for a Wiki (a refused start or the update's offer would write a Cursor skill, and a skill in the way would hide the refusal; /ship review, Cycle 0055 pt1), a slow read (the Git look) runs while the marker is claimed for no run yet (/ship review pass 3), the path is not checked once more after the confirmation (Step 11: a link put on it while the confirmation stood open), an existing output folder is not looked for, or the manifest is not looked at once more after the claim; no_claim=what each step does (host tests); seam=stand-ins
+test('a generation’s start checks the folder, the existing Wiki, the publisher’s blocks and other runs before it asks, then checks the path again, makes the folder, reads the publication and Git before it claims the marker, looks for a Wiki once more and only then readies the agent', async () => {
   // Arrange
   const steps: string[] = []
 
@@ -91,12 +95,15 @@ test('a generation’s start checks the folder, the existing Wiki, the publisher
         'path',
         'token',
         'block',
+        'folder',
         'in-the-way',
         'confirm',
+        'path',
         'parent',
         'publication',
         'git',
         'block',
+        'folder',
         'in-the-way',
         'claim',
         'token',
@@ -300,4 +307,72 @@ test('the no-Wiki sentence names the folder and nothing else', () => {
 
   // Assert
   assert.equal(sentence, 'Codebook found no LLM Wiki in docs/wiki.')
+})
+
+// Value: protects=Step 11 of the /ship review of Cycle 0055 pt1 (both Codex passes) and E1-F3's root cause: an output folder that exists without a Wiki, which the publisher refuses (`publish-wiki.mjs` inspectOutput); fails_when=the learner is asked to confirm, or an agent starts, for a publish that is sure to be refused, or a folder that appears while the confirmation stands open is claimed anyway; no_claim=the publisher's own refusal; seam=stand-ins
+test('an output folder that exists without a Wiki refuses the generation before the confirmation, and before the claim when it appeared while the confirmation stood open', async () => {
+  // Arrange: in one start the folder is there from the first look; in the other it appears after the confirmation.
+  const presentSteps: string[] = []
+  const present = standIns(presentSteps, {
+    hasOutputFolderWithoutWiki: async () => true,
+  })
+  const appearingSteps: string[] = []
+  let folderLooks = 0
+  const appearing = standIns(appearingSteps, {
+    hasOutputFolderWithoutWiki: async () => {
+      folderLooks += 1
+      return folderLooks > 1
+    },
+  })
+
+  // Act
+  const presentStart = await startWikiGenerate(present)
+  const appearingStart = await startWikiGenerate(appearing)
+
+  // Assert
+  const refusal =
+    'refuse: The folder .codebook/wiki already exists but holds no LLM Wiki, and the publisher writes a first Wiki only into a folder it makes itself. Move what you keep in it elsewhere and remove the folder, or set codebook.wikiOutputDirectory to a folder that does not exist yet, then press Generate LLM Wiki again.'
+  assert.deepEqual(
+    {
+      presentStart,
+      presentSteps,
+      appearingStart,
+      appearingClaimed: appearingSteps.includes('claim'),
+      appearingRefusal: appearingSteps.at(-1),
+    },
+    {
+      presentStart: undefined,
+      presentSteps: ['path', 'token', 'block', refusal],
+      appearingStart: undefined,
+      appearingClaimed: false,
+      appearingRefusal: refusal,
+    },
+  )
+})
+
+// Value: protects=Step 11 of the /ship review of Cycle 0055 pt1 (Codex adversarial): a link put on the Wiki folder's path while the confirmation stood open; fails_when=the folder that holds the output is made through it, outside the project, before the path is checked again; no_claim=what the path check finds (assertNoLinkOnWikiPath tests); seam=a path check that refuses on its second call
+test('a link put on the path while the confirmation stood open refuses the generation before any folder is made', async () => {
+  // Arrange
+  const steps: string[] = []
+  let pathChecks = 0
+  const dependencies = standIns(steps, {
+    assertPathHeld: async () => {
+      pathChecks += 1
+      if (pathChecks > 1)
+        throw new Error('The Wiki folder .codebook/wiki is a link.')
+    },
+  })
+
+  // Act
+  const failure = await startWikiGenerate(dependencies).then(
+    () => undefined,
+    (error: unknown) =>
+      error instanceof Error ? error.message : String(error),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { failure, madeFolder: steps.includes('parent') },
+    { failure: 'The Wiki folder .codebook/wiki is a link.', madeFolder: false },
+  )
 })

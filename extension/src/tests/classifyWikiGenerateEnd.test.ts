@@ -227,3 +227,31 @@ test('a generation stopped by the learner or its bound after it published ends a
     timedOut: { state: 'timed-out', site: 'replaced' },
   })
 })
+
+// Value: protects=Step 11 of the /ship review of Cycle 0055 pt1 (both Codex passes): a generation stopped after a manifest appeared that is no verified publication (no publisher's receipt, or one that failed the owner or entry-page check); fails_when=the stop's end records the site as replaced, so its notice says a Wiki was published and offers to open it; no_claim=the notice's words (wikiGenerateNotice tests); seam=none
+test('a generation stopped after a manifest appeared without a verified publication ends with nothing published', () => {
+  // Arrange
+  const manifestOnly: WikiUpdateEndFacts = {
+    ...NOTHING_PUBLISHED,
+    tokenAtEnd: 'b@8',
+    cancelled: true,
+  }
+  const failedCheck: WikiUpdateEndFacts = {
+    ...publishedWith({ status: 'current', changedPaths: [], addedPaths: [] }),
+    generatedSiteProblem:
+      'The LLM Wiki published in .codebook/wiki does not identify this opened project.',
+    timedOut: true,
+  }
+
+  // Act
+  const ends = [
+    classifyWikiUpdateEnd(manifestOnly),
+    classifyWikiUpdateEnd(failedCheck),
+  ]
+
+  // Assert
+  assert.deepEqual(ends, [
+    { state: 'cancelled', site: 'kept' },
+    { state: 'timed-out', site: 'kept' },
+  ])
+})

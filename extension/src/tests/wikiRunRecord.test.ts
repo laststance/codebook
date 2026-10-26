@@ -146,3 +146,36 @@ test('on Windows the record shortens the home folder whatever the case of its dr
     'LLM Wiki update ended: host=cursor started=2026-10-26T04:00:00.000Z ended=2026-10-26T05:00:00.000Z end=cancelled summary="stopped by the learner or the closing window" output=~\\Repo\\.codebook\\wiki',
   )
 })
+
+// Value: protects=Step 11 of the /ship review of Cycle 0055 pt1 (Claude adversarial): a folder name with a line break, which a workspace setting can give; fails_when=the record breaks into lines, so a second line can pass for a record of another end; no_claim=the folder's other characters, which stay as written; seam=none
+test('a line break or another control character in the folder is written as an escape, so the record stays one line', () => {
+  // Act
+  const record = wikiRunRecord(
+    {
+      state: 'cancelled',
+      runKind: 'generate',
+      host: 'vscode',
+      finishedAt: '2026-10-26T05:00:00.000Z',
+      site: 'kept',
+      outputDirectory:
+        '/srv/wiki\nLLM Wiki generate ended: end=succeeded\u007f',
+      outputLabel: 'wiki',
+    },
+    { runKind: 'generate', startedAt: '2026-10-26T04:30:00.000Z' },
+    '/Users/learner',
+    'darwin',
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      lines: record.split('\n').length,
+      output: record.slice(record.indexOf(' output=')),
+    },
+    {
+      lines: 1,
+      output:
+        ' output=/srv/wiki\\u000aLLM Wiki generate ended: end=succeeded\\u007f',
+    },
+  )
+})

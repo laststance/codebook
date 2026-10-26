@@ -236,6 +236,27 @@ function stoppedEnd(
 }
 
 /**
+ * Names what a stopped generation left: `replaced` only for a publication of the Codebook publisher that passed the owner and entry-page checks and whose manifest could be read, so a stop's notice offers to open nothing else; a manifest that appeared without one leaves `kept` (nothing was published); called by {@link classifyWikiUpdateEnd} for a generation the learner or its bound stopped (/ship review, Cycle 0055 pt1).
+ * @param facts - What the host observed when the run stopped.
+ * @param site - Whether the manifest changed during the run.
+ * @returns The site the stop's end records.
+ * @example
+ * generationStopSite({ ...facts, publicationAtEnd: undefined }, 'replaced') // => 'kept'
+ */
+function generationStopSite(
+  facts: WikiUpdateEndFacts,
+  site: WikiUpdateSite,
+): WikiUpdateSite {
+  const isVerifiedPublication =
+    facts.publicationAtEnd !== undefined &&
+    facts.publicationAtEnd !== facts.publicationAtStart &&
+    facts.published !== undefined &&
+    facts.generatedSiteProblem === undefined
+  // Only a verified publication counts as published; a manifest without one is nothing the learner can open.
+  return site === 'replaced' && !isVerifiedPublication ? 'kept' : site
+}
+
+/**
  * Picks the published manifest that is the run's success; called by {@link endOfFinishedRun} before any failure the agent reported is looked at.
  * @param facts - What the host observed when the run stopped.
  * @returns
@@ -523,7 +544,10 @@ export function classifyWikiUpdateEnd(
   if (missing) return missing
   const site: WikiUpdateSite =
     facts.tokenAtEnd === facts.tokenAtStart ? 'kept' : 'replaced'
-  const stopped = stoppedEnd(facts, site)
+  const stopped = stoppedEnd(
+    facts,
+    facts.runKind === 'generate' ? generationStopSite(facts, site) : site,
+  )
   if (stopped) return stopped
   return facts.runKind === 'generate'
     ? endOfFinishedGeneration(facts, site)
