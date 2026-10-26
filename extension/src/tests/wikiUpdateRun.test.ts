@@ -499,3 +499,33 @@ test('a start refused because somebody is still updating the Wiki, and a run tha
     site: 'kept',
   })
 })
+
+// Value: protects=the LLM Wiki view's refresh on a change of this window's run state; fails_when=a start, an end, a refused start or a stopped listener's later change is reported wrongly; no_claim=what the view does with it; seam=the run state object
+test('onDidChange reports every change of the state and nothing after the listener is removed', () => {
+  // Arrange
+  const run = new WikiUpdateRun()
+  const output = {
+    outputDirectory: '/repo/.codebook/wiki',
+    outputLabel: '.codebook/wiki',
+  }
+  let changes = 0
+  const stopListening = run.onDidChange(() => {
+    changes += 1
+  })
+
+  // Act
+  run.begin('cursor', output, 900_000, false)
+  run.markCandidateStaged()
+  run.end({ state: 'cancelled', site: 'kept' })
+  run.refuseStart('cursor', output, {
+    kind: 'conflict',
+    paths: ['index.html'],
+    cause: 'edited-page',
+  })
+  const changesWhileListening = changes
+  stopListening()
+  run.begin('cursor', output, 900_000, false)
+
+  // Assert
+  assert.deepEqual([changesWhileListening, changes], [4, 4])
+})

@@ -132,7 +132,7 @@ const LOCAL_WORDING: LlmWikiViewWording = {
 }
 
 /** The message above the tree while a VS Code watch is shown: Stop watching ends Codebook's watch only. */
-export const LLM_WIKI_WATCHING_MESSAGE =
+const LLM_WIKI_WATCHING_MESSAGE =
   'Codebook is watching the chat. Stop watching does not stop the chat; stop it in the chat.'
 
 /** How an attention cause is worded and what its row offers (the plan's attention table). */
