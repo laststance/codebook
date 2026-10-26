@@ -19,7 +19,7 @@ Cycle 0056 ([Issue #135](https://github.com/laststance/codebook/issues/135)), a 
 - **A folder that cannot take a first Wiki names what is in the way** (`The folder <folder> cannot take a new LLM Wiki: <path> is in the way. Press Update LLM Wiki for the details and the next step.`); the block's cause id moves to the Output record.
 - **The LLM Wiki view shows `Waiting for chat`** as soon as a stopped watch's reservation is written, also without a file event.
 
-**Diagrams.** The bundled skill moves to **1.0.50**: two conditional edges between the same nodes, and an edge that crosses a row, no longer draw their labels over each other or over a node.
+**Diagrams.** The bundled skill moves to **1.0.50**: two conditional edges between the same nodes, an edge that crosses a row, and edges between different nodes with one midpoint no longer draw their labels over each other or over a node.
 
 **Compatibility.** The MCP API stays 1.8; the Wiki's published format, the marker format and stored learner data do not change.
 

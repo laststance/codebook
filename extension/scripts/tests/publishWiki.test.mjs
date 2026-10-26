@@ -5336,6 +5336,27 @@ function threeRowColumn(diagram, edges) {
   }))
 }
 
+/** Replaces the fixture's nodes and edges with the given grid: each node as `[id, row, column]`, each edge as `[id, from, to, label, condition]`; an edge with a condition is a branch. */
+function gridDiagram(diagram, nodes, edges) {
+  const reference = diagram.nodes[0].sources
+  diagram.nodes = nodes.map(([id, row, column]) => ({
+    id,
+    label: id,
+    row,
+    column,
+    sources: reference,
+  }))
+  diagram.edges = edges.map(([id, from, to, label, condition]) => ({
+    id,
+    from,
+    to,
+    label,
+    kind: condition ? 'branch' : 'call',
+    ...(condition ? { condition } : {}),
+    sources: reference,
+  }))
+}
+
 /** The boxes of a rendered flow diagram: each node's rectangle and each edge's label backing, by id. */
 function diagramBoxes(html) {
   const box = ([, id, x, y, width, height]) => ({
@@ -5482,6 +5503,123 @@ test('a column with a stacked pair and an edge across two rows draws no label ov
         labels: ['e1', 'e2', 'e3', 'e4'],
         overlaps: [],
       },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=CodeRabbit on PR #136 (render-wiki-diagrams.mjs labelBandOf), two edges whose labels share a midpoint in one gap; fails_when=an edge from the first to the third column and an edge straight down the second column, both leaving the top row, draw their labels in the same place because their bands are keyed by different column pairs; no_claim=the connector lines; seam=a two-row grid with those two edges
+test('two edges that cross the same gap at the same midpoint stack their labels instead of drawing them over each other', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-diagram-shared-midpoint-')),
+  )
+  try {
+    const manifest = await diagramInput(root)
+    gridDiagram(
+      manifest.pages[0].diagrams[0],
+      [
+        ['a', 0, 0],
+        ['b', 0, 1],
+        ['c', 1, 1],
+        ['d', 1, 2],
+      ],
+      [
+        ['e1', 'a', 'd', 'Send the order'],
+        ['e2', 'b', 'c', 'Check the stock'],
+      ],
+    )
+
+    // Act
+    const boxes = diagramBoxes(await renderedDiagramHtml(root, manifest))
+
+    // Assert
+    assert.deepEqual(
+      {
+        nodes: boxes.nodes.map(({ id }) => id).sort(),
+        labels: boxes.labels.map(({ id }) => id).sort(),
+        overlaps: overlappingBoxes(boxes),
+      },
+      { nodes: ['a', 'b', 'c', 'd'], labels: ['e1', 'e2'], overlaps: [] },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=Cycle 0056 (found with the CodeRabbit finding above), a row's horizontal label under a tall stack of labels that cross the gap above that row at the same midpoint; fails_when=the stack in the gap reaches down over the label reserved above the row; no_claim=labels at different midpoints; seam=two conditional edges down from the top row and one edge along the second row, all with one midpoint
+test('a horizontal label below a stack of labels in the gap above its row keeps clear of that stack', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-diagram-gap-and-row-')),
+  )
+  try {
+    const manifest = await diagramInput(root)
+    gridDiagram(
+      manifest.pages[0].diagrams[0],
+      [
+        ['a', 0, 0],
+        ['b', 1, 1],
+        ['x', 1, 0],
+      ],
+      [
+        ['e1', 'a', 'b', 'Save the draft', 'the form is valid'],
+        ['e2', 'a', 'b', 'Show the errors', 'the form is invalid'],
+        ['e3', 'x', 'b', 'Load the saved draft'],
+      ],
+    )
+
+    // Act
+    const boxes = diagramBoxes(await renderedDiagramHtml(root, manifest))
+
+    // Assert
+    assert.deepEqual(
+      {
+        nodes: boxes.nodes.map(({ id }) => id).sort(),
+        labels: boxes.labels.map(({ id }) => id).sort(),
+        overlaps: overlappingBoxes(boxes),
+      },
+      { nodes: ['a', 'b', 'x'], labels: ['e1', 'e2', 'e3'], overlaps: [] },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=Cycle 0056 (found with the CodeRabbit finding above), two horizontal edges of one row between different node pairs with one midpoint; fails_when=the outer and the inner pair draw their labels in the same place above the row; no_claim=the connector lines, which cross the inner nodes as the author placed them; seam=one row of four nodes with an edge from the first to the fourth and one from the second to the third
+test('two edges of one row between different nodes with one midpoint stack their labels', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-diagram-row-midpoint-')),
+  )
+  try {
+    const manifest = await diagramInput(root)
+    gridDiagram(
+      manifest.pages[0].diagrams[0],
+      [
+        ['a', 0, 0],
+        ['b', 0, 1],
+        ['c', 0, 2],
+        ['d', 0, 3],
+      ],
+      [
+        ['e1', 'a', 'd', 'Forward the receipt'],
+        ['e2', 'b', 'c', 'Count the items'],
+      ],
+    )
+
+    // Act
+    const boxes = diagramBoxes(await renderedDiagramHtml(root, manifest))
+
+    // Assert
+    assert.deepEqual(
+      {
+        nodes: boxes.nodes.map(({ id }) => id).sort(),
+        labels: boxes.labels.map(({ id }) => id).sort(),
+        overlaps: overlappingBoxes(boxes),
+      },
+      { nodes: ['a', 'b', 'c', 'd'], labels: ['e1', 'e2'], overlaps: [] },
     )
   } finally {
     await rm(root, { recursive: true, force: true })

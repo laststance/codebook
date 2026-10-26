@@ -113,18 +113,23 @@ function flowSvg(diagram, prefix) {
   const nodeHeight = Math.max(...diagram.nodes.map(node => wrap(node.label, 20).length)) * LAYOUT.lineHeight + LAYOUT.nodePadding * 2;
   const labelGroups = new Map();
   const definitions = new Map(diagram.nodes.map(node => [node.id, node]));
-  /** Names the label band an edge's label stacks in: one band for the edges of a row's node pair, and one for the edges between two columns that leave through the same gap between rows, so labels of different edges never share a place. */
-  const labelBandOf = edge => {
+  /** Names the gap between rows an edge's label sits in: above its row for a horizontal edge, the gap it leaves its source node through for a vertical one. */
+  const gapRowOf = edge => {
     const from = definitions.get(edge.from), to = definitions.get(edge.to);
-    if (from.row === to.row) return [from.id, to.id].sort().join(':');
-    return `gap:${Math.min(from.column, to.column)}:${Math.max(from.column, to.column)}:${to.row > from.row ? from.row : from.row - 1}`;
+    if (from.row === to.row) return from.row - 1;
+    return to.row > from.row ? from.row : from.row - 1;
   };
+  /** Names the label band an edge's label stacks in: every label with one midpoint (the column sum fixes it) in one gap between rows shares a band, horizontal and vertical edges alike, so labels of different edges never share a place. */
+  const labelBandOf = edge => `band:${definitions.get(edge.from).column + definitions.get(edge.to).column}:${gapRowOf(edge)}`;
+  // The bands a vertical edge crosses stack in the middle of their gap; a band of a row's horizontal edges alone keeps the row's reserved place above its nodes.
+  const crossedBands = new Set();
   for (const edge of diagram.edges) {
     // A self-loop has its own label place above its node.
     if (edge.from === edge.to) continue;
     const key = labelBandOf(edge);
     const group = labelGroups.get(key) ?? [];
     group.push(edge); labelGroups.set(key, group);
+    if (definitions.get(edge.from).row !== definitions.get(edge.to).row) crossedBands.add(key);
   }
   const groupedHeight = [...labelGroups.values()].map(group => group.reduce((height, edge) => height + edgeLines(edge).length * LAYOUT.lineHeight, (group.length - 1) * LAYOUT.labelGap));
   const labelHeight = Math.max(LAYOUT.lineHeight, ...diagram.edges.map(edge => edgeLines(edge).length * LAYOUT.lineHeight), ...groupedHeight);
@@ -153,11 +158,12 @@ function flowSvg(diagram, prefix) {
     const midpointX = (startX + endX) / 2, midpointY = (startY + endY) / 2;
     const offsetX = horizontal ? 0 : lane, offsetY = horizontal ? lane : 0;
     const path = `M${startX} ${startY} C${midpointX + offsetX} ${startY + offsetY} ${midpointX + offsetX} ${endY + offsetY} ${endX} ${endY}`;
-    // Horizontal labels use the row's reserved band, clear of both nodes and their connector; a vertical label stacks in the gap next to the node it leaves, so an edge across several rows never puts its label on a node between.
-    const group = labelGroups.get(labelBandOf(edge)) ?? [edge];
+    // Horizontal labels use the row's reserved band, clear of both nodes and their connector; a vertical label stacks in the gap next to the node it leaves, so an edge across several rows never puts its label on a node between. A horizontal label whose midpoint a vertical edge also crosses in the gap above its row joins that stack.
+    const band = labelBandOf(edge);
+    const group = labelGroups.get(band) ?? [edge];
     const priorHeight = group.slice(0, group.indexOf(edge)).reduce((height, previous) => height + edgeLines(previous).length * LAYOUT.lineHeight + LAYOUT.labelGap, 0);
-    const gapMiddleY = forward ? from.y + nodeHeight + (rowStride - nodeHeight) / 2 : from.y - (rowStride - nodeHeight) / 2;
-    const labelY = horizontal ? from.y - labelHeight + LAYOUT.fontSize + priorHeight : gapMiddleY - labelHeight / 2 + priorHeight;
+    const gapMiddleY = LAYOUT.margin + labelHeight + gapRowOf(edge) * rowStride + nodeHeight + (rowStride - nodeHeight) / 2;
+    const labelY = crossedBands.has(band) ? gapMiddleY - labelHeight / 2 + priorHeight : from.y - labelHeight + LAYOUT.fontSize + priorHeight;
     return edgeSvg(edge, prefix, path, midpointX + offsetX, labelY);
   }).join('');
   return { width, height, content: connectors + diagram.nodes.map(node => nodeSvg(node, positions.get(node.id))).join('') };
