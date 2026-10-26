@@ -1090,6 +1090,8 @@ export async function workspaceHarness(
   let closeDisposedPanelTabsLater = false
   /** Whether a disposed pane that is the front tab of a group shared with other tabs first makes the next tab the active one through a tab notification, and closes its own tab later; see `activateNextTabBeforeDisposedPaneTabCloses`. */
   let activatesNextTabBeforeDisposedPaneTabCloses = false
+  /** Whether a disposed panel's `viewType` and `viewColumn` throw `Webview is disposed`, as the editor's WebviewPanel does; see `throwFromDisposedPanelGetters`. */
+  let throwsFromDisposedPanelGetters = false
   /** The next-tab notification of a disposed pane that the fake editor has not delivered yet; the first layout read after the disposal delivers it while the read is in flight. */
   let pendingNextTabActivation: (() => void) | undefined
   // Cursor 3.23.12 keeps naming the chat's group as the active tab group after `workbench.action.focusFirstEditorGroup` gave the main editor the keyboard. Only a group event corrects the name: a whole tab-model rebuild names the active group (`workbench.desktop.main.js` 17269:31013, `extensionHostProcess.js` 131:33177), as does a group's activation (17269:28123, 131:33740); a tab notification is a tab operation, which leaves the named group as it is (131:34068), so it does not (Cycle 0046 row 673).
@@ -2834,9 +2836,14 @@ export async function workspaceHarness(
     let actualViewColumn = options?.viewColumn
       ? nativeReaderColumn(options.viewColumn)
       : options?.viewColumn
+    let isDisposed = false
     const value = {
-      // As the editor's WebviewPanel names it, so a test can find one panel among the native ones.
-      viewType: kind,
+      // As the editor's WebviewPanel names it, so a test can find one panel among the native ones; after its disposal it throws, as the editor's does, once a test asks for that (`throwFromDisposedPanelGetters`).
+      get viewType(): string {
+        if (throwsFromDisposedPanelGetters && isDisposed)
+          throw new Error('Webview is disposed')
+        return kind
+      },
       blockInnerFocus: false,
       webview: {
         html: '',
@@ -2995,6 +3002,8 @@ export async function workspaceHarness(
       emit,
       /** The panel's column as the editor's WebviewPanel reports it: its tab's group's column, unless `reportPanelColumn` makes it report another. */
       get viewColumn(): number | undefined {
+        if (throwsFromDisposedPanelGetters && isDisposed)
+          throw new Error('Webview is disposed')
         return reportedPanelColumns.has(kind)
           ? reportedPanelColumns.get(kind)
           : actualViewColumn
@@ -3316,6 +3325,7 @@ export async function workspaceHarness(
         }
       },
       dispose(): void {
+        isDisposed = true
         if (!panels.delete(value)) return
         // A disposed pane that had the keyboard leaves it to no editor.
         if (
@@ -5945,6 +5955,13 @@ export async function workspaceHarness(
      */
     activateNextTabBeforeDisposedPaneTabCloses(): void {
       activatesNextTabBeforeDisposedPaneTabCloses = true
+    },
+    /**
+     * Makes a disposed panel's `viewType` and `viewColumn` throw `Webview is disposed`, as the editor's WebviewPanel does (`dispose()` itself stays idempotent).
+     * @example harness.throwFromDisposedPanelGetters()
+     */
+    throwFromDisposedPanelGetters(): void {
+      throwsFromDisposedPanelGetters = true
     },
     /**
      * Delivers queued native tab changes after a regression changes window focus, for delayed pane-disposal checks.

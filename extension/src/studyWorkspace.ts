@@ -234,6 +234,7 @@ import {
   NODE_RECORDED_SOURCE_TEXT,
 } from './utils/describeNodeRecordedSource'
 import { describeNodeTestReplay } from './utils/describeNodeTestReplay'
+import { describePaneIdentity } from './utils/describePaneIdentity'
 import { describeStudy } from './utils/describeStudy'
 import {
   describeViewportDelivery,
@@ -22609,10 +22610,18 @@ export class StudyWorkspace {
     name: 'Application' | 'Study',
     panel: vscode.WebviewPanel,
   ): void {
-    this.placementEvents.record(
-      performance.now(),
-      `${name} view state active=${panel.active} visible=${panel.visible} column=${panel.viewColumn ?? 'none'}`,
-    )
+    // A pane the editor disposed meanwhile throws from its getters; a note never fails the listener.
+    try {
+      this.placementEvents.record(
+        performance.now(),
+        `${name} view state active=${panel.active} visible=${panel.visible} column=${panel.viewColumn ?? 'none'}`,
+      )
+    } catch {
+      this.placementEvents.record(
+        performance.now(),
+        `${name} view state of a disposed pane`,
+      )
+    }
   }
 
   /**
@@ -22673,7 +22682,7 @@ export class StudyWorkspace {
   ): void {
     if (!panel) return
     this.noteNativeEffect(
-      `reveal ${panel.viewType} column ${column ?? 'own'} preserveFocus ${preserveFocus}`,
+      `reveal ${describePaneIdentity(panel)} to column ${column ?? 'own'} preserveFocus ${preserveFocus}`,
     )
     panel.reveal(column, preserveFocus)
   }
@@ -22685,9 +22694,7 @@ export class StudyWorkspace {
    */
   private disposePane(panel: vscode.WebviewPanel | undefined): void {
     if (!panel) return
-    this.noteNativeEffect(
-      `dispose ${panel.viewType} column ${panel.viewColumn ?? 'none'}`,
-    )
+    this.noteNativeEffect(`dispose ${describePaneIdentity(panel)}`)
     panel.dispose()
   }
 

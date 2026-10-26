@@ -262,3 +262,24 @@ test('a refused guard lists the tab operation and the pane view-state report the
     await harness.close()
   }
 })
+
+// Value: protects=Codebook: Close Study Workspace after a replay opened (N56 native finding on 8b76a578): panes the editor already disposed with their tabs are disposed again without reading their identity, so the close ends without `Webview is disposed`; fails_when=the effect note reads viewType or viewColumn of a disposed panel, which throws as the editor's WebviewPanel does, and the close rejects; why_new=Cycle 0056 task 17 stage 1 (the new disposal note); seam=workspaceHarness whose disposed panels throw from viewType and viewColumn, an open reader with both panes; no_claim=the editor's own dialog
+test('closing the Study workspace ends without an error when the editor already disposed its panes', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.throwFromDisposedPanelGetters()
+  try {
+    await harness.reader.open()
+
+    // Act
+    const closing = harness.reader.close().then(
+      () => 'closed',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.equal(await closing, 'closed')
+  } finally {
+    await harness.close()
+  }
+})
