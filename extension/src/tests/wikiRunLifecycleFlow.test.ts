@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdir, readFile, utimes, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { WikiUpdateTimeoutError } from '../utils/wikiUpdateTimeoutError'
@@ -641,7 +641,7 @@ test('Stop LLM Wiki Run during a generation’s Cursor skill step ends the start
     {
       markerWhileReadying: true,
       errors: [
-        'Codebook did not start the LLM Wiki generation: The LLM Wiki generation was cancelled at HH:MM while Codebook readied the Cursor skill; no agent was started.',
+        'Codebook did not start the LLM Wiki generation: The LLM Wiki generation was cancelled at HH:MM while Codebook readied the Cursor skill; no agent was started. Press Generate LLM Wiki when you want to start again.',
       ],
       notices: [],
       agentRuns: 0,
@@ -684,7 +684,7 @@ test('Stop LLM Wiki Run during an update’s Cursor skill step ends the start wi
     { errors: project.errors.map(withoutClockTime), agentRuns },
     {
       errors: [
-        'Codebook could not start the Wiki update: The LLM Wiki update was cancelled at HH:MM while Codebook readied the Cursor skill; no agent was started.',
+        'Codebook could not start the Wiki update: The LLM Wiki update was cancelled at HH:MM while Codebook readied the Cursor skill; no agent was started. Press Update LLM Wiki when you want to start again.',
       ],
       agentRuns: 0,
     },
@@ -1047,15 +1047,21 @@ test('a window that closes during a generation’s Cursor skill step ends the st
   )
 })
 
-// Value: protects=Cycle 0056 pass 1 RT2 for an update that took a reservation over; fails_when=a window that closes during the skill step of an Update anyway leaves the start's marker claimed, or the cleanup of the refused start runs after the reservations were dropped and registers one nobody removes; no_claim=the generation's wording (test above); seam=a verify step that never settles
-test('a window that closes during an update’s Cursor skill step after Update anyway leaves no marker of this start', async (context) => {
-  // Arrange
+/** Holds a Cursor skill step open in a window that took another window's reservation over, closes the window, and returns the marker on disk right after the shutdown and how often the agent ran. */
+async function closeWindowDuringSkillStepOverReservation(
+  context: TestContext,
+  kind: 'generate' | 'update',
+  watchEndedAtMs: number,
+): Promise<{
+  marker: Record<string, unknown> | undefined
+  agentRuns: number
+}> {
   let agentRuns = 0
-  const watchEndedAtMs = Date.now() - 1_000
+  const anyway = kind === 'update' ? 'Update anyway' : 'Generate anyway'
   const project = await openProjectWithoutWiki({
     cursor: true,
     chooseAction: (_message, actions) =>
-      actions.includes('Update anyway') ? 'Update anyway' : undefined,
+      actions.includes(anyway) ? anyway : undefined,
     cursorSkill: { verify: () => new Promise<never>(() => {}) },
     cursorAgent: async () => {
       agentRuns += 1
@@ -1063,34 +1069,134 @@ test('a window that closes during an update’s Cursor skill step after Update a
     },
   })
   context.after(() => project.close())
-  await publishGeneratedWiki(project.outputDirectory, project.projectRoot)
-  const publishedAt = new Date(watchEndedAtMs - 10_000)
-  await utimes(
-    join(project.outputDirectory, 'codebook-wiki.json'),
-    publishedAt,
-    publishedAt,
-  )
+  if (kind === 'update') {
+    await publishGeneratedWiki(project.outputDirectory, project.projectRoot)
+    const publishedAt = new Date(watchEndedAtMs - 10_000)
+    await utimes(
+      join(project.outputDirectory, 'codebook-wiki.json'),
+      publishedAt,
+      publishedAt,
+    )
+  }
   await writeOtherWindowReservation(
     project.projectRoot,
     project.markerPath,
     watchEndedAtMs,
   )
-  const updating = project.runUpdateCommand().catch(() => undefined)
+  const starting =
+    kind === 'update'
+      ? project.runUpdateCommand().catch(() => undefined)
+      : project.runCommand(GENERATE_COMMAND).catch(() => undefined)
   await waitUntil(
     () => project.skillCalls.includes('verify'),
     'the skill step',
     6_000,
   )
-
-  // Act: the marker is read the moment the window's shutdown is done, not when the step's bound would have ended it.
+  // The marker is read the moment the window's shutdown is done, not when the step's bound would have ended it.
   await project.closeWindow()
-  const markerLeft = await exists(project.markerPath)
-  await updating
+  const marker = await readMarker(project.markerPath)
+  await starting
+  return { marker, agentRuns }
+}
+
+// Value: protects=Cycle 0056 pass 2 SM-A, the reservation of another window's stopped watch that a closing window wrote back; fails_when=the closing window drops the reservation it wrote back after Update anyway, so the other window's chat that may still publish loses its protection, or the written-back marker is this window's; no_claim=this window's own reservation at close (stopExtension tests); seam=a verify step that never settles and a reservation written by hand
+test('a window that closes during an update’s Cursor skill step after Update anyway leaves the other window’s reservation on disk', async (context) => {
+  // Arrange
+  const watchEndedAtMs = Date.now() - 1_000
+
+  // Act
+  const { marker, agentRuns } = await closeWindowDuringSkillStepOverReservation(
+    context,
+    'update',
+    watchEndedAtMs,
+  )
 
   // Assert
   assert.deepEqual(
-    { markerLeft, agentRuns },
-    { markerLeft: false, agentRuns: 0 },
+    {
+      windowId: marker?.windowId,
+      host: marker?.host,
+      watchEndedAtMs: marker?.watchEndedAtMs,
+      runKind: marker?.runKind,
+      agentRuns,
+    },
+    {
+      windowId: 'the-other-window',
+      host: 'vscode',
+      watchEndedAtMs,
+      runKind: 'generate',
+      agentRuns: 0,
+    },
+  )
+})
+
+// Value: protects=Cycle 0056 pass 2 SM-B, the generation twin of SM-A; fails_when=a window that closes during a Generate anyway's skill step drops the other window's reservation it wrote back; no_claim=the update's wording (test above); seam=a verify step that never settles and a reservation written by hand
+test('a window that closes during a generation’s Cursor skill step after Generate anyway leaves the other window’s reservation on disk', async (context) => {
+  // Arrange
+  const watchEndedAtMs = Date.now() - 1_000
+
+  // Act
+  const { marker, agentRuns } = await closeWindowDuringSkillStepOverReservation(
+    context,
+    'generate',
+    watchEndedAtMs,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      windowId: marker?.windowId,
+      host: marker?.host,
+      watchEndedAtMs: marker?.watchEndedAtMs,
+      runKind: marker?.runKind,
+      agentRuns,
+    },
+    {
+      windowId: 'the-other-window',
+      host: 'vscode',
+      watchEndedAtMs,
+      runKind: 'generate',
+      agentRuns: 0,
+    },
+  )
+})
+
+// Value: protects=Cycle 0056 pass 2 SM-C, a window that closes while the skill's deploy never settles; fails_when=shutdown waits for the hung deploy beyond the termination grace, leaves the start's marker, or lets an agent start; no_claim=a hung verify (tests above); seam=a verify that reports a missing skill and a deploy that never settles
+test('a window that closes while the Cursor skill deploy never settles shuts down within the grace, removes the marker and starts no agent', async (context) => {
+  // Arrange
+  let agentRuns = 0
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    cursorSkill: {
+      verify: async () => {
+        throw new Error('The managed Cursor skill is missing.')
+      },
+      deploy: () => new Promise<void>(() => {}),
+    },
+    cursorAgent: async () => {
+      agentRuns += 1
+      return 'Published.'
+    },
+  })
+  context.after(() => project.close())
+  const generating = project.runCommand(GENERATE_COMMAND).catch(() => undefined)
+  await waitUntil(
+    () => project.skillCalls.includes('deploy'),
+    'the hung deploy',
+    6_000,
+  )
+
+  // Act
+  const closeStartedAtMs = Date.now()
+  await project.closeWindow()
+  const shutdownMs = Date.now() - closeStartedAtMs
+  const markerLeft = await exists(project.markerPath)
+  await generating
+
+  // Assert
+  assert.deepEqual(
+    { isShutdownInsideGrace: shutdownMs < 4_000, markerLeft, agentRuns },
+    { isShutdownInsideGrace: true, markerLeft: false, agentRuns: 0 },
   )
 })
 
@@ -1221,15 +1327,15 @@ test('a Generate pressed while a stopped step’s verify still hangs waits for i
     {
       skillCalls: ['verify'],
       errors: [
-        'Codebook did not start the LLM Wiki generation: The LLM Wiki generation was cancelled at HH:MM while Codebook readied the Cursor skill; no agent was started.',
-        'Codebook did not start the LLM Wiki generation: The LLM Wiki generation was cancelled at HH:MM while Codebook readied the Cursor skill; no agent was started.',
+        'Codebook did not start the LLM Wiki generation: The LLM Wiki generation was cancelled at HH:MM while Codebook readied the Cursor skill; no agent was started. Press Generate LLM Wiki when you want to start again.',
+        'Codebook did not start the LLM Wiki generation: The LLM Wiki generation was cancelled at HH:MM while Codebook readied the Cursor skill; no agent was started. Press Generate LLM Wiki when you want to start again.',
       ],
     },
   )
 })
 
-// Value: protects=Cycle 0056 pass 1 T1, the bound firing while an earlier stopped deploy still hangs; fails_when=the second start waits for the hung deploy past its own bound, or leaves its marker, or starts an agent; no_claim=a Stop of the second step (test above); seam=a deploy that never settles and a bound shortened to one second
-test('a Generate pressed after a stopped step whose deploy still hangs ends at its own bound with the bound sentence and releases the marker', async (context) => {
+// Value: protects=Cycle 0056 pass 2 RT-B, the bound firing while an earlier stopped deploy never settles; fails_when=the second start says only that it timed out although the cause is the hung step of this window, leaves its marker, or starts an agent; no_claim=a Stop of the second step (test above); seam=a deploy that never settles and a bound shortened to one second
+test('a Generate pressed after a stopped step whose deploy never settles ends at its own bound saying the earlier step is still running and releases the marker', async (context) => {
   // Arrange
   let agentRuns = 0
   const project = await openProjectWithoutWiki({
@@ -1274,8 +1380,51 @@ test('a Generate pressed after a stopped step whose deploy still hangs ends at i
     {
       skillCalls: ['verify', 'deploy'],
       lastError:
-        'Codebook did not start the LLM Wiki generation: Codebook stopped readying the Cursor skill after 1 second; no agent was started. Press Generate LLM Wiki again, or run Codebook: Set Up AI Chat.',
+        'Codebook did not start the LLM Wiki generation: Codebook could not ready the Cursor skill: an earlier Cursor skill step in this window is still running. Reload the window (Developer: Reload Window) to end it, then press Generate LLM Wiki again.',
       agentRuns: 0,
+    },
+  )
+})
+
+// Value: protects=Cycle 0056 pass 2 RT-A, the owner of a reservation that two refused starts in a row write back; fails_when=the second refused start writes this window's record (host cursor, this window's id) over the other window's VS Code reservation; no_claim=the first write-back (test above); seam=a reservation written by hand and the skill steps stubbed
+test('two refused starts in a row over a VS Code window’s reservation leave it that window’s marker', async (context) => {
+  // Arrange
+  const watchEndedAtMs = Date.now() - 1_000
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    chooseAction: (_message, actions) =>
+      actions.includes('Generate anyway') ? 'Generate anyway' : undefined,
+    cursorSkill: SKILL_IN_THE_WAY,
+  })
+  context.after(() => project.close())
+  await writeOtherWindowReservation(
+    project.projectRoot,
+    project.markerPath,
+    watchEndedAtMs,
+  )
+  await project.runCommand(GENERATE_COMMAND)
+  await waitForWriteBack(project)
+
+  // Act
+  await project.runCommand(GENERATE_COMMAND).catch(() => undefined)
+  await waitForWriteBack(project, 2)
+
+  // Assert
+  const marker = await readMarker(project.markerPath)
+  assert.deepEqual(
+    {
+      host: marker?.host,
+      windowId: marker?.windowId,
+      startedAtMs: marker?.startedAtMs,
+      watchEndedAtMs: marker?.watchEndedAtMs,
+      runKind: marker?.runKind,
+    },
+    {
+      host: 'vscode',
+      windowId: 'the-other-window',
+      startedAtMs: watchEndedAtMs - 60_000,
+      watchEndedAtMs,
+      runKind: 'generate',
     },
   )
 })

@@ -45,6 +45,7 @@ import {
   WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE,
   WIKI_RUN_STARTING_SENTENCE,
   WIKI_SKILL_STEP_BOUND_REASON,
+  WIKI_SKILL_STEP_EARLIER_RUNNING_END,
   WIKI_SKILL_STEP_STOPPED_REASON,
   WIKI_SKILL_STEP_TIMEOUT_MS,
   WIKI_UPDATE_LAST_RUN_STATE_KEY,
@@ -323,17 +324,18 @@ export function activate(
   let lastWikiAgentExit: WikiAgentExit | undefined
   // This window's id in the marker of a running update; another window's live marker refuses a start here.
   const wikiWindowId = randomUUID()
-  // The reservation each of this window's stopped VS Code watches left on disk for other windows, by Wiki output, with the timer that removes it at that watch's bound.
-  const wikiReservations = new Map<
-    string,
-    {
-      release: () => Promise<boolean>
-      timer: NodeJS.Timeout
-      /** When that watch ended and the kind of its run: what a start that takes the reservation over writes back if it is refused. */
-      watchEndedAtMs: number
-      runKind: WikiRunKind
-    }
-  >()
+  /** One reservation this window keeps on disk for a Wiki output: how to remove it, the timer that removes it at its bound, and what a start that takes it over writes back if it is refused. */
+  type WikiReservationEntry = {
+    release: () => Promise<boolean>
+    timer: NodeJS.Timeout
+    /** When that watch ended and the kind of its run. */
+    watchEndedAtMs: number
+    runKind: WikiRunKind
+    /** Set where this window wrote back another window's marker after a refused start: that marker is the original owner's, whose chat may still publish, so this window's shutdown leaves it on disk and a second refused start writes it back again as it was. Absent for this window's own reservation. */
+    replacedMarker?: TakenOverWikiReservation['replacedMarker']
+  }
+  // The reservation each of this window's stopped VS Code watches left on disk for other windows, by Wiki output, with the timer that removes it at that watch's bound; also one written back for another window's stopped watch ({@link WikiReservationEntry.replacedMarker}).
+  const wikiReservations = new Map<string, WikiReservationEntry>()
   // The latest change of this window's own marker on each Wiki output (its removal, or its turn into a stopped watch's reservation), while it runs (`running`) or waits for its next attempt, with the timer of that attempt.
   const wikiMarkerChanges = new Map<string, WikiMarkerChangeEntry>()
   // How many attempts of this window's own marker changes have ended on each Wiki output; a start whose claim met the marker in change compares it ({@link claimWikiMarkerForStart}).
@@ -425,6 +427,8 @@ export function activate(
     wikiReservations.delete(outputDirectory)
     if (!reservation) return
     clearTimeout(reservation.timer)
+    // Another window's stopped watch that this window wrote back stays on disk at this window's close: its chat may still publish, and only this window's own reservations are dropped here. Its bound removes it for the windows that read it.
+    if (isWindowClosing && reservation.replacedMarker !== undefined) return
     // The disk marker is the reload's only protection when its stopped-watch record is not in storage.
     if (
       await doesReloadNeedWikiReservation(
@@ -1407,15 +1411,12 @@ export function activate(
    * Registers this window's reservation of a Wiki output, so that its bound removes it, the window's shutdown drops it and a start that takes it over finds what to write back; called by {@link settleWikiRunMarker} for a stopped watch's reservation and by {@link leaveWikiMarkerOfRefusedStart} for one written back.
    * Why: a reservation without its entry is not removed at its bound, not dropped at shutdown and not seen by the next start of this window, which would release it and lose the protection of the chat that may still publish (Cycle 0056 M1).
    * @param outputDirectory - The Wiki output the reservation protects; the reservation of this output only is replaced, one this window left on another output keeps its own timer.
-   * @param reservation - How to remove the marker, when that watch ended and the kind of its run.
+   * @param reservation - How to remove the marker, when that watch ended, the kind of its run and, for another window's marker written back, that marker.
    * @example registerWikiReservation('/repo/.codebook/wiki', { release, watchEndedAtMs: 1_790_000_900_000, runKind: 'generate' })
    */
   const registerWikiReservation = (
     outputDirectory: string,
-    reservation: Pick<
-      NonNullable<ReturnType<typeof wikiReservations.get>>,
-      'release' | 'watchEndedAtMs' | 'runKind'
-    >,
+    reservation: Omit<WikiReservationEntry, 'timer'>,
   ): void => {
     clearTimeout(wikiReservations.get(outputDirectory)?.timer)
     // A reservation lasts the bound of its run's kind from the end of its watch, the one every reader of the marker uses ({@link wikiRunBoundMs}); only a VS Code watch leaves one. The bounds this module reads itself are passed, so a host test that shortens one reaches the timer.
@@ -1906,7 +1907,7 @@ export function activate(
    * @param startedAtMs - When the run starts.
    * @returns The claim's release and reservation, with `takenOver` when the claim took a stopped watch's reservation over (so a start that is then refused writes it back as it was, {@link leaveWikiMarkerOfRefusedStart}); or the marker of another window that holds it.
    * @throws What {@link claimWikiUpdateMarker} throws.
-   * @example await claimWikiRunMarker('/repo/.codebook/wiki', 'vscode', 'generate', Date.now()) // => { release, reserve }
+   * @example await claimWikiRunMarker('/repo/.codebook/wiki', 'vscode', 'generate', Date.now()) // => { release, reserve, takenOver }
    */
   const claimWikiRunMarker = async (
     outputDirectory: string,
@@ -1941,6 +1942,8 @@ export function activate(
       (ownReservation && {
         watchEndedAtMs: ownReservation.watchEndedAtMs,
         runKind: ownReservation.runKind,
+        // A reservation this window wrote back for another window stays that window's marker when a second refused start writes it back.
+        replacedMarker: ownReservation.replacedMarker,
       })
     return { ...claim, takenOver }
   }
@@ -1968,6 +1971,7 @@ export function activate(
       release: claim.release,
       watchEndedAtMs: takenOver.watchEndedAtMs,
       runKind: takenOver.runKind,
+      replacedMarker: takenOver.replacedMarker,
     })
   }
   /**
@@ -2443,8 +2447,11 @@ export function activate(
     }, WIKI_SKILL_STEP_TIMEOUT_MS)
     // An earlier step that was stopped may still be writing the skill; this one starts after it (under the same stop and bound).
     const earlierStep = wikiSkillStepInFlight
+    // Whether this step still waits for that earlier step: a bound that fires then says so, as no skill work of this step ever began.
+    let isWaitingForEarlierStep = earlierStep !== undefined
     const step = (async (): Promise<void> => {
       await earlierStep
+      isWaitingForEarlierStep = false
       // A step that was stopped or bounded while it waited writes nothing.
       stop.signal.throwIfAborted()
       try {
@@ -2478,7 +2485,9 @@ export function activate(
         throw new Error(
           describeWikiSkillStepEnd(
             stop.signal.reason === WIKI_SKILL_STEP_BOUND_REASON
-              ? WIKI_SKILL_STEP_BOUND_REASON
+              ? isWaitingForEarlierStep
+                ? WIKI_SKILL_STEP_EARLIER_RUNNING_END
+                : WIKI_SKILL_STEP_BOUND_REASON
               : WIKI_SKILL_STEP_STOPPED_REASON,
             runKind,
             WIKI_SKILL_STEP_TIMEOUT_MS,

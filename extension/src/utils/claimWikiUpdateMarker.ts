@@ -40,6 +40,7 @@ import {
 import { readWikiRegularFile } from './readWikiRegularFile'
 import { removeWithoutFollowing } from './removeWithoutFollowing'
 import { systemErrorCode } from './systemErrorCode'
+import type { WikiRunKind } from './wikiUpdateRun'
 import { withoutBootTime } from './withoutBootTime'
 
 /** A marker that is in the way at the moment another window removes or replaces it under its claim: it is no run that holds the Wiki, and this window may not remove it either. @example const inChange: WikiUpdateMarkerInChange = { isMarkerInChange: true } */
@@ -52,7 +53,7 @@ type WikiUpdateHolder =
 /** The reservation of a stopped watch that a start's claim took over, which a start refused after its claim writes back as it was: when the watch ended, the kind of the run it came from and, where another window's marker was read under the claim, that marker, so the written-back reservation keeps its owner (host, process, window, start) and so its own bound rather than the refused start's. */
 export type TakenOverWikiReservation = {
   watchEndedAtMs: number
-  runKind: 'generate' | 'update'
+  runKind: WikiRunKind
   /** The marker the claim removed; absent for this window's own reservation, which the claim's record already names. */
   replacedMarker?: WikiUpdateMarker
 }
@@ -151,7 +152,7 @@ function machineAndProcessOf(
  */
 function withRunKind<Record extends { runKind?: unknown }>(
   record: Record,
-  runKind: 'generate' | 'update',
+  runKind: WikiRunKind,
 ): Omit<Record, 'runKind'> & { runKind?: 'generate' } {
   const { runKind: _ownRunKind, ...withoutKind } = record
   return runKind === 'generate' ? { ...withoutKind, runKind } : withoutKind

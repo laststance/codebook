@@ -91,3 +91,20 @@ test('a signal that fires in the tick the step settles still ends the wait with 
   // Assert
   assert.equal(end, 'stopped')
 })
+
+// Value: protects=Cycle 0056 pass 2 T-A, a step that fails on its own before any signal; fails_when=the step's error is replaced by the signal's reason or swallowed; no_claim=a step that fails after the signal (test above); seam=a step that rejects at once
+test('a step that fails before the signal fired rethrows its own error', async () => {
+  // Arrange
+  const signal = new AbortController().signal
+
+  // Act
+  const end = await runUnderAbortSignal(async () => {
+    throw new Error('the deploy failed')
+  }, signal).then(
+    () => 'resolved',
+    (reason: unknown) => (reason instanceof Error ? reason.message : reason),
+  )
+
+  // Assert
+  assert.equal(end, 'the deploy failed')
+})

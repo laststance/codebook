@@ -1,3 +1,4 @@
+import { WIKI_RUN_KIND_WORDS } from './wikiRunKindWords'
 import type { WikiRunKind } from './wikiUpdateRun'
 
 /**
@@ -11,6 +12,5 @@ import type { WikiRunKind } from './wikiUpdateRun'
  * describeJoinedWikiStart('update')   // => 'Codebook is already starting an LLM Wiki update in this window; this press joins it.'
  */
 export function describeJoinedWikiStart(runKind: WikiRunKind): string {
-  const run = runKind === 'generate' ? 'generation' : 'update'
-  return `Codebook is already starting an LLM Wiki ${run} in this window; this press joins it.`
+  return `Codebook is already starting an LLM Wiki ${WIKI_RUN_KIND_WORDS[runKind].noun} in this window; this press joins it.`
 }

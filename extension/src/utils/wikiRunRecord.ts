@@ -31,7 +31,7 @@ function endSummary(ended: EndedWikiRun): string {
       // One verb per host, as the notices and the view say it: Codebook stops watching a VS Code chat and cancels a Cursor agent.
       return ended.host === 'cursor'
         ? 'cancelled by the learner or the closing window'
-        : 'stopped watching at the learner’s or the closing window’s request'
+        : 'stopped watching by the learner or the closing window'
     case 'timed-out':
       return 'stopped at its bound'
     case 'conflict':

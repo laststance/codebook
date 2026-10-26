@@ -135,7 +135,7 @@ test('each end of a run is summarized in Codebook’s own words: a refused start
     'LLM Wiki generate ended: host=vscode started=2026-10-26T04:00:00.000Z ended=2026-10-26T05:00:00.000Z end=timed-out summary="stopped at its bound" exit=SIGTERM output=/elsewhere/wiki',
     'LLM Wiki update ended: host=unknown started=not started ended=2026-10-26T05:00:00.000Z end=already-current summary="nothing to update: the Wiki matches the source" output=/elsewhere/wiki',
     'LLM Wiki update ended: host=vscode started=2026-10-26T04:00:00.000Z ended=2026-10-26T05:00:00.000Z end=failed summary="a publication appeared but failed a check" output=/elsewhere/wiki',
-    'LLM Wiki generate ended: host=vscode started=2026-10-26T04:00:00.000Z ended=2026-10-26T05:00:00.000Z end=cancelled summary="stopped watching at the learner’s or the closing window’s request" output=/elsewhere/wiki',
+    'LLM Wiki generate ended: host=vscode started=2026-10-26T04:00:00.000Z ended=2026-10-26T05:00:00.000Z end=cancelled summary="stopped watching by the learner or the closing window" output=/elsewhere/wiki',
     'LLM Wiki generate ended: host=vscode started=not started ended=2026-10-26T05:00:00.000Z end=failed summary="failed; the notice names the cause" cause=edited-page output=~',
   ])
 })
