@@ -536,6 +536,7 @@ test('an event of an unrelated file below the watched folder reads nothing', asy
 
   // Act
   fake.files.report('change', '/project/.codebook/wiki/index.html')
+  // gstack-timing-ok: proves no read follows; waits six times this view's 20 ms debounce, after which a matched event would have read
   await new Promise((resolve) => setTimeout(resolve, 120))
 
   // Assert

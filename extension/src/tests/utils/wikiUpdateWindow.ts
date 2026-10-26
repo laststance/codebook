@@ -26,6 +26,11 @@ import { createFakeFileWatching, FakeRelativePattern } from './fakeFileWatching'
 import { listenTo } from './listenTo'
 import { loadModule } from './loadModule'
 
+/** How often an opening window looks whether the LLM Wiki view has shown its first read. */
+const FIRST_VIEW_READ_POLL_MS = 5
+/** How long an opening window waits for the LLM Wiki view's first read before the test fails with that cause. */
+const FIRST_VIEW_READ_LIMIT_MS = 10_000
+
 /** The Cancel of one run the window showed: the Cancel button of a progress notification (a Cursor run), or a press on the status bar entry that watches a VS Code update. */
 export type CancellableProgress = {
   cancel(): void
@@ -388,6 +393,19 @@ export async function openWikiUpdateWindow(options: {
     return controls
   }
   for (const step of options.holdAtOpen ?? []) makeHold(step)
+  /** Waits until the LLM Wiki view has shown its first read: its state key no longer reads `loading` (an editor without the view never sets it). */
+  const untilFirstViewRead = async (): Promise<void> => {
+    const deadline = Date.now() + FIRST_VIEW_READ_LIMIT_MS
+    while (
+      contextKeys[constants.LLM_WIKI_STATE_CONTEXT_KEY] === 'loading' &&
+      Date.now() < deadline
+    )
+      await sleepFor(FIRST_VIEW_READ_POLL_MS)
+    if (contextKeys[constants.LLM_WIKI_STATE_CONTEXT_KEY] === 'loading')
+      throw new Error(
+        `The LLM Wiki view did not show its first read within ${FIRST_VIEW_READ_LIMIT_MS} ms.`,
+      )
+  }
   /** Waits at a step a test holds open; a step nobody holds passes at once. */
   const passHold = async (step: HeldUpdateStep): Promise<void> => {
     const hold = holds.get(step)
@@ -881,6 +899,8 @@ export async function openWikiUpdateWindow(options: {
   // The reader serves the update state, so the browser tab must be open first.
   if (options.openReader ?? true)
     await commands.get('codebook.openDeepWiki')?.()
+  // The LLM Wiki view reads the Wiki at activation, and once more after its watcher stands. A test arranges its holds on the Wiki's reads only after those, so the view never takes a hold meant for a run; a test that holds a step at open wants the loading state and waits itself.
+  if ((options.holdAtOpen ?? []).length === 0) await untilFirstViewRead()
   return {
     chatRequests,
     executedCommands,
