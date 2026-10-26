@@ -974,6 +974,13 @@ export const CODEBOOK_HOST_CONTEXT_KEY = 'codebook.host'
 export const LLM_WIKI_REFRESH_DEBOUNCE_MS = 1_000
 /** How often the LLM Wiki view reads its state again while a row of a run (this window's, another window's or a stopped watch's reservation) is shown: a marker whose window died leaves no file event. */
 export const LLM_WIKI_POLL_MS = 30_000
+/** The command that opens the published Wiki in the browser; the Wiki row of the LLM Wiki view runs it on click. */
+export const OPEN_DEEP_WIKI_COMMAND = 'codebook.openDeepWiki'
+/** The window id the LLM Wiki view passes when it reads a run marker: one no window has, so this window's own reservation is seen as a stopped watch's too. */
+export const LLM_WIKI_VIEW_WINDOW_ID = '\u0000llm-wiki-view'
+/** The message above the LLM Wiki tree while a VS Code watch is shown: Stop watching ends Codebook's watch only. */
+export const LLM_WIKI_WATCHING_MESSAGE =
+  'Codebook is watching the chat. Stop watching does not stop the chat; stop it in the chat.'
 /** The command of the LLM Wiki view's title bar Refresh action. */
 export const REFRESH_LLM_WIKI_COMMAND = 'codebook.refreshLlmWiki'
 /** The command that a click on the view's attention or last-attempt row runs: it shows the row's full sentence, with Copy details. */

@@ -17,6 +17,7 @@ import {
 
 import type { LlmWikiView } from './llmWikiView'
 import { resolveManageTrustCommand } from './resolveManageTrustCommand'
+import { withHomeFolderShown } from './withHomeFolderShown'
 
 /** What the commands of the LLM Wiki view ask of the window. */
 export type LlmWikiCommandOptions = {
@@ -59,7 +60,7 @@ async function showRowDetail(
   )
   if (choice === COPY_DETAILS_ACTION)
     await options.editor.env.clipboard.writeText(
-      detail.split(homedir()).join('~'),
+      withHomeFolderShown(detail, homedir()),
     )
 }
 

@@ -1,5 +1,7 @@
 import { WIKI_SHORT_REVISION_CHARS } from '../constants'
 
+import { fullCommitHash } from './fullCommitHash'
+
 /** What the manifest and the manifest file say of one generation: the revision it records and when the manifest was written (epoch milliseconds). */
 export type WikiGeneration = {
   /** The manifest's `generated.revision` as written; kept only when it is a full commit hash. */
@@ -32,10 +34,10 @@ export function describeWikiGeneration(
     new Date(epochMs).toLocaleDateString(),
 ): string | undefined {
   // A revision is kept only as a full commit hash, as the freshness check keeps it.
-  const fullRevision =
-    generation.revision && /^[a-f0-9]{40,64}$/i.test(generation.revision)
-      ? generation.revision.slice(0, WIKI_SHORT_REVISION_CHARS)
-      : undefined
+  const fullRevision = fullCommitHash(generation.revision)?.slice(
+    0,
+    WIKI_SHORT_REVISION_CHARS,
+  )
   const date =
     generation.publishedAtMs === undefined
       ? undefined

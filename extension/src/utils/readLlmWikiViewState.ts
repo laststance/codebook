@@ -1,6 +1,8 @@
 import {
   LLM_WIKI_ROW_ACTIONS,
+  LLM_WIKI_WATCHING_MESSAGE,
   MS_PER_MINUTE,
+  OPEN_DEEP_WIKI_COMMAND,
   SHOW_LLM_WIKI_ATTENTION_COMMAND,
   WIKI_UPDATE_REASON_LIMIT_CHARS,
 } from '../constants'
@@ -130,10 +132,6 @@ const LOCAL_WORDING: LlmWikiViewWording = {
   formatTime: (epochMs) => formatClockTime(epochMs),
   formatDate: (epochMs) => new Date(epochMs).toLocaleDateString(),
 }
-
-/** The message above the tree while a VS Code watch is shown: Stop watching ends Codebook's watch only. */
-const LLM_WIKI_WATCHING_MESSAGE =
-  'Codebook is watching the chat. Stop watching does not stop the chat; stop it in the chat.'
 
 /** How an attention cause is worded and what its row offers (the plan's attention table). */
 type AttentionRow = {
@@ -333,7 +331,7 @@ function wikiRow(
       .filter((line) => line !== undefined && line !== '')
       .join('\n'),
     icon: 'book',
-    command: { command: 'codebook.openDeepWiki' },
+    command: { command: OPEN_DEEP_WIKI_COMMAND },
     actions: hasRunRow ? [] : ['update'],
   }
 }

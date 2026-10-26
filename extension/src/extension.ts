@@ -26,6 +26,8 @@ import {
   GENERATE_WIKI_ACTION,
   LLM_WIKI_POLL_MS,
   LLM_WIKI_REFRESH_DEBOUNCE_MS,
+  LLM_WIKI_VIEW_WINDOW_ID,
+  OPEN_DEEP_WIKI_COMMAND,
   OPEN_WIKI_IN_BROWSER_ACTION,
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_FILE_MODE,
@@ -1159,7 +1161,7 @@ export function activate(
   }
   /** The command each button of a generation's notice runs ({@link wikiGenerateNotice}). */
   const WIKI_NOTICE_ACTION_COMMANDS: Record<string, string> = {
-    [OPEN_WIKI_IN_BROWSER_ACTION]: 'codebook.openDeepWiki',
+    [OPEN_WIKI_IN_BROWSER_ACTION]: OPEN_DEEP_WIKI_COMMAND,
     [UPDATE_WIKI_ACTION]: 'codebook.updateDeepWiki',
     [GENERATE_WIKI_ACTION]: GENERATE_DEEP_WIKI_COMMAND,
   }
@@ -1211,7 +1213,7 @@ export function activate(
         else if (choice === OPEN_WIKI_ACTION)
           // The command's own handler tells the learner why the Wiki did not open; its rejection has nobody else to go to.
           void vscode.commands
-            .executeCommand('codebook.openDeepWiki')
+            .executeCommand(OPEN_DEEP_WIKI_COMMAND)
             .then(undefined, () => undefined)
       },
       // A notification the editor could not show has nobody to report to either.
@@ -2678,7 +2680,7 @@ export function activate(
     }),
     // A second command while the first is still opening joins it: two opens in flight would each start a reader, and the failure of one would close the other's.
     registerCommand(
-      'codebook.openDeepWiki',
+      OPEN_DEEP_WIKI_COMMAND,
       joinInFlight(async () => {
         try {
           // A folder without a Wiki offers its generation instead of an error about a missing manifest (Cycle 0055, proposed change 3).
@@ -2953,7 +2955,7 @@ export function activate(
           isWikiOwnedBy,
           // A window id nobody has: this window's own reservation is seen as the stopped watch's too.
           readMarker: (outputDirectory) =>
-            readLiveWikiUpdateMarker(outputDirectory, '\u0000llm-wiki-view'),
+            readLiveWikiUpdateMarker(outputDirectory, LLM_WIKI_VIEW_WINDOW_ID),
           ownWindowId: wikiWindowId,
           isStartUnderWay: () => wikiUpdate !== undefined,
           hasPublishEndedWait: hasWikiPublishEndedWait,

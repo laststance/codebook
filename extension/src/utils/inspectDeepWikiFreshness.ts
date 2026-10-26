@@ -11,6 +11,7 @@ import {
 } from '../constants'
 
 import type { WikiIncludedSource } from './answerDeepWikiQuestion'
+import { fullCommitHash } from './fullCommitHash'
 import { gitExecutablePath } from './gitExecutablePath'
 import { hashFileSha256 } from './hashFileSha256'
 import { isWikiSourceCandidate } from './isWikiSourceCandidate'
@@ -170,22 +171,6 @@ function listingFailure(error: unknown): AdditionCheck {
     kind: 'unverified',
     cause: cause === 'no-repository' ? 'git-failed' : cause,
   }
-}
-
-/**
- * Keeps a generated revision only when it is a full commit hash; called by {@link findAddedSources} before the revision is given to Git.
- * @param generatedRevision - The revision the manifest records, if any.
- * @returns The revision when it is 40 to 64 hexadecimal digits, `undefined` otherwise (none, empty, a short hash, a branch name).
- * @example
- * fullCommitHash('0f9e8d7c6b5a49382716051a2b3c4d5e6f708192') // => '0f9e8d7c6b5a49382716051a2b3c4d5e6f708192'
- * fullCommitHash('main')                                     // => undefined
- */
-function fullCommitHash(
-  generatedRevision: string | undefined,
-): string | undefined {
-  return generatedRevision && /^[a-f0-9]{40,64}$/i.test(generatedRevision)
-    ? generatedRevision
-    : undefined
 }
 
 /**
