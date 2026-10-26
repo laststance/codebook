@@ -518,7 +518,7 @@ test('a manifest created in the output folder shows the Wiki row after the watch
   // Act
   await publishGeneratedWiki(project.outputDirectory, project.projectRoot)
   project.reportFileEvent('create', join(project.projectRoot, 'notes.md'))
-  await new Promise((resolve) => setTimeout(resolve, 300))
+  await project.llmWiki.whenIdle()
   const idsBeforeTheEvent = idsOf(project)
   const readsBeforeTheEvent = project.looks.publishTokenReads
   project.reportFileEvent(
@@ -548,8 +548,8 @@ test('five file events inside the debounce become one read that shows the last s
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
   await untilRow(project, 'wiki')
-  // gstack-timing-ok: proves no second read follows; waits six times the shortened 40 ms debounce after the last event
-  await new Promise((resolve) => setTimeout(resolve, 250))
+  // Settled: no debounced read is waiting and no read runs, so a second read would already be counted.
+  await project.llmWiki.whenIdle()
 
   // Assert
   // Two reads: the burst's one, and the single follow-up read that the watcher's move from the project to .codebook adds once the Wiki's folders exist.
@@ -987,28 +987,150 @@ test('a refused file watcher is recorded once in Output, said in the Output rowâ
   )
 })
 
-// Value: protects=AC 2 (the row actions are commands a keyboard reaches); fails_when=Open Chat, Change location, Copy recovery request or Reveal Wiki Folder run another editor command or copy another text; no_claim=what the editor does with them; seam=the stubbed editor's command log and clipboard
-test('Open Chat, Change location, Reveal Wiki Folder and Copy recovery request run the editor commands and the copy the plan names', async (context) => {
+// Value: protects=AC 2 (the row actions are commands a keyboard reaches); fails_when=Open Chat, Change location or Copy recovery request run another editor command or copy another text; no_claim=what the editor does with them; seam=the stubbed editor's command log and clipboard
+test('Open Chat, Change location and Copy recovery request run the editor commands and the copy the plan names', async (context) => {
   // Arrange
   const project = await openEmptyProject(context)
 
   // Act
   await project.runCommand('codebook.llmWiki.openChat')
   await project.runCommand('codebook.llmWiki.changeLocation')
-  await project.runCommand('codebook.revealWikiFolder')
   await project.runCommand('codebook.copyWikiRecoveryRequest')
 
   // Assert
   assert.deepEqual(
     [project.executedCommands, project.clipboard, project.notices],
     [
-      [
-        'workbench.action.chat.open',
-        'workbench.action.openSettings',
-        'revealFileInOS',
-      ],
+      ['workbench.action.chat.open', 'workbench.action.openSettings'],
       ['/codebook Recover the unfinished LLM Wiki publish for this project'],
       ['Copied the recovery request. Paste it into the editor chat.'],
+    ],
+  )
+})
+
+// Value: protects=AC 2 (the view settles after a debounced event, so a test proves an absent read without a fixed sleep); fails_when=whenIdle resolves while the debounced read of a watched file's event is still waiting, so a test reads its result too early or proves an absence too soon; no_claim=the debounce length; seam=a manifest event, the debounce shortened to 40 ms
+test('the view is idle only after the debounced read of a manifest event has shown the Wiki', async (context) => {
+  // Arrange
+  const project = await openEmptyProject(context)
+  await publishGeneratedWiki(project.outputDirectory, project.projectRoot)
+
+  // Act
+  project.reportFileEvent(
+    'create',
+    join(project.outputDirectory, 'codebook-wiki.json'),
+  )
+  await project.llmWiki.whenIdle()
+
+  // Assert
+  assert.deepEqual(idsOf(project), ['wiki', 'output'])
+})
+
+// Value: protects=AC 4 (Reveal Wiki Folder opens a folder that exists on this computer); fails_when=the command opens nothing for a Wiki folder that exists locally, or opens another folder; no_claim=what the operating system's file manager does; seam=the stubbed editor's command log
+test('Reveal Wiki Folder on a published Wiki asks the editor to reveal that folder', async (context) => {
+  // Arrange
+  const { window } = await openPublishedWiki(context)
+
+  // Act
+  await window.runCommand('codebook.revealWikiFolder')
+
+  // Assert
+  assert.deepEqual(
+    [window.executedCommands, window.notices],
+    [['revealFileInOS'], []],
+  )
+})
+
+// Value: protects=AC 4 (Reveal Wiki Folder says why nothing opened for a missing folder); fails_when=the command runs the editor's reveal on a folder that does not exist, which shows nothing, or says nothing; no_claim=the wording in another editor language; seam=a project with no Wiki folder
+test('Reveal Wiki Folder on a missing folder says the folder does not exist yet and reveals nothing', async (context) => {
+  // Arrange
+  const project = await openEmptyProject(context)
+
+  // Act
+  await project.runCommand('codebook.revealWikiFolder')
+
+  // Assert
+  assert.deepEqual(
+    [project.executedCommands, project.notices],
+    [[], ['The LLM Wiki folder .codebook/wiki does not exist (yet).']],
+  )
+})
+
+// Value: protects=AC 4 (Reveal Wiki Folder says why nothing opened in a remote window); fails_when=a window connected to a remote host asks the editor to reveal a folder that is on the remote host, which opens nothing on this computer, with no sentence; no_claim=the remote name's spelling in every editor; seam=env.remoteName of the fake editor
+test('Reveal Wiki Folder in a remote window says the folder is on the remote host and reveals nothing', async (context) => {
+  // Arrange
+  const { window } = await openPublishedWiki(context, {
+    remoteName: 'ssh-remote',
+  })
+
+  // Act
+  await window.runCommand('codebook.revealWikiFolder')
+
+  // Assert
+  assert.deepEqual(
+    [window.executedCommands, window.notices],
+    [
+      [],
+      [
+        'Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on ssh-remote.',
+      ],
+    ],
+  )
+})
+
+// Value: protects=AC 2 (the view does no background work while hidden); fails_when=a manifest event while the view is collapsed runs the freshness check, or showing the view again does not read once more and check the freshness; no_claim=the poll (read-loop tests); seam=setVisible(false), a manifest event and the view's own settle
+test('a collapsed view runs no freshness check for a manifest event and checks once when it is shown again', async (context) => {
+  // Arrange
+  const { wiki, window } = await openPublishedWiki(context)
+  await untilFreshness(window)
+  await window.llmWiki.whenIdle()
+  const checksWhileShown = window.looks.freshnessInspections
+
+  // Act
+  window.llmWiki.setVisible(false)
+  window.reportFileEvent(
+    'change',
+    join(wiki.outputDirectory, 'codebook-wiki.json'),
+  )
+  await window.llmWiki.whenIdle()
+  const checksWhileHidden = window.looks.freshnessInspections
+  window.llmWiki.setVisible(true)
+  await window.llmWiki.whenIdle()
+
+  // Assert
+  assert.deepEqual(
+    [
+      checksWhileHidden - checksWhileShown,
+      window.looks.freshnessInspections - checksWhileShown,
+    ],
+    [0, 1],
+  )
+})
+
+// Value: protects=N55-F3 (the message and the rows change in one render); fails_when=the view writes the tree message when it sets its model, before the editor reads the new rows, so the message shows in one frame and the rows in another; no_claim=the editor's frames (N56 step 4); seam=the fake tree's render log of change events, root reads and message writes
+test('the message changes only when the tree reads the new rows, not when the change event fires', async (context) => {
+  // Arrange
+  const project = await openEmptyProject(context, {
+    chatReply: () => new Promise<never>(() => {}),
+  })
+  void project.runCommand(GENERATE_COMMAND)
+  await untilRow(project, 'run')
+  const watchingMessage =
+    'Codebook is watching the chat. Stop watching does not stop the chat; stop it in the chat.'
+  const stoppedMessage =
+    'Codebook stopped watching the chat, which may still publish this Wiki. To stop it, stop the request in the chat.'
+
+  // Act
+  await project.runCommand('codebook.llmWiki.stopWatching')
+  await untilRow(project, 'reservation')
+
+  // Assert
+  const log = project.llmWiki.renderLog()
+  const writeIndex = log.indexOf(`message:${stoppedMessage}`)
+  assert.deepEqual(
+    [project.llmWiki.message(), log.slice(writeIndex - 2, writeIndex + 1)],
+    [
+      stoppedMessage,
+      [`change:${watchingMessage}`, 'getChildren', `message:${stoppedMessage}`],
     ],
   )
 })
@@ -1639,6 +1761,8 @@ test('a reservation inside its window still shows Waiting for chat', async (cont
 test('Change location opens the settings searched for the output setting and Reveal Wiki Folder reveals the output folder', async (context) => {
   // Arrange
   const project = await openEmptyProject(context)
+  // Reveal Wiki Folder reveals a folder that exists; a missing one is told instead.
+  await mkdir(project.outputDirectory, { recursive: true })
 
   // Act
   await project.runCommand('codebook.llmWiki.changeLocation')

@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { WikiUpdateMarkerLook } from '../utils/readLiveWikiUpdateMarker'
 import {
   readLlmWikiViewFacts,
   type LlmWikiViewFactsDependencies,
 } from '../utils/readLlmWikiViewFacts'
+
+import { defer } from './utils/defer'
 
 const NOW_MS = 1_790_000_000_000
 const GENERATE_BOUND_MS = 3_300_000
@@ -149,5 +152,69 @@ test('the ready facts name the project root next to the output folder', async ()
   assert.deepEqual(
     facts.kind === 'ready' ? [facts.projectRoot, facts.outputDirectory] : [],
     ['/repo', '/repo/.codebook/wiki'],
+  )
+})
+
+// Value: protects=the speed of a refresh and the receipt-before-manifest order (item 25 of #132, item 27); fails_when=the start block, the publish token and the marker are read one after another instead of together, or any of them starts before the receipt has been read; no_claim=how long a real disk read takes; seam=reads held open until all three have started
+test('the receipt is read first, then the start block, the token and the marker start together', async () => {
+  // Arrange
+  const started: string[] = []
+  const settleReceipt = defer<string>()
+  const settleBlock = defer<undefined>()
+  const settleToken = defer<string>()
+  const settleMarker = defer<WikiUpdateMarkerLook>()
+  const read = readLlmWikiViewFacts(
+    dependencies({
+      readPublication: () => {
+        started.push('receipt')
+        return settleReceipt.promise
+      },
+      findStartBlock: () => {
+        started.push('start-block')
+        return settleBlock.promise
+      },
+      readPublishToken: () => {
+        started.push('token')
+        return settleToken.promise
+      },
+      readMarker: () => {
+        started.push('marker')
+        return settleMarker.promise
+      },
+    }),
+  )
+  await waitUntil(() => started.length >= 1, 'the receipt read', 2_000)
+  const startedBeforeTheReceipt = [...started]
+
+  // Act
+  settleReceipt.resolve('receipt@1')
+  const didAllStart = await waitUntil(
+    () => started.length >= 4,
+    'the three independent reads to start together',
+    2_000,
+  ).then(
+    () => true,
+    () => false,
+  )
+  const startedWhileAllAreHeld = [...started]
+  settleBlock.resolve(undefined)
+  settleToken.resolve('token')
+  settleMarker.resolve({ kind: 'none' })
+  const facts = await read
+
+  // Assert
+  assert.deepEqual(
+    [
+      startedBeforeTheReceipt,
+      didAllStart,
+      startedWhileAllAreHeld,
+      facts.kind === 'ready' ? facts.publication : 'not ready',
+    ],
+    [
+      ['receipt'],
+      true,
+      ['receipt', 'start-block', 'token', 'marker'],
+      'receipt@1',
+    ],
   )
 })

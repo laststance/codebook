@@ -17,7 +17,7 @@ export type FakeTreeRow = {
  * Why: the host harness reaches the view through the whole extension; the read-loop tests need to hold its closures open and count their calls, which only the view's own options allow.
  * Used by the read-loop tests of the LLM Wiki view.
  *
- * @returns `editor` (to pass as the view's editor), `rows` (the tree as shown now), `contextKeys`, `files` (the fake file watching, to report events), `fireConfigurationChange`.
+ * @returns `editor` (to pass as the view's editor), `rows` (the tree as shown now), `message` (the tree view's message), `contextKeys`, `files` (the fake file watching, to report events), `setVisible`, `fireConfigurationChange`.
  * @example
  * const fake = createFakeLlmWikiEditor()
  * const view = createLlmWikiView({ editor: fake.editor, host: 'vscode', … })
@@ -29,6 +29,8 @@ export function createFakeLlmWikiEditor() {
   const configurationListeners: Array<
     (event: { affectsConfiguration: (id: string) => boolean }) => void
   > = []
+  const visibilityListeners: Array<(event: { visible: boolean }) => void> = []
+  let isViewShown = true
   let provider:
     | {
         getChildren(element?: string): string[]
@@ -80,7 +82,12 @@ export function createFakeLlmWikiEditor() {
         provider = treeOptions.treeDataProvider
         return {
           message: undefined as string | undefined,
-          onDidChangeVisibility: () => ({ dispose(): void {} }),
+          get visible(): boolean {
+            return isViewShown
+          },
+          onDidChangeVisibility: (
+            listener: (event: { visible: boolean }) => void,
+          ) => listenTo(visibilityListeners, listener),
           dispose(): void {},
         }
       },
@@ -109,6 +116,12 @@ export function createFakeLlmWikiEditor() {
       }),
     contextKeys,
     files,
+    /** Shows or hides the view as the learner expands or collapses it, and reports it to the view. */
+    setVisible(isVisible: boolean): void {
+      isViewShown = isVisible
+      for (const listener of [...visibilityListeners])
+        listener({ visible: isVisible })
+    },
     fireConfigurationChange(): void {
       for (const listener of [...configurationListeners])
         listener({ affectsConfiguration: () => true })

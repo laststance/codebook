@@ -12,6 +12,7 @@ import {
   type WikiFreshness,
 } from '../../utils/inspectDeepWikiFreshness'
 import { listWikiCandidates } from '../../utils/listWikiCandidates'
+import { createLlmWikiView, type LlmWikiView } from '../../utils/llmWikiView'
 import { PREPARED_LOCK_SUFFIX } from '../../utils/preparedLockSuffix'
 import { readWikiPublicationIdentity } from '../../utils/readWikiPublicationIdentity'
 import { readWikiPublishToken } from '../../utils/readWikiPublishToken'
@@ -93,6 +94,10 @@ export type FakeLlmWikiView = {
   contextKeys: Record<string, unknown>
   treeChangeCount(): number
   setVisible(isVisible: boolean): void
+  /** Resolves once the view has no debounced refresh waiting and no read or freshness check under way, so a test proves an absent read without a fixed sleep. */
+  whenIdle(): Promise<void>
+  /** What the fake tree did, in order: `change:<message shown when the change event fired>`, `getChildren` (the root read the editor makes after a change event) and `message:<text written>`. A message written before the change event shows as a `change:` entry that already holds the new text. */
+  renderLog(): string[]
 }
 
 type UriHandler = (uri: { path: string; query: string }) => Promise<void>
@@ -145,6 +150,7 @@ export type HeldUpdateStep =
  * @param options.missingEditorCommands - Commands this editor does not have: the list of its commands leaves them out, and running one throws the editor's "command not found". An editor has the chat's commands when omitted.
  * @param options.signWatchFails - Makes the editor throw this message when the extension registers its listener for opened documents.
  * @param options.editorCommand - What the editor does when the extension runs a command other than the chat request (the reveal of the chat, which is the chat command without a query, the editor's New Chat, the chat's Cancel and its "Remove All Queued", for example): it gets the command's name, and what it returns or throws is the command's result. Such a command returns nothing when omitted.
+ * @param options.remoteName - The editor's `env.remoteName`, as a window connected to a remote host reports it (for example `ssh-remote`); absent for a local window.
  * @param options.cursorAgent - What the Cursor agent does; it gets the project, the prompt, the run's abort signal, the bound the run would stop it at and the run's kind.
  * @param options.cancellable - Collects the Cancel of each run the window shows: the Cancel button of a progress notification, and the press on a status bar entry, which runs the entry's command while the entry is on screen, as a click does; the window shows both and records their texts also when omitted.
  * @param options.declineConfirmation - Makes the learner dismiss the modal confirmation of the browser's update link.
@@ -173,6 +179,7 @@ export async function openWikiUpdateWindow(options: {
   projectRoot: string
   outputSetting?: string
   cursor?: boolean
+  remoteName?: string
   chatFails?: boolean | string
   chatReply?: () => Promise<unknown>
   chatAnswerClock?: {
@@ -281,6 +288,8 @@ export async function openWikiUpdateWindow(options: {
     markerClaims: number
     /** How often the extension read the publish token: once per read of the LLM Wiki view's state, among the start checks' reads. */
     publishTokenReads: number
+    /** How often the freshness of the published Wiki was inspected: once per freshness check of the LLM Wiki view. */
+    freshnessInspections: number
   }
   markerChanges: WikiMarkerChange[]
   openWorkspace(nextProjectRoot: string): void
@@ -355,6 +364,7 @@ export async function openWikiUpdateWindow(options: {
     stampReadsDone: 0,
     markerClaims: 0,
     publishTokenReads: 0,
+    freshnessInspections: 0,
   }
   const markerChanges: WikiMarkerChange[] = []
   /** Records one change of this window's marker, and what it answered once it settled. */
@@ -394,7 +404,10 @@ export async function openWikiUpdateWindow(options: {
     | undefined
   let treeMessage: string | undefined
   let treeChangeCount = 0
+  const renderLog: string[] = []
+  let llmWikiView: LlmWikiView | undefined
   const visibilityListeners: Array<(event: { visible: boolean }) => void> = []
+  let isViewShown = true
   const holdControls = new Map<
     HeldUpdateStep,
     { started: Promise<void>; release(): void }
@@ -665,6 +678,7 @@ export async function openWikiUpdateWindow(options: {
         TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
         env: {
           ...(options.cursor ? { appName: 'Cursor' } : {}),
+          ...(options.remoteName ? { remoteName: options.remoteName } : {}),
           asExternalUri: keepLocalAddress,
           openExternal: async () => true,
           clipboard: {
@@ -728,16 +742,30 @@ export async function openWikiUpdateWindow(options: {
               treeDataProvider: NonNullable<typeof treeProvider>
             },
           ) => {
-            treeProvider = treeOptions.treeDataProvider
-            treeProvider.onDidChangeTreeData(() => {
+            const provider = treeOptions.treeDataProvider
+            treeProvider = {
+              ...provider,
+              getChildren: () => {
+                renderLog.push('getChildren')
+                return provider.getChildren()
+              },
+            }
+            // Like the editor, the fake reads the root children after every change event.
+            provider.onDidChangeTreeData(() => {
               treeChangeCount += 1
+              renderLog.push(`change:${treeMessage ?? ''}`)
+              treeProvider?.getChildren()
             })
             return {
               get message() {
                 return treeMessage
               },
               set message(next: string | undefined) {
+                renderLog.push(`message:${next ?? ''}`)
                 treeMessage = next
+              },
+              get visible() {
+                return isViewShown
               },
               onDidChangeVisibility: (
                 listener: (event: { visible: boolean }) => void,
@@ -874,6 +902,15 @@ export async function openWikiUpdateWindow(options: {
           return stamp
         },
       },
+      // The real view runs; the window only keeps its handle so a test can wait for it to settle.
+      './utils/llmWikiView': {
+        createLlmWikiView: (
+          ...created: Parameters<typeof createLlmWikiView>
+        ) => {
+          llmWikiView = createLlmWikiView(...created)
+          return llmWikiView
+        },
+      },
       './utils/readWikiPublishToken': {
         readWikiPublishToken: async (outputDirectory: string) => {
           looks.publishTokenReads += 1
@@ -933,6 +970,7 @@ export async function openWikiUpdateWindow(options: {
         inspectDeepWikiFreshness: async (
           ...checked: Parameters<typeof inspectDeepWikiFreshness>
         ) => {
+          looks.freshnessInspections += 1
           await passHold('freshness-inspection')
           return options.realFreshnessCheck
             ? inspectDeepWikiFreshness(...checked)
@@ -1032,7 +1070,10 @@ export async function openWikiUpdateWindow(options: {
       message: () => treeMessage,
       contextKeys,
       treeChangeCount: () => treeChangeCount,
+      renderLog: () => [...renderLog],
+      whenIdle: async () => llmWikiView?.whenIdle(),
       setVisible(isVisible: boolean): void {
+        isViewShown = isVisible
         for (const listener of [...visibilityListeners])
           listener({ visible: isVisible })
       },

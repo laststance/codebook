@@ -217,12 +217,14 @@ async function readManifestFacts(
 > {
   const { projectRoot, outputDirectory, outputLabel } = location
   const nowMs = dependencies.now()
-  const block = await dependencies.findStartBlock(outputDirectory, projectRoot)
+  // The start check and the token read do not depend on each other, so both are under way together.
+  const blockRead = dependencies.findStartBlock(outputDirectory, projectRoot)
   // A token that cannot be read still means a manifest stands there.
-  const tokenLook = await dependencies.readPublishToken(outputDirectory).then(
+  const tokenRead = dependencies.readPublishToken(outputDirectory).then(
     (token) => ({ didReadFail: false, token }),
     () => ({ didReadFail: true, token: undefined }),
   )
+  const [block, tokenLook] = await Promise.all([blockRead, tokenRead])
   const isManifestPresent =
     tokenLook.didReadFail || tokenLook.token !== undefined
   const generation = isManifestPresent
@@ -292,11 +294,15 @@ export async function readLlmWikiViewFacts(
   const publication = await dependencies
     .readPublication(outputDirectory)
     .catch(() => undefined)
-  const manifestFacts = await readManifestFacts(dependencies, {
-    projectRoot,
-    outputDirectory,
-    outputLabel,
-  })
+  // Once the receipt is read, the manifest facts and the marker do not depend on each other, so they are read together.
+  const [manifestFacts, markerFacts] = await Promise.all([
+    readManifestFacts(dependencies, {
+      projectRoot,
+      outputDirectory,
+      outputLabel,
+    }),
+    readMarkerFacts(dependencies, outputDirectory),
+  ])
   return {
     kind: 'ready',
     host: dependencies.host,
@@ -308,6 +314,6 @@ export async function readLlmWikiViewFacts(
     publication,
     ...manifestFacts,
     ...readRunFacts(dependencies, outputDirectory),
-    ...(await readMarkerFacts(dependencies, outputDirectory)),
+    ...markerFacts,
   }
 }

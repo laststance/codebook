@@ -17,8 +17,11 @@ import {
   WIKI_UPDATE_RECOVERY_REQUEST,
 } from '../constants'
 
+import { describeUnrevealableWikiFolder } from './describeUnrevealableWikiFolder'
+import { isExistingFolder } from './isExistingFolder'
 import type { LlmWikiView } from './llmWikiView'
 import { resolveManageTrustCommand } from './resolveManageTrustCommand'
+import { wikiOutputLabel } from './wikiOutputLabel'
 import { withHomeFolderShown } from './withHomeFolderShown'
 
 /** What the commands of the LLM Wiki view ask of the window. */
@@ -38,8 +41,11 @@ export type LlmWikiCommandOptions = {
   view: LlmWikiView
   /** Stops this window's run: the VS Code watch, or the Cursor agent. */
   cancelRun: () => void
-  /** The resolved Wiki folder. */
-  findOutputDirectory: () => Promise<string>
+  /** The opened project and the resolved Wiki folder. */
+  findWikiLocation: () => Promise<{
+    projectRoot: string
+    outputDirectory: string
+  }>
 }
 
 /**
@@ -94,7 +100,7 @@ async function manageTrust(options: LlmWikiCommandOptions): Promise<void> {
  * @param options - The window's closures ({@link LlmWikiCommandOptions}).
  * @returns The registrations, to dispose with the extension.
  * @example
- * context.subscriptions.push(...registerLlmWikiCommands({ editor: vscode, registerCommand, showNotice, view, cancelRun, findOutputDirectory }))
+ * context.subscriptions.push(...registerLlmWikiCommands({ editor: vscode, registerCommand, showNotice, view, cancelRun, findWikiLocation }))
  */
 export function registerLlmWikiCommands(
   options: LlmWikiCommandOptions,
@@ -113,12 +119,23 @@ export function registerLlmWikiCommands(
         'Copied the recovery request. Paste it into the editor chat.',
       )
     }),
-    registerCommand(REVEAL_WIKI_FOLDER_COMMAND, async () =>
-      editor.commands.executeCommand(
+    registerCommand(REVEAL_WIKI_FOLDER_COMMAND, async () => {
+      const { projectRoot, outputDirectory } = await options.findWikiLocation()
+      // The editor's reveal shows nothing for a missing folder or one on a remote host, so the learner is told instead.
+      const reason = describeUnrevealableWikiFolder({
+        outputLabel: wikiOutputLabel(projectRoot, outputDirectory),
+        exists: await isExistingFolder(outputDirectory),
+        remoteName: editor.env.remoteName,
+      })
+      if (reason !== undefined) {
+        void options.showNotice('information', reason)
+        return
+      }
+      await editor.commands.executeCommand(
         REVEAL_FILE_IN_OS_COMMAND,
-        editor.Uri.file(await options.findOutputDirectory()),
-      ),
-    ),
+        editor.Uri.file(outputDirectory),
+      )
+    }),
     registerCommand(LLM_WIKI_ROW_ACTIONS['stop-watching'].command, cancelRun),
     registerCommand(LLM_WIKI_ROW_ACTIONS['cancel-run'].command, cancelRun),
     registerCommand(LLM_WIKI_ROW_ACTIONS['open-chat'].command, () =>

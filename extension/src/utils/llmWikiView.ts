@@ -74,7 +74,7 @@ export type LlmWikiView = {
   refresh(): Promise<void>
   /** Asks for a refresh after the debounce; many calls inside it become one read. Production reaches it through the editor's events only; tests call it to stand in for one. */
   requestRefresh(): void
-  /** Resolves once no read and no freshness check is under way. Only tests call it, to wait for the view to settle. */
+  /** Resolves once no debounced refresh is waiting (it has fired or was never scheduled) and no read and no freshness check is under way. Only tests call it, to wait for the view to settle, so a test proves an absent read without a fixed sleep. */
   whenIdle(): Promise<void>
   /** The row with this id as it is shown now. */
   findRow(rowId: string): LlmWikiRow | undefined
@@ -143,6 +143,15 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
   /** The latest facts that ask for a freshness check; requests while one runs coalesce into this one. */
   let freshnessRequest: ReadyFacts | undefined
   let debounceTimer: NodeJS.Timeout | undefined
+  /** Settles when the waiting debounce has fired or was dropped; `whenIdle` waits on it. */
+  let debounceSettled:
+    { promise: Promise<void>; settle: () => void } | undefined
+  /** Whether the tree is shown; a hidden view runs no poll and no freshness check. */
+  let isViewVisible = true
+  /** Whether the last good read showed a run row, so the poll goes on across a failed read's error row. */
+  let wasRunShownBeforeError = false
+  /** The message the tree view shows now; the next one is applied when the tree reads the new rows. */
+  let appliedMessage: string | undefined
   let pollTimer: NodeJS.Timeout | undefined
   let isDisposed = false
   let isWatcherBroken = false
@@ -162,8 +171,15 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
   const treeView = editor.window.createTreeView<string>(LLM_WIKI_VIEW_ID, {
     treeDataProvider: {
       onDidChangeTreeData: treeChanges.event,
-      getChildren: (element) =>
-        element ? [] : model.rows.map((row) => row.id),
+      getChildren: (element) => {
+        if (element) return []
+        // The message follows the rows in one render: it is written here, when the tree reads the new model's root children after the change event, not when the model is set.
+        if (model.message !== appliedMessage) {
+          appliedMessage = model.message
+          treeView.message = model.message
+        }
+        return model.rows.map((row) => row.id)
+      },
       getTreeItem: (rowId) => {
         const row = model.rows.find((candidate) => candidate.id === rowId)
         const item = new editor.TreeItem(
@@ -193,6 +209,9 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
     },
   })
 
+  // The editor reports whether the view is shown now; a collapsed view runs no poll.
+  isViewVisible = treeView.visible
+
   /** Shows a model: sets the context key, the message and fires one tree change, only for what differs from what is shown. */
   const show = (next: LlmWikiViewModel): void => {
     // A read that finished after dispose shows nothing.
@@ -203,7 +222,6 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
     model = next
     shownKey = nextKey
     shownState = next.state
-    treeView.message = next.message
     if (didStateChange)
       void editor.commands.executeCommand(
         SET_CONTEXT_COMMAND,
@@ -213,13 +231,18 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
     treeChanges.fire()
   }
 
-  /** Keeps the poll timer running exactly while a run row is shown. */
+  /** Keeps the poll timer running exactly while the view is shown and a run row is shown, or the error row follows a read that showed one. */
   const keepPoll = (): void => {
     if (isDisposed) return
     const isRunShown = model.rows.some((row) =>
       LLM_WIKI_RUN_ROW_IDS.has(row.id),
     )
-    if (!isRunShown) {
+    const isErrorShown = model.rows.some(
+      (row) => row.id === LLM_WIKI_ERROR_ROW.id,
+    )
+    const isPollWanted =
+      isViewVisible && (isRunShown || (isErrorShown && wasRunShownBeforeError))
+    if (!isPollWanted) {
       clearInterval(pollTimer)
       pollTimer = undefined
       return
@@ -233,8 +256,18 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
   const requestRefresh = (): void => {
     if (isDisposed) return
     clearTimeout(debounceTimer)
+    if (!debounceSettled) {
+      let settle: () => void = () => {}
+      const promise = new Promise<void>((resolve) => {
+        settle = resolve
+      })
+      debounceSettled = { promise, settle }
+    }
     debounceTimer = setTimeout(() => {
+      // The read starts in this turn, so `whenIdle` sees it as `running` once the debounce is settled.
       void refresh()
+      debounceSettled?.settle()
+      debounceSettled = undefined
     }, debounceMs)
     debounceTimer.unref()
   }
@@ -511,9 +544,13 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
     if (nextFacts.kind === 'ready') rememberPublication(nextFacts, next)
     shownReadyFacts = nextFacts.kind === 'ready' ? nextFacts : undefined
     show(next)
+    wasRunShownBeforeError = next.rows.some((row) =>
+      LLM_WIKI_RUN_ROW_IDS.has(row.id),
+    )
     keepPoll()
-    // No Wiki row shown (an attention cause hides it) means no freshness to read.
+    // No Wiki row shown (an attention cause hides it) means no freshness to read; a hidden view reads it when it is shown again.
     if (
+      isViewVisible &&
       nextFacts.kind === 'ready' &&
       nextFacts.wiki &&
       next.rows.some((row) => row.id === 'wiki')
@@ -553,7 +590,10 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
     treeChanges,
     treeView,
     treeView.onDidChangeVisibility((event) => {
+      isViewVisible = event.visible
+      // Hidden: no poll. Shown: one read, which restarts the poll and the freshness check.
       if (event.visible) requestRefresh()
+      else keepPoll()
     }),
     editor.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration(WIKI_OUTPUT_DIRECTORY_SETTING))
@@ -569,8 +609,8 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
     refresh,
     requestRefresh,
     async whenIdle(): Promise<void> {
-      while (running ?? freshnessLoop) {
-        await Promise.all([running, freshnessLoop])
+      while (debounceSettled ?? running ?? freshnessLoop) {
+        await Promise.all([debounceSettled?.promise, running, freshnessLoop])
       }
     },
     findRow: (rowId) => model.rows.find((row) => row.id === rowId),
@@ -578,6 +618,8 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
       isDisposed = true
       freshnessRequest = undefined
       clearTimeout(debounceTimer)
+      debounceSettled?.settle()
+      debounceSettled = undefined
       clearInterval(pollTimer)
       watcher?.dispose()
       for (const subscription of subscriptions) subscription.dispose()

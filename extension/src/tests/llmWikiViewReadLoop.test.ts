@@ -15,23 +15,13 @@ import type {
   LlmWikiViewFacts,
 } from '../utils/readLlmWikiViewState'
 
+import { defer } from './utils/defer'
 import { createFakeLlmWikiEditor } from './utils/fakeLlmWikiEditor'
 
 type ReadyFacts = Extract<LlmWikiViewFacts, { kind: 'ready' }>
 
 const WATCHED_PROJECT = '/project'
 const WATCHED_OUTPUT = '/project/.codebook/wiki'
-
-/** A promise a test settles by hand. */
-function defer<Value>() {
-  let resolve: (value: Value) => void = () => {}
-  let reject: (cause: unknown) => void = () => {}
-  const promise = new Promise<Value>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise
-    reject = rejectPromise
-  })
-  return { promise, resolve, reject }
-}
 
 /** Ready facts for a project with no Wiki; a test adds what it examines. */
 function readyFacts(overrides: Partial<ReadyFacts> = {}): ReadyFacts {
@@ -536,11 +526,132 @@ test('an event of an unrelated file below the watched folder reads nothing', asy
 
   // Act
   fake.files.report('change', '/project/.codebook/wiki/index.html')
-  // gstack-timing-ok: proves no read follows; waits six times this view's 20 ms debounce, after which a matched event would have read
-  await new Promise((resolve) => setTimeout(resolve, 120))
+  // Settled: no debounced read is waiting and none runs, so a read for this event would already be counted.
+  await view.whenIdle()
 
   // Assert
   assert.equal(readCount() - readsBefore, 0)
+})
+
+/** Facts that show this window's run row, so the view polls. */
+const runningFacts = (): ReadyFacts =>
+  readyFacts({
+    run: {
+      kind: 'generate',
+      startedAtMs: 0,
+      timeoutMs: 3_300_000,
+      isAwaitingChat: false,
+    },
+  })
+
+// Value: protects=the debounce flush; fails_when=whenIdle resolves while the debounce of a matched event is still waiting, so the read it will make is missed by a test that proves a count; no_claim=the debounce length; seam=a matched event, the debounce of 20 ms
+test('whenIdle waits for the debounced read of a watched file’s event', async (context) => {
+  // Arrange
+  const { fake, readCount, view } = openWatchedView(context)
+  await view.whenIdle()
+  const readsBefore = readCount()
+
+  // Act
+  fake.files.report('change', WATCHED_OUTPUT)
+  await view.whenIdle()
+
+  // Assert
+  assert.equal(readCount() - readsBefore, 1)
+})
+
+// Value: protects=the 30 second poll across a failed read; fails_when=a read that throws while a run row showed replaces the run row with the error row and the poll stops, so a run that ended elsewhere never clears the error row; no_claim=the 30 second value; seam=mocked timers, a read that succeeds with a run and then throws
+test('the poll keeps reading after a read failed while a run row showed', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] })
+  let isFailing = false
+  let reads = 0
+  const { fake, view } = openView(context, {
+    readFacts: async () => {
+      reads += 1
+      if (isFailing) throw new Error('disk busy')
+      return runningFacts()
+    },
+  })
+  await view.whenIdle()
+  isFailing = true
+  await view.refresh()
+  const readsWithTheErrorRow = reads
+
+  // Act
+  context.mock.timers.tick(50)
+  await view.whenIdle()
+
+  // Assert
+  assert.deepEqual(
+    [fake.rows().map((row) => row.label), reads - readsWithTheErrorRow],
+    [[ERROR_ROW_LABEL], 1],
+  )
+})
+
+// Value: protects=the error row clears once the run is over; fails_when=the poll that continues across the error row never stops, or the next good read does not clear the error row; no_claim=the 30 second value; seam=mocked timers
+test('the poll stops once a good read shows no run after the error row', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] })
+  let step: 'run' | 'fail' | 'idle' = 'run'
+  let reads = 0
+  const { view } = openView(context, {
+    readFacts: async () => {
+      reads += 1
+      if (step === 'fail') throw new Error('disk busy')
+      return step === 'run' ? runningFacts() : readyFacts()
+    },
+  })
+  await view.whenIdle()
+  step = 'fail'
+  await view.refresh()
+  step = 'idle'
+  context.mock.timers.tick(50)
+  await view.whenIdle()
+  const readsAfterTheGoodRead = reads
+
+  // Act
+  context.mock.timers.tick(200)
+  await view.whenIdle()
+
+  // Assert
+  assert.equal(reads - readsAfterTheGoodRead, 0)
+})
+
+// Value: protects=no background work while hidden; fails_when=a collapsed view still polls while a run row shows, or showing it again does not read once and restart the poll; no_claim=the editor's visibility semantics; seam=mocked timers, the fake view's visibility
+test('a hidden view does not poll and a shown view reads once and polls again', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] })
+  let reads = 0
+  const { fake, view } = openView(context, {
+    readFacts: async () => {
+      reads += 1
+      return runningFacts()
+    },
+  })
+  await view.whenIdle()
+
+  // Act
+  fake.setVisible(false)
+  const readsWhenHidden = reads
+  context.mock.timers.tick(500)
+  await view.whenIdle()
+  const readsAfterHiddenTicks = reads
+  fake.setVisible(true)
+  context.mock.timers.tick(20)
+  await view.whenIdle()
+  const readsAfterShown = reads
+  context.mock.timers.tick(50)
+  await view.whenIdle()
+
+  // Assert
+  assert.deepEqual(
+    [
+      readsAfterHiddenTicks - readsWhenHidden,
+      readsAfterShown - readsAfterHiddenTicks,
+      reads - readsAfterShown,
+    ],
+    [0, 1, 1],
+  )
 })
 
 // Value: protects=item 8, an output outside the project whose parent is missing; fails_when=the watcher walks up to an ancestor (the home folder or the root) and watches it recursively, or the Output row does not say the view refreshes on visibility and Refresh only, or the cause is recorded more than once; no_claim=the editor's cost of a recursive watch; seam=a findWatchedFolder that answers a far ancestor

@@ -3271,7 +3271,7 @@ export function activate(
         showNotice,
         view: llmWikiView,
         cancelRun: cancelWikiRun,
-        findOutputDirectory: async () => (await wikiLocation()).outputDirectory,
+        findWikiLocation: wikiLocation,
       }),
     )
   }
