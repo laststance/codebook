@@ -16,6 +16,7 @@ import { PREPARED_LOCK_SUFFIX } from '../../utils/preparedLockSuffix'
 import { readWikiPublicationIdentity } from '../../utils/readWikiPublicationIdentity'
 import { readWikiPublishToken } from '../../utils/readWikiPublishToken'
 import { readWikiWatchStamp } from '../../utils/readWikiWatchStamp'
+import * as refreshCursorMcpCatalogModule from '../../utils/refreshCursorMcpCatalog'
 import { startWikiChatUpdate } from '../../utils/startWikiChatUpdate'
 import { waitForWikiPublish } from '../../utils/waitForWikiPublish'
 import type { WikiUpdateStatus } from '../../utils/wikiUpdateRun'
@@ -25,6 +26,25 @@ import { keepLocalAddress, parseFakeUri } from './fakeEditorAddresses'
 import { createFakeFileWatching, FakeRelativePattern } from './fakeFileWatching'
 import { listenTo } from './listenTo'
 import { loadModule } from './loadModule'
+
+/**
+ * Makes the `Date` a loaded module sees, whose `now()` answers a test's clock while `new Date(…)` stays real.
+ * @param clock - The test's present, in epoch milliseconds.
+ * @returns A `Date` subclass whose static `now` calls the clock.
+ * @example
+ * const ClockedDate = createClockedDate(() => 1_790_000_000_000)
+ * ClockedDate.now() // => 1_790_000_000_000 (a loaded module's `Date.now()` reads it)
+ */
+function createClockedDate(
+  clock: () => number,
+): new (...args: ConstructorParameters<typeof Date>) => Date {
+  class ClockedDate extends Date {
+    static override now(): number {
+      return clock()
+    }
+  }
+  return ClockedDate
+}
 
 /** How often an opening window looks whether the LLM Wiki view has shown its first read. */
 const FIRST_VIEW_READ_POLL_MS = 5
@@ -187,6 +207,7 @@ export async function openWikiUpdateWindow(options: {
   cursorSkill?: {
     verify?: () => Promise<unknown>
     deploy?: () => Promise<unknown>
+    remove?: () => Promise<unknown>
   }
   answerConfirmation?: (
     message: string,
@@ -204,6 +225,10 @@ export async function openWikiUpdateWindow(options: {
   wikiWatcherFails?: string
   /** Makes this many removals of the window's own run marker throw `EBUSY` before they work, as a scanner holding the file does on Windows; each is recorded in `markerChanges` as `threw`. */
   markerReleaseFailures?: number
+  /** Makes this many turns of the window's own marker into a stopped watch's reservation (including a taken-over reservation written back) answer `false`, as when another window holds the claim on the marker at that moment; each is recorded in `markerChanges` with the answer `false`. */
+  markerReserveFailures?: number
+  /** Replaces `Date.now()` inside `extension.ts` itself (the utilities it requires keep the real clock), so a test can place the moment a Stop is pressed and the moment its rejection is handled in different minutes. */
+  clock?: () => number
 }): Promise<{
   chatRequests: Array<{ name: string; query: string }>
   executedCommands: string[]
@@ -316,6 +341,7 @@ export async function openWikiUpdateWindow(options: {
   const outputLines: string[] = []
   let outputShown = 0
   let markerReleaseFailuresLeft = options.markerReleaseFailures ?? 0
+  let markerReserveFailuresLeft = options.markerReserveFailures ?? 0
   const progressTitles: string[] = []
   const statusBarTexts: string[] = []
   const statusBarEntries: FakeStatusBarEntry[] = []
@@ -731,7 +757,19 @@ export async function openWikiUpdateWindow(options: {
           skillCalls.push('deploy')
           return options.cursorSkill?.deploy?.()
         },
-        removeManagedCursorSkill: async () => undefined,
+        // The removal records its call; nothing is removed from the learner's home.
+        removeManagedCursorSkill: async () => {
+          skillCalls.push('remove')
+          await options.cursorSkill?.remove?.()
+          return { status: 'removed' }
+        },
+      },
+      // The removal's catalog step refuses at once, so a test of the skill's removal reads its warning and touches no Cursor config.
+      './utils/refreshCursorMcpCatalog': {
+        ...refreshCursorMcpCatalogModule,
+        captureOwnedCursorMcpCatalogGeneration: async () => {
+          throw new Error('No Cursor MCP catalog is used in this test.')
+        },
       },
       ...(options.constants
         ? { './constants': { ...constants, ...options.constants } }
@@ -799,6 +837,11 @@ export async function openWikiUpdateWindow(options: {
               takenOver?: Parameters<typeof claim.reserve>[1],
             ) => {
               await passHold('marker-change')
+              // The claim on the marker could not be had at this moment: the marker stays as it was and the change is asked for again.
+              if (markerReserveFailuresLeft > 0) {
+                markerReserveFailuresLeft -= 1
+                return recordMarkerChange('reserve', Promise.resolve(false))
+              }
               return recordMarkerChange(
                 'reserve',
                 claim.reserve(watchEndedAtMs, takenOver),
@@ -903,6 +946,8 @@ export async function openWikiUpdateWindow(options: {
           }),
       },
     },
+    // A test's clock reaches the `Date.now()` calls of `extension.ts` only; every other module keeps the real one.
+    options.clock ? { Date: createClockedDate(options.clock) } : {},
   )
   const contextSubscriptions: Array<{ dispose(): unknown }> = []
   boundary.activate({

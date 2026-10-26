@@ -1,4 +1,7 @@
-import type { TakenOverWikiReservation } from './claimWikiUpdateMarker'
+import type {
+  TakenOverWikiReservation,
+  WikiReservationHandoff,
+} from './claimWikiUpdateMarker'
 import { describeOutputFolderWithoutWiki } from './describeOutputFolderWithoutWiki'
 import { describeWikiGenerateBlock } from './describeWikiGenerateBlock'
 import type { WikiUpdateStartBlock } from './findWikiUpdateStartBlock'
@@ -13,10 +16,7 @@ export type WikiRunMarkerClaim<Holder> =
       release: () => Promise<boolean>
       reserve: (
         watchEndedAtMs: number,
-        takenOver?: Pick<
-          TakenOverWikiReservation,
-          'runKind' | 'replacedMarker'
-        >,
+        takenOver?: WikiReservationHandoff,
       ) => Promise<boolean>
       /** The stopped watch's reservation the claim took over (its end, the kind of its run and its marker); a refused start writes it back as it was ({@link leaveMarker}). */
       takenOver?: TakenOverWikiReservation

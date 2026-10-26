@@ -9,6 +9,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { URLSearchParams } from 'node:url'
 
 import * as vscode from 'vscode'
@@ -44,13 +45,14 @@ import {
   WIKI_MANIFEST_FILE,
   WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE,
   WIKI_RUN_STARTING_SENTENCE,
+  WIKI_SKILL_REMOVAL_STEP_RUNNING_SENTENCE,
   WIKI_SKILL_STEP_BOUND_REASON,
-  WIKI_SKILL_STEP_EARLIER_RUNNING_END,
   WIKI_SKILL_STEP_STOPPED_REASON,
   WIKI_SKILL_STEP_TIMEOUT_MS,
   WIKI_UPDATE_LAST_RUN_STATE_KEY,
   WIKI_UPDATE_MARKER_CHANGE_RETRIES,
   WIKI_UPDATE_MARKER_CHANGE_RETRY_DELAY_MS,
+  WIKI_UPDATE_MARKER_CLAIM_RETRY_DELAY_MS,
   WIKI_UPDATE_UNREADABLE_MANIFEST_GRACE_MS,
   WIKI_UPDATE_WATCH_POLL_MS,
   WIKI_UPDATE_WATCH_TIMEOUT_MS,
@@ -186,6 +188,7 @@ import { wikiManifestIdentity } from './utils/wikiManifestIdentity'
 import { wikiOutputLabel } from './utils/wikiOutputLabel'
 import { wikiRunBoundMs } from './utils/wikiRunBoundMs'
 import { wikiRunRecord } from './utils/wikiRunRecord'
+import { wikiSkillStepEndOf } from './utils/wikiSkillStepEndOf'
 import { OPEN_WIKI_ACTION, wikiUpdateNotice } from './utils/wikiUpdateNotice'
 import {
   WikiUpdateRun,
@@ -296,12 +299,30 @@ export function activate(
   /** How often the server was asked to stop from outside the handling of changed folders: by Stop Agent Server and by the closing window ({@link stopOnRequest}). A start that waited for that handling reads it before and after its wait. */
   let stopsAskedFor = 0
   let deepWikiReader: DeepWikiReader | undefined
-  /** The start of a Wiki run that is under way in this window, with its kind so that a press that joins it names it ({@link describeJoinedWikiStart}). */
-  let wikiStart: { attempt: Promise<void>; kind: WikiRunKind } | undefined
-  /** The abort of the managed Cursor skill step a start is in, which Stop LLM Wiki Run and the step's bound end; none outside that step. */
-  let wikiSkillStepStop: AbortController | undefined
+  /** The start of a Wiki run that is under way in this window, with its kind so that a press that joins it names it, and which of the two joined sentences ({@link describeJoinedWikiStart}) it has shown already: each once per running attempt. */
+  let wikiStart:
+    | {
+        attempt: Promise<void>
+        kind: WikiRunKind
+        shownJoinedNotices: Set<'plain' | 'choice'>
+      }
+    | undefined
+  /** The abort of the managed Cursor skill step a start is in, which Stop LLM Wiki Run and the step's bound end, with the moment the learner (or the closing window) stopped it; none outside that step. */
+  let wikiSkillStepStop:
+    { controller: AbortController; stoppedAtMs?: number } | undefined
   // The latest Cursor skill step (verify and deploy) while it has not settled, also after a Stop or the bound ended the wait for it: a new step waits for it, so two deploys never write the managed skill at once (Cycle 0056 L3).
   let wikiSkillStepInFlight: Promise<void> | undefined
+  /**
+   * Ends the Cursor skill step a start is in, and stamps the moment, so the sentence of the end names when the learner pressed Stop and not when the rejection was handled (Cycle 0056 A3); called by {@link cancelWikiRun}, by {@link stopExtension} and by the removal of the managed skill.
+   * @param step - The step's abort and stamp.
+   * @example stopWikiSkillStep(wikiSkillStepStop)
+   */
+  const stopWikiSkillStep = (
+    step: NonNullable<typeof wikiSkillStepStop>,
+  ): void => {
+    step.stoppedAtMs ??= Date.now()
+    step.controller.abort(WIKI_SKILL_STEP_STOPPED_REASON)
+  }
   // One update run per window, shared by the command, the `/update` link and the browser button.
   const wikiUpdateRun = new WikiUpdateRun()
   // The active run of either host: its one abort, and a promise that settles once its watch or its agent has stopped. `awaitsChat` marks a VS Code update that still waits for the chat's first sign, whose watch is not shown yet.
@@ -331,10 +352,10 @@ export function activate(
     /** When that watch ended and the kind of its run. */
     watchEndedAtMs: number
     runKind: WikiRunKind
-    /** Set where this window wrote back another window's marker after a refused start: that marker is the original owner's, whose chat may still publish, so this window's shutdown leaves it on disk and a second refused start writes it back again as it was. Absent for this window's own reservation. */
-    replacedMarker?: TakenOverWikiReservation['replacedMarker']
+    /** Whether this window wrote back another window's marker after a refused start: that marker is the original owner's, whose chat may still publish, so this window's shutdown leaves it on disk. A later start reads that owner's marker from the disk, never from this entry ({@link claimWikiRunMarker}). Absent for this window's own reservation. */
+    isWrittenBack?: boolean
   }
-  // The reservation each of this window's stopped VS Code watches left on disk for other windows, by Wiki output, with the timer that removes it at that watch's bound; also one written back for another window's stopped watch ({@link WikiReservationEntry.replacedMarker}).
+  // The reservation each of this window's stopped VS Code watches left on disk for other windows, by Wiki output, with the timer that removes it at that watch's bound; also one written back for another window's stopped watch ({@link WikiReservationEntry.isWrittenBack}).
   const wikiReservations = new Map<string, WikiReservationEntry>()
   // The latest change of this window's own marker on each Wiki output (its removal, or its turn into a stopped watch's reservation), while it runs (`running`) or waits for its next attempt, with the timer of that attempt.
   const wikiMarkerChanges = new Map<string, WikiMarkerChangeEntry>()
@@ -368,8 +389,9 @@ export function activate(
     )
     // A later change of this output, or a start that took its marker over, replaced this one meanwhile.
     if (wikiMarkerChanges.get(outputDirectory) !== pending) return
-    // A closing window keeps no timer: its shutdown makes the waiting changes once more.
-    if (isChanged || retriesLeft === 0 || isExtensionStopping) {
+    // A closing window keeps no timer, but a change that was not made stays registered: its shutdown asks for it again within the grace ({@link retryWikiMarkerChangesNow}), so a write-back that failed at the close is not lost.
+    if (!isChanged && retriesLeft > 0 && isExtensionStopping) return
+    if (isChanged || retriesLeft === 0) {
       wikiMarkerChanges.delete(outputDirectory)
       // The change has settled, so the listeners read the marker once, after the counter a start compares counted this attempt.
       for (const listener of [...wikiMarkerChangeListeners]) {
@@ -391,16 +413,21 @@ export function activate(
     clearTimeout(wikiMarkerChanges.get(outputDirectory)?.timer)
     wikiMarkerChanges.delete(outputDirectory)
   }
-  /** Makes every change of this window's markers that waits for its next attempt once more, now; called by {@link stopExtension} at shutdown, since a closing window keeps no timer and such a marker would otherwise count for other windows until it expires. A change that is running at that moment is not made twice. @example await retryWikiMarkerChangesNow() */
+  /** Makes every change of this window's markers that waits for its next attempt once more, now, and again until it is made or {@link WIKI_CURSOR_TERMINATION_GRACE_MS} has passed; called by {@link stopExtension} at shutdown, since a closing window keeps no timer and such a marker would otherwise count for other windows until it expires. The waiting changes are those with a timer and those that failed while the window was closing (no timer). A change that is running at that moment is not made twice. @example await retryWikiMarkerChangesNow() */
   const retryWikiMarkerChangesNow = async (): Promise<void> => {
     const waiting = [...wikiMarkerChanges.entries()].filter(
-      ([, pending]) => pending.timer !== undefined,
+      ([, pending]) => pending.running === undefined,
     )
+    const deadlineMs = Date.now() + WIKI_CURSOR_TERMINATION_GRACE_MS
     await Promise.all(
-      waiting.map(([outputDirectory, pending]) => {
+      waiting.map(async ([outputDirectory, pending]) => {
         clearTimeout(pending.timer)
         wikiMarkerChanges.delete(outputDirectory)
-        return pending.change().catch(() => false)
+        // The claim on the marker may be another window's for a moment; the change is asked for until the grace is over.
+        while (!(await pending.change().catch(() => false))) {
+          if (Date.now() >= deadlineMs) return
+          await delay(WIKI_UPDATE_MARKER_CLAIM_RETRY_DELAY_MS)
+        }
       }),
     )
   }
@@ -428,7 +455,7 @@ export function activate(
     if (!reservation) return
     clearTimeout(reservation.timer)
     // Another window's stopped watch that this window wrote back stays on disk at this window's close: its chat may still publish, and only this window's own reservations are dropped here. Its bound removes it for the windows that read it.
-    if (isWindowClosing && reservation.replacedMarker !== undefined) return
+    if (isWindowClosing && reservation.isWrittenBack) return
     // The disk marker is the reload's only protection when its stopped-watch record is not in storage.
     if (
       await doesReloadNeedWikiReservation(
@@ -1012,7 +1039,7 @@ export function activate(
     stoppedWikiRun?.controller.abort(WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON)
     // A start in the Cursor skill step has claimed the marker and has no run to abort: ending the step makes it leave the marker (removed, or a taken-over reservation written back), which is waited for below so that the reservation is registered before the reservations are dropped.
     const startInSkillStep = wikiSkillStepStop ? wikiStart?.attempt : undefined
-    wikiSkillStepStop?.abort(WIKI_SKILL_STEP_STOPPED_REASON)
+    if (wikiSkillStepStop) stopWikiSkillStep(wikiSkillStepStop)
     const failures: unknown[] = []
     for (const step of [
       // Owned runtimes are released first; an in-flight or failing browser reader close cannot strand them.
@@ -1411,7 +1438,7 @@ export function activate(
    * Registers this window's reservation of a Wiki output, so that its bound removes it, the window's shutdown drops it and a start that takes it over finds what to write back; called by {@link settleWikiRunMarker} for a stopped watch's reservation and by {@link leaveWikiMarkerOfRefusedStart} for one written back.
    * Why: a reservation without its entry is not removed at its bound, not dropped at shutdown and not seen by the next start of this window, which would release it and lose the protection of the chat that may still publish (Cycle 0056 M1).
    * @param outputDirectory - The Wiki output the reservation protects; the reservation of this output only is replaced, one this window left on another output keeps its own timer.
-   * @param reservation - How to remove the marker, when that watch ended, the kind of its run and, for another window's marker written back, that marker.
+   * @param reservation - How to remove the marker, when that watch ended, the kind of its run and whether it is another window's marker written back.
    * @example registerWikiReservation('/repo/.codebook/wiki', { release, watchEndedAtMs: 1_790_000_900_000, runKind: 'generate' })
    */
   const registerWikiReservation = (
@@ -1739,7 +1766,7 @@ export function activate(
     // The refused attempt may still be unwinding when the button is pressed; the override is a start of its own, after it.
     Promise.resolve(attemptToAwaitBeforeOverride(refusedAttempt))
       .catch(() => undefined)
-      .then(() => updateDeepWiki(leftovers))
+      .then(() => updateDeepWiki(leftovers, true))
       .catch((error: unknown) => {
         void showNotice(
           'error',
@@ -1936,15 +1963,15 @@ export function activate(
     wikiReservations.delete(outputDirectory)
     // A change of an earlier run's marker that waits for its next attempt has nothing left to change: this run holds the marker now.
     cancelWikiMarkerChange(outputDirectory)
-    // What the claim removed under its own claim on the marker (another window's reservation), or else this window's own reservation, which reads as nobody's run to its own look.
+    // What the claim removed under its own claim on the marker (another window's reservation, with its exact text), or else this window's own reservation, which reads as nobody's run to its own look. A reservation this window wrote back for another window is never restored from this window's memory: its owner may have removed it since, and only a claim that read it on the disk takes it over again.
     const takenOver: TakenOverWikiReservation | undefined =
       claim.replacedReservation ??
-      (ownReservation && {
-        watchEndedAtMs: ownReservation.watchEndedAtMs,
-        runKind: ownReservation.runKind,
-        // A reservation this window wrote back for another window stays that window's marker when a second refused start writes it back.
-        replacedMarker: ownReservation.replacedMarker,
-      })
+      (ownReservation && !ownReservation.isWrittenBack
+        ? {
+            watchEndedAtMs: ownReservation.watchEndedAtMs,
+            runKind: ownReservation.runKind,
+          }
+        : undefined)
     return { ...claim, takenOver }
   }
   /**
@@ -1971,7 +1998,8 @@ export function activate(
       release: claim.release,
       watchEndedAtMs: takenOver.watchEndedAtMs,
       runKind: takenOver.runKind,
-      replacedMarker: takenOver.replacedMarker,
+      // Another window's marker was read from the disk under the claim; this window's own reservation names none.
+      isWrittenBack: takenOver.replacedMarker !== undefined,
     })
   }
   /**
@@ -2189,6 +2217,7 @@ export function activate(
    * Runs one start of a Wiki run, generation or update, unless one is under way in this window, coalescing repeated presses; called by {@link updateDeepWiki} and {@link generateDeepWiki}.
    * @param kind - The kind of this start, which a press that joins it is told ({@link describeJoinedWikiStart}).
    * @param startRun - The run's start: its checks and, when they pass, its launch ({@link launchWikiRun}).
+   * @param isChoiceCarried - Whether this press carries the learner's choice ("Update anyway", "Generate anyway", the offer's "Update"), which a start it joins does not apply; the joined press is told so ({@link describeJoinedWikiStart}).
    * @returns The start under way when a press arrives during one (in Cursor the first call lasts the whole run); otherwise once this start settled.
    * @throws What the start threw.
    * @example await runWikiAttempt('update', async () => { … })
@@ -2196,13 +2225,22 @@ export function activate(
   const runWikiAttempt = async (
     kind: WikiRunKind,
     startRun: () => Promise<void>,
+    isChoiceCarried = false,
   ): Promise<void> => {
     if (wikiStart) {
       // In Cursor the first call lasts the whole run, so a second command arrives here and must be told, as one from the browser link is.
       if (wikiUpdateRun.isRunning()) showWikiUpdateRunning()
-      // A start that has not begun its run yet: the press joins it, and says so.
-      else
-        void showNotice('information', describeJoinedWikiStart(wikiStart.kind))
+      else {
+        // A start that has not begun its run yet: the press joins it, and says so once per kind of sentence for this attempt; a press with a choice is told its choice was not applied.
+        const joinedNotice = isChoiceCarried ? 'choice' : 'plain'
+        if (!wikiStart.shownJoinedNotices.has(joinedNotice)) {
+          wikiStart.shownJoinedNotices.add(joinedNotice)
+          void showNotice(
+            'information',
+            describeJoinedWikiStart(wikiStart.kind, isChoiceCarried),
+          )
+        }
+      }
       return wikiStart.attempt
     }
     const attempt = (async () => {
@@ -2213,7 +2251,11 @@ export function activate(
       }
       await startRun()
     })()
-    const ownStart = { attempt, kind }
+    const ownStart = {
+      attempt,
+      kind,
+      shownJoinedNotices: new Set<'plain' | 'choice'>(),
+    }
     wikiStart = ownStart
     try {
       await attempt
@@ -2274,54 +2316,60 @@ export function activate(
       host: isCursorHost ? 'cursor' : 'vscode',
     }
   }
-  /** Starts a project-bound skill update from the browser or command, coalescing repeated clicks. @param acknowledgedLeftovers - Given when the learner pressed "Update anyway": the leftovers named by the refusals it was pressed on, one press after the other, which alone are ignored; every other leftover, there already or appeared since, refuses the start with a notice of its own, and another window's running update still refuses it. @example await updateDeepWiki() */
+  /** Starts a project-bound skill update from the browser or command, coalescing repeated clicks. @param acknowledgedLeftovers - Given when the learner pressed "Update anyway": the leftovers named by the refusals it was pressed on, one press after the other, which alone are ignored; every other leftover, there already or appeared since, refuses the start with a notice of its own, and another window's running update still refuses it. @param isChoiceCarried - Whether the press carries a choice (Update anyway, the offer's Update), which a start under way would not apply ({@link runWikiAttempt}). @example await updateDeepWiki() */
   const updateDeepWiki = (
     acknowledgedLeftovers: readonly WikiLeftover[] = [],
+    isChoiceCarried = false,
   ): Promise<void> =>
-    runWikiAttempt('update', async () => {
-      const { projectRoot, wikiOutput, host } = await wikiRunPlace()
-      let start: WikiUpdateStart | undefined
-      try {
-        start = await checkWikiUpdateStart(
-          projectRoot,
-          wikiOutput,
-          host,
-          acknowledgedLeftovers,
+    runWikiAttempt(
+      'update',
+      async () => {
+        const { projectRoot, wikiOutput, host } = await wikiRunPlace()
+        let start: WikiUpdateStart | undefined
+        try {
+          start = await checkWikiUpdateStart(
+            projectRoot,
+            wikiOutput,
+            host,
+            acknowledgedLeftovers,
+          )
+        } catch (error) {
+          // The page waits for this start; a check that threw must reach it as a failed start with the reason, not as silence, and the Output record names it as every refused start's does.
+          wikiUpdateRun.refuseStart(host, wikiOutput, {
+            kind: 'failed',
+            reason: thrownMessage(error),
+          })
+          writeWikiRunRecord({ runKind: 'update' })
+          throw error
+        }
+        if (!start) return
+        // The update request names the managed skill's procedure, so Cursor's agent gets the skill once the checks passed, as a generation's does (Eng decision 73).
+        // A window that began to close between the claim and the skill step has already looked for a step to stop and found none: it starts no verify or deploy, which nothing would end before the host does. The check below then leaves the marker.
+        if (isCursorHost && !isExtensionStopping)
+          await prepareCursorSkillForUpdate(start, host, wikiOutput)
+        // The checks and the skill take time (the freshness inspection hashes every source). A window that began to close meanwhile has already looked for a run to stop, so it starts none: no watch and no unattended agent.
+        if (isExtensionStopping) {
+          await leaveWikiMarkerOfRefusedStart(
+            wikiOutput.outputDirectory,
+            start.claim,
+          )
+          return
+        }
+        const { hasGitRepository } = start
+        const run = newWikiRun('update', projectRoot, wikiOutput, host, start)
+        await launchWikiRun(run, () =>
+          buildWikiUpdatePrompt({
+            manifestPath: join(wikiOutput.outputDirectory, WIKI_MANIFEST_FILE),
+            timeoutMs: run.timeoutMs,
+            // Nothing shows the Cursor CLI's reply to the learner, so its report is not asked for.
+            isReplyRead: !isCursorHost,
+            hasGitRepository,
+            uncoveredPaths: run.uncoveredAtStart,
+          }),
         )
-      } catch (error) {
-        // The page waits for this start; a check that threw must reach it as a failed start with the reason, not as silence, and the Output record names it as every refused start's does.
-        wikiUpdateRun.refuseStart(host, wikiOutput, {
-          kind: 'failed',
-          reason: thrownMessage(error),
-        })
-        writeWikiRunRecord({ runKind: 'update' })
-        throw error
-      }
-      if (!start) return
-      // The update request names the managed skill's procedure, so Cursor's agent gets the skill once the checks passed, as a generation's does (Eng decision 73).
-      if (isCursorHost)
-        await prepareCursorSkillForUpdate(start, host, wikiOutput)
-      // The checks and the skill take time (the freshness inspection hashes every source). A window that began to close meanwhile has already looked for a run to stop, so it starts none: no watch and no unattended agent.
-      if (isExtensionStopping) {
-        await leaveWikiMarkerOfRefusedStart(
-          wikiOutput.outputDirectory,
-          start.claim,
-        )
-        return
-      }
-      const { hasGitRepository } = start
-      const run = newWikiRun('update', projectRoot, wikiOutput, host, start)
-      await launchWikiRun(run, () =>
-        buildWikiUpdatePrompt({
-          manifestPath: join(wikiOutput.outputDirectory, WIKI_MANIFEST_FILE),
-          timeoutMs: run.timeoutMs,
-          // Nothing shows the Cursor CLI's reply to the learner, so its report is not asked for.
-          isReplyRead: !isCursorHost,
-          hasGitRepository,
-          uncoveredPaths: run.uncoveredAtStart,
-        }),
-      )
-    })
+      },
+      isChoiceCarried,
+    )
   /**
    * Tells the learner why a generation did not start, writes its Output record, and offers the override where there is one; called for every refusal of {@link startWikiGenerate} and for a start that threw.
    * A generation's refusal is not recorded as the update's state: the reader page that shows that state exists only for a published Wiki.
@@ -2376,7 +2424,7 @@ export function activate(
   ): void => {
     Promise.resolve(attemptToAwaitBeforeOverride(refusedAttempt))
       .catch(() => undefined)
-      .then(() => generateDeepWiki(leftovers))
+      .then(() => generateDeepWiki(leftovers, true))
       .catch(refuseThrownWikiGenerate)
   }
   /**
@@ -2440,8 +2488,11 @@ export function activate(
   const prepareCursorWikiSkill = async (
     runKind: WikiRunKind,
   ): Promise<void> => {
-    const stop = new AbortController()
-    wikiSkillStepStop = stop
+    const skillStep: NonNullable<typeof wikiSkillStepStop> = {
+      controller: new AbortController(),
+    }
+    const stop = skillStep.controller
+    wikiSkillStepStop = skillStep
     const bound = setTimeout(() => {
       stop.abort(WIKI_SKILL_STEP_BOUND_REASON)
     }, WIKI_SKILL_STEP_TIMEOUT_MS)
@@ -2484,20 +2535,17 @@ export function activate(
       if (stop.signal.aborted)
         throw new Error(
           describeWikiSkillStepEnd(
-            stop.signal.reason === WIKI_SKILL_STEP_BOUND_REASON
-              ? isWaitingForEarlierStep
-                ? WIKI_SKILL_STEP_EARLIER_RUNNING_END
-                : WIKI_SKILL_STEP_BOUND_REASON
-              : WIKI_SKILL_STEP_STOPPED_REASON,
+            wikiSkillStepEndOf(stop.signal.reason, isWaitingForEarlierStep),
             runKind,
             WIKI_SKILL_STEP_TIMEOUT_MS,
-            formatClockTime(Date.now()),
+            // The moment of the Stop, not of this handling.
+            formatClockTime(skillStep.stoppedAtMs ?? Date.now()),
           ),
         )
       throw error
     } finally {
       clearTimeout(bound)
-      if (wikiSkillStepStop === stop) wikiSkillStepStop = undefined
+      if (wikiSkillStepStop === skillStep) wikiSkillStepStop = undefined
     }
   }
   /**
@@ -2549,99 +2597,110 @@ export function activate(
   /**
    * Starts a first LLM Wiki generation from Codebook's entry (Codebook: Generate LLM Wiki), coalescing repeated presses: the start's checks, the confirmation, the folder, the agent and the marker ({@link startWikiGenerate}), then the run of kind `generate` ({@link launchWikiRun}) with the generate request ({@link buildWikiGeneratePrompt}).
    * @param acknowledgedLeftovers - Given when the learner pressed "Generate anyway": the leftovers named by the refusals it was pressed on, which alone are ignored.
+   * @param isChoiceCarried - Whether the press carries the learner's choice (Generate anyway), which a start under way would not apply ({@link runWikiAttempt}).
    * @throws What a start threw (a link on the folder's path, an unwritable parent folder, the Cursor skill's conflict); no marker is left.
    * @example await generateDeepWiki()
    */
   const generateDeepWiki = (
     acknowledgedLeftovers: readonly WikiLeftover[] = [],
+    isChoiceCarried = false,
   ): Promise<void> =>
-    runWikiAttempt('generate', async () => {
-      const { projectRoot, wikiOutput, host } = await wikiRunPlace()
-      const { outputDirectory } = wikiOutput
-      const start = await startWikiGenerate({
-        wikiOutput,
-        assertPathHeld: () =>
-          assertNoLinkOnWikiPath(outputDirectory, projectRoot),
-        readPublishToken: () => readWikiPublishToken(outputDirectory),
-        findStartBlock: () =>
-          findWikiUpdateStartBlock(outputDirectory, projectRoot),
-        findRunInTheWay: () =>
-          findWikiRunInTheWay(
+    runWikiAttempt(
+      'generate',
+      async () => {
+        const { projectRoot, wikiOutput, host } = await wikiRunPlace()
+        const { outputDirectory } = wikiOutput
+        const start = await startWikiGenerate({
+          wikiOutput,
+          assertPathHeld: () =>
+            assertNoLinkOnWikiPath(outputDirectory, projectRoot),
+          readPublishToken: () => readWikiPublishToken(outputDirectory),
+          findStartBlock: () =>
+            findWikiUpdateStartBlock(outputDirectory, projectRoot),
+          findRunInTheWay: () =>
+            findWikiRunInTheWay(
+              outputDirectory,
+              acknowledgedLeftovers,
+              'generate',
+              startWikiGenerateAnyway,
+            ),
+          confirm: () => confirmWikiGenerate(projectRoot, wikiOutput),
+          openLocationSetting: async () =>
+            vscode.commands.executeCommand(
+              'workbench.action.openSettings',
+              '@id:codebook.wikiOutputDirectory',
+            ),
+          // The marker lies beside the output folder, in a folder a fresh project lacks; the output folder itself is the publisher's to make.
+          makeOutputParent: async () => {
+            await mkdir(dirname(outputDirectory), { recursive: true })
+          },
+          // A window that began to close between the claim and the skill step starts no verify or deploy (as for an update); the check after the start leaves the marker.
+          prepareAgent: () =>
+            isCursorHost && !isExtensionStopping
+              ? prepareCursorWikiSkill('generate')
+              : Promise.resolve(),
+          // The same bounded retry every change of this window's marker has; a closing window gets its one attempt.
+          leaveMarker: (claim) =>
+            leaveWikiMarkerOfRefusedStart(outputDirectory, claim),
+          claimMarker: (startedAtMs) =>
+            claimWikiRunMarker(outputDirectory, host, 'generate', startedAtMs),
+          describeHolder: (holder) =>
+            describeOtherWikiWindow(holder, 'generate'),
+          readPublicationIdentity: () =>
+            readWikiPublicationIdentity(outputDirectory),
+          hasGitRepository: () =>
+            isInGitRepository(projectRoot, outputDirectory),
+          // A link or a file there was refused by the path check; only a folder of its own without a manifest counts, and one that holds a Wiki gets the update's offer.
+          hasOutputFolderWithoutWiki: async () =>
+            (await lstat(outputDirectory).then(
+              (stat) => stat.isDirectory(),
+              () => false,
+            )) &&
+            (await readWikiPublishToken(outputDirectory).catch(
+              () => 'unreadable',
+            )) === undefined,
+          offerUpdate: () => {
+            // The generation that offers the update, which the update waits for, and only for it.
+            const offeringAttempt = wikiStart?.attempt
+            void showNotice(
+              'information',
+              describeExistingWiki(wikiOutput.outputLabel),
+              UPDATE_WIKI_ACTION,
+            ).then(
+              (choice) => {
+                if (choice === UPDATE_WIKI_ACTION)
+                  startWikiUpdateAnyway([], offeringAttempt)
+              },
+              () => undefined,
+            )
+          },
+          refuse: (reason, override, cause) =>
+            refuseWikiGenerate(host, wikiOutput, reason, override, cause),
+          now: Date.now,
+        })
+        if (!start) return
+        // A window that began to close while the learner confirmed starts no run its shutdown no longer finds.
+        if (isExtensionStopping) {
+          await leaveWikiMarkerOfRefusedStart(outputDirectory, start.claim)
+          return
+        }
+        const run = newWikiRun('generate', projectRoot, wikiOutput, host, {
+          ...start,
+          tokenAtStart: undefined,
+          uncoveredAtStart: [],
+        })
+        await launchWikiRun(run, () =>
+          buildWikiGeneratePrompt({
             outputDirectory,
-            acknowledgedLeftovers,
-            'generate',
-            startWikiGenerateAnyway,
-          ),
-        confirm: () => confirmWikiGenerate(projectRoot, wikiOutput),
-        openLocationSetting: async () =>
-          vscode.commands.executeCommand(
-            'workbench.action.openSettings',
-            '@id:codebook.wikiOutputDirectory',
-          ),
-        // The marker lies beside the output folder, in a folder a fresh project lacks; the output folder itself is the publisher's to make.
-        makeOutputParent: async () => {
-          await mkdir(dirname(outputDirectory), { recursive: true })
-        },
-        prepareAgent: () =>
-          isCursorHost ? prepareCursorWikiSkill('generate') : Promise.resolve(),
-        // The same bounded retry every change of this window's marker has; a closing window gets its one attempt.
-        leaveMarker: (claim) =>
-          leaveWikiMarkerOfRefusedStart(outputDirectory, claim),
-        claimMarker: (startedAtMs) =>
-          claimWikiRunMarker(outputDirectory, host, 'generate', startedAtMs),
-        describeHolder: (holder) => describeOtherWikiWindow(holder, 'generate'),
-        readPublicationIdentity: () =>
-          readWikiPublicationIdentity(outputDirectory),
-        hasGitRepository: () => isInGitRepository(projectRoot, outputDirectory),
-        // A link or a file there was refused by the path check; only a folder of its own without a manifest counts, and one that holds a Wiki gets the update's offer.
-        hasOutputFolderWithoutWiki: async () =>
-          (await lstat(outputDirectory).then(
-            (stat) => stat.isDirectory(),
-            () => false,
-          )) &&
-          (await readWikiPublishToken(outputDirectory).catch(
-            () => 'unreadable',
-          )) === undefined,
-        offerUpdate: () => {
-          // The generation that offers the update, which the update waits for, and only for it.
-          const offeringAttempt = wikiStart?.attempt
-          void showNotice(
-            'information',
-            describeExistingWiki(wikiOutput.outputLabel),
-            UPDATE_WIKI_ACTION,
-          ).then(
-            (choice) => {
-              if (choice === UPDATE_WIKI_ACTION)
-                startWikiUpdateAnyway([], offeringAttempt)
-            },
-            () => undefined,
-          )
-        },
-        refuse: (reason, override, cause) =>
-          refuseWikiGenerate(host, wikiOutput, reason, override, cause),
-        now: Date.now,
-      })
-      if (!start) return
-      // A window that began to close while the learner confirmed starts no run its shutdown no longer finds.
-      if (isExtensionStopping) {
-        await leaveWikiMarkerOfRefusedStart(outputDirectory, start.claim)
-        return
-      }
-      const run = newWikiRun('generate', projectRoot, wikiOutput, host, {
-        ...start,
-        tokenAtStart: undefined,
-        uncoveredAtStart: [],
-      })
-      await launchWikiRun(run, () =>
-        buildWikiGeneratePrompt({
-          outputDirectory,
-          timeoutMs: run.timeoutMs,
-          // Nothing shows the Cursor CLI's reply to the learner, so its report is not asked for.
-          isReplyRead: !isCursorHost,
-          hasGitRepository: start.hasGitRepository,
-        }),
-      )
-    })
+            timeoutMs: run.timeoutMs,
+            // Nothing shows the Cursor CLI's reply to the learner, so its report is not asked for.
+            isReplyRead: !isCursorHost,
+            hasGitRepository: start.hasGitRepository,
+          }),
+        )
+      },
+      isChoiceCarried,
+    )
   if (vscode.window?.registerUriHandler)
     context.subscriptions.push(
       vscode.window.registerUriHandler({
@@ -2749,7 +2808,7 @@ export function activate(
     }
     // A start in the Cursor skill step ends at once, with its own sentence.
     if (wikiSkillStepStop) {
-      wikiSkillStepStop.abort(WIKI_SKILL_STEP_STOPPED_REASON)
+      stopWikiSkillStep(wikiSkillStepStop)
       return
     }
     // A run that is still starting has nothing to stop yet; the learner is told so instead of "nothing is running".
@@ -2781,6 +2840,17 @@ export function activate(
       const attempt = (async () => {
         cursorRemoving = true
         try {
+          // A Cursor skill step of this window that is still running would write the skill again after it is removed: the step is ended and waited for within the grace, and a step that does not settle in time leaves everything in place, with the learner told.
+          if (wikiSkillStepStop) stopWikiSkillStep(wikiSkillStepStop)
+          if (
+            !(await settledWithin(
+              wikiSkillStepInFlight,
+              WIKI_CURSOR_TERMINATION_GRACE_MS,
+            ))
+          ) {
+            void showNotice('warning', WIKI_SKILL_REMOVAL_STEP_RUNNING_SENTENCE)
+            return
+          }
           // Setup and auto reconnect must finish before removing their shared skill, registration, and catalog.
           await cursorSetup?.catch(() => {})
           await cursorRegistration?.attempt.catch(() => {})

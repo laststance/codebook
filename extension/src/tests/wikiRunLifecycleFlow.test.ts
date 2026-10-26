@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict'
-import { mkdir, readFile, utimes, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
+import { setTimeout as sleepFor } from 'node:timers/promises'
 
+import { WIKI_CURSOR_TERMINATION_GRACE_MS } from '../constants'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { claimWikiUpdateMarker } from '../utils/claimWikiUpdateMarker'
+import { formatClockTime } from '../utils/formatClockTime'
 import { WikiUpdateTimeoutError } from '../utils/wikiUpdateTimeoutError'
 
 import {
@@ -1052,6 +1056,7 @@ async function closeWindowDuringSkillStepOverReservation(
   context: TestContext,
   kind: 'generate' | 'update',
   watchEndedAtMs: number,
+  windowOptions: { markerReserveFailures?: number } = {},
 ): Promise<{
   marker: Record<string, unknown> | undefined
   agentRuns: number
@@ -1059,6 +1064,7 @@ async function closeWindowDuringSkillStepOverReservation(
   let agentRuns = 0
   const anyway = kind === 'update' ? 'Update anyway' : 'Generate anyway'
   const project = await openProjectWithoutWiki({
+    ...windowOptions,
     cursor: true,
     chooseAction: (_message, actions) =>
       actions.includes(anyway) ? anyway : undefined,
@@ -1193,9 +1199,13 @@ test('a window that closes while the Cursor skill deploy never settles shuts dow
   const markerLeft = await exists(project.markerPath)
   await generating
 
-  // Assert
+  // Assert: the limit is the grace itself, so a loaded machine cannot flake the claim "within the grace".
   assert.deepEqual(
-    { isShutdownInsideGrace: shutdownMs < 4_000, markerLeft, agentRuns },
+    {
+      isShutdownInsideGrace: shutdownMs < WIKI_CURSOR_TERMINATION_GRACE_MS,
+      markerLeft,
+      agentRuns,
+    },
     { isShutdownInsideGrace: true, markerLeft: false, agentRuns: 0 },
   )
 })
@@ -1426,5 +1436,580 @@ test('two refused starts in a row over a VS Code window’s reservation leave it
       watchEndedAtMs,
       runKind: 'generate',
     },
+  )
+})
+
+/** Presses Stop LLM Wiki Run until the window has told this many ends of a start, which is when the step under way took the stop (a Stop before the step began only says the run is starting). */
+const stopUntilErrorsTold = async (
+  project: ProjectWindow,
+  errorCount: number,
+): Promise<void> => {
+  await waitUntil(
+    async () => {
+      await project.runCommand(CANCEL_COMMAND)
+      return project.errors.length >= errorCount
+    },
+    `the ${errorCount}. stop sentence`,
+    6_000,
+  )
+}
+
+// Value: protects=Cycle 0056 pass 3 SM3-A, a generation start of a window that closed between its claim and the Cursor skill step; fails_when=the step still runs verify or deploy for up to 30 seconds after the window began to close, or the marker stays, or an agent starts; no_claim=a window that closes inside the step (tests above); seam=the claim's answer held open while the window closes
+test('a window that closes between a generation’s claim and its Cursor skill step runs no verify or deploy, removes the marker and starts no agent', async (context) => {
+  // Arrange
+  let agentRuns = 0
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    cursorAgent: async () => {
+      agentRuns += 1
+      return 'Published.'
+    },
+  })
+  context.after(() => project.close())
+  const claimAnswer = project.hold('claim-answer')
+  const generating = project.runCommand(GENERATE_COMMAND).catch(() => undefined)
+  await claimAnswer.started
+
+  // Act
+  await project.closeWindow()
+  claimAnswer.release()
+  await generating
+  await waitUntil(
+    async () => !(await exists(project.markerPath)),
+    'the marker’s removal',
+    6_000,
+  )
+
+  // Assert
+  assert.deepEqual(
+    { skillCalls: project.skillCalls, agentRuns },
+    { skillCalls: [], agentRuns: 0 },
+  )
+})
+
+// Value: protects=Cycle 0056 pass 3 SM3-B, the update twin of SM3-A; fails_when=an update start of a window that closed after its claim still runs verify or deploy, leaves the marker or starts an agent; no_claim=the generation's start (test above); seam=the claim's answer held open while the window closes
+test('a window that closes between an update’s claim and its Cursor skill step runs no verify or deploy, removes the marker and starts no agent', async (context) => {
+  // Arrange
+  let agentRuns = 0
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    cursorAgent: async () => {
+      agentRuns += 1
+      return 'Done.'
+    },
+  })
+  context.after(() => project.close())
+  await publishGeneratedWiki(project.outputDirectory, project.projectRoot)
+  const claimAnswer = project.hold('claim-answer')
+  const updating = project.runUpdateCommand().catch(() => undefined)
+  await claimAnswer.started
+
+  // Act
+  await project.closeWindow()
+  claimAnswer.release()
+  await updating
+  await waitUntil(
+    async () => !(await exists(project.markerPath)),
+    'the marker’s removal',
+    6_000,
+  )
+
+  // Assert
+  assert.deepEqual(
+    { skillCalls: project.skillCalls, agentRuns },
+    { skillCalls: [], agentRuns: 0 },
+  )
+})
+
+// Value: protects=Cycle 0056 pass 3 SM3-C, a window that closes while a second press waits for an earlier hung deploy; fails_when=shutdown waits for the hung deploy beyond the grace, the second start's marker stays, or an agent starts; no_claim=the second press's own Stop (tests above); seam=a deploy that never settles
+test('a window that closes while a second press waits for an earlier hung deploy shuts down within the grace, removes the marker and starts no agent', async (context) => {
+  // Arrange
+  let agentRuns = 0
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    cursorSkill: {
+      verify: async () => {
+        throw new Error('The managed Cursor skill is missing.')
+      },
+      deploy: () => new Promise<void>(() => {}),
+    },
+    cursorAgent: async () => {
+      agentRuns += 1
+      return 'Published.'
+    },
+  })
+  context.after(() => project.close())
+  const firstPress = project.runCommand(GENERATE_COMMAND).catch(() => undefined)
+  await waitUntil(
+    () => project.skillCalls.includes('deploy'),
+    'the first deploy',
+    6_000,
+  )
+  await project.runCommand(CANCEL_COMMAND)
+  await firstPress
+  const secondPress = project
+    .runCommand(GENERATE_COMMAND)
+    .catch(() => undefined)
+  await waitUntil(
+    async () => await exists(project.markerPath),
+    'the second start’s claim',
+    6_000,
+  )
+  // The second start has no verify to show for itself; a moment lets it reach its wait for the first deploy.
+  await flushQueuedReactions()
+  await waitUntil(() => project.errors.length === 1, 'the first end', 6_000)
+
+  // Act
+  const closeStartedAtMs = Date.now()
+  await project.closeWindow()
+  const shutdownMs = Date.now() - closeStartedAtMs
+  await secondPress
+  const markerLeft = await exists(project.markerPath)
+
+  // Assert
+  assert.deepEqual(
+    {
+      isShutdownInsideGrace: shutdownMs < WIKI_CURSOR_TERMINATION_GRACE_MS,
+      markerLeft,
+      skillCalls: project.skillCalls,
+      agentRuns,
+    },
+    {
+      isShutdownInsideGrace: true,
+      markerLeft: false,
+      skillCalls: ['verify', 'deploy'],
+      agentRuns: 0,
+    },
+  )
+})
+
+// Value: protects=Cycle 0056 pass 3 SM3-D, three presses against one hung deploy; fails_when=the third press starts a deploy beside the hung one (it waits for the second step, which waits for the first) or any press ends without its own stop sentence; no_claim=the second press alone (L3 test); seam=a deploy that never settles
+test('three presses against one hung deploy start one deploy only and each ends with its own stop sentence', async (context) => {
+  // Arrange
+  let deployCalls = 0
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    cursorSkill: {
+      verify: async () => {
+        throw new Error('The managed Cursor skill is missing.')
+      },
+      deploy: () => {
+        deployCalls += 1
+        return new Promise<void>(() => {})
+      },
+    },
+  })
+  context.after(() => project.close())
+  const firstPress = project.runCommand(GENERATE_COMMAND).catch(() => undefined)
+  await waitUntil(
+    () => project.skillCalls.includes('deploy'),
+    'the first deploy',
+    6_000,
+  )
+  await project.runCommand(CANCEL_COMMAND)
+  await firstPress
+
+  // Act
+  const secondPress = project
+    .runCommand(GENERATE_COMMAND)
+    .catch(() => undefined)
+  await stopUntilErrorsTold(project, 2)
+  await secondPress
+  const thirdPress = project.runCommand(GENERATE_COMMAND).catch(() => undefined)
+  await stopUntilErrorsTold(project, 3)
+  await thirdPress
+  await waitUntil(
+    async () => !(await exists(project.markerPath)),
+    'the marker’s removal',
+    6_000,
+  )
+
+  // Assert
+  assert.deepEqual(
+    { deployCalls, errors: project.errors.map(withoutClockTime) },
+    {
+      deployCalls: 1,
+      errors: [
+        'Codebook did not start the LLM Wiki generation: The LLM Wiki generation was cancelled at HH:MM while Codebook readied the Cursor skill; no agent was started. Press Generate LLM Wiki when you want to start again.',
+        'Codebook did not start the LLM Wiki generation: The LLM Wiki generation was cancelled at HH:MM while Codebook readied the Cursor skill; no agent was started. Press Generate LLM Wiki when you want to start again.',
+        'Codebook did not start the LLM Wiki generation: The LLM Wiki generation was cancelled at HH:MM while Codebook readied the Cursor skill; no agent was started. Press Generate LLM Wiki when you want to start again.',
+      ],
+    },
+  )
+})
+
+// Value: protects=Cycle 0056 pass 3 T3-B, Stop pressed while the second step waits for the hung earlier deploy; fails_when=the waiting step answers the earlier-step sentence (which blames the earlier step and sends the learner to Reload Window) instead of its own cancellation; no_claim=the bound ending a waiting step (RT-B tests); seam=a deploy that never settles
+test('Stop LLM Wiki Run while a second step waits for a hung earlier deploy tells the cancellation, not that an earlier step is running', async (context) => {
+  // Arrange
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    cursorSkill: {
+      verify: async () => {
+        throw new Error('The managed Cursor skill is missing.')
+      },
+      deploy: () => new Promise<void>(() => {}),
+    },
+  })
+  context.after(() => project.close())
+  const firstPress = project.runCommand(GENERATE_COMMAND).catch(() => undefined)
+  await waitUntil(
+    () => project.skillCalls.includes('deploy'),
+    'the first deploy',
+    6_000,
+  )
+  await project.runCommand(CANCEL_COMMAND)
+  await firstPress
+
+  // Act
+  const secondPress = project
+    .runCommand(GENERATE_COMMAND)
+    .catch(() => undefined)
+  await stopUntilErrorsTold(project, 2)
+  await secondPress
+
+  // Assert
+  assert.equal(
+    withoutClockTime(project.errors[1] ?? ''),
+    'Codebook did not start the LLM Wiki generation: The LLM Wiki generation was cancelled at HH:MM while Codebook readied the Cursor skill; no agent was started. Press Generate LLM Wiki when you want to start again.',
+  )
+})
+
+// Value: protects=Cycle 0056 pass 3 T3-B, the update twin of RT-B; fails_when=an update that waits for a hung earlier deploy and reaches its bound says only that it timed out, names a generation, leaves its marker or starts an agent; no_claim=the generation's wording (RT-B test above); seam=a deploy that never settles and a bound shortened to one second
+test('an Update pressed after a stopped step whose deploy never settles ends at its own bound saying the earlier step is still running and releases the marker', async (context) => {
+  // Arrange
+  let agentRuns = 0
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    constants: { WIKI_SKILL_STEP_TIMEOUT_MS: 1_000 },
+    cursorSkill: {
+      verify: async () => {
+        throw new Error('The managed Cursor skill is missing.')
+      },
+      deploy: () => new Promise<void>(() => {}),
+    },
+    cursorAgent: async () => {
+      agentRuns += 1
+      return 'Done.'
+    },
+  })
+  context.after(() => project.close())
+  await publishGeneratedWiki(project.outputDirectory, project.projectRoot)
+  const firstPress = project.runUpdateCommand().catch(() => undefined)
+  await waitUntil(
+    () => project.skillCalls.includes('deploy'),
+    'the first deploy',
+    6_000,
+  )
+  await project.runCommand(CANCEL_COMMAND)
+  await firstPress
+
+  // Act
+  await project.runUpdateCommand().catch(() => undefined)
+  await waitUntil(
+    async () => !(await exists(project.markerPath)),
+    'the marker’s removal',
+    6_000,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      skillCalls: project.skillCalls,
+      lastError: project.errors.at(-1),
+      agentRuns,
+    },
+    {
+      skillCalls: ['verify', 'deploy'],
+      lastError:
+        'Codebook could not start the Wiki update: Codebook could not ready the Cursor skill: an earlier Cursor skill step in this window is still running. Reload the window (Developer: Reload Window) to end it, then press Update LLM Wiki again.',
+      agentRuns: 0,
+    },
+  )
+})
+
+// Value: protects=Cycle 0056 pass 3 RT3-A, the original owner's release of a reservation that another window took over and wrote back; fails_when=the written-back marker is not the owner's text byte for byte, so the owner's release, bound timer or close finds "not my text" and leaves the marker for the whole bound; no_claim=the claim's byte-identical write-back (claimWikiUpdateMarker test); seam=a real claim of another window and the skill steps stubbed
+test('a reservation written back after a refused start is still removed by the window that left it', async (context) => {
+  // Arrange
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    chooseAction: (_message, actions) =>
+      actions.includes('Generate anyway') ? 'Generate anyway' : undefined,
+    cursorSkill: SKILL_IN_THE_WAY,
+  })
+  context.after(() => project.close())
+  await mkdir(join(project.projectRoot, '.codebook'), { recursive: true })
+  const ownerClaim = await claimWikiUpdateMarker(project.outputDirectory, {
+    pid: process.pid,
+    windowId: 'window-a',
+    host: 'vscode',
+    startedAtMs: Date.now() - 60_000,
+    runKind: 'generate',
+  })
+  assert.ok('reserve' in ownerClaim)
+  await ownerClaim.reserve(Date.now() - 1_000)
+  await project.runCommand(GENERATE_COMMAND)
+  await waitForWriteBack(project)
+  const markerWhileWrittenBack = await readMarker(project.markerPath)
+
+  // Act: the window that left the reservation ends its bound or closes.
+  await ownerClaim.release()
+
+  // Assert
+  assert.deepEqual(
+    {
+      windowIdWhileWrittenBack: markerWhileWrittenBack?.windowId,
+      markerLeft: await exists(project.markerPath),
+    },
+    { windowIdWhileWrittenBack: 'window-a', markerLeft: false },
+  )
+})
+
+// Value: protects=Cycle 0056 pass 3 A1, a written-back reservation that its owner has removed since; fails_when=a second refused start restores the owner's finished reservation from this window's memory, so every window is blocked for up to the generate bound by a chat that has ended; no_claim=a reservation still on disk (RT-A test above); seam=a reservation written by hand and removed by hand
+test('a second refused start after the original owner removed its written-back reservation leaves no marker', async (context) => {
+  // Arrange
+  const watchEndedAtMs = Date.now() - 1_000
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    chooseAction: (_message, actions) =>
+      actions.includes('Generate anyway') ? 'Generate anyway' : undefined,
+    cursorSkill: SKILL_IN_THE_WAY,
+  })
+  context.after(() => project.close())
+  await writeOtherWindowReservation(
+    project.projectRoot,
+    project.markerPath,
+    watchEndedAtMs,
+  )
+  await project.runCommand(GENERATE_COMMAND)
+  await waitForWriteBack(project)
+  // The other window's chat ended and its window removed the reservation.
+  await rm(project.markerPath)
+
+  // Act
+  await project.runCommand(GENERATE_COMMAND).catch(() => undefined)
+
+  // Assert
+  assert.equal(await exists(project.markerPath), false)
+})
+
+// Value: protects=Cycle 0056 pass 3 RT3-B and the adversarial P2, a write-back that fails while the window closes; fails_when=the failed write-back is dropped at the close, so the marker stays this window's start marker and the other window's chat loses its protection; no_claim=a write-back that works at once (SM-A tests); seam=the window's turn of the marker answering false twice, as when another window holds the claim
+test('a window that closes while the claim on the marker is held writes the other window’s reservation back within the grace', async (context) => {
+  // Arrange
+  const watchEndedAtMs = Date.now() - 1_000
+  const { marker, agentRuns } = await closeWindowDuringSkillStepOverReservation(
+    context,
+    'generate',
+    watchEndedAtMs,
+    { markerReserveFailures: 2 },
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      windowId: marker?.windowId,
+      watchEndedAtMs: marker?.watchEndedAtMs,
+      agentRuns,
+    },
+    { windowId: 'the-other-window', watchEndedAtMs, agentRuns: 0 },
+  )
+})
+
+// Value: protects=Cycle 0056 pass 3 RT3-C, Remove Managed Cursor Skill during a hung Cursor skill step; fails_when=the skill is removed while the step's deploy is still running, so the late deploy writes the skill the learner just removed; no_claim=the removal itself (extension and editorChatOnboarding tests); seam=a deploy that settles after the removal began
+test('Remove Managed Cursor Skill waits for the Cursor skill step it ended and removes the skill after that deploy settled', async (context) => {
+  // Arrange
+  const order: string[] = []
+  let settleDeploy = (): void => {}
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    cursorSkill: {
+      verify: async () => {
+        throw new Error('The managed Cursor skill is missing.')
+      },
+      deploy: () =>
+        new Promise<void>((resolveDeploy) => {
+          settleDeploy = (): void => {
+            order.push('deploy-settled')
+            resolveDeploy()
+          }
+        }),
+      remove: async () => {
+        order.push('remove-called')
+      },
+    },
+  })
+  context.after(() => project.close())
+  const generating = project.runCommand(GENERATE_COMMAND).catch(() => undefined)
+  await waitUntil(
+    () => project.skillCalls.includes('deploy'),
+    'the deploy',
+    6_000,
+  )
+
+  // Act: the removal ends the step and waits for its deploy; it removes nothing while that deploy runs.
+  const removing = project.runCommand('codebook.removeManagedCursorSkill')
+  await sleepFor(100)
+  const callsWhileDeployRuns = [...order]
+  settleDeploy()
+  await removing
+  await generating
+
+  // Assert
+  assert.deepEqual(
+    { callsWhileDeployRuns, order },
+    {
+      callsWhileDeployRuns: [],
+      order: ['deploy-settled', 'remove-called'],
+    },
+  )
+})
+
+// Value: protects=Cycle 0056 pass 3 RT3-C, a Cursor skill step that does not settle within the grace; fails_when=the skill is removed anyway (and re-created by the late deploy) or the learner is not told why nothing was removed; no_claim=a deploy that settles in time (test above); seam=a deploy that never settles and the grace shortened to 300 ms
+test('Remove Managed Cursor Skill tells the learner and removes nothing while a Cursor skill step is still running after the grace', async (context) => {
+  // Arrange
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    constants: { WIKI_CURSOR_TERMINATION_GRACE_MS: 300 },
+    cursorSkill: {
+      verify: async () => {
+        throw new Error('The managed Cursor skill is missing.')
+      },
+      deploy: () => new Promise<void>(() => {}),
+    },
+  })
+  context.after(() => project.close())
+  void project.runCommand(GENERATE_COMMAND).catch(() => undefined)
+  await waitUntil(
+    () => project.skillCalls.includes('deploy'),
+    'the deploy',
+    6_000,
+  )
+
+  // Act
+  await project.runCommand('codebook.removeManagedCursorSkill')
+
+  // Assert
+  assert.deepEqual(
+    { skillCalls: project.skillCalls, warnings: project.warnings },
+    {
+      skillCalls: ['verify', 'deploy'],
+      warnings: [
+        'Codebook did not remove the managed Cursor skill: a Cursor skill step of this window is still running and could write the skill again. Reload the window (Developer: Reload Window) to end it, then run Codebook: Remove Managed Cursor Skill again.',
+      ],
+    },
+  )
+})
+
+// Value: protects=Cycle 0056 pass 3 A2, a plain press that joins a start under way; fails_when=every further press shows the joined notice again (the README says once); no_claim=the first notice's wording (tests above); seam=the start checks held open
+test('two plain presses that join a start under way show the joined notice once', async (context) => {
+  // Arrange
+  const project = await openProjectWithoutWiki()
+  context.after(() => project.close())
+  const startChecks = project.hold('start-block')
+  const generating = project.runCommand(GENERATE_COMMAND)
+  await startChecks.started
+
+  // Act: a press that joins returns the start it joined, so none is awaited before the start is released.
+  const joiningPresses = [
+    project.runCommand(GENERATE_COMMAND),
+    project.runCommand(UPDATE_COMMAND),
+  ]
+  await flushQueuedReactions()
+  startChecks.release()
+  await Promise.all([generating, ...joiningPresses])
+
+  // Assert
+  assert.deepEqual(project.notices, [
+    'Codebook is already starting an LLM Wiki generation in this window; this press joins it.',
+  ])
+})
+
+// Value: protects=Cycle 0056 pass 3 A2, a press with a choice that joins a start under way; fails_when=Generate anyway pressed during a start under way is told "this press joins it" although its acknowledgement is dropped, or is told nothing; no_claim=the plain press (test above); seam=the button of a refusal pressed later, and the start checks of a second press held open
+test('Generate anyway pressed while another start is under way says that the choice was not applied', async (context) => {
+  // Arrange
+  let pressGenerateAnyway = (): void => {}
+  const pressed = new Promise<string>((resolvePress) => {
+    pressGenerateAnyway = (): void => resolvePress('Generate anyway')
+  })
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    chooseAction: (_message, actions) =>
+      actions.includes('Generate anyway') ? pressed : undefined,
+    cursorSkill: SKILL_IN_THE_WAY,
+  })
+  context.after(() => project.close())
+  await writeOtherWindowReservation(
+    project.projectRoot,
+    project.markerPath,
+    Date.now() - 1_000,
+  )
+  await project.runCommand(GENERATE_COMMAND)
+  const startChecks = project.hold('start-block')
+  const secondPress = project.runCommand(GENERATE_COMMAND)
+  await startChecks.started
+
+  // Act
+  pressGenerateAnyway()
+  await waitUntil(
+    () => project.notices.length > 0,
+    'the notice of the press with a choice',
+    6_000,
+  )
+  startChecks.release()
+  await secondPress
+
+  // Assert
+  assert.deepEqual(project.notices, [
+    'Codebook is already starting an LLM Wiki generation in this window, so this choice was not applied. If that start stops for the same reason, choose it again.',
+  ])
+})
+
+// Value: protects=Cycle 0056 pass 3 A3, the time a skill-step cancellation names; fails_when=the sentence names the moment the rejection was handled, a minute later than the Stop when the two straddle a minute boundary; no_claim=the sentence's wording (describeWikiSkillStepEnd tests); seam=a clock frozen mid-minute that jumps 61 seconds the moment the abort has fired
+test('the cancellation of a Cursor skill step names the time Stop LLM Wiki Run was pressed', async (context) => {
+  // Arrange
+  let stopPressedAtMs: number | undefined
+  let clockAdvanceMs = 0
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    cursorSkill: { verify: () => new Promise<never>(() => {}) },
+    clock: () =>
+      stopPressedAtMs === undefined
+        ? Date.now()
+        : stopPressedAtMs + clockAdvanceMs,
+  })
+  context.after(() => project.close())
+  const generating = project.runCommand(GENERATE_COMMAND).catch(() => undefined)
+  await waitUntil(
+    () => project.skillCalls.includes('verify'),
+    'the skill step',
+    6_000,
+  )
+  // Stop is pressed in the middle of a minute; the rejection of the waiting step is handled 61 seconds later by this clock, in the next minute.
+  const pressedAtMs = Math.floor(Date.now() / 60_000) * 60_000 + 30_000
+  stopPressedAtMs = pressedAtMs
+  const abort = AbortController.prototype.abort
+  context.mock.method(
+    AbortController.prototype,
+    'abort',
+    function (this: AbortController, reason?: unknown): void {
+      abort.call(this, reason)
+      clockAdvanceMs = 61_000
+    },
+  )
+
+  // Act
+  await project.runCommand(CANCEL_COMMAND)
+  await generating
+  context.mock.restoreAll()
+
+  // Assert
+  assert.deepEqual(
+    {
+      namesStopMinute: project.errors[0]?.includes(
+        `cancelled at ${formatClockTime(pressedAtMs)} while`,
+      ),
+      isLaterMinuteDifferent:
+        formatClockTime(pressedAtMs) !== formatClockTime(pressedAtMs + 61_000),
+    },
+    { namesStopMinute: true, isLaterMinuteDifferent: true },
   )
 })

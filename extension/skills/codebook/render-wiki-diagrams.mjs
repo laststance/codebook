@@ -113,11 +113,16 @@ function flowSvg(diagram, prefix) {
   const nodeHeight = Math.max(...diagram.nodes.map(node => wrap(node.label, 20).length)) * LAYOUT.lineHeight + LAYOUT.nodePadding * 2;
   const labelGroups = new Map();
   const definitions = new Map(diagram.nodes.map(node => [node.id, node]));
-  for (const edge of diagram.edges) {
+  /** Names the label band an edge's label stacks in: one band for the edges of a row's node pair, and one for the edges between two columns that leave through the same gap between rows, so labels of different edges never share a place. */
+  const labelBandOf = edge => {
     const from = definitions.get(edge.from), to = definitions.get(edge.to);
-    // Edges between one pair of nodes share a label band; stacking them keeps their label boxes apart, in a row and in a column.
-    if (from.id === to.id) continue;
-    const key = [from.id, to.id].sort().join(':');
+    if (from.row === to.row) return [from.id, to.id].sort().join(':');
+    return `gap:${Math.min(from.column, to.column)}:${Math.max(from.column, to.column)}:${to.row > from.row ? from.row : from.row - 1}`;
+  };
+  for (const edge of diagram.edges) {
+    // A self-loop has its own label place above its node.
+    if (edge.from === edge.to) continue;
+    const key = labelBandOf(edge);
     const group = labelGroups.get(key) ?? [];
     group.push(edge); labelGroups.set(key, group);
   }
@@ -148,10 +153,11 @@ function flowSvg(diagram, prefix) {
     const midpointX = (startX + endX) / 2, midpointY = (startY + endY) / 2;
     const offsetX = horizontal ? 0 : lane, offsetY = horizontal ? lane : 0;
     const path = `M${startX} ${startY} C${midpointX + offsetX} ${startY + offsetY} ${midpointX + offsetX} ${endY + offsetY} ${endX} ${endY}`;
-    // Horizontal labels use the row's reserved band, clear of both nodes and their connector; vertical ones stack from the top of the gap between the two nodes.
-    const group = labelGroups.get([edge.from, edge.to].sort().join(':')) ?? [edge];
+    // Horizontal labels use the row's reserved band, clear of both nodes and their connector; a vertical label stacks in the gap next to the node it leaves, so an edge across several rows never puts its label on a node between.
+    const group = labelGroups.get(labelBandOf(edge)) ?? [edge];
     const priorHeight = group.slice(0, group.indexOf(edge)).reduce((height, previous) => height + edgeLines(previous).length * LAYOUT.lineHeight + LAYOUT.labelGap, 0);
-    const labelY = horizontal ? from.y - labelHeight + LAYOUT.fontSize + priorHeight : midpointY + offsetY - labelHeight / 2 + priorHeight;
+    const gapMiddleY = forward ? from.y + nodeHeight + (rowStride - nodeHeight) / 2 : from.y - (rowStride - nodeHeight) / 2;
+    const labelY = horizontal ? from.y - labelHeight + LAYOUT.fontSize + priorHeight : gapMiddleY - labelHeight / 2 + priorHeight;
     return edgeSvg(edge, prefix, path, midpointX + offsetX, labelY);
   }).join('');
   return { width, height, content: connectors + diagram.nodes.map(node => nodeSvg(node, positions.get(node.id))).join('') };

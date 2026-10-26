@@ -939,10 +939,13 @@ export const WIKI_SKILL_STEP_STOPPED_REASON = 'stopped'
 export const WIKI_SKILL_STEP_BOUND_REASON = 'bound'
 /** How a start's own bound ended it while it still waited for an earlier skill step of this window that never settled; not an abort reason (the abort says `bound`), {@link describeWikiSkillStepEnd} words it. */
 export const WIKI_SKILL_STEP_EARLIER_RUNNING_END = 'earlier-step-running'
-/** The sentence of {@link WIKI_SKILL_STEP_EARLIER_RUNNING_END} up to the button of the start's kind, which {@link describeWikiSkillStepEnd} completes with `<Generate|Update> LLM Wiki again.` (Cycle 0056 RT-B). */
+/** What {@link WIKI_SKILL_STEP_EARLIER_RUNNING_END} says happened and what ends it, without the next press; {@link describeWikiSkillStepEnd} adds `, then press <Generate|Update> LLM Wiki again.` (Cycle 0056 RT-B). */
 export const WIKI_SKILL_STEP_EARLIER_RUNNING_SENTENCE =
-  'Codebook could not ready the Cursor skill: an earlier Cursor skill step in this window is still running. Reload the window (Developer: Reload Window) to end it, then press'
-/** The longest any run of any kind and host can last ({@link longestWikiRunMs}): a VS Code generation's chat opening plus its bound. A marker file whose kind cannot be read counts this long, never the update's shorter bound. */
+  'Codebook could not ready the Cursor skill: an earlier Cursor skill step in this window is still running. Reload the window (Developer: Reload Window) to end it'
+/** What Codebook says when Remove Managed Cursor Skill meets a Cursor skill step of this window that is still running after the grace, so a late deploy could write the skill again; nothing is removed (Cycle 0056 RT3-C). */
+export const WIKI_SKILL_REMOVAL_STEP_RUNNING_SENTENCE =
+  'Codebook did not remove the managed Cursor skill: a Cursor skill step of this window is still running and could write the skill again. Reload the window (Developer: Reload Window) to end it, then run Codebook: Remove Managed Cursor Skill again.'
+/** The longest any run of any kind and host can last ({@link longestWikiRunMs}): a VS Code generation's chat opening plus its bound. A marker file whose kind cannot be read counts this long, never the update's shorter bound. Written from the raw bounds here because the helpers that name each bound read this module; `wikiRunBoundMs.test.ts` pins it against {@link longestWikiRunMs} over every kind and host, so a changed bound that this list misses fails there. */
 export const LONGEST_WIKI_RUN_MS = Math.max(
   WIKI_GENERATE_TIMEOUT_MS,
   WIKI_CHAT_OPEN_TIMEOUT_MS + WIKI_GENERATE_TIMEOUT_MS,

@@ -40,6 +40,6 @@ export function describeWikiSkillStepEnd(
   if (end === WIKI_SKILL_STEP_STOPPED_REASON)
     return `The LLM Wiki ${noun} was cancelled at ${stoppedAt} while Codebook readied the Cursor skill; no agent was started. Press ${button} LLM Wiki when you want to start again.`
   if (end === WIKI_SKILL_STEP_EARLIER_RUNNING_END)
-    return `${WIKI_SKILL_STEP_EARLIER_RUNNING_SENTENCE} ${button} LLM Wiki again.`
+    return `${WIKI_SKILL_STEP_EARLIER_RUNNING_SENTENCE}, then press ${button} LLM Wiki again.`
   return `Codebook stopped readying the Cursor skill after ${secondsText(boundMs)}; no agent was started. Press ${button} LLM Wiki again, or run ${SET_UP_AI_CHAT_COMMAND}.`
 }

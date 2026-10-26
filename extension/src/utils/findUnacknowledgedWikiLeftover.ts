@@ -12,6 +12,7 @@ import {
   type WikiLastRun,
 } from './selectActiveWikiCandidate'
 import { wikiRunBoundMs } from './wikiRunBoundMs'
+import { WIKI_RUN_KIND_WORDS } from './wikiRunKindWords'
 import type { WikiRunKind } from './wikiUpdateRun'
 
 /** One refusal of a Wiki update's start for an earlier chat that may still publish: the leftovers of that one chat the refusal names, which its "Update anyway" passes, and the sentence that names them. */
@@ -74,7 +75,7 @@ async function reservationRefusal(
         startedAtMs: otherWindow.startedAtMs,
       },
     ],
-    reason: `The VS Code chat another editor window asked at ${formatClockTime(otherWindow.startedAtMs, {})} may still be ${otherWindow.runKind === 'generate' ? 'generating' : 'updating'} this Wiki; that window stopped watching it at ${formatClockTime(watchEndedAtMs, {})} and Codebook waits for it until ${formatWaitEnd(watchEndedAtMs + watchTimeoutMs)}. If that chat was stopped, choose ${overrideActionOf(runKind)} in the editor’s notification.`,
+    reason: `The VS Code chat another editor window asked at ${formatClockTime(otherWindow.startedAtMs, {})} may still be ${WIKI_RUN_KIND_WORDS[otherWindow.runKind ?? 'update'].verb} this Wiki; that window stopped watching it at ${formatClockTime(watchEndedAtMs, {})} and Codebook waits for it until ${formatWaitEnd(watchEndedAtMs + watchTimeoutMs)}. If that chat was stopped, choose ${overrideActionOf(runKind)} in the editor’s notification.`,
   }
 }
 
@@ -125,7 +126,7 @@ function ownChatReason(
   const staged = seenCandidate
     ? ` (candidate ${seenCandidate.name}, written ${formatClockTime(seenCandidate.writtenAtMs, {})})`
     : ''
-  return `The VS Code chat this window asked at ${formatClockTime(awaitedOwnRun.startedAtMs, {})} may still be ${awaitedOwnRun.runKind === 'generate' ? 'generating' : 'updating'} this Wiki${staged}; Codebook stopped watching it at ${formatClockTime(awaitedOwnRun.endedAtMs, {})} and waits for it until ${formatWaitEnd(waitEndsAtMs)}. If that chat was stopped, choose ${overrideAction} in the editor’s notification.`
+  return `The VS Code chat this window asked at ${formatClockTime(awaitedOwnRun.startedAtMs, {})} may still be ${WIKI_RUN_KIND_WORDS[awaitedOwnRun.runKind ?? 'update'].verb} this Wiki${staged}; Codebook stopped watching it at ${formatClockTime(awaitedOwnRun.endedAtMs, {})} and waits for it until ${formatWaitEnd(waitEndsAtMs)}. If that chat was stopped, choose ${overrideAction} in the editor’s notification.`
 }
 
 /**

@@ -3928,3 +3928,59 @@ test('a reservation taken over by a Cursor claim is written back as the VS Code 
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
+
+// Value: protects=Cycle 0056 pass 3 RT3-A, the original owner's release of a reservation another window took over and wrote back; fails_when=the written-back marker is re-serialized from the parsed marker (other key order), so the owner compares its own text, finds it is not its own and leaves the marker for its whole bound; no_claim=how the extension registers the write-back (host tests); seam=two real claims of one process under different window ids
+test('a reservation taken over and written back is the original owner’s text, so its release still removes the marker', async () => {
+  // Arrange
+  const wiki = await createWikiFolder()
+  try {
+    const ownerClaim = await claimWikiUpdateMarker(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: Date.now() - 60_000,
+        runKind: 'generate',
+      },
+      AS_THIS_WINDOW,
+    )
+    assert.ok('reserve' in ownerClaim)
+    assert.equal(await ownerClaim.reserve(Date.now() - 1_000), true)
+    const ownerText = await readFile(wiki.markerPath, 'utf8')
+    const takingClaim = await claimWikiUpdateMarker(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-b',
+        host: 'cursor',
+        startedAtMs: Date.now(),
+      },
+      AS_THIS_WINDOW,
+    )
+    assert.ok('reserve' in takingClaim)
+    assert.ok(takingClaim.replacedReservation)
+
+    // Act: the taking window is refused and writes the reservation back; then the owner releases its own reservation.
+    await takingClaim.reserve(
+      takingClaim.replacedReservation.watchEndedAtMs,
+      takingClaim.replacedReservation,
+    )
+    const writtenBackText = await readFile(wiki.markerPath, 'utf8')
+    await ownerClaim.release()
+
+    // Assert
+    assert.deepEqual(
+      {
+        isWrittenBackTextTheOwners: writtenBackText === ownerText,
+        markerLeft: await readFile(wiki.markerPath, 'utf8').then(
+          () => true,
+          () => false,
+        ),
+      },
+      { isWrittenBackTextTheOwners: true, markerLeft: false },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})

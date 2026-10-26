@@ -5315,6 +5315,161 @@ test('two branch edges from one node to the node below it draw label boxes that 
   }
 })
 
+/** Replaces the fixture's two nodes and one edge with a column of three nodes and the given edges, each edge as `[id, from, to, label, condition]`; an edge with a condition is a branch. */
+function threeRowColumn(diagram, edges) {
+  const reference = diagram.nodes[0].sources
+  diagram.nodes = ['a', 'b', 'c'].map((id, row) => ({
+    id,
+    label: id,
+    row,
+    column: 0,
+    sources: reference,
+  }))
+  diagram.edges = edges.map(([id, from, to, label, condition]) => ({
+    id,
+    from,
+    to,
+    label,
+    kind: condition ? 'branch' : 'call',
+    ...(condition ? { condition } : {}),
+    sources: reference,
+  }))
+}
+
+/** The boxes of a rendered flow diagram: each node's rectangle and each edge's label backing, by id. */
+function diagramBoxes(html) {
+  const box = ([, id, x, y, width, height]) => ({
+    id,
+    left: Number(x),
+    right: Number(x) + Number(width),
+    top: Number(y),
+    bottom: Number(y) + Number(height),
+  })
+  return {
+    nodes: [
+      ...html.matchAll(
+        /<g data-node-id="([^"]+)"><rect x="([\d.-]+)" y="([\d.-]+)" width="([\d.]+)" height="([\d.]+)"/g,
+      ),
+    ].map(box),
+    labels: [
+      ...html.matchAll(
+        /<g data-edge-id="([^"]+)"[^>]*>(?:(?!<\/g>)[\s\S])*?<rect x="([\d.-]+)" y="([\d.-]+)" width="([\d.]+)" height="([\d.]+)" rx="3"/g,
+      ),
+    ].map(box),
+  }
+}
+
+/** The pairs of boxes (a label and a node, or two labels) that cover a common area, as `label e4 × node b`. */
+function overlappingBoxes({ nodes, labels }) {
+  const overlap = (first, second) =>
+    first.left < second.right &&
+    second.left < first.right &&
+    first.top < second.bottom &&
+    second.top < first.bottom
+  return labels.flatMap((label, index) => [
+    ...nodes
+      .filter((node) => overlap(label, node))
+      .map((node) => `label ${label.id} × node ${node.id}`),
+    ...labels
+      .slice(index + 1)
+      .filter((other) => overlap(label, other))
+      .map((other) => `label ${label.id} × label ${other.id}`),
+  ])
+}
+
+/** Renders the fixture's page and returns the first page's HTML. */
+async function renderedDiagramHtml(root, manifest) {
+  return (
+    await renderWikiPages(manifest, {
+      projectRoot: root,
+      outputDirectory: join(root, '.codebook/wiki'),
+    })
+  ).get('index.html')
+}
+
+// Value: protects=Cycle 0056 pass 3 A4(1), a diagram that needs no stacked labels keeps the layout it had before the label bands grew; fails_when=widening the label bands to every node pair moves the label boxes or the rows of a diagram whose edges share no node pair, so every published diagram changes; no_claim=how a browser paints the SVG; seam=label boxes hard-coded from the renderer of the release before this change
+test('a three-row diagram whose labels need no stacking keeps the label boxes of the earlier renderer', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-diagram-unchanged-')),
+  )
+  try {
+    const manifest = await diagramInput(root)
+    threeRowColumn(manifest.pages[0].diagrams[0], [
+      ['e1', 'a', 'b', 'Read data'],
+      ['e2', 'b', 'c', 'Write the result'],
+    ])
+
+    // Act
+    const { labels } = diagramBoxes(await renderedDiagramHtml(root, manifest))
+
+    // Assert
+    assert.deepEqual(
+      labels.map(({ id, left, top, right, bottom }) => ({
+        id,
+        left: Math.round(left * 100) / 100,
+        top,
+        right: Math.round(right * 100) / 100,
+        bottom,
+      })),
+      [
+        { id: 'e1', left: 83.88, top: 145, right: 180.12, bottom: 163 },
+        { id: 'e2', left: 51.12, top: 307, right: 212.88, bottom: 325 },
+      ],
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=Cycle 0056 pass 3 A4(2), the label of an edge that crosses a row; fails_when=a conditional edge from the top to the bottom node of a column puts its label on the node between them, where the node paints over it; no_claim=the connector line, which an author's grid placement decides; seam=a column of three nodes with one edge across two rows
+test('the label of an edge across two rows stays clear of the node between them', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-diagram-span-label-')),
+  )
+  try {
+    const manifest = await diagramInput(root)
+    threeRowColumn(manifest.pages[0].diagrams[0], [
+      ['e1', 'a', 'b', 'Read data'],
+      ['e4', 'a', 'c', 'Skip the write', 'cached'],
+    ])
+
+    // Act
+    const boxes = diagramBoxes(await renderedDiagramHtml(root, manifest))
+
+    // Assert
+    assert.deepEqual(overlappingBoxes(boxes), [])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=Cycle 0056 pass 3 A4(2), a column of three rows with a stacked pair and an edge across two rows; fails_when=any label box covers a node or another label box once the label bands span every edge pair; no_claim=how a browser paints the SVG; seam=the stacked pair between the lower two nodes and the crossing edge from the top node
+test('a column with a stacked pair and an edge across two rows draws no label over a node or another label', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-diagram-stack-span-')),
+  )
+  try {
+    const manifest = await diagramInput(root)
+    threeRowColumn(manifest.pages[0].diagrams[0], [
+      ['e1', 'a', 'b', 'Read data'],
+      ['e2', 'b', 'c', 'Show the saved result', 'ready'],
+      ['e3', 'b', 'c', 'Show the failure notice', 'denied'],
+      ['e4', 'a', 'c', 'Skip the write', 'cached'],
+    ])
+
+    // Act
+    const boxes = diagramBoxes(await renderedDiagramHtml(root, manifest))
+
+    // Assert
+    assert.deepEqual(overlappingBoxes(boxes), [])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('wrapped diagram operations preserve word boundaries and an accessible condition label', async () => {
   // Arrange
   const root = await realpath(

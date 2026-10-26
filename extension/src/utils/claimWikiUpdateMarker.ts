@@ -56,21 +56,26 @@ export type TakenOverWikiReservation = {
   runKind: WikiRunKind
   /** The marker the claim removed; absent for this window's own reservation, which the claim's record already names. */
   replacedMarker?: WikiUpdateMarker
+  /** The text of that marker file exactly as it was read under the claim; a write-back restores these bytes, so the original owner's release, bound timer and close still find their own text ({@link changeOwnMarker}). Set with `replacedMarker`. */
+  replacedText?: string
 }
+
+/** What a refused start hands back to the `reserve` of {@link WikiUpdateMarkerClaim} to write a taken-over reservation back as it was: the run's kind and, where another window's marker was replaced, that marker and its exact text. The one shape the claim, the start ({@link WikiRunMarkerClaim}) and the extension's write-back share. */
+export type WikiReservationHandoff = Pick<
+  TakenOverWikiReservation,
+  'runKind' | 'replacedMarker' | 'replacedText'
+>
 
 /** The claimed marker of this window's run (`release` removes it when the run ends; `reserve` turns it into the reservation of a stopped watch, which other windows read until the watch bound; each answers `false` while this run's marker stayed as it was because the claim on it could not be had or the marker could not be read, and may be asked again), or what holds the Wiki instead: the marker of the other window's run, the time since which another window is writing its marker (with the marker file's path and its last counting moment when that file cannot be read), or the note that another window is changing the marker. */
 export type WikiUpdateMarkerClaim =
   | {
       release: () => Promise<boolean>
-      /** Turns the marker into a reservation that ends its watch at `watchEndedAtMs`; `takenOver` names the reservation a refused start writes back, which keeps its kind and so the bound of the run it came from (`update` leaves `runKind` out, as an update's marker always did) and, where another window's marker was replaced, that window's identity. */
+      /** Turns the marker into a reservation that ends its watch at `watchEndedAtMs`; `takenOver` names the reservation a refused start writes back, which keeps its kind and so the bound of the run it came from (`update` leaves `runKind` out, as an update's marker always did) and, where another window's marker was replaced, that marker's exact text, so its owner still recognizes it. */
       reserve: (
         watchEndedAtMs: number,
-        takenOver?: Pick<
-          TakenOverWikiReservation,
-          'runKind' | 'replacedMarker'
-        >,
+        takenOver?: WikiReservationHandoff,
       ) => Promise<boolean>
-      /** The reservation of a stopped watch that this claim removed from another window's marker to place its own, read under the claim; absent where it removed none (this window's own reservation reads as nobody's run and is not named here). */
+      /** The reservation of a stopped watch that this claim removed from another window's marker to place its own, read under the claim; absent where it removed none (this window's own reservation reads as nobody's run and is not named here). The extension hands it on as `takenOver` of the start's claimed marker, the one name a refused start writes back from ({@link WikiReservationHandoff}). */
       replacedReservation?: TakenOverWikiReservation
     }
   | { heldBy: WikiUpdateHolder }
@@ -494,7 +499,7 @@ async function claimMarkerChange(
  * @param markerPath - `<output>.update-run.json`.
  * @param ownWindowId - The asking window's own id.
  * @param judgement - The identity of this process, the reader of process starts and the clock.
- * @returns The stopped watch's reservation of another window that was removed (its end, run kind and marker, read under the claim), so a start that is refused later can write it back; `undefined` when a marker of nobody's run was removed, and when nothing was: the marker stays when another window holds the claim (it is removing the marker itself), when the look under the claim finds another window's run, a marker being written or no marker, and when the claim was lost meanwhile; the exclusive creation that follows decides either way.
+ * @returns The stopped watch's reservation of another window that was removed (its end, run kind, marker and exact text, read under the claim), so a start that is refused later can write it back; `undefined` when a marker of nobody's run was removed, and when nothing was: the marker stays when another window holds the claim (it is removing the marker itself), when the look under the claim finds another window's run, a marker being written or no marker, and when the claim was lost meanwhile; the exclusive creation that follows decides either way.
  * @example
  * await removeUnownedMarker('/repo/.codebook/wiki', '/repo/.codebook/wiki.update-run.json', windowId, judgement)
  */
@@ -515,15 +520,21 @@ async function removeUnownedMarker(
     )
     // What the look read as nobody's is removed whatever it is: a file, a link as the link, a folder with its content.
     if (isMarkerOfNobodysRun(look) && (await claim.isStillHeld())) {
+      // Only a reservation of a stopped watch names an end worth writing back; its exact text is read under the claim, before the removal.
+      if (look.kind === 'live' && look.heldBy.watchEndedAtMs !== undefined) {
+        const reservationText = await readMarkerText(markerPath)
+        // A reservation that cannot be read now stays, as it cannot be written back as it was; the exclusive creation that follows refuses this start as a marker in change.
+        if (typeof reservationText === 'string') return undefined
+        await removeWithoutFollowing(markerPath)
+        return {
+          watchEndedAtMs: look.heldBy.watchEndedAtMs,
+          runKind: look.heldBy.runKind ?? 'update',
+          replacedMarker: look.heldBy,
+          replacedText: reservationText.text,
+        }
+      }
       await removeWithoutFollowing(markerPath)
-      // Only a reservation of a stopped watch names an end worth writing back.
-      return look.kind === 'live' && look.heldBy.watchEndedAtMs !== undefined
-        ? {
-            watchEndedAtMs: look.heldBy.watchEndedAtMs,
-            runKind: look.heldBy.runKind ?? 'update',
-            replacedMarker: look.heldBy,
-          }
-        : undefined
+      return undefined
     }
     return undefined
   } finally {
@@ -655,21 +666,20 @@ export async function claimWikiUpdateMarker(
         replacedReservation,
         async reserve(
           watchEndedAtMs: number,
-          takenOver?: Pick<
-            TakenOverWikiReservation,
-            'runKind' | 'replacedMarker'
-          >,
+          takenOver?: WikiReservationHandoff,
         ): Promise<boolean> {
-          // A taken-over reservation is written back as the marker it was (its host, process and window), never as this start's: the other window's VS Code watch keeps its bound.
-          const reservation = JSON.stringify({
-            ...(takenOver === undefined
-              ? record
-              : withRunKind(
-                  takenOver.replacedMarker ?? record,
-                  takenOver.runKind,
-                )),
-            watchEndedAtMs,
-          })
+          // Another window's reservation is written back byte for byte as read under the claim: its owner compares its own text when it releases, and a re-serialized marker (the parsed key order) would read as not its own. Its host, process and window stay, so the VS Code watch keeps its bound.
+          const reservation =
+            takenOver?.replacedText ??
+            JSON.stringify({
+              ...(takenOver === undefined
+                ? record
+                : withRunKind(
+                    takenOver.replacedMarker ?? record,
+                    takenOver.runKind,
+                  )),
+              watchEndedAtMs,
+            })
           return changeOwnMarker(
             markerPath,
             written,
