@@ -25,7 +25,37 @@ test('Reveal Wiki Folder names a missing folder before the remote host and lets 
 
   // Assert
   assert.deepEqual(results, [
-    'The LLM Wiki folder .codebook/wiki does not exist (yet).',
+    'The LLM Wiki folder .codebook/wiki does not exist (yet). Generate LLM Wiki creates it.',
+    undefined,
+  ])
+})
+
+// Value: protects=RT2-B and D2 (each reason gives its next step; WSL is local); fails_when=a file in the folder's place is told as missing, a remote reason lacks the next step, or WSL is refused as remote; why_new=the test above covers missing and local only; seam=none; no_claim=the editor's reveal command
+test('Reveal Wiki Folder words a file, a remote host with its next step, and lets WSL reveal', () => {
+  // Arrange
+  const fileInPlace = { outputLabel: 'docs/wiki', exists: false, isFile: true }
+  const existingInSsh = {
+    outputLabel: 'docs/wiki',
+    exists: true,
+    remoteName: 'ssh-remote',
+  }
+  const existingInWsl = {
+    outputLabel: 'docs/wiki',
+    exists: true,
+    remoteName: 'wsl',
+  }
+
+  // Act
+  const results = [
+    describeUnrevealableWikiFolder(fileInPlace),
+    describeUnrevealableWikiFolder(existingInSsh),
+    describeUnrevealableWikiFolder(existingInWsl),
+  ]
+
+  // Assert
+  assert.deepEqual(results, [
+    'The LLM Wiki folder docs/wiki is a file, not a folder. Remove or rename that file, or change the location.',
+    'Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on ssh-remote. Open it from a terminal or file manager on ssh-remote.',
     undefined,
   ])
 })

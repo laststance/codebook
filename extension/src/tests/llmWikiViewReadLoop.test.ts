@@ -46,8 +46,9 @@ const publishedWiki: ReadyFacts['wiki'] = {
 function openView(
   context: TestContext,
   overrides: Partial<LlmWikiViewOptions> = {},
+  fakeOptions: Parameters<typeof createFakeLlmWikiEditor>[0] = {},
 ) {
-  const fake = createFakeLlmWikiEditor()
+  const fake = createFakeLlmWikiEditor(fakeOptions)
   const recordedFailures: string[] = []
   const tellings: string[] = []
   const view = createLlmWikiView({
@@ -794,4 +795,310 @@ test('refresh resolves even when the read failed', async (context) => {
 
   // Assert
   assert.equal(outcome, 'resolved')
+})
+
+const WATCHING_MESSAGE =
+  'Codebook is watching the chat. Stop watching does not stop the chat; stop it in the chat.'
+
+// Value: protects=RT2-A (one Output record per failure while the error row stands); fails_when=the 30 s poll that continues across the error row writes the same read failure to Output › Codebook at every tick; no_claim=the 30 second value; seam=mocked timers, a read that succeeds with a run and then keeps throwing
+test('a read failure that persists across poll ticks is recorded once in Output', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] })
+  let isFailing = false
+  const { recordedFailures, view } = openView(context, {
+    readFacts: async () => {
+      if (isFailing) throw new Error('disk busy')
+      return runningFacts()
+    },
+  })
+  await view.whenIdle()
+  isFailing = true
+
+  // Act
+  await view.refresh()
+  for (let tick = 0; tick < 3; tick += 1) {
+    context.mock.timers.tick(50)
+    await view.whenIdle()
+  }
+
+  // Assert
+  assert.deepEqual(recordedFailures, [
+    'The LLM Wiki view could not read its state',
+  ])
+})
+
+// Value: protects=RT2-A (a different failure, or one after a good read, is recorded again); fails_when=the dedupe swallows a new cause or never resets after a good read, so a later failure leaves Output silent; no_claim=the cause's wording; seam=a readFacts that throws two causes, then succeeds, then throws the first cause again
+test('a different failure and a failure after a good read are recorded again', async (context) => {
+  // Arrange
+  const outcomes: Array<Error | 'good'> = [
+    new Error('disk busy'),
+    new Error('disk busy'),
+    new Error('permission denied'),
+    'good',
+    new Error('disk busy'),
+  ]
+  let next = 0
+  const { recordedFailures, view } = openView(context, {
+    readFacts: async () => {
+      const outcome = outcomes[next++]
+      if (outcome instanceof Error) throw outcome
+      return readyFacts()
+    },
+  })
+
+  // Act
+  for (let read = 0; read < outcomes.length; read += 1) await view.refresh()
+
+  // Assert
+  assert.equal(recordedFailures.length, 3)
+})
+
+// Value: protects=SM2-1 (debounce-pending x dispose, T2); fails_when=whenIdle keeps waiting for a debounce that dispose dropped, so a test or caller hangs, or the dropped debounce still reads; no_claim=the debounce length; seam=mocked timers with no tick after dispose
+test('dispose while a debounce is pending settles whenIdle without a tick and reads nothing', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] })
+  let reads = 0
+  const { view } = openView(context, {
+    readFacts: async () => {
+      reads += 1
+      return readyFacts()
+    },
+  })
+  await view.whenIdle()
+  const readsBefore = reads
+  view.requestRefresh()
+  let isIdle = false
+  const idle = view.whenIdle().then(() => {
+    isIdle = true
+  })
+
+  // Act
+  view.dispose()
+  await idle
+
+  // Assert
+  assert.deepEqual([isIdle, reads - readsBefore], [true, 0])
+})
+
+// Value: protects=SM2-2 (reading x requestRefresh); fails_when=a debounced refresh that fires while a read runs is dropped or double-counted, so the last event is not shown or three reads happen; no_claim=the debounce length; seam=mocked timers, a held readFacts
+test('a debounced refresh that fires during a read makes one more read and shows the last facts', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] })
+  const held = defer<LlmWikiViewFacts>()
+  let reads = 0
+  let isHoldingNextRead = false
+  const { fake, view } = openView(context, {
+    readFacts: async () => {
+      reads += 1
+      if (isHoldingNextRead) {
+        // Only the first read after the arrangement is held; the re-read is not.
+        isHoldingNextRead = false
+        return held.promise
+      }
+      return readyFacts({ wiki: publishedWiki, outputLabel: '.codebook/last' })
+    },
+  })
+  await view.whenIdle()
+  const readsBefore = reads
+  isHoldingNextRead = true
+  const heldRefresh = view.refresh()
+  await afterEventLoopTurn()
+
+  // Act
+  view.requestRefresh()
+  context.mock.timers.tick(20)
+  await afterEventLoopTurn()
+  held.resolve(
+    readyFacts({ wiki: publishedWiki, outputLabel: '.codebook/held' }),
+  )
+  await heldRefresh
+  await view.whenIdle()
+
+  // Assert
+  assert.deepEqual(
+    [reads - readsBefore, rowOf(fake, 'output')?.label],
+    [2, 'Output: .codebook/last'],
+  )
+})
+
+// Value: protects=SM2-3 (reading x refresh); fails_when=refreshes asked for during a read start a read each, or are dropped so the last facts are not shown; no_claim=the Refresh command's wiring; seam=a held readFacts, three refresh calls
+test('three refreshes during a read make exactly one more read and show the last facts', async (context) => {
+  // Arrange
+  const held = defer<LlmWikiViewFacts>()
+  let reads = 0
+  let isHoldingNextRead = false
+  const { fake, view } = openView(context, {
+    readFacts: async () => {
+      reads += 1
+      if (isHoldingNextRead) {
+        // Only the first read after the arrangement is held; the re-read is not.
+        isHoldingNextRead = false
+        return held.promise
+      }
+      return readyFacts({ wiki: publishedWiki, outputLabel: '.codebook/last' })
+    },
+  })
+  await view.whenIdle()
+  const readsBefore = reads
+  isHoldingNextRead = true
+  const heldRefresh = view.refresh()
+  await afterEventLoopTurn()
+
+  // Act
+  const more = [view.refresh(), view.refresh(), view.refresh()]
+  held.resolve(
+    readyFacts({ wiki: publishedWiki, outputLabel: '.codebook/held' }),
+  )
+  await Promise.all([heldRefresh, ...more])
+  await view.whenIdle()
+
+  // Assert
+  assert.deepEqual(
+    [reads - readsBefore, rowOf(fake, 'output')?.label],
+    [2, 'Output: .codebook/last'],
+  )
+})
+
+// Value: protects=SM2-4 (reading x show); fails_when=showing a hidden view while a read runs neither re-reads nor runs the freshness check, so the rows stay as that read left them; no_claim=the editor's visibility semantics; seam=a hidden view, a held readFacts, setVisible(true)
+test('showing a hidden view during a read reads again and runs the freshness check', async (context) => {
+  // Arrange
+  const held = defer<LlmWikiViewFacts>()
+  let reads = 0
+  let freshnessChecks = 0
+  let isHoldingNextRead = false
+  const { fake, view } = openView(context, {
+    readFacts: async () => {
+      reads += 1
+      if (isHoldingNextRead) {
+        // Only the first read after the arrangement is held; the re-read is not.
+        isHoldingNextRead = false
+        return held.promise
+      }
+      return readyFacts({ wiki: publishedWiki })
+    },
+    readFreshness: async () => {
+      freshnessChecks += 1
+      return { status: 'current' }
+    },
+  })
+  await view.whenIdle()
+  fake.setVisible(false)
+  const readsBefore = reads
+  const checksBefore = freshnessChecks
+  isHoldingNextRead = true
+  const heldRefresh = view.refresh()
+  await afterEventLoopTurn()
+
+  // Act
+  fake.setVisible(true)
+  held.resolve(readyFacts({ wiki: publishedWiki }))
+  await heldRefresh
+  await view.whenIdle()
+
+  // Assert
+  assert.deepEqual(
+    [reads - readsBefore, freshnessChecks > checksBefore],
+    [2, true],
+  )
+})
+
+// Value: protects=SM2-5 (error-after-run-row x hide); fails_when=a collapsed view keeps polling across the error row; no_claim=the 30 second value; seam=mocked timers, a run row, a failing read, setVisible(false)
+test('hiding the view while the error row follows a run row stops the poll', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] })
+  let isFailing = false
+  let reads = 0
+  const { view, fake } = openView(context, {
+    readFacts: async () => {
+      reads += 1
+      if (isFailing) throw new Error('disk busy')
+      return runningFacts()
+    },
+  })
+  await view.whenIdle()
+  isFailing = true
+  await view.refresh()
+  fake.setVisible(false)
+  await view.whenIdle()
+  const readsWhenHidden = reads
+
+  // Act
+  context.mock.timers.tick(200)
+  await view.whenIdle()
+
+  // Assert
+  assert.equal(reads - readsWhenHidden, 0)
+})
+
+// Value: protects=SM2-6 (error-after-run-row x show); fails_when=showing the view again with a still-failing read forgets the run that was shown, so the poll never restarts and the error row stays; no_claim=the 30 second value; seam=mocked timers, a run row, a failing read, hide, show
+test('showing the view again with a read that still fails restarts the poll across the error row', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] })
+  let isFailing = false
+  let reads = 0
+  const { view, fake } = openView(context, {
+    readFacts: async () => {
+      reads += 1
+      if (isFailing) throw new Error('disk busy')
+      return runningFacts()
+    },
+  })
+  await view.whenIdle()
+  isFailing = true
+  await view.refresh()
+  fake.setVisible(false)
+  fake.setVisible(true)
+  await view.whenIdle()
+  const readsAfterShown = reads
+
+  // Act
+  context.mock.timers.tick(50)
+  await view.whenIdle()
+
+  // Assert
+  assert.equal(reads - readsAfterShown, 1)
+})
+
+// Value: protects=SM2-7 (message cleared x getChildren) and N55-F3; fails_when=a state without a message writes the cleared message before the tree reads the new rows, or never clears the old one; no_claim=the editor's frames; seam=the fake tree's render log
+test('a state without a message clears the message when the tree reads its rows, after getChildren', async (context) => {
+  // Arrange
+  let isRunning = true
+  const { fake, view } = openView(context, {
+    readFacts: async () => (isRunning ? runningFacts() : readyFacts()),
+  })
+  await view.whenIdle()
+  fake.rows()
+  isRunning = false
+  await view.refresh()
+
+  // Act
+  fake.rows()
+
+  // Assert
+  assert.deepEqual(fake.renderLog(), [
+    'getChildren',
+    `message:${WATCHING_MESSAGE}`,
+    'getChildren',
+    'message:undefined',
+  ])
+})
+
+// Value: protects=RT2-C (a root read inside createTreeView); fails_when=an editor that reads the provider while createTreeView runs makes the view throw before it has its tree view handle, or the message is lost afterwards; no_claim=a message at that moment (the first model has none); seam=a fake editor that calls getChildren synchronously from createTreeView
+test('an editor that reads the root inside createTreeView still gets the rows and the message', async (context) => {
+  // Arrange
+  const { fake, view } = openView(
+    context,
+    { readFacts: async () => runningFacts() },
+    { readsRootInsideCreateTreeView: true },
+  )
+
+  // Act
+  await view.whenIdle()
+  const rowIds = idsOf(fake)
+
+  // Assert
+  assert.deepEqual(
+    [rowIds, fake.message()],
+    [['run', 'output'], WATCHING_MESSAGE],
+  )
 })

@@ -20,6 +20,7 @@ import {
 } from '../constants'
 
 import { describeUnrevealableWikiFolder } from './describeUnrevealableWikiFolder'
+import { isExistingFile } from './isExistingFile'
 import { isExistingFolder } from './isExistingFolder'
 import type { LlmWikiView } from './llmWikiView'
 import { resolveManageTrustCommand } from './resolveManageTrustCommand'
@@ -124,9 +125,12 @@ export function registerLlmWikiCommands(
     registerCommand(REVEAL_WIKI_FOLDER_COMMAND, async () => {
       const { projectRoot, outputDirectory } = await options.findWikiLocation()
       // The editor's reveal shows nothing for a missing folder or one on a remote host, so the learner is told instead.
+      const exists = await isExistingFolder(outputDirectory)
       const reason = describeUnrevealableWikiFolder({
         outputLabel: wikiOutputLabel(projectRoot, outputDirectory),
-        exists: await isExistingFolder(outputDirectory),
+        exists,
+        // A file in the folder's place gets its own sentence, not "does not exist".
+        isFile: !exists && (await isExistingFile(outputDirectory)),
         remoteName: editor.env.remoteName,
       })
       if (reason !== undefined) {

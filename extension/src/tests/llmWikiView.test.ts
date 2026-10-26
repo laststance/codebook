@@ -1051,7 +1051,12 @@ test('Reveal Wiki Folder on a missing folder says the folder does not exist yet 
   // Assert
   assert.deepEqual(
     [project.executedCommands, project.notices],
-    [[], ['The LLM Wiki folder .codebook/wiki does not exist (yet).']],
+    [
+      [],
+      [
+        'The LLM Wiki folder .codebook/wiki does not exist (yet). Generate LLM Wiki creates it.',
+      ],
+    ],
   )
 })
 
@@ -1071,7 +1076,44 @@ test('Reveal Wiki Folder in a remote window says the folder is on the remote hos
     [
       [],
       [
-        'Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on ssh-remote.',
+        'Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on ssh-remote. Open it from a terminal or file manager on ssh-remote.',
+      ],
+    ],
+  )
+})
+
+// Value: protects=RT2-B (1) (a WSL window reveals as a local one); fails_when=a WSL window is refused as remote although the editor's reveal works there, as Codebook treats WSL like a local window everywhere; no_claim=what the reveal shows in WSL; seam=env.remoteName of the fake editor
+test('Reveal Wiki Folder in a WSL window reveals the folder and shows no notice', async (context) => {
+  // Arrange
+  const { window } = await openPublishedWiki(context, { remoteName: 'wsl' })
+
+  // Act
+  await window.runCommand('codebook.revealWikiFolder')
+
+  // Assert
+  assert.deepEqual(
+    [window.executedCommands, window.notices],
+    [['revealFileInOS'], []],
+  )
+})
+
+// Value: protects=RT2-B (2) (a file at the output path is not told as missing); fails_when=a file where the Wiki folder should be is told "does not exist (yet)", which sends the learner to Generate instead of to the file; no_claim=the Wiki row for this cause; seam=a file written at the default output path
+test('Reveal Wiki Folder on a file in the folder’s place says it is a file and reveals nothing', async (context) => {
+  // Arrange
+  const project = await openEmptyProject(context)
+  await mkdir(dirname(project.outputDirectory), { recursive: true })
+  await writeFile(project.outputDirectory, 'not a folder')
+
+  // Act
+  await project.runCommand('codebook.revealWikiFolder')
+
+  // Assert
+  assert.deepEqual(
+    [project.executedCommands, project.notices],
+    [
+      [],
+      [
+        'The LLM Wiki folder .codebook/wiki is a file, not a folder. Remove or rename that file, or change the location.',
       ],
     ],
   )

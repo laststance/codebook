@@ -1080,20 +1080,29 @@ export const LLM_WIKI_RECOVERY_REQUEST_COPIED_NOTICE =
 /**
  * Sentence for a Wiki folder that does not exist, so Reveal Wiki Folder opens nothing.
  * @param outputLabel - The folder as the learner reads it.
- * @returns `The LLM Wiki folder <label> does not exist (yet).`
- * @example llmWikiFolderMissingNotice('.codebook/wiki') // => 'The LLM Wiki folder .codebook/wiki does not exist (yet).'
+ * @returns `The LLM Wiki folder <label> does not exist (yet). Generate LLM Wiki creates it.` (the first sentence is Issue #135 task 21's; the second names the next step)
+ * @example llmWikiFolderMissingNotice('.codebook/wiki') // => 'The LLM Wiki folder .codebook/wiki does not exist (yet). Generate LLM Wiki creates it.'
  */
 export const llmWikiFolderMissingNotice = (outputLabel: string): string =>
-  `The LLM Wiki folder ${outputLabel} does not exist (yet).`
+  `The LLM Wiki folder ${outputLabel} does not exist (yet). Generate LLM Wiki creates it.`
+
+/**
+ * Sentence for a Wiki output path where a file stands, so Reveal Wiki Folder opens nothing.
+ * @param outputLabel - The path as the learner reads it.
+ * @returns `The LLM Wiki folder <label> is a file, not a folder. Remove or rename that file, or change the location.`
+ * @example llmWikiFolderIsFileNotice('.codebook/wiki') // => 'The LLM Wiki folder .codebook/wiki is a file, not a folder. Remove or rename that file, or change the location.'
+ */
+export const llmWikiFolderIsFileNotice = (outputLabel: string): string =>
+  `The LLM Wiki folder ${outputLabel} is a file, not a folder. Remove or rename that file, or change the location.`
 
 /**
  * Sentence for a Wiki folder in a remote window, where Reveal Wiki Folder opens folders of this computer only.
  * @param remoteName - The editor's `env.remoteName`.
- * @returns `Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on <remote name>.`
- * @example llmWikiFolderRemoteNotice('wsl') // => 'Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on wsl.'
+ * @returns `Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on <remote name>. Open it from a terminal or file manager on <remote name>.` (the first sentence is Issue #135 task 21's; the second names the next step)
+ * @example llmWikiFolderRemoteNotice('ssh-remote') // => 'Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on ssh-remote. Open it from a terminal or file manager on ssh-remote.'
  */
 export const llmWikiFolderRemoteNotice = (remoteName: string): string =>
-  `Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on ${remoteName}.`
+  `Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on ${remoteName}. Open it from a terminal or file manager on ${remoteName}.`
 
 /** How often the extension looks for a newly published manifest while a Wiki update is watched. */
 export const WIKI_UPDATE_WATCH_POLL_MS = 2_000
