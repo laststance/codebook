@@ -271,6 +271,57 @@ test('a Saved studies choice sent from the Learning summary after the Study work
   }
 })
 
+// Value: protects=N55-F4 H2-a: a test replay chosen while the Application stands alone in its group opens although the editor reports the group active a moment after Codebook's reveal of the Application; fails_when=the entry arms a guard while the editor's late report of Codebook's own placement is still on its way, reads the report as the learner's focus change and refuses with "Native pane, group or focus changed while presentation waited"; why_new=Cycle 0056 task 17 stage 2 (N55-F4 refusal 1 is a rare race, hardened against both hypotheses); seam=workspaceHarness with activateApplicationGroupLateAfterReveal, the diagnostics log; no_claim=that Cursor reports it this way (N56 step 1 checks natively)
+test('a test replay chosen while the Application is alone in its group opens without a placement refusal', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  harness.activateApplicationGroupLateAfterReveal()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.open()
+
+    // Act
+    harness.receiveContext({
+      type: 'node-history',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+    })
+    // A refusal ends the entry without a landing, so the wait ends on either result.
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 ||
+        logged.some(
+          (entry) => entry.surface === 'presentation:placement-refused',
+        ),
+      'the Saved studies choice lands on the first stop or is refused',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(
+      logged.filter(
+        (entry) => entry.surface === 'presentation:placement-refused',
+      ),
+      [],
+    )
+    await landsOn(
+      harness,
+      2,
+      'the Saved studies choice lands on the first stop',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 for (const entry of ['Open replay', 'Saved studies'] as const) {
   // Value: protects=the learner's entry into a test replay in VS Code gives region 2's composition: the Study pane closes, the Application pane and the recorded source stay, and the Learning summary shows in the chat's place, moved beside the chat once per profile; fails_when=the Study pane stays open with the replay in its Test replay section, the summary keeps its placeholder, or the move does not run; why_new=Cycle 0051 DS-A (AC1): a test replay entered the Study composition; seam=workspaceHarness (VS Code), openLearningReplay and the Study pane's node-history message, the fake vscode.moveViews; no_claim=the native placement, which N51 (a) checks
   test(`${entry} in VS Code opens a test replay with the Study pane closed and the Learning summary beside the chat`, async () => {

@@ -1094,6 +1094,15 @@ export async function workspaceHarness(
   let throwsFromDisposedPanelGetters = false
   /** The next-tab notification of a disposed pane that the fake editor has not delivered yet; the first layout read after the disposal delivers it while the read is in flight. */
   let pendingNextTabActivation: (() => void) | undefined
+  /** Whether the fake Cursor reports the Application's group active a moment after a reveal of the Application that keeps the keyboard answered; see `activateApplicationGroupLateAfterReveal`. */
+  let activatesApplicationGroupLateAfterReveal = false
+  /** Whether the fake Cursor reports the group `workbench.action.newGroupAbove` made active only after the command answered; see `activateNewGroupLateAfterInsertion`. */
+  let activatesNewGroupLateAfterInsertion = false
+  /** The late group activations the fake editor has not reported yet; the first layout read after them reports them while it is in flight, else a timer does. */
+  const pendingLateGroupActivations: {
+    report: () => void
+    atRead: () => boolean
+  }[] = []
   // Cursor 3.23.12 keeps naming the chat's group as the active tab group after `workbench.action.focusFirstEditorGroup` gave the main editor the keyboard. Only a group event corrects the name: a whole tab-model rebuild names the active group (`workbench.desktop.main.js` 17269:31013, `extensionHostProcess.js` 131:33177), as does a group's activation (17269:28123, 131:33740); a tab notification is a tab operation, which leaves the named group as it is (131:34068), so it does not (Cycle 0046 row 673).
   let staleNamedGroup: (typeof groups)[number] | undefined
   // The tab that had the keyboard was closed while the focus was to be preserved, or its pane was disposed: no editor has the keyboard, the page body does (Cursor 3.23.12 after Close Study Workspace, Cycle 0045 obs15 P4), until something is focused again.
@@ -1253,6 +1262,30 @@ export async function workspaceHarness(
     }, delayMs)
     pendingEditorTimers.add(timer)
     return timer
+  }
+  /**
+   * Queues one late report of a group's activation, as Cursor sends `$acceptTabGroupUpdate` for a group after the command that caused it has answered: the group becomes the active one and the editor tells its group listeners that it changed. The first layout read after the call reports it while the read is in flight, else a timer does {@link NEXT_TAB_ACTIVATION_DELAY_MS} later.
+   * @param group - The group, or a function that names it when the report is made.
+   * @param atRead - Whether a layout read that arrives now reports it; the timer reports it whatever this says. Defaults to every read.
+   * @example queueLateGroupActivation(() => groups.find((candidate) => candidate.tabs.includes(nativeTab)))
+   */
+  function queueLateGroupActivation(
+    group: () => (typeof groups)[number] | undefined,
+    atRead: () => boolean = () => true,
+  ): void {
+    const pending = { report: (): void => {}, atRead }
+    const report = (): void => {
+      const index = pendingLateGroupActivations.indexOf(pending)
+      if (index < 0) return
+      pendingLateGroupActivations.splice(index, 1)
+      const activated = group()
+      if (!activated || !groups.includes(activated)) return
+      activeTabGroup = activated
+      changedGroups({ opened: [], closed: [], changed: [activated] })
+    }
+    pending.report = report
+    pendingLateGroupActivations.push(pending)
+    runEditorChangeLater(report, NEXT_TAB_ACTIVATION_DELAY_MS)
   }
   const automaticallyClosedColumns: number[] = []
   let transientLayout = false,
@@ -3064,6 +3097,17 @@ export async function workspaceHarness(
         )
       },
       reveal(column?: number, preserveFocus?: boolean): void {
+        // The editor reports the reveal's own group active a moment after the reveal answered, although the reveal keeps the keyboard.
+        if (
+          activatesApplicationGroupLateAfterReveal &&
+          kind === 'codebook.scopedBrowser' &&
+          preserveFocus &&
+          column === undefined &&
+          !applyingLaterReveal
+        )
+          queueLateGroupActivation(() =>
+            groups.find((candidate) => candidate.tabs.includes(nativeTab)),
+          )
         // The pane comes to the front of its group, or moves to another column, with the tab events of that, one turn after this call returned.
         const revealsInPlaceLater =
             revealsPanelsLater &&
@@ -4097,6 +4141,15 @@ export async function workspaceHarness(
           }
           if (name === 'workbench.action.newGroupAbove') {
             insertNativeAppGroup()
+            // The editor reports the new group active only after the command answered.
+            if (activatesNewGroupLateAfterInsertion) {
+              const inserted = activeTabGroup
+              // The report comes after the preparation's focus return has left the new group, so a guard armed by then sees the keyboard move there.
+              queueLateGroupActivation(
+                () => inserted,
+                () => activeTabGroup !== inserted,
+              )
+            }
             return
           }
           if (name === 'workbench.action.lockEditorGroup') {
@@ -4332,6 +4385,14 @@ export async function workspaceHarness(
           if (name === 'workbench.action.toggleMaximizedPanel')
             returnHiddenEditorArea()
           if (name === 'vscode.getEditorLayout') {
+            // Cursor reports a group's late activation while a layout read armed after the command is in flight.
+            const dueGroupActivations = pendingLateGroupActivations.filter(
+              (pending) => pending.atRead(),
+            )
+            if (dueGroupActivations.length) {
+              await new Promise<void>((resolve) => setImmediate(resolve))
+              for (const pending of dueGroupActivations) pending.report()
+            }
             // Cursor reports the next tab active while a layout read that was armed after the disposal is in flight.
             const deliverNextTabActivation = pendingNextTabActivation
             if (deliverNextTabActivation) {
@@ -5955,6 +6016,20 @@ export async function workspaceHarness(
      */
     activateNextTabBeforeDisposedPaneTabCloses(): void {
       activatesNextTabBeforeDisposedPaneTabCloses = true
+    },
+    /**
+     * Makes the fake editor report the Application's group active a moment after every reveal of the Application that keeps the keyboard, as Cursor reports `app?.reveal(undefined, true)` late (N55-F4 hypothesis H2-a).
+     * @example harness.activateApplicationGroupLateAfterReveal()
+     */
+    activateApplicationGroupLateAfterReveal(): void {
+      activatesApplicationGroupLateAfterReveal = true
+    },
+    /**
+     * Makes the fake editor report the group `workbench.action.newGroupAbove` made active only after the command answered, as Cursor activates a new group late (N55-F4 hypothesis H2-b, row 650).
+     * @example harness.activateNewGroupLateAfterInsertion()
+     */
+    activateNewGroupLateAfterInsertion(): void {
+      activatesNewGroupLateAfterInsertion = true
     },
     /**
      * Makes a disposed panel's `viewType` and `viewColumn` throw `Webview is disposed`, as the editor's WebviewPanel does (`dispose()` itself stays idempotent).

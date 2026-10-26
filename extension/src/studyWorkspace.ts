@@ -8457,20 +8457,12 @@ export class StudyWorkspace {
         historyRequest === this.historyRequest
       ) {
         const app = this.app
-        this.revealPane(app, undefined, true)
-        // The editor reports the reveal a moment later; the arrangement below would read that report as a change the learner made, so it waits, bounded, until the pane is the tab its group shows.
-        if (app)
+        // A pane that is already the tab its group shows needs no reveal: the editor would report the reveal anyway, a moment later and as a group activation, which the next guard reads as the learner's focus change (N55-F4 refusal 1, H2-a).
+        if (app && !(app.visible && this.applicationFrontsItsGroup(app))) {
+          this.revealPane(app, undefined, true)
+          // The editor reports the reveal a moment later; the arrangement below would read that report as a change the learner made, so it waits, bounded, until the pane is the tab its group shows.
           await waitUntil(
-            () =>
-              this.app !== app ||
-              vscode.window.tabGroups.all.some(
-                (group) =>
-                  group.viewColumn === app.viewColumn &&
-                  this.isCodebookPaneInput(
-                    group.activeTab?.input,
-                    'codebook.scopedBrowser',
-                  ),
-              ),
+            () => this.app !== app || this.applicationFrontsItsGroup(app),
             'the revealed Application pane',
             PRESENTATION_READY_TIMEOUT_MS,
             signal,
@@ -8478,6 +8470,7 @@ export class StudyWorkspace {
             // A pane the editor keeps behind another tab is no reason to end the entry; only the caller's own cancellation is.
             signal?.throwIfAborted()
           })
+        }
         this.assertLifetime(lifetime)
         signal?.throwIfAborted()
       }
@@ -22186,6 +22179,23 @@ export class StudyWorkspace {
       this.errors.delete('layout')
       this.publish()
     })
+  }
+
+  /**
+   * Says whether the Application pane is the tab its group shows; called by {@link open} before and after it reveals the pane.
+   * @param app - The Application pane.
+   * @returns `true` when its group's front tab is an Application pane.
+   * @example if (this.applicationFrontsItsGroup(app)) return
+   */
+  private applicationFrontsItsGroup(app: vscode.WebviewPanel): boolean {
+    return vscode.window.tabGroups.all.some(
+      (group) =>
+        group.viewColumn === app.viewColumn &&
+        this.isCodebookPaneInput(
+          group.activeTab?.input,
+          'codebook.scopedBrowser',
+        ),
+    )
   }
 
   /**
