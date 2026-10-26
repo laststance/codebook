@@ -1327,3 +1327,44 @@ test('a Saved studies choice opens its replay while the notification of a refuse
     await harness.close()
   }
 })
+
+// Value: protects=N55-F4's held pane choice: the Study pane that sent a Saved studies choice is released (it gets its open-request-settled reply) when the entry is refused although the learner has not answered the failure notification; fails_when=the reply waits for the notification's answer, so the pane keeps its opening choice and fires no change for the same entry; why_new=Cycle 0056 task 17 (the reply is posted only after the handled message resolved); seam=workspaceHarness with an error notification that never settles, the entry's composition step refused once, the harness's recorded open-request replies; no_claim=the pane's own list rendering (Reader DOM)
+test('the Study pane is released from a refused Saved studies choice while the failure notification is unanswered', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.open()
+    harness.answerErrorDialogs(() => new Promise<undefined>(() => undefined))
+    harness.reader['enterSummaryCompositionForReplay'] =
+      async (): Promise<void> => {
+        throw new Error(
+          'Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.',
+        )
+      }
+
+    // Act
+    harness.receiveContext({
+      type: 'node-history',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      openRequest: 1,
+    })
+    await waitUntil(
+      () => harness.openRequestReplies().length === 1,
+      'the Study pane gets the reply to its refused choice',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(harness.openRequestReplies(), [
+      { webview: 'context', openRequest: 1 },
+    ])
+    assert.equal(harness.errorMessages.length, 1)
+  } finally {
+    await harness.close()
+  }
+})

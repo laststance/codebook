@@ -223,6 +223,54 @@ test('a test replay chosen in a Study pane that shares the learner’s group ope
   }
 })
 
+// Value: protects=N55-F4's silent drop: a Saved studies choice sent from the Learning summary after Close Study Workspace is recorded in Output › Codebook with its study, and the sending pane gets its open-request-settled reply; fails_when=the reader drops the choice with no Output entry and no reply, so the learner sees nothing and the pane keeps its opening choice; why_new=Cycle 0056 task 17 (receive's owner gate returned silently for the Learning summary of a closed workspace); seam=workspaceHarness (VS Code), the Learning summary view's listener, the diagnostics log, the harness's recorded open-request replies; no_claim=the wording the learner reads in a real Output channel
+test('a Saved studies choice sent from the Learning summary after the Study workspace closed is recorded and releases the pane', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  try {
+    const history = await openByOpenReplay(harness)
+    const revision = lastView(harness)!.revision
+    await harness.reader.close()
+
+    // Act
+    harness.receive({
+      type: 'node-history',
+      revision,
+      studyId: history.studyId,
+      openRequest: 5,
+    })
+    await waitUntil(
+      () => harness.openRequestReplies().length === 1,
+      'the Learning summary gets the reply to its dropped choice',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(harness.openRequestReplies(), [
+      { webview: 'summary', openRequest: 5 },
+    ])
+    // The entry is copied into this realm's plain objects: the reader runs in the harness's own realm.
+    assert.deepEqual(
+      logged.map((entry) => ({ ...entry })),
+      [
+        {
+          surface: 'choice:dropped',
+          studyId: history.studyId,
+          cause:
+            'The "node-history" choice from the Learning summary was not carried out: the Study workspace is closed. Open Study Workspace, then choose it again.',
+        },
+      ],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 for (const entry of ['Open replay', 'Saved studies'] as const) {
   // Value: protects=the learner's entry into a test replay in VS Code gives region 2's composition: the Study pane closes, the Application pane and the recorded source stay, and the Learning summary shows in the chat's place, moved beside the chat once per profile; fails_when=the Study pane stays open with the replay in its Test replay section, the summary keeps its placeholder, or the move does not run; why_new=Cycle 0051 DS-A (AC1): a test replay entered the Study composition; seam=workspaceHarness (VS Code), openLearningReplay and the Study pane's node-history message, the fake vscode.moveViews; no_claim=the native placement, which N51 (a) checks
   test(`${entry} in VS Code opens a test replay with the Study pane closed and the Learning summary beside the chat`, async () => {

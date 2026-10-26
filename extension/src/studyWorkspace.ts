@@ -23126,13 +23126,18 @@ export class StudyWorkspace {
     void webview.postMessage(reply)
   }
 
-  /** Accepts only bounded named UI messages, rejecting stale controls before dispatch. @example await this.receive(message) */
-  private async receive(
-    value: unknown,
+  /**
+   * Says whether a webview message comes from a pane the reader no longer answers: a renderer a handoff retired, or the Learning summary while the Study workspace is closed or has left the summary composition; called twice by {@link receive}, before and after its initialization.
+   * @param origin - The pane family the webview belongs to.
+   * @param owner - The panel or view whose webview sent the message; `undefined` for a message the reader delivers itself.
+   * @returns `true` when the message is to be dropped.
+   * @example if (this.isMessageOwnerRetired('context', owner)) return
+   */
+  private isMessageOwnerRetired(
     origin: 'context' | 'moments',
     owner?: vscode.WebviewPanel | vscode.WebviewView,
-  ): Promise<void> {
-    if (
+  ): boolean {
+    return Boolean(
       owner &&
       (owner !==
         (origin === 'moments'
@@ -23141,9 +23146,47 @@ export class StudyWorkspace {
             ? this.summaryView
             : this.contextPanel) ||
         (owner === this.summaryView &&
-          (!this.opened || !this.summaryComposition || this.closing)))
+          (!this.opened || !this.summaryComposition || this.closing))),
+    )
+  }
+
+  /**
+   * Writes one Output › Codebook entry for a learner's choice (a Saved studies entry, a tab or an item) that the Learning summary sent while the Study workspace was closed, so a dropped choice leaves a trace instead of nothing (N55-F4, Cycle 0056 task 17); called by {@link receive} when {@link isMessageOwnerRetired} drops a message.
+   * The pane that sent the choice is released by {@link receivePaneMessage}'s reply, which is posted whether or not the message was carried out. A renderer a handoff retired is no learner's choice and writes nothing.
+   * @param value - The raw message that was dropped.
+   * @param owner - The view that sent it.
+   * @example this.noteDroppedSummaryChoice(message, owner)
+   */
+  private noteDroppedSummaryChoice(
+    value: unknown,
+    owner?: vscode.WebviewPanel | vscode.WebviewView,
+  ): void {
+    if (!owner || owner !== this.summaryView) return
+    const parsed = messageSchema.safeParse(value)
+    if (
+      !parsed.success ||
+      !CONTROL_RETIRING_MESSAGE_TYPES.has(parsed.data.type)
     )
       return
+    this.diagnostics?.log({
+      surface: 'choice:dropped',
+      ...('studyId' in parsed.data && typeof parsed.data.studyId === 'string'
+        ? { studyId: parsed.data.studyId }
+        : {}),
+      cause: `The "${parsed.data.type}" choice from the Learning summary was not carried out: the Study workspace is closed. Open Study Workspace, then choose it again.`,
+    })
+  }
+
+  /** Accepts only bounded named UI messages, rejecting stale controls before dispatch. @example await this.receive(message) */
+  private async receive(
+    value: unknown,
+    origin: 'context' | 'moments',
+    owner?: vscode.WebviewPanel | vscode.WebviewView,
+  ): Promise<void> {
+    if (this.isMessageOwnerRetired(origin, owner)) {
+      this.noteDroppedSummaryChoice(value, owner)
+      return
+    }
     const parsed = messageSchema.safeParse(value)
     if (!parsed.success) throw new Error('Unsupported reader message.')
     const message = parsed.data
@@ -23163,18 +23206,10 @@ export class StudyWorkspace {
     }
     await this.initialize()
     // Initialization can outlive a panel handoff; retired renderers never acknowledge or control its successor.
-    if (
-      owner &&
-      (owner !==
-        (origin === 'moments'
-          ? this.moments
-          : this.summaryComposition
-            ? this.summaryView
-            : this.contextPanel) ||
-        (owner === this.summaryView &&
-          (!this.opened || !this.summaryComposition || this.closing)))
-    )
+    if (this.isMessageOwnerRetired(origin, owner)) {
+      this.noteDroppedSummaryChoice(value, owner)
       return
+    }
     if (message.type === 'ready') {
       this.lastPublished = undefined
       this.publish()
