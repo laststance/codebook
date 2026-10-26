@@ -617,6 +617,31 @@ test('the poll stops once a good read shows no run after the error row', async (
   assert.equal(reads - readsAfterTheGoodRead, 0)
 })
 
+// Value: protects=the poll runs only for a run that was shown; fails_when=an error row after a read that never showed a run starts the poll, so a broken folder is read again and again; why_new=the neighbouring poll tests start from a shown run; no_claim=the 30 second value; seam=mocked timers, a read that throws from the first call
+test('the poll does not start for an error row when no run row was shown before', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] })
+  let reads = 0
+  const { fake, view } = openView(context, {
+    readFacts: async () => {
+      reads += 1
+      throw new Error('disk busy')
+    },
+  })
+  await view.whenIdle()
+  const readsWithTheErrorRow = reads
+
+  // Act
+  context.mock.timers.tick(200)
+  await view.whenIdle()
+
+  // Assert
+  assert.deepEqual(
+    [fake.rows().map((row) => row.label), reads - readsWithTheErrorRow],
+    [[ERROR_ROW_LABEL], 0],
+  )
+})
+
 // Value: protects=task 22 (one read when the view is shown); fails_when=showing a hidden view waits for the 1 s debounce, so stale rows stay on screen and the poll stays stopped for that second; no_claim=the editor's visibility semantics; seam=mocked timers with no tick after the view is shown
 test('a hidden view that is shown reads at once without waiting for the debounce', async (context) => {
   // Arrange
