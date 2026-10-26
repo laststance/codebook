@@ -9,6 +9,7 @@ import {
   llmWikiFolderLocationFailedNotice,
   LLM_WIKI_RECOVERY_REQUEST_COPIED_NOTICE,
   LLM_WIKI_ROW_ACTIONS,
+  MANAGE_WORKSPACE_TRUST_COMMAND,
   OPEN_CHAT_COMMAND,
   OPEN_FOLDER_COMMAND,
   OPEN_SETTINGS_COMMAND,
@@ -22,7 +23,6 @@ import {
 
 import { describeUnrevealableWikiFolder } from './describeUnrevealableWikiFolder'
 import type { LlmWikiView } from './llmWikiView'
-import { resolveManageTrustCommand } from './resolveManageTrustCommand'
 import { thrownMessage } from './thrownMessage'
 import { wikiFolderKindOf } from './wikiFolderKindOf'
 import { wikiOutputLabel } from './wikiOutputLabel'
@@ -79,22 +79,24 @@ async function showRowDetail(
 }
 
 /**
- * Runs the editor's command that manages workspace trust, or says where to find it when the editor lists none of the known ids.
+ * Runs the editor's Manage Workspace Trust command, or says where to find it when the editor rejects it.
+ *
+ * Trigger: the Manage Workspace Trust action of the view's trust row ({@link registerLlmWikiCommands}).
  * @param options - The window's closures.
- * @returns Nothing.
+ * @returns Nothing; a rejection is recorded in Output › Codebook and the learner gets the Command Palette notice.
  * @example await manageTrust(options)
  */
 async function manageTrust(options: LlmWikiCommandOptions): Promise<void> {
-  const available = await options.editor.commands.getCommands(true)
-  const commandId = resolveManageTrustCommand(available)
-  if (commandId === undefined) {
+  try {
+    await options.editor.commands.executeCommand(MANAGE_WORKSPACE_TRUST_COMMAND)
+  } catch (cause) {
+    // An editor without the command rejects; the learner still learns where to trust the folder.
+    options.recordFailure('Manage Workspace Trust could not run', cause)
     void options.showNotice(
       'information',
       LLM_WIKI_MANAGE_TRUST_FALLBACK_NOTICE,
     )
-    return
   }
-  await options.editor.commands.executeCommand(commandId)
 }
 
 /**

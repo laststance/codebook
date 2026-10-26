@@ -1030,11 +1030,8 @@ export const COPY_WIKI_RECOVERY_REQUEST_COMMAND =
 export const REVEAL_WIKI_FOLDER_COMMAND = 'codebook.revealWikiFolder'
 /** The button of the attention notice that copies its sentence. */
 export const COPY_DETAILS_ACTION = 'Copy details'
-/** The ids of the editor's command that manages workspace trust, in the order Codebook prefers them; the view runs the first one the editor lists (`workbench.trust.manage` is VS Code's own id; vscode-go calls `workbench.action.manageTrust`). Unverified in each host until the native trial. */
-export const MANAGE_WORKSPACE_TRUST_COMMAND_IDS = [
-  'workbench.trust.manage',
-  'workbench.action.manageTrust',
-] as const
+/** The editor's command that manages workspace trust. Native trial N56 (2026-10-27): VS Code 1.142.0 and Cursor 3.27.12 both open their Workspace Trust editor with it; Cursor's Keyboard Shortcuts editor lists `workbench.trust.manage` and registers no `workbench.action.manageTrust`. */
+export const MANAGE_WORKSPACE_TRUST_COMMAND = 'workbench.trust.manage'
 /** What one inline action of an LLM Wiki view row is: the command it runs and the words of its title. The row function names an action by its key, the manifest contributes each command with a menu entry that tests `viewItem` for the key. */
 export const LLM_WIKI_ROW_ACTIONS = {
   update: { command: UPDATE_DEEP_WIKI_COMMAND, title: 'Update LLM Wiki' },
@@ -1069,7 +1066,7 @@ export const LLM_WIKI_ROW_ACTIONS = {
   },
 } as const
 
-/** What the LLM Wiki view says when the editor lists none of the known ids of its Manage Workspace Trust command ({@link resolveManageTrustCommand}, run by {@link registerLlmWikiCommands}). */
+/** What the LLM Wiki view says when the editor rejects its Manage Workspace Trust command ({@link MANAGE_WORKSPACE_TRUST_COMMAND}, run by {@link registerLlmWikiCommands}). */
 export const LLM_WIKI_MANAGE_TRUST_FALLBACK_NOTICE =
   'Run "Workspaces: Manage Workspace Trust" from the Command Palette to trust this folder.'
 

@@ -447,30 +447,47 @@ test('a window without a folder offers Open Folder and an untrusted folder offer
   )
 })
 
-// Value: protects=the manage-trust id decision; fails_when=the action runs an id the editor does not list, or runs none and says nothing; no_claim=that the id exists in Cursor (native trial); seam=the stubbed editor's command list
-test('Manage Workspace Trust runs the first known trust command the editor lists, and says where to find it when it lists none', async (context) => {
+// Value: protects=Manage Workspace Trust in VS Code and Cursor (both list only workbench.trust.manage, N56 step 2); fails_when=the action asks the editor for its command list first and shows the notice instead of running the command because the list names neither id; why_new=the old lookup hid the command whenever getCommands did not list it; seam=the stubbed editor, whose command list holds neither trust id; no_claim=that the native editors open their trust editor (native trial)
+test('Manage Workspace Trust runs workbench.trust.manage without consulting the editor’s command list', async (context) => {
   // Arrange
-  const { window: listed } = await openPublishedWiki(context, {
-    trusted: false,
-    extraEditorCommands: ['workbench.action.manageTrust'],
-  })
-  const { window: unlisted } = await openPublishedWiki(context, {
-    trusted: false,
-  })
+  const { window } = await openPublishedWiki(context, { trusted: false })
 
   // Act
-  await listed.runCommand('codebook.llmWiki.manageTrust')
-  await unlisted.runCommand('codebook.llmWiki.manageTrust')
+  await window.runCommand('codebook.llmWiki.manageTrust')
 
   // Assert
   assert.deepEqual(
-    [listed.executedCommands, unlisted.executedCommands, unlisted.notices],
+    [window.executedCommands, window.notices],
+    [['workbench.trust.manage'], []],
+  )
+})
+
+// Value: protects=the learner knowing where to trust a folder in an editor without the command; fails_when=a rejected trust command leaves no notice or no cause in Output › Codebook; why_new=the old code never ran the command when it was not listed, so a rejection was unhandled; seam=the stubbed editor refusing workbench.trust.manage; no_claim=the wording of a native editor's own error
+test('Manage Workspace Trust says where to find the command and records the cause when the editor rejects it', async (context) => {
+  // Arrange
+  const { window } = await openPublishedWiki(context, {
+    trusted: false,
+    missingEditorCommands: ['workbench.trust.manage'],
+  })
+
+  // Act
+  await window.runCommand('codebook.llmWiki.manageTrust')
+
+  // Assert
+  assert.deepEqual(
     [
-      ['workbench.action.manageTrust'],
-      [],
+      window.notices,
+      window.outputLines.some(
+        (line) =>
+          line.startsWith('error: ') &&
+          line.includes("command 'workbench.trust.manage' not found"),
+      ),
+    ],
+    [
       [
         'Run "Workspaces: Manage Workspace Trust" from the Command Palette to trust this folder.',
       ],
+      true,
     ],
   )
 })

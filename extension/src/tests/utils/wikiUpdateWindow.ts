@@ -227,8 +227,6 @@ export async function openWikiUpdateWindow(options: {
   noFolder?: boolean
   /** Keeps these steps open from the window's activation on, so a test sees the state before the first read ends; `hold(step)` then returns the same hold. */
   holdAtOpen?: HeldUpdateStep[]
-  /** Commands the editor lists besides the chat's (for example the id of its manage-trust command). */
-  extraEditorCommands?: string[]
   /** Makes the editor refuse the file watcher of the LLM Wiki view with this message. */
   wikiWatcherFails?: string
   /** Makes this many removals of the window's own run marker throw `EBUSY` before they work, as a scanner holding the file does on Windows; each is recorded in `markerChanges` as `threw`. */
@@ -565,7 +563,6 @@ export async function openWikiUpdateWindow(options: {
               'workbench.action.chat.newChat',
               'workbench.action.chat.cancel',
               'workbench.action.chat.removeAllPendingRequests',
-              ...(options.extraEditorCommands ?? []),
             ].filter(
               (command) => !options.missingEditorCommands?.includes(command),
             ),
