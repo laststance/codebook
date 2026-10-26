@@ -86,6 +86,7 @@ import {
   SUMMARY_PLACEMENT_ACTION,
   FOREIGN_PREVIEW_ACTION,
   MOVE_VIEWS_COMMAND,
+  REFUSAL_REPORT_EFFECTS,
   REFUSAL_REPORT_GROUP_TABS,
   SUMMARY_BESIDE_CHAT_MOVE_ARGUMENT,
   SUMMARY_BESIDE_CHAT_MOVED_KEY,
@@ -247,6 +248,7 @@ import { editorTabInputKinds } from './utils/editorTabInputKinds'
 import { emptyFirstGroupObstacle } from './utils/emptyFirstGroupObstacle'
 import { emptyGroupsGoneSince } from './utils/emptyGroupsGoneSince'
 import { evidenceInUseElsewhere } from './utils/evidenceInUseElsewhere'
+import { failedPlacementChecks } from './utils/failedPlacementChecks'
 import { firstVerifiedStopSequence } from './utils/firstVerifiedStopSequence'
 import { focusEditorGroupCommand } from './utils/focusEditorGroupCommand'
 import { focusWebview } from './utils/focusWebview'
@@ -301,7 +303,9 @@ import { parseRecordedStudyGroups } from './utils/parseRecordedStudyGroups'
 import {
   describePlacementRefusal,
   PlacementEventLog,
+  type RefusalEvent,
   type RefusalGroupView,
+  type RefusalTabView,
 } from './utils/placementRefusalReport'
 import { plannedStopLine } from './utils/plannedStopLine'
 import { projectLearningSummary } from './utils/projectLearningSummary'
@@ -979,6 +983,10 @@ export class StudyWorkspace {
   private hostOpeningTestReplay = false
   /** The editor's recent group and active text editor changes, for {@link refusePlacement}'s report (F382). */
   private readonly placementEvents = new PlacementEventLog()
+  /** The native effects this host itself issued (reveals, disposals, editor commands, shown documents), for {@link refusePlacement}'s report (N55-F4). */
+  private readonly placementEffects = new PlacementEventLog(
+    REFUSAL_REPORT_EFFECTS,
+  )
   /**
    * The explicit Live intent {@link returnCurrentSelection} records for an open reader, so Open and cold reentry, also after a Close, prepare the chat layout before a runtime starts: the record that was current then, and whether it had stopped. A Close keeps it, and so does a Return that arranged nothing, since the selection either leaves follows the current run in Live; a run that starts after it and the stop of the current run end it ({@link isLiveCompositionRequested}, Cycle 0046 OCR1-8).
    */
@@ -2418,9 +2426,9 @@ export class StudyWorkspace {
       const expected: unknown = JSON.parse(receipt.signature)
       // Native pixel rounding is no resize; a ratio the learner changed is.
       if (isProportionalEditorLayout(expected, layout)) return true
-      await vscode.commands.executeCommand('vscode.setEditorLayout', expected)
+      await this.executeEditorCommand('vscode.setEditorLayout', expected)
       assertCurrent()
-      const restored = await vscode.commands.executeCommand<unknown>(
+      const restored = await this.executeEditorCommand<unknown>(
         'vscode.getEditorLayout',
       )
       assertCurrent()
@@ -2542,7 +2550,7 @@ export class StudyWorkspace {
         (matchesRecordedAppGroup() ||
           (recordedApplication.visible && matchesRecordedSourceGroup())),
     })
-    recordedApplication.reveal(recordedApplication.viewColumn, true)
+    this.revealPane(recordedApplication, recordedApplication.viewColumn, true)
     await waitUntil(
       () => recordedApplication === this.app && recordedApplication.visible,
       'recorded Application visibility during Restore',
@@ -3004,7 +3012,7 @@ export class StudyWorkspace {
         if (this.enlargedLayoutReceipt !== enlarged || !retained()) return
         this.enlargedLayoutReceipt = undefined
         // A late switch between owned Study and Application changes focus, but leaves the measured main grid intact.
-        const layout = await vscode.commands.executeCommand<unknown>(
+        const layout = await this.executeEditorCommand<unknown>(
           'vscode.getEditorLayout',
         )
         assertCurrent()
@@ -3015,14 +3023,14 @@ export class StudyWorkspace {
         )
           return
         // Editor-layout reads omit maximization, so reapplying the measured grid must clear it before confirmation.
-        await vscode.commands.executeCommand(
+        await this.executeEditorCommand(
           'vscode.setEditorLayout',
           JSON.parse(receipt.signature),
         )
         // The measured layout is the one the Enlarge began from: the sizes kept for a Close are given back with it.
         this.groupSizesBeforeExpand = undefined
         assertCurrent()
-        const restoredLayout = await vscode.commands.executeCommand<unknown>(
+        const restoredLayout = await this.executeEditorCommand<unknown>(
           'vscode.getEditorLayout',
         )
         assertCurrent()
@@ -3359,7 +3367,7 @@ export class StudyWorkspace {
           await this.focusPresentationPanel(placedApplication, signal)
           return
         }
-        const restored = await vscode.window.showTextDocument(document, {
+        const restored = await this.showTextDocumentNoted(document, {
           viewColumn: currentGroup.viewColumn,
           preserveFocus: false,
           preview,
@@ -3377,7 +3385,7 @@ export class StudyWorkspace {
     const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab
     if (!activeTab || activeTab === activatedByClose)
       return async (): Promise<void> => {
-        await vscode.commands.executeCommand(
+        await this.executeEditorCommand(
           'workbench.action.focusActiveEditorGroup',
         )
       }
@@ -3759,7 +3767,7 @@ export class StudyWorkspace {
     chatEditorTab: boolean,
   ): Promise<boolean> {
     if (!command) return false
-    await vscode.commands.executeCommand(command)
+    await this.executeEditorCommand(command)
     // Only a chat is told about; a learner's page of the main editor that got its group's focus back is not.
     if (toldCause && (chatEditorTab || command === CURSOR_FOCUS_AGENT_COMMAND))
       this.tellChatKeyboardReturned(toldCause)
@@ -3902,7 +3910,7 @@ export class StudyWorkspace {
     group: vscode.TabGroup,
   ): Promise<vscode.ViewColumn | 'other' | 'unknown'> {
     const count = editorLayoutGroupCount(
-      await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'),
+      await this.executeEditorCommand<unknown>('vscode.getEditorLayout'),
     )
     // A missing layout never grants main-part membership.
     if (count === undefined) return 'unknown'
@@ -5048,9 +5056,10 @@ export class StudyWorkspace {
       : undefined
     // Without a width nothing can be compared: the primary side bar stays as the learner has it.
     if (widthPx === undefined) return layoutBeforeRead
-    await vscode.commands
-      .executeCommand('workbench.action.closeSidebar')
-      .then(undefined, () => undefined)
+    await this.executeEditorCommand('workbench.action.closeSidebar').then(
+      undefined,
+      () => undefined,
+    )
     const widthWithoutPrimaryPx = await this.readEditorAreaWidthPx()
     // The measurement hid the primary side bar and cannot tell whether it was open: the end of the reading shows it again rather than leave the learner's bar away.
     if (widthWithoutPrimaryPx === undefined) {
@@ -5089,7 +5098,7 @@ export class StudyWorkspace {
    * @throws What `assertUnchanged` throws; the sizes then stay kept, for the next Restore or the Close.
    * @example
    * ```ts
-   * await vscode.commands.executeCommand('workbench.action.minimizeOtherEditors')
+   * await this.executeEditorCommand('workbench.action.minimizeOtherEditors')
    * await this.giveGroupSizesBackAfterExpand() // two rows of 617 and 70 px are 344 and 343 px again
    * ```
    */
@@ -5104,9 +5113,10 @@ export class StudyWorkspace {
     this.groupSizesBeforeExpand = undefined
     // Only the main editor's groups of before get their sizes back.
     if (!this.hasMainEditorGroupsOf(before, now)) return
-    await vscode.commands
-      .executeCommand('vscode.setEditorLayout', before)
-      .then(undefined, () => undefined)
+    await this.executeEditorCommand('vscode.setEditorLayout', before).then(
+      undefined,
+      () => undefined,
+    )
   }
 
   /**
@@ -5151,9 +5161,10 @@ export class StudyWorkspace {
    */
   private async readMaximizedEditorAreaWidthPx(): Promise<number | undefined> {
     return maximizedEditorAreaWidthPx(
-      await vscode.commands
-        .executeCommand<unknown>('vscode.getEditorLayout')
-        .then(undefined, () => undefined),
+      await this.executeEditorCommand<unknown>('vscode.getEditorLayout').then(
+        undefined,
+        () => undefined,
+      ),
     )
   }
 
@@ -5220,7 +5231,7 @@ export class StudyWorkspace {
   ): Promise<void> {
     // A measured reading hides both side bars with the group's maximization; one whose measurement failed after hiding the primary bar leaves the secondary bar alone.
     if (this.sideBarsBeforeRead?.widthWithoutPrimaryPx !== undefined) {
-      await vscode.commands.executeCommand(
+      await this.executeEditorCommand(
         'workbench.action.maximizeEditorHideSidebar',
       )
       return
@@ -5229,7 +5240,7 @@ export class StudyWorkspace {
     await this.expandKeepingGroupSizes(this.layoutBeforeReading)
     await this.maximizeAfterExpand(assertReadFocus, async () => {
       assertReadFocus()
-      await vscode.commands.executeCommand(
+      await this.executeEditorCommand(
         'workbench.action.toggleMaximizeEditorGroup',
       )
     })
@@ -5244,9 +5255,7 @@ export class StudyWorkspace {
    * @example await this.expandKeepingGroupSizes(this.layoutBeforeReading)
    */
   private async expandKeepingGroupSizes(layoutBefore: unknown): Promise<void> {
-    await vscode.commands.executeCommand(
-      'workbench.action.minimizeOtherEditors',
-    )
+    await this.executeEditorCommand('workbench.action.minimizeOtherEditors')
     this.groupSizesBeforeExpand ??= layoutBefore
   }
 
@@ -5270,7 +5279,7 @@ export class StudyWorkspace {
    * @param maximize - The caller's steps after its Expand.
    * @returns Once the steps are done.
    * @throws What a step throws, after the sizes were given back or left kept.
-   * @example await this.maximizeAfterExpand(assertReadFocus, async () => { await vscode.commands.executeCommand('workbench.action.toggleMaximizeEditorGroup') })
+   * @example await this.maximizeAfterExpand(assertReadFocus, async () => { await this.executeEditorCommand('workbench.action.toggleMaximizeEditorGroup') })
    */
   private async maximizeAfterExpand(
     assertUnchanged: () => void,
@@ -5347,7 +5356,7 @@ export class StudyWorkspace {
    * @returns `true` when a bar was shown and the active editor group focused again, `false` when no Read's measurement was pending or no bar is to be shown.
    * @example
    * ```ts
-   * await vscode.commands.executeCommand('workbench.action.minimizeOtherEditors')
+   * await this.executeEditorCommand('workbench.action.minimizeOtherEditors')
    * this.maximizedByRead = false
    * await this.showSideBarsHiddenByRead()
    * ```
@@ -5358,7 +5367,7 @@ export class StudyWorkspace {
     this.sideBarsBeforeRead = undefined
     const showCommands = await this.sideBarShowCommands(before)
     const run = (command: string): Thenable<unknown> =>
-      vscode.commands.executeCommand(command).then(undefined, () => undefined)
+      this.executeEditorCommand(command).then(undefined, () => undefined)
     for (const command of showCommands) await run(command)
     if (!showCommands.length) return false
     await run('workbench.action.focusActiveEditorGroup')
@@ -5452,9 +5461,10 @@ export class StudyWorkspace {
   ): Promise<{ auxiliary: boolean; primary: boolean }> {
     if (widthPx === undefined)
       return { auxiliary: false, primary: before.primaryVisible }
-    await vscode.commands
-      .executeCommand('workbench.action.closeSidebar')
-      .then(undefined, () => undefined)
+    await this.executeEditorCommand('workbench.action.closeSidebar').then(
+      undefined,
+      () => undefined,
+    )
     const widthWithoutPrimaryPx = await this.readEditorAreaWidthPx()
     return {
       auxiliary: this.hasSideBarGain(
@@ -5485,9 +5495,10 @@ export class StudyWorkspace {
    * @example const layout = await this.readEditorLayout() // => { orientation: 1, groups: [{ size: 344 }, { size: 343 }] }
    */
   private async readEditorLayout(): Promise<unknown> {
-    return vscode.commands
-      .executeCommand<unknown>('vscode.getEditorLayout')
-      .then(undefined, () => undefined)
+    return this.executeEditorCommand<unknown>('vscode.getEditorLayout').then(
+      undefined,
+      () => undefined,
+    )
   }
 
   /**
@@ -5594,7 +5605,9 @@ export class StudyWorkspace {
       restoreFocusAttempted = false
     let assertViewportOwnership: (() => void) | undefined
     let assertRetainedPlacement = this.opened
-      ? this.retainPresentationPlacement()
+      ? this.retainPresentationPlacement(
+          'performPresentation/assertRetainedPlacement',
+        )
       : undefined
     this.presentationMovedFocus = false
     this.presentationYieldedToLearner = false
@@ -5683,7 +5696,9 @@ export class StudyWorkspace {
           const entered = this.confirmEnteredComposition(input)
           // A cold default Study already arranged around its prepared App; keep every original group instead of reapplying the three-leaf legacy placement.
           if (!this.liveComposition && !this.summaryComposition) {
-            const assertEntry = this.retainPresentationPlacement()
+            const assertEntry = this.retainPresentationPlacement(
+              'performPresentation/assertEntry',
+            )
             await this.savePresentationPreference(input.mode, transition.id)
             assertCurrent()
             assertEntry()
@@ -5693,7 +5708,9 @@ export class StudyWorkspace {
           this.tellUntoldSelectionKeyboard(requester)
           return { ...entered, preference: this.presentationState().preference }
         }
-        assertRetainedPlacement ??= this.retainPresentationPlacement()
+        assertRetainedPlacement ??= this.retainPresentationPlacement(
+          'performPresentation/assertRetainedPlacement',
+        )
         this.presentationPoseRequest = undefined
         this.presentationPose = undefined
         this.presentationPoseRestored = undefined
@@ -5805,7 +5822,9 @@ export class StudyWorkspace {
         )
         assertCurrent()
         if (!this.app?.active && !this.contextPanel?.active) assertSourceFocus()
-        assertRetainedPlacement = this.retainPresentationPlacement()
+        assertRetainedPlacement = this.retainPresentationPlacement(
+          'performPresentation/assertRetainedPlacement',
+        )
         for (const release of releaseViewports.splice(0)) release()
         // Native movement may recreate the renderer; it must acknowledge the same evidence after the lock is released.
         if (this.recordingActive) {
@@ -5851,9 +5870,11 @@ export class StudyWorkspace {
         if (!this.keepsKeyboardAfterAgentSelection(agentSelection))
           await restoreFocus?.(signal, assertSourceFocus, true)
         assertCurrent()
-        assertRetainedPlacement = this.retainPresentationPlacement()
+        assertRetainedPlacement = this.retainPresentationPlacement(
+          'performPresentation/assertRetainedPlacement',
+        )
         const receipt = this.layoutReceipt,
-          actual = await vscode.commands.executeCommand<unknown>(
+          actual = await this.executeEditorCommand<unknown>(
             'vscode.getEditorLayout',
           )
         assertCurrent()
@@ -6123,8 +6144,13 @@ export class StudyWorkspace {
   ): Promise<void> {
     const lifetime = this.lifetime,
       transition = this.presentationTransition
-    const assertPlacement = this.retainPresentationPlacement(false),
-      assertInitialFocus = this.retainPresentationPlacement()
+    const assertPlacement = this.retainPresentationPlacement(
+        'focusPresentationPanel/assertPlacement',
+        false,
+      ),
+      assertInitialFocus = this.retainPresentationPlacement(
+        'focusPresentationPanel/assertInitialFocus',
+      )
     const kind =
       panel === this.app
         ? 'codebook.scopedBrowser'
@@ -6238,7 +6264,7 @@ export class StudyWorkspace {
       return
     }
     // The keyboard may be outside the editor area while the pane is the active editor: the pane takes it, and nothing waits for its document.
-    if (!this.reportsKeyboard(panel)) panel.reveal(undefined, false)
+    if (!this.reportsKeyboard(panel)) this.revealPane(panel, undefined, false)
   }
 
   /**
@@ -6322,7 +6348,10 @@ export class StudyWorkspace {
       const selection = JSON.stringify(this.selection),
         bundle = this.recordingActive ? this.playback?.bundle() : undefined
       const focusBeforeRead = this.readingFocusOrigin()
-      const assertPlacement = this.retainPresentationPlacement(false)
+      const assertPlacement = this.retainPresentationPlacement(
+        'readStudyPane/assertPlacement',
+        false,
+      )
       if (region === 'source') {
         const sourceColumn = this.studyPanePositions().sourceColumn
         if (this.sourceReady() && this.sourceUri && sourceColumn) {
@@ -6337,7 +6366,7 @@ export class StudyWorkspace {
           } finally {
             originalTab.dispose()
           }
-          await vscode.window.showTextDocument(document, {
+          await this.showTextDocumentNoted(document, {
             viewColumn: sourceColumn,
             preserveFocus: false,
             preview: false,
@@ -6367,7 +6396,7 @@ export class StudyWorkspace {
         const kind =
           region === 'app' ? 'codebook.scopedBrowser' : 'codebook.studyContext'
         assertReadFocus()
-        panel.reveal(undefined, false)
+        this.revealPane(panel, undefined, false)
         // At minimum widths the offscreen webview cannot acknowledge inner focus until its owned tab is maximized.
         await waitUntil(
           () => {
@@ -6627,7 +6656,7 @@ export class StudyWorkspace {
        * @example
        * ```ts
        * await focusedPane.endReadMaximization(async () => {
-       *   await vscode.commands.executeCommand('workbench.action.minimizeOtherEditors')
+       *   await this.executeEditorCommand('workbench.action.minimizeOtherEditors')
        *   await this.showSideBarsHiddenByRead()
        * })
        * ```
@@ -6688,7 +6717,9 @@ export class StudyWorkspace {
       this.sameStudyPanePositions(receipt.panes),
     )
     const layoutBefore = await this.groupSizesBeforeEnlarge(before)
-    const assertRetained = this.retainPresentationPlacement()
+    const assertRetained = this.retainPresentationPlacement(
+      'enlargePresentationPanel/assertRetained',
+    )
     this.enlargedLayoutReceipt = undefined
     this.presentationConfirmed = false
     try {
@@ -6703,7 +6734,7 @@ export class StudyWorkspace {
           ? await this.readPassivePresentationLayout()
           : undefined
         assertRetained()
-        await vscode.commands.executeCommand(
+        await this.executeEditorCommand(
           'workbench.action.toggleMaximizeEditorGroup',
         )
         assertRetained()
@@ -6720,12 +6751,16 @@ export class StudyWorkspace {
     }
   }
 
-  /** Protects passive awaits in {@link performPresentation} from adopting learner pane/group/focus changes. @param retainFocus - Compares the focused group, tab and text editor too. @param acceptWikiGroupReturn - Takes the editor's own selection of the Repository Wiki's group beside the identical text editor as no change ({@link isWikiGroupBesideTextEditor}); only the borrow receipt of {@link readMainEditorGrid} asks for it (finding 606). @example const assertRetained = this.retainPresentationPlacement(); */
+  /** Protects passive awaits in {@link performPresentation} from adopting learner pane/group/focus changes. @param callSite - Short name of the caller and its guard (`method/variable`), printed in a refusal's report so a native take can tell which await refused. @param retainFocus - Compares the focused group, tab and text editor too. @param acceptWikiGroupReturn - Takes the editor's own selection of the Repository Wiki's group beside the identical text editor as no change ({@link isWikiGroupBesideTextEditor}); only the borrow receipt of {@link readMainEditorGrid} asks for it (finding 606). @example const assertRetained = this.retainPresentationPlacement('open/assertPlacement'); */
   private retainPresentationPlacement(
+    callSite: string,
     retainFocus = true,
     acceptWikiGroupReturn = false,
   ): () => void {
-    const armed = this.armPlacementReport('retainPresentationPlacement')
+    const armed = this.armPlacementReport(
+      'retainPresentationPlacement',
+      callSite,
+    )
     const transition = this.presentationTransition,
       lifetime = this.lifetime
     const panes = this.studyPanePositions(),
@@ -6807,32 +6842,35 @@ export class StudyWorkspace {
         (coveredBackgroundSource &&
           registeringApp === this.app &&
           focusedSource() === undefined)
-      const sameFocus =
-        !retainFocus ||
-        (retainedFocus.group ===
-          this.editorGroupIdentities.get(
-            vscode.window.tabGroups.activeTabGroup,
-          ) &&
-          (focusedWebview === undefined ||
-            (sameWebviewTab &&
-              focusedWebviewCloseRevision ===
-                this.webviewCloseRevisions.get(focusedWebview))) &&
-          sameSource &&
-          appActive === this.app?.active &&
-          contextActive === this.contextPanel?.active)
-      if (
-        this.sameEditorGroups(groups, vscode.window.tabGroups.all) &&
-        this.sameStudyPanePositions(panes) &&
-        sameFocus
+      // Each comparison is kept apart, so a refusal's report names the ones that failed.
+      const failedChecks = failedPlacementChecks(
+        {
+          groups: this.sameEditorGroups(groups, vscode.window.tabGroups.all),
+          panePositions: this.sameStudyPanePositions(panes),
+          focusGroup:
+            retainedFocus.group ===
+            this.editorGroupIdentities.get(
+              vscode.window.tabGroups.activeTabGroup,
+            ),
+          webviewTab: focusedWebview === undefined || sameWebviewTab,
+          closeRevision:
+            focusedWebview === undefined ||
+            focusedWebviewCloseRevision ===
+              this.webviewCloseRevisions.get(focusedWebview),
+          source: sameSource,
+          appActive: appActive === this.app?.active,
+          contextActive: contextActive === this.contextPanel?.active,
+        },
+        retainFocus,
       )
-        return
+      if (!failedChecks.length) return
       // Retire only this operation's focus ownership; an older passive read cannot suppress a newer transition's recovery.
       if (
         transition === this.presentationTransition &&
         lifetime === this.lifetime
       )
         this.yieldFocusToLearner()
-      throw this.refusePlacement(armed)
+      throw this.refusePlacement(armed, failedChecks)
     }
   }
 
@@ -7003,8 +7041,8 @@ export class StudyWorkspace {
         this.initialAppPlacement = undefined
       }
       if (replacementContext) this.bindContextPanel(replacementContext)
-      if (replacementApp) previousApp.dispose()
-      if (replacementContext) previousContext.dispose()
+      if (replacementApp) this.disposePane(previousApp)
+      if (replacementContext) this.disposePane(previousContext)
       await waitUntil(
         () => {
           signal.throwIfAborted()
@@ -7044,7 +7082,7 @@ export class StudyWorkspace {
       for (const subscription of subscriptions) subscription.dispose()
       // Failed creation removes only unadopted owned panes; adopted state never rolls back over newer learner input.
       for (const [region, replacement] of replacements)
-        if (this[region] !== replacement) replacement.dispose()
+        if (this[region] !== replacement) this.disposePane(replacement)
     }
   }
 
@@ -7098,7 +7136,9 @@ export class StudyWorkspace {
     let assertPlacedSourceFocus: (() => void) | undefined
     if (!sourceUri)
       throw new Error('No selected immutable source is available.')
-    const assertSourcePlacement = this.retainPresentationPlacement()
+    const assertSourcePlacement = this.retainPresentationPlacement(
+      'placePresentation/assertSourcePlacement',
+    )
     const document = await vscode.workspace.openTextDocument(sourceUri)
     signal.throwIfAborted()
     assertEvidence()
@@ -7202,7 +7242,9 @@ export class StudyWorkspace {
       }
       // Native debugger stops open prepared repository files as previews even while the captured reader is active, and a learner's single click opens a workspace file as one; both stay, pinned.
       for (const prepared of preparedPreviews) {
-        const assertPreparedPlacement = this.retainPresentationPlacement()
+        const assertPreparedPlacement = this.retainPresentationPlacement(
+          'placePresentation/assertPreparedPlacement',
+        )
         const sourceDocument = await Promise.resolve(
           vscode.workspace.openTextDocument(prepared.uri),
         ).catch(() => {
@@ -7220,7 +7262,7 @@ export class StudyWorkspace {
           throw new Error(
             'The prepared preview changed before it could be retained.',
           )
-        await vscode.window.showTextDocument(sourceDocument, {
+        await this.showTextDocumentNoted(sourceDocument, {
           viewColumn: prepared.group.viewColumn,
           preserveFocus: true,
           preview: false,
@@ -7242,8 +7284,10 @@ export class StudyWorkspace {
       }
       assertPreviewOwnership()
       // Native relocation can flatten the nested grid and omit its height; retain both axes before moving panes.
-      const assertBeforeMove = this.retainPresentationPlacement()
-      const retainedLayout = await vscode.commands.executeCommand<unknown>(
+      const assertBeforeMove = this.retainPresentationPlacement(
+        'placePresentation/assertBeforeMove',
+      )
+      const retainedLayout = await this.executeEditorCommand<unknown>(
         'vscode.getEditorLayout',
       )
       assertPlacement()
@@ -7270,7 +7314,7 @@ export class StudyWorkspace {
         requestedSourcePosition,
         requestedSourcePosition,
       )
-      const editor = await vscode.window.showTextDocument(document, {
+      const editor = await this.showTextDocumentNoted(document, {
         viewColumn: descriptor.sourceColumn,
         preserveFocus: false,
         preview: false,
@@ -7337,7 +7381,7 @@ export class StudyWorkspace {
         ownedContext.viewColumn !== descriptor.contextColumn
       ) {
         // Move only the owned explanation after source occupies column two, so its new group cannot close on creation.
-        ownedContext.reveal(descriptor.contextColumn, true)
+        this.revealPane(ownedContext, descriptor.contextColumn, true)
         await waitUntil(
           () => {
             assertPlacement()
@@ -7392,15 +7436,17 @@ export class StudyWorkspace {
       this.sourceGroup = vscode.window.tabGroups.all.find(
         (group) => group.viewColumn === descriptor.sourceColumn,
       )
-      const assertAfterMove = this.retainPresentationPlacement()
-      const measuredLayout = await vscode.commands.executeCommand<unknown>(
+      const assertAfterMove = this.retainPresentationPlacement(
+        'placePresentation/assertAfterMove',
+      )
+      const measuredLayout = await this.executeEditorCommand<unknown>(
         'vscode.getEditorLayout',
       )
       assertPlacement()
       assertAfterMove()
       assertSourceFocus()
       // Minimum-size native groups may opt out of proportional expansion; supply actual pixels when both axes are measured.
-      await vscode.commands.executeCommand(
+      await this.executeEditorCommand(
         'vscode.setEditorLayout',
         toPixelEditorLayout(descriptor.layout, measuredLayout) ??
           toPixelEditorLayout(descriptor.layout, retainedLayout) ??
@@ -7408,10 +7454,12 @@ export class StudyWorkspace {
       )
       assertPlacement()
       assertSourceFocus()
-      const assertSettling = this.retainPresentationPlacement()
+      const assertSettling = this.retainPresentationPlacement(
+        'placePresentation/assertSettling',
+      )
       await waitUntil(
         async () => {
-          const actual = await vscode.commands.executeCommand<unknown>(
+          const actual = await this.executeEditorCommand<unknown>(
             'vscode.getEditorLayout',
           )
           assertPlacement()
@@ -7425,14 +7473,16 @@ export class StudyWorkspace {
       )
       assertPlacement()
       assertSourceFocus()
-      const assertConfirmed = this.retainPresentationPlacement()
+      const assertConfirmed = this.retainPresentationPlacement(
+        'placePresentation/assertConfirmed',
+      )
       // Relocation and resizing can replace the native view state; restore a visible anchor only after both settle.
       if (!app.active && !context.active) assertSourceFocus()
       await restoreReadingPosition(editor, signal)
       assertPlacement()
       assertConfirmed()
       if (!app.active && !context.active) assertSourceFocus()
-      const layout = await vscode.commands.executeCommand<unknown>(
+      const layout = await this.executeEditorCommand<unknown>(
         'vscode.getEditorLayout',
       )
       assertPlacement()
@@ -7650,10 +7700,10 @@ export class StudyWorkspace {
       })),
     }
     grid.assertUnchanged()
-    await vscode.commands.executeCommand('vscode.setEditorLayout', layout)
+    await this.executeEditorCommand('vscode.setEditorLayout', layout)
     assertColdCurrent()
     grid.assertFocused()
-    const actual = await vscode.commands.executeCommand<unknown>(
+    const actual = await this.executeEditorCommand<unknown>(
       'vscode.getEditorLayout',
     )
     assertColdCurrent()
@@ -8221,7 +8271,7 @@ export class StudyWorkspace {
       if (this.liveComposition || this.summaryComposition) {
         // Live uses the host chat; disposing only our panel never closes another editor's tabs.
         const disposedStudyPane = this.contextPanel
-        this.contextPanel?.dispose()
+        this.disposePane(this.contextPanel)
         this.contextPanel = undefined
         this.presentationMode = 'study-workspace'
         // A Study pane in a learner's group leaves no retired group for the arrangement to drain, yet the editor reports the group's next tab active before it closes the disposed tab; a guard armed meanwhile reads that as the learner's focus change (N55-F4 refusal 2). Every guard therefore starts after the close.
@@ -8331,7 +8381,8 @@ export class StudyWorkspace {
         this.app?.viewColumn !==
           STUDY_PRESENTATIONS[this.presentationMode].appColumn
       ) {
-        this.app?.reveal(
+        this.revealPane(
+          this.app,
           STUDY_PRESENTATIONS[this.presentationMode].appColumn,
           true,
         )
@@ -8405,7 +8456,7 @@ export class StudyWorkspace {
         historyRequest === this.historyRequest
       ) {
         const app = this.app
-        app?.reveal(undefined, true)
+        this.revealPane(app, undefined, true)
         // The editor reports the reveal a moment later; the arrangement below would read that report as a change the learner made, so it waits, bounded, until the pane is the tab its group shows.
         if (app)
           await waitUntil(
@@ -8434,9 +8485,9 @@ export class StudyWorkspace {
         // Reentry without a retained layout cannot arrange anything; already manual groups must remain usable.
         const assertPlacement =
           firstOpen || this.layoutReceipt
-            ? this.retainPresentationPlacement(false)
+            ? this.retainPresentationPlacement('open/assertPlacement', false)
             : (): void => {}
-        panel.reveal(undefined, false)
+        this.revealPane(panel, undefined, false)
         // Drain the requested native focus change before the final layout read starts a passive ownership guard.
         await waitUntil(
           async () => {
@@ -8459,7 +8510,7 @@ export class StudyWorkspace {
             )
               return true
             // A side chat can retain focus while the Context tab is visibly placed in the only editor part.
-            const layout = await vscode.commands.executeCommand<unknown>(
+            const layout = await this.executeEditorCommand<unknown>(
               'vscode.getEditorLayout',
             )
             this.assertLifetime(lifetime)
@@ -8590,7 +8641,7 @@ export class StudyWorkspace {
       // The refusal leaves the window as the entry found it. The pane is released first: its close handler would read the disposal as the learner closing the pane and cancel the recording load whose refusal is being answered.
       if (unarrangedApp && unarrangedApp === this.app) {
         this.app = undefined
-        unarrangedApp.dispose()
+        this.disposePane(unarrangedApp)
       }
       // A newer focus of the learner stays, also the one the refusal names; the keyboard a measurement borrowed goes back to the editor part that held it, told that nothing was arranged (rows 718, 731 and 736).
       if (
@@ -8942,7 +8993,7 @@ export class StudyWorkspace {
       if (this.summaryComposition) await this.showLearningSummary()
       // A Study composition without its pane (closed, or lost to an earlier Live composition) gets it back (F208).
       else if (!this.contextPanel && !this.liveComposition) await this.open()
-      else this.contextPanel?.reveal(undefined, false)
+      else this.revealPane(this.contextPanel, undefined, false)
     }
     if (action === 'read-app') await this.readStudyPane('app')
     if (action === 'read-source') await this.readStudyPane('source')
@@ -8958,7 +9009,7 @@ export class StudyWorkspace {
       await this.enlargePresentationPanel(this.contextPanel)
     }
     if (action === 'outline')
-      await vscode.commands.executeCommand('codebook.learningOutline.focus')
+      await this.executeEditorCommand('codebook.learningOutline.focus')
     // One click replaces opening Run and Debug, expanding Variables and expanding its first scope by hand.
     if (action === 'show-variables') {
       this.isShowingNativeVariables = true
@@ -9022,7 +9073,7 @@ export class StudyWorkspace {
             'Current file differs from the selected captured source. The captured document remains unchanged.',
           ),
         )
-      await vscode.window.showTextDocument(document, {
+      await this.showTextDocumentNoted(document, {
         viewColumn: vscode.ViewColumn.Beside,
         preview: false,
       })
@@ -9267,7 +9318,9 @@ export class StudyWorkspace {
     chatCause?: ChatKeyboardReturnCause,
     yieldedToLearner = false,
   ): Promise<void> {
-    const assertRetainedFocus = this.retainPresentationPlacement(),
+    const assertRetainedFocus = this.retainPresentationPlacement(
+        'finishCurrentReturn/assertRetainedFocus',
+      ),
       selections = JSON.stringify(vscode.window.activeTextEditor?.selections)
     // Native command discovery can wait; recheck ownership immediately before its eventual focus dispatch.
     const stillCurrent = (): boolean => {
@@ -9347,16 +9400,17 @@ export class StudyWorkspace {
     place: ReturnType<StudyWorkspace['learnersKeyboardPlace']>,
   ): Promise<void> {
     if (place === 'moments' && this.moments?.visible) {
-      await vscode.commands
-        .executeCommand('codebook.observedMoments.focus')
-        .then(undefined, () => undefined)
+      await this.executeEditorCommand('codebook.observedMoments.focus').then(
+        undefined,
+        () => undefined,
+      )
       return
     }
     // A Study pane the Return did not close keeps its keyboard.
     if (place !== 'study' || this.contextPanel) return
-    await vscode.commands
-      .executeCommand('workbench.action.focusActiveEditorGroup')
-      .then(undefined, () => undefined)
+    await this.executeEditorCommand(
+      'workbench.action.focusActiveEditorGroup',
+    ).then(undefined, () => undefined)
     this.tellLearnersReturnKeyboard()
   }
 
@@ -9633,9 +9687,9 @@ export class StudyWorkspace {
       // A closed reader has no live or replay arrangement: the next selection opens it instead of arranging panes that no longer exist.
       this.liveComposition = false
       this.summaryComposition = false
-      contextPanel?.dispose()
+      this.disposePane(contextPanel)
       this.contextPanel = undefined
-      applicationPanel?.dispose()
+      this.disposePane(applicationPanel)
       this.app = undefined
       this.initialAppPlacement = undefined
       // A refused or late close of the Application's group is told and ends nothing: the cleanup below still runs (Cycle 0046 OCR1-4).
@@ -9831,9 +9885,9 @@ export class StudyWorkspace {
    */
   private async namesOnlyMainEditorGroups(): Promise<boolean> {
     if (this.disposed || !vscode.window.state.focused) return false
-    const layout = await vscode.commands
-      .executeCommand<unknown>('vscode.getEditorLayout')
-      .then(undefined, () => undefined)
+    const layout = await this.executeEditorCommand<unknown>(
+      'vscode.getEditorLayout',
+    ).then(undefined, () => undefined)
     return editorLayoutGroupCount(layout) === vscode.window.tabGroups.all.length
   }
 
@@ -9916,7 +9970,7 @@ export class StudyWorkspace {
       )
     )
       return
-    panel.dispose()
+    this.disposePane(panel)
     // A refused or late group close is told and keeps the keyboard's settle below.
     await this.releaseApplicationGroup().catch((error: unknown) =>
       this.report('layout', error),
@@ -10014,9 +10068,9 @@ export class StudyWorkspace {
     await this.closedPanesGone('codebook.scopedBrowser')
     // Native tab removal can outlast the learner leaving this window; the earlier focus sample no longer owns its keyboard.
     if (this.app || this.closing || !vscode.window.state.focused) return
-    await vscode.commands
-      .executeCommand('workbench.action.focusActiveEditorGroup')
-      .then(undefined, () => undefined)
+    await this.executeEditorCommand(
+      'workbench.action.focusActiveEditorGroup',
+    ).then(undefined, () => undefined)
     this.tellKeyboardAfterRunClosedPane()
   }
 
@@ -10182,9 +10236,9 @@ export class StudyWorkspace {
    */
   private async giveActiveGroupKeyboardAfterClose(): Promise<void> {
     await this.closedPanesGone()
-    await vscode.commands
-      .executeCommand('workbench.action.focusActiveEditorGroup')
-      .then(undefined, () => undefined)
+    await this.executeEditorCommand(
+      'workbench.action.focusActiveEditorGroup',
+    ).then(undefined, () => undefined)
     this.tellKeyboardAfterClose()
   }
 
@@ -10388,9 +10442,10 @@ export class StudyWorkspace {
     // Keep the final group/layout decision and its command in the same continuation.
     const layout = this.layoutOfBeforeOpenToRestore(before, now, groups)
     if (layout === undefined) return
-    await vscode.commands
-      .executeCommand('vscode.setEditorLayout', layout)
-      .then(undefined, () => undefined)
+    await this.executeEditorCommand('vscode.setEditorLayout', layout).then(
+      undefined,
+      () => undefined,
+    )
   }
 
   /**
@@ -11722,7 +11777,7 @@ export class StudyWorkspace {
       return 'retry'
     }
     if (tab.input instanceof vscode.TabInputText) {
-      await vscode.window.showTextDocument(tab.input.uri, {
+      await this.showTextDocumentNoted(tab.input.uri, {
         viewColumn: obstacle.viewColumn,
         preview: false,
         preserveFocus: true,
@@ -11759,11 +11814,11 @@ export class StudyWorkspace {
   ): Promise<'retry' | 'told'> {
     const focusCommand = focusEditorGroupCommand(group.viewColumn)
     if (focusCommand && group.activeTab === tab) {
-      await vscode.commands.executeCommand(focusCommand)
+      await this.executeEditorCommand(focusCommand)
       // The command keeps the tab that is in front of the group the focus moved to; the tab is re-read after it.
       const focused = vscode.window.tabGroups.activeTabGroup
       if (focused.viewColumn === group.viewColumn && focused.activeTab === tab)
-        await vscode.commands.executeCommand('workbench.action.keepEditor')
+        await this.executeEditorCommand('workbench.action.keepEditor')
     }
     const stillPreview = vscode.window.tabGroups.all
       .filter((candidate) => candidate.viewColumn === group.viewColumn)
@@ -14206,7 +14261,7 @@ export class StudyWorkspace {
         )
         // Same-input updates do not reveal a hidden editor area; an owned recorded seek restores the panel explicitly.
         if (this.recordingActive && confirmedLayout) {
-          await vscode.commands.executeCommand(
+          await this.executeEditorCommand(
             'workbench.action.toggleMaximizedPanel',
           )
           this.assertLifetime(lifetime)
@@ -14248,7 +14303,7 @@ export class StudyWorkspace {
         // Updating an existing input neither replaces its DOM editor nor guesses whether source, chat or a view owns the keyboard.
         const editor =
           existingView ??
-          (await vscode.window.showTextDocument(document, {
+          (await this.showTextDocumentNoted(document, {
             viewColumn: targetColumn,
             preserveFocus: preserveFocus && !takesPausedFocus,
             preview: false,
@@ -14564,12 +14619,13 @@ export class StudyWorkspace {
     document: vscode.TextDocument,
     column: vscode.ViewColumn,
   ): Promise<void> {
-    await vscode.window
-      .showTextDocument(document, { viewColumn: column, preserveFocus: false })
-      .then(
-        () => undefined,
-        () => undefined,
-      )
+    await this.showTextDocumentNoted(document, {
+      viewColumn: column,
+      preserveFocus: false,
+    }).then(
+      () => undefined,
+      () => undefined,
+    )
   }
 
   /**
@@ -14800,12 +14856,12 @@ export class StudyWorkspace {
     if (
       reapplication === 'when-collapsed' &&
       !this.isApplicationGroupCollapsed(
-        await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'),
+        await this.executeEditorCommand<unknown>('vscode.getEditorLayout'),
         receipt,
       )
     )
       return
-    await vscode.commands.executeCommand(
+    await this.executeEditorCommand(
       'vscode.setEditorLayout',
       JSON.parse(receipt.signature),
     )
@@ -14964,13 +15020,11 @@ export class StudyWorkspace {
   }): void {
     this.stopHandOver.markDone(paused.sessionId)
     // A keyboard courtesy: an editor that refuses the show leaves the focus where it was.
-    void vscode.window
-      .showTextDocument(paused.editor.document, {
-        viewColumn: paused.editor.viewColumn,
-        preserveFocus: false,
-        selection: paused.editor.selection,
-      })
-      .then(undefined, () => undefined)
+    void this.showTextDocumentNoted(paused.editor.document, {
+      viewColumn: paused.editor.viewColumn,
+      preserveFocus: false,
+      selection: paused.editor.selection,
+    }).then(undefined, () => undefined)
   }
 
   /**
@@ -15290,7 +15344,7 @@ export class StudyWorkspace {
         await this.prepareApplicationGroup(undefined, undefined, true)
       await this.open()
     }
-    this.app?.reveal(undefined, false)
+    this.revealPane(this.app, undefined, false)
   }
 
   /**
@@ -15777,7 +15831,7 @@ export class StudyWorkspace {
       this.applicationGroupChange = { kind: 'insert' }
       try {
         sourceFocus.assertRetained()
-        await vscode.commands.executeCommand('workbench.action.newGroupAbove')
+        await this.executeEditorCommand('workbench.action.newGroupAbove')
       } finally {
         sourceFocus.dispose()
         this.applicationGroupChange = undefined
@@ -15816,8 +15870,10 @@ export class StudyWorkspace {
         ),
         assertCurrent,
       )
-      const assertPlaced = this.retainPresentationPlacement()
-      let layout = await vscode.commands.executeCommand<unknown>(
+      const assertPlaced = this.retainPresentationPlacement(
+        'reserveApplicationGroup/assertPlaced',
+      )
+      let layout = await this.executeEditorCommand<unknown>(
         'vscode.getEditorLayout',
       )
       // Retain accepted native placement for a later Return even when this entry was cancelled; Close and newer input still revoke its proof.
@@ -16433,7 +16489,7 @@ export class StudyWorkspace {
     const allocated = this.applicationGroup?.identity
     // Only the pane this preparation created goes; a pane the reader adopted meanwhile stays.
     if (this.app === createdPanel) this.app = undefined
-    createdPanel.dispose()
+    this.disposePane(createdPanel)
     await this.closedPanesGone('codebook.scopedBrowser')
     await this.retireFailedApplicationPreparation(allocated, undefined)
   }
@@ -16457,7 +16513,7 @@ export class StudyWorkspace {
       this.app = undefined
       this.applicationPreparationSource = undefined
       this.replayApplicationCovered = false
-      createdPanel.dispose()
+      this.disposePane(createdPanel)
       await this.closedPanesGone('codebook.scopedBrowser')
     }
     // No allocation means no cleanup authority; two unknown identities never prove ownership.
@@ -16647,7 +16703,7 @@ export class StudyWorkspace {
         : undefined
     if (expectedRemoval) this.applicationGroupChange = expectedRemoval
     try {
-      panel.reveal(vscode.ViewColumn.One, true)
+      this.revealPane(panel, vscode.ViewColumn.One, true)
       // The editor reports the move later; a placement guard taken before that report reads this own move as a learner change.
       await waitUntil(
         () => panel.viewColumn === vscode.ViewColumn.One,
@@ -16882,9 +16938,9 @@ export class StudyWorkspace {
       orientation: VERTICAL_EDITOR_ORIENTATION,
       groups: Array.from({ length: count }, () => ({})),
     }
-    await vscode.commands.executeCommand('vscode.setEditorLayout', stacked)
+    await this.executeEditorCommand('vscode.setEditorLayout', stacked)
     assertPlaced()
-    const read = await vscode.commands.executeCommand<unknown>(
+    const read = await this.executeEditorCommand<unknown>(
       'vscode.getEditorLayout',
     )
     assertPlaced()
@@ -16908,10 +16964,10 @@ export class StudyWorkspace {
   ): Promise<unknown> {
     if (!hasRowAtMinimumHeight(layout)) return layout
     const rows = stackRowsAtOneHeight(layout)
-    await vscode.commands.executeCommand('vscode.setEditorLayout', rows)
+    await this.executeEditorCommand('vscode.setEditorLayout', rows)
     this.assertLifetime(lifetime)
     assertPlaced()
-    const read = await vscode.commands.executeCommand<unknown>(
+    const read = await this.executeEditorCommand<unknown>(
       'vscode.getEditorLayout',
     )
     this.assertLifetime(lifetime)
@@ -16980,7 +17036,7 @@ export class StudyWorkspace {
       }
     })
     try {
-      await vscode.commands.executeCommand('workbench.action.lockEditorGroup')
+      await this.executeEditorCommand('workbench.action.lockEditorGroup')
     } finally {
       listener.dispose()
     }
@@ -17010,9 +17066,7 @@ export class StudyWorkspace {
         lockReport.identity,
         assertCurrent,
       )
-    await vscode.commands.executeCommand(
-      'workbench.action.focusFirstEditorGroup',
-    )
+    await this.executeEditorCommand('workbench.action.focusFirstEditorGroup')
     assertCurrent()
     if (
       this.editorGroupIdentities.get(vscode.window.tabGroups.activeTabGroup) !==
@@ -17021,7 +17075,7 @@ export class StudyWorkspace {
       throw new Error(
         'Native focus changed before the new Application group could be locked.',
       )
-    await vscode.commands.executeCommand('workbench.action.lockEditorGroup')
+    await this.executeEditorCommand('workbench.action.lockEditorGroup')
     assertCurrent()
     return true
   }
@@ -17049,11 +17103,11 @@ export class StudyWorkspace {
     if (!isActive()) {
       const focusCommand = focusEditorGroupCommand(group.viewColumn)
       if (!focusCommand) return
-      await vscode.commands.executeCommand(focusCommand)
+      await this.executeEditorCommand(focusCommand)
       assertCurrent()
       if (!isActive()) return
     }
-    await vscode.commands.executeCommand('workbench.action.unlockEditorGroup')
+    await this.executeEditorCommand('workbench.action.unlockEditorGroup')
   }
 
   /**
@@ -17460,7 +17514,7 @@ export class StudyWorkspace {
       this.textTabUri(group.activeTab) !== editor.document.uri.toString()
     )
       return false
-    await vscode.commands.executeCommand(command).then(
+    await this.executeEditorCommand(command).then(
       () => undefined,
       () => undefined,
     )
@@ -17547,17 +17601,17 @@ export class StudyWorkspace {
   ): Promise<{ groupCount: number; layout: unknown } | undefined> {
     const groupsBefore = vscode.window.tabGroups.all.length
     // Layout reads answer for the part that has the keyboard (a focused chat part answers for itself), and the editor unlocks only the active group: a group at the record's column that is not yet that group takes the keyboard before the proof.
-    if (focusCommand) await vscode.commands.executeCommand(focusCommand)
+    if (focusCommand) await this.executeEditorCommand(focusCommand)
     assertCurrent()
     if (!(await this.provenLeftoverGroup(marker))) return undefined
-    await vscode.commands.executeCommand('workbench.action.unlockEditorGroup')
+    await this.executeEditorCommand('workbench.action.unlockEditorGroup')
     const group = await this.provenLeftoverGroup(marker)
     if (!group)
       throw new Error(
         'The editor refused to retire the empty Application group an earlier window left.',
       )
     await this.closeLeftoverAsIssuedRemoval(group, groupsBefore, signal)
-    const layout = await vscode.commands.executeCommand<unknown>(
+    const layout = await this.executeEditorCommand<unknown>(
       'vscode.getEditorLayout',
     )
     if (editorLayoutGroupCount(layout) !== marker.groupCount - 1)
@@ -17611,7 +17665,7 @@ export class StudyWorkspace {
   private async provenLeftoverGroup(
     marker: Parameters<typeof isApplicationGroupMarkerProven>[0],
   ): Promise<vscode.TabGroup | undefined> {
-    const layout = await vscode.commands.executeCommand<unknown>(
+    const layout = await this.executeEditorCommand<unknown>(
       'vscode.getEditorLayout',
     )
     const group = vscode.window.tabGroups.all.find(
@@ -17737,7 +17791,10 @@ export class StudyWorkspace {
       initialGroup = this.editorGroupIdentities.get(
         vscode.window.tabGroups.activeTabGroup,
       ),
-      assertPlacement = this.retainPresentationPlacement(false),
+      assertPlacement = this.retainPresentationPlacement(
+        'retireSourceDerivedGroup/assertPlacement',
+        false,
+      ),
       copiedDocument = currentSource?.document
     let inputChanged = false
     /**
@@ -17770,7 +17827,7 @@ export class StudyWorkspace {
       if (sourceToCopy) {
         const version = sourceToCopy.document.version,
           selections = sourceToCopy.selections,
-          shown = await vscode.window.showTextDocument(sourceToCopy.document, {
+          shown = await this.showTextDocumentNoted(sourceToCopy.document, {
             viewColumn: original.viewColumn,
             preserveFocus: initialEditor !== sourceToCopy,
             preview: false,
@@ -17976,7 +18033,7 @@ export class StudyWorkspace {
       if (takesKeyboard) {
         this.applicationFocusBorrows++
         this.firstGroupFrontAtBorrow = undefined
-        await vscode.commands.executeCommand(
+        await this.executeEditorCommand(
           'workbench.action.focusFirstEditorGroup',
         )
         // What the borrow left in front of the first group, for a refused change's give-back (row 728).
@@ -17993,7 +18050,10 @@ export class StudyWorkspace {
         borrow
       ) {
         const { retained, sourceTab } = borrow
-        const assertGroups = this.retainPresentationPlacement(false),
+        const assertGroups = this.retainPresentationPlacement(
+            'focusApplicationSourceGroup/assertGroups',
+            false,
+          ),
           version = retained.document.version,
           selections = JSON.stringify(retained.selections),
           retainedUri = retained.document.uri.toString()
@@ -18017,14 +18077,11 @@ export class StudyWorkspace {
           }),
         ]
         try {
-          const shown = await vscode.window.showTextDocument(
-            retained.document,
-            {
-              viewColumn: vscode.ViewColumn.One,
-              preserveFocus: false,
-              preview: sourceTab.isPreview,
-            },
-          )
+          const shown = await this.showTextDocumentNoted(retained.document, {
+            viewColumn: vscode.ViewColumn.One,
+            preserveFocus: false,
+            preview: sourceTab.isPreview,
+          })
           assertCurrent()
           assertGroups()
           this.assertBorrowedPreparationSource(retained, shown, {
@@ -18044,7 +18101,10 @@ export class StudyWorkspace {
         throw new Error(
           'Focus the first main source group before preparing the Application.',
         )
-      const assertPlaced = this.retainPresentationPlacement(!sourceReceipt)
+      const assertPlaced = this.retainPresentationPlacement(
+        'focusApplicationSourceGroup/assertPlaced',
+        !sourceReceipt,
+      )
       return {
         assertRetained: (): void => {
           try {
@@ -18217,7 +18277,10 @@ export class StudyWorkspace {
       namedIdentity = this.editorGroupIdentities.get(namedGroup),
       namedTab = namedGroup.activeTab,
       initialEditor = vscode.window.activeTextEditor,
-      assertGroups = this.retainPresentationPlacement(false),
+      assertGroups = this.retainPresentationPlacement(
+        'retainPreparationPrimaryInput/assertGroups',
+        false,
+      ),
       primaryTabKey = this.readingTabKey(primary, primary.activeTab),
       primaryInput = JSON.stringify(primary.activeTab?.input),
       namedTabKey = this.readingTabKey(namedGroup, namedTab),
@@ -18651,7 +18714,8 @@ export class StudyWorkspace {
     try {
       this.applicationGroup = parked
       // Moving the keyboard-owning App must carry its input out of the emptied group; an inactive App preserves the current input.
-      if (!owned.parked) panel.reveal(destination.viewColumn, !panel.active)
+      if (!owned.parked)
+        this.revealPane(panel, destination.viewColumn, !panel.active)
       await waitUntil(
         () => {
           if (this.app !== panel)
@@ -19284,6 +19348,7 @@ export class StudyWorkspace {
     })
     let visible = panel.visible
     panel.onDidChangeViewState(() => {
+      this.notePlacementViewState('Application', panel)
       if (this.app !== panel) return
       // The pane's active flag is one of the readings of the chat's record, and the editor reports it on this channel.
       this.sampleKeyboardOutsideEditors()
@@ -19467,6 +19532,7 @@ export class StudyWorkspace {
       this.clearPendingContextCreation()
     })
     panel.onDidChangeViewState(() => {
+      this.notePlacementViewState('Study', panel)
       if (this.contextPanel !== panel) return
       this.bindPendingContextCreation()
       // The pane's active flag is one of the readings of the chat's record, and the editor reports it on this channel.
@@ -19539,7 +19605,7 @@ export class StudyWorkspace {
       const focusOptions = preserveFocus ? { preserveFocus: true } : undefined
       // Only explicit replay entry reveals the bottom controls; passive ticks never reopen a closed panel, and an agent's entry switches no panel container.
       if (this.revealsObservedMoments(revealPlayback, keepsViewsInFront)) {
-        await vscode.commands.executeCommand(
+        await this.executeEditorCommand(
           'codebook.observedMoments.focus',
           focusOptions,
         )
@@ -19548,7 +19614,7 @@ export class StudyWorkspace {
       const keptBehind = this.keepsSummaryBehindSideBarFront(keepsViewsInFront)
       // Only a summary that may come in front of the chat's bar stays where it is; any other is brought to the front and awaited.
       if (!keptBehind) {
-        await vscode.commands.executeCommand(
+        await this.executeEditorCommand(
           'codebook.learningSummary.focus',
           focusOptions,
         )
@@ -19651,7 +19717,7 @@ export class StudyWorkspace {
       // A flag that did not persist would repeat the move at every open: no move without it.
       if (state.get<boolean>(SUMMARY_BESIDE_CHAT_MOVED_KEY) !== true)
         throw new Error('The profile flag of the summary move was not saved.')
-      await vscode.commands.executeCommand(
+      await this.executeEditorCommand(
         MOVE_VIEWS_COMMAND,
         SUMMARY_BESIDE_CHAT_MOVE_ARGUMENT,
       )
@@ -19720,7 +19786,7 @@ export class StudyWorkspace {
       true,
     )
     // The editor's Move View list opens for the summary itself; the learner picks its destination there.
-    await vscode.commands.executeCommand(
+    await this.executeEditorCommand(
       'workbench.action.moveFocusedView',
       'codebook.learningSummary',
     )
@@ -19751,7 +19817,7 @@ export class StudyWorkspace {
       SHOW_NATIVE_VARIABLES_COMMANDS
     if (hostCommands.has(focusVariablesCommand)) {
       const wasSummaryVisible = Boolean(this.summaryView?.visible)
-      await vscode.commands.executeCommand(focusVariablesCommand)
+      await this.executeEditorCommand(focusVariablesCommand)
       // In Cursor the summary shares its side bar with Run and Debug, which the focus command just put in its place; the learner is told how to keep both.
       if (wasSummaryVisible && !this.summaryView?.visible)
         this.offerSummaryPlacement('summary-displaced')
@@ -19774,10 +19840,10 @@ export class StudyWorkspace {
         // A reader closed during the wait must not move the focus of whatever list the learner went on to.
         if (valuesListed || this.closing || this.disposed) return
         // The list commands act on whichever list holds the focus, and the learner may have clicked into another one during the waits: Variables gets the focus back first.
-        await vscode.commands.executeCommand(focusVariablesCommand)
+        await this.executeEditorCommand(focusVariablesCommand)
         for (const command of listCommands)
           if (hostCommands.has(command))
-            await vscode.commands.executeCommand(command)
+            await this.executeEditorCommand(command)
         // Without a historical session that can report the values, a second attempt has nothing to wait for.
         if (!debuggerView?.available) return
       }
@@ -19785,7 +19851,7 @@ export class StudyWorkspace {
     }
     // Run and Debug is the nearest place this host can open; the reader's hint names the step that remains.
     if (hostCommands.has(NATIVE_RUN_AND_DEBUG_VIEW_COMMAND)) {
-      await vscode.commands.executeCommand(NATIVE_RUN_AND_DEBUG_VIEW_COMMAND)
+      await this.executeEditorCommand(NATIVE_RUN_AND_DEBUG_VIEW_COMMAND)
       return
     }
     // Nothing to run: one sentence instead of a failed command.
@@ -19816,9 +19882,9 @@ export class StudyWorkspace {
       )
         return
       this.summaryHeldFocus = false
-      void vscode.commands
-        .executeCommand('workbench.action.focusActiveEditorGroup')
-        .then(undefined, (error) => this.report('reader', error))
+      void this.executeEditorCommand(
+        'workbench.action.focusActiveEditorGroup',
+      ).then(undefined, (error) => this.report('reader', error))
     }, SUMMARY_FOCUS_RELEASE_WAIT_MS)
   }
 
@@ -19867,9 +19933,11 @@ export class StudyWorkspace {
     if (this.outline) return
     // Cursor removes an information notification with a button after about 15 s; the title action and the palette entry stay.
     if (this.isCursorHost())
-      void vscode.commands
-        .executeCommand('setContext', SUMMARY_PLACEMENT_CONTEXT_KEY, true)
-        .then(undefined, (error: unknown) => this.report('layout', error))
+      void this.executeEditorCommand(
+        'setContext',
+        SUMMARY_PLACEMENT_CONTEXT_KEY,
+        true,
+      ).then(undefined, (error: unknown) => this.report('layout', error))
     this.observeEditorGroups()
     this.watchKeyboardOutsideEditors()
     this.disposables.push(
@@ -19883,6 +19951,7 @@ export class StudyWorkspace {
     )
     this.disposables.push(
       vscode.window.tabGroups.onDidChangeTabs((event) => {
+        this.notePlacementTabEvent(event)
         // Real closure ends every existing focus receipt for that type; wrapper refresh alone does not close a tab.
         for (const tab of event.closed)
           if (tab.input instanceof vscode.TabInputWebview) {
@@ -20265,8 +20334,10 @@ export class StudyWorkspace {
   private async readPassivePresentationLayout(): Promise<unknown> {
     // The Study's group count bounds the focus before the read; the measured count, after it, decides another part (row 716).
     const mainFocused = this.hasFocusWithinColumns(STUDY_EDITOR_GROUP_COUNT),
-      assertRetained = this.retainPresentationPlacement()
-    const layout = await vscode.commands.executeCommand<unknown>(
+      assertRetained = this.retainPresentationPlacement(
+        'readPassivePresentationLayout/assertRetained',
+      )
+    const layout = await this.executeEditorCommand<unknown>(
         'vscode.getEditorLayout',
       ),
       count = editorLayoutGroupCount(layout)
@@ -20339,12 +20410,12 @@ export class StudyWorkspace {
         : undefined
     // A text editor in front of its group is shown again as before.
     if (!command)
-      return vscode.window.showTextDocument(editor.document, {
+      return this.showTextDocumentNoted(editor.document, {
         viewColumn: column,
         preserveFocus: false,
         preview,
       })
-    await vscode.commands.executeCommand(command)
+    await this.executeEditorCommand(command)
     await waitUntil(
       () =>
         editorShowsDocument(
@@ -20397,7 +20468,7 @@ export class StudyWorkspace {
       matchesGroup: () =>
         vscode.window.tabGroups.activeTabGroup.viewColumn === column,
     })
-    await vscode.commands.executeCommand(command)
+    await this.executeEditorCommand(command)
     await waitUntil(
       editorFocused,
       "the floating window's editor focus",
@@ -20472,7 +20543,9 @@ export class StudyWorkspace {
     beforeScopeFocus?: (acquire?: RepositoryFocusTarget) => void,
   ) {
     let assertAcquiredFocus = (): void => {}
-    const assertInitial = this.retainPresentationPlacement()
+    const assertInitial = this.retainPresentationPlacement(
+      'readMainEditorGrid/assertInitial',
+    )
     const initialTab = vscode.window.tabGroups.activeTabGroup.activeTab
     const initialWebview =
       initialTab?.input instanceof vscode.TabInputWebview
@@ -20508,7 +20581,7 @@ export class StudyWorkspace {
       vscode.window.onDidChangeActiveTextEditor(retainInitial),
     ]
     try {
-      layout = await vscode.commands.executeCommand<unknown>(
+      layout = await this.executeEditorCommand<unknown>(
         'vscode.getEditorLayout',
       )
       assertCurrent()
@@ -20550,7 +20623,10 @@ export class StudyWorkspace {
       const preview =
         vscode.window.tabGroups.activeTabGroup.activeTab?.isPreview ?? false
       const restoreReading = retainEditorReadingPosition(editor),
-        assertGroups = this.retainPresentationPlacement(false)
+        assertGroups = this.retainPresentationPlacement(
+          'readMainEditorGrid/assertGroups',
+          false,
+        )
       const firstInput = vscode.window.tabGroups.all.find(
         (group) => group.viewColumn === vscode.ViewColumn.One,
       )?.activeTab?.input
@@ -20723,7 +20799,7 @@ export class StudyWorkspace {
         assertGroups()
         assertAcquiredFocus()
       } else if (sourceBorrow) {
-        await vscode.window.showTextDocument(sourceBorrow.document, {
+        await this.showTextDocumentNoted(sourceBorrow.document, {
           viewColumn: sourceBorrow.viewColumn,
           preserveFocus: false,
           preview: false,
@@ -20731,7 +20807,7 @@ export class StudyWorkspace {
         assertCurrent()
         assertGroups()
       } else {
-        await vscode.commands.executeCommand(
+        await this.executeEditorCommand(
           'workbench.action.focusFirstEditorGroup',
         )
         assertCurrent()
@@ -20796,8 +20872,12 @@ export class StudyWorkspace {
       assertCurrent()
       assertGroups()
       // The editor's own late return to the Repository Wiki's group beside the borrowed text editor is no learner change (finding 606: right after Study Close).
-      const assertFocused = this.retainPresentationPlacement(true, true)
-      layout = await vscode.commands.executeCommand<unknown>(
+      const assertFocused = this.retainPresentationPlacement(
+        'readMainEditorGrid/assertFocused',
+        true,
+        true,
+      )
+      layout = await this.executeEditorCommand<unknown>(
         'vscode.getEditorLayout',
       )
       assertCurrent()
@@ -20844,7 +20924,7 @@ export class StudyWorkspace {
             )
           },
         })
-        panel.reveal(undefined, false)
+        this.revealPane(panel, undefined, false)
         await waitUntil(
           () =>
             panel.active &&
@@ -20981,7 +21061,9 @@ export class StudyWorkspace {
         ),
       )
     const outsideContents = contents(outside),
-      assertPlacement = this.retainPresentationPlacement()
+      assertPlacement = this.retainPresentationPlacement(
+        'readMainEditorGrid/assertPlacement',
+      )
     const assertUnchanged = (): void => {
       assertPlacement()
       assertAcquiredFocus()
@@ -21282,7 +21364,7 @@ export class StudyWorkspace {
           grid.groups.length < restoredGroupCount &&
           grid.groups.length < vscode.window.tabGroups.all.length
         ) {
-          await vscode.commands.executeCommand(
+          await this.executeEditorCommand(
             'vscode.setEditorLayout',
             targetLayout,
           )
@@ -21293,7 +21375,7 @@ export class StudyWorkspace {
               column: group.viewColumn,
             })),
             panes = this.studyPanePositions()
-          const preparedLayout = await vscode.commands.executeCommand<unknown>(
+          const preparedLayout = await this.executeEditorCommand<unknown>(
             'vscode.getEditorLayout',
           )
           this.assertLifetime(lifetime)
@@ -21327,14 +21409,15 @@ export class StudyWorkspace {
           return
         }
         if (restored.before.appColumn !== restored.after.appColumn)
-          this.app?.reveal(restored.before.appColumn, true)
+          this.revealPane(this.app, restored.before.appColumn, true)
         if (restored.before.contextColumn !== restored.after.contextColumn)
-          this.contextPanel?.reveal(restored.before.contextColumn, true)
+          this.revealPane(
+            this.contextPanel,
+            restored.before.contextColumn,
+            true,
+          )
         // Restore a previously verified grid; arbitrary post-reveal geometry cannot establish Codebook ownership.
-        await vscode.commands.executeCommand(
-          'vscode.setEditorLayout',
-          targetLayout,
-        )
+        await this.executeEditorCommand('vscode.setEditorLayout', targetLayout)
         noteContextReservation()
         this.assertLifetime(lifetime)
         const preparedGroups = vscode.window.tabGroups.all.map((group) => ({
@@ -21346,7 +21429,7 @@ export class StudyWorkspace {
           sourceGroup: restored.after.sourceGroup,
           sourceColumn: restored.after.sourceColumn,
         }
-        const preparedLayout = await vscode.commands.executeCommand<unknown>(
+        const preparedLayout = await this.executeEditorCommand<unknown>(
           'vscode.getEditorLayout',
         )
         this.assertLifetime(lifetime)
@@ -21394,15 +21477,15 @@ export class StudyWorkspace {
     )
       throw new Error('The retained pane restoration changed before placement.')
     if (targets.appColumn !== receipt.panes.appColumn)
-      this.app?.reveal(targets.appColumn, true)
+      this.revealPane(this.app, targets.appColumn, true)
     if (targets.contextColumn !== receipt.panes.contextColumn)
-      this.contextPanel?.reveal(targets.contextColumn, true)
+      this.revealPane(this.contextPanel, targets.contextColumn, true)
     const expected = {
       ...receipt.panes,
       appColumn: targets.appColumn,
       contextColumn: targets.contextColumn,
     }
-    const layout = await vscode.commands.executeCommand<unknown>(
+    const layout = await this.executeEditorCommand<unknown>(
       'vscode.getEditorLayout',
     )
     this.assertLifetime(lifetime)
@@ -21537,13 +21620,13 @@ export class StudyWorkspace {
             return
           }
           this.layoutReceipt = undefined
-          await vscode.commands.executeCommand(
+          await this.executeEditorCommand(
             'vscode.setEditorLayout',
             saved.layout,
           )
           // Retain accepted placement effects even after cancellation, so a newer evidence visit can reverse them safely.
           const after = this.studyPanePositions()
-          const restoredLayout = await vscode.commands.executeCommand<unknown>(
+          const restoredLayout = await this.executeEditorCommand<unknown>(
             'vscode.getEditorLayout',
           )
           this.assertLifetime(queuedLifetime)
@@ -22042,7 +22125,7 @@ export class StudyWorkspace {
         return
       }
       // The workbench accepts both native effects together; its interim split sizes are not a receipt.
-      await vscode.commands.executeCommand('runCommands', {
+      await this.executeEditorCommand('runCommands', {
         commands: [
           {
             command: 'vscode.setEditorLayout',
@@ -22179,7 +22262,7 @@ export class StudyWorkspace {
     let stableMismatch: { signature: string; sinceMs: number } | undefined
     const settled = await waitUntil(
       async () => {
-        const actual = await vscode.commands.executeCommand<unknown>(
+        const actual = await this.executeEditorCommand<unknown>(
           'vscode.getEditorLayout',
         )
         this.assertLifetime(lifetime)
@@ -22270,27 +22353,62 @@ export class StudyWorkspace {
       const pixels = toPixelEditorLayout(this.studyLayout(), actual)
       // A reply captured in the main editor does not authorize a mutation in a chat part that gained focus while it waited.
       if (!pixels || !this.isMainEditorLayout(actual)) return false
-      await vscode.commands.executeCommand('vscode.setEditorLayout', pixels)
+      await this.executeEditorCommand('vscode.setEditorLayout', pixels)
       return true
     }
   }
 
   /**
-   * Notes the moment and the editor groups a placement guard starts waiting at, so {@link refusePlacement} can say what changed; called by each of the three placement guards when it is armed.
+   * Notes the moment and the editor groups a placement guard starts waiting at, so {@link refusePlacement} can say what changed; called by each of the placement guards when it is armed.
    * The groups are kept raw and cheap (labels are not sanitized here): a guard is armed far more often than it refuses, and {@link refusePlacement} sanitizes the snapshot only when it reports.
    * @param guard - The guard's name, as the report names it.
-   * @returns The arm time and the groups then, with raw labels and bounded.
-   * @example const armed = this.armPlacementReport('retainPresentationPlacement')
+   * @param callSite - The caller's short name, when the guard has several callers ({@link retainPresentationPlacement}).
+   * @returns The arm time, the groups then and the tab that had the focus, with raw labels and bounded.
+   * @example const armed = this.armPlacementReport('retainPresentationPlacement', 'open/assertPlacement')
    */
-  private armPlacementReport(guard: string): {
+  private armPlacementReport(
+    guard: string,
+    callSite?: string,
+  ): {
     guard: string
+    callSite?: string
     armedAtMs: number
     before: RefusalGroupView[]
+    focusedTab: RefusalTabView | undefined
   } {
     return {
       guard,
+      ...(callSite === undefined ? {} : { callSite }),
       armedAtMs: performance.now(),
       before: this.refusalGroupViews(),
+      focusedTab: this.refusalTabView(
+        vscode.window.tabGroups.activeTabGroup.activeTab,
+      ),
+    }
+  }
+
+  /**
+   * Describes one tab as a refusal report keeps it: the raw label, the input kind and the preview and pinned flags; called by {@link refusalGroupViews} and {@link armPlacementReport}.
+   * @param tab - The tab, or `undefined` for a group that shows none.
+   * @returns The view, or `undefined`; the label still needs {@link sanitizeRefusalGroups}'s treatment before it is shown.
+   * @example this.refusalTabView(group.activeTab) // => { label: 'auth.ts', kind: 'text', isPreview: false, isPinned: false }
+   */
+  private refusalTabView(
+    tab: vscode.Tab | undefined,
+  ): RefusalTabView | undefined {
+    if (!tab) return undefined
+    return {
+      label: tab.label,
+      kind:
+        tab.input instanceof vscode.TabInputText
+          ? 'text'
+          : tab.input instanceof vscode.TabInputWebview
+            ? `webview ${tab.input.viewType}`
+            : tab.input instanceof vscode.TabInputTextDiff
+              ? 'diff'
+              : 'other',
+      isPreview: tab.isPreview,
+      isPinned: tab.isPinned,
     }
   }
 
@@ -22301,21 +22419,18 @@ export class StudyWorkspace {
    */
   private refusalGroupViews(): RefusalGroupView[] {
     const active = vscode.window.tabGroups.activeTabGroup
-    return vscode.window.tabGroups.all.map((group) => ({
-      viewColumn: group.viewColumn,
-      isActive: group === active,
-      tabs: group.tabs.slice(0, REFUSAL_REPORT_GROUP_TABS).map((tab) => ({
-        label: tab.label,
-        kind:
-          tab.input instanceof vscode.TabInputText
-            ? 'text'
-            : tab.input instanceof vscode.TabInputWebview
-              ? `webview ${tab.input.viewType}`
-              : tab.input instanceof vscode.TabInputTextDiff
-                ? 'diff'
-                : 'other',
-      })),
-    }))
+    return vscode.window.tabGroups.all.map((group) => {
+      const activeTab = this.refusalTabView(group.activeTab)
+      return {
+        viewColumn: group.viewColumn,
+        isActive: group === active,
+        tabs: group.tabs.slice(0, REFUSAL_REPORT_GROUP_TABS).map((tab) => {
+          const { label, kind } = this.refusalTabView(tab)!
+          return { label, kind }
+        }),
+        ...(activeTab ? { activeTab } : {}),
+      }
+    })
   }
 
   /**
@@ -22334,6 +22449,42 @@ export class StudyWorkspace {
         ...tab,
         label: sanitizeCause(tab.label, roots),
       })),
+      ...(group.activeTab
+        ? {
+            activeTab: {
+              ...group.activeTab,
+              label: sanitizeCause(group.activeTab.label, roots),
+            },
+          }
+        : {}),
+    }))
+  }
+
+  /**
+   * Sanitizes one tab of a refusal report like {@link sanitizeRefusalGroups} does its groups'; called by {@link refusePlacement} for the focused tab and the active tab.
+   * @param tab - The tab view, or `undefined`.
+   * @returns The same view with a sanitized label.
+   * @example this.sanitizeRefusalTab(armed.focusedTab)
+   */
+  private sanitizeRefusalTab(
+    tab: RefusalTabView | undefined,
+  ): RefusalTabView | undefined {
+    return tab
+      ? { ...tab, label: sanitizeCause(tab.label, this.privateRoots()) }
+      : undefined
+  }
+
+  /**
+   * Sanitizes the free text of timed notes (tab labels in a tab operation, for one) before a refusal report shows them; called by {@link refusePlacement}.
+   * @param notes - Notes from {@link placementEvents} or {@link placementEffects}.
+   * @returns The same notes with sanitized texts.
+   * @example this.sanitizeRefusalNotes(this.placementEvents.since(armedAtMs))
+   */
+  private sanitizeRefusalNotes(notes: readonly RefusalEvent[]): RefusalEvent[] {
+    const roots = this.privateRoots()
+    return notes.map((note) => ({
+      ...note,
+      what: sanitizeCause(note.what, roots),
     }))
   }
 
@@ -22365,25 +22516,50 @@ export class StudyWorkspace {
   }
 
   /**
-   * Writes one Output › Codebook entry that names the refusing guard and what it saw, and returns the refusal the guard throws; called by the three placement guards in place of their bare error (F382).
-   * The sentence the learner reads is unchanged; the entry carries the groups before and after, the editor's events since the guard was armed and, when it was the cause, the active text editor change.
+   * Writes one Output › Codebook entry that names the refusing guard and what it saw, and returns the refusal the guard throws; called by the placement guards in place of their bare error (F382).
+   * The sentence the learner reads is unchanged; the entry carries the guard's call site and failed checks when it names them, the groups before and after with each group's front tab, the focused tab at arming against the active tab now, the editor's events since the guard was armed (group changes, tab operations, pane view-state changes, the active text editor) and the native effects Codebook itself issued since then (N55-F4, Cycle 0056 task 17).
    * @param armed - What {@link armPlacementReport} noted.
+   * @param failedChecks - The comparisons that failed, when the guard keeps them apart.
    * @returns The error with the refusal sentence.
-   * @example throw this.refusePlacement(armed)
+   * @example throw this.refusePlacement(armed, ['focus group'])
    */
-  private refusePlacement(armed: {
-    guard: string
-    armedAtMs: number
-    before: RefusalGroupView[]
-  }): Error {
+  private refusePlacement(
+    armed: {
+      guard: string
+      callSite?: string
+      armedAtMs: number
+      before: RefusalGroupView[]
+      focusedTab?: RefusalTabView | undefined
+    },
+    failedChecks?: readonly string[],
+  ): Error {
     const nowMs = performance.now()
     const cause = describePlacementRefusal({
       guard: armed.guard,
+      ...(armed.callSite === undefined ? {} : { callSite: armed.callSite }),
+      ...(failedChecks === undefined ? {} : { failedChecks }),
       armedAtMs: armed.armedAtMs,
       nowMs,
       before: this.sanitizeRefusalGroups(armed.before),
       after: this.sanitizeRefusalGroups(this.refusalGroupViews()),
-      events: this.placementEvents.since(armed.armedAtMs),
+      ...('focusedTab' in armed
+        ? {
+            focus: {
+              atArming: this.sanitizeRefusalTab(armed.focusedTab),
+              atRefusal: this.sanitizeRefusalTab(
+                this.refusalTabView(
+                  vscode.window.tabGroups.activeTabGroup.activeTab,
+                ),
+              ),
+            },
+          }
+        : {}),
+      events: this.sanitizeRefusalNotes(
+        this.placementEvents.since(armed.armedAtMs),
+      ),
+      effects: this.sanitizeRefusalNotes(
+        this.placementEffects.since(armed.armedAtMs),
+      ),
     })
     this.diagnostics?.log({ surface: 'presentation:placement-refused', cause })
     return new Error(
@@ -22403,6 +22579,116 @@ export class StudyWorkspace {
       performance.now(),
       `groups opened ${columns(event.opened)} closed ${columns(event.closed)} changed ${columns(event.changed)}`,
     )
+  }
+
+  /**
+   * Notes one tab operation for the refusal report, as the labels of the tabs opened, closed and changed; called by the tab listener {@link installReaders} registers.
+   * The labels are raw here and sanitized only when a refusal reports them ({@link sanitizeRefusalNotes}).
+   * @param event - The editor's change.
+   * @example this.notePlacementTabEvent(event) // records 'tabs opened [] closed ["data.ts"] changed []'
+   */
+  private notePlacementTabEvent(event: vscode.TabChangeEvent): void {
+    const labels = (tabs: readonly vscode.Tab[]): string =>
+      `[${tabs
+        .slice(0, REFUSAL_REPORT_GROUP_TABS)
+        .map((tab) => `"${tab.label}"`)
+        .join(',')}]`
+    this.placementEvents.record(
+      performance.now(),
+      `tabs opened ${labels(event.opened)} closed ${labels(event.closed)} changed ${labels(event.changed)}`,
+    )
+  }
+
+  /**
+   * Notes one view-state report of an owned pane for the refusal report: whether it is active and visible and the column the editor gives it; called by the view-state listeners of {@link bindApplicationPanel} and {@link bindContextPanel}.
+   * @param name - Which pane reported.
+   * @param panel - The pane.
+   * @example this.notePlacementViewState('Application', panel) // records 'Application view state active=true visible=true column=1'
+   */
+  private notePlacementViewState(
+    name: 'Application' | 'Study',
+    panel: vscode.WebviewPanel,
+  ): void {
+    this.placementEvents.record(
+      performance.now(),
+      `${name} view state active=${panel.active} visible=${panel.visible} column=${panel.viewColumn ?? 'none'}`,
+    )
+  }
+
+  /**
+   * Notes one native effect Codebook itself issues (a reveal, a disposal, an editor command, a shown document), so a refusal's report lists what this host did while its guard waited and a native take can tell an editor report that answers it from a learner's change; called by {@link executeEditorCommand}, {@link showTextDocumentNoted}, {@link revealPane} and {@link disposePane}.
+   * @param what - The effect in words, with its column and `preserveFocus` where it has them.
+   * @example this.noteNativeEffect('reveal Application column 1 preserveFocus true')
+   */
+  private noteNativeEffect(what: string): void {
+    this.placementEffects.record(performance.now(), what)
+  }
+
+  /**
+   * Runs an editor command and notes it as one of Codebook's own effects; every command this class sends goes through here, instead of `this.executeEditorCommand`, except the reads of the layout and context keys, which change nothing.
+   * @param command - The command id.
+   * @param rest - Its arguments.
+   * @returns What the editor's command returns.
+   * @example await this.executeEditorCommand('workbench.action.focusFirstEditorGroup')
+   */
+  private executeEditorCommand<Result = unknown>(
+    command: string,
+    ...rest: unknown[]
+  ): Thenable<Result> {
+    if (command !== 'vscode.getEditorLayout' && command !== 'setContext')
+      this.noteNativeEffect(`command ${command}`)
+    return vscode.commands.executeCommand<Result>(command, ...rest)
+  }
+
+  /**
+   * Shows a document in the editor and notes it as one of Codebook's own effects, with its column and `preserveFocus`; every `showTextDocument` this class sends goes through here.
+   * @param target - The document or its uri.
+   * @param options - Where and how to show it.
+   * @returns The editor the document is shown in.
+   * @example await this.showTextDocumentNoted(document, { viewColumn: 2, preserveFocus: true })
+   */
+  private showTextDocumentNoted(
+    target: vscode.TextDocument | vscode.Uri,
+    options?: vscode.TextDocumentShowOptions,
+  ): Thenable<vscode.TextEditor> {
+    this.noteNativeEffect(
+      `showTextDocument column ${options?.viewColumn ?? 'active'} preserveFocus ${options?.preserveFocus ?? false}`,
+    )
+    return 'fsPath' in target
+      ? vscode.window.showTextDocument(target, options)
+      : vscode.window.showTextDocument(target, options)
+  }
+
+  /**
+   * Reveals an owned pane and notes it as one of Codebook's own effects, with its column and `preserveFocus`.
+   * @param panel - The pane; `undefined` reveals nothing, as the optional call it replaces did.
+   * @param column - The column to reveal it in; `undefined` keeps the pane's own.
+   * @param preserveFocus - Whether the reveal leaves the keyboard where it is.
+   * @example this.revealPane(this.app, 1, true)
+   */
+  private revealPane(
+    panel: vscode.WebviewPanel | undefined,
+    column: vscode.ViewColumn | undefined,
+    preserveFocus: boolean,
+  ): void {
+    if (!panel) return
+    this.noteNativeEffect(
+      `reveal ${panel.viewType} column ${column ?? 'own'} preserveFocus ${preserveFocus}`,
+    )
+    panel.reveal(column, preserveFocus)
+  }
+
+  /**
+   * Disposes an owned pane and notes it as one of Codebook's own effects, with the group tabs it leaves listed by the editor.
+   * @param panel - The pane; `undefined` disposes nothing.
+   * @example this.disposePane(this.contextPanel)
+   */
+  private disposePane(panel: vscode.WebviewPanel | undefined): void {
+    if (!panel) return
+    this.noteNativeEffect(
+      `dispose ${panel.viewType} column ${panel.viewColumn ?? 'none'}`,
+    )
+    panel.dispose()
   }
 
   /** Retains logical ownership across Cursor's wrapper-only tab-model resync, never across moved or replaced groups. @example this.observeEditorGroups(event) */
@@ -24840,7 +25126,7 @@ export class StudyWorkspace {
    */
   private async editorAreaHidden(): Promise<boolean> {
     return isCollapsedEditorLayout(
-      await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'),
+      await this.executeEditorCommand<unknown>('vscode.getEditorLayout'),
     )
   }
 
@@ -25558,7 +25844,7 @@ export class StudyWorkspace {
     )
     const document = await vscode.workspace.openTextDocument(slot.uri)
     if (!isCurrent()) return
-    await vscode.window.showTextDocument(document, {
+    await this.showTextDocumentNoted(document, {
       viewColumn:
         holder?.viewColumn ?? this.nodeSourceSlotColumn(slot.uri, undefined),
       preserveFocus: !takesKeyboard,
@@ -25740,7 +26026,7 @@ export class StudyWorkspace {
     const document = await vscode.workspace.openTextDocument(uri)
     if (request !== this.selectedNodeHistoryRequest) return 'overtaken'
     // A renamed slot opens where the earlier one is, before that tab closes: a group the slot alone filled is never emptied, which `workbench.editor.closeEmptyGroups` would remove.
-    await vscode.window.showTextDocument(document, {
+    await this.showTextDocumentNoted(document, {
       viewColumn: this.nodeSourceSlotColumn(uri, earlierUri),
       preserveFocus: true,
       preview: false,

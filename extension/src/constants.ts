@@ -1851,3 +1851,6 @@ export const REFUSAL_REPORT_LABEL_CHARS = 48
 
 /** The most editor events a {@link PlacementEventLog} keeps and a placement refusal report lists, in events. */
 export const REFUSAL_REPORT_EVENTS = 24
+
+/** The most native effects Codebook itself issued (reveals, disposals, editor commands, shown documents) that a {@link PlacementEventLog} keeps for a placement refusal report, in effects. */
+export const REFUSAL_REPORT_EFFECTS = 48

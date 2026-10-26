@@ -1355,7 +1355,7 @@ test('a refused placement guard sanitizes the tab labels of its two snapshots fo
       ).length,
       1,
     )
-    assert.equal(sanitizedLabels, 10)
+    assert.equal(sanitizedLabels, 17)
   } finally {
     context.mock.restoreAll()
     await harness.close()
