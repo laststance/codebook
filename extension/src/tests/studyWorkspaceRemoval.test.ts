@@ -10444,15 +10444,16 @@ test('a study whose save failed and that another window then deletes with its re
   }
 })
 
-// Value: protects=a recorded run of this window whose first saves cannot look at its recording folder (a permission denied, a disk error, a folder Windows is deleting or a scanner holds): the study stays this window's, the failure is told in the line "History not saved: …", and Retry storage / refresh saves the study once the folder can be looked at again; fails_when=the save counts every failure of that look as the recording having left the library with the study, so the reader forgets the study and drops its pending checkpoint as if another window had deleted it, and the run's learning is never saved although nothing was removed (Cycle 0047 row 170); why_new=Cycle 0047 row 170 (S2CR-2, S2CXA-C2-1, S2OCR2-1, S2CLA-2, S2CXS-1): row 162's test has only a recording folder that is gone; seam=the look at the run's recording folder that the library's study save makes, refused with EACCES while the test says so (every other look reaches the disk)
+// Value: protects=a recorded run of this window whose first saves cannot look at its recording folder (a permission denied, a disk error, a folder Windows is deleting or a scanner holds): the study stays this window's, the failure is told in the line "History not saved: …", and Retry storage / refresh saves the study once the folder can be looked at again; fails_when=the save counts every failure of that look as the recording having left the library with the study, so the reader forgets the study and drops its pending checkpoint as if another window had deleted it, and the run's learning is never saved although nothing was removed (Cycle 0047 row 170); why_new=Cycle 0047 row 170 (S2CR-2, S2CXA-C2-1, S2OCR2-1, S2CLA-2, S2CXS-1): row 162's test has only a recording folder that is gone; seam=the look at the run's recording folder that a running study save makes, refused with EACCES while the test says so (every other look reaches the disk); Cycle 0054: the seam counts the saves running per folder, because one shared variable let any other save that ended (another library's, sharing the prototype) lift the refusal before this save looked, which failed the suite once under `pnpm health`'s coverage run on 5aa799fc
 test('a recorded run whose saves cannot look at its recording folder keeps its study, tells "History not saved: …", and Retry storage / refresh saves the study once the folder can be looked at', async (context) => {
   // Arrange: a recorded run of this window; while it runs and stops, every study save's look at the run's recording folder is refused.
   const harness = await workspaceHarness(true, true)
   try {
     const saveStudy = LearningLibrary.prototype.saveStudy,
       lstatBefore = fsPromises.lstat
-    let isLookRefused = true,
-      refusedLook: string | undefined
+    let isLookRefused = true
+    // Saves still running, by the recording folder they look at: a save looks only once it holds the library's lock, so one that ends must not lift the refusal for another that waits for that lock.
+    const savesLookingAt = new Map<string, number>()
     context.mock.method(
       LearningLibrary.prototype,
       'saveStudy',
@@ -10460,12 +10461,19 @@ test('a recorded run whose saves cannot look at its recording folder keeps its s
         this: LearningLibrary,
         ...input: Parameters<LearningLibrary['saveStudy']>
       ) {
-        // Only the look this save makes at the run's recording folder is refused.
-        refusedLook = isLookRefused ? input[1]?.recordingDirectory : undefined
+        const recordingDirectory = input[1]?.recordingDirectory
+        if (recordingDirectory === undefined)
+          return await saveStudy.apply(this, input)
+        savesLookingAt.set(
+          recordingDirectory,
+          (savesLookingAt.get(recordingDirectory) ?? 0) + 1,
+        )
         try {
           return await saveStudy.apply(this, input)
         } finally {
-          refusedLook = undefined
+          const remaining = savesLookingAt.get(recordingDirectory)! - 1
+          if (remaining === 0) savesLookingAt.delete(recordingDirectory)
+          else savesLookingAt.set(recordingDirectory, remaining)
         }
       },
     )
@@ -10473,7 +10481,12 @@ test('a recorded run whose saves cannot look at its recording folder keeps its s
       fsPromises,
       'lstat',
       async (...input: Parameters<typeof lstatBefore>) => {
-        if (refusedLook !== undefined && input[0] === refusedLook)
+        // Only a running save's look at the run's recording folder is refused, while the test says so.
+        if (
+          isLookRefused &&
+          typeof input[0] === 'string' &&
+          savesLookingAt.has(input[0])
+        )
           throw Object.assign(new Error('EACCES: permission denied, lstat'), {
             code: 'EACCES',
           })

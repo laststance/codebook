@@ -1,12 +1,9 @@
 import { StudyError } from '../errors'
 
-import {
-  decideNodeTestRootClaim,
-  type NodeTestRootClaim,
-} from './decideNodeTestRootClaim'
+import type { NodeTestRootClaim } from './decideNodeTestRootClaim'
+import { decideRootClaimFromListing } from './decideRootClaimFromListing'
 import type { RootClaimListing } from './listVitestForRootClaim'
 import type { ListVitestTestFilesRequest } from './listVitestTestFiles'
-import { partitionListedTestFiles } from './partitionListedTestFiles'
 import { readRootClaimBasis, type RootClaimBasis } from './readRootClaimBasis'
 import type { VitestConfigEntries } from './readVitestConfigEntries'
 import { repositoryPosixPath } from './repositoryPosixPath'
@@ -69,7 +66,7 @@ type ChosenVitestRoot = {
 }
 
 /**
- * Makes the root claim for a test whose config walk stopped below the opened root: where the root holds a config file (and no config-named folder or outside link), its own Vitest is usable and the declared path does not start with `-`, the root's listing of the cited test decides ({@link decideNodeTestRootClaim}).
+ * Makes the root claim for a test whose config walk stopped below the opened root: where the root holds a config file (and no config-named folder or outside link), its own Vitest is usable and the declared path does not start with `-`, the root's listing of the cited test decides ({@link decideRootClaimFromListing}).
  * @param input - The plan's input.
  * @param walk - Where the config walk stopped.
  * @returns
@@ -106,15 +103,7 @@ async function claimFromRoot(
     filter: input.declaredTestFile,
     excludes: [],
   })
-  const decision = decideNodeTestRootClaim(
-    listing.outcome === 'listed'
-      ? {
-          outcome: 'listed',
-          citedCount: (await partitionListedTestFiles(listing.files, testFile))
-            .cited.length,
-        }
-      : listing,
-  )
+  const decision = await decideRootClaimFromListing(listing, testFile)
   if (decision.mode === 'refused') throw decision.refusal
   return decision.mode === 'root'
     ? {

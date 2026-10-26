@@ -8,7 +8,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.8'
-export const EXTENSION_VERSION = '0.2.43'
+export const EXTENSION_VERSION = '0.2.44'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -1105,10 +1105,14 @@ export const NODE_TEST_MINIMUM_VITEST_MAJOR = 4
 export const NODE_TEST_TITLE_PATH_LIMIT = 16
 /** Other test files Vitest's substring file filter may add before Codebook refuses instead of excluding each one. */
 export const NODE_TEST_EXCLUDED_FILE_LIMIT = 64
-/** Bound for one `vitest list --filesOnly` preflight; the whole attach phase is bounded separately. */
+/** Bound for one `vitest list --filesOnly` preflight; all the listings of one launch share {@link NODE_TEST_LISTING_PHASE_TIMEOUT_MS}, and the attach budget ({@link NODE_TEST_ATTACH_TIMEOUT_MS}) starts after them. */
 export const VITEST_FILE_LIST_TIMEOUT_MS = 30_000
 /** Grace period for releasing the owned Vitest listing group before escalating to SIGKILL. */
 export const VITEST_FILE_LIST_SHUTDOWN_TIMEOUT_MS = 1_000
+/** Bound for all the Vitest listings of one owned Node test launch together (the root claim asked again, the package listing and its confirmation): room for those three at their own deadline ({@link VITEST_FILE_LIST_TIMEOUT_MS}) and their releases, each a close and a group wait after SIGTERM and again after SIGKILL ({@link VITEST_FILE_LIST_SHUTDOWN_TIMEOUT_MS} each). The attach budget starts after them. */
+export const NODE_TEST_LISTING_PHASE_TIMEOUT_MS =
+  3 * (VITEST_FILE_LIST_TIMEOUT_MS + 4 * VITEST_FILE_LIST_SHUTDOWN_TIMEOUT_MS) +
+  5_000
 /** Error text kept from a failed Vitest preflight. */
 export const VITEST_LIST_ERROR_LIMIT_CHARS = 2_048
 /** Largest Vitest JSON report read to confirm which test ran. */
@@ -1184,6 +1188,8 @@ export const REPOSITORY_STORAGE_VALUE_LIMIT_CHARS = 2_048
 export const REPOSITORY_STORAGE_LIMIT_BYTES = 16_384
 export const REPOSITORY_SETUP_TIMEOUT_MS = 90_000
 export const REPOSITORY_PAUSE_HOLD_TIMEOUT_MS = 300_000
+/** The longest private observation hold a native Node test trial accepts (`CODEBOOK_NODE_TEST_HOLD_MS`, `CODEBOOK_NODE_TEST_HOLD_AFTER_MS`), so a recording can show the state the trial reached. */
+export const NATIVE_TRIAL_HOLD_LIMIT_MS = 60_000
 /** Added to {@link ACTIVE_TIMEOUT_MS} for the wait of a `codebook_continue` sent with `answer: "next"`, counted from the acknowledged continuation: a run that ends at its own active deadline is then answered with that end, not with the bound. */
 export const CONTINUE_ANSWER_GRACE_MS = 2_000
 /** The longest a `codebook_continue` sent with `answer: "next"` may take in total, counted from the call's start. The time the runtime needs before it acknowledges the continuation (arming the next stop, the acknowledgement) is bounded by the runtime's own deadlines and counts against this budget, so the wait after it only gets shorter. Well below the smallest MCP client timeout found for a tool call (120 s idle in Cursor 3.23 and in Codebook's Cursor bridge, {@link CURSOR_MCP_BRIDGE_REQUEST_TIMEOUT_MS}; none in VS Code 1.140). */

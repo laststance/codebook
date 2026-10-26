@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.2.44.0] - 2026-10-26 (development candidate)
+
+Cycle 0054 ([Issue #130](https://github.com/laststance/codebook/issues/130)), a bug-fix cycle: the three defects Cycle 0053 carried.
+
+**A test that ends before a later declared stop says so.**
+
+- **When the test exits before the next declared stop**, the continuation now answers `Owned Node test exited with code <n> (or signal <s>) before declared stop <N>.`. The sentence goes on: a declared stop is reached only when the test runs its line after the previous stop; the test's output is in the Codebook test output; and if Vitest skipped the cited test, check `testTitles`. Earlier versions said only that the debug session ended.
+- **A test that ends before its first declared stop** now adds that the first declared stop is reached only when the test runs its line.
+- **A failure that is not an early exit keeps its own words:** a refusal before the test runs on (for example after you stopped the session yourself) and a failure while a reached stop is captured.
+- **The node-test help tells the chat** that an additional stop is reached only when the test runs its line after the previous stop: a line that ran before it counts only if the test runs it again (in a loop, for example). It names the exit code or signal of a test that ends before a stop.
+- **A run that ends with an error before its first stop** is no longer described as one that did not run its test. The node-test help and the bundled skill (1.0.48) now say that such a run reached no stop and explains nothing: a refusal before the launch ran no test, and a test that exited before that stop names its exit code or signal.
+
+**A package test's launch checks the root claim again.**
+
+- **When a test runs in its package because of the root claim** (`rootClaim` `not-selected`, `several-projects` or `listing-failed`), Codebook asks the repository root's Vitest once more right before the launch. The start is refused, naming the new and the planned answer, when that answer changed. This catches a config the root's `projects` select being added or edited to include the test, which neither the root config nor its Vitest shows.
+- **A root listing that cannot finish** (stopped, past its deadline, or with a process group that could not be confirmed as ended) refuses with its own error.
+- **The Vitest listings of a start have their own time:**
+  - each listing has 30 seconds;
+  - all of them together have 107 seconds;
+  - the attach to the debugger gets its own budget after them.
+- **A start stopped while a listing is being released starts no further listing.**
+
+**Compatibility.** The MCP API stays 1.8 and no input or stored format changes. The bundled skill moves to 1.0.48, one sentence changed.
+
 ## [0.2.43.0] - 2026-10-26 (development candidate)
 
 Cycle 0053 ([Issue #128](https://github.com/laststance/codebook/issues/128)), a feature cycle: a test inside a workspace package runs with that package's Vitest and config.

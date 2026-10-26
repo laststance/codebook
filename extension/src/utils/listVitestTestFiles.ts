@@ -28,6 +28,11 @@ export type ListVitestTestFilesRequest = {
   /** The cited test file relative to {@link ListVitestTestFilesRequest.vitestRoot}, with `/` separators. */
   filter: string
   excludes: string[]
+  /** Also told when this listing's process group could not be confirmed as ended, beside the owner the caller binds; a launch's root claim re-check reads it to refuse instead of falling back. */
+  onReleaseFailed?: (
+    failure: VitestListingReleaseFailure,
+    retryRelease: RetryVitestListingRelease,
+  ) => void
 }
 /** A listing that outlived its deadline, told apart from Vitest's own failure so that a root claim refuses the start instead of falling back ({@link listVitestForRootClaim}). */
 export class VitestListingDeadlineError extends Error {}
@@ -65,10 +70,10 @@ const listedFilesSchema = z.array(
  * @param request.filter - The cited test file relative to the Vitest root.
  * @param request.excludes - Escaped absolute paths passed as `--exclude=` globs.
  * @param request.signal - The run's cancellation.
- * @param request.timeoutMs - Listing deadline; the default fits inside the attach phase.
+ * @param request.timeoutMs - Listing deadline; the default bounds each listing on its own, and the owned Node test run starts its attach budget only after its listings.
  * @param request.onReleaseFailed - Told once when the listing's process group could not be confirmed as ended, whatever the listing's own outcome, with a {@link RetryVitestListingRelease} that runs the release again; the owned Node test run journals it and keeps the retry for its own release.
  * @returns Every file entry Vitest reports, in Vitest's order, once the listing's process group is confirmed as ended.
- * @throws When Vitest fails or writes no readable list (a {@link VitestListingFailedError}), times out (a {@link VitestListingDeadlineError}), is cancelled, or cannot be started; that reason is kept also when the release fails. When a listing that finished
+ * @throws The cancellation's reason, before any process starts, when the signal has already aborted. When Vitest fails or writes no readable list (a {@link VitestListingFailedError}), times out (a {@link VitestListingDeadlineError}), is cancelled, or cannot be started; that reason is kept also when the release fails. When a listing that finished
  * could not be released, because a signal or a probe was refused or the group did not end within its wait after SIGTERM and SIGKILL, with that failure as the
  * cause: a process of the group may still run, so the Node test run is not started and the listing's folder is kept.
  * @example
@@ -88,6 +93,8 @@ export async function listVitestTestFiles(
     ) => void
   },
 ): Promise<VitestListedFile[]> {
+  // A run stopped before this listing starts (while the previous listing was released, for example) starts no Vitest process.
+  request.signal.throwIfAborted()
   const timeoutMs = request.timeoutMs ?? VITEST_FILE_LIST_TIMEOUT_MS
   const deadline = AbortSignal.timeout(timeoutMs)
   const directory = await mkdtemp(join(tmpdir(), 'codebook-vitest-list-'))

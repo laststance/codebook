@@ -13,9 +13,13 @@ import {
   checkNodeTestFiles,
   type CheckedNodeTestStop,
 } from './checkNodeTestFiles'
-import type {
-  ListVitestTestFilesRequest,
-  VitestListedFile,
+import { decideRootClaimFromListing } from './decideRootClaimFromListing'
+import { isPackageRootClaim } from './isPackageRootClaim'
+import type { RootClaimListing } from './listVitestForRootClaim'
+import {
+  VitestListingFailedError,
+  type ListVitestTestFilesRequest,
+  type VitestListedFile,
 } from './listVitestTestFiles'
 import { partitionListedTestFiles } from './partitionListedTestFiles'
 import type {
@@ -124,6 +128,55 @@ async function verifyExecutionPlan(
 }
 
 /**
+ * Asks the opened root again, right before a package run's launch, how its own Vitest answers the root claim the plan decided, and refuses the launch when the answer changed: a config the root's `projects` selects can be added, removed or edited without the root config or the root Vitest changing.
+ * Only a package run whose plan made a claim (`not-selected`, `several-projects`, `listing-failed`) asks; a root-mode run already lists from the root at launch, and a run without a claim has none to ask. Its answer is decided as the plan's was ({@link decideRootClaimFromListing}); a listing that is cancelled, times out, cannot confirm that its process group ended or cannot run refuses with its own error, as the launch's package listings do.
+ * Called by {@link prepareNodeTestLaunch} after its first plan check and before its package listing.
+ * @param root - The repository's real root.
+ * @param testFile - The cited test's real path.
+ * @param declaredTestFile - The configuration's repository-relative test file, the root listing's filter.
+ * @param plan - The plan of the run's pre-history check.
+ * @param listTestFiles - The owned Vitest file listing, bound to the run's Node, cancellation and listing deadline.
+ * @throws An `INVALID_CONFIGURATION` {@link StudyError} naming the new and the planned answer; the error of a root listing that did not end with a list or a clean failure.
+ * @example await reaskRootClaim('/repo', '/repo/packages/a/src/a.test.ts', 'packages/a/src/a.test.ts', plan, listTestFiles) // => resolves while the root still answers not-selected
+ */
+async function reaskRootClaim(
+  root: string,
+  testFile: string,
+  declaredTestFile: string,
+  plan: NodeTestExecutionPlan,
+  listTestFiles: ListVitestTestFiles,
+): Promise<void> {
+  const planned = plan.summary.rootClaim
+  if (!isPackageRootClaim(planned)) return
+  const rootVitest = await requireOwnedVitest(root, root, testFile)
+  let releaseFailed = false
+  const listing: RootClaimListing = await listTestFiles({
+    program: rootVitest.program,
+    vitestRoot: root,
+    filter: declaredTestFile,
+    excludes: [],
+    onReleaseFailed: () => {
+      releaseFailed = true
+    },
+  }).then(
+    (files) => ({ outcome: 'listed', files }),
+    (error: unknown) => {
+      // Only a failure Vitest itself reported, whose process group ended, answers the claim again; any other end refuses with the listing's own error, as the package listings below do.
+      if (releaseFailed || !(error instanceof VitestListingFailedError))
+        throw error
+      return { outcome: 'failed', error }
+    },
+  )
+  const decision = await decideRootClaimFromListing(listing, testFile)
+  if (decision.mode === 'refused') throw decision.refusal
+  if (decision.rootClaim !== planned)
+    throw new StudyError(
+      'INVALID_CONFIGURATION',
+      `node-test's plan for ${repositoryPosixPath(root, testFile)} changed while the run was preparing (the repository root's Vitest now answers rootClaim ${decision.rootClaim}, not ${planned}); start the test again.`,
+    )
+}
+
+/**
  * Seals one repository-local Vitest command that runs exactly the cited test, after checking every cited source and asking Vitest which files it would run.
  *
  * Vitest's file filter is a substring match and its name filter a regular expression over the full test name, so the command excludes every
@@ -156,6 +209,13 @@ export async function prepareNodeTestLaunch(
     configuration,
   )
   const { major, program } = await verifyExecutionPlan(root, testFile, plan)
+  await reaskRootClaim(
+    root,
+    testFile,
+    configuration.testFile,
+    plan,
+    listTestFiles,
+  )
   const excludes = await excludeOtherTestFiles(
     root,
     testFile,
