@@ -2,14 +2,11 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { writeFileSync } from 'node:fs'
 import {
-  access,
   chmod,
   mkdir,
   mkdtemp,
   readFile,
   readdir,
-  realpath,
-  rename,
   rm,
   symlink,
   writeFile,
@@ -21,6 +18,11 @@ import { test } from 'node:test'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { WikiFreshness } from '../utils/inspectDeepWikiFreshness'
 
+import {
+  exists,
+  openProjectWithoutWiki,
+  publishGeneratedWiki,
+} from './utils/openProjectWithoutWiki'
 import { openWikiUpdateWindow } from './utils/wikiUpdateWindow'
 
 const CURRENT: WikiFreshness = {
@@ -30,76 +32,6 @@ const CURRENT: WikiFreshness = {
 }
 
 const GENERATE_COMMAND = 'codebook.generateDeepWiki'
-
-/** Says whether a path exists on disk. */
-const exists = (path: string): Promise<boolean> =>
-  access(path).then(
-    () => true,
-    () => false,
-  )
-
-/** Publishes a first Wiki the way the publisher would: its entry page, then the manifest of this project and the receipt that names the manifest's hash, each moved into place. */
-async function publishGeneratedWiki(
-  outputDirectory: string,
-  projectRoot: string,
-  repositoryRoot = projectRoot,
-): Promise<void> {
-  await mkdir(outputDirectory, { recursive: true })
-  await writeFile(join(outputDirectory, 'index.html'), '<title>Wiki</title>')
-  const manifestText = JSON.stringify({
-    schemaVersion: 1,
-    repositoryRoot,
-    generated: { revision: '1936e41913729663cc99081e3224db89bb2d8e56' },
-    pages: [],
-    assets: [],
-    excludedPaths: [],
-    includedSources: [{ path: 'src/a.ts', sha256: 'a'.repeat(64) }],
-  })
-  const manifestPath = join(outputDirectory, 'codebook-wiki.json')
-  await writeFile(`${manifestPath}.next`, manifestText)
-  await rename(`${manifestPath}.next`, manifestPath)
-  const receiptPath = join(outputDirectory, 'codebook-publication.json')
-  await writeFile(
-    `${receiptPath}.next`,
-    JSON.stringify({
-      schemaVersion: 1,
-      kind: 'published',
-      manifestSha256: createHash('sha256').update(manifestText).digest('hex'),
-    }),
-  )
-  await rename(`${receiptPath}.next`, receiptPath)
-}
-
-/** Opens a window on a project that has no Wiki and no `.codebook` folder yet, the ordinary first use; the browser reader is not opened, since there is nothing to serve. */
-async function openProjectWithoutWiki(
-  options: Omit<
-    Parameters<typeof openWikiUpdateWindow>[0],
-    'projectRoot' | 'openReader'
-  > = {},
-) {
-  const projectDirectory = await mkdtemp(
-    join(tmpdir(), 'codebook-wiki-generate-'),
-  )
-  const projectRoot = await realpath(projectDirectory)
-  const window = await openWikiUpdateWindow({
-    ...options,
-    projectRoot,
-    openReader: false,
-  })
-  const outputDirectory = join(projectRoot, '.codebook', 'wiki')
-  return {
-    ...window,
-    projectRoot,
-    outputDirectory,
-    markerPath: `${outputDirectory}.update-run.json`,
-    /** Closes the editor window as the learner does, keeping the project on disk for the test's assertions; `close` still removes it. */
-    closeWindow: (): Promise<void> => window.close(),
-    async close(): Promise<void> {
-      await window.close()
-      await rm(projectDirectory, { recursive: true, force: true })
-    },
-  }
-}
 
 // Value: protects=AC 1 and 14, the first Generate from Codebook's entry in VS Code in a project without `.codebook`; fails_when=Generate starts without the confirmation that names the resolved folder and the chat hand-over, sends no generate request, fails to claim its marker because the folder that holds it is missing (`placeStorageLock` makes no folder), writes no `runKind` into the marker, or makes the output folder itself; no_claim=the chat's own work and its publish (later tests); seam=the stubbed editor
 test('Generate LLM Wiki in VS Code confirms the folder and the chat hand-over, then hands a generate request to a new chat and claims a generation marker, in a project without .codebook', async (context) => {

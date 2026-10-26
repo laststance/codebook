@@ -1,4 +1,4 @@
-import { join, relative, sep } from 'node:path'
+import { dirname, join, relative, sep } from 'node:path'
 
 import type * as vscode from 'vscode'
 
@@ -135,7 +135,8 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
   const pollMs = options.pollMs ?? LLM_WIKI_POLL_MS
   const treeChanges = new editor.EventEmitter<void>()
   let model: LlmWikiViewModel = { state: 'other', rows: [LLM_WIKI_LOADING_ROW] }
-  let shownState: string | undefined
+  // Until the first read ends the welcome content must not show: the state is `loading`.
+  let shownState: string | undefined = 'loading'
   let shownKey = JSON.stringify(model)
   let facts: LlmWikiViewFacts | undefined
   let previousRowIds: string[] = []
@@ -156,6 +157,11 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
     'setContext',
     CODEBOOK_HOST_CONTEXT_KEY,
     options.host,
+  )
+  void editor.commands.executeCommand(
+    'setContext',
+    LLM_WIKI_STATE_CONTEXT_KEY,
+    'loading',
   )
 
   const treeView = editor.window.createTreeView<string>(LLM_WIKI_VIEW_ID, {
@@ -189,7 +195,7 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
   /** Shows a model: sets the context key, the message and fires one tree change, only for what differs from what is shown. */
   const show = (next: LlmWikiViewModel): void => {
     const nextKey = JSON.stringify(next)
-    if (nextKey === shownKey && shownState !== undefined) return
+    if (nextKey === shownKey && next.state === shownState) return
     const didStateChange = next.state !== shownState
     model = next
     shownKey = nextKey
@@ -229,7 +235,8 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
 
   /** Puts the watcher on the nearest existing folder of the output, and makes it again when that folder or the output changed. */
   const keepWatcher = async (outputDirectory: string): Promise<void> => {
-    const folder = await options.findWatchedFolder(outputDirectory)
+    // The markers lie beside the output folder, so its parent is the first folder to stand on.
+    const folder = await options.findWatchedFolder(dirname(outputDirectory))
     if (
       watcher?.folder === folder &&
       watcher.outputDirectory === outputDirectory

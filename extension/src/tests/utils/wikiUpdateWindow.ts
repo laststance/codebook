@@ -97,6 +97,7 @@ export type HeldUpdateStep =
   | 'marker-change'
   | 'marker-write'
   | 'claim-answer'
+  | 'start-block'
 
 /**
  * Opens an editor window (the real extension with a stubbed `vscode`) on a project whose Wiki already exists, and records everything the learner would see of an update.
@@ -183,6 +184,10 @@ export async function openWikiUpdateWindow(options: {
   ) => string | undefined
   /** Whether the editor trusts the folder; true when omitted. */
   trusted?: boolean
+  /** Opens the window with no folder. */
+  noFolder?: boolean
+  /** Keeps these steps open from the window's activation on, so a test sees the state before the first read ends; `hold(step)` then returns the same hold. */
+  holdAtOpen?: HeldUpdateStep[]
   /** Commands the editor lists besides the chat's (for example the id of its manage-trust command). */
   extraEditorCommands?: string[]
   /** Makes the editor refuse the file watcher of the LLM Wiki view with this message. */
@@ -224,6 +229,8 @@ export async function openWikiUpdateWindow(options: {
     stampReads: number
     stampReadsDone: number
     markerClaims: number
+    /** How often the extension read the publish token: once per read of the LLM Wiki view's state, among the start checks' reads. */
+    publishTokenReads: number
   }
   markerChanges: WikiMarkerChange[]
   openWorkspace(nextProjectRoot: string): void
@@ -292,6 +299,7 @@ export async function openWikiUpdateWindow(options: {
     stampReads: 0,
     stampReadsDone: 0,
     markerClaims: 0,
+    publishTokenReads: 0,
   }
   const markerChanges: WikiMarkerChange[] = []
   /** Records one change of this window's marker, and what it answered once it settled. */
@@ -321,7 +329,7 @@ export async function openWikiUpdateWindow(options: {
   > = []
   const trustListeners: Array<() => void> = []
   let isTrusted = options.trusted ?? true
-  let isFolderOpen = true
+  let isFolderOpen = !options.noFolder
   let treeProvider:
     | {
         getChildren(): string[]
@@ -332,10 +340,41 @@ export async function openWikiUpdateWindow(options: {
   let treeMessage: string | undefined
   let treeChangeCount = 0
   const visibilityListeners: Array<(event: { visible: boolean }) => void> = []
+  const holdControls = new Map<
+    HeldUpdateStep,
+    { started: Promise<void>; release(): void }
+  >()
   const holds = new Map<
     HeldUpdateStep,
     { reached(): void; released: Promise<void> }
   >()
+  /** Makes a hold on a step, or returns the one already made, for `hold()` and `holdAtOpen`. */
+  const makeHold = (
+    step: HeldUpdateStep,
+  ): { started: Promise<void>; release(): void } => {
+    const existing = holdControls.get(step)
+    if (existing) return existing
+    let reached = (): void => {}
+    let release = (): void => {}
+    const started = new Promise<void>((resolveStarted) => {
+      reached = resolveStarted
+    })
+    const released = new Promise<void>((resolveReleased) => {
+      release = resolveReleased
+    })
+    holds.set(step, { reached, released })
+    const controls = {
+      started,
+      release(): void {
+        holds.delete(step)
+        holdControls.delete(step)
+        release()
+      },
+    }
+    holdControls.set(step, controls)
+    return controls
+  }
+  for (const step of options.holdAtOpen ?? []) makeHold(step)
   /** Waits at a step a test holds open; a step nobody holds passes at once. */
   const passHold = async (step: HeldUpdateStep): Promise<void> => {
     const hold = holds.get(step)
@@ -657,16 +696,18 @@ export async function openWikiUpdateWindow(options: {
         : {}),
       // The real start check runs; a test that holds its wait at a fresh journal decides when the second look comes, and otherwise the real time passes.
       './utils/findWikiUpdateStartBlock': {
-        findWikiUpdateStartBlock: (
+        findWikiUpdateStartBlock: async (
           outputDirectory: string,
           projectRoot: string,
-        ) =>
-          findWikiUpdateStartBlock(outputDirectory, projectRoot, {
+        ) => {
+          await passHold('start-block')
+          return findWikiUpdateStartBlock(outputDirectory, projectRoot, {
             wait: async (delayMs: number) => {
               if (holds.has('journal-wait')) await passHold('journal-wait')
               else await sleepFor(delayMs)
             },
-          }),
+          })
+        },
       },
       // The real listing runs; the window only counts how often a look parsed the candidates, and can keep one listing open after it has read the folder.
       './utils/listWikiCandidates': {
@@ -718,6 +759,7 @@ export async function openWikiUpdateWindow(options: {
       },
       './utils/readWikiPublishToken': {
         readWikiPublishToken: async (outputDirectory: string) => {
+          looks.publishTokenReads += 1
           if (publishTokenReadFailure !== undefined)
             throw new Error(publishTokenReadFailure)
           await passHold('publish-token-read')
@@ -927,24 +969,7 @@ export async function openWikiUpdateWindow(options: {
     breakPublishTokenRead(message: string | undefined): void {
       publishTokenReadFailure = message
     },
-    hold(step: HeldUpdateStep): { started: Promise<void>; release(): void } {
-      let reached = (): void => {}
-      let release = (): void => {}
-      const started = new Promise<void>((resolveStarted) => {
-        reached = resolveStarted
-      })
-      const released = new Promise<void>((resolveReleased) => {
-        release = resolveReleased
-      })
-      holds.set(step, { reached, released })
-      return {
-        started,
-        release(): void {
-          holds.delete(step)
-          release()
-        },
-      }
-    },
+    hold: makeHold,
     close: (): Promise<void> => boundary.deactivate(),
   }
 }
