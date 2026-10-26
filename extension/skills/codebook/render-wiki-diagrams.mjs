@@ -111,16 +111,17 @@ function edgeSvg(edge, prefix, path, labelX, labelY) {
 /** Renders grid positions and explicit connectors without inferring temporal order. @example flowSvg(diagram, 'diagram-auth') */
 function flowSvg(diagram, prefix) {
   const nodeHeight = Math.max(...diagram.nodes.map(node => wrap(node.label, 20).length)) * LAYOUT.lineHeight + LAYOUT.nodePadding * 2;
-  const horizontalGroups = new Map();
+  const labelGroups = new Map();
   const definitions = new Map(diagram.nodes.map(node => [node.id, node]));
   for (const edge of diagram.edges) {
     const from = definitions.get(edge.from), to = definitions.get(edge.to);
-    if (from.id === to.id || from.row !== to.row) continue;
+    // Edges between one pair of nodes share a label band; stacking them keeps their label boxes apart, in a row and in a column.
+    if (from.id === to.id) continue;
     const key = [from.id, to.id].sort().join(':');
-    const group = horizontalGroups.get(key) ?? [];
-    group.push(edge); horizontalGroups.set(key, group);
+    const group = labelGroups.get(key) ?? [];
+    group.push(edge); labelGroups.set(key, group);
   }
-  const groupedHeight = [...horizontalGroups.values()].map(group => group.reduce((height, edge) => height + edgeLines(edge).length * LAYOUT.lineHeight, (group.length - 1) * LAYOUT.labelGap));
+  const groupedHeight = [...labelGroups.values()].map(group => group.reduce((height, edge) => height + edgeLines(edge).length * LAYOUT.lineHeight, (group.length - 1) * LAYOUT.labelGap));
   const labelHeight = Math.max(LAYOUT.lineHeight, ...diagram.edges.map(edge => edgeLines(edge).length * LAYOUT.lineHeight), ...groupedHeight);
   const rowStride = nodeHeight + labelHeight + LAYOUT.rowGap, columnStride = LAYOUT.nodeWidth + LAYOUT.columnGap;
   const positions = new Map(diagram.nodes.map(node => [node.id, { x: LAYOUT.margin + node.column * columnStride, y: LAYOUT.margin + labelHeight + node.row * rowStride, height: nodeHeight }]));
@@ -147,10 +148,10 @@ function flowSvg(diagram, prefix) {
     const midpointX = (startX + endX) / 2, midpointY = (startY + endY) / 2;
     const offsetX = horizontal ? 0 : lane, offsetY = horizontal ? lane : 0;
     const path = `M${startX} ${startY} C${midpointX + offsetX} ${startY + offsetY} ${midpointX + offsetX} ${endY + offsetY} ${endX} ${endY}`;
-    // Horizontal labels use the row's reserved band, clear of both nodes and their connector.
-    const group = horizontalGroups.get([edge.from, edge.to].sort().join(':')) ?? [edge];
+    // Horizontal labels use the row's reserved band, clear of both nodes and their connector; vertical ones stack from the top of the gap between the two nodes.
+    const group = labelGroups.get([edge.from, edge.to].sort().join(':')) ?? [edge];
     const priorHeight = group.slice(0, group.indexOf(edge)).reduce((height, previous) => height + edgeLines(previous).length * LAYOUT.lineHeight + LAYOUT.labelGap, 0);
-    const labelY = horizontal ? from.y - labelHeight + LAYOUT.fontSize + priorHeight : midpointY + offsetY - labelHeight / 2;
+    const labelY = horizontal ? from.y - labelHeight + LAYOUT.fontSize + priorHeight : midpointY + offsetY - labelHeight / 2 + priorHeight;
     return edgeSvg(edge, prefix, path, midpointX + offsetX, labelY);
   }).join('');
   return { width, height, content: connectors + diagram.nodes.map(node => nodeSvg(node, positions.get(node.id))).join('') };

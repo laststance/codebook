@@ -5261,6 +5261,60 @@ test('pending and success branches retain their own conditions and operations', 
   }
 })
 
+// Value: protects=two conditional edges between the same two stacked nodes keep their labels readable in a published diagram; fails_when=the labels of a Show result edge and a Show error edge share one label band, so their backing boxes overlap; no_claim=how a browser paints the SVG or the room left of the first column
+test('two branch edges from one node to the node below it draw label boxes that do not overlap', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-diagram-label-boxes-')),
+  )
+  try {
+    const manifest = await diagramInput(root),
+      diagram = manifest.pages[0].diagrams[0]
+    diagram.nodes[1].row = 1
+    diagram.nodes[1].column = 0
+    diagram.edges[0] = {
+      ...diagram.edges[0],
+      kind: 'branch',
+      label: 'Show the saved result',
+      condition: 'ready',
+    }
+    diagram.edges.push({
+      ...diagram.edges[0],
+      id: 'failure',
+      label: 'Show the failure notice',
+      condition: 'denied',
+    })
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+    const boxes = ['read', 'failure'].map((id) => {
+      const [, x, y, width, height] = edgeGroup(html, id).match(
+        /<rect x="([\d.-]+)" y="([\d.-]+)" width="([\d.]+)" height="([\d.]+)" rx="3"/,
+      )
+      return {
+        left: Number(x),
+        right: Number(x) + Number(width),
+        top: Number(y),
+        bottom: Number(y) + Number(height),
+      }
+    })
+    // Assert
+    const [first, second] = boxes
+    const doOverlap =
+      first.left < second.right &&
+      second.left < first.right &&
+      first.top < second.bottom &&
+      second.top < first.bottom
+    assert.equal(doOverlap, false)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('wrapped diagram operations preserve word boundaries and an accessible condition label', async () => {
   // Arrange
   const root = await realpath(
