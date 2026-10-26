@@ -107,6 +107,7 @@ test('a generation’s start checks the folder, the existing Wiki, the publisher
         'in-the-way',
         'claim',
         'token',
+        'folder',
         'agent',
       ],
       startedAtMs: 1_790_000_000_000,
@@ -183,11 +184,11 @@ test('an agent that cannot be readied after the claim releases the marker and pa
 
   // Assert
   assert.deepEqual(
-    { failure, lastSteps: steps.slice(-2) },
+    { failure, lastSteps: steps.slice(-3) },
     {
       failure:
         'A Cursor skill named codebook that Codebook does not own is in the way.',
-      lastSteps: ['token', 'release'],
+      lastSteps: ['token', 'folder', 'release'],
     },
   )
 })
@@ -374,5 +375,39 @@ test('a link put on the path while the confirmation stood open refuses the gener
   assert.deepEqual(
     { failure, madeFolder: steps.includes('parent') },
     { failure: 'The Wiki folder .codebook/wiki is a link.', madeFolder: false },
+  )
+})
+
+// Value: protects=CodeRabbit's finding on PR #133: a folder without a Wiki that appears between the last look and the claim; fails_when=the claimed generation readies its agent for a publish that the publisher refuses, or keeps its marker after refusing; no_claim=the folder's earlier looks (test above); seam=stand-ins whose third folder look finds the folder
+test('a folder without a Wiki that appears around the claim releases the marker and refuses the generation before the agent is readied', async () => {
+  // Arrange: the first two looks find no folder; the look after the claim finds one.
+  const steps: string[] = []
+  let folderLooks = 0
+  const dependencies = standIns(steps, {
+    hasOutputFolderWithoutWiki: async () => {
+      folderLooks += 1
+      return folderLooks > 2
+    },
+  })
+
+  // Act
+  const start = await startWikiGenerate(dependencies)
+
+  // Assert
+  assert.deepEqual(
+    {
+      start,
+      readiedAgent: steps.includes('agent'),
+      lastSteps: steps.slice(-3),
+    },
+    {
+      start: undefined,
+      readiedAgent: false,
+      lastSteps: [
+        'token',
+        'release',
+        'refuse: The folder .codebook/wiki already exists but holds no LLM Wiki, and the publisher writes a first Wiki only into a folder it makes itself. Move what you keep in it elsewhere and remove the folder, or set codebook.wikiOutputDirectory to a folder that does not exist yet, then press Generate LLM Wiki again.',
+      ],
+    },
   )
 })

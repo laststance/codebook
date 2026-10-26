@@ -100,6 +100,14 @@ async function beginClaimedGeneration<Holder>(
       dependencies.offerUpdate()
       return undefined
     }
+    // A folder without a Wiki that appeared around the claim is refused too: the publisher would refuse it after the agent's work (CodeRabbit, PR #133).
+    if (await dependencies.hasOutputFolderWithoutWiki()) {
+      await claim.release().catch(() => false)
+      dependencies.refuse(
+        describeOutputFolderWithoutWiki(dependencies.wikiOutput.outputLabel),
+      )
+      return undefined
+    }
     await dependencies.prepareAgent()
     return {
       ...begun,
