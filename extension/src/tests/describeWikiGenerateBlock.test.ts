@@ -38,3 +38,18 @@ test('each block a folder without a Wiki can hold is told with the generation’
     'The folder .codebook/wiki cannot take a new LLM Wiki: index.html is in the way. Press Update LLM Wiki to see what it is.',
   ])
 })
+
+// Value: protects=Cycle 0056 L5, a block that needs a manifest and names no path; fails_when=the sentence says the folder is in its own way ("X cannot take a new LLM Wiki: X is in the way"); no_claim=a block that names a path (test above); seam=none
+test('a block that needs a manifest and names no path does not call the folder itself the thing in the way', () => {
+  // Act
+  const sentence = describeWikiGenerateBlock(
+    { cause: 'edited-page', paths: [] },
+    '.codebook/wiki',
+  )
+
+  // Assert
+  assert.equal(
+    sentence,
+    'The folder .codebook/wiki cannot take a new LLM Wiki. Press Update LLM Wiki to see what is in the way.',
+  )
+})

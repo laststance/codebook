@@ -45,9 +45,9 @@ function standIns(
     prepareAgent: async (): Promise<void> => {
       steps.push('agent')
     },
-    // The window's bounded retry is its own; a stand-in makes the change once.
-    changeMarker: async (change): Promise<void> => {
-      await change().catch(() => false)
+    // The window's bounded retry is its own; a stand-in releases the marker once.
+    leaveMarker: async (claim): Promise<void> => {
+      await claim.release().catch(() => false)
     },
     claimMarker: async () => {
       steps.push('claim')

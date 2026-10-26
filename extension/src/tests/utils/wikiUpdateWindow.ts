@@ -95,7 +95,7 @@ type NumericConstantName = {
     : never
 }[keyof typeof constants]
 
-/** An awaited step of an update that a test can keep open: the freshness inspection among the start checks, VS Code's chat command that carries the request, one listing of the candidates (the next listing after `hold` is kept open once it has read the folder; later ones pass), the wait of the start check before its second look at a publish journal written a moment ago (held, it lasts until the release and no real time), a read of the publish token (the start checks read it and so does the end of a run, so a hold set after the start keeps the end open), or the change of the run's marker at its end (its removal or its turn into a reservation: held, the run's end is already recorded and told, and the run waits there), or the write of the reservation that turn puts beside the marker (held, the change holds the claim on the marker while it waits, as a slow disk holds it), or the moment after a start's claim on the marker answered and before the start reads the answer (`claim-answer`), or a read of the publication identity (the LLM Wiki view reads it after the manifest, so a hold keeps a read open between the two). */
+/** An awaited step of an update that a test can keep open: the freshness inspection among the start checks, VS Code's chat command that carries the request, one listing of the candidates (the next listing after `hold` is kept open once it has read the folder; later ones pass), the wait of the start check before its second look at a publish journal written a moment ago (held, it lasts until the release and no real time), a read of the publish token (the start checks read it and so does the end of a run, so a hold set after the start keeps the end open), or the change of the run's marker at its end (its removal or its turn into a reservation: held, the run's end is already recorded and told, and the run waits there), or the write of the reservation that turn puts beside the marker (held, the change holds the claim on the marker while it waits, as a slow disk holds it), or the moment before a start's claim on the marker begins (`claim-start`, after the start looked at the marker), or the moment after a start's claim on the marker answered and before the start reads the answer (`claim-answer`), or a read of the publication identity (the LLM Wiki view reads it after the manifest, so a hold keeps a read open between the two). */
 export type HeldUpdateStep =
   | 'freshness-inspection'
   | 'chat-open'
@@ -104,6 +104,7 @@ export type HeldUpdateStep =
   | 'publish-token-read'
   | 'marker-change'
   | 'marker-write'
+  | 'claim-start'
   | 'claim-answer'
   | 'start-block'
   | 'publication-read'
@@ -770,11 +771,13 @@ export async function openWikiUpdateWindow(options: {
         claimWikiUpdateMarker: async (
           ...claimed: Parameters<typeof claimWikiUpdateMarker>
         ) => {
+          await passHold('claim-start')
           const claim = await claimWikiUpdateMarker(...claimed)
           looks.markerClaims += 1
           await passHold('claim-answer')
           if (!('release' in claim)) return claim
           return {
+            replacedReservation: claim.replacedReservation,
             release: async () => {
               await passHold('marker-change')
               // A removal that the system refuses for now, as a scanner or an indexer holding the file does.
@@ -791,11 +794,14 @@ export async function openWikiUpdateWindow(options: {
               }
               return recordMarkerChange('release', claim.release())
             },
-            reserve: async (watchEndedAtMs: number) => {
+            reserve: async (
+              watchEndedAtMs: number,
+              reservedRunKind?: 'generate' | 'update',
+            ) => {
               await passHold('marker-change')
               return recordMarkerChange(
                 'reserve',
-                claim.reserve(watchEndedAtMs),
+                claim.reserve(watchEndedAtMs, reservedRunKind),
               )
             },
           }

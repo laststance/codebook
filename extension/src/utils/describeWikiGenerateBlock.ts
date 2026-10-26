@@ -10,7 +10,7 @@ import type { WikiUpdateStartBlock } from './findWikiUpdateStartBlock'
  *
  * @param block - The cause and the paths the start check named.
  * @param outputLabel - The Wiki folder as the learner reads it.
- * @returns The sentence for the cause, naming the first path and the next step; for a cause no folder without a manifest can hold, the sentence that names the cause and sends the learner to the update.
+ * @returns The sentence for the cause, naming the first path and the next step. For a cause no folder without a manifest can hold, a sentence that names the first path (or, where the check named none, only the folder) as in the way and sends the learner to the update; it names no cause id.
  * @example
  * describeWikiGenerateBlock({ cause: 'held-publish-lock', paths: ['wiki.publish-lock.json'] }, '.codebook/wiki')
  * // => 'A publish of the LLM Wiki in .codebook/wiki may still be running or was stopped (wiki.publish-lock.json). Once it ends, press Generate LLM Wiki again; if it was stopped, ask the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project" once its process exits.'
@@ -32,6 +32,9 @@ export function describeWikiGenerateBlock(
       return `${outputLabel} holds a link or special file (${firstPath}), which the publisher refuses. Move it out of the folder, then press Generate LLM Wiki again.`
     default:
       // A cause that needs a manifest names no cause id here; the Output record keeps it.
+      // A check that named no path has nothing to point at, and the folder must not be named as the thing in its own way.
+      if (block.paths.length === 0)
+        return `The folder ${outputLabel} cannot take a new LLM Wiki. Press Update LLM Wiki to see what is in the way.`
       return `The folder ${outputLabel} cannot take a new LLM Wiki: ${firstPath} is in the way. Press Update LLM Wiki to see what it is.`
   }
 }

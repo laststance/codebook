@@ -34,6 +34,7 @@ async function writeOtherWindowReservation(
   projectRoot: string,
   markerPath: string,
   watchEndedAtMs: number,
+  runKind: 'generate' | 'update' = 'generate',
 ): Promise<void> {
   await mkdir(join(projectRoot, '.codebook'), { recursive: true })
   await writeFile(
@@ -44,7 +45,8 @@ async function writeOtherWindowReservation(
       host: 'vscode',
       startedAtMs: watchEndedAtMs - 60_000,
       watchEndedAtMs,
-      runKind: 'generate',
+      // An update's marker never carried the field.
+      ...(runKind === 'generate' ? { runKind } : {}),
     }),
   )
 }
@@ -337,6 +339,207 @@ test('a skill conflict after Generate anyway writes the taken-over reservation b
   )
 })
 
+// Value: protects=Cycle 0056 M1, the protection of a reservation written back after a refused start; fails_when=the second press of Generate anyway releases the written-back reservation because this window no longer knows it, so the chat that may still publish loses its marker; no_claim=the first write-back (test above); seam=a reservation written by hand and the skill steps stubbed
+test('a second Generate anyway that meets the skill conflict again keeps the written-back reservation with its original end', async (context) => {
+  // Arrange: another window's generation stopped watching a moment ago; the skill is in the way both times.
+  const watchEndedAtMs = Date.now() - 1_000
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    chooseAction: (_message, actions) =>
+      actions.includes('Generate anyway') ? 'Generate anyway' : undefined,
+    cursorSkill: {
+      verify: async () => {
+        throw new Error('The managed Cursor skill was changed.')
+      },
+      deploy: async () => {
+        throw new Error(
+          'A Cursor skill named codebook that Codebook does not own is in the way.',
+        )
+      },
+    },
+  })
+  context.after(() => project.close())
+  await writeOtherWindowReservation(
+    project.projectRoot,
+    project.markerPath,
+    watchEndedAtMs,
+  )
+  await project.runCommand(GENERATE_COMMAND)
+  await waitUntil(
+    async () =>
+      (await readMarker(project.markerPath))?.windowId !== 'the-other-window',
+    'the first written-back reservation',
+    6_000,
+  )
+
+  // Act: the press meets the conflict again and its command rejects with it.
+  await project.runCommand(GENERATE_COMMAND).catch(() => undefined)
+  await waitUntil(
+    () => project.errors.length > 2,
+    'the second skill conflict’s notice',
+    6_000,
+  )
+  await flushQueuedReactions()
+  await waitUntil(
+    () => project.markerChanges.filter((change) => change.answer).length >= 2,
+    'the second write-back',
+    6_000,
+  )
+
+  // Assert
+  const marker = await readMarker(project.markerPath)
+  assert.deepEqual(
+    {
+      reservationEndsAt: marker?.watchEndedAtMs,
+      changes: project.markerChanges.map((change) => change.kind),
+    },
+    { reservationEndsAt: watchEndedAtMs, changes: ['reserve', 'reserve'] },
+  )
+})
+
+// Value: protects=Cycle 0056 M1, the bound of a written-back reservation; fails_when=a reservation written back after a refused start is never removed at its bound, so it blocks every other window until the marker's own expiry; no_claim=the bound of a reservation the run left itself (marker bookkeeping tests); seam=the watch bound shortened to 600 ms and a reservation that ended 400 ms ago
+test('a reservation written back after a skill conflict is removed at its watch bound', async (context) => {
+  // Arrange: the other window's watch ended 400 ms ago and this window's bound is 600 ms.
+  const watchEndedAtMs = Date.now() - 400
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    constants: { WIKI_UPDATE_WATCH_TIMEOUT_MS: 600 },
+    chooseAction: (_message, actions) =>
+      actions.includes('Generate anyway') ? 'Generate anyway' : undefined,
+    cursorSkill: {
+      verify: async () => {
+        throw new Error('The managed Cursor skill was changed.')
+      },
+      deploy: async () => {
+        throw new Error(
+          'A Cursor skill named codebook that Codebook does not own is in the way.',
+        )
+      },
+    },
+  })
+  context.after(() => project.close())
+  await writeOtherWindowReservation(
+    project.projectRoot,
+    project.markerPath,
+    watchEndedAtMs,
+    'update',
+  )
+
+  // Act
+  await project.runCommand(GENERATE_COMMAND)
+  await waitUntil(
+    async () =>
+      (await readMarker(project.markerPath))?.windowId !== 'the-other-window',
+    'the written-back reservation',
+    6_000,
+  )
+  await waitUntil(
+    async () => !(await exists(project.markerPath)),
+    'the removal at the bound',
+    6_000,
+  )
+
+  // Assert
+  assert.equal(await exists(project.markerPath), false)
+})
+
+// Value: protects=Cycle 0056 CR1, the kind of a taken-over reservation; fails_when=an update's reservation taken over by Generate anyway is written back as a generation's (a runKind of generate and so the generation's longer bound), or an update's reservation gets a runKind field its format never had; no_claim=a generation's reservation written back (test above); seam=an update's reservation written by hand and the skill steps stubbed
+test('an update’s reservation taken over by Generate anyway is written back as an update’s, without a run kind', async (context) => {
+  // Arrange
+  const watchEndedAtMs = Date.now() - 1_000
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    chooseAction: (_message, actions) =>
+      actions.includes('Generate anyway') ? 'Generate anyway' : undefined,
+    cursorSkill: {
+      verify: async () => {
+        throw new Error('The managed Cursor skill was changed.')
+      },
+      deploy: async () => {
+        throw new Error(
+          'A Cursor skill named codebook that Codebook does not own is in the way.',
+        )
+      },
+    },
+  })
+  context.after(() => project.close())
+  await writeOtherWindowReservation(
+    project.projectRoot,
+    project.markerPath,
+    watchEndedAtMs,
+    'update',
+  )
+
+  // Act
+  await project.runCommand(GENERATE_COMMAND)
+  await waitUntil(
+    async () =>
+      (await readMarker(project.markerPath))?.windowId !== 'the-other-window',
+    'the written-back reservation',
+    6_000,
+  )
+
+  // Assert
+  const marker = await readMarker(project.markerPath)
+  assert.deepEqual(
+    {
+      reservationEndsAt: marker?.watchEndedAtMs,
+      hasRunKind: 'runKind' in (marker ?? {}),
+    },
+    { reservationEndsAt: watchEndedAtMs, hasRunKind: false },
+  )
+})
+
+// Value: protects=Cycle 0056 L1, the reservation a claim takes over; fails_when=the written-back end is the one read before the claim although another window replaced the reservation meanwhile; no_claim=a marker nobody replaced (tests above); seam=the claim held before it begins while the other window writes a later reservation
+test('a reservation another window writes between the start’s look and its claim is the one written back after a skill conflict', async (context) => {
+  // Arrange: the first reservation ended long ago; a later one replaces it while the start waits to claim.
+  const firstEndedAtMs = Date.now() - 4_000
+  const laterEndedAtMs = Date.now() - 1_000
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    chooseAction: (_message, actions) =>
+      actions.includes('Generate anyway') ? 'Generate anyway' : undefined,
+    cursorSkill: {
+      verify: async () => {
+        throw new Error('The managed Cursor skill was changed.')
+      },
+      deploy: async () => {
+        throw new Error(
+          'A Cursor skill named codebook that Codebook does not own is in the way.',
+        )
+      },
+    },
+  })
+  context.after(() => project.close())
+  await writeOtherWindowReservation(
+    project.projectRoot,
+    project.markerPath,
+    firstEndedAtMs,
+  )
+  const claimStart = project.hold('claim-start')
+
+  // Act
+  const pressing = project.runCommand(GENERATE_COMMAND)
+  await claimStart.started
+  await writeOtherWindowReservation(
+    project.projectRoot,
+    project.markerPath,
+    laterEndedAtMs,
+  )
+  claimStart.release()
+  await pressing
+  await waitUntil(
+    async () =>
+      (await readMarker(project.markerPath))?.windowId !== 'the-other-window',
+    'the written-back reservation',
+    6_000,
+  )
+
+  // Assert
+  const marker = await readMarker(project.markerPath)
+  assert.equal(marker?.watchEndedAtMs, laterEndedAtMs)
+})
+
 // Value: protects=Cycle 0056 task 12 for an update, the same reservation taken over by Update anyway; fails_when=the refused update removes the marker instead of writing the reservation back; no_claim=a reservation of this window's own stopped watch (the marker bookkeeping tests); seam=a reservation written by hand and the skill steps stubbed
 test('a skill conflict after Update anyway writes the taken-over reservation back with its watch end', async (context) => {
   // Arrange: a Wiki stands, and another window's generation stopped watching a moment ago.
@@ -608,4 +811,58 @@ test('a Cursor skill verify that fails after Stop LLM Wiki Run does not go on to
 
   // Assert
   assert.deepEqual(project.skillCalls, ['verify'])
+})
+
+// Value: protects=Cycle 0056 L3, one deploy of the managed Cursor skill at a time; fails_when=a press after Stop starts another verify and deploy while the stopped step's deploy still writes the skill; no_claim=the stopped step's own end (tests above); seam=a deploy the test settles
+test('a Generate pressed after Stop waits for the stopped deploy to settle, so two deploys never run at once', async (context) => {
+  // Arrange
+  let runningDeploys = 0
+  let mostRunningDeploys = 0
+  const settleDeploys: Array<() => void> = []
+  const project = await openProjectWithoutWiki({
+    cursor: true,
+    cursorSkill: {
+      verify: async () => {
+        throw new Error('The managed Cursor skill is missing.')
+      },
+      deploy: () =>
+        new Promise<void>((resolveDeploy) => {
+          runningDeploys += 1
+          mostRunningDeploys = Math.max(mostRunningDeploys, runningDeploys)
+          settleDeploys.push(() => {
+            runningDeploys -= 1
+            resolveDeploy()
+          })
+        }),
+    },
+    cursorAgent: async () => 'Published.',
+  })
+  context.after(() => project.close())
+  const firstPress = project.runCommand(GENERATE_COMMAND).catch(() => undefined)
+  await waitUntil(
+    () => project.skillCalls.includes('deploy'),
+    'the first deploy',
+    6_000,
+  )
+  await project.runCommand(CANCEL_COMMAND)
+  await firstPress
+
+  // Act: the second press starts while the first deploy has not settled.
+  const secondPress = project
+    .runCommand(GENERATE_COMMAND)
+    .catch(() => undefined)
+  await flushQueuedReactions()
+  await new Promise((resolveWait) => setTimeout(resolveWait, 100))
+  const callsWhileFirstSettles = [...project.skillCalls]
+  settleDeploys[0]?.()
+  await waitUntil(() => settleDeploys.length === 2, 'the second deploy', 6_000)
+  await project.runCommand(CANCEL_COMMAND)
+  await secondPress
+  settleDeploys[1]?.()
+
+  // Assert
+  assert.deepEqual(
+    { callsWhileFirstSettles, mostRunningDeploys },
+    { callsWhileFirstSettles: ['verify', 'deploy'], mostRunningDeploys: 1 },
+  )
 })

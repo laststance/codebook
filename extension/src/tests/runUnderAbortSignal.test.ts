@@ -73,3 +73,21 @@ test('a step that fails after the signal ended the wait raises no unhandled reje
   // Assert
   assert.deepEqual(unhandled, [])
 })
+
+// Value: protects=Cycle 0056 L2, a Stop pressed in the tick the step settles; fails_when=the step's result wins the race by order alone and the start goes on to launch the agent after Stop; no_claim=a step that settles long after the signal (tests above); seam=a step that fires the signal as it settles
+test('a signal that fires in the tick the step settles still ends the wait with its reason', async () => {
+  // Arrange
+  const stopping = new AbortController()
+
+  // Act
+  const end = await runUnderAbortSignal(async () => {
+    queueMicrotask(() => stopping.abort('stopped'))
+    return 'done'
+  }, stopping.signal).then(
+    (result) => `resolved with ${result}`,
+    (reason: unknown) => reason,
+  )
+
+  // Assert
+  assert.equal(end, 'stopped')
+})

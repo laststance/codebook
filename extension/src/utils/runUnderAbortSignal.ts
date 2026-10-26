@@ -5,7 +5,7 @@
  * @param step - Starts the work; it is called once, and not at all when the signal has fired already.
  * @param signal - Ends the wait when it fires.
  * @returns What the step resolved with, when it settled before the signal.
- * @throws The signal's reason when it fired first; what the step threw when it failed first. A step that settles after the signal is not awaited: its result is ignored and its failure swallowed.
+ * @throws The signal's reason when it fired first or in the same tick the step settled (a Stop pressed then still wins); what the step threw when it failed first. A step that settles after the signal is not awaited: its result is ignored and its failure swallowed.
  * @example
  * await runUnderAbortSignal(() => deploy(), controller.signal)
  */
@@ -25,7 +25,10 @@ export async function runUnderAbortSignal<Result>(
     endWaiting = (): void => signal.removeEventListener('abort', onAbort)
   })
   try {
-    return await Promise.race([stepping, aborted])
+    const result = await Promise.race([stepping, aborted])
+    // A signal that fired in the tick the step settled lost the race by order alone; the stop still counts.
+    signal.throwIfAborted()
+    return result
   } finally {
     endWaiting()
   }

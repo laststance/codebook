@@ -53,7 +53,16 @@ type WikiUpdateHolder =
 export type WikiUpdateMarkerClaim =
   | {
       release: () => Promise<boolean>
-      reserve: (watchEndedAtMs: number) => Promise<boolean>
+      /** Turns the marker into a reservation that ends its watch at `watchEndedAtMs`; `reservedRunKind` names the kind the reservation keeps when it is not this run's own (a taken-over reservation written back keeps the kind and so the bound of the run it came from: `update` leaves `runKind` out, as an update's marker always did). */
+      reserve: (
+        watchEndedAtMs: number,
+        reservedRunKind?: 'generate' | 'update',
+      ) => Promise<boolean>
+      /** The reservation of a stopped watch that this claim removed from another window's marker to place its own, read under the claim; absent where it removed none (this window's own reservation reads as nobody's run and is not named here). */
+      replacedReservation?: {
+        watchEndedAtMs: number
+        runKind: 'generate' | 'update'
+      }
     }
   | { heldBy: WikiUpdateHolder }
 
@@ -126,6 +135,21 @@ function machineAndProcessOf(
 }
 
 /**
+ * Gives a marker the run kind of a reservation written back; called by `reserve` of {@link claimWikiUpdateMarker}.
+ * @param record - The marker this claim wrote.
+ * @param runKind - The kind to keep: `generate` is written, `update` is left out as an update's marker always left it.
+ * @returns A copy of the marker with that kind.
+ * @example withRunKind({ pid: 4242, windowId: '3f6c', host: 'vscode', startedAtMs: 1, runKind: 'generate' }, 'update') // => { pid: 4242, windowId: '3f6c', host: 'vscode', startedAtMs: 1 }
+ */
+function withRunKind<Record extends { runKind?: unknown }>(
+  record: Record,
+  runKind: 'generate' | 'update',
+): Omit<Record, 'runKind'> & { runKind?: 'generate' } {
+  const { runKind: _ownRunKind, ...withoutKind } = record
+  return runKind === 'generate' ? { ...withoutKind, runKind } : withoutKind
+}
+
+/**
  * Lets only the failure "a marker file is already there" pass; called by {@link claimWikiUpdateMarker} with what its exclusive creation threw, before it looks at the marker in the way.
  * @param error - What the exclusive creation threw.
  * @throws The given error itself when its code is not `EEXIST` (for example a read-only folder).
@@ -189,6 +213,11 @@ function claimOfHolder(
   if (heldBy) return { heldBy }
   return isLastAttempt ? { heldBy: { isMarkerInChange: true } } : undefined
 }
+
+/** The reservation of a stopped watch that a claim removed under its exclusive claim on the marker: when the watch ended, and the kind of the run it came from. */
+type ReplacedWikiReservation = NonNullable<
+  Extract<WikiUpdateMarkerClaim, { release: unknown }>['replacedReservation']
+>
 
 /** What one read of the marker file under the claim found: the file's text, `missing` when nothing is at its path, `foreign` when an entry is there that cannot hold what this window wrote, or `unreadable` when a regular file is there that this read could not take as the marker. */
 type MarkerTextRead = { text: string } | 'missing' | 'foreign' | 'unreadable'
@@ -461,7 +490,7 @@ async function claimMarkerChange(
  * @param markerPath - `<output>.update-run.json`.
  * @param ownWindowId - The asking window's own id.
  * @param judgement - The identity of this process, the reader of process starts and the clock.
- * @returns Nothing. The marker stays when another window holds the claim (it is removing the marker itself), when the look under the claim finds another window's run, a marker being written or no marker, and when the claim was lost meanwhile; the exclusive creation that follows decides either way.
+ * @returns The stopped watch's reservation of another window that was removed (its end and run kind, read under the claim), so a start that is refused later can write it back; `undefined` when a marker of nobody's run was removed, and when nothing was: the marker stays when another window holds the claim (it is removing the marker itself), when the look under the claim finds another window's run, a marker being written or no marker, and when the claim was lost meanwhile; the exclusive creation that follows decides either way.
  * @example
  * await removeUnownedMarker('/repo/.codebook/wiki', '/repo/.codebook/wiki.update-run.json', windowId, judgement)
  */
@@ -470,9 +499,9 @@ async function removeUnownedMarker(
   markerPath: string,
   ownWindowId: string,
   judgement: MarkerClaimJudgement,
-): Promise<void> {
+): Promise<ReplacedWikiReservation | undefined> {
   const claim = await claimMarkerChange(markerPath, 1, judgement)
-  if (!claim) return
+  if (!claim) return undefined
   try {
     // Another window may have taken the marker over since the look that brought this call; only a marker that this look reads as nobody's run is removed.
     const look = await readLiveWikiUpdateMarker(
@@ -481,8 +510,17 @@ async function removeUnownedMarker(
       atThisMoment(judgement),
     )
     // What the look read as nobody's is removed whatever it is: a file, a link as the link, a folder with its content.
-    if (isMarkerOfNobodysRun(look) && (await claim.isStillHeld()))
+    if (isMarkerOfNobodysRun(look) && (await claim.isStillHeld())) {
       await removeWithoutFollowing(markerPath)
+      // Only a reservation of a stopped watch names an end worth writing back.
+      return look.kind === 'live' && look.heldBy.watchEndedAtMs !== undefined
+        ? {
+            watchEndedAtMs: look.heldBy.watchEndedAtMs,
+            runKind: look.heldBy.runKind ?? 'update',
+          }
+        : undefined
+    }
+    return undefined
   } finally {
     await claim.release()
   }
@@ -594,6 +632,8 @@ export async function claimWikiUpdateMarker(
   const record = { ...marker, ...machineAndProcessOf(judgement.identity) }
   /** What this claim last wrote into the marker file; only a file that still holds it is this claim's to remove. */
   let written = JSON.stringify(record)
+  /** The reservation the one removal of the first attempt took away. */
+  let replacedReservation: ReplacedWikiReservation | undefined
   // One retry: after a marker that was nobody's was removed the exclusive creation decides again.
   for (const isLastAttempt of [false, true]) {
     try {
@@ -607,8 +647,17 @@ export async function claimWikiUpdateMarker(
             await judgementFrom(inputs),
           )
         },
-        async reserve(watchEndedAtMs: number): Promise<boolean> {
-          const reservation = JSON.stringify({ ...record, watchEndedAtMs })
+        replacedReservation,
+        async reserve(
+          watchEndedAtMs: number,
+          reservedRunKind?: 'generate' | 'update',
+        ): Promise<boolean> {
+          const reservation = JSON.stringify({
+            ...(reservedRunKind === undefined
+              ? record
+              : withRunKind(record, reservedRunKind)),
+            watchEndedAtMs,
+          })
           return changeOwnMarker(
             markerPath,
             written,
@@ -631,7 +680,7 @@ export async function claimWikiUpdateMarker(
       // What holds the Wiki ends the claim; a marker that is nobody's run is removed for the one retry.
       const holder = claimOfHolder(look, isLastAttempt)
       if (holder) return holder
-      await removeUnownedMarker(
+      replacedReservation = await removeUnownedMarker(
         outputDirectory,
         markerPath,
         marker.windowId,
