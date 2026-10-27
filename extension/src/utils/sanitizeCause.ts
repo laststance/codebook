@@ -1,6 +1,7 @@
 import { StudyError } from '../errors'
 
 import { messageNamingCause } from './messageNamingCause'
+import { redactSecretText } from './redactSecretText'
 import { withoutErrorName } from './withoutErrorName'
 
 /** The private roots a cause must not show, with the words that replace them. */
@@ -129,5 +130,8 @@ export function sanitizeCause(error: unknown, roots: CauseRoots): string {
           hideRoots(error.causeDetail),
         )
       : hideRoots(withoutErrorName(String(error)))
-  return text.replace(CONTROL_CHARACTERS, ' ').replace(/ {2,}/g, ' ').trim()
+  // Secret-looking values in a cause are masked last, once control characters can no longer split them.
+  return redactSecretText(
+    text.replace(CONTROL_CHARACTERS, ' ').replace(/ {2,}/g, ' ').trim(),
+  )
 }

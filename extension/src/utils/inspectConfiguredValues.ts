@@ -11,6 +11,8 @@ import {
 } from '../constants'
 import type { RepositoryConfiguration } from '../repositoryConfigSchemas'
 
+import { redactInspectedValue } from './redactInspectedValue'
+
 /** Captures declared bounded facts for {@link ConfiguredBrowserRun}; an object or function is captured as its `{ type }` marker, because its members are not bounded, and explicit unavailability preserves other facts while the caller gates continuation. @example await inspectConfiguredValues(evaluate, callFrameId, configuration.inspections, assertCurrent) */
 export async function inspectConfiguredValues(
   evaluate: (
@@ -48,7 +50,7 @@ export async function inspectConfiguredValues(
       (inspection.mode !== 'type' ||
         REPOSITORY_CAPTURED_TYPES.some((type) => type === value.data))
     if (available && value.success) {
-      values[path] = value.data
+      values[path] = redactInspectedValue(inspection, value.data)
       continue
     }
     const reason = response.exceptionDetails

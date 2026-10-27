@@ -1,3 +1,5 @@
+import { redactSecretText } from './redactSecretText'
+
 /** One unexpected failure on a test replay's path, as its producer reports it for the Output › Codebook channel; every text in it is already sanitized ({@link sanitizeCause}). */
 export type CodebookDiagnostic = {
   /** The MCP error code, or the surface that failed (`save:stop-rejected`, `open:test-replay`). */
@@ -36,10 +38,13 @@ export function formatCodebookDiagnostic(
     ...(entry.studyId ? [`study ${entry.studyId}`] : []),
     ...(entry.profile ? [`profile ${entry.profile}`] : []),
   ].join(' · ')
-  return [
-    identity,
-    `Codebook ${context.extensionVersion} (API ${context.apiVersion}) · ${context.hostName} ${context.hostVersion}`,
-    `Cause: ${entry.cause}`,
-    ...(entry.stack ? [entry.stack] : []),
-  ].join('\n')
+  // The channel is a durable log the learner copies into reports; mask secret-looking values in the whole entry.
+  return redactSecretText(
+    [
+      identity,
+      `Codebook ${context.extensionVersion} (API ${context.apiVersion}) · ${context.hostName} ${context.hostVersion}`,
+      `Cause: ${entry.cause}`,
+      ...(entry.stack ? [entry.stack] : []),
+    ].join('\n'),
+  )
 }

@@ -10,6 +10,7 @@ import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { buildNodeTestEnvironment } from './buildNodeTestEnvironment'
+import { createOutputRedactor } from './createOutputRedactor'
 import { isProcessGroupGone } from './isProcessGroupGone'
 import type { PreparedNodeTestLaunch } from './prepareNodeTestLaunch'
 import { readNodeInspectorEndpoint } from './readNodeInspectorEndpoint'
@@ -91,6 +92,8 @@ export async function launchNodeTest(
     ['stderr', child.stderr],
   ] as const) {
     const decoder = new StringDecoder('utf8')
+    // One redactor per channel, applied before the announcement, the 32 KiB tail and the 4,096-character event split, so a secret never reaches any of them.
+    const redactor = createOutputRedactor()
     const enqueue = (
       text: string,
       deliver: (event: NodeTestOutputEvent) => void | Promise<void>,
@@ -150,8 +153,12 @@ export async function launchNodeTest(
       }
       if (part) enqueue(part, onOutput)
     }
-    stream.on('data', (chunk: Buffer) => accept(decoder.write(chunk)))
-    stream.on('end', () => accept(decoder.end()))
+    stream.on('data', (chunk: Buffer) =>
+      accept(redactor.write(decoder.write(chunk))),
+    )
+    stream.on('end', () =>
+      accept(redactor.write(decoder.end()) + redactor.end()),
+    )
   }
   record('node-test.started', {
     pid: child.pid,

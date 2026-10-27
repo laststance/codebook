@@ -5,11 +5,14 @@ import {
   DEBUGGER_PROXY_TARGET_NAME,
   NODE_TEST_FACT_TYPE_LIMIT_CHARS,
   NODE_TEST_MODULE_BINDING_NAME,
+  REDACTION_MASK,
   REPOSITORY_LITERAL_LIMIT_CHARS,
 } from '../constants'
 import type { RepositoryInspection } from '../repositoryConfigSchemas'
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 
+import { isSecretPath } from './isSecretPath'
+import { redactSecretText } from './redactSecretText'
 import type {
   ModuleDeclarationBinding,
   SourceImports,
@@ -70,8 +73,15 @@ export async function inspectNodeTestVariables(
       failedPass.abort()
       throw error
     })
-    const display =
+    // Redaction contract: a value under a secret-named step, or one shaped like a credential, reads [masked]; a type name is never a value.
+    const rawDisplay =
       inspection.mode === 'type' ? variable?.type : variable?.value
+    const display =
+      rawDisplay === undefined || inspection.mode === 'type'
+        ? rawDisplay
+        : isSecretPath(inspection.path)
+          ? REDACTION_MASK
+          : redactSecretText(rawDisplay)
     if (
       !variable ||
       !display ||
@@ -94,7 +104,10 @@ export async function inspectNodeTestVariables(
       display,
       ...(type !== undefined && { type }),
     })
-    selected.push(variable)
+    // The kept debugger variable carries the masked value too, so nothing downstream sees the real one.
+    selected.push(
+      inspection.mode === 'type' ? variable : { ...variable, value: display },
+    )
   }
   // A lazy value whose expansion failed reads as unavailable (settledLazy); a run cancelled meanwhile still ends the pass.
   signal.throwIfAborted()

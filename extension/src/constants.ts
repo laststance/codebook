@@ -1890,3 +1890,12 @@ export const SUMMARY_CHOICE_DROPPED_REASON_COMPOSITION_LEFT =
 /** What the learner's notice for a dropped Learning summary choice starts with, before the reason. */
 export const SUMMARY_CHOICE_DROPPED_NOTICE_PREFIX =
   'Codebook did not carry out your choice: '
+
+/** The text that replaces a secret value or a secret-named value in every captured fact, variable, snapshot, output and cause ({@link redactSecretText}). */
+export const REDACTION_MASK = '[masked]'
+
+/** The most characters of an incomplete trailing token or private-key block an output redactor holds back; past it the held part is released masked ({@link createOutputRedactor}). 8 KiB. */
+export const OUTPUT_REDACTION_HOLD_LIMIT_CHARS = 8_192
+
+/** The characters kept back when an over-long run shows no secret shape is released, so a secret marker cut by the release is still seen whole ({@link createOutputRedactor}). */
+export const OUTPUT_REDACTION_CARRY_CHARS = 16

@@ -2,6 +2,7 @@ import type { DebugProtocol } from '@vscode/debugprotocol'
 import { z } from 'zod'
 
 import {
+  REDACTION_MASK,
   REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
   REPLAY_DEBUG_MAX_DEPTH,
   REPLAY_DEBUG_MAX_FRAMES,
@@ -15,6 +16,8 @@ import {
 } from '../replayDebugSchemas'
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 
+import { isSecretName } from './isSecretName'
+import { redactSecretText } from './redactSecretText'
 import { shouldCaptureReplayScope } from './shouldCaptureReplayScope'
 
 const scopeResponse = z.object({
@@ -156,14 +159,19 @@ export async function captureReplayDebugSnapshot(
             unavailable: 'Historical variable count limit reached.',
           }
         const index = snapshot.variables.length
+        // Redaction contract: a secret-named variable keeps its name and type but reads [masked], and its subtree is neither read nor saved; any other value is masked only where it looks like a credential. Masking comes before shortening.
+        const isSecretVariable = isSecretName(variable.name)
         const saved: ReplayDebugSnapshot['variables'][number] = {
-          name: shorten(variable.name),
-          value: shorten(variable.value),
+          name: shorten(redactSecretText(variable.name)),
+          value: isSecretVariable
+            ? REDACTION_MASK
+            : shorten(redactSecretText(variable.value)),
           type: variable.type && shorten(variable.type),
           children: [],
         }
         snapshot.variables.push(saved)
         variables.push(index)
+        if (isSecretVariable) continue
         const nested = await captureVariables(
           variable.variablesReference,
           depth + 1,

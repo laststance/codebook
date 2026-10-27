@@ -511,6 +511,16 @@ A configured Study retains one article item with its ordered participant-specifi
 
 The run resource's `operationProgress` distinguishes accepted input from `inputDispatched`, `inputAcknowledged`, exact `continuedPause` and `afterVerified`; these transitions also invalidate older saved checkpoints. Study reports observation history and recording persistence separately. **Observation saved** does not certify **Recording saved**. A recording-context failure offers **Retry storage / refresh** without repeating application input. After restart, recording stays unverified until its saved evidence is opened and validated.
 
+## Masked values
+
+Codebook masks credentials before a browser or test run's values reach the chat, a saved history or the Output › Codebook channel. A masked value reads `[masked]`.
+
+- **Masked by name.** A variable, property or header whose name ends in the word `password`, `passwd`, `secret`, `token`, `authorization`, `cookie`, `credential` or `session` (plural too), or in `api key` or `private key`, is masked together with everything inside it. Names are read as words in camelCase, snake_case and kebab-case: `accessToken`, `db_passwd`, `set-cookie`, `apiKey` and `privateKey` are masked; `tokenCount`, `sortKey`, `passwordPolicy` and `sessionId` stay visible.
+- **Masked by shape.** In any captured text, a password in a URL (`postgres://app:[masked]@db`; the user name stays), a JWT, a `Bearer` token, an `sk-` key, a `ghp_` or `github_pat_` token, an `AKIA` access key and a private-key block (`-----BEGIN … PRIVATE KEY-----` to its end) are replaced. Test output and errors are masked the same way, also when a secret arrives split across chunks, before any text is cut or stored.
+- **Not masked.** Codebook has no detector for secret content: a secret held in a plainly named variable or printed as ordinary text stays visible. Public keys and certificates stay visible.
+- **The native debugger is unchanged.** It is the editor's own and still shows you the real values.
+- **Updating.** Values captured after this update may read `[masked]` where they showed a real value before. Studies and replays saved earlier are not rewritten.
+
 ## Study workspace
 
 Codebook contributes `debug.focusEditorOnBreak: false` as the native debugger default, so a breakpoint can select its source and values without moving the keyboard out of the chat. This default applies to native debugging throughout editors where Codebook is enabled. At a stop Codebook did not cause (a step or a continue of yours, a refresh of the debug adapter, or a debug session that is not a Codebook run), Codebook gives the paused file the keyboard once, where the editor would without this default: only at the frame the editor's own stop handling focuses, or when the editor opens that frame's source for the stop. A stop the editor keeps in the background, or one at which it focuses no frame (every frame skipped as library code), moves the keyboard nowhere. Codebook also does nothing while a recording is open or when you set the setting yourself. Existing explicit User and Workspace preferences take precedence; Codebook writes no settings file. Set `debug.focusEditorOnBreak` to `true` in the ordinary editor settings if you prefer the debugger to focus source at a break. Disabling or removing Codebook removes its default contribution.
