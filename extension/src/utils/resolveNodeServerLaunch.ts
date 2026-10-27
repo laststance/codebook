@@ -48,6 +48,23 @@ async function realPathOrNothing(path: string): Promise<string | undefined> {
 }
 
 /**
+ * Says whether a path is a file or a folder now; a path removed since its real path was read is neither, so the refusal names it instead of a raw error.
+ * @param path - A real path.
+ * @param kind - The kind it must be.
+ * @returns `true` when the path is of that kind.
+ * @example await isEntryOfKind('/repo/apps/api', 'folder') // => true
+ */
+async function isEntryOfKind(
+  path: string,
+  kind: 'file' | 'folder',
+): Promise<boolean> {
+  const entry = await stat(path).catch(() => undefined)
+  return kind === 'file'
+    ? Boolean(entry?.isFile())
+    : Boolean(entry?.isDirectory())
+}
+
+/**
  * Says whether a real path is the folder itself or lies below it.
  * @param folder - The folder's real path.
  * @param realPath - The real path to place.
@@ -164,7 +181,7 @@ async function resolveTsxLoader(
   if (
     !loader ||
     !isInsideFolder(workspace, loader) ||
-    !(await stat(loader)).isFile()
+    !(await isEntryOfKind(loader, 'file'))
   )
     throw refusal(
       `node-server's tsx for ${declaredPackageRoot} (${installedName}) exports no loader file inside the repository as "." for import; install the repository's dependencies again.`,
@@ -196,7 +213,7 @@ export async function resolveNodeServerLaunch(
   if (
     !packageRoot ||
     !isFolderOrInside(workspace, packageRoot) ||
-    !(await stat(packageRoot)).isDirectory()
+    !(await isEntryOfKind(packageRoot, 'folder'))
   )
     throw refusal(
       `node-server's packageRoot ${configuration.packageRoot} is not a folder inside the opened repository by its real path.`,
@@ -205,7 +222,7 @@ export async function resolveNodeServerLaunch(
   if (
     !entry ||
     !isInsideFolder(packageRoot, entry) ||
-    !(await stat(entry)).isFile()
+    !(await isEntryOfKind(entry, 'file'))
   )
     throw refusal(
       `node-server's entry ${configuration.entry} is not a file inside packageRoot ${configuration.packageRoot} by its real path.`,

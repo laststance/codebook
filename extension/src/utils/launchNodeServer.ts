@@ -40,10 +40,14 @@ export type NodeServerExit = {
  * @param workspace - The repository's real root.
  * @param path - A real path inside it.
  * @returns The sanitized path.
- * @example journalPath('/repo', '/repo/apps/api/src/server.ts') // => '<workspace>/apps/api/src/server.ts'
+ * @example
+ * journalPath('/repo', '/repo/apps/api/src/server.ts') // => '<workspace>/apps/api/src/server.ts'
+ * journalPath('/repo', '/repo')                          // => '<workspace>'
  */
 function journalPath(workspace: string, path: string): string {
-  return `<workspace>/${repositoryPosixPath(workspace, path)}`
+  const inside = repositoryPosixPath(workspace, path)
+  // The repository root itself reads as the bare placeholder.
+  return inside === '.' ? '<workspace>' : `<workspace>/${inside}`
 }
 
 /**

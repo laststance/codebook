@@ -6,8 +6,8 @@ import { isSecretPath } from './isSecretPath'
 import { redactSecretText } from './redactSecretText'
 
 /**
- * Applies the redaction contract to one browser inspection value before it is saved as a fact.
- * Why: a value under a secret-named step must never reach the chat or a saved history; called by {@link inspectConfiguredValues} for each available value.
+ * Applies the redaction contract to one inspected value before it is saved as a fact.
+ * Why: a value under a secret-named step must never reach the chat or a saved history; called by {@link inspectConfiguredValues} for each available browser value and by {@link inspectNodeTestVariables} for each node-test display.
  * @param inspection - The declared inspection (its mode and path).
  * @param data - The captured value.
  * @returns
@@ -17,10 +17,12 @@ import { redactSecretText } from './redactSecretText'
  * @example
  * redactInspectedValue({ path: 'form.password', mode: 'value' }, 'hunter2') // => '[masked]'
  */
-export function redactInspectedValue(
+export function redactInspectedValue<
+  Value extends ConfiguredObservation['values'][string],
+>(
   inspection: Pick<RepositoryInspection, 'mode' | 'path'>,
-  data: ConfiguredObservation['values'][string],
-): ConfiguredObservation['values'][string] {
+  data: Value,
+): Value | string {
   // A type name, null and an object marker are not secret values.
   if (inspection.mode !== 'value' || data === null || typeof data === 'object')
     return data

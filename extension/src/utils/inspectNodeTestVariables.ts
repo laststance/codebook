@@ -5,14 +5,12 @@ import {
   DEBUGGER_PROXY_TARGET_NAME,
   NODE_TEST_FACT_TYPE_LIMIT_CHARS,
   NODE_TEST_MODULE_BINDING_NAME,
-  REDACTION_MASK,
   REPOSITORY_LITERAL_LIMIT_CHARS,
 } from '../constants'
 import type { RepositoryInspection } from '../repositoryConfigSchemas'
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 
-import { isSecretPath } from './isSecretPath'
-import { redactSecretText } from './redactSecretText'
+import { redactInspectedValue } from './redactInspectedValue'
 import type {
   ModuleDeclarationBinding,
   SourceImports,
@@ -77,11 +75,9 @@ export async function inspectNodeTestVariables(
     const rawDisplay =
       inspection.mode === 'type' ? variable?.type : variable?.value
     const display =
-      rawDisplay === undefined || inspection.mode === 'type'
-        ? rawDisplay
-        : isSecretPath(inspection.path)
-          ? REDACTION_MASK
-          : redactSecretText(rawDisplay)
+      rawDisplay === undefined
+        ? undefined
+        : redactInspectedValue(inspection, rawDisplay)
     if (
       !variable ||
       !display ||

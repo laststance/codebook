@@ -126,7 +126,7 @@ test('an owned server announces its loopback inspector, answers after release an
     assert.deepEqual(startFacts, {
       pid: server.pid,
       args: ['--inspect-brk=127.0.0.1:0', '<workspace>/server.cjs'],
-      cwd: '<workspace>/.',
+      cwd: '<workspace>',
       loader: 'node',
       nodeVersion: process.versions.node,
       secretEnvironmentInherited: false,

@@ -25,7 +25,7 @@ const PREFIXED_KEYS = [
 
 /**
  * Replaces secret-looking values in text with {@link REDACTION_MASK}: URL userinfo passwords, JWTs, Bearer tokens, `sk-`, `ghp_`, `github_pat_` and `AKIA` keys, and private-key PEM blocks.
- * Why: the redaction contract keeps credentials out of chat, history and logs; called by {@link createOutputRedactor}, {@link redactSecretValue}, {@link sanitizeCause} and {@link formatCodebookDiagnostic}. It detects these shapes only, never a secret in plain text.
+ * Why: the redaction contract keeps credentials out of chat, history and logs; called by {@link createOutputRedactor}, {@link redactInspectedValue}, {@link sanitizeCause} and {@link formatCodebookDiagnostic}. It detects these shapes only, never a secret in plain text.
  * @param text - Any captured text.
  * @returns The text with every match replaced; unchanged when nothing matches.
  * @example
