@@ -405,6 +405,13 @@ for (const [rebuild, shown] of [
         READER_RESULT_BOUND_MS,
       )
 
+      // The editor's late report may come after the landing: it runs at the next layout read or its timer.
+      await waitUntil(
+        () => harness.lateGroupReportsWaiting() === 0,
+        'the editor’s late group report has run',
+        READER_RESULT_BOUND_MS,
+      )
+
       // Assert: the editor's late report reached its live group model (the premise), and the open was not refused.
       assert.equal(harness.lateGroupActivationsReported(), 1)
       assert.deepEqual(

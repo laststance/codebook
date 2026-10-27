@@ -6079,12 +6079,6 @@ export async function workspaceHarness(
       activatesApplicationGroupLateAfterReveal = true
     },
     /**
-     * Makes the fake editor report the group `workbench.action.newGroupAbove` made active only after the command answered, as Cursor activates a new group late (N55-F4 hypothesis H2-b, row 650).
-     * @param delayMs - How long after the command the report comes; omitted for the editor's usual short delay.
-     * @example harness.activateNewGroupLateAfterInsertion()
-     * @example harness.activateNewGroupLateAfterInsertion(600) // later than the preparation's wait
-     */
-    /**
      * Counts the late group activations the fake editor reported to a group of its live model; a report whose group is no longer in the model is dropped and not counted.
      * @returns How many late activations reached a live group so far.
      * @example harness.lateGroupActivationsReported() // => 1 after activateNewGroupLateAfterInsertion and one Application group insertion
@@ -6096,6 +6090,12 @@ export async function workspaceHarness(
      * @example harness.lateGroupReportsWaiting() // => 0 once the editor's late report has run
      */
     lateGroupReportsWaiting: () => pendingLateGroupActivations.length,
+    /**
+     * Makes the fake editor report the group `workbench.action.newGroupAbove` made active only after the command answered, as Cursor activates a new group late (N55-F4 hypothesis H2-b, row 650).
+     * @param delayMs - How long after the command the report comes; omitted for the editor's usual short delay.
+     * @example harness.activateNewGroupLateAfterInsertion()
+     * @example harness.activateNewGroupLateAfterInsertion(600) // later than the preparation's wait
+     */
     activateNewGroupLateAfterInsertion(delayMs?: number): void {
       activatesNewGroupLateAfterInsertion = true
       newGroupActivationDelayMs = delayMs
