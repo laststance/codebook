@@ -105,3 +105,20 @@ test('the home folder and a file-system root are never watched', () => {
   // Assert
   assert.deepEqual(folders, [undefined, undefined, undefined])
 })
+
+// Value: protects=a project opened at the home folder whose .codebook exists: the watcher stands on .codebook, never on the home folder the project root names; fails_when=the project-root preference ignores the home-folder rule and watches the home folder recursively; why_new=Cycle 0056 task 33 added the project-root preference, and the home-folder test only covers a nearest folder that is the home folder itself; seam=the pure function; no_claim=the editor's watcher
+test('a project at the home folder is watched from the existing .codebook below it, not from the home folder', () => {
+  // Arrange
+  const choice = {
+    projectRoot: HOME,
+    outputDirectory: `${HOME}/.codebook/wiki`,
+    nearestExistingFolder: `${HOME}/.codebook`,
+    homeDirectory: HOME,
+  }
+
+  // Act
+  const folder = chooseWikiWatchFolder(choice)
+
+  // Assert
+  assert.equal(folder, '/Users/ada/.codebook')
+})

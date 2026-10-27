@@ -4399,6 +4399,56 @@ for (const dropped of [
   })
 }
 
+// Value: protects=a Learning summary message that is no choice (the view's ready report) arriving after Close Study Workspace is dropped without a notification or an Output › Codebook entry; fails_when=the drop notice is raised for every dropped message instead of the learner's choices (history, node-history, tab, select), so each stale report tells the learner a choice was not carried out; why_new=the task 17 tests send only a node-history choice, so a notice for any dropped message would pass them; seam=workspaceHarness, the Learning summary view's listener, the harness's information messages, the diagnostics log; no_claim=the notification's look in the editor
+test('a Learning summary report that is no choice is dropped after Close Study Workspace without telling the learner', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  try {
+    const history = await openByOpenReplay(harness)
+    const revision = lastView(harness)!.revision
+    await harness.reader.close()
+    const noticesBefore = harness.informationMessages.length
+
+    // Act
+    harness.receive({ type: 'ready' })
+    // A later choice is told, so the wait below ends only after the ready report was handled.
+    harness.receive({
+      type: 'node-history',
+      revision,
+      studyId: history.studyId,
+      openRequest: 9,
+    })
+    await waitUntil(
+      () => harness.openRequestReplies().length === 1,
+      'the Learning summary gets the reply to its dropped choice',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        newNotices: harness.informationMessages
+          .slice(noticesBefore)
+          .map((notice) => notice.message),
+        entries: logged.map((entry) => entry.surface),
+      },
+      {
+        newNotices: [
+          'Codebook did not carry out your choice: the Study workspace is closed. Open Study Workspace, then choose it again.',
+        ],
+        entries: ['choice:dropped'],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=an Application group the editor reports active later than the preparation's 150 ms wait: the open is refused with a report of the late activation, never a half-arranged reader; fails_when=the open succeeds with no report or ends in another failure, or the report no longer lists the group change the late activation caused (local open-code-review OCR-L2, Cycle 0056 pt3); why_new=task 17's test pinned only a report that arrives within the bound; seam=workspaceHarness with activateNewGroupLateAfterInsertion(600), the diagnostics log; no_claim=that Cursor ever reports later than the bound (N56 on 5b39b767 and 02acefaa: 13 opens, no refusal)
 test('a test replay whose Application group the editor activates after the preparation’s wait is refused with a placement report', async () => {
   // Arrange
