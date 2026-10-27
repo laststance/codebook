@@ -492,10 +492,12 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
 
   private async classifyAndReport(stop: NativeStop): Promise<void> {
     const session = this.active.get(stop.sessionId)
-    // Only the bound session's pauses are the run's; a child session's stop is not reported.
-    if (!session || this.releaseBegun || session.id !== this.bound?.session.id)
-      return
-    const trace = await this.readStack(session, stop)
+    // Only the bound session's pauses are the run's; a child session's stop is not reported. A stop after the release began is reported too, so the run can end the group before the detach resumes it.
+    if (!session || session.id !== this.bound?.session.id) return
+    // Once the release began the stack is not read (its requests are aborted): the pause is reported as no declared stop.
+    const trace = this.releaseBegun
+      ? { stackFrames: [] }
+      : await this.readStack(session, stop)
     // A stop whose thread ran on while its stack was read is no pause any more, even if the thread stopped again since.
     if (!this.unreportedStops.has(stop.token)) return
     const frame = trace.stackFrames[0]

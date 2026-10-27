@@ -1476,3 +1476,129 @@ test('the response sanitizer keeps the body text apart from the workspace root',
     '{"name":"Mary  Jane"}\na,b\n1,2\nError: at <workspace>/x\n',
   )
 })
+
+// ---------------------------------------------------------------- Cycle 0058: a pause during the detach, the leader's start, a continue while stopping
+
+/** Waits until the debugger's release has been called this many times (a detach is under way when it is held by `releaseGate`). */
+function releaseCalls(harness: Harness, count: number): Promise<void> {
+  return waitUntil(
+    () =>
+      harness.order.filter((step) => step === 'debugger.release').length >=
+        count || undefined,
+    `${count} debugger release calls`,
+    1_000,
+  ).then(() => undefined)
+}
+
+// protects=D14 v3 / task 4: a pause the debugger reports while a stop's detach is under way is ended by SIGKILL at once, not resumed by the detach to run until SIGTERM, and the run journals it with the pid; fails_when=the group is signalled only after the detach (or never before SIGTERM), or the event is missing; no_claim=the real adapter's timing (the debugger test covers that it reports the stop)
+test('a pause reported during the detach of a first stop kills the group before the detach settles', async () => {
+  // Arrange
+  const harness = await readyHarness()
+  const detach = defer<void>()
+  harness.debug.releaseGate = detach.promise
+  const stopping = harness.run.stop()
+  await releaseCalls(harness, 1)
+  // Act
+  harness.debug.learnerPause()
+  const signalsBeforeDetachSettled = [...harness.calls.signals]
+  detach.resolve()
+  await stopping
+  // Assert
+  assert.deepEqual(signalsBeforeDetachSettled, [[4242, 'SIGKILL']])
+  assert.deepEqual(
+    harness.events.filter((event) => event.type.endsWith('late-pause-killed')),
+    [{ type: 'node-server.late-pause-killed', detail: { pid: 4242 } }],
+  )
+})
+
+/** Fails a stop with no request under way (so the retry takes the detach path), then holds the retry's detach; returns what a test needs to move on. */
+async function retryHoldingItsDetach(harness: Harness) {
+  const first = rejectsWith(harness.run.stop(), 'RUNTIME_FAILED')
+  harness.clock.advance(10_000)
+  await first
+  const detach = defer<void>()
+  harness.debug.releaseGate = detach.promise
+  const retry = harness.run.stop()
+  void retry.catch(() => undefined)
+  await releaseCalls(harness, 2)
+  return { detach, retry }
+}
+
+// protects=task 4 on a retried stop: the late-pause SIGKILL follows the identity check, so it is sent as soon as the group reads as the launched one; fails_when=the retry's pause is not ended, or ended before the group was confirmed; no_claim=the close's own SIGTERM sequence
+test('a pause reported during the detach of a retried stop kills the group once it is confirmed as the launched one', async () => {
+  // Arrange
+  const harness = await readyHarness({ holdClose: true })
+  const { detach, retry } = await retryHoldingItsDetach(harness)
+  // Act
+  harness.debug.learnerPause()
+  await waitUntil(
+    () => harness.calls.signals.length === 1 || undefined,
+    'the late SIGKILL',
+    1_000,
+  )
+  detach.resolve()
+  harness.server.closeGate.resolve()
+  await retry
+  // Assert
+  assert.deepEqual(harness.calls.signals, [[4242, 'SIGKILL']])
+})
+
+// protects=task 4 on a retried stop: a group that cannot be confirmed as the launched one receives nothing, and the stop is not failed by the late pause itself; fails_when=an unverifiable group is signalled; no_claim=the stop's failure path (the retried-stop tests)
+test('a pause reported during the detach of a retried stop sends no signal to a group that cannot be confirmed', async () => {
+  // Arrange
+  const harness = await readyHarness({ holdClose: true })
+  const { detach, retry } = await retryHoldingItsDetach(harness)
+  harness.calls.leader.start = undefined
+  harness.calls.leader.cwd = undefined
+  // Act
+  harness.debug.learnerPause()
+  await new Promise((resolve) => setImmediate(resolve))
+  detach.resolve()
+  harness.server.closeGate.resolve()
+  await retry
+  // Assert
+  assert.deepEqual(harness.calls.signals, [])
+  assert.deepEqual(
+    harness.events.filter((event) => event.type.endsWith('late-pause-killed')),
+    [],
+  )
+})
+
+// protects=task 3: a leader start that could not be read at launch is read again before the attach and recorded for the orphan sweep; fails_when=the run records nothing (the sweep could never match it) or only the first read is tried; no_claim=the real ps read
+test('a leader start that failed at the launch is read again before the attach and recorded', async () => {
+  // Arrange
+  const harness = createHarness({ leaderStartReads: [undefined] })
+  // Act
+  await harness.run.prepare()
+  // Assert
+  assert.equal(harness.calls.remembered[0]?.leaderStartedAt, 'start-1')
+})
+
+// protects=task 9: a continue while the run is stopping is a historical pause even when the learner's pause is still held; fails_when=the held pause answers LEARNER_PAUSED to a run that is already ending; no_claim=the other cells of the state × call table (their own tests)
+test('a continue while the run is stopping with the learner pause held is STALE_PAUSE', async () => {
+  // Arrange
+  const harness = await readyHarness({ holdClose: true })
+  await sendRequest(harness)
+  harness.debug.learnerPause()
+  await until(harness, (view) => view.state === 'learner-paused')
+  const stopping = harness.run.stop()
+  void stopping.catch(() => undefined)
+  await waitUntil(
+    () => harness.server.closeCalls === 1 || undefined,
+    'the close to begin',
+    1_000,
+  )
+  // Act
+  const error = await rejectsWith(
+    harness.run.continue({
+      sessionId: 'session-1',
+      threadId: 1,
+      generation: 1,
+    }),
+    'STALE_PAUSE',
+  )
+  harness.server.closeGate.resolve()
+  await stopping
+  // Assert
+  assert.match(error.message, /stopping or stopped/)
+})

@@ -61,7 +61,6 @@ test('a matching orphan group gets SIGTERM then SIGKILL when it stays, and one p
   const closed = await reapNodeServerOrphans({
     store,
     readProcessStart: async () => RECORD.leaderStartedAt,
-    readProcessCwd: async () => RECORD.cwd,
     signalGroup: (group, signal) => signals.push(`${signal}:${group}`),
     isGroupGone: () => false,
     log: (line) => lines.push(line),
@@ -86,7 +85,6 @@ test('an orphan group that exits after SIGTERM receives no SIGKILL', async () =>
   await reapNodeServerOrphans({
     store,
     readProcessStart: async () => RECORD.leaderStartedAt,
-    readProcessCwd: async () => RECORD.cwd,
     signalGroup: (group, signal) => {
       signals.push(`${signal}:${group}`)
       gone = true
@@ -113,7 +111,6 @@ test('records whose leader start or folder differs or is gone are dropped withou
   const closed = await reapNodeServerOrphans({
     store,
     readProcessStart: async (pid) => starts.get(pid),
-    readProcessCwd: async () => RECORD.cwd,
     signalGroup: (group, signal) => signals.push(`${signal}:${group}`),
     isGroupGone: () => true,
     log: () => undefined,
@@ -125,23 +122,33 @@ test('records whose leader start or folder differs or is gone are dropped withou
   assert.equal(store.value, undefined)
 })
 
-// protects=same start but another folder is not our server; fails_when=the folder is not compared; no_claim=none
-test('a record whose process runs in another folder is dropped without any signal', async () => {
+// protects=the sweep follows the run's identity rule: a leader with the recorded start time is the launched server whatever its folder, and its group is closed; fails_when=a server that changed its folder keeps running because the folder differs; no_claim=how the folder was read before this rule
+test('a record whose leader has the recorded start in another folder is closed', async () => {
   // Arrange
   const store = memento([RECORD])
   const signals: string[] = []
+  const lines: string[] = []
+  let groupGone = false
   // Act
-  await reapNodeServerOrphans({
+  const closed = await reapNodeServerOrphans({
     store,
     readProcessStart: async () => RECORD.leaderStartedAt,
-    readProcessCwd: async () => '/elsewhere',
-    signalGroup: (group, signal) => signals.push(`${signal}:${group}`),
-    isGroupGone: () => true,
-    log: () => undefined,
+    signalGroup: (group, signal) => {
+      signals.push(`${signal}:${group}`)
+      groupGone = true
+    },
+    isGroupGone: () => groupGone,
+    readOwnProcessGroup: async () => 1,
+    log: (line) => lines.push(line),
     graceMs: 50,
   })
   // Assert
-  assert.deepEqual(signals, [])
+  assert.equal(closed, 1)
+  assert.deepEqual(signals, ['SIGTERM:4242'])
+  assert.equal(store.value, undefined)
+  assert.deepEqual(lines, [
+    'Closed a server left running by an earlier window (pid 4242, declared port 4100).',
+  ])
 })
 
 // protects=a damaged store never signals or throws; fails_when=malformed entries are used or crash activation; no_claim=VS Code's storage
@@ -157,7 +164,6 @@ test('malformed stored records are dropped, valid ones kept for judgement', asyn
   const closed = await reapNodeServerOrphans({
     store,
     readProcessStart: async () => RECORD.leaderStartedAt,
-    readProcessCwd: async () => RECORD.cwd,
     signalGroup: (group, signal) => signals.push(`${signal}:${group}`),
     isGroupGone: () => true,
     log: () => undefined,
@@ -201,7 +207,6 @@ test('a record whose reader throws does not stop the sweep of the next record', 
       if (pid === 4242) throw new Error('ps failed')
       return RECORD.leaderStartedAt
     },
-    readProcessCwd: async () => RECORD.cwd,
     signalGroup: (group, signal) => signals.push(`${signal}:${group}`),
     isGroupGone: () => true,
     readOwnProcessGroup: async () => 1,
@@ -223,7 +228,6 @@ test('a record written during the sweep is kept when the sweep finishes', async 
   await reapNodeServerOrphans({
     store,
     readProcessStart: async () => RECORD.leaderStartedAt,
-    readProcessCwd: async () => RECORD.cwd,
     signalGroup: () => {
       // A run starts while the orphan is being closed.
       store.value = [...(store.value as unknown[]), live]
@@ -249,7 +253,6 @@ test("a record whose group is not led by its pid, or is the editor's own group, 
   const closed = await reapNodeServerOrphans({
     store,
     readProcessStart: async () => RECORD.leaderStartedAt,
-    readProcessCwd: async () => RECORD.cwd,
     signalGroup: (group, signal) => signals.push(`${signal}:${group}`),
     isGroupGone: () => true,
     readOwnProcessGroup: async () => 5555,
@@ -276,7 +279,6 @@ async function sweepRecord(
   const closed = await reapNodeServerOrphans({
     store,
     readProcessStart: async () => RECORD.leaderStartedAt,
-    readProcessCwd: async () => RECORD.cwd,
     signalGroup: (group, signal) => signals.push(`${signal}:${group}`),
     isGroupGone: () => false,
     readOwnProcessGroup: async () => 1,
@@ -324,22 +326,31 @@ test('a different start time drops the record without a signal even when the gro
   assert.equal(swept.store.value, undefined)
 })
 
-// protects=a server whose folder changed or could not be read keeps its record; fails_when=the record is dropped while the group still runs, or the group is signalled unverified; no_claim=why the folder differs
-test('a matching start with an unconfirmed folder keeps the record and signals nothing', async () => {
-  // Arrange / Act
-  const changed = await sweepRecord({
-    readProcessCwd: async () => '/elsewhere',
-  })
-  const unreadable = await sweepRecord({
-    readProcessCwd: async () => undefined,
-  })
+// protects=a record kept because its leader cannot be verified is shown in Output at every sweep with its pid and port and stays in the store, and nobody is signalled; fails_when=the record is aged out, the sweep is silent, or a member is signalled; no_claim=which members remain
+test('a record kept as unverifiable is reported at each sweep with its pid and port', async () => {
+  // Arrange
+  const store = memento([RECORD])
+  const lines: string[] = []
+  const signals: string[] = []
+  const sweep = () =>
+    reapNodeServerOrphans({
+      store,
+      readProcessStart: async () => undefined,
+      signalGroup: (group, signal) => signals.push(`${signal}:${group}`),
+      isGroupGone: () => false,
+      readOwnProcessGroup: async () => 1,
+      log: (line) => lines.push(line),
+      graceMs: 20,
+    })
+  // Act
+  await sweep()
+  await sweep()
   // Assert
-  assert.deepEqual(changed.signals, [])
-  assert.deepEqual(changed.store.value, [RECORD])
-  assert.deepEqual(unreadable.signals, [])
-  assert.deepEqual(unreadable.store.value, [RECORD])
-  assert.deepEqual(changed.lines, [
-    'Could not confirm a server left running by an earlier window (pid 4242, declared port 4100); it was not signalled and its record is kept.',
+  assert.deepEqual(signals, [])
+  assert.deepEqual(store.value, [RECORD])
+  assert.deepEqual(lines, [
+    'A server group left by an earlier window has no verifiable leader, but its members remain (pid 4242, declared port 4100); Codebook did not signal processes it cannot identify.',
+    'A server group left by an earlier window has no verifiable leader, but its members remain (pid 4242, declared port 4100); Codebook did not signal processes it cannot identify.',
   ])
 })
 

@@ -10,7 +10,7 @@ export type Outcome = ErrorCode | 'accepted'
  *
  * - start (a new key): `BUSY` while any run still owns resources (every state but stopped); accepted once the run is stopped.
  * - http-request (a new key): the order is LEARNER_PAUSED (the learner holds the server: learner-paused, unattributed), then REQUEST_ALREADY_SENT (a request went out: in flight, paused, responded, request-failed, and a stopping or stopped run that sent one), then RUN_NOT_READY (preparing; a run that never sent and is ending). Only `ready` accepts.
- * - continue (the current arguments when the run is paused, otherwise the arguments of the earlier pause): LEARNER_PAUSED first; then STALE_PAUSE for a run that is ending or ended (every pause is historical); then NO_PAUSE when the server is not paused at a declared stop (preparing, ready, in flight, responded, request-failed). Only `paused` accepts.
+ * - continue (the current arguments when the run is paused, otherwise the arguments of the earlier pause): STALE_PAUSE first for a run that is ending or ended (every pause is historical, also while the learner's pause is still held: Cycle 0058, `ownedNodeServerRun.test.ts`); then LEARNER_PAUSED (the learner holds the server); then NO_PAUSE when the server is not paused at a declared stop (preparing, ready, in flight, responded, request-failed). Only `paused` accepts.
  * - stop: accepted in every state (idempotent; it cancels a preparation, releases a live run, retries a failed stop and answers the stopped run).
  * - the same key and arguments replay the stored receipt in every state: for start in every row; for http-request in every row after the request went out.
  */

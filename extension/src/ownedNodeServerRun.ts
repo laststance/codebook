@@ -223,8 +223,10 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   private stopAdmittedAtMs = 0
   /** How many releases the run has begun; a later one is a retry that must confirm the group before it signals. */
   private releaseAttempts = 0
-  /** The launched leader's start (when readable) and folder, kept for the identity check of a retried stop. */
-  private launchedLeader?: { startedAt?: string; cwd: string }
+  /** The launched leader's start as read after the spawn (read again before the attach when that failed), kept for the identity check of a retried stop. */
+  private launchedStartedAt?: string
+  /** The release that detaches the debugger before it signals (no kill-first), while its close is under way; a pause reported meanwhile ends the group at once. */
+  private detachRelease?: { isRetry: boolean; killed: boolean }
   // Pauses.
   private generation = 0
   private pause?: OwnedPause
@@ -473,10 +475,15 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       (event) => this.onServerOutput(event),
     )
     this.server = server
-    // The launch folder identifies the group from the spawn on; the leader's start time joins it once read, so a stop before that read can still be retried.
-    this.launchedLeader = { cwd: launched.packageRoot }
     this.portClaim = claimOwnedDevelopmentPort(this.input.configuration.port)
     void server.whenExited().then((exit) => this.onServerExit(exit))
+    // The leader's start identifies the group for a retried stop; it is read while the server still waits paused for the debugger, and read again before the attach when this read fails.
+    this.launchedStartedAt =
+      server.pid === undefined
+        ? undefined
+        : await this.dependencies
+            .readProcessStart(server.pid)
+            .catch(() => undefined)
     return server
   }
 
@@ -577,8 +584,9 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     packageRoot: string,
   ): Promise<void> {
     const { pid, processGroup } = this.identityOf(server)
-    const leaderStartedAt = await this.dependencies.readProcessStart(pid)
-    this.launchedLeader = { startedAt: leaderStartedAt, cwd: packageRoot }
+    const leaderStartedAt =
+      this.launchedStartedAt ?? (await this.dependencies.readProcessStart(pid))
+    this.launchedStartedAt = leaderStartedAt
     if (leaderStartedAt === undefined) return
     await this.step('recording the launched process', () =>
       this.dependencies.rememberProcess({
@@ -762,7 +770,11 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   /** A native pause after the entry pause (the debugger's `onPause`). */
   private onDebuggerPause(pause: NodeServerDebuggerPause): void {
     // D14 v3 for a pause that arrives after the stop was admitted: whatever it is (a declared stop, the learner's, inside the request or not), the detach would resume it, so the group is killed first.
-    if (this.lifecycle === 'stopping') this.killFirst = true
+    if (this.lifecycle === 'stopping') {
+      this.killFirst = true
+      // A detach already under way would resume this pause: the group is ended now.
+      this.killDuringDetach()
+    }
     if (this.lifecycle !== 'live') return
     this.generation += 1
     const kind = this.classify(pause)
@@ -922,16 +934,16 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   }
 
   async continue(identity: PauseIdentity): Promise<void> {
-    // A held pause is the learner's: before every other refusal.
-    if (this.heldPauses.size > 0)
-      throw new StudyError('LEARNER_PAUSED', this.learnerPausedText())
-    const pause = this.pause
-    // A run that is ending or ended has only historical pauses (the state × call table).
+    // A run that is ending or ended has only historical pauses, even a held one (the state × call table).
     if (this.lifecycle !== 'live')
       throw new StudyError(
         'STALE_PAUSE',
         'The run is stopping or stopped, so this pause is historical.',
       )
+    // A held pause is the learner's: before every other refusal of a live run.
+    if (this.heldPauses.size > 0)
+      throw new StudyError('LEARNER_PAUSED', this.learnerPausedText())
+    const pause = this.pause
     if (!pause)
       throw new StudyError(
         'NO_PAUSE',
@@ -1312,17 +1324,23 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       // The paused code must not run on: the group dies before the debugger lets go of it.
       if (this.killFirst && (await this.maySignal(server, isRetry)))
         this.dependencies.signalGroup(server.processGroup, 'SIGKILL')
-      await server.close(
-        this.killFirst
-          ? undefined
-          : (): Promise<void> => this.debug?.release() ?? Promise.resolve(),
-        {
-          sinceAdmissionMs: () => this.clock.now() - this.stopAdmittedAtMs,
-          confirmGroup: () => this.confirmLaunchedGroup(server),
-          // An earlier stop may have signalled the group before its close ran (a SIGKILL that failed), so the close checks it from its first signal.
-          retried: isRetry,
-        },
-      )
+      // The detach is under way from here until the close returns: a pause reported meanwhile is killed.
+      if (!this.killFirst) this.detachRelease = { isRetry, killed: false }
+      try {
+        await server.close(
+          this.killFirst
+            ? undefined
+            : (): Promise<void> => this.debug?.release() ?? Promise.resolve(),
+          {
+            sinceAdmissionMs: () => this.clock.now() - this.stopAdmittedAtMs,
+            confirmGroup: () => this.confirmLaunchedGroup(server),
+            // An earlier stop may have signalled the group before its close ran (a SIGKILL that failed), so the close checks it from its first signal.
+            retried: isRetry,
+          },
+        )
+      } finally {
+        this.detachRelease = undefined
+      }
     }
     await this.debug?.release()
     await this.dependencies
@@ -1338,17 +1356,15 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   /**
    * Reads whether the group is still the launched one: the leader's start and folder against the launch's ({@link confirmLaunchedGroup}).
    * @param server - The launched server.
-   * @returns The verdict; `unverifiable` when the launch left no identity or the server has no pid.
+   * @returns The verdict; `unverifiable` when the launch start was never read (a folder alone identifies nothing) or the server has no pid.
    */
   private async confirmLaunchedGroup(
     server: OwnedNodeServer,
   ): Promise<LaunchedGroupVerdict> {
-    const leader = this.launchedLeader
-    if (server.pid === undefined || !leader) return 'unverifiable'
+    if (server.pid === undefined) return 'unverifiable'
     return confirmLaunchedGroup({
       pid: server.pid,
-      startedAt: leader.startedAt,
-      cwd: leader.cwd,
+      startedAt: this.launchedStartedAt,
       leaderExited: server.exited() !== undefined,
       readProcessStart: this.dependencies.readProcessStart,
       readProcessCwd: this.dependencies.readProcessCwd,
@@ -1375,6 +1391,38 @@ class OwnedNodeServerRun implements NodeServerRuntime {
         'The server process group could not be confirmed as the one Codebook started, so it was not signalled again.',
       )
     return verdict === 'launched'
+  }
+
+  /**
+   * Ends the group at once when a pause is reported while a stop's detach (no kill-first) is under way: the detach would resume the paused code and let it run until SIGTERM.
+   * A first release signals unconditionally; a retry signals as soon as the identity check answers `launched` (an unverifiable group receives nothing; the release's own failure path then applies). The close goes on with its own SIGTERM sequence meanwhile.
+   * Called by {@link onDebuggerPause} once per release.
+   */
+  private killDuringDetach(): void {
+    const release = this.detachRelease
+    const server = this.server
+    if (!release || release.killed || server?.processGroup === undefined) return
+    const { pid, processGroup } = server
+    release.killed = true
+    if (!release.isRetry) {
+      this.sendLateKill(pid, processGroup)
+      return
+    }
+    // A retry confirms the group first; a check that fails or cannot tell sends nothing.
+    void this.maySignal(server, true).then(
+      (confirmed) => confirmed && this.sendLateKill(pid, processGroup),
+      () => undefined,
+    )
+  }
+
+  /** Sends SIGKILL to the group for a pause reported during the detach and journals it; a signal the system refuses is left to the close's own sequence. */
+  private sendLateKill(pid: number | undefined, processGroup: number): void {
+    try {
+      this.dependencies.signalGroup(processGroup, 'SIGKILL')
+      this.record('node-server.late-pause-killed', { pid })
+    } catch {
+      // The close still signals the group with SIGTERM and SIGKILL on its own.
+    }
   }
 
   /** D14 v3: a server paused in the debugger (a declared stop, the learner's own pause, or a stop the run has not classified yet), whose request is under way (paused or not: a stop it reaches during the detach would be resumed by it) or whose pause hold expired, is killed before its debugger lets go; a server that is not paused takes Stop v2. */
