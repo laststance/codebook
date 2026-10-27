@@ -129,7 +129,15 @@ test('a real VSIX loads outside the checkout and excludes bundled applications a
   )
   assert.ok(
     [...original.keys()].every(
-      (path) => !/(?:^|\/)(?:demo|fixture|experiments)(?:\/|$)/.test(path),
+      (path) => !/(?:^|\/)(?:demo|fixtures?|experiments)(?:\/|$)/.test(path),
+    ),
+  )
+  // The node-server tests' HTTP server (src/tests/fixtures/node-server) never ships, under any folder name.
+  assert.ok(
+    [...original.keys()].every(
+      (path) =>
+        !path.includes('node-server/server.') &&
+        !path.endsWith('fixture-server.json'),
     ),
   )
   for (const path of COMPILED_DIRECTORIES) {

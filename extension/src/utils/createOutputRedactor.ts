@@ -55,7 +55,7 @@ function holdStart(text: string): number {
 
 /**
  * Makes the stateful redactor of one output channel (stdout or stderr), so a secret split over chunks is still masked before the output is cut, split or saved.
- * Holds back at most {@link OUTPUT_REDACTION_HOLD_LIMIT_CHARS} of an incomplete trailing token or private-key block; past that, a run that may be a secret fails closed (released as {@link REDACTION_MASK}, the rest of that token or block dropped) and a run showing no secret shape is released with a short carry. Called by {@link launchNodeTest} for each channel, before any truncation or event split.
+ * Holds back at most {@link OUTPUT_REDACTION_HOLD_LIMIT_CHARS} of an incomplete trailing token or private-key block; past that, a run that may be a secret fails closed (released as {@link REDACTION_MASK}, the rest of that token or block dropped) and a run showing no secret shape is released with a short carry. Called by {@link captureProcessOutput} for each channel of an owned test or server, before any truncation or event split.
  * @returns A fresh {@link OutputRedactor}; one per channel, never shared.
  * @example
  * const redactor = createOutputRedactor()

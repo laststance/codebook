@@ -1248,6 +1248,16 @@ export const NODE_SERVER_PORT_MAX = 65_535
 export const NODE_SERVER_REQUEST_PATH_LIMIT_CHARS = 2_048
 /** The largest request body, in UTF-8 bytes, a node-server declaration may send. */
 export const NODE_SERVER_REQUEST_BODY_LIMIT_BYTES = 16_384
+/** The most server output delivered but not yet settled; a server printing faster than its events settle fails its capture instead of buffering without bound. */
+export const NODE_SERVER_OUTPUT_PENDING_LIMIT_BYTES = 1_048_576
+/** How long a stopping server's debugger may take to detach before SIGTERM is sent anyway: a server handling SIGTERM waits for an attached debugger before it exits (Part A, Issue #139). */
+export const NODE_SERVER_DEBUGGER_DETACH_TIMEOUT_MS = 1_000
+/** How long a server's process group has after SIGTERM before SIGKILL, and again after SIGKILL before its close fails. */
+export const NODE_SERVER_SHUTDOWN_GRACE_MS = 5_000
+/** How much of an owned process's output is kept: its first bytes for the inspector announcement, its last ones as the redacted tail. */
+export const PROCESS_OUTPUT_LIMIT_BYTES = 32_768
+/** The longest text of one stamped output event of an owned process. */
+export const PROCESS_OUTPUT_EVENT_LIMIT_CHARS = 4_096
 /** The command id of the status item's Save learning replay and its Retry; registered by the extension, run by a click. */
 export const SAVE_LEARNING_REPLAY_COMMAND = 'codebook.saveLearningReplay'
 /** The command id of the status item's Open replay and Open retained history. */
