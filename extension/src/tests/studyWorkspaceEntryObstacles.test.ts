@@ -8689,16 +8689,19 @@ test('the wait for an Application group’s late activation ends at once when it
   // Arrange
   const harness = await workspaceHarness()
   try {
-    const startedAtMs = performance.now()
-
     // Act
-    await harness.reader['waitForLateGroupActivation'](
+    const wait = harness.reader['waitForLateGroupActivation'](
       Symbol('group'),
       AbortSignal.abort(),
+    ).then(() => 'ended' as const)
+    // The next macrotask: a wait that ended at once has settled before it; one that waits for a timer or a report has not.
+    const nextTask = new Promise<'still waiting'>((resolve) =>
+      setImmediate(() => resolve('still waiting')),
     )
 
     // Assert
-    assert.equal(performance.now() - startedAtMs < 50, true)
+    assert.equal(await Promise.race([wait, nextTask]), 'ended')
+    await wait
   } finally {
     await harness.close()
   }
