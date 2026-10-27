@@ -1,9 +1,6 @@
 import { basename } from 'node:path'
 
-import {
-  WIKI_UPDATE_MARKER_CHANGE_RETRY_DELAY_MS,
-  WIKI_UPDATE_RECOVERY_REQUEST,
-} from '../constants'
+import { WIKI_UPDATE_RECOVERY_REQUEST } from '../constants'
 
 import type { WikiAgentExit } from './agentExitOf'
 import { describeWikiGenerateBlock } from './describeWikiGenerateBlock'
@@ -65,6 +62,8 @@ export type LlmWikiViewFactsDependencies = {
   ) => Promise<boolean>
   /** This window's run state. */
   runStatus: () => WikiUpdateStatus
+  /** Whether this window's change of the output's marker (its removal, or its turn into a stopped watch's reservation) is still pending: from the run's end until it is made or given up, retries included. */
+  isMarkerChangePending: (outputDirectory: string) => boolean
   /** Whether a VS Code run still waits for the chat's first sign. */
   isAwaitingChat: () => boolean
   /** How the Cursor agent of this window's last run exited. */
@@ -113,25 +112,23 @@ function sentenceOfBlock(
 }
 
 /**
- * Says whether this window's run ended so recently that its own marker, which still stands as a run's, is being removed or turned into a reservation.
+ * Says whether this window's own marker, which still stands as a run's, is being removed or turned into a reservation after its run ended.
  *
- * Why: a run's end reaches the view before the file work that removes its marker or turns it into the reservation of a stopped watch, so a read in that gap sees neither a run nor a reservation. A change that failed is asked for again after {@link WIKI_UPDATE_MARKER_CHANGE_RETRY_DELAY_MS}; a marker still standing by then (or one with no run of this window behind it) is not settling, so the view shows what the facts say.
+ * Why: a run's end reaches the view before the file work that removes its marker or turns it into the reservation of a stopped watch, and a change that failed waits for its retry, so a read in that time sees neither a run nor a reservation. The change is pending from the turn the run's end is recorded until it is made or given up, and either end makes the view read again; a marker still standing after that is not settling, so the view shows what the facts say.
  * Trigger: {@link readMarkerFacts} asks it for this window's own live marker.
  *
  * @param dependencies - The editor window's closures.
- * @returns `true` when this window's last run ended less than {@link WIKI_UPDATE_MARKER_CHANGE_RETRY_DELAY_MS} ago; `false` while one runs, before any run, and later.
- * @example isOwnMarkerSettling({ ...dependencies, runStatus: () => cancelledAt('2026-10-28T00:00:00.000Z'), now: () => Date.parse('2026-10-28T00:00:01.000Z') }) // => true
+ * @param outputDirectory - The Wiki folder whose marker it is.
+ * @returns `true` while this window has no running run and its change of this marker is pending; `false` while a run runs, and once the change was made or given up.
+ * @example isOwnMarkerSettling({ ...dependencies, runStatus: () => ({ state: 'idle' }), isMarkerChangePending: () => true }, '/repo/.codebook/wiki') // => true
  */
 function isOwnMarkerSettling(
   dependencies: LlmWikiViewFactsDependencies,
+  outputDirectory: string,
 ): boolean {
-  const status = dependencies.runStatus()
-  // A running run's marker is row 2's; with no run of this window the marker is not one its end is changing.
-  if (status.state === 'running' || status.state === 'idle') return false
-  return (
-    dependencies.now() - Date.parse(status.finishedAt) <
-    WIKI_UPDATE_MARKER_CHANGE_RETRY_DELAY_MS
-  )
+  // A running run's marker is row 2's.
+  if (dependencies.runStatus().state === 'running') return false
+  return dependencies.isMarkerChangePending(outputDirectory)
 }
 
 /**
@@ -159,7 +156,9 @@ async function readMarkerFacts(
   if (held.watchEndedAtMs === undefined) {
     // This window's own live marker is row 2's, never "another window".
     if (held.windowId === dependencies.ownWindowId)
-      return isOwnMarkerSettling(dependencies) ? { isMarkerSettling: true } : {}
+      return isOwnMarkerSettling(dependencies, outputDirectory)
+        ? { isMarkerSettling: true }
+        : {}
     return { elsewhere: { kind: held.runKind, startedAtMs: held.startedAtMs } }
   }
   // A start refuses for this reservation only until its own deadline, the same one the start check uses; a live owner process does not extend it.

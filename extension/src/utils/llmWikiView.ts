@@ -250,7 +250,7 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
     treeChanges.fire()
   }
 
-  /** Keeps the poll timer running exactly while the view is shown and a run row is shown, the error row follows a read that showed one, or a message is kept while this window's marker settles (a marker change that failed sends no event, so the poll ends the kept message). */
+  /** Keeps the poll timer running exactly while the view is shown and a run row is shown, or the error row follows a read that showed one. */
   const keepPoll = (): void => {
     if (isDisposed) return
     const isRunShown = model.rows.some((row) =>
@@ -259,10 +259,8 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
     const isErrorShown = model.rows.some(
       (row) => row.id === LLM_WIKI_ERROR_ROW.id,
     )
-    const isMessageKept = shownReadyFacts?.isMarkerSettling === true
     const isPollWanted =
-      isViewVisible &&
-      (isRunShown || isMessageKept || (isErrorShown && wasRunShownBeforeError))
+      isViewVisible && (isRunShown || (isErrorShown && wasRunShownBeforeError))
     if (!isPollWanted) {
       clearInterval(pollTimer)
       pollTimer = undefined

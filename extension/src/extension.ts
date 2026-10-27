@@ -3260,6 +3260,9 @@ export function activate(
           isStartUnderWay: () => wikiStart !== undefined,
           hasPublishEndedWait: hasWikiPublishEndedWait,
           runStatus: () => wikiUpdateRun.status(),
+          // A change is registered in the turn the run's end is recorded, and its end (made or given up) makes the view read again.
+          isMarkerChangePending: (outputDirectory) =>
+            wikiMarkerChanges.has(outputDirectory),
           isAwaitingChat: () => activeWikiRun?.awaitsChat === true,
           lastAgentExit: () => lastWikiAgentExit,
           now: () => Date.now(),

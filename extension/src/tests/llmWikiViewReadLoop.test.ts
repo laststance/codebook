@@ -1457,6 +1457,7 @@ test('the message stays the watching message from the run’s end until the stop
         isStartUnderWay: () => false,
         hasPublishEndedWait: async () => false,
         runStatus: () => status,
+        isMarkerChangePending: () => true,
         isAwaitingChat: () => false,
         lastAgentExit: () => undefined,
         now: () => nowMs,
@@ -1495,80 +1496,153 @@ test('the message stays the watching message from the run’s end until the stop
   ])
 })
 
-// Value: protects=ship review pass 1 on task 13 (the message kept while this window's marker settles never outlives the settle); fails_when=the watching message stays once the marker still stands 10 s after the run's end (its change failed), or only a file or run event would replace it; no_claim=the file work that removes the marker; seam=the real facts reader with this window's own marker held live, a clock the test moves and the view's own poll
-test('the watching message kept after the run’s end gives way by itself when the marker still stands 10 s later', async (context) => {
-  // Arrange
-  let nowMs = 1_790_000_000_000
-  const ownLiveMarker: WikiUpdateMarkerLook = {
+/** The facts reader of a VS Code window whose own Wiki run marker the test holds, with the run state, the pending marker change and the clock under the test's control. */
+function ownMarkerFacts(state: {
+  marker: () => WikiUpdateMarkerLook
+  status: () => WikiUpdateStatus
+  isChangePending: () => boolean
+  nowMs: () => number
+}): () => Promise<LlmWikiViewFacts> {
+  return () =>
+    readLlmWikiViewFacts({
+      host: 'vscode',
+      isFolderOpen: () => true,
+      isTrusted: () => true,
+      wikiLocation: async () => ({
+        projectRoot: WATCHED_PROJECT,
+        outputDirectory: WATCHED_OUTPUT,
+      }),
+      readPublishToken: async () => undefined,
+      readPublication: async () => undefined,
+      findStartBlock: async () => undefined,
+      readGeneration: async () => ({}),
+      isWikiOwnedBy: async () => true,
+      readMarker: async () => state.marker(),
+      ownWindowId: 'this-window',
+      isStartUnderWay: () => false,
+      hasPublishEndedWait: async () => false,
+      runStatus: state.status,
+      isMarkerChangePending: state.isChangePending,
+      isAwaitingChat: () => false,
+      lastAgentExit: () => undefined,
+      now: state.nowMs,
+    })
+}
+
+const RUN_START_MS = 1_790_000_000_000
+
+/** This window's own marker of a generation started a minute before {@link RUN_START_MS} plus 60 s, live, or the reservation a stopped watch left when `watchEndedAtMs` is given. */
+function ownGenerationMarker(watchEndedAtMs?: number): WikiUpdateMarkerLook {
+  return {
     kind: 'live',
     heldBy: {
       pid: 1,
       windowId: 'this-window',
       host: 'vscode',
-      startedAtMs: nowMs - 60_000,
+      startedAtMs: RUN_START_MS,
       runKind: 'generate',
+      ...(watchEndedAtMs === undefined ? {} : { watchEndedAtMs }),
     },
   }
-  let status: WikiUpdateStatus = {
-    state: 'running',
-    host: 'vscode',
-    startedAt: new Date(nowMs - 60_000).toISOString(),
-    timeoutMs: 3_300_000,
-    candidateStaged: false,
-    runKind: 'generate',
-    outputDirectory: WATCHED_OUTPUT,
-    outputLabel: '.codebook/wiki',
-  }
-  const { fake, view } = openView(context, {
-    readFacts: () =>
-      readLlmWikiViewFacts({
-        host: 'vscode',
-        isFolderOpen: () => true,
-        isTrusted: () => true,
-        wikiLocation: async () => ({
-          projectRoot: WATCHED_PROJECT,
-          outputDirectory: WATCHED_OUTPUT,
-        }),
-        readPublishToken: async () => undefined,
-        readPublication: async () => undefined,
-        findStartBlock: async () => undefined,
-        readGeneration: async () => ({}),
-        isWikiOwnedBy: async () => true,
-        readMarker: async () => ownLiveMarker,
-        ownWindowId: 'this-window',
-        isStartUnderWay: () => false,
-        hasPublishEndedWait: async () => false,
-        runStatus: () => status,
-        isAwaitingChat: () => false,
-        lastAgentExit: () => undefined,
-        now: () => nowMs,
-      }),
-  })
-  await view.whenIdle()
-  fake.rows()
-  status = {
+}
+
+const RUNNING_GENERATION: WikiUpdateStatus = {
+  state: 'running',
+  host: 'vscode',
+  startedAt: new Date(RUN_START_MS).toISOString(),
+  timeoutMs: 3_300_000,
+  candidateStaged: false,
+  runKind: 'generate',
+  outputDirectory: WATCHED_OUTPUT,
+  outputLabel: '.codebook/wiki',
+}
+
+/** The cancelled generation of {@link RUNNING_GENERATION}, ended at `endedAtMs`. */
+function cancelledGeneration(endedAtMs: number): WikiUpdateStatus {
+  return {
     state: 'cancelled',
     site: 'kept',
     runKind: 'generate',
     host: 'vscode',
-    finishedAt: new Date(nowMs).toISOString(),
+    finishedAt: new Date(endedAtMs).toISOString(),
     outputDirectory: WATCHED_OUTPUT,
     outputLabel: '.codebook/wiki',
   }
+}
+
+// Value: protects=ship review pass 2 on task 13 (the watching message stays while a failed marker change waits for its retry, so the message never empties between the watching and the stopped-watch message); fails_when=a read more than 10 s after the run's end, while the first change failed and its retry is pending, writes an empty message before the retry turns the marker into the reservation; no_claim=the retry timing; seam=the real facts reader with the marker change's pending state under the test's control
+test('the watching message stays while a failed marker change waits for its retry, then the stopped-watch message replaces it, never empty between', async (context) => {
+  // Arrange
+  const endedAtMs = RUN_START_MS + 60_000
+  const clock = { nowMs: endedAtMs }
+  let status: WikiUpdateStatus = RUNNING_GENERATION
+  let marker = ownGenerationMarker()
+  let isChangePending = false
+  const { fake, view } = openView(context, {
+    readFacts: ownMarkerFacts({
+      marker: () => marker,
+      status: () => status,
+      isChangePending: () => isChangePending,
+      nowMs: () => clock.nowMs,
+    }),
+  })
+  await view.whenIdle()
+  fake.rows()
+  const logBeforeTheEnd = fake.renderLog().length
+
+  // Act
+  // The run ended; the first change of its marker failed and waits for its retry.
+  status = cancelledGeneration(endedAtMs)
+  isChangePending = true
+  await view.refresh()
+  fake.rows()
+  clock.nowMs = endedAtMs + 11_000
+  await view.refresh()
+  fake.rows()
+  // The retry turned the marker into the reservation.
+  marker = ownGenerationMarker(endedAtMs)
+  isChangePending = false
+  await view.refresh()
+  fake.rows()
+
+  // Assert
+  const messageWrites = fake
+    .renderLog()
+    .slice(logBeforeTheEnd)
+    .filter((entry) => entry.startsWith('message:'))
+    .filter((entry, index, writes) => entry !== writes[index - 1])
+  assert.deepEqual(messageWrites, [
+    `message:${WATCHING_MESSAGE}`,
+    `message:${STOPPED_MESSAGE}`,
+  ])
+})
+
+// Value: protects=ship review passes 1 and 2 on task 13 (a kept message never outlives the marker change); fails_when=the watching message stays once Codebook gave up changing its marker (no change pending, the marker still standing); no_claim=the file work that changes the marker; seam=the real facts reader with the marker change's pending state under the test's control
+test('the watching message gives way once the marker change was given up with the marker still standing', async (context) => {
+  // Arrange
+  const endedAtMs = RUN_START_MS + 60_000
+  let status: WikiUpdateStatus = RUNNING_GENERATION
+  let isChangePending = false
+  const { fake, view } = openView(context, {
+    readFacts: ownMarkerFacts({
+      marker: () => ownGenerationMarker(),
+      status: () => status,
+      isChangePending: () => isChangePending,
+      nowMs: () => endedAtMs + 130_000,
+    }),
+  })
+  await view.whenIdle()
+  fake.rows()
+  status = cancelledGeneration(endedAtMs)
+  isChangePending = true
   await view.refresh()
   fake.rows()
   const messageWhileSettling = fake.message()
 
   // Act
-  nowMs += 10_000
-  await waitUntil(
-    () => {
-      fake.rows()
-      return fake.message() !== WATCHING_MESSAGE || undefined
-    },
-    'the view to read again by itself',
-    1_000,
-  ).catch(() => undefined)
+  isChangePending = false
+  await view.refresh()
+  fake.rows()
 
   // Assert
   assert.deepEqual(

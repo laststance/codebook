@@ -36,6 +36,7 @@ function dependencies(
     isStartUnderWay: () => false,
     hasPublishEndedWait: async () => false,
     runStatus: () => ({ state: 'idle' }),
+    isMarkerChangePending: () => false,
     isAwaitingChat: () => false,
     lastAgentExit: () => undefined,
     now: () => NOW_MS,
@@ -220,8 +221,8 @@ test('the receipt is read first, then the start block, the token and the marker 
   )
 })
 
-// protects=task 13 and ship review pass 1: this window's own live marker reads as settling only in the moment after its run ended (until a failed marker change is asked for again), so the view keeps its message for that moment and never for a marker left standing; fails_when=a running run's own marker, one with no run of this window, or one still standing 10 s after the end reads as settling, or one a second after the end does not; why_new=the read loop covers the model message only; seam=none; no_claim=the file work that removes the marker
-test('this window’s own live marker is settling only for 10 s after its run ended, and another window’s marker is elsewhere', async () => {
+// protects=task 13 and ship review passes 1 and 2: this window's own live marker reads as settling exactly while this window's change of that marker (its removal, or its turn into a reservation) is still pending, retries included, so the view keeps its message for that time and never for a marker left standing; fails_when=a running run's own marker, or one whose change was made or given up, reads as settling, or one whose change is pending (also more than 10 s after the run's end) does not; why_new=the read loop covers the model message only; seam=none; no_claim=the file work that changes the marker
+test('this window’s own live marker is settling exactly while its marker change is pending, and another window’s marker is elsewhere', async () => {
   // Arrange
   const ownLive = (windowId: string): WikiUpdateMarkerLook => ({
     kind: 'live',
@@ -250,24 +251,33 @@ test('this window’s own live marker is settling only for 10 s after its run en
     outputDirectory: '/repo/.codebook/wiki',
     outputLabel: '.codebook/wiki',
   }
-  const read = (windowId: string, status: WikiUpdateStatus) =>
+  const pendingFor: string[] = []
+  const read = (
+    windowId: string,
+    status: WikiUpdateStatus,
+    isChangePending: boolean,
+  ) =>
     readLlmWikiViewFacts(
       dependencies({
         readMarker: async () => ownLive(windowId),
         runStatus: () => status,
+        isMarkerChangePending: (outputDirectory) => {
+          pendingFor.push(outputDirectory)
+          return isChangePending
+        },
       }),
     )
 
   // Act
-  const justEnded = await read('this-window', endedAgo(1_000))
-  const endedLongAgo = await read('this-window', endedAgo(10_000))
-  const noRun = await read('this-window', { state: 'idle' })
-  const stillRunning = await read('this-window', running)
-  const otherWindow = await read('other-window', endedAgo(1_000))
+  const justEnded = await read('this-window', endedAgo(1_000), true)
+  const retrying = await read('this-window', endedAgo(60_000), true)
+  const givenUp = await read('this-window', endedAgo(130_000), false)
+  const stillRunning = await read('this-window', running, true)
+  const otherWindow = await read('other-window', endedAgo(1_000), true)
 
   // Assert
   assert.deepEqual(
-    [justEnded, endedLongAgo, noRun, stillRunning, otherWindow].map((facts) =>
+    [justEnded, retrying, givenUp, stillRunning, otherWindow].map((facts) =>
       facts.kind === 'ready'
         ? {
             isMarkerSettling: facts.isMarkerSettling,
@@ -277,10 +287,11 @@ test('this window’s own live marker is settling only for 10 s after its run en
     ),
     [
       { isMarkerSettling: true, elsewhere: undefined },
-      { isMarkerSettling: undefined, elsewhere: undefined },
+      { isMarkerSettling: true, elsewhere: undefined },
       { isMarkerSettling: undefined, elsewhere: undefined },
       { isMarkerSettling: undefined, elsewhere: undefined },
       { isMarkerSettling: undefined, elsewhere: 'update' },
     ],
   )
+  assert.deepEqual(new Set(pendingFor), new Set(['/repo/.codebook/wiki']))
 })
