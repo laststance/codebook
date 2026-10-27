@@ -560,7 +560,7 @@ test('node-server.closed records killed true only when the close sent SIGKILL', 
   assert.equal(killedOf(stubborn.journal), true)
 })
 
-// protects=a retried close whose group is gone when the kill bound arrives sends no SIGKILL and does not record one, and checks the group's identity once; fails_when=the close sends or records a SIGKILL for a group that ended, or checks the identity a second time; no_claim=a real group that ends exactly at the bound
+// protects=a retried close whose group is gone when the kill bound arrives sends no SIGKILL and does not record one; its identity is checked before SIGTERM and again before the kill bound (ship structured review); fails_when=the close sends or records a SIGKILL for a group that ended, or skips the second check; no_claim=a real group that ends exactly at the bound
 test('a retried close whose group has ended by the kill bound sends no SIGKILL and records killed false', async (t) => {
   // Arrange
   const { server, journal } = await launchFixture(t, 'listen')
@@ -583,12 +583,12 @@ test('a retried close whose group has ended by the kill bound sends no SIGKILL a
   })
   // Assert
   assert.deepEqual(signals, ['SIGTERM'])
-  assert.equal(confirmations, 1)
+  assert.equal(confirmations, 2)
   assert.equal(killedOf(journal), false)
 })
 
-// protects=a retried close checks the group's identity once, before SIGTERM, and sends SIGKILL at the kill bound without a second check, so a slow check cannot push SIGKILL past 5 s; fails_when=the identity check runs again at the bound and SIGKILL lands after it; no_claim=the product's 5 s value (a shorter one is named here)
-test('a retried close with a slow identity check calls it once and sends SIGKILL by its kill bound', async (t) => {
+// protects=a retried close checks the group's identity before SIGTERM and again before the kill bound, early enough that a slow check does not push SIGKILL past the bound (Cycle 0057 item 5; ship structured review: a group id reused after SIGTERM is never killed unchecked); fails_when=the second check starts at the bound so SIGKILL lands after it, or SIGKILL goes without a second check; no_claim=the product's 5 s value (a shorter one is named here)
+test('a retried close with a slow identity check confirms the group again and still sends SIGKILL by its kill bound', async (t) => {
   // Arrange
   const { server, port } = await launchFixture(t, 'ignore-sigterm')
   const inspector = await releaseFixture(server, port)
@@ -613,7 +613,7 @@ test('a retried close with a slow identity check calls it once and sends SIGKILL
     },
   })
   // Assert
-  assert.equal(confirmations, 1)
+  assert.equal(confirmations, 2)
   // gstack-timing-ok: SIGKILL by the kill bound counted from the admission is the contract under test; the limit leaves 400 ms over the bound.
   assert.ok(killedAtMs !== undefined && killedAtMs < 1_600, `${killedAtMs}`)
   assert.equal(exit.signal, 'SIGKILL')
@@ -649,4 +649,63 @@ test('a close whose group probe throws at the kill bound sends no SIGKILL and re
   assert.deepEqual(signals, ['SIGTERM'])
   assert.ok(outcome instanceof Error)
   assert.match(outcome.message, /EPERM/)
+})
+
+// protects=a retried close kills only a group its second identity check confirms just before the kill bound (ship structured review, P1): a group whose id another process group took after SIGTERM receives no SIGKILL; fails_when=the close sends SIGKILL at the bound on a group-existence probe alone; no_claim=a real reuse of a process-group id (the check's verdict is named here)
+test('a retried close sends no SIGKILL when the check before the kill bound finds the group replaced', async (t) => {
+  // Arrange
+  const { server, journal } = await launchFixture(t, 'listen')
+  const signals: string[] = []
+  const verdicts: LaunchedGroupVerdict[] = ['launched', 'replaced']
+  // Act
+  const outcome = await server
+    .close(undefined, {
+      killByMs: 300,
+      deadlineMs: 600,
+      retried: true,
+      confirmGroup: async () => verdicts.shift() ?? 'replaced',
+      // The signals are recorded, not sent: the group still has members at the kill bound.
+      signalGroup: (_group, signal) => {
+        signals.push(signal)
+      },
+      isGroupGone: () => false,
+    })
+    .catch((error: unknown) => error)
+  // Assert
+  assert.deepEqual(signals, ['SIGTERM'])
+  assert.ok(!(outcome instanceof Error))
+  assert.equal(killedOf(journal), false)
+})
+
+// protects=the kill bound is never stretched by a second identity check (Cycle 0057 item 5) and SIGKILL never goes unchecked: a check that has not answered by the bound sends nothing and fails the close, so the stop fails retryably; fails_when=the close waits for the check past the bound, or sends SIGKILL without its answer; no_claim=which reader was slow
+test('a retried close whose check before the kill bound has not answered sends no SIGKILL and rejects', async (t) => {
+  // Arrange
+  const { server } = await launchFixture(t, 'listen')
+  const signals: string[] = []
+  let confirmations = 0
+  // Act
+  const outcome = await server
+    .close(undefined, {
+      killByMs: 300,
+      deadlineMs: 600,
+      retried: true,
+      confirmGroup: () => {
+        confirmations += 1
+        return confirmations === 1
+          ? Promise.resolve('launched')
+          : new Promise<LaunchedGroupVerdict>(() => {})
+      },
+      signalGroup: (_group, signal) => {
+        signals.push(signal)
+      },
+      isGroupGone: () => false,
+    })
+    .catch((error: unknown) => error)
+  // Assert
+  assert.deepEqual(signals, ['SIGTERM'])
+  assert.ok(outcome instanceof Error)
+  assert.match(
+    outcome.message,
+    /could not be confirmed as the launched one by the kill bound/,
+  )
 })

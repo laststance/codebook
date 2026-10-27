@@ -495,17 +495,47 @@ test(
     await assert.rejects(debug.release(), /the adapter did not answer/)
     // Act
     await editor.adapter.childStops()
+    // The run hears a stop during the release in the turn it arrives, so the wait is taken first.
+    const nextPause = heard.nextPause()
     editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
       file: STOP_FILE,
       line: 14,
     })
-    const pause = await heard.nextPause()
+    const pause = await nextPause
     // Assert
     assert.equal(pause.sessionId, 'node-server-session')
     assert.equal(pause.reason, 'breakpoint')
     assert.equal(heard.pauses.length, 1)
     assert.equal(debug.hasUnreportedPause(), false)
     await debug.release()
+  },
+)
+
+// protects=Cycle 0058 task 4 (ship Codex adversarial review): a stop the adapter reports while the release is under way reaches the run even when the detach's `continued` follows in the same turn, so the run can end the group; fails_when=the stop waits in the classification queue and the `continued` drops it before the run hears of it; no_claim=the run's reaction (its own test)
+test(
+  'a stop during the release is reported to the run even when a continue follows it at once',
+  { timeout: 10_000 },
+  async () => {
+    // Arrange
+    const stopHeld = defer<void>()
+    const editor = await editorHarness({ stopGate: stopHeld.promise })
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    const releasing = debug.release()
+    // Act
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+      file: STOP_FILE,
+      line: 14,
+    })
+    editor.adapter.continued(1, true)
+    stopHeld.resolve()
+    await releasing
+    await new Promise((resolve) => setImmediate(resolve))
+    // Assert
+    assert.deepEqual(
+      heard.pauses.map((pause) => [pause.sessionId, pause.reason]),
+      [['node-server-session', 'breakpoint']],
+    )
   },
 )
 

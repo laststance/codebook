@@ -228,7 +228,32 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       threadId: stop.threadId,
       reason: stop.reason,
     })
-    if (this.entryReleased) this.enqueueClassification(stop)
+    if (!this.entryReleased) return
+    // Once the release began, a stop of the bound session goes to the run at once: the detach's `continued` can follow in the same turn and would drop it from the classification queue before the run ends the group.
+    if (this.releaseBegun && stop.sessionId === this.bound?.session.id) {
+      this.reportStopDuringRelease(stop)
+      return
+    }
+    this.enqueueClassification(stop)
+  }
+
+  /**
+   * Reports a stop of the bound session that arrived after the release began, in the turn it arrived: its stack is not read (the release aborted the reads), so it counts as no declared stop, and the run ends the group before the detach resumes the paused code.
+   * Called by {@link onStopped} after the release began.
+   * @param stop - The adapter's stop.
+   * @example this.reportStopDuringRelease(stop) // the run's onPause hears it with no declared stop index
+   */
+  private reportStopDuringRelease(stop: NativeStop): void {
+    codebookStopLedger.recordStop(stop.sessionId, false)
+    this.livePauses.set(stop.token, { stop, trace: { stackFrames: [] } })
+    this.handlers?.onPause({
+      token: stop.token,
+      sessionId: stop.sessionId,
+      threadId: stop.threadId,
+      reason: stop.reason,
+      declaredStopIndex: undefined,
+      location: undefined,
+    })
   }
 
   /** The adapter answered a resume request: an accepted one lets its thread, or every thread, run on; a rejected one leaves the pause as it was. */
@@ -492,7 +517,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
 
   private async classifyAndReport(stop: NativeStop): Promise<void> {
     const session = this.active.get(stop.sessionId)
-    // Only the bound session's pauses are the run's; a child session's stop is not reported. A stop after the release began is reported too, so the run can end the group before the detach resumes it.
+    // Only the bound session's pauses are the run's; a child session's stop is not reported. A stop queued before the release began is reported too, so the run can end the group before the detach resumes it.
     if (!session || session.id !== this.bound?.session.id) return
     // Once the release began the stack is not read (its requests are aborted): the pause is reported as no declared stop.
     const trace = this.releaseBegun

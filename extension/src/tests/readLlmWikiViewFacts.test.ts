@@ -295,3 +295,69 @@ test('this window’s own live marker is settling exactly while its marker chang
   )
   assert.deepEqual(new Set(pendingFor), new Set(['/repo/.codebook/wiki']))
 })
+
+// protects=task 13 (ship Codex adversarial review): a run that ends while the facts are read (after the marker was read, before the manifest read finished) is seen as ended by the run facts and the marker's settle alike, so the view keeps its message instead of showing none; fails_when=the settle is judged from the run state at the marker read while the run facts come from a later moment, so the facts hold neither a run, a reservation nor a settling marker; why_new=the other settle test changes the run state before the read starts; seam=none; no_claim=the view's message (the read loop tests)
+test('a run that ends during the read is seen as ended by the run facts and the marker settle together', async () => {
+  // Arrange
+  const markerRead = defer<void>()
+  const manifestRead = defer<void>()
+  let status: WikiUpdateStatus = {
+    state: 'running',
+    host: 'vscode',
+    startedAt: new Date(NOW_MS - 60_000).toISOString(),
+    timeoutMs: 1_800_000,
+    candidateStaged: false,
+    outputDirectory: '/repo/.codebook/wiki',
+    outputLabel: '.codebook/wiki',
+  }
+  let isChangePending = false
+  const reading = readLlmWikiViewFacts(
+    dependencies({
+      readMarker: async () => {
+        markerRead.resolve()
+        return {
+          kind: 'live',
+          heldBy: {
+            pid: 1,
+            windowId: 'this-window',
+            host: 'vscode',
+            startedAtMs: NOW_MS - 60_000,
+            runKind: 'update',
+          },
+        }
+      },
+      readGeneration: async () => {
+        await manifestRead.promise
+        return { revision: undefined, publishedAtMs: 1 }
+      },
+      runStatus: () => status,
+      isMarkerChangePending: () => isChangePending,
+    }),
+  )
+  await markerRead.promise
+  await new Promise((resolve) => setImmediate(resolve))
+
+  // Act
+  status = {
+    state: 'cancelled',
+    site: 'kept',
+    host: 'vscode',
+    finishedAt: new Date(NOW_MS).toISOString(),
+    outputDirectory: '/repo/.codebook/wiki',
+    outputLabel: '.codebook/wiki',
+  }
+  isChangePending = true
+  manifestRead.resolve()
+  const facts = await reading
+
+  // Assert
+  assert.deepEqual(
+    facts.kind === 'ready'
+      ? {
+          isRunShown: facts.run !== undefined,
+          isMarkerSettling: facts.isMarkerSettling,
+        }
+      : 'not ready',
+    { isRunShown: false, isMarkerSettling: true },
+  )
+})

@@ -72,11 +72,11 @@ export type LlmWikiViewFactsDependencies = {
   now: () => number
 }
 
-/** What a read of the facts found about the marker. */
+/** What a read of the facts found about the marker; `isOwnMarkerLive` is this window's own live marker, whose settle is judged together with the run ({@link readLlmWikiViewFacts}). */
 type MarkerFacts = Pick<
   Extract<LlmWikiViewFacts, { kind: 'ready' }>,
-  'elsewhere' | 'reservation' | 'isMarkerSettling'
->
+  'elsewhere' | 'reservation'
+> & { isOwnMarkerLive?: true }
 
 /**
  * Words the sentence of a start block for the attention row: the update's sentence where a Wiki stands, the generation's where none does.
@@ -115,7 +115,7 @@ function sentenceOfBlock(
  * Says whether this window's own marker, which still stands as a run's, is being removed or turned into a reservation after its run ended.
  *
  * Why: a run's end reaches the view before the file work that removes its marker or turns it into the reservation of a stopped watch, and a change that failed waits for its retry, so a read in that time sees neither a run nor a reservation. The change is pending from the turn the run's end is recorded until it is made or given up, and either end makes the view read again; a marker still standing after that is not settling, so the view shows what the facts say.
- * Trigger: {@link readMarkerFacts} asks it for this window's own live marker.
+ * Trigger: {@link readLlmWikiViewFacts} asks it for this window's own live marker, in the turn it reads the run.
  *
  * @param dependencies - The editor window's closures.
  * @param outputDirectory - The Wiki folder whose marker it is.
@@ -154,11 +154,9 @@ async function readMarkerFacts(
   if (look?.kind !== 'live') return {}
   const held: WikiUpdateMarker = look.heldBy
   if (held.watchEndedAtMs === undefined) {
-    // This window's own live marker is row 2's, never "another window".
+    // This window's own live marker is row 2's, never "another window"; whether it settles is read with the run, at the end of the read.
     if (held.windowId === dependencies.ownWindowId)
-      return isOwnMarkerSettling(dependencies, outputDirectory)
-        ? { isMarkerSettling: true }
-        : {}
+      return { isOwnMarkerLive: true }
     return { elsewhere: { kind: held.runKind, startedAtMs: held.startedAtMs } }
   }
   // A start refuses for this reservation only until its own deadline, the same one the start check uses; a live owner process does not extend it.
@@ -328,6 +326,12 @@ export async function readLlmWikiViewFacts(
     }),
     readMarkerFacts(dependencies, outputDirectory),
   ])
+  const { isOwnMarkerLive, ...markerRows } = markerFacts
+  // The run and the settle of this window's own marker are read in the same turn, so a run that ended during the reads is seen as ended by both.
+  const runFacts = readRunFacts(dependencies, outputDirectory)
+  const isMarkerSettling =
+    isOwnMarkerLive === true &&
+    isOwnMarkerSettling(dependencies, outputDirectory)
   return {
     kind: 'ready',
     host: dependencies.host,
@@ -338,7 +342,8 @@ export async function readLlmWikiViewFacts(
     nowMs: dependencies.now(),
     publication,
     ...manifestFacts,
-    ...readRunFacts(dependencies, outputDirectory),
-    ...markerFacts,
+    ...runFacts,
+    ...markerRows,
+    ...(isMarkerSettling ? { isMarkerSettling: true } : {}),
   }
 }

@@ -190,7 +190,7 @@ export function sendDeclaredRequest(input: DeclaredRequestInput): {
       incoming,
       (bytes, readCut) => {
         if (settled) return
-        // Shape the body first: a throwing shaper or sanitizer must reject `response`, not leave it pending.
+        // Shape the body first: a throwing shaper or sanitizer must reject `response`, not leave it pending. The message says the server answered (a POST reached it) and never quotes the thrown error.
         let body: string
         try {
           body = shapeResponseBody(bytes, contentType, readCut, input.sanitize)
@@ -198,7 +198,7 @@ export function sendDeclaredRequest(input: DeclaredRequestInput): {
           fail(
             new StudyError(
               'REQUEST_FAILED',
-              'Codebook could not prepare the response body for display.',
+              `The server answered with HTTP ${incoming.statusCode}, but Codebook could not prepare the response body for display.`,
             ),
           )
           return
