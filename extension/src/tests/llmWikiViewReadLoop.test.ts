@@ -1531,7 +1531,7 @@ function ownMarkerFacts(state: {
 
 const RUN_START_MS = 1_790_000_000_000
 
-/** This window's own marker of a generation started a minute before {@link RUN_START_MS} plus 60 s, live, or the reservation a stopped watch left when `watchEndedAtMs` is given. */
+/** This window's own marker of a generation started at {@link RUN_START_MS}: live, or the reservation a stopped watch left when `watchEndedAtMs` is given. */
 function ownGenerationMarker(watchEndedAtMs?: number): WikiUpdateMarkerLook {
   return {
     kind: 'live',
