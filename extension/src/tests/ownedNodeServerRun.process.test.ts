@@ -7,96 +7,26 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises'
-import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { StudyError } from '../errors'
 import type { NodeServerConfiguration } from '../nodeServerConfigSchemas'
-import {
-  createOwnedNodeServerRun,
-  type NodeServerRunDependencies,
-} from '../ownedNodeServerRun'
+import { createOwnedNodeServerRun } from '../ownedNodeServerRun'
 import { sha256 } from '../runtimeSupport/utils/sha256'
-import { assertNodeServerPortFree } from '../utils/assertNodeServerPortFree'
-import { findPortOccupant } from '../utils/findPortOccupant'
-import { forgetNodeServerProcess } from '../utils/forgetNodeServerProcess'
 import { isProcessGroupGone } from '../utils/isProcessGroupGone'
-import { launchNodeServer } from '../utils/launchNodeServer'
 import { readNodeServerOrphanRecords } from '../utils/nodeServerOrphanRecords'
-import { readConnectionServerPid } from '../utils/readConnectionServerPid'
-import { readListeningPortsOfProcess } from '../utils/readListeningPortsOfProcess'
-import { readProcessStart } from '../utils/readProcessStart'
-import { rememberNodeServerProcess } from '../utils/rememberNodeServerProcess'
-import { resolveNodeServerLaunch } from '../utils/resolveNodeServerLaunch'
-import { resolveNodeServerStops } from '../utils/resolveNodeServerStops'
-import { sendDeclaredRequest } from '../utils/sendDeclaredRequest'
-import { signalProcessGroup } from '../utils/signalProcessGroup'
-import { REAL_DEADLINE_TIMERS } from '../utils/slotDeadline'
-import { verifyListenerOwnership } from '../utils/verifyListenerOwnership'
-import { waitForServerReadiness } from '../utils/waitForServerReadiness'
 
-import { createCdpNodeServerDebugger } from './utils/cdpNodeServerDebugger'
 import { freeLoopbackPort } from './utils/freeLoopbackPort'
+import {
+  accepts,
+  realNodeServerDependencies,
+  untilView,
+} from './utils/realNodeServerDependencies'
 
 /** The test-only HTTP server as compiled beside this test; it never ships. */
 const FIXTURE_SERVER = join(__dirname, 'fixtures/node-server/server.js')
-
-/** Says whether something accepts connections on a loopback port now. */
-async function accepts(port: number): Promise<boolean> {
-  const socket = connect({ host: '127.0.0.1', port })
-  return new Promise((resolve) => {
-    socket.once('connect', () => {
-      socket.destroy()
-      resolve(true)
-    })
-    socket.once('error', () => resolve(false))
-  })
-}
-
-/**
- * The real readiness, listener, request and orphan-record utilities (part U), with orphan records kept in an in-memory store.
- * `giveUpMs` ends the readiness wait early for the not-listening test, which would otherwise wait the real 30 s of running time.
- */
-function realUtilities(
-  giveUpMs: number,
-  orphanStore: Map<string, unknown>,
-): Pick<
-  NodeServerRunDependencies,
-  | 'waitForReadiness'
-  | 'verifyListener'
-  | 'readListeningPorts'
-  | 'readConnectionServerPid'
-  | 'sendRequest'
-  | 'rememberProcess'
-  | 'forgetProcess'
-> {
-  const store = {
-    get: (key: string) => orphanStore.get(key),
-    update: async (key: string, value: unknown): Promise<void> => {
-      orphanStore.set(key, value)
-    },
-  }
-  return {
-    waitForReadiness: (input) => {
-      const startedAt = performance.now()
-      return waitForServerReadiness({
-        ...input,
-        hasTimeLeft: () =>
-          input.hasTimeLeft() && performance.now() - startedAt < giveUpMs,
-      })
-    },
-    verifyListener: verifyListenerOwnership,
-    readListeningPorts: (pid) => readListeningPortsOfProcess(pid),
-    readConnectionServerPid: (input) => readConnectionServerPid(input),
-    sendRequest: sendDeclaredRequest,
-    rememberProcess: (record): Promise<void> =>
-      rememberNodeServerProcess(store, record),
-    forgetProcess: (runId): Promise<void> =>
-      forgetNodeServerProcess(store, runId),
-  }
-}
 
 /** Builds a run of the fixture server in a new repository folder; the folder and every process are cleaned up after the test. */
 async function fixtureRun(
@@ -155,21 +85,11 @@ async function fixtureRun(
     },
     citedSources: [],
     runId: 'process-run',
-    dependencies: {
-      clock: { now: () => performance.now(), set: REAL_DEADLINE_TIMERS.set },
-      node: { executable: process.execPath, version: process.versions.node },
-      createDebugger: createCdpNodeServerDebugger,
-      resolveLaunch: resolveNodeServerLaunch,
-      resolveStops: resolveNodeServerStops,
-      assertPortFree: ({ port: declared, signal }) =>
-        assertNodeServerPortFree({ port: declared, signal, findPortOccupant }),
-      launch: launchNodeServer,
-      signalGroup: signalProcessGroup,
-      isGroupGone: isProcessGroupGone,
-      readProcessStart: (pid) => readProcessStart(pid),
-      findPortOccupant,
-      ...realUtilities(options.giveUpMs ?? 20_000, orphanStore),
-    },
+    dependencies: realNodeServerDependencies(
+      { executable: process.execPath, version: process.versions.node },
+      options.giveUpMs ?? 20_000,
+      orphanStore,
+    ),
   })
   // A failed test still ends the server it started.
   t.after(() => run.stop().catch(() => undefined))
@@ -274,18 +194,3 @@ test('a real server that never listens fails the start with SERVER_NOT_LISTENING
   assert.match(error.message, new RegExp(`declared port ${port}`))
   assert.equal(isProcessGroupGone(pid()!), true)
 })
-
-/** Waits until the run's view satisfies a condition, by listening to its changes. */
-function untilView(
-  run: ReturnType<typeof createOwnedNodeServerRun>,
-  condition: (view: ReturnType<typeof run.view>) => boolean,
-): Promise<ReturnType<typeof run.view>> {
-  if (condition(run.view())) return Promise.resolve(run.view())
-  return new Promise((resolve) => {
-    const subscription = run.onDidChange(() => {
-      if (!condition(run.view())) return
-      subscription.dispose()
-      resolve(run.view())
-    })
-  })
-}

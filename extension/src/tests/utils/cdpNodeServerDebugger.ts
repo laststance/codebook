@@ -16,6 +16,7 @@ import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
 import { verifyNodeTestInspectorOwnership } from '../../utils/verifyNodeTestInspectorOwnership'
 
 import { defer } from './defer'
+import { generatedPositionOfOriginal } from './generatedPositionOfOriginal'
 
 /**
  * A test stand-in for the editor's debugger: it drives the server's inspector directly over CDP, as the Part A spike did, behind the same {@link NodeServerDebugger} seam.
@@ -34,6 +35,10 @@ export function createCdpNodeServerDebugger(
   let entryPaused = false
   let released = false
   const breakpoints = new Map<number, string>()
+  /** The 0-based generated line each armed stop's breakpoint sits on (the raw line for JavaScript, the mapped line for TypeScript). */
+  const breakpointLines = new Map<number, number>()
+  /** TypeScript stops waiting for their script: bound when it is parsed or about to run, through its inline source map. */
+  const unboundTypeScriptStops: NodeServerStopTarget[] = []
   const livePauses = new Map<
     number,
     { callFrames: Protocol.Debugger.CallFrame[]; target?: NodeServerStopTarget }
@@ -50,10 +55,51 @@ export function createCdpNodeServerDebugger(
       (stop) =>
         event.hitBreakpoints?.includes(
           breakpoints.get(stop.declaredStopIndex) ?? '',
-        ) && line === stop.line - 1,
+        ) && line === breakpointLines.get(stop.declaredStopIndex),
     )
   }
+  /** Binds the waiting TypeScript stops of a script through its source map; a script that is not theirs is left alone. */
+  const bindTypeScriptStops = async (script: {
+    scriptId: string
+    url?: string
+    sourceMapURL?: string
+  }): Promise<void> => {
+    for (const stop of [...unboundTypeScriptStops]) {
+      if (
+        script.url !== pathToFileURL(stop.file).href &&
+        script.url !== stop.file
+      )
+        continue
+      // Stop columns are 1-based; the map's are 0-based.
+      const generated = generatedPositionOfOriginal(
+        script.sourceMapURL,
+        stop.line - 1,
+        stop.column - 1,
+      )
+      if (!generated) continue
+      unboundTypeScriptStops.splice(unboundTypeScriptStops.indexOf(stop), 1)
+      const result = await connection().request('Debugger.setBreakpoint', {
+        location: {
+          scriptId: script.scriptId,
+          lineNumber: generated.line,
+          columnNumber: generated.column,
+        },
+      })
+      breakpoints.set(stop.declaredStopIndex, result.breakpointId)
+      breakpointLines.set(
+        stop.declaredStopIndex,
+        result.actualLocation.lineNumber,
+      )
+    }
+  }
   const onPaused = (event: Protocol.Debugger.PausedEvent): void => {
+    // V8 pauses before a source-mapped script runs: bind its stops now, then go on (CommonJS scripts bind when parsed instead).
+    if (event.reason === 'instrumentation') {
+      void bindTypeScriptStops({ ...event.data })
+        .then(() => connection().request('Debugger.resume', {}))
+        .catch(() => undefined)
+      return
+    }
     // The first pause is the entry pause (`--inspect-brk`); the run never sees it.
     if (!entryPaused) {
       entryPaused = true
@@ -73,7 +119,7 @@ export function createCdpNodeServerDebugger(
       declaredStopIndex: target?.declaredStopIndex,
       location: frame && {
         path: target?.path ?? 'other',
-        line: frame.location.lineNumber + 1,
+        line: target?.line ?? frame.location.lineNumber + 1,
       },
     }
     handlers?.onPause(pause)
@@ -86,6 +132,9 @@ export function createCdpNodeServerDebugger(
         if (!released) handlers?.onEnd('the inspector connection closed')
       }
       cdp.on('Debugger.paused', onPaused)
+      cdp.on('Debugger.scriptParsed', (script) => {
+        void bindTypeScriptStops(script).catch(() => undefined)
+      })
       cdp.on('Debugger.resumed', () => {
         for (const token of [...livePauses.keys()].filter((key) => key > 0)) {
           livePauses.delete(token)
@@ -94,6 +143,9 @@ export function createCdpNodeServerDebugger(
       })
       await cdp.request('Debugger.enable', undefined)
       await cdp.request('Runtime.enable', undefined)
+      await cdp.request('Debugger.setInstrumentationBreakpoint', {
+        instrumentation: 'beforeScriptWithSourceMapExecution',
+      })
       await cdp.request('Runtime.runIfWaitingForDebugger', undefined)
       await entry.promise
       // The entry pause: the inspector must belong to the launched process.
@@ -112,6 +164,15 @@ export function createCdpNodeServerDebugger(
     async armStops(stops): Promise<NodeServerArmedStop[]> {
       const armed: NodeServerArmedStop[] = []
       for (const stop of stops) {
+        // A TypeScript stop binds through the script's source map once the loader has compiled the file.
+        if (stop.file.endsWith('.ts')) {
+          unboundTypeScriptStops.push(stop)
+          armed.push({
+            declaredStopIndex: stop.declaredStopIndex,
+            boundLine: stop.line,
+          })
+          continue
+        }
         const result = await connection().request(
           'Debugger.setBreakpointByUrl',
           {
@@ -120,6 +181,7 @@ export function createCdpNodeServerDebugger(
           },
         )
         breakpoints.set(stop.declaredStopIndex, result.breakpointId)
+        breakpointLines.set(stop.declaredStopIndex, stop.line - 1)
         armed.push({
           declaredStopIndex: stop.declaredStopIndex,
           boundLine: (result.locations[0]?.lineNumber ?? stop.line - 1) + 1,
@@ -147,15 +209,17 @@ export function createCdpNodeServerDebugger(
             returnByValue: true,
           },
         )
+        const value: unknown = result.result.value
         facts.push({
           path: inspection.path,
           mode: inspection.mode,
-          display: String(result.result.value),
+          display:
+            typeof value === 'string' ? value : String(JSON.stringify(value)),
         })
       }
       return {
         path: target.path,
-        line: frame.location.lineNumber + 1,
+        line: target.line,
         sourceHash: target.hash,
         facts,
         unavailable: [],
@@ -171,6 +235,7 @@ export function createCdpNodeServerDebugger(
           breakpointId,
         })
       breakpoints.clear()
+      breakpointLines.clear()
     },
     async release(): Promise<void> {
       released = true
