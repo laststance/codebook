@@ -379,6 +379,8 @@ export function createHarness(options: HarnessOptions = {}) {
       start: string | undefined
       cwd: string | undefined
     },
+    /** A signal that fails once, as the system refuses one for a member the user may not signal (EPERM); a test sets it before the call. */
+    failSignal: undefined as NodeJS.Signals | undefined,
     readiness: [] as Array<
       Parameters<NodeServerRunDependencies['waitForReadiness']>[0]
     >,
@@ -448,6 +450,12 @@ export function createHarness(options: HarnessOptions = {}) {
     signalGroup: (group, signal) => {
       order.push(`signal:${signal}`)
       calls.signals.push([group, signal])
+      if (calls.failSignal === signal) {
+        calls.failSignal = undefined
+        throw Object.assign(new Error(`kill ${signal} EPERM`), {
+          code: 'EPERM',
+        })
+      }
     },
     isGroupGone: () => options.groupGone ?? false,
     readProcessStart: async () => calls.leader.start,

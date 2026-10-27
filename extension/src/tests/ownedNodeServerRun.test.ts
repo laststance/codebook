@@ -1361,6 +1361,26 @@ test('a retried stop that cannot read the leader signals nothing and fails', asy
   assert.equal(harness.run.view().state, 'stopping')
 })
 
+// protects=a stop whose first SIGKILL failed before any close ran tells the retried stop's close that it is a retry, so that close confirms the group before it signals and a group the run found replaced is never signalled; fails_when=the close of a retried stop is told nothing and signals as a first close; no_claim=the launcher's own checks (its process test)
+test('a retried stop whose first SIGKILL failed tells its close that the stop is a retry', async () => {
+  // Arrange
+  const harness = await readyHarness()
+  await sendRequest(harness)
+  harness.calls.failSignal = 'SIGKILL'
+  await rejectsWith(harness.run.stop(), 'RUNTIME_FAILED')
+  harness.calls.leader.start = 'start-of-another-process'
+  // Act
+  await harness.run.stop()
+  // Assert
+  assert.deepEqual(harness.calls.signals, [[4242, 'SIGKILL']])
+  assert.equal(harness.server.closeCalls, 1)
+  assert.equal(harness.server.closeOptions[0]?.retried, true)
+  assert.equal(
+    await harness.server.closeOptions[0]?.confirmGroup?.(),
+    'replaced',
+  )
+})
+
 // protects=the close is told how long ago the stop was admitted, so its detach, TERM grace and group wait count from the admission and SIGKILL lands by 5 s; fails_when=the close counts from its own start or is given no clock; no_claim=the launcher's timing (its process test)
 test('the close measures the stop from its admission, not from the close call', async () => {
   // Arrange

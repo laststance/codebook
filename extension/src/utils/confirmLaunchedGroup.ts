@@ -1,3 +1,5 @@
+import { isGroupCertainlyGone } from './isGroupCertainlyGone'
+
 /** Whether the process group a stop is about to signal is still the one the run launched. */
 export type LaunchedGroupVerdict = 'launched' | 'replaced' | 'unverifiable'
 
@@ -13,6 +15,8 @@ export type ConfirmLaunchedGroupInput = {
   leaderExited: boolean
   readProcessStart(pid: number): Promise<string | undefined>
   readProcessCwd(pid: number): Promise<string | undefined>
+  /** Whether no process of the group is left (a signal-0 probe of the group id, {@link isProcessGroupGone}); a probe that throws counts as "not gone". */
+  isGroupGone(processGroup: number): boolean
 }
 
 /**
@@ -21,11 +25,11 @@ export type ConfirmLaunchedGroupInput = {
  * Called by the node-server run before its own retried SIGKILL and by the launcher's close before every signal of a retried close.
  * @param input - The leader's launch identity (start time, folder) and the readers ({@link ConfirmLaunchedGroupInput}).
  * @returns
- * - `launched` when the leader still has the launch start time and folder, or when the leader is gone and the launcher saw it exit (a group id cannot be reused while a member holds it, and a new group's leader would be readable)
- * - `replaced` when a readable leader has another start time or folder: the id belongs to another process now, nothing may be signalled
- * - `unverifiable` when the leader cannot be read while the launcher has not seen it exit, or only one of its two facts can be read
+ * - `launched` when the leader still has the launch start time and folder, or when nothing is readable and the group certainly has no member left (signalling it can reach no process)
+ * - `replaced` when a readable leader has another start time or folder, or when any process is readable at the pid of a leader the launcher saw exit: the id belongs to another process now, nothing may be signalled
+ * - `unverifiable` when nothing is readable while the group may still have members (a failed read and an absent process read alike), or only one of the two facts can be read
  * @example
- * await confirmLaunchedGroup({ pid: 4242, startedAt: 'Wed Oct 28 10:00:00 2026', cwd: '/repo/apps/api', leaderExited: false, readProcessStart, readProcessCwd }) // => 'launched'
+ * await confirmLaunchedGroup({ pid: 4242, startedAt: 'Wed Oct 28 10:00:00 2026', cwd: '/repo/apps/api', leaderExited: false, readProcessStart, readProcessCwd, isGroupGone: isProcessGroupGone }) // => 'launched'
  */
 export async function confirmLaunchedGroup(
   input: ConfirmLaunchedGroupInput,
@@ -34,9 +38,13 @@ export async function confirmLaunchedGroup(
     input.readProcessStart(input.pid),
     input.readProcessCwd(input.pid),
   ])
-  // Nothing readable: the leader is gone, which is only the launched group's remains when its exit was seen.
+  // Nothing readable: a failed ps or lsof query reads like an absent process, so only a group with no member left may count as the launched one.
   if (startedAt === undefined && cwd === undefined)
-    return input.leaderExited ? 'launched' : 'unverifiable'
+    return isGroupCertainlyGone(input.isGroupGone, input.pid)
+      ? 'launched'
+      : 'unverifiable'
+  // The launcher saw its leader exit, so a process readable at that pid now is another one.
+  if (input.leaderExited) return 'replaced'
   // A readable fact that differs from the launch identity names another process.
   if (
     (startedAt !== undefined &&
@@ -46,7 +54,6 @@ export async function confirmLaunchedGroup(
   )
     return 'replaced'
   // Both facts must be read to call the leader the launched one (an unrecorded launch start compares the folder alone).
-  if (cwd === undefined || (startedAt === undefined && !input.leaderExited))
-    return 'unverifiable'
+  if (cwd === undefined || startedAt === undefined) return 'unverifiable'
   return 'launched'
 }

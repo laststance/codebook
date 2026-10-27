@@ -52,6 +52,8 @@ export type NodeServerCloseOptions = {
   sinceAdmissionMs?: () => number
   /** Reads whether the group is still the launched one ({@link confirmLaunchedGroup}), before each signal of a retried close; the launcher's own reading of its leader when absent. */
   confirmGroup?: () => Promise<LaunchedGroupVerdict>
+  /** Whether the stop is a retry of an earlier one that may have signalled the group before any close ran (the run's own count): such a close confirms the group before each signal from its first call on. */
+  retried?: boolean
   /** By when SIGKILL has been sent; {@link NODE_SERVER_KILL_BY_MS} unless a test names its own. */
   killByMs?: number
   /** The stop's whole deadline; {@link NODE_SERVER_STOP_DEADLINE_MS} unless a test names its own. */
@@ -188,7 +190,7 @@ export async function launchNodeServer(
     },
     /**
      * Ends the whole owned process group inside the stop's budget: the debugger detaches first (a server handling SIGTERM waits for an attached debugger before it exits, and a paused one cannot run its handler), then SIGTERM, then SIGKILL no later than {@link NODE_SERVER_KILL_BY_MS} after the stop's admission, and the group's exit is awaited until {@link NODE_SERVER_STOP_DEADLINE_MS}. Detach, grace and wait share these two bounds, so a slow detach shortens the grace instead of delaying the kill.
-     * A retried close (the earlier one failed) signals only after {@link confirmLaunchedGroup} found the group still the launched one: a replaced group is left alone, an unverifiable one fails the close.
+     * A retried close (an earlier close failed, or the run says its stop is a retry) signals only after {@link confirmLaunchedGroup} found the group still the launched one: a replaced group is left alone, an unverifiable one fails the close.
      * @param detachDebugger - Ends the run's debugger session for this process (detach, which resumes it); bounded by {@link NODE_SERVER_DEBUGGER_DETACH_TIMEOUT_MS} and by the kill bound, and skipped when absent.
      * @param options - The stop's clock, bounds and checks ({@link NodeServerCloseOptions}).
      * @returns How the process ended.
@@ -208,7 +210,8 @@ export async function launchNodeServer(
         const deadlineMs = options.deadlineMs ?? NODE_SERVER_STOP_DEADLINE_MS
         const signalGroup = options.signalGroup ?? signalProcessGroup
         const isGroupGone = options.isGroupGone ?? isProcessGroupGone
-        const isRetry = closeAttempts++ > 0
+        // A stop the run retries is a retry here too, even when its first attempt failed before any close ran.
+        const isRetry = closeAttempts++ > 0 || options.retried === true
         // The time left until a bound of the stop, never less than one poll so a check that is already true still runs.
         const timeLeft = (boundMs: number): number =>
           Math.max(boundMs - sinceAdmissionMs(), NODE_SERVER_GROUP_EXIT_POLL_MS)
@@ -241,6 +244,7 @@ export async function launchNodeServer(
                 leaderExited: hasExited(),
                 readProcessStart,
                 readProcessCwd,
+                isGroupGone,
               }))
           )()
           if (verdict === 'unverifiable')

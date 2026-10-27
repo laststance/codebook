@@ -413,7 +413,9 @@ test('a stop sends SIGKILL by its kill bound even when the debugger detach never
     ['SIGTERM', 'SIGKILL'],
   )
   const [term, kill] = signals
+  // gstack-timing-ok: the kill bound counted from the admission is the contract under test; the lower limits are the order (detach, TERM, KILL) and the upper limits leave about 700 ms of slack.
   assert.ok(term && term.atMs >= 900 && term.atMs < 1_200, `${term?.atMs}`)
+  // gstack-timing-ok: SIGKILL by the kill bound is the contract under test (same slack as above).
   assert.ok(kill && kill.atMs >= 1_150 && kill.atMs < 1_900, `${kill?.atMs}`)
   assert.equal(exit.signal, 'SIGKILL')
   assert.equal(isProcessGroupGone(server.processGroup!), true)
@@ -472,4 +474,30 @@ test('a retried close signals only a group confirmed as the launched one', async
   assert.match(unverifiable.retry.message, /could not be confirmed/)
   assert.deepEqual(launched.signals, ['SIGTERM', 'SIGKILL', 'SIGTERM'])
   assert.ok(!(launched.retry instanceof Error))
+})
+
+// protects=a close told that its stop is a retry confirms the group before it signals even on its own first call, so a group the run found replaced is left alone; fails_when=the first close of a retried stop signals without the identity check; no_claim=the run's count of its stops (the run test)
+test('the first close of a retried stop leaves a replaced group alone', async (t) => {
+  // Arrange
+  const { server } = await launchFixture(t, 'listen')
+  t.after(async () => {
+    if (!isProcessGroupGone(server.processGroup!))
+      signalProcessGroup(server.processGroup!, 'SIGKILL')
+  })
+  const signals: string[] = []
+  // Act
+  const exit = await server
+    .close(undefined, {
+      killByMs: 300,
+      deadlineMs: 600,
+      retried: true,
+      confirmGroup: async () => 'replaced',
+      signalGroup: (_group, signal) => {
+        signals.push(signal)
+      },
+    })
+    .catch((error: unknown) => error)
+  // Assert
+  assert.deepEqual(signals, [])
+  assert.ok(!(exit instanceof Error))
 })

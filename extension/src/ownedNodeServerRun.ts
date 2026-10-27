@@ -46,6 +46,7 @@ import {
   stopFailedError,
 } from './utils/describeNodeServerRunFailure'
 import type { PortOccupant } from './utils/findPortOccupant'
+import { isGroupCertainlyGone } from './utils/isGroupCertainlyGone'
 import type { isProcessGroupGone } from './utils/isProcessGroupGone'
 import type { launchNodeServer, NodeServerExit } from './utils/launchNodeServer'
 import {
@@ -1286,13 +1287,9 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     )
   }
 
-  /** Whether the group has no member left; an unreadable group counts as still there. */
+  /** Whether the group has no member left; an unreadable group counts as still there ({@link isGroupCertainlyGone}). */
   private safeGroupGone(processGroup: number): boolean {
-    try {
-      return this.dependencies.isGroupGone(processGroup)
-    } catch {
-      return false
-    }
+    return isGroupCertainlyGone(this.dependencies.isGroupGone, processGroup)
   }
 
   /**
@@ -1316,6 +1313,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
         {
           sinceAdmissionMs: () => this.clock.now() - this.stopAdmittedAtMs,
           confirmGroup: () => this.confirmLaunchedGroup(server),
+          // An earlier stop may have signalled the group before its close ran (a SIGKILL that failed), so the close checks it from its first signal.
+          retried: isRetry,
         },
       )
     }
@@ -1347,6 +1346,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       leaderExited: server.exited() !== undefined,
       readProcessStart: this.dependencies.readProcessStart,
       readProcessCwd: this.dependencies.readProcessCwd,
+      isGroupGone: this.dependencies.isGroupGone,
     })
   }
 

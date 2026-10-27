@@ -4,6 +4,7 @@ import {
 } from '../constants'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
+import { isGroupCertainlyGone } from './isGroupCertainlyGone'
 import { isProcessGroupGone } from './isProcessGroupGone'
 import {
   readNodeServerOrphanRecords,
@@ -78,24 +79,6 @@ type OrphanOutcome = 'closed' | 'dropped' | 'kept'
 type OrphanReaders = Parameters<typeof closeOrphanGroup>[0]
 
 /**
- * Says whether a recorded group has no member left, treating an unreadable answer as "not gone".
- * @param readers - The injected readers.
- * @param processGroup - The recorded group.
- * @returns `true` only when the group is certainly gone.
- * @example groupCertainlyGone(readers, 4242) // => false when the check throws
- */
-function groupCertainlyGone(
-  readers: OrphanReaders,
-  processGroup: number,
-): boolean {
-  try {
-    return readers.isGroupGone(processGroup)
-  } catch {
-    return false
-  }
-}
-
-/**
  * Judges one record: closes its group when the leader is verified, drops it when the identity positively mismatches or the group is gone, and keeps it otherwise (the leader could not be verified, or members outlive a dead leader).
  * @param readers - The injected readers and signals.
  * @param record - The recorded group, already known to be led by its pid and not the editor's own.
@@ -115,7 +98,10 @@ async function judgeOrphanRecord(
     return 'dropped'
   const verified = startedAt !== undefined && cwd === record.cwd
   // Nothing identifies the leader and nothing is left of the group: no record to keep.
-  if (!verified && groupCertainlyGone(readers, record.processGroup))
+  if (
+    !verified &&
+    isGroupCertainlyGone(readers.isGroupGone, record.processGroup)
+  )
     return 'dropped'
   if (startedAt === undefined) {
     // The leader is gone (or unreadable) but members remain: report them, signal nobody we cannot identify, keep the record.
@@ -158,7 +144,9 @@ async function sweepOrphanRecord(
       `Could not close a server left running by an earlier window (pid ${record.pid}, declared port ${record.declaredPort}).`,
     )
     // A failed read or signal proves nothing about the server: keep the record unless its group is certainly gone.
-    return groupCertainlyGone(readers, record.processGroup) ? 'dropped' : 'kept'
+    return isGroupCertainlyGone(readers.isGroupGone, record.processGroup)
+      ? 'dropped'
+      : 'kept'
   }
 }
 

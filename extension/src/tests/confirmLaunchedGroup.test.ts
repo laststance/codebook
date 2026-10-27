@@ -18,6 +18,7 @@ function leader(
     leaderExited: false,
     readProcessStart: async () => now.startedAt,
     readProcessCwd: async () => now.cwd,
+    isGroupGone: () => false,
     ...overrides,
   }
 }
@@ -46,14 +47,51 @@ test('a leader with another start time or another folder is a replaced group', a
   assert.deepEqual(verdicts, ['replaced', 'replaced'])
 })
 
-// protects=a leader that exited and left members is still the launched group, so the survivors are ended; fails_when=an exited leader reads as replaced or is refused; no_claim=members of the group
-test('an unreadable leader that the launcher saw exit is still the launched group', async () => {
+// protects=a leader that cannot be read is the launched group's end only when its group has no member left: a read that failed (a ps or lsof timeout) and an absent process read alike, so a group that still has members is never signalled on a guess, also after the launcher saw its leader exit; fails_when=unreadable facts plus an earlier exit read as the launched group while the group id is in use; no_claim=a real reuse of a process-group id
+test('an unreadable leader is the launched group only when its group has no member left', async () => {
   // Arrange
-  const input = leader({}, { leaderExited: true })
+  const exitedAndGone = leader(
+    {},
+    { leaderExited: true, isGroupGone: () => true },
+  )
+  const exitedWithMembers = leader({}, { leaderExited: true })
+  const probeFails = leader(
+    {},
+    {
+      leaderExited: true,
+      isGroupGone: () => {
+        throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+      },
+    },
+  )
   // Act
-  const verdict = await confirmLaunchedGroup(input)
+  const verdicts = [
+    await confirmLaunchedGroup(exitedAndGone),
+    await confirmLaunchedGroup(exitedWithMembers),
+    await confirmLaunchedGroup(probeFails),
+  ]
   // Assert
-  assert.equal(verdict, 'launched')
+  assert.deepEqual(verdicts, ['launched', 'unverifiable', 'unverifiable'])
+})
+
+// protects=once the launcher saw its leader exit, a process readable at that pid is another process, so a retried stop leaves its group alone; fails_when=a readable process at an exited leader's pid (same folder, start unreadable or not recorded at launch) reads as the launched group; no_claim=a real reuse of a process id
+test('a process readable at the pid of a leader that exited is a replaced group', async () => {
+  // Arrange
+  const sameFolderStartUnreadable = leader(
+    { cwd: '/repo/apps/api' },
+    { leaderExited: true },
+  )
+  const sameFolderNoLaunchStart = leader(
+    { startedAt: 'start-9', cwd: '/repo/apps/api' },
+    { leaderExited: true, startedAt: undefined },
+  )
+  // Act
+  const verdicts = [
+    await confirmLaunchedGroup(sameFolderStartUnreadable),
+    await confirmLaunchedGroup(sameFolderNoLaunchStart),
+  ]
+  // Assert
+  assert.deepEqual(verdicts, ['replaced', 'replaced'])
 })
 
 // protects=nothing is signalled on a guess: a leader that cannot be read while alive, or whose folder cannot be read, is unverifiable; fails_when=an unreadable leader is signalled; no_claim=the stop's failure text
