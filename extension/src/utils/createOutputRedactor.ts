@@ -1,5 +1,6 @@
 import {
   OUTPUT_REDACTION_CARRY_CHARS,
+  OUTPUT_REDACTION_END_MARKER_TAIL_CHARS,
   OUTPUT_REDACTION_HOLD_LIMIT_CHARS,
   REDACTION_MASK,
 } from '../constants'
@@ -19,8 +20,6 @@ const PRIVATE_KEY_END = /-----END [A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*-----/
 /** Where any secret shape this contract masks begins; a run of 8 KiB with none of these cannot be a secret yet. */
 const SECRET_START =
   /eyJ|Bearer|:\/\/|sk-|gh[pousr]_|github_pat_|AKIA|-----BEGIN/i
-/** How much of the dropped body is kept to find an end marker split across chunks. */
-const END_MARKER_TAIL_CHARS = 80
 
 /**
  * Finds where the text that may still grow into a secret begins; everything before it can be released.
@@ -74,7 +73,7 @@ export function createOutputRedactor(): OutputRedactor {
     if (dropping === 'block') {
       const end = PRIVATE_KEY_END.exec(combined)
       if (!end) {
-        held = combined.slice(-END_MARKER_TAIL_CHARS)
+        held = combined.slice(-OUTPUT_REDACTION_END_MARKER_TAIL_CHARS)
         return ''
       }
       combined = combined.slice(end.index + end[0].length)

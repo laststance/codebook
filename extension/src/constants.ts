@@ -1909,3 +1909,6 @@ export const OUTPUT_REDACTION_HOLD_LIMIT_CHARS = 8_192
 
 /** The characters kept back when an over-long run shows no secret shape is released, so a secret marker cut by the release is still seen whole ({@link createOutputRedactor}). */
 export const OUTPUT_REDACTION_CARRY_CHARS = 16
+
+/** The characters of a dropped private-key body kept to find an END marker split across chunks ({@link createOutputRedactor}). */
+export const OUTPUT_REDACTION_END_MARKER_TAIL_CHARS = 80
