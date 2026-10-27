@@ -1,5 +1,5 @@
-/** Process settings an owned Node test may inherit; account credentials and unrelated variables stay out. */
-const INHERITED_VARIABLES = [
+/** Process settings an owned Node process (a test or a server) may inherit; account credentials and unrelated variables stay out. Shared with {@link buildNodeServerEnvironment}. */
+export const INHERITED_VARIABLES = [
   'PATH',
   'HOME',
   'TMPDIR',

@@ -95,7 +95,7 @@ test('a real VSIX loads outside the checkout and excludes bundled applications a
   // Assert
   assert.equal(receipt.isolatedModuleLoad, true)
   assert.equal(receipt.isolatedWikiPageWorker, true)
-  assert.equal(checked.extension.version, '0.2.49')
+  assert.equal(checked.extension.version, '0.2.50')
   assert.equal(checked.extension.apiVersion, '1.8')
   assert.equal(checked.entries, 33)
   assert.equal(receipt.dependencies.length, 16)
@@ -129,7 +129,15 @@ test('a real VSIX loads outside the checkout and excludes bundled applications a
   )
   assert.ok(
     [...original.keys()].every(
-      (path) => !/(?:^|\/)(?:demo|fixture|experiments)(?:\/|$)/.test(path),
+      (path) => !/(?:^|\/)(?:demo|fixtures?|experiments)(?:\/|$)/.test(path),
+    ),
+  )
+  // The node-server tests' HTTP server (src/tests/fixtures/node-server) never ships, under any folder name.
+  assert.ok(
+    [...original.keys()].every(
+      (path) =>
+        !path.includes('node-server/server.') &&
+        !path.endsWith('fixture-server.json'),
     ),
   )
   for (const path of COMPILED_DIRECTORIES) {

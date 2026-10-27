@@ -843,3 +843,233 @@ process.on('SIGTERM', () => {
     code: 'ENOENT',
   })
 })
+
+// Value: protects=the redaction contract on the repository-browser dev server's output, which the run journals in application.closed and quotes in failure messages (pt1 red-team finding); fails_when=a credential the server prints, even split across chunks, reaches the journal or the readiness failure; why_new=no test fed the dev server's log through redaction; seam=the launcher run in an isolated module context with a stub child, as the other tests here; no_claim=a real next dev process
+test('a credential the dev server prints, split across chunks, reads [masked] in the closed journal and in a readiness failure', async (context) => {
+  // Arrange
+  const filename = join(__dirname, '../utils/launchDevelopmentServer.js'),
+    nativeRequire = createRequire(filename)
+  const exports: Partial<typeof ServerModule> = {},
+    journal: { type: string; detail: unknown }[] = []
+  const token = ['ghp', '0123456789abcdefghijKLMNOPqrstuvwxyz'].join('_')
+  const child = Object.assign(new EventEmitter(), {
+    pid: 42000,
+    exitCode: null as number | null,
+    signalCode: null,
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+  })
+  let groupAlive = true
+  context.mock.method(
+    process,
+    'kill',
+    (_pid: number, signal?: string | number): true => {
+      if (signal === 'SIGTERM') {
+        groupAlive = false
+        child.emit('exit')
+      }
+      if (signal === 0 && !groupAlive)
+        throw Object.assign(new Error('missing group'), { code: 'ESRCH' })
+      return true
+    },
+  )
+  runInNewContext(
+    await readFile(filename, 'utf8'),
+    {
+      exports,
+      AbortSignal,
+      Buffer,
+      process: { env: {} },
+      require(name: string) {
+        if (name === 'node:child_process') return { spawn: () => child }
+        if (name.endsWith('/utils/waitUntil'))
+          return {
+            waitUntil: async (read: () => unknown): Promise<unknown> => {
+              const value = await read()
+              if (!value) throw new Error('not ready')
+              return value
+            },
+          }
+        return nativeRequire(name)
+      },
+    },
+    { filename },
+  )
+  assert.ok(exports.launchDevelopmentServer)
+  const server = exports.launchDevelopmentServer(
+    '/isolated-target',
+    '/node',
+    (type, detail) => journal.push({ type, detail }),
+    false,
+    3000,
+  )
+  child.stdout.emit('data', Buffer.from(`using token ${token.slice(0, 12)}`))
+  child.stdout.emit('data', Buffer.from(`${token.slice(12)} for the api\n`))
+  child.exitCode = 1
+  // Act
+  const failure = await server
+    .ready(new AbortController().signal)
+    .catch((error: unknown) => error)
+  await server.close()
+  // Assert
+  // The launcher runs in its own realm, so its Error is read by its message, not by instanceof.
+  const failureMessage =
+    typeof failure === 'object' && failure !== null
+      ? Reflect.get(failure, 'message')
+      : undefined
+  assert.equal(
+    failureMessage,
+    'Application exited: 1: using token [masked] for the api\n',
+  )
+  const closed = journal.find((entry) => entry.type === 'application.closed')
+  assert.equal(
+    JSON.stringify(closed?.detail).includes('using token [masked] for the api'),
+    true,
+  )
+  assert.equal(JSON.stringify(journal).includes(token.slice(4, 20)), false)
+})
+
+// Value: protects=the dev server's stderr is redacted too, and a credential still held at a stream's end is masked when the stream ends (pt1 pass 2 testing finding); fails_when=stderr bypasses the redactor or the end flush releases the held token raw; why_new=the first redaction test drives stdout and the exit path only; seam=the launcher run in an isolated module context with a stub child; no_claim=a real next dev process
+test('a credential the dev server prints last on stderr, without a line end, reads [masked] once the stream ends', async (context) => {
+  // Arrange
+  const filename = join(__dirname, '../utils/launchDevelopmentServer.js'),
+    nativeRequire = createRequire(filename)
+  const exports: Partial<typeof ServerModule> = {},
+    journal: { type: string; detail: unknown }[] = []
+  const token = ['ghp', 'ZYXWVUTSRQPONMLKJIHGFEDCBA9876543210'].join('_')
+  const child = Object.assign(new EventEmitter(), {
+    pid: 42000,
+    exitCode: null,
+    signalCode: null,
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+  })
+  let groupAlive = true
+  context.mock.method(
+    process,
+    'kill',
+    (_pid: number, signal?: string | number): true => {
+      if (signal === 'SIGTERM') {
+        groupAlive = false
+        child.emit('exit')
+      }
+      if (signal === 0 && !groupAlive)
+        throw Object.assign(new Error('missing group'), { code: 'ESRCH' })
+      return true
+    },
+  )
+  runInNewContext(
+    await readFile(filename, 'utf8'),
+    {
+      exports,
+      AbortSignal,
+      Buffer,
+      process: { env: {} },
+      require(name: string) {
+        if (name === 'node:child_process') return { spawn: () => child }
+        if (name.endsWith('/utils/waitUntil'))
+          return {
+            waitUntil: async (read: () => unknown): Promise<unknown> => {
+              const value = await read()
+              if (!value) throw new Error('not ready')
+              return value
+            },
+          }
+        return nativeRequire(name)
+      },
+    },
+    { filename },
+  )
+  assert.ok(exports.launchDevelopmentServer)
+  const server = exports.launchDevelopmentServer(
+    '/isolated-target',
+    '/node',
+    (type, detail) => journal.push({ type, detail }),
+    false,
+    3000,
+  )
+  // Act
+  child.stderr.emit(
+    'data',
+    Buffer.from(`fatal: bad credential ${token.slice(0, 9)}`),
+  )
+  child.stderr.emit('data', Buffer.from(token.slice(9)))
+  child.stderr.emit('end')
+  await server.close()
+  // Assert
+  const closed = journal.find((entry) => entry.type === 'application.closed')
+  assert.equal(
+    JSON.stringify(closed?.detail).includes('fatal: bad credential [masked]'),
+    true,
+  )
+  assert.equal(JSON.stringify(journal).includes(token.slice(4, 20)), false)
+})
+
+// Value: protects=the closed journal carries the dev server's last held output, masked, even when the process exits before its stream ends (pt1 Step 11 Codex finding: the held tail was published only on the stream's end, after the journal); fails_when=the journal lacks the held text or carries it raw; why_new=the earlier tests end the stream before close; seam=the launcher run in an isolated module context with a stub child; no_claim=a real next dev process
+test('the dev server output still held when it exits reaches the closed journal masked, before its stream ends', async (context) => {
+  // Arrange
+  const filename = join(__dirname, '../utils/launchDevelopmentServer.js'),
+    nativeRequire = createRequire(filename)
+  const exports: Partial<typeof ServerModule> = {},
+    journal: { type: string; detail: unknown }[] = []
+  const child = Object.assign(new EventEmitter(), {
+    pid: 42000,
+    exitCode: null,
+    signalCode: null,
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+  })
+  let groupAlive = true
+  context.mock.method(
+    process,
+    'kill',
+    (_pid: number, signal?: string | number): true => {
+      if (signal === 'SIGTERM') {
+        groupAlive = false
+        child.emit('exit')
+      }
+      if (signal === 0 && !groupAlive)
+        throw Object.assign(new Error('missing group'), { code: 'ESRCH' })
+      return true
+    },
+  )
+  runInNewContext(
+    await readFile(filename, 'utf8'),
+    {
+      exports,
+      AbortSignal,
+      Buffer,
+      process: { env: {} },
+      require(name: string) {
+        if (name === 'node:child_process') return { spawn: () => child }
+        if (name.endsWith('/utils/waitUntil'))
+          return {
+            waitUntil: async (read: () => unknown): Promise<unknown> => {
+              const value = await read()
+              if (!value) throw new Error('not ready')
+              return value
+            },
+          }
+        return nativeRequire(name)
+      },
+    },
+    { filename },
+  )
+  assert.ok(exports.launchDevelopmentServer)
+  const server = exports.launchDevelopmentServer(
+    '/isolated-target',
+    '/node',
+    (type, detail) => journal.push({ type, detail }),
+    false,
+    3000,
+  )
+  // Act
+  child.stderr.emit('data', Buffer.from(`fatal: ECONNRESET token ${'ghp'}_abc`))
+  await server.close()
+  // Assert
+  const closed = journal.find((entry) => entry.type === 'application.closed')
+  assert.equal(
+    JSON.stringify(closed?.detail).includes('fatal: ECONNRESET token [masked]'),
+    true,
+  )
+})

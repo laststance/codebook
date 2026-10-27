@@ -1,30 +1,26 @@
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:net'
-import { StringDecoder } from 'node:string_decoder'
 
 import {
   NODE_TEST_HISTORY_LIMIT_BYTES,
   REPOSITORY_RUN_TIMEOUT_MS,
 } from '../constants'
+import { NANOSECONDS_PER_MILLISECOND } from '../runtimeSupport/constants'
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { buildNodeTestEnvironment } from './buildNodeTestEnvironment'
+import type { ProcessOutputEvent } from './captureProcessOutput'
 import { isProcessGroupGone } from './isProcessGroupGone'
 import type { PreparedNodeTestLaunch } from './prepareNodeTestLaunch'
 import { readNodeInspectorEndpoint } from './readNodeInspectorEndpoint'
 import { signalProcessGroup } from './signalProcessGroup'
+import { watchOwnedProcess } from './watchOwnedProcess'
 
-const OUTPUT_LIMIT_BYTES = 32_768
-const OUTPUT_EVENT_LIMIT_CHARS = 4_096
 const INSPECTOR_READY_TIMEOUT_MS = 15_000
 const SHUTDOWN_TIMEOUT_MS = 5_000
-export type NodeTestOutputEvent = {
-  sequence: number
-  elapsedMs: number
-  channel: 'stdout' | 'stderr'
-  text: string
-}
+/** One stamped, redacted chunk of an owned test's output ({@link ProcessOutputEvent}). */
+export type NodeTestOutputEvent = ProcessOutputEvent
 
 /** Reserves a local port only while choosing one; the later Inspector identity must still be checked against the owned process group. @example const port = await availableInspectorPort() */
 async function availableInspectorPort(): Promise<number> {
@@ -69,90 +65,17 @@ export async function launchNodeTest(
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
-  let output = '',
-    announcement = '',
-    error: Error | undefined,
-    exited = false,
-    closing: Promise<void> | undefined,
-    outputSequence = 0
-  let outputWrites = Promise.resolve(),
-    pendingOutputBytes = 0
-  const exit = new Promise<void>((resolve) =>
-    child.once('close', () => {
-      exited = true
-      resolve()
-    }),
-  )
-  child.once('error', (cause) => {
-    error = cause
+  let closing: Promise<void> | undefined
+  // Each channel is redacted before the 32 KiB tail and the 4,096-character event split, so a secret never reaches either.
+  const { exit, hasExited, failure, capture } = watchOwnedProcess(child, {
+    startedAt: started,
+    onOutput,
+    // Output beyond the durable history's capacity can never be saved; fail capture instead of buffering it behind slow history writes.
+    pendingLimitBytes: NODE_TEST_HISTORY_LIMIT_BYTES,
+    overflowMessage:
+      'Node test output capture failed: output outpaced its durable history beyond the history size limit.',
+    failurePrefix: 'Node test output capture failed',
   })
-  for (const [channel, stream] of [
-    ['stdout', child.stdout],
-    ['stderr', child.stderr],
-  ] as const) {
-    const decoder = new StringDecoder('utf8')
-    const enqueue = (
-      text: string,
-      deliver: (event: NodeTestOutputEvent) => void | Promise<void>,
-    ): void => {
-      const bytes = Buffer.byteLength(text)
-      // Output beyond the durable history's capacity can never be saved; fail capture instead of buffering it behind slow history writes.
-      if (pendingOutputBytes + bytes > NODE_TEST_HISTORY_LIMIT_BYTES) {
-        error = new Error(
-          'Node test output capture failed: output outpaced its durable history beyond the history size limit.',
-        )
-        return
-      }
-      pendingOutputBytes += bytes
-      const event = {
-        sequence: ++outputSequence,
-        elapsedMs: Number(process.hrtime.bigint() - started) / 1_000_000,
-        channel,
-        text,
-      }
-      // Hand the chunk over in the step that stamps it; the history serializes its own durable writes, so a debugger stop accepted later cannot overtake it.
-      let delivery: Promise<void>
-      try {
-        delivery = Promise.resolve(deliver(event))
-      } catch (cause) {
-        delivery = Promise.reject(cause)
-      }
-      const settled = delivery
-        .catch((cause) => {
-          error ??= new Error(
-            `Node test output capture failed: ${String(cause)}`,
-          )
-        })
-        .finally(() => {
-          pendingOutputBytes -= bytes
-        })
-      outputWrites = outputWrites.then(() => settled)
-    }
-    const accept = (text: string): void => {
-      if (!text) return
-      // Keep the initial Inspector announcement and the final bounded test result separately.
-      if (Buffer.byteLength(announcement) < OUTPUT_LIMIT_BYTES)
-        announcement = Buffer.from(announcement + text)
-          .subarray(0, OUTPUT_LIMIT_BYTES)
-          .toString('utf8')
-      output = Buffer.from(output + text)
-        .subarray(-OUTPUT_LIMIT_BYTES)
-        .toString('utf8')
-      if (!onOutput || error) return
-      let part = ''
-      for (const character of text) {
-        if (part.length + character.length > OUTPUT_EVENT_LIMIT_CHARS) {
-          enqueue(part, onOutput)
-          if (error) return
-          part = ''
-        }
-        part += character
-      }
-      if (part) enqueue(part, onOutput)
-    }
-    stream.on('data', (chunk: Buffer) => accept(decoder.write(chunk)))
-    stream.on('end', () => accept(decoder.end()))
-  }
   record('node-test.started', {
     pid: child.pid,
     port,
@@ -166,8 +89,9 @@ export async function launchNodeTest(
   return {
     pid: child.pid,
     processGroup: child.pid,
-    elapsedMs: () => Number(process.hrtime.bigint() - started) / 1_000_000,
-    output: () => output,
+    elapsedMs: () =>
+      Number(process.hrtime.bigint() - started) / NANOSECONDS_PER_MILLISECOND,
+    output: () => capture.tail(),
     /** Waits for the launched test command's actual exit before sealing its output result. @example const result = await testRun.result(signal) */
     async result(signal: AbortSignal): Promise<{
       exitCode: number | null
@@ -181,9 +105,14 @@ export async function launchNodeTest(
         signal,
         REPOSITORY_RUN_TIMEOUT_MS,
       )
-      await outputWrites
-      if (error) throw error
-      return { exitCode: child.exitCode, signal: child.signalCode, output }
+      await capture.settled()
+      const ended = failure()
+      if (ended) throw ended
+      return {
+        exitCode: child.exitCode,
+        signal: child.signalCode,
+        output: capture.tail(),
+      }
     },
     /** Reports how the process ended once it exits within `timeoutMs`, or `undefined` while it is still running. Used to explain a debugger session that ended before its first stop. @example await testRun.waitForExit(2_000) // => { exitCode: 0, signal: null } */
     async waitForExit(
@@ -202,14 +131,15 @@ export async function launchNodeTest(
     async inspectorEndpoint(signal: AbortSignal): Promise<string> {
       return waitUntil(
         () => {
-          if (error || exited)
+          const ended = failure()
+          if (ended || hasExited())
             throw (
-              error ??
+              ended ??
               new Error(
                 `Node test exited before debugger attachment: ${child.exitCode}`,
               )
             )
-          const endpoint = readNodeInspectorEndpoint(announcement)
+          const endpoint = readNodeInspectorEndpoint(capture.announcement())
           if (!endpoint) return undefined
           if (Number(new URL(endpoint).port) !== port)
             throw new Error('Node test announced a foreign Inspector port.')
@@ -225,7 +155,7 @@ export async function launchNodeTest(
       const attempt = (closing ??= (async () => {
         if (!child.pid) {
           await exit
-          await outputWrites
+          await capture.settled()
           return
         }
         const processGroup = child.pid
@@ -252,7 +182,7 @@ export async function launchNodeTest(
           signalProcessGroup(processGroup, 'SIGKILL')
           await waitForRelease()
         }
-        await outputWrites
+        await capture.settled()
         record('node-test.closed', {
           pid: child.pid,
           exitCode: child.exitCode,

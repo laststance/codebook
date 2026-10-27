@@ -8,7 +8,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.8'
-export const EXTENSION_VERSION = '0.2.49'
+export const EXTENSION_VERSION = '0.2.50'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -26,6 +26,10 @@ export const LARGEST_PROCESS_ID = 2 ** 31 - 1
 export const PROCESS_START_QUERY_TIMEOUT_MS = 3_000
 /** The most bytes the query for one process's start may print; a longer answer is no start. */
 export const PROCESS_START_QUERY_MAX_BYTES = 1_024
+/** How long one query of a port's listening sockets (`lsof` or `ss`) may run before it is ended and the port's owner counts as unknown. */
+export const LISTENER_QUERY_TIMEOUT_MS = 3_000
+/** The most bytes one query of a port's listening sockets may print; a longer answer leaves the port's owner unknown. */
+export const LISTENER_QUERY_MAX_BYTES = 1_048_576
 /** How far apart, in 100 ns ticks, a creation time the Windows process table names (Win32_Process CreationDate, to the microsecond) and a recorded start (to the 100 ns) may lie and still name one process: less than a microsecond ({@link readProcessStart}). */
 export const WINDOWS_PROCESS_TABLE_PRECISION_TICKS = 10
 /** How long a failed read of this process's own start is kept before the start is read again. */
@@ -1236,6 +1240,26 @@ export const BOOK_PREPARE_TIMEOUT_MS = 20_000
 export const BOOK_SOURCE_CONCURRENCY = 4
 export const REPOSITORY_BROWSER_PROFILE = 'repository-browser'
 export const NODE_TEST_PROFILE = 'node-test'
+/** The lowest port a node-server declaration may name: a lower one needs privileges a development server does not run with, and Codebook never raises them. */
+export const NODE_SERVER_PORT_MIN = 1_024
+/** The highest TCP port. */
+export const TCP_PORT_MAX = 65_535
+/** The highest TCP port a node-server declaration may name. */
+export const NODE_SERVER_PORT_MAX = TCP_PORT_MAX
+/** The longest request path, its query string included, a node-server declaration may send. */
+export const NODE_SERVER_REQUEST_PATH_LIMIT_CHARS = 2_048
+/** The largest request body, in UTF-8 bytes, a node-server declaration may send. */
+export const NODE_SERVER_REQUEST_BODY_LIMIT_BYTES = 16_384
+/** The most server output delivered but not yet settled; a server printing faster than its events settle fails its capture instead of buffering without bound. */
+export const NODE_SERVER_OUTPUT_PENDING_LIMIT_BYTES = 1_048_576
+/** How long a stopping server's debugger may take to detach before SIGTERM is sent anyway: a server handling SIGTERM waits for an attached debugger before it exits (Part A, Issue #139). */
+export const NODE_SERVER_DEBUGGER_DETACH_TIMEOUT_MS = 1_000
+/** How long a server's process group has after SIGTERM before SIGKILL, and again after SIGKILL before its close fails. */
+export const NODE_SERVER_SHUTDOWN_GRACE_MS = 5_000
+/** How much of an owned process's output is kept: its first bytes for the inspector announcement, its last ones as the redacted tail. */
+export const PROCESS_OUTPUT_LIMIT_BYTES = 32_768
+/** The longest text of one stamped output event of an owned process. */
+export const PROCESS_OUTPUT_EVENT_LIMIT_CHARS = 4_096
 /** The command id of the status item's Save learning replay and its Retry; registered by the extension, run by a click. */
 export const SAVE_LEARNING_REPLAY_COMMAND = 'codebook.saveLearningReplay'
 /** The command id of the status item's Open replay and Open retained history. */
@@ -1532,7 +1556,7 @@ export const REPOSITORY_APPLICATION_LOG_LIMIT_BYTES = 262_144
 export const REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS = 10_000
 /** Next's own development port, used when the dev script declares no port. */
 export const DEVELOPMENT_SERVER_DEFAULT_PORT = 3000
-export const DEVELOPMENT_SERVER_MAX_PORT = 65_535
+export const DEVELOPMENT_SERVER_MAX_PORT = TCP_PORT_MAX
 /** Bounds one loopback connect that asks whether something already listens on the project's port; a connect that times out proves nothing (Windows reports a refused loopback connect only after its SYN retries, 1 to 2 s), so the bind probe decides. */
 export const DEVELOPMENT_PORT_PROBE_CONNECT_TIMEOUT_MS = 500
 /** Bounds the wait for a port that Codebook's own earlier run is still releasing (its owned process group is exiting) before the start is refused as that run's. */
@@ -1878,3 +1902,21 @@ export const SUMMARY_CHOICE_DROPPED_REASON_COMPOSITION_LEFT =
 /** What the learner's notice for a dropped Learning summary choice starts with, before the reason. */
 export const SUMMARY_CHOICE_DROPPED_NOTICE_PREFIX =
   'Codebook did not carry out your choice: '
+
+/** The text that replaces a secret value or a secret-named value in every captured fact, variable, snapshot, output and cause ({@link redactSecretText}). */
+export const REDACTION_MASK = '[masked]'
+
+/** The most characters of an incomplete trailing token or private-key block an output redactor holds back; past it the held part is released masked ({@link createOutputRedactor}). 8 KiB. */
+export const OUTPUT_REDACTION_HOLD_LIMIT_CHARS = 8_192
+
+/** The characters kept back when an over-long run shows no secret shape is released, so a secret marker cut by the release is still seen whole ({@link createOutputRedactor}). */
+export const OUTPUT_REDACTION_CARRY_CHARS = 16
+
+/** The characters of a dropped private-key body kept to find an END marker split across chunks ({@link createOutputRedactor}); longer than the longest END marker its bounded label allows (about 106 characters). */
+export const OUTPUT_REDACTION_END_MARKER_TAIL_CHARS = 128
+
+/** How far into a debugger preview value its type name or length prefix is looked for ({@link redactValuePreview}); a longer type name is read as a bare value. */
+export const PREVIEW_VALUE_PREFIX_LIMIT_CHARS = 128
+
+/** How much of an oversized private-key block an output redactor drops before it ends the block at the next line break, so a header without an END marker cannot silence the channel ({@link createOutputRedactor}); four times a 4096-bit RSA key's PEM. */
+export const OUTPUT_REDACTION_BLOCK_DROP_LIMIT_CHARS = 16_384
