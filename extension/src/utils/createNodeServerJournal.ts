@@ -2,6 +2,7 @@ import {
   EVENT_DETAIL_LIMIT_BYTES,
   MAX_EVENTS,
   MAX_RETAINED_EVENT_BYTES,
+  EVENT_TYPE_LIMIT_CHARS,
 } from '../constants'
 
 import { cutTextToFit } from './cutTextToFit'
@@ -86,7 +87,7 @@ export function createNodeServerJournal(
     retainedBytes += bytes
     events.push({
       sequence: ++sequence,
-      type: type.slice(0, 128),
+      type: type.slice(0, EVENT_TYPE_LIMIT_CHARS),
       detail: kept,
     })
   }

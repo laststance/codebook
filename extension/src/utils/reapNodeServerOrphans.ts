@@ -1,4 +1,7 @@
-import { NODE_SERVER_ORPHANS_STORAGE_KEY } from '../constants'
+import {
+  NODE_SERVER_GROUP_EXIT_POLL_MS,
+  NODE_SERVER_ORPHANS_STORAGE_KEY,
+} from '../constants'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { isProcessGroupGone } from './isProcessGroupGone'
@@ -60,7 +63,7 @@ async function closeOrphanGroup(
     'the server group to exit',
     input.graceMs,
     undefined,
-    50,
+    NODE_SERVER_GROUP_EXIT_POLL_MS,
   ).catch(() => false)
   if (!gone) input.signalGroup(record.processGroup, 'SIGKILL')
   input.log(

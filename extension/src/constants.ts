@@ -105,6 +105,8 @@ export const MAX_EXPLANATIONS = 32
 export const MAX_VALUE_PATHS = 10
 export const EVENT_PAGE_SIZE = 50
 export const EVENT_DETAIL_LIMIT_BYTES = 8_192
+/** The longest event type a run's journal keeps. */
+export const EVENT_TYPE_LIMIT_CHARS = 128
 /**
  * What ends a text {@link cutTextToFit} cut to fit a bound, so a reader sees that the text went on: the reason of the one run failure the evidence keeps past a refusal, cut to fit {@link EVENT_DETAIL_LIMIT_BYTES} (Cycle 0046 row 698).
  * @example cutTextToFit('x'.repeat(100), (candidate) => candidate.length <= 20) // => 'xxxxxxxxxxxxx… [cut]'
@@ -1283,6 +1285,8 @@ export const NODE_SERVER_SHUTDOWN_GRACE_MS = 5_000
 export const NODE_SERVER_READY_CONNECT_TIMEOUT_MS = 250
 /** The pause between two readiness rounds, so a server still starting is not hammered. */
 export const NODE_SERVER_READY_POLL_INTERVAL_MS = 50
+/** How often the orphan reaper checks whether a signalled server group has exited. */
+export const NODE_SERVER_GROUP_EXIT_POLL_MS = 50
 /** The most of a response a node-server run reads; the socket is destroyed there and the response reads `(cut at 1 MiB)`. */
 export const NODE_SERVER_RESPONSE_READ_LIMIT_BYTES = 1_048_576
 /** How many leading bytes of a text response are shown to the chat and in Output. */

@@ -12,6 +12,7 @@ import {
   BOOK_MAX_FILES,
   BOOK_MAX_SOURCES,
   EVENT_DETAIL_LIMIT_BYTES,
+  EVENT_TYPE_LIMIT_CHARS,
   HTTP_BODY_LIMIT_BYTES,
   INVALID_SAVED_STUDY_LIMIT_MESSAGE,
   MAX_EVENTS,
@@ -3754,7 +3755,7 @@ export class StudyService {
             const bounded = safe
             events.push({
               sequence: ++sequence,
-              type: type.slice(0, 128),
+              type: type.slice(0, EVENT_TYPE_LIMIT_CHARS),
               detail: bounded,
             })
             return historyWrite

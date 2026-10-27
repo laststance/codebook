@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { once } from 'node:events'
 import {
   copyFile,
   mkdtemp,
@@ -8,7 +7,7 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises'
-import { connect, createServer } from 'node:net'
+import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -39,21 +38,10 @@ import { verifyListenerOwnership } from '../utils/verifyListenerOwnership'
 import { waitForServerReadiness } from '../utils/waitForServerReadiness'
 
 import { createCdpNodeServerDebugger } from './utils/cdpNodeServerDebugger'
+import { freeLoopbackPort } from './utils/freeLoopbackPort'
 
 /** The test-only HTTP server as compiled beside this test; it never ships. */
 const FIXTURE_SERVER = join(__dirname, 'fixtures/node-server/server.js')
-
-/** A loopback port that was free a moment ago. */
-async function freePort(): Promise<number> {
-  const probe = createServer()
-  probe.listen(0, '127.0.0.1')
-  await once(probe, 'listening')
-  const address = probe.address()
-  assert.ok(address && typeof address !== 'string')
-  probe.close()
-  await once(probe, 'close')
-  return address.port
-}
 
 /** Says whether something accepts connections on a loopback port now. */
 async function accepts(port: number): Promise<boolean> {
@@ -119,7 +107,7 @@ async function fixtureRun(
     await mkdtemp(join(tmpdir(), 'codebook-node-server-run-')),
   )
   t.after(() => rm(workspace, { recursive: true, force: true }))
-  const port = await freePort()
+  const port = await freeLoopbackPort()
   await copyFile(FIXTURE_SERVER, join(workspace, 'server.cjs'))
   await writeFile(
     join(workspace, 'fixture-server.json'),
