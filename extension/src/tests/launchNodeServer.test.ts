@@ -132,6 +132,10 @@ test('an owned server announces its loopback inspector, answers after release an
       secretEnvironmentInherited: false,
     })
     assert.ok(inheritedVariables.includes('PATH'))
+    // Node itself copies NODE_V8_COVERAGE into a child's environment while this process collects coverage (the health check's c8 run, CI's coverage upload), so the journal then truthfully names it.
+    const coverageVariable = process.env.NODE_V8_COVERAGE
+      ? ['NODE_V8_COVERAGE']
+      : []
     assert.ok(
       inheritedVariables.every((name) =>
         [
@@ -147,6 +151,7 @@ test('an owned server announces its loopback inspector, answers after release an
           'NODE_EXTRA_CA_CERTS',
           'SSL_CERT_FILE',
           'SSL_CERT_DIR',
+          ...coverageVariable,
         ].includes(name),
       ),
     )
