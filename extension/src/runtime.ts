@@ -21,6 +21,7 @@ import type {
   ProfileLeft,
 } from './runtimeSupport/hostBrowser'
 import type { PauseIdentity, PauseGate } from './runtimeSupport/pauseGate'
+import type { StateChangingRequestQuestion } from './utils/askToSendStateChangingRequest'
 import type {
   RetryVitestListingRelease,
   VitestListingReleaseFailure,
@@ -375,7 +376,7 @@ export interface StudyEnvironment {
    * @returns `true` for Send; `false` for Cancel, a dismissal, or the signal's abort (D6: no answer within the pause-hold bound).
    */
   confirmStateChangingRequest?(
-    request: { method: string; path: string },
+    request: StateChangingRequestQuestion,
     signal: AbortSignal,
   ): Promise<boolean>
 }

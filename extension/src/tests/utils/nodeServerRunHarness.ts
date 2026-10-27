@@ -59,6 +59,8 @@ export type HarnessOptions = {
   serverOutput?: string
   /** The pids that hold the server end of the request's connection; the launched server by default. */
   connectionHolders?: number[]
+  /** Holds the request's peer check (which process holds the connection) until the test settles it. */
+  peerCheckGate?: Promise<void>
   inspectorPort?: number
   /** The server ends the close call by hand: the test settles `closeGate`. */
   holdClose?: boolean
@@ -77,6 +79,8 @@ export class FakeNodeServerDebugger implements NodeServerDebugger {
   retireCount = 0
   releaseCount = 0
   lastSessionName = ''
+  /** The adapter reported a stop whose stack the editor is still reading, so the run has not heard of it yet. */
+  unreportedPause = false
   constructor(
     readonly input: NodeServerDebuggerInput,
     private readonly order: string[],
@@ -146,6 +150,9 @@ export class FakeNodeServerDebugger implements NodeServerDebugger {
     this.order.push('debugger.release')
     this.releaseCount += 1
     await this.releaseGate
+  }
+  hasUnreportedPause(): boolean {
+    return this.unreportedPause
   }
 
   /** The adapter reports a pause; returns its token. */
@@ -252,9 +259,17 @@ export function fakeRequestSender(order: string[]) {
         response: defer<NodeServerResponse>(),
       }
       current = answers
+      // As the real sender: an abort ends both answers at once, and an aborted request writes nothing.
+      const abort = (): void => {
+        answers.written.reject(input.signal.reason)
+        answers.response.reject(input.signal.reason)
+      }
+      if (input.signal.aborted) abort()
+      else input.signal.addEventListener('abort', abort, { once: true })
       // The sender verifies the connected socket before it writes a byte; a failure leaves zero bytes sent.
       void input.verifyPeer(this.connection).then(
         () => {
+          if (input.signal.aborted) return
           this.bytesWritten += 1
           answers.written.resolve()
         },
@@ -424,8 +439,10 @@ export function createHarness(options: HarnessOptions = {}) {
       return options.listener ?? { owned: true }
     },
     readListeningPorts: async () => options.listeningPorts ?? [],
-    readConnectionServerPid: async () =>
-      options.connectionHolders ?? [server.pid],
+    readConnectionServerPid: async () => {
+      await options.peerCheckGate
+      return options.connectionHolders ?? [server.pid]
+    },
     sendRequest: (input) => {
       if (options.sendThrows) throw options.sendThrows
       return sender.send(input, runtime.view().state)

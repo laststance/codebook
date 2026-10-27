@@ -133,11 +133,11 @@ test('the environment confirmation hook asks through the editor modal and confir
   const signal = new AbortController().signal
   // Act
   const sent = await sending.environment.confirmStateChangingRequest?.(
-    { method: 'POST', path: '/api/items' },
+    { runId: 'run-1', method: 'POST', path: '/api/items' },
     signal,
   )
   const cancelled = await cancelling.environment.confirmStateChangingRequest?.(
-    { method: 'POST', path: '/api/items' },
+    { runId: 'run-1', method: 'POST', path: '/api/items' },
     signal,
   )
   // Assert

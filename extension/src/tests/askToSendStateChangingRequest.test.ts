@@ -25,7 +25,7 @@ test('the confirmation is a modal naming the method, the path and the repository
   const { show, shown } = modalAnswering('Send')
   // Act
   const confirmed = await createStateChangingRequestAsker(show)(
-    { method: 'DELETE', path: '/api/items/7' },
+    { runId: 'run-1', method: 'DELETE', path: '/api/items/7' },
     new AbortController().signal,
   )
   // Assert
@@ -49,7 +49,7 @@ test('Cancel or a dismissed modal does not confirm', async () => {
   const { show } = modalAnswering(undefined)
   // Act
   const confirmed = await createStateChangingRequestAsker(show)(
-    { method: 'POST', path: '/api/items' },
+    { runId: 'run-1', method: 'POST', path: '/api/items' },
     new AbortController().signal,
   )
   // Assert
@@ -64,7 +64,7 @@ test('an abort while the modal is open answers false', async () => {
   const show: ShowModalQuestion = () => learner.promise
   // Act
   const asking = createStateChangingRequestAsker(show)(
-    { method: 'PUT', path: '/api/items/7' },
+    { runId: 'run-1', method: 'PUT', path: '/api/items/7' },
     controller.signal,
   )
   controller.abort()
@@ -81,7 +81,7 @@ test('an already aborted question shows no modal', async () => {
   controller.abort()
   // Act
   const confirmed = await createStateChangingRequestAsker(show)(
-    { method: 'POST', path: '/api/items' },
+    { runId: 'run-1', method: 'POST', path: '/api/items' },
     controller.signal,
   )
   // Assert
@@ -96,7 +96,7 @@ test('the question removes its abort listener once it is answered', async () => 
   const controller = new AbortController()
   // Act
   await createStateChangingRequestAsker(show)(
-    { method: 'POST', path: '/api/items' },
+    { runId: 'run-1', method: 'POST', path: '/api/items' },
     controller.signal,
   )
   // Assert
@@ -113,7 +113,7 @@ test('a retry after an abort joins the open modal and gets its answer', async ()
     return learner.promise
   }
   const ask = createStateChangingRequestAsker(show)
-  const request = { method: 'POST', path: '/api/items' }
+  const request = { runId: 'run-1', method: 'POST', path: '/api/items' }
   const first = new AbortController()
   // Act
   const firstAnswer = ask(request, first.signal)
@@ -131,10 +131,66 @@ test('a question after the answer opens a new modal', async () => {
   // Arrange
   const { show, shown } = modalAnswering('Send')
   const ask = createStateChangingRequestAsker(show)
-  const request = { method: 'POST', path: '/api/items' }
+  const request = { runId: 'run-1', method: 'POST', path: '/api/items' }
   // Act
   await ask(request, new AbortController().signal)
   await ask(request, new AbortController().signal)
   // Assert
   assert.equal(shown.length, 2)
+})
+
+// protects=a modal another run left on screen never answers this run's request: a new run asks the learner in its own modal; fails_when=the Send click on the old run's modal sends the new run's request, or the new run shows no modal; no_claim=the editor's modal queue
+test('a new run with the same method and path asks in its own modal, not the one an earlier run left open', async () => {
+  // Arrange
+  const modals: ReturnType<typeof defer<string | undefined>>[] = []
+  const show: ShowModalQuestion = () => {
+    const learner = defer<string | undefined>()
+    modals.push(learner)
+    return learner.promise
+  }
+  const ask = createStateChangingRequestAsker(show)
+  const earlierRun = { runId: 'run-a', method: 'POST', path: '/api/items' }
+  const laterRun = { runId: 'run-b', method: 'POST', path: '/api/items' }
+  const gaveUp = new AbortController()
+  // Act
+  const earlierAnswer = ask(earlierRun, gaveUp.signal)
+  gaveUp.abort()
+  const laterAnswer = ask(laterRun, new AbortController().signal)
+  modals[0]?.resolve('Send')
+  modals[1]?.resolve(undefined)
+  // Assert
+  assert.equal(await earlierAnswer, false)
+  assert.equal(await laterAnswer, false)
+  assert.equal(modals.length, 2)
+})
+
+// protects=the shared modal belongs to one declared request: a request with another body asks again; fails_when=a Send given for one body sends another; no_claim=none
+test('a request with another body asks in its own modal', async () => {
+  // Arrange
+  const modals: ReturnType<typeof defer<string | undefined>>[] = []
+  const show: ShowModalQuestion = () => {
+    const learner = defer<string | undefined>()
+    modals.push(learner)
+    return learner.promise
+  }
+  const ask = createStateChangingRequestAsker(show)
+  const declared = {
+    runId: 'run-a',
+    method: 'POST',
+    path: '/api/items',
+    contentType: 'application/json',
+    body: '{"name":"a"}',
+  }
+  const changed = { ...declared, body: '{"name":"b"}' }
+  const gaveUp = new AbortController()
+  // Act
+  const declaredAnswer = ask(declared, gaveUp.signal)
+  gaveUp.abort()
+  const changedAnswer = ask(changed, new AbortController().signal)
+  modals[0]?.resolve('Send')
+  modals[1]?.resolve(undefined)
+  // Assert
+  assert.equal(await declaredAnswer, false)
+  assert.equal(await changedAnswer, false)
+  assert.equal(modals.length, 2)
 })

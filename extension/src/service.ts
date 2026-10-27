@@ -4412,14 +4412,14 @@ export class StudyService {
 
   /**
    * Asks the learner, in the editor's native modal, whether to send a state-changing request; the chat AI cannot answer it (TD-6, D6).
-   * @param record - The node-server run, whose cancellation closes the question.
-   * @param declaration - The declared request, of which the modal names the method and path.
+   * @param record - The node-server run, whose cancellation closes the question and whose id keeps a modal another run left open from answering it.
+   * @param declaration - The declared request, of which the modal names the method and path; the whole declaration identifies the question.
    * @throws `PREREQUISITE_MISSING` when the editor has no such modal; `REQUEST_NOT_CONFIRMED` when the learner cancelled, dismissed it, or did not answer within {@link StudyService.confirmationTimeoutMs} (the run stays `ready`; asking again needs the same or a new key).
    * @example await this.confirmNodeServerRequest(record, { method: 'POST', path: '/api/items' })
    */
   private async confirmNodeServerRequest(
     record: StudyRecord,
-    declaration: { method: string; path: string },
+    declaration: NodeServerConfiguration['request'],
   ): Promise<void> {
     const confirm = this.environment.confirmStateChangingRequest
     if (!confirm)
@@ -4432,11 +4432,7 @@ export class StudyService {
       record.cancellation.signal,
     ])
     const sent = await confirm
-      .call(
-        this.environment,
-        { method: declaration.method, path: declaration.path },
-        signal,
-      )
+      .call(this.environment, { runId: record.id, ...declaration }, signal)
       .catch(() => false)
     if (!sent)
       throw new StudyError(

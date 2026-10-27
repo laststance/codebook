@@ -99,6 +99,8 @@ export interface NodeServerDebugger {
   retireStops(signal: AbortSignal): Promise<void>
   /** Removes the owned breakpoints, ends the session (detach, which resumes the target) and stops listening; safe to call again after a failure. */
   release(): Promise<void>
+  /** Whether the target is paused at a stop the run has not been told about yet (its stack is still being read): the stop kills such a server first, since the pause may be inside the request (D14). */
+  hasUnreportedPause(): boolean
 }
 
 /** The pieces a debugger factory is given. */

@@ -6,6 +6,7 @@ import { StudyError } from '../errors'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { ContinueInput } from '../schemas'
 import type { StudyService } from '../service'
+import type { StateChangingRequestQuestion } from '../utils/askToSendStateChangingRequest'
 
 import { createHarness } from './helpers'
 import { createManualClock } from './utils/createManualClock'
@@ -162,13 +163,13 @@ test('an http-request while the learner holds the server is LEARNER_PAUSED, befo
   assert.equal(refusal.code, 'LEARNER_PAUSED')
 })
 
-// protects=D6: a POST waits for the learner's Send in the native modal, which names the method and path, and only then reaches the run; fails_when=the request is sent before the answer or the modal lacks the method or path; no_claim=the modal's text (environment tests)
-test('a POST http-request is sent only after the learner confirms it, and the confirmation names its method and path', async (context) => {
+// protects=D6: a POST waits for the learner's Send in the native modal, which names the method and path, and only then reaches the run; the question carries the run and the whole declared request, so a modal another run left open never answers it; fails_when=the request is sent before the answer, or the question lacks the run id or part of the declaration; no_claim=the modal's text (environment tests)
+test('a POST http-request is sent only after the learner confirms it, and the confirmation names its run and declared request', async (context) => {
   // Arrange
   const harness = await createHarness()
   context.after(() => harness.close())
   const answer = defer<boolean>()
-  const asked: { method: string; path: string }[] = []
+  const asked: StateChangingRequestQuestion[] = []
   const { service, record, run } = await startFakeNodeServerRun(harness, {
     request: POST_REQUEST,
     confirm: (request) => {
@@ -187,7 +188,15 @@ test('a POST http-request is sent only after the learner confirms it, and the co
   answer.resolve(true)
   const receipt = await sending
   // Assert
-  assert.deepEqual(asked, [{ method: 'POST', path: '/api/items' }])
+  assert.deepEqual(asked, [
+    {
+      runId: record.id,
+      method: 'POST',
+      path: '/api/items',
+      contentType: 'application/json',
+      body: '{"name":"example"}',
+    },
+  ])
   assert.equal(sentWhileAsking, false)
   assert.equal(receipt.key, 'post-1')
   assert.deepEqual(run.calls, ['prepare', 'sendRequest:post-1'])

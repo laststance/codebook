@@ -237,6 +237,10 @@ export function createCdpNodeServerDebugger(
       breakpoints.clear()
       breakpointLines.clear()
     },
+    // Each pause is reported to the run as it arrives (the instrumentation pause before a script runs is no stop), so none waits unreported.
+    hasUnreportedPause(): boolean {
+      return false
+    },
     async release(): Promise<void> {
       released = true
       cdp?.close()

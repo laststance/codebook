@@ -36,6 +36,8 @@ export async function editorHarness(
     stopFailures?: number
     /** The adapter rejects the stack trace of a pause after the entry pause. */
     stackTraceFails?: boolean
+    /** Holds the adapter's stack trace of a pause after the entry pause until the test settles it. */
+    stackTraceGate?: Promise<void>
     documents?: Array<{
       uri: { scheme: string; fsPath: string }
       getText: () => string
@@ -136,6 +138,7 @@ export async function editorHarness(
       if (command === 'continue') entryDone = true
       if (command === 'stackTrace' && options.stackTraceFails && entryDone)
         throw new Error('stackTrace timed out')
+      if (command === 'stackTrace' && entryDone) await options.stackTraceGate
       if (command === 'stackTrace')
         return {
           stackFrames: currentFrame

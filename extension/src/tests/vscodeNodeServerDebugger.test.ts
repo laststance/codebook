@@ -459,3 +459,45 @@ test('a pause whose stack trace fails is reported as a pause that is no declared
   assert.equal(pause.location, undefined)
   await debug.release()
 })
+
+// protects=D14: a stop the adapter reported but whose stack the editor is still reading counts as a pause the run has not heard of, until it is reported; fails_when=a stop admitted in that window reads the server as running, so the detach resumes the paused handler; no_claim=a real adapter's timing
+test('a stop whose stack is still being read counts as an unreported pause until the run hears of it', async () => {
+  // Arrange
+  const stackTrace = defer<void>()
+  const editor = await editorHarness({ stackTraceGate: stackTrace.promise })
+  const { debug, heard } = await armedDebugger(editor)
+  await debug.releaseEntry(AbortSignal.timeout(5_000))
+  const afterEntry = debug.hasUnreportedPause()
+  // Act
+  editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+    file: STOP_FILE,
+    line: 14,
+  })
+  const whileReading = debug.hasUnreportedPause()
+  stackTrace.resolve()
+  await heard.nextPause()
+  // Assert
+  assert.equal(afterEntry, false)
+  assert.equal(whileReading, true)
+  assert.equal(debug.hasUnreportedPause(), false)
+  await debug.release()
+})
+
+// protects=a stop the learner continues before its stack arrives is no pause any more; fails_when=a server running on is still read as paused, so a stop kills it instead of letting it shut down; no_claim=none
+test('a stop the learner continues before its stack arrives no longer counts as an unreported pause', async () => {
+  // Arrange
+  const stackTrace = defer<void>()
+  const editor = await editorHarness({ stackTraceGate: stackTrace.promise })
+  const { debug } = await armedDebugger(editor)
+  await debug.releaseEntry(AbortSignal.timeout(5_000))
+  editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+    file: STOP_FILE,
+    line: 14,
+  })
+  // Act
+  editor.adapter.learnerContinues()
+  // Assert
+  assert.equal(debug.hasUnreportedPause(), false)
+  stackTrace.resolve()
+  await debug.release()
+})

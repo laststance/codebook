@@ -737,6 +737,12 @@ class OwnedNodeServerRun implements NodeServerRuntime {
 
   /** A native pause after the entry pause (the debugger's `onPause`). */
   private onDebuggerPause(pause: NodeServerDebuggerPause): void {
+    // D14 for a pause that arrives after the stop was admitted: a declared stop, or any pause inside the request, is killed before the debugger lets go.
+    if (
+      this.lifecycle === 'stopping' &&
+      (pause.declaredStopIndex !== undefined || this.inRequestWindow())
+    )
+      this.killFirst = true
     if (this.lifecycle !== 'live') return
     this.generation += 1
     const kind = this.classify(pause)
@@ -993,11 +999,12 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       await handle.written
     } catch (error) {
       // Any other failure is reported by the response promise, which rejects with it too.
-      // A listener that is not the server: nothing was sent, and the request may be tried again.
+      // A listener that is not the server, or a stop admitted before the first byte: nothing was sent.
       if (
         error instanceof StudyError &&
         (error.code === 'LISTENER_NOT_OWNED' ||
-          error.code === 'PORT_OWNER_UNKNOWN')
+          error.code === 'PORT_OWNER_UNKNOWN' ||
+          error.code === 'RUN_NOT_READY')
       ) {
         this.closeRequestWindow(token)
         throw error
@@ -1162,6 +1169,13 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     this.killFirst ||= this.mustKillFirst()
     this.lifecycle = 'stopping'
     this.abort.abort()
+    // A request still checking its connection writes nothing once the stop is admitted.
+    this.requestAbort.abort(
+      new StudyError(
+        'RUN_NOT_READY',
+        'The run was stopped before its request was written, so nothing was sent.',
+      ),
+    )
     this.cancelTimers()
     this.notify()
     const attempt = this.stopWithinDeadline(afterPreparation).catch(
@@ -1257,6 +1271,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     const claim = this.portClaim
     if (claim) beginReleaseOfOwnedDevelopmentPort(claim)
     if (server?.processGroup !== undefined) {
+      // A stop the editor reported after the admission and is still reading may be inside the request too.
+      if (this.debug?.hasUnreportedPause()) this.killFirst = true
       // The paused code must not run on: the group dies before the debugger lets go of it.
       if (this.killFirst)
         this.dependencies.signalGroup(server.processGroup, 'SIGKILL')
@@ -1277,9 +1293,10 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     if (claim) releaseOwnedDevelopmentPort(claim)
   }
 
-  /** D14: a server paused at a declared stop (inside the request or outside it), paused by the learner inside the request, or whose pause hold expired, is killed before its debugger lets go. */
+  /** D14: a server paused at a declared stop (inside the request or outside it), paused by the learner inside the request, paused at a stop the run has not classified yet, or whose pause hold expired, is killed before its debugger lets go. */
   private mustKillFirst(): boolean {
     if (this.holdExpired) return true
+    if (this.debug?.hasUnreportedPause()) return true
     if (this.nativeHolds.size === 0) return false
     return this.ownedHits.size > 0 || this.inRequestWindow()
   }

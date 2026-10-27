@@ -66,6 +66,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   private readonly active = new Map<string, vscode.DebugSession>()
   private readonly pausedSessions = new Set<string>()
   private readonly sessionStops: NativeStop[] = []
+  /** The stops the adapter reported that the run has not been told about yet, by token, with their session. */
+  private readonly unreportedStops = new Map<number, string>()
   /** The pauses the run knows, by token, with the stack read when they were classified. */
   private readonly livePauses = new Map<
     number,
@@ -193,6 +195,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
         : undefined,
     }
     this.sessionStops.push(stop)
+    this.unreportedStops.set(sequence, session.id)
     this.input.record('node-server.dap-stopped', {
       sessionId: session.id,
       threadId: stop.threadId,
@@ -204,6 +207,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   /** Reports to the run that the session's reported pauses ran on (Codebook's resume, the learner's Continue or a step). */
   private resumeSession(sessionId: string): void {
     this.pausedSessions.delete(sessionId)
+    this.forgetUnreportedStops(sessionId)
     for (const [token, { stop }] of this.livePauses)
       if (stop.sessionId === sessionId) {
         this.livePauses.delete(token)
@@ -211,8 +215,19 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       }
   }
 
+  /** The session's reported stops ran on or ended, so none of them can still hold the target. */
+  private forgetUnreportedStops(sessionId: string): void {
+    for (const [token, stopSession] of this.unreportedStops)
+      if (stopSession === sessionId) this.unreportedStops.delete(token)
+  }
+
+  hasUnreportedPause(): boolean {
+    return this.unreportedStops.size > 0
+  }
+
   private onSessionTerminated(session: vscode.DebugSession): void {
     this.pausedSessions.delete(session.id)
+    this.forgetUnreportedStops(session.id)
     codebookStopLedger.forget(session.id)
     if (!this.active.delete(session.id)) return
     this.input.record('node-server.session-terminated', {
@@ -438,6 +453,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
         codebookStopLedger.isWindowOpen(session.id),
     )
     this.livePauses.set(stop.token, { stop, trace })
+    this.unreportedStops.delete(stop.token)
     this.handlers?.onPause({
       token: stop.token,
       sessionId: stop.sessionId,

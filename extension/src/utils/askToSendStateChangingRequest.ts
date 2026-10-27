@@ -8,25 +8,40 @@ export type ShowModalQuestion = (
   ...items: string[]
 ) => PromiseLike<string | undefined>
 
+/** The request a modal asks about: the run that declared it and its whole declaration, so a shared modal answers exactly this request of this run. */
+export type StateChangingRequestQuestion = {
+  runId: string
+  method: string
+  path: string
+  contentType?: string
+  body?: string
+}
+
 /**
  * Makes the question the environment asks before a state-changing request of a node-server run is sent: a native modal that names the method and path and says the server uses the repository's own configured database. The chat AI cannot answer it (TD-6).
- * The editor offers no way to close a modal, so one whose caller gave up (no answer within the bound, a cancelled run) stays on screen. A retry for the same request therefore joins that modal instead of opening a second one, and the learner's single answer belongs to the retry; a click on Send with no retry waiting changes nothing.
+ * The editor offers no way to close a modal, so one whose caller gave up (no answer within the bound, a cancelled run) stays on screen. A retry of the same run's same declared request therefore joins that modal instead of opening a second one, and the learner's single answer belongs to the retry; another run, or another method, path, content type or body, asks in its own modal; a click on Send with no retry waiting changes nothing.
  * Called once by the environment; the service awaits the result before it sends the request (D6).
  * @param show - The editor's modal question ({@link ShowModalQuestion}).
  * @returns The asker: `(request, signal)` resolves `true` only when the learner chose Send; `false` for Cancel, a dismissal, an abort (also one that came first, which shows no modal). Its abort listener is removed once it settles.
  * @example
  * const ask = createStateChangingRequestAsker(show)
- * await ask({ method: 'POST', path: '/api/items' }, signal) // => true after Send
+ * await ask({ runId: 'r1', method: 'POST', path: '/api/items' }, signal) // => true after Send
  */
 export function createStateChangingRequestAsker(show: ShowModalQuestion) {
-  // The modal still showing, by the request it asks about.
+  // The modal still showing, by the run and request it asks about.
   let open: { key: string; choice: Promise<string | undefined> } | undefined
   return async (
-    request: { method: string; path: string },
+    request: StateChangingRequestQuestion,
     signal: AbortSignal,
   ): Promise<boolean> => {
     if (signal.aborted) return false
-    const key = `${request.method} ${request.path}`
+    const key = JSON.stringify([
+      request.runId,
+      request.method,
+      request.path,
+      request.contentType ?? null,
+      request.body ?? null,
+    ])
     if (open?.key !== key) {
       const choice = Promise.resolve(
         show(
