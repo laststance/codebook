@@ -250,3 +250,117 @@ test('the system listener tool names this process as the listener of a dual-stac
     [{ port, pid: process.pid }],
   )
 })
+
+// Value: protects=bracketed IPv6 and zone-scoped listener addresses read as the bare address in the IPv6 family; fails_when=brackets or the %zone stay in the address, or the family is lost, so an owned IPv6 listener reads as foreign; why_new=existing rows cover only the wildcard, 127.0.0.1 and ::1 in ss; seam=none; no_claim=real lsof output (stubbed runner; unit only)
+test('lsof reads a link-local IPv6 listener with its zone removed and a bracketed loopback unchanged', async () => {
+  // Arrange
+  const tool = answeringTool({
+    stdout: 'p100\nf5\ntIPv6\nn[fe80::1%lo0]:4100\nf6\ntIPv6\nn[::1]:4100\n',
+  })
+  // Act
+  const reading = await readPortListeners(4100, {
+    findTool: async () => LSOF,
+    run: tool.run,
+  })
+  // Assert
+  assert.deepEqual(reading, {
+    kind: 'read',
+    tool: 'lsof',
+    listeners: [
+      { family: 'IPv6', address: 'fe80::1', port: 4100, pid: 100 },
+      { family: 'IPv6', address: '::1', port: 4100, pid: 100 },
+    ],
+  })
+})
+
+// Value: protects=a listener answer that is malformed, oversized or an lsof failure with a message never reads as "no listener" or a guessed owner; fails_when=an out-of-range port, a socket before its family, a non-numeric pid, a non-LISTEN ss row, an oversized answer or lsof exit 1 with stderr is skipped or read as empty; why_new=existing rows cover only a named-service port and exit 1 without a word; seam=none; no_claim=the port-owner error code mapping (pt2; stubbed runner)
+test('a malformed, oversized or noisy listener answer leaves the port owner unknown with its own reason', async () => {
+  // Arrange
+  const unreadableLsof = (stdout: string) => ({ stdout })
+  const cases: {
+    tool: ListenerTool
+    answer: { stdout: string } | Error
+    reason: string
+  }[] = [
+    {
+      tool: LSOF,
+      answer: unreadableLsof('p48633\nf18\ntIPv4\nn127.0.0.1:70000\n'),
+      reason: 'lsof printed a listener line Codebook cannot read.',
+    },
+    {
+      tool: LSOF,
+      answer: unreadableLsof('p48633\nf18\nn127.0.0.1:4100\n'),
+      reason: 'lsof printed a listener line Codebook cannot read.',
+    },
+    {
+      tool: LSOF,
+      answer: unreadableLsof('pabc\nf18\ntIPv4\nn127.0.0.1:4100\n'),
+      reason: 'lsof printed a listener line Codebook cannot read.',
+    },
+    {
+      tool: SS,
+      answer: {
+        stdout: 'ESTAB 0      0      127.0.0.1:4100   127.0.0.1:5000\n',
+      },
+      reason: 'ss printed a listener line Codebook cannot read.',
+    },
+    {
+      tool: LSOF,
+      answer: Object.assign(new Error('Command failed'), {
+        code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
+      }),
+      reason: 'lsof printed more than 1048576 bytes.',
+    },
+    {
+      tool: LSOF,
+      answer: Object.assign(new Error('Command failed'), {
+        code: 1,
+        stdout: '',
+        stderr: "lsof: WARNING: can't stat() fuse file system\n",
+      }),
+      reason: "lsof failed: lsof: WARNING: can't stat() fuse file system.",
+    },
+  ]
+  // Act
+  const readings = []
+  for (const { tool, answer } of cases)
+    readings.push(
+      await readPortListeners(4100, {
+        findTool: async () => tool,
+        run: answeringTool(answer).run,
+      }),
+    )
+  // Assert
+  assert.deepEqual(
+    readings,
+    cases.map(({ reason }) => ({ kind: 'unknown', reason })),
+  )
+})
+
+// Value: protects=an older ss that prints IPv6 local addresses without brackets (`:::4100`, `::1:4100`) still reads them in the IPv6 family; fails_when=the family is taken from a leading bracket only, so an owned IPv6 listener reads as IPv4 and the ownership check compares the wrong family; why_new=existing ss rows are all bracketed or `*`; seam=none; no_claim=every iproute2 release's exact columns (stubbed runner; unit only)
+test('an older ss that prints IPv6 addresses without brackets reads them as IPv6 listeners', async () => {
+  // Arrange
+  const tool = answeringTool({
+    stdout: [
+      'LISTEN     0      128         :::4100         :::*    users:(("node",pid=1234,fd=18))',
+      'LISTEN     0      128       ::1:4100         :::*    users:(("node",pid=1234,fd=19))',
+      'LISTEN     0      128  127.0.0.1:4100   0.0.0.0:*    users:(("node",pid=1234,fd=20))',
+      '',
+    ].join('\n'),
+  })
+  // Act
+  const reading = await readPortListeners(4100, {
+    findTool: async () => SS,
+    run: tool.run,
+  })
+  // Assert
+  assert.deepEqual(reading, {
+    kind: 'read',
+    tool: 'ss',
+    listeners: [
+      { family: 'IPv6', address: '::', port: 4100, pid: 1234 },
+      { family: 'IPv6', address: '::1', port: 4100, pid: 1234 },
+      { family: 'IPv4', address: '127.0.0.1', port: 4100, pid: 1234 },
+    ],
+  })
+})
