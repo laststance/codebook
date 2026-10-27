@@ -10,10 +10,13 @@ import {
   type LlmWikiView,
   type LlmWikiViewOptions,
 } from '../utils/llmWikiView'
+import type { WikiUpdateMarkerLook } from '../utils/readLiveWikiUpdateMarker'
+import { readLlmWikiViewFacts } from '../utils/readLlmWikiViewFacts'
 import type {
   LlmWikiFreshness,
   LlmWikiViewFacts,
 } from '../utils/readLlmWikiViewState'
+import type { WikiUpdateStatus } from '../utils/wikiUpdateRun'
 
 import { defer } from './utils/defer'
 import { createFakeLlmWikiEditor } from './utils/fakeLlmWikiEditor'
@@ -1401,4 +1404,93 @@ test('a root read after dispose writes no message on the tree view', async (cont
     [fake.renderLog(), fake.message()],
     [[...logAtDispose, 'getChildren'], WATCHING_MESSAGE],
   )
+})
+
+const STOPPED_MESSAGE =
+  'Codebook stopped watching the chat, which may still publish this Wiki. To stop it, stop the request in the chat.'
+
+// Value: protects=item 13 (the tree message never empties between the watching and the stopped-watch message); fails_when=a read lands after this window's run ended but before its marker turned into the reservation, and the view writes an empty message for that moment; no_claim=the rows of that moment or the file work that turns the marker; seam=the real facts reader with this window's own marker held live while the run status is already stopped
+test('the message stays the watching message from the run’s end until the stopped-watch message replaces it, never empty between', async (context) => {
+  // Arrange
+  const nowMs = 1_790_000_000_000
+  const ownMarker = (
+    watchEndedAtMs: number | undefined,
+  ): WikiUpdateMarkerLook => ({
+    kind: 'live',
+    heldBy: {
+      pid: 1,
+      windowId: 'this-window',
+      host: 'vscode',
+      startedAtMs: nowMs - 60_000,
+      runKind: 'generate',
+      ...(watchEndedAtMs === undefined ? {} : { watchEndedAtMs }),
+    },
+  })
+  let status: WikiUpdateStatus = {
+    state: 'running',
+    host: 'vscode',
+    startedAt: new Date(nowMs - 60_000).toISOString(),
+    timeoutMs: 3_300_000,
+    candidateStaged: false,
+    runKind: 'generate',
+    outputDirectory: WATCHED_OUTPUT,
+    outputLabel: '.codebook/wiki',
+  }
+  let marker = ownMarker(undefined)
+  const { fake, view } = openView(context, {
+    readFacts: () =>
+      readLlmWikiViewFacts({
+        host: 'vscode',
+        isFolderOpen: () => true,
+        isTrusted: () => true,
+        wikiLocation: async () => ({
+          projectRoot: WATCHED_PROJECT,
+          outputDirectory: WATCHED_OUTPUT,
+        }),
+        readPublishToken: async () => undefined,
+        readPublication: async () => undefined,
+        findStartBlock: async () => undefined,
+        readGeneration: async () => ({}),
+        isWikiOwnedBy: async () => true,
+        readMarker: async () => marker,
+        ownWindowId: 'this-window',
+        isStartUnderWay: () => false,
+        hasPublishEndedWait: async () => false,
+        runStatus: () => status,
+        isAwaitingChat: () => false,
+        lastAgentExit: () => undefined,
+        now: () => nowMs,
+      }),
+  })
+  await view.whenIdle()
+  fake.rows()
+  const logBeforeTheEnd = fake.renderLog().length
+
+  // Act
+  // The run ended; its marker has not turned into the reservation yet.
+  status = {
+    state: 'cancelled',
+    site: 'kept',
+    runKind: 'generate',
+    host: 'vscode',
+    finishedAt: new Date(nowMs).toISOString(),
+    outputDirectory: WATCHED_OUTPUT,
+    outputLabel: '.codebook/wiki',
+  }
+  await view.refresh()
+  fake.rows()
+  marker = ownMarker(nowMs - 1_000)
+  await view.refresh()
+  fake.rows()
+
+  // Assert
+  const messageWrites = fake
+    .renderLog()
+    .slice(logBeforeTheEnd)
+    .filter((entry) => entry.startsWith('message:'))
+    .filter((entry, index, writes) => entry !== writes[index - 1])
+  assert.deepEqual(messageWrites, [
+    `message:${WATCHING_MESSAGE}`,
+    `message:${STOPPED_MESSAGE}`,
+  ])
 })
