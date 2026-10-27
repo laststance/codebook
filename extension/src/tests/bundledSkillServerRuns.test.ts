@@ -111,7 +111,19 @@ test('the bundled skill opens no Study workspace for a server run', async () => 
   )
   assert.match(
     skill,
-    /For a browser request requiring runtime observation \(a server run needs no presentation\), open the learner presentation/,
+    /requiring runtime observation \(a server run needs no presentation\), open the learner presentation/,
+  )
+})
+
+// protects=a test run still opens the Study presentation before its first input: the server route narrows that rule for server runs only; fails_when=the rule names browser requests alone, so the chat skips the Study view for a test run as it does for a server run; no_claim=the test flow's later steps
+test('the bundled skill still opens the Study presentation for a test run', async () => {
+  // Arrange / Act
+  const skill = await readBundledSkill()
+
+  // Assert
+  assert.match(
+    skill,
+    /For a browser or test request requiring runtime observation \(a server run needs no presentation\), open the learner presentation before the first application input\./,
   )
 })
 
