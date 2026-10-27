@@ -28,7 +28,6 @@ export type RefusalEvent = {
 
 /**
  * Keeps the last notes (the editor's tab-group changes, tab operations, active text editor changes and pane view-state changes, or the effects Codebook itself issued) with their time, so a placement refusal can say what happened while its guard waited; fed by {@link StudyWorkspace}'s listeners and effect wrappers and read by {@link describePlacementRefusal}.
- * @param capacity - How many notes are kept; the editor's events keep {@link REFUSAL_REPORT_EVENTS}, Codebook's own effects `REFUSAL_REPORT_EFFECTS` (set by the caller).
  * @example
  * const log = new PlacementEventLog()
  * log.record(10, 'groups closed [2]')
@@ -36,6 +35,10 @@ export type RefusalEvent = {
 export class PlacementEventLog {
   private readonly events: RefusalEvent[] = []
 
+  /**
+   * Creates a log that keeps the last `capacity` notes.
+   * @param capacity - How many notes are kept; the editor's events keep {@link REFUSAL_REPORT_EVENTS} (the default), Codebook's own effects {@link REFUSAL_REPORT_EFFECTS} (set by the caller).
+   */
   constructor(private readonly capacity: number = REFUSAL_REPORT_EVENTS) {}
 
   /** Adds one note, dropping the oldest beyond the capacity. @example log.record(performance.now(), 'groups opened [3]') */

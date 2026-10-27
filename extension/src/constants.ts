@@ -1070,6 +1070,10 @@ export const LLM_WIKI_ROW_ACTIONS = {
 export const LLM_WIKI_MANAGE_TRUST_FALLBACK_NOTICE =
   'Run "Workspaces: Manage Workspace Trust" from the Command Palette to trust this folder.'
 
+/** What the LLM Wiki view says when the editor has the Manage Workspace Trust command ({@link MANAGE_WORKSPACE_TRUST_COMMAND}) but it failed to open; the cause is in Output › Codebook. */
+export const LLM_WIKI_MANAGE_TRUST_FAILED_NOTICE =
+  'Manage Workspace Trust could not open. The cause is in Output › Codebook.'
+
 /** What the LLM Wiki view says once the recovery request is copied. */
 export const LLM_WIKI_RECOVERY_REQUEST_COPIED_NOTICE =
   'Copied the recovery request. Paste it into the editor chat.'
@@ -1857,15 +1861,15 @@ export const LATE_GROUP_ACTIVATION_WAIT_MS = 150
 
 /** Why the reader did not carry out a choice the Learning summary sent while the Study workspace was closed; completes "The … choice from the Learning summary was not carried out: " in Output › Codebook and "Codebook did not carry out your choice: " in the notice the learner sees. */
 export const SUMMARY_CHOICE_DROPPED_REASON_CLOSED =
-  'the Study workspace is closed. Open Study Workspace, then choose it again.'
+  'the Study workspace is closed. Run Codebook: Open Study Workspace, then choose it again.'
 
 /** The reason when the choice arrived while the Study workspace was closing. See {@link SUMMARY_CHOICE_DROPPED_REASON_CLOSED}. */
 export const SUMMARY_CHOICE_DROPPED_REASON_CLOSING =
-  'the Study workspace is closing. Wait until it has closed, open it with Open Study Workspace, then choose it again.'
+  'the Study workspace is closing. When it has closed, run Codebook: Open Study Workspace, then choose it again.'
 
 /** The reason when the reader had left the summary composition (the Study pane stands again). See {@link SUMMARY_CHOICE_DROPPED_REASON_CLOSED}. */
 export const SUMMARY_CHOICE_DROPPED_REASON_COMPOSITION_LEFT =
-  'the Learning summary no longer shows a replay. Choose it again from Saved studies in the Study workspace.'
+  'the Learning summary no longer shows a replay. Open a replay from Saved studies, then choose again.'
 
 /** What the learner's notice for a dropped Learning summary choice starts with, before the reason. */
 export const SUMMARY_CHOICE_DROPPED_NOTICE_PREFIX =

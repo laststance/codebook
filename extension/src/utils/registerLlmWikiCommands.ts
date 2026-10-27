@@ -5,6 +5,7 @@ import type * as vscode from 'vscode'
 import {
   COPY_DETAILS_ACTION,
   COPY_WIKI_RECOVERY_REQUEST_COMMAND,
+  LLM_WIKI_MANAGE_TRUST_FAILED_NOTICE,
   LLM_WIKI_MANAGE_TRUST_FALLBACK_NOTICE,
   llmWikiFolderLocationFailedNotice,
   LLM_WIKI_RECOVERY_REQUEST_COPIED_NOTICE,
@@ -79,22 +80,27 @@ async function showRowDetail(
 }
 
 /**
- * Runs the editor's Manage Workspace Trust command, or says where to find it when the editor rejects it.
+ * Runs the editor's Manage Workspace Trust command; says where to find it when the editor lacks the command, and that the command could not open when it rejects for another cause.
  *
  * Trigger: the Manage Workspace Trust action of the view's trust row ({@link registerLlmWikiCommands}).
  * @param options - The window's closures.
- * @returns Nothing; a rejection is recorded in Output › Codebook and the learner gets the Command Palette notice.
+ * @returns Nothing; a rejection is recorded in Output › Codebook; the learner gets the Command Palette notice for a missing command and the could-not-open notice for any other rejection.
  * @example await manageTrust(options)
  */
 async function manageTrust(options: LlmWikiCommandOptions): Promise<void> {
   try {
     await options.editor.commands.executeCommand(MANAGE_WORKSPACE_TRUST_COMMAND)
   } catch (cause) {
-    // An editor without the command rejects; the learner still learns where to trust the folder.
     options.recordFailure('Manage Workspace Trust could not run', cause)
+    // The editor says "command '<id>' not found" when it lacks the command; only then the learner learns where else to trust the folder. Any other rejection is a command that exists and failed.
+    const lacksCommand = thrownMessage(cause).includes(
+      `command '${MANAGE_WORKSPACE_TRUST_COMMAND}' not found`,
+    )
     void options.showNotice(
       'information',
-      LLM_WIKI_MANAGE_TRUST_FALLBACK_NOTICE,
+      lacksCommand
+        ? LLM_WIKI_MANAGE_TRUST_FALLBACK_NOTICE
+        : LLM_WIKI_MANAGE_TRUST_FAILED_NOTICE,
     )
   }
 }

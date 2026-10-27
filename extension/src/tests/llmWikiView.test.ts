@@ -493,6 +493,39 @@ test('Manage Workspace Trust says where to find the command and records the caus
   )
 })
 
+// Value: protects=the learner not being sent to the Command Palette for a trust command the editor has but could not open; fails_when=any rejection of workbench.trust.manage shows the Command Palette sentence as if the command were missing, or a failure that is not a missing command is not recorded in Output › Codebook (local review D5/RT3, Cycle 0056 pt3); why_new=the earlier test rejected only with a missing-command error; seam=the stubbed editor's command throwing a failure of its own; no_claim=the wording of a native editor's own error
+test('Manage Workspace Trust says it could not open, and records the cause, when the editor has the command and it fails', async (context) => {
+  // Arrange
+  const { window } = await openPublishedWiki(context, {
+    trusted: false,
+    editorCommand: (name) => {
+      if (name === 'workbench.trust.manage')
+        throw new Error('The trust editor crashed')
+    },
+  })
+
+  // Act
+  await window.runCommand('codebook.llmWiki.manageTrust')
+
+  // Assert
+  assert.deepEqual(
+    [
+      window.notices,
+      window.outputLines.some(
+        (line) =>
+          line.startsWith('error: ') &&
+          line.includes('The trust editor crashed'),
+      ),
+    ],
+    [
+      [
+        'Manage Workspace Trust could not open. The cause is in Output › Codebook.',
+      ],
+      true,
+    ],
+  )
+})
+
 // Value: protects=AC 2 (error row); fails_when=a read that throws leaves the tree empty or on loading, writes no cause to Output, or does not recover at Refresh; no_claim=the cause's wording; seam=a folder that no longer exists
 test('a read that throws shows Could not read the LLM Wiki state, records the cause in Output and recovers at Refresh', async (context) => {
   // Arrange
@@ -684,6 +717,8 @@ test('in a fresh project the watcher stands on the project and stays there once 
     6_000,
   )
   await project.runCommand('codebook.refreshLlmWiki')
+  // The refresh settles before the cancel, so a slow re-registration of the watcher would already show in the count.
+  await project.llmWiki.whenIdle()
   await project.runCommand('codebook.llmWiki.cancelRun')
 
   // Assert

@@ -1286,7 +1286,7 @@ test('a refused placement guard sanitizes the tab labels of its two snapshots fo
     harness.focusMutableDraft('auth.ts', 3)
     harness.focusMutableDraft('actions.ts', 2)
     let arms = 0
-    let sanitizedLabels = 0
+    const sanitizedLabels = new Set<string>()
     const reader = harness.reader as unknown as Record<
       string,
       (...args: unknown[]) => unknown
@@ -1307,7 +1307,7 @@ test('a refused placement guard sanitizes the tab labels of its two snapshots fo
             group.tabs.some((tab) => tab.label === args[0]),
           )
         )
-          sanitizedLabels++
+          sanitizedLabels.add(String(args[0]))
         return sanitize(...args)
       },
     )
@@ -1356,7 +1356,20 @@ test('a refused placement guard sanitizes the tab labels of its two snapshots fo
       ).length,
       1,
     )
-    assert.equal(sanitizedLabels, 17)
+    // Every tab label the report names went through the sanitizer; the check follows the report's own lines, so a new report line needs no new count.
+    const cause = logged.find(
+      (entry) => entry.surface === 'presentation:placement-refused',
+    )!.cause
+    const labelsInReport = [
+      ...new Set(
+        harness.groups.flatMap((group) => group.tabs.map((tab) => tab.label)),
+      ),
+    ].filter((label) => cause.includes(label))
+    assert.equal(labelsInReport.length > 0, true)
+    assert.deepEqual(
+      labelsInReport.filter((label) => !sanitizedLabels.has(label)),
+      [],
+    )
   } finally {
     context.mock.restoreAll()
     await harness.close()
@@ -8706,6 +8719,104 @@ test('the wait for an Application group’s late activation ends at once when it
     await harness.close()
   }
 })
+
+/**
+ * Starts the reader's wait for an Application group's late activation report on the harness, with its tab-group subscriptions counted.
+ * @param harness - The workspace harness.
+ * @param signal - The preparation's cancellation, when the wait has one.
+ * @returns `wait` (settles when the wait ends), `isEnded()`, `reportActivation()` (the editor reports the group changed) and `subscriptions()` (how many listeners the wait registered and how many it disposed).
+ * @example const late = startLateActivationWait(harness); late.reportActivation(); await late.wait
+ */
+function startLateActivationWait(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+  signal?: AbortSignal,
+) {
+  const identity = Symbol('allocated group')
+  const group = harness.groups[0]!
+  harness.reader['editorGroupIdentities'].set(group as never, identity)
+  const tabGroups = harness.editor.window.tabGroups
+  const subscribe = tabGroups.onDidChangeTabGroups.bind(tabGroups)
+  const counts = { registered: 0, disposed: 0 }
+  const listeners = new Set<Parameters<typeof subscribe>[0]>()
+  tabGroups.onDidChangeTabGroups = (callback) => {
+    counts.registered++
+    listeners.add(callback)
+    const subscription = subscribe(callback)
+    return {
+      dispose(): void {
+        counts.disposed++
+        listeners.delete(callback)
+        subscription.dispose()
+      },
+    }
+  }
+  let isEnded = false
+  const wait = harness.reader['waitForLateGroupActivation'](
+    identity,
+    signal,
+  ).then(() => {
+    isEnded = true
+  })
+  return {
+    wait,
+    isEnded: (): boolean => isEnded,
+    /** The editor reports the allocated group as changed, as Cursor does after the command answered. */
+    reportActivation: (): void => {
+      for (const listener of [...listeners])
+        listener({ opened: [], closed: [], changed: [group] })
+    },
+    subscriptions: () => ({ ...counts }),
+  }
+}
+
+// Value: protects=the wait for an Application group's late activation ending at the first report, at its 150 ms bound when the editor reports nothing, and at once when its preparation is cancelled in any of those states, with its listener disposed each time; fails_when=a cancelled wait goes on to the bound or leaves its listener registered, a report does not end the wait, or the bound is not what ends a silent editor's wait; why_new=the coverage review found the wait's state cells (report, silence, cancellation) untested apart from an already aborted signal; seam=the reader's waitForLateGroupActivation on the workspace harness with the faked clock and counted tab-group listeners; no_claim=the native editor's report
+for (const cell of [
+  { name: 'a report of the group’s activation', ends: 'report' },
+  { name: 'the 150 ms bound when the editor reports nothing', ends: 'bound' },
+  {
+    name: 'a cancellation while the activation would still have come',
+    ends: 'abort',
+    reportsAfterwards: true,
+  },
+  {
+    name: 'a cancellation while the editor reports nothing',
+    ends: 'abort',
+    reportsAfterwards: false,
+  },
+] as const)
+  test(`the wait for an Application group’s late activation ends at ${cell.name} and disposes its listener`, async (context) => {
+    // Arrange
+    const harness = await workspaceHarness()
+    try {
+      const abort = new AbortController()
+      enableFakeClock(context)
+      const late = startLateActivationWait(harness, abort.signal)
+      const settledAfterEvents = async (): Promise<boolean> => {
+        await Promise.resolve()
+        return late.isEnded()
+      }
+      assert.equal(await settledAfterEvents(), false)
+
+      // Act
+      if (cell.ends === 'report') late.reportActivation()
+      if (cell.ends === 'bound') {
+        await advanceClock(context, 149)
+        assert.equal(await settledAfterEvents(), false)
+        await advanceClock(context, 1)
+      }
+      if (cell.ends === 'abort') abort.abort()
+      await late.wait
+      // A report after the wait ended changes nothing.
+      if ('reportsAfterwards' in cell && cell.reportsAfterwards)
+        late.reportActivation()
+
+      // Assert
+      assert.deepEqual(late.subscriptions(), { registered: 1, disposed: 1 })
+    } finally {
+      resetFakeClock(context)
+      await harness.close()
+    }
+  })
 
 for (const entry of [
   "an agent's Study workspace request",

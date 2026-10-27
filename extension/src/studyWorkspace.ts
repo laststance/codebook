@@ -991,6 +991,8 @@ export class StudyWorkspace {
    * The replay a closed reader keeps selected for its next Open Study Workspace while an entry for another replay opens; the Learning summary and the bottom panel receive no message that carries it ({@link publish}). It is released when the entry ends ({@link openNodeHistoryFromHost}), and it holds nothing once the chosen replay replaces the selection.
    */
   private heldBackReplay: { entry: number; studyId: string } | undefined
+  /** The reason of the last dropped Learning summary choice the learner was told, so repeated clicks in one state raise one notice ({@link noteDroppedSummaryChoice}); forgotten at {@link open} and {@link close}. */
+  private lastToldDroppedChoiceReason: string | undefined
   /** The editor's recent group and active text editor changes, for {@link refusePlacement}'s report (F382). */
   private readonly placementEvents = new PlacementEventLog()
   /** The native effects this host itself issued (reveals, disposals, editor commands, shown documents), for {@link refusePlacement}'s report (N55-F4). */
@@ -8158,6 +8160,8 @@ export class StudyWorkspace {
     forAgent = false,
   ): Promise<void> {
     if (origin !== 'presentation') this.assertPresentationIdle()
+    // A reader that opens again tells a dropped Learning summary choice anew (the notice is once per reason and state).
+    this.lastToldDroppedChoiceReason = undefined
     signal?.throwIfAborted()
     const lifetime = this.lifetime
     this.assertLifetime(lifetime)
@@ -9579,6 +9583,7 @@ export class StudyWorkspace {
     // Read before anything is closed or shown: the tab outside the text editors and the Study panes that has the keyboard now (Cursor's chat), which gets it back when this close shows a side bar.
     const giveKeyboardBackToChat = this.retainForeignTabFocus(undefined)
     this.closing = true
+    this.lastToldDroppedChoiceReason = undefined
     this.revision++
     this.lifetime++
     this.pendingHistory = undefined
@@ -11931,6 +11936,8 @@ export class StudyWorkspace {
       if (this.heldBackReplay?.entry === entry) {
         this.heldBackReplay = undefined
         this.lastPublished = undefined
+        // An entry that opened the reader and then failed or was superseded leaves the views on what the hold showed; they draw the retained replay again now.
+        if (this.opened && !this.closing && !this.disposed) this.publish()
       }
     }
   }
@@ -23564,7 +23571,9 @@ export class StudyWorkspace {
         : {}),
       cause: `The "${parsed.data.type}" choice from the Learning summary was not carried out: ${reason}`,
     })
-    // The learner sees the drop too: a pane that only released its list would otherwise show nothing happened.
+    // The learner sees the drop too, once per reason while the reader stays in that state; every drop above still has its Output entry.
+    if (this.lastToldDroppedChoiceReason === reason) return
+    this.lastToldDroppedChoiceReason = reason
     void showPlainNotice(
       vscode.window,
       'information',
