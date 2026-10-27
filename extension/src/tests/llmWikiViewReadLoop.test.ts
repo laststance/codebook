@@ -1150,7 +1150,43 @@ test('showing the view again with a read that still fails restarts the poll acro
   assert.equal(reads - readsAfterShown, 1)
 })
 
-// Value: protects=SM2-7 (message cleared x getChildren) and N55-F3; fails_when=a state without a message writes the cleared message before the tree reads the new rows, or never clears the old one; no_claim=the editor's frames; seam=the fake tree's render log
+// Value: protects=task 16 (N56 native takes: the message lagged the rows by about 200 ms with the write in getChildren, then led them by one frame when sent with the refresh request); fails_when=the new message is sent before the root read that returns the new rows (in the emission that only queues the refresh, a round trip ahead of the rows), or in a later emission than the rows; why_new=the extension host sends $setMessage at once but the refresh takes $refresh and $getChildren before the rows paint, so only a write inside that root read leaves with the rows; seam=the fake editor's model of ExtHostTreeView (leading 200 ms debounce, refresh queued asynchronously, root read); no_claim=the native editor's paint (N56 step 4)
+test('a run ending sends the cleared message during the root read that returns the new rows, and not before it', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] })
+  let isRunning = true
+  const { fake, view } = openView(
+    context,
+    { readFacts: async () => (isRunning ? runningFacts() : readyFacts()) },
+    { modelsExtensionHostDebounce: true },
+  )
+  await view.whenIdle()
+  // The run's start: its trailing emission, the root read that writes the watching message, and the window that write opens.
+  context.mock.timers.tick(200)
+  await Promise.resolve()
+  context.mock.timers.tick(200)
+  const logBeforeTheEnd = fake.hostLog().length
+  isRunning = false
+
+  // Act
+  await view.refresh()
+  context.mock.timers.tick(200)
+  await Promise.resolve()
+
+  // Assert
+  assert.deepEqual(fake.hostLog().slice(logBeforeTheEnd), [
+    // The leading emission: the same-value write of the old message, which changes nothing on screen.
+    `emit message(${WATCHING_MESSAGE})`,
+    // The trailing emission carries only the refresh request.
+    'emit refresh',
+    // The cleared message leaves while the main thread reads the root, right before the new rows return.
+    'root-read',
+    'emit message(none)',
+    'root-return()',
+  ])
+})
+
+// Value: protects=SM2-7 (message cleared x getChildren) and N55-F3; fails_when=a state without a message writes the cleared message before the tree reads the new rows, or never clears the old one; why_changed=show now writes the current message again (a same-value write that opens the extension host's debounce window) before the tree change, so the log starts with a message write; no_claim=the editor's frames; seam=the fake tree's render log
 test('a state without a message clears the message when the tree reads its rows, after getChildren', async (context) => {
   // Arrange
   let isRunning = true
@@ -1167,7 +1203,9 @@ test('a state without a message clears the message when the tree reads its rows,
 
   // Assert
   assert.deepEqual(fake.renderLog(), [
+    'message:undefined',
     'getChildren',
+    `message:${WATCHING_MESSAGE}`,
     `message:${WATCHING_MESSAGE}`,
     'getChildren',
     'message:undefined',
@@ -1344,14 +1382,16 @@ test('a freshness check that keeps failing is recorded once in Output, and again
   ])
 })
 
-// Value: protects=F8 (no write on a disposed tree view); fails_when=a root read after dispose writes the message on the disposed tree view; no_claim=the message before dispose; seam=a run row's message set on the model but not yet read by the tree, then dispose, then a root read
+// Value: protects=F8 (no write on a disposed tree view); fails_when=a root read after dispose writes a message on the disposed tree view; why_changed=the message is written by the root read again, so the root read before dispose applies it and the guard is that a read after dispose changes nothing; no_claim=the message before dispose; seam=a run row's message shown, then dispose, then a root read
 test('a root read after dispose writes no message on the tree view', async (context) => {
   // Arrange
   const { fake, view } = openView(context, {
     readFacts: async () => runningFacts(),
   })
   await view.whenIdle()
+  fake.rows()
   view.dispose()
+  const logAtDispose = fake.renderLog()
 
   // Act
   fake.rows()
@@ -1359,6 +1399,6 @@ test('a root read after dispose writes no message on the tree view', async (cont
   // Assert
   assert.deepEqual(
     [fake.renderLog(), fake.message()],
-    [['getChildren'], undefined],
+    [[...logAtDispose, 'getChildren'], WATCHING_MESSAGE],
   )
 })

@@ -11,6 +11,11 @@ import {
   saveOneStopNodeHistory,
   workspaceHarness,
 } from './studyWorkspaceHarness'
+import {
+  advanceClockUntilSettled,
+  enableFakeClock,
+  resetFakeClock,
+} from './utils/fakeClock'
 
 for (const replaceWrappers of [false, true])
   test(`MCP-first App preparation reserves its own locked group and preserves both learner groups${replaceWrappers ? ' across native wrapper replacement' : ''}`, async () => {
@@ -2761,17 +2766,19 @@ test('a live entry from the Study layout arranges the application above the sour
 })
 
 for (const besideChat of [false, true])
-  // Value: protects=retirement before native measurement and one final arrangement measurement; fails_when=a disposed Context tab is measured or arrange repeats its initial read; why_new=Cycle 0045 SP-5 with PC-3.8, reconciled with dedicated App preparation; the tab's close held until the final arrangement began, so its wait is reached (Cycle 0050 F240); seam=passthrough native-command and arrange observers installed before the run starts, the final arrangement told by the context pane it retires (F154); no_claim=where the final arrangement runs, during preparation or at the explicit open
+  // Value: protects=retirement before native measurement and one final arrangement measurement; fails_when=a disposed Context tab is measured or arrange repeats its initial read while the chat does not hold the keyboard (a keyboard borrowed from the chat reads the layout once more within the same measurement); why_new=Cycle 0045 SP-5 with PC-3.8, reconciled with dedicated App preparation; the tab's close held until the final arrangement began, so its wait is reached (Cycle 0050 F240); seam=passthrough native-command and arrange observers installed before the run starts, the final arrangement told by the context pane it retires (F154); no_claim=where the final arrangement runs, during preparation or at the explicit open
   test(`live entry waits for retired Study tabs before measurement and measures its final arrangement once${besideChat ? ', returning the keyboard to chat' : ''}`, async () => {
     // Arrange: native tab retirement is delayed, and App preparation has its own separate measurements.
     const harness = await workspaceHarness()
     const executeCommand = harness.editor.commands.executeCommand,
       arrange = harness.reader['arrange'],
       readsWithRetiredTab: boolean[] = [],
+      chatKeyboardAtReads: boolean[] = [],
       arrangements: {
         retiresContextPane: boolean
         commands: string[]
         readsWithRetiredTab: boolean[]
+        chatKeyboardAtReads: boolean[]
       }[] = []
     try {
       harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
@@ -2782,7 +2789,8 @@ for (const besideChat of [false, true])
       harness.holdDisposedPanelTabCloses()
       // Observe actual native effects without changing their arguments, responses or timing, from before the run starts: the live entry's final arrangement can run while the run prepares, on a loaded machine before the explicit open below (F154).
       harness.editor.commands.executeCommand = async (...args) => {
-        if (args[0] === 'vscode.getEditorLayout')
+        if (args[0] === 'vscode.getEditorLayout') {
+          chatKeyboardAtReads.push(chat?.focused() === true)
           readsWithRetiredTab.push(
             harness.groups.some((group) =>
               group.tabs.some(
@@ -2792,11 +2800,14 @@ for (const besideChat of [false, true])
               ),
             ),
           )
+        }
         return executeCommand.call(harness.editor.commands, ...args)
       }
       harness.reader['arrange'] = async (...args): Promise<void> => {
         const start = harness.commands.length,
           readsStart = readsWithRetiredTab.length
+        // The learner types in the chat when the final arrangement begins beside it: the measurement then meets a chat that holds the keyboard, which is the premise of the extra layout read asserted below.
+        if (args[5] !== undefined) chat?.focusTab()
         const arranged = arrange.apply(harness.reader, args)
         // The arrangement that retires the context pane runs up to its wait for the tab's close in this turn; the editor closes the tab in the next one.
         if (args[5] !== undefined)
@@ -2809,6 +2820,7 @@ for (const besideChat of [false, true])
             retiresContextPane: args[5] !== undefined,
             commands: harness.commands.slice(start),
             readsWithRetiredTab: readsWithRetiredTab.slice(readsStart),
+            chatKeyboardAtReads: chatKeyboardAtReads.slice(readsStart),
           })
         }
       }
@@ -2834,18 +2846,22 @@ for (const besideChat of [false, true])
         (arrangement) => arrangement.retiresContextPane,
       )
       assert.equal(finalArrangements.length, 1)
-      const { commands, readsWithRetiredTab: finalReads } =
-        finalArrangements[0]!
+      const {
+        commands,
+        readsWithRetiredTab: finalReads,
+        chatKeyboardAtReads: finalChatKeyboardAtReads,
+      } = finalArrangements[0]!
       assert.equal(finalReads.length > 0, true)
       assert.equal(finalReads.includes(true), false)
       const batch = commands.indexOf('runCommands')
       assert.notEqual(batch, -1)
-      assert.equal(
-        commands
-          .slice(0, batch)
-          .filter((command) => command === 'vscode.getEditorLayout').length,
-        1,
-      )
+      // The measurement beside the chat's editor part reads the layout once more after it borrowed the main editor's first group (readMainEditorGrid), when the keyboard was with the chat as the measurement began; that second read belongs to the same measurement.
+      const layoutReadsBeforeBatch = commands
+        .slice(0, batch)
+        .filter((command) => command === 'vscode.getEditorLayout').length
+      // The premise: the chat holds the keyboard at the first read exactly when the arrangement stands beside the chat.
+      assert.equal(finalChatKeyboardAtReads[0], besideChat)
+      assert.equal(layoutReadsBeforeBatch, besideChat ? 2 : 1)
       if (chat) {
         assert.equal(chat.focused(), true)
         assert.deepEqual(
@@ -3238,3 +3254,54 @@ for (const row of [
       await harness.close()
     }
   })
+
+// Value: protects=a Close Study Workspace that completes while an Open waits for a retired Study tab's close staying closed: the stale Open writes none of its state over the Close; fails_when=the Open sets opened and clears closing after the wait, so the reader reports open with no panes and its next Open skips the first-open work (Codex adversarial and structured CX1, Cycle 0056 pt3); why_new=open() wrote opened and closing before it rechecked its lifetime; seam=holdDisposedPanelTabCloses for the Study context tab, the live run that makes the Open dispose the Study pane, a Close completed meanwhile; no_claim=the native tab model
+test('a Close that completes while an Open waits for the retired Study tab leaves the reader closed', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
+    await harness.reader.open()
+    harness.closeDisposedPanelTabsLater()
+    harness.holdDisposedPanelTabCloses()
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await [...harness.service.records.values()][0]!.preparation
+    // No AbortSignal: a Return to Live and a command Open wait this way.
+    const opening = harness.reader.open().then(
+      () => 'opened',
+      (error: unknown) => String(error),
+    )
+    await waitUntil(
+      () => harness.reader['hasRetiredStudyPaneTab'](),
+      'the Open disposes the Study pane and waits for its tab to close',
+      5_000,
+    )
+
+    // Act: the Close completes while the Open waits, then the editor closes the tab.
+    // The Close drains the editor for the native bound; the faked clock passes it.
+    const closing = harness.reader.close()
+    enableFakeClock(context)
+    await advanceClockUntilSettled(context, closing, 10_000)
+    await closing
+    resetFakeClock(context)
+    harness.closePendingDisposedPanelTabs()
+    await opening
+
+    // Assert
+    assert.deepEqual(
+      [
+        harness.reader.inspect().opened,
+        harness.reader.inspect().view?.readerClosed,
+      ],
+      [false, true],
+    )
+  } finally {
+    resetFakeClock(context)
+    await harness.close()
+  }
+})

@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import {
+  LATE_GROUP_ACTIVATION_WAIT_MS,
   NODE_TEST_HISTORY_DIRECTORY,
   REPOSITORY_BROWSER_PROFILE as PROFILE_ID,
 } from '../constants'
@@ -13,6 +14,7 @@ import { ReplayDebuggerStartError, StudyError } from '../errors'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { StudyViewMessage } from '../ui/studyHtml'
+import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 
 import {
   readerSeams,
@@ -160,6 +162,273 @@ function compositionOf(harness: Harness) {
     family: lastView(harness)?.replayFamily,
   }
 }
+
+// Value: protects=N55-F4 refusal 2: a test replay chosen in a Study pane that sits in the learner's own group opens, although Cursor reports the group's next tab as active before it closes the disposed Study tab; fails_when=the entry reads the grid while the disposed Study tab is still listed and refuses with "Native pane, group or focus changed while presentation waited"; why_new=Cycle 0056 task 17 (the refusal came from Codebook's own disposal, not from the learner); seam=workspaceHarness with activateNextTabBeforeDisposedPaneTabCloses and addForeignDraft in the Study pane's group, and in the second cell replaceGroupObjectsOnTabChanges (Cursor's extension host gives groups new objects at tab changes; the delayed next-tab activation looks its group up again, PR #138 review); no_claim=Cursor's own event order (N56 step 1 checks it natively)
+for (const rebuildsGroupObjects of [false, true])
+  test(`a test replay chosen in a Study pane that shares the learner’s group opens without a placement refusal${rebuildsGroupObjects ? ', also when the editor rebuilds its group objects at every tab change' : ''}`, async () => {
+    // Arrange
+    const harness = await workspaceHarness()
+    const logged: CodebookDiagnostic[] = []
+    harness.reader.diagnostics = {
+      log: (entry) => logged.push(entry),
+      show: () => undefined,
+    }
+    harness.activateNextTabBeforeDisposedPaneTabCloses()
+    if (rebuildsGroupObjects) harness.replaceGroupObjectsOnTabChanges()
+    try {
+      const history = await saveTwoStopNodeHistory(
+        harness.service.nodeHistoryStore!,
+      )
+      await harness.reader.action('retry')
+      await harness.reader.open()
+      const studyColumn = harness.panelColumn('codebook.studyContext')
+      assert.notEqual(studyColumn, undefined)
+      // The learner's own tab shares the Study pane's group, so the group is no one Codebook created.
+      harness.addForeignDraft(studyColumn)
+
+      // Act
+      harness.receiveContext({
+        type: 'node-history',
+        revision: lastView(harness)!.revision,
+        studyId: history.studyId,
+      })
+      // A refusal ends the entry without a landing, so the wait ends on either result.
+      await waitUntil(
+        () =>
+          lastView(harness)?.nodeHistoryPosition?.sequence === 2 ||
+          logged.some(
+            (entry) => entry.surface === 'presentation:placement-refused',
+          ),
+        'the Saved studies choice lands on the first stop or is refused',
+        READER_RESULT_BOUND_MS,
+      )
+
+      // Assert
+      assert.deepEqual(
+        logged.filter(
+          (entry) => entry.surface === 'presentation:placement-refused',
+        ),
+        [],
+      )
+      await landsOn(
+        harness,
+        2,
+        'the Saved studies choice lands on the first stop',
+      )
+      assert.deepEqual(compositionOf(harness), {
+        studyPane: false,
+        application: true,
+        summary: true,
+        family: 'test',
+      })
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=N55-F4's silent drop: a Saved studies choice sent from the Learning summary after Close Study Workspace is recorded in Output › Codebook with its study, and the sending pane gets its open-request-settled reply; fails_when=the reader drops the choice with no Output entry and no reply, so the learner sees nothing and the pane keeps its opening choice; why_new=Cycle 0056 task 17 (receive's owner gate returned silently for the Learning summary of a closed workspace); seam=workspaceHarness (VS Code), the Learning summary view's listener, the diagnostics log, the harness's recorded open-request replies; no_claim=the wording the learner reads in a real Output channel
+test('a Saved studies choice sent from the Learning summary after the Study workspace closed is recorded and releases the pane', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  try {
+    const history = await openByOpenReplay(harness)
+    const revision = lastView(harness)!.revision
+    await harness.reader.close()
+
+    // Act
+    harness.receive({
+      type: 'node-history',
+      revision,
+      studyId: history.studyId,
+      openRequest: 5,
+    })
+    await waitUntil(
+      () => harness.openRequestReplies().length === 1,
+      'the Learning summary gets the reply to its dropped choice',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(harness.openRequestReplies(), [
+      { webview: 'summary', openRequest: 5 },
+    ])
+    // The entry is copied into this realm's plain objects: the reader runs in the harness's own realm.
+    assert.deepEqual(
+      logged.map((entry) => ({ ...entry })),
+      [
+        {
+          surface: 'choice:dropped',
+          studyId: history.studyId,
+          cause:
+            'The "node-history" choice from the Learning summary was not carried out: the Study workspace is closed. To continue, run “Codebook: Open Study Workspace”, then make your choice again.',
+        },
+      ],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=N55-F4 H2-a: a test replay chosen while the Application stands alone in its group opens although the editor reports the group active a moment after Codebook's reveal of the Application; fails_when=the entry arms a guard while the editor's late report of Codebook's own placement is still on its way, reads the report as the learner's focus change and refuses with "Native pane, group or focus changed while presentation waited"; why_new=Cycle 0056 task 17 stage 2 (N55-F4 refusal 1 is a rare race, hardened against both hypotheses); seam=workspaceHarness with activateApplicationGroupLateAfterReveal, the diagnostics log; no_claim=that Cursor reports it this way (N56 step 1 checks natively)
+test('a test replay chosen while the Application is alone in its group opens without a placement refusal', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  harness.activateApplicationGroupLateAfterReveal()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.open()
+
+    // Act
+    harness.receiveContext({
+      type: 'node-history',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+    })
+    // A refusal ends the entry without a landing, so the wait ends on either result.
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 ||
+        logged.some(
+          (entry) => entry.surface === 'presentation:placement-refused',
+        ),
+      'the Saved studies choice lands on the first stop or is refused',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(
+      logged.filter(
+        (entry) => entry.surface === 'presentation:placement-refused',
+      ),
+      [],
+    )
+    await landsOn(
+      harness,
+      2,
+      'the Saved studies choice lands on the first stop',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+for (const [rewrap, reported] of [
+  [undefined, 1],
+  ['replace', 0],
+] as const)
+  // Value: protects=the fidelity of the workspace harness's late group reports, on which the H2-b cells rest: a late report follows its group through a rebuild that keeps the group (new wrappers) and is dropped when the editor replaced the group by an opened one; fails_when=the fake editor carries the report to a group it reported as opened in place of the inserted one (closed + opened), so a cell can pass on an activation the editor never made; why_new=PR #138 CodeRabbit review on 896e4212; seam=workspaceHarness, activateNewGroupLateAfterInsertion, the fake editor's newGroupAbove, resyncEditorGroups, lateGroupActivationsReported and lateGroupReportsWaiting; no_claim=any editor's own behaviour
+  test(`the fake editor ${reported ? 'makes' : 'drops'} a late group report when it ${rewrap ? 'replaced the group by an opened one' : 'gave the group new wrappers'} before the report`, async () => {
+    // Arrange
+    const harness = await workspaceHarness()
+    harness.activateNewGroupLateAfterInsertion(LATE_GROUP_ACTIVATION_WAIT_MS)
+    try {
+      // The command acts on the first group, as the preparation's own call does.
+      await harness.editor.commands.executeCommand(
+        'workbench.action.focusFirstEditorGroup',
+      )
+      await harness.editor.commands.executeCommand(
+        'workbench.action.newGroupAbove',
+      )
+
+      // Act: the editor rebuilds its groups while the late report waits.
+      harness.resyncEditorGroups(rewrap)
+      await waitUntil(
+        () => harness.lateGroupReportsWaiting() === 0,
+        'the late group report has run',
+        READER_RESULT_BOUND_MS,
+      )
+
+      // Assert
+      assert.equal(harness.lateGroupActivationsReported(), reported)
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=N55-F4 H2-b: a test replay opens although the editor reports the Application's new group active only after newGroupAbove answered; fails_when=the entry arms a guard while the editor's late report of Codebook's own placement is still on its way, reads the report as the learner's focus change and refuses with "Native pane, group or focus changed while presentation waited"; why_new=Cycle 0056 task 17 stage 2 (N55-F4 refusal 1 is a rare race, hardened against both hypotheses); seam=workspaceHarness with activateNewGroupLateAfterInsertion, the diagnostics log, and in the other cells replaceGroupObjectsOnTabChanges or useCursorGroupWrappers (Cursor's extension host gives groups new objects at tab changes and when it opens a group; the late report follows the inserted group through them, PR #138 review); no_claim=that Cursor reports it this way (N56 step 1 checks natively)
+for (const [rebuild, shown] of [
+  ['none', ''],
+  [
+    'tab changes',
+    ', also when the editor rebuilds its group objects at every tab change',
+  ],
+  [
+    'opened groups',
+    ', also when the editor gives its groups new wrappers whenever it opens a group',
+  ],
+] as const)
+  test(`a test replay whose Application group the editor activates late opens without a placement refusal${shown}`, async () => {
+    // Arrange
+    const harness = await workspaceHarness()
+    const logged: CodebookDiagnostic[] = []
+    harness.reader.diagnostics = {
+      log: (entry) => logged.push(entry),
+      show: () => undefined,
+    }
+    harness.activateNewGroupLateAfterInsertion()
+    if (rebuild === 'tab changes') harness.replaceGroupObjectsOnTabChanges()
+    if (rebuild === 'opened groups') harness.useCursorGroupWrappers()
+    try {
+      const history = await saveTwoStopNodeHistory(
+        harness.service.nodeHistoryStore!,
+      )
+      await harness.reader.action('retry')
+      await harness.reader.open()
+
+      // Act
+      harness.receiveContext({
+        type: 'node-history',
+        revision: lastView(harness)!.revision,
+        studyId: history.studyId,
+      })
+      // A refusal ends the entry without a landing, so the wait ends on either result.
+      await waitUntil(
+        () =>
+          lastView(harness)?.nodeHistoryPosition?.sequence === 2 ||
+          logged.some(
+            (entry) => entry.surface === 'presentation:placement-refused',
+          ),
+        'the Saved studies choice lands on the first stop or is refused',
+        READER_RESULT_BOUND_MS,
+      )
+
+      // The editor's late report may come after the landing: it runs at the next layout read or its timer.
+      await waitUntil(
+        () => harness.lateGroupReportsWaiting() === 0,
+        'the editor’s late group report has run',
+        READER_RESULT_BOUND_MS,
+      )
+
+      // Assert: the editor's late report reached its live group model (the premise), and the open was not refused.
+      assert.equal(harness.lateGroupActivationsReported(), 1)
+      assert.deepEqual(
+        logged.filter(
+          (entry) => entry.surface === 'presentation:placement-refused',
+        ),
+        [],
+      )
+      await landsOn(
+        harness,
+        2,
+        'the Saved studies choice lands on the first stop',
+      )
+    } finally {
+      await harness.close()
+    }
+  })
 
 for (const entry of ['Open replay', 'Saved studies'] as const) {
   // Value: protects=the learner's entry into a test replay in VS Code gives region 2's composition: the Study pane closes, the Application pane and the recorded source stay, and the Learning summary shows in the chat's place, moved beside the chat once per profile; fails_when=the Study pane stays open with the replay in its Test replay section, the summary keeps its placeholder, or the move does not run; why_new=Cycle 0051 DS-A (AC1): a test replay entered the Study composition; seam=workspaceHarness (VS Code), openLearningReplay and the Study pane's node-history message, the fake vscode.moveViews; no_claim=the native placement, which N51 (a) checks
@@ -3861,6 +4130,1167 @@ test('a failed move whose return to the last moment fails too does not say the l
     )
   } finally {
     harness.restoreCurrentSourceOpen()
+    await harness.close()
+  }
+})
+
+/**
+ * Records the study ids of the test replays every Study message a view's webview receives from now on names, by wrapping its `postMessage`; the closed-reader open tests read it to prove that a view never draws another replay while a chosen one opens.
+ * @param view - The harness's Learning summary view.
+ * @returns The live list of each received Study message's shown test replay id (`'none'` for a message that names no test replay).
+ * @example const drawn = recordDrawnTestReplays(harness.summary) // => ['none', 'node_run-b']
+ */
+function recordDrawnTestReplays(view: {
+  webview: { postMessage: (message: StudyViewMessage) => Promise<boolean> }
+}): string[] {
+  const drawn: string[] = [],
+    post = view.webview.postMessage.bind(view.webview)
+  view.webview.postMessage = async (message: StudyViewMessage) => {
+    if (message.type === 'study')
+      drawn.push(message.nodeHistory?.header.studyId ?? 'none')
+    return post(message)
+  }
+  return drawn
+}
+
+// Value: protects=Saved studies naming no study while the reader is closed, so the learner can choose the study the closed reader showed and have it open, and naming the replay again once Open Study Workspace restores it; fails_when=a closed reader's Study message omits readerClosed, or an open reader sets it (Cycle 0056 task 31, N56-F1: the list kept naming the shown replay, so choosing it fired no change); why_new=the list rule lived in the page only, with no host signal for a closed reader; seam=the reader's inspected Study message; no_claim=the list's rendering (Reader DOM check study-bootstrap-qa)
+test('a closed reader tells Saved studies that it is closed, and a reopened reader that shows its replay does not', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await openByOpenReplay(harness)
+    const whileOpen = harness.reader.inspect().view?.readerClosed
+
+    // Act
+    await harness.reader.close()
+    const afterClose = harness.reader.inspect().view?.readerClosed
+    await harness.reader.open()
+    const afterReopen = harness.reader.inspect().view
+
+    // Assert
+    assert.deepEqual(
+      {
+        whileOpen,
+        afterClose,
+        afterReopen: afterReopen?.readerClosed,
+        replay: afterReopen?.nodeHistory?.header.studyId,
+      },
+      {
+        whileOpen: undefined,
+        afterClose: true,
+        afterReopen: undefined,
+        replay: history.studyId,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Open replay from the status item after Close never draws the replay the closed reader showed in the Learning summary while the chosen one opens; fails_when=the summary receives a Study message that names the closed reader's replay once the open starts (Cycle 0056 task 32, N56-F2: 1 to 2 frames of the earlier replay's title, result and stop beside "The recorded source is opening"); why_new=Cycle 0052 task 2 covered Return to Live, not an open from a closed reader that keeps its selection; seam=the harness's summary webview postMessage; no_claim=the native frames, which the N56 rerun checks
+test('Open replay of another test replay after Close never draws the replay the closed reader showed in the Learning summary', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    // Saved before the first open, whose Retry storage / refresh lists both replays in Saved studies.
+    const chosenReplay = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    const closedReplay = await openByOpenReplay(harness)
+    await harness.reader.close()
+    const drawn = recordDrawnTestReplays(harness.summary)
+
+    // Act
+    await harness.reader.openLearningReplay(chosenReplay.studyId)
+    await landsOn(harness, 2, 'the chosen replay lands on its first stop')
+
+    // Assert
+    await waitUntil(
+      () => drawn.at(-1) === chosenReplay.studyId,
+      'the summary draws the chosen replay',
+      READER_RESULT_BOUND_MS,
+    )
+    assert.equal(drawn.includes(closedReplay.studyId), false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a Saved studies choice of another test replay after Close never draws the replay the closed reader showed in the Learning summary while the chosen one opens; fails_when=the summary receives a Study message that names the closed reader's replay once the choice arrives (Cycle 0056 task 32, N56-F2); why_new=the status item's Open replay and a Saved studies choice enter the closed reader through the same entry but each is its own learner path; seam=the harness's summary webview postMessage and the Study pane's node-history message; no_claim=the native frames, which the N56 rerun checks
+test('a Saved studies choice of another test replay after Close never draws the replay the closed reader showed in the Learning summary', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    // Saved before the first open, whose Retry storage / refresh lists both replays in Saved studies.
+    const chosenReplay = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    const closedReplay = await openByOpenReplay(harness)
+    await harness.reader.close()
+    const drawn = recordDrawnTestReplays(harness.summary)
+
+    // Act
+    await readerSeams(harness).receive(
+      {
+        type: 'node-history',
+        revision: harness.reader.inspect().view!.revision,
+        studyId: chosenReplay.studyId,
+      },
+      'context',
+    )
+    await landsOn(harness, 2, 'the chosen replay lands on its first stop')
+
+    // Assert
+    await waitUntil(
+      () => drawn.at(-1) === chosenReplay.studyId,
+      'the summary draws the chosen replay',
+      READER_RESULT_BOUND_MS,
+    )
+    assert.equal(drawn.includes(closedReplay.studyId), false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=choosing again the test replay the closed reader showed still opens it at once, with the Learning summary drawing that replay; fails_when=retiring the closed reader's selection for another replay also retires the same replay's, or the summary never draws it (Cycle 0056 task 32); why_new=the fix retires a closed reader's selection only for another replay; seam=the harness's summary webview postMessage; no_claim=the native frames
+test('Open replay of the test replay the closed reader showed draws that replay in the Learning summary', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const closedReplay = await openByOpenReplay(harness)
+    await harness.reader.close()
+    const drawn = recordDrawnTestReplays(harness.summary)
+
+    // Act
+    await harness.reader.openLearningReplay(closedReplay.studyId)
+    await landsOn(harness, 2, 'the replay lands on its first stop')
+
+    // Assert
+    await waitUntil(
+      () => drawn.at(-1) === closedReplay.studyId,
+      'the summary draws the replay again',
+      READER_RESULT_BOUND_MS,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a browser recording chosen after Close of a test replay never draws the test replay in the Learning summary while the recording opens; fails_when=the summary receives a Study message that names the closed reader's test replay once the recording's open starts (Cycle 0056 task 32, the browser side of N56-F2); why_new=the task's fix covers a test replay entering a closed reader, and the reverse entry needed its own proof; seam=recordedReaderHarness, the summary webview's postMessage; no_claim=the native frames, which the N56 rerun checks
+test('a browser recording opened after Close of a test replay never draws the test replay in the Learning summary', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(history.studyId)
+    await landsOn(harness, 2, 'the test replay lands on its first stop')
+    await harness.reader.close()
+    const drawn = recordDrawnTestReplays(harness.summary)
+
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert: the summary was published to, and none of it named the test replay.
+    assert.equal(drawn.length > 0, true)
+    assert.equal(drawn.includes(history.studyId), false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a test replay chosen after Close of a browser recording never draws the recording in the Learning summary while the replay opens; fails_when=the summary receives a Study message that carries the closed reader's recording once the test replay's open starts (Cycle 0056 task 32, the browser side of N56-F2); why_new=the task's fix covers a test replay closed before another test replay, and the reverse entry needed its own proof; seam=recordedReaderHarness, the summary webview's postMessage; no_claim=the native frames, which the N56 rerun checks
+test('a test replay opened after Close of a browser recording never draws the recording in the Learning summary', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    await harness.reader.close()
+    harness.answerWarningDialogs(async () => 'Close browser replay')
+    const recordingsDrawn: (string | undefined)[] = [],
+      post = harness.summary.webview.postMessage.bind(harness.summary.webview)
+    harness.summary.webview.postMessage = async (message: StudyViewMessage) => {
+      if (message.type === 'study' && message.recording !== undefined)
+        recordingsDrawn.push(message.nodeHistory?.header.studyId)
+      return post(message)
+    }
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+    await landsOn(harness, 2, 'the test replay lands on its first stop')
+
+    // Assert
+    assert.deepEqual(recordingsDrawn, [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the replay a closed reader showed surviving an entry for another replay that is refused, so Open Study Workspace still shows it; fails_when=the entry drops the closed reader's selection before its open and the refusal leaves the learner with no replay to restore (local open-code-review, Cycle 0056 pt3 OCR-L3); why_new=task 32 kept the closed reader's replay out of the summary but its first fix retired the selection for good; seam=the reader's open refused once for the second replay's entry, the diagnostics log; no_claim=the notification's wording
+test('a refused Open replay of another test replay after Close leaves the closed reader’s replay for Open Study Workspace', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.reader.diagnostics = { log: () => undefined, show: () => undefined }
+  try {
+    const chosenReplay = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    const closedReplay = await openByOpenReplay(harness)
+    await harness.reader.close()
+    const open = harness.reader.open.bind(harness.reader)
+    let isFirstOpen = true
+    harness.reader.open = async (...openArguments): Promise<void> => {
+      if (isFirstOpen) {
+        isFirstOpen = false
+        throw new Error('The editor refused the arrangement.')
+      }
+      return open(...openArguments)
+    }
+    const drawn = recordDrawnTestReplays(harness.summary)
+
+    // Act: the second replay's entry is refused, then the learner opens the workspace again.
+    await harness.reader.openLearningReplay(chosenReplay.studyId)
+    const drawnWhileRefused = [...drawn]
+    await harness.reader.open()
+
+    // Assert
+    assert.deepEqual(
+      {
+        replay: harness.reader.inspect().view?.nodeHistory?.header.studyId,
+        drawnWhileRefused: drawnWhileRefused.includes(closedReplay.studyId),
+      },
+      { replay: closedReplay.studyId, drawnWhileRefused: false },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+/** What the learner is told, and the Output entry says, for each reason a Learning summary choice is dropped. */
+const DROPPED_CHOICE_SENTENCES = {
+  closed:
+    'the Study workspace is closed. To continue, run “Codebook: Open Study Workspace”, then make your choice again.',
+  closing:
+    'the Study workspace is closing. When it has closed, run “Codebook: Open Study Workspace”, then make your choice again.',
+  left: 'the Learning summary is not showing a replay. Open a replay from Saved studies, then make your choice again.',
+} as const
+
+/** What a dropped-choice message is built from. */
+type DroppedChoiceContext = {
+  revision: number
+  studyId: string
+  itemId: string
+}
+
+/** The four choices the Learning summary sends that a closed, closing or left composition drops. */
+const DROPPED_CHOICE_MESSAGES = [
+  {
+    type: 'history',
+    openRequest: 21,
+    carriesStudy: true,
+    build: ({ revision, studyId }: DroppedChoiceContext) => ({
+      type: 'history',
+      revision,
+      studyId,
+      openRequest: 21,
+    }),
+  },
+  {
+    type: 'node-history',
+    openRequest: 22,
+    carriesStudy: true,
+    build: ({ revision, studyId }: DroppedChoiceContext) => ({
+      type: 'node-history',
+      revision,
+      studyId,
+      openRequest: 22,
+    }),
+  },
+  {
+    type: 'tab',
+    openRequest: undefined,
+    carriesStudy: false,
+    build: ({ revision }: DroppedChoiceContext) => ({
+      type: 'tab',
+      revision,
+      tab: 'live',
+    }),
+  },
+  {
+    type: 'select',
+    openRequest: undefined,
+    carriesStudy: false,
+    build: ({ revision, itemId }: DroppedChoiceContext) => ({
+      type: 'select',
+      revision,
+      itemId,
+    }),
+  },
+] as const
+
+/**
+ * Sends one Learning summary message and settles when the reader has handled it, so an assertion that follows reads final counts.
+ * @param harness - The workspace harness.
+ * @param message - The message the summary posts.
+ * @returns Once the reader has handled the message.
+ * @example await sendFromSummary(harness, { type: 'ready' })
+ */
+function sendFromSummary(harness: Harness, message: unknown): Promise<void> {
+  return readerSeams(harness).receiveFromPanel(
+    message,
+    'context',
+    harness.summary,
+  )
+}
+
+/**
+ * Reads the notices the reader raised for dropped choices.
+ * @param harness - The workspace harness.
+ * @returns The notice texts that start with the dropped-choice prefix.
+ * @example droppedChoiceNotices(harness) // => ['Codebook did not carry out your choice: the Study workspace is closed. …']
+ */
+function droppedChoiceNotices(harness: Harness): string[] {
+  return harness.informationMessages
+    .map((notice) => notice.message)
+    .filter((text) => text.startsWith('Codebook did not carry out your choice'))
+}
+
+// Value: protects=every choice the Learning summary can send (history, node-history, tab, select) telling the learner why it was not carried out, in the words of its reason, in one notification and in one Output › Codebook entry, whether the reader is closed, closing, has left the replay composition or closed while it initialized; fails_when=a message type is dropped without a notice or entry, the reason is worded for another state, or a reason's sentence changes unnoticed (local open-code-review OCR-L4 and /ship pass 2 SM14 to SM25, Cycle 0056 pt3); why_new=task 17 recorded the drop but worded every reason as a closed workspace and showed the learner nothing; seam=workspaceHarness, readerSeams.receiveFromPanel with the Learning summary view, the harness's information messages, the diagnostics log; no_claim=the notification's look in the editor
+for (const reason of [
+  'closed',
+  'closing',
+  'left',
+  'left for the Live arrangement',
+  'closed while initializing',
+] as const)
+  for (const choice of DROPPED_CHOICE_MESSAGES)
+    test(`a ${choice.type} choice from the Learning summary dropped because the reader is ${reason} is told in one notification and one Output entry`, async () => {
+      // Arrange
+      const harness = await workspaceHarness()
+      const logged: CodebookDiagnostic[] = []
+      harness.reader.diagnostics = {
+        log: (entry) => logged.push(entry),
+        show: () => undefined,
+      }
+      try {
+        const history = await openByOpenReplay(harness)
+        const view = lastView(harness)!
+        const message = choice.build({
+          revision: view.revision,
+          studyId: history.studyId,
+          itemId: view.model.selection.itemId,
+        })
+        const sentence =
+          DROPPED_CHOICE_SENTENCES[
+            reason === 'closed while initializing'
+              ? 'closed'
+              : reason === 'left for the Live arrangement'
+                ? 'left'
+                : reason
+          ]
+
+        // Act
+        if (reason === 'closed while initializing') {
+          const held = holdNextInitialize(harness)
+          const received = sendFromSummary(harness, message)
+          await held.entered
+          await harness.reader.close()
+          held.release()
+          await received
+        } else {
+          if (reason === 'closed') await harness.reader.close()
+          if (reason === 'closing') harness.reader['closing'] = true
+          if (reason === 'left') await harness.reader.action('return-current')
+          // The reader stands in the Live arrangement: open, but no longer in the summary composition.
+          if (reason === 'left for the Live arrangement') {
+            harness.reader['summaryComposition'] = false
+            harness.reader['liveComposition'] = true
+          }
+          await sendFromSummary(harness, message)
+        }
+
+        // Assert
+        assert.deepEqual(
+          {
+            notices: droppedChoiceNotices(harness),
+            // The entries are copied into this realm's plain objects: the reader runs in the harness's own realm.
+            entries: logged.map((entry) => ({ ...entry })),
+            replies: harness.openRequestReplies(),
+          },
+          {
+            notices: [`Codebook did not carry out your choice: ${sentence}`],
+            entries: [
+              {
+                surface: 'choice:dropped',
+                ...(choice.carriesStudy ? { studyId: history.studyId } : {}),
+                cause: `The "${choice.type}" choice from the Learning summary was not carried out: ${sentence}`,
+              },
+            ],
+            // The pane that sent a choice with an open request is released whether or not it was carried out.
+            replies:
+              choice.openRequest === undefined
+                ? []
+                : [{ webview: 'summary', openRequest: choice.openRequest }],
+          },
+        )
+      } finally {
+        harness.reader['closing'] = false
+        await harness.close()
+      }
+    })
+
+// Value: protects=a Learning summary message that is no choice (the view's ready report or its keyboard-focus report) being dropped quietly, with no notification and no Output entry, whether the reader is closed, closing, has left the replay composition or closed while it initialized; fails_when=a stale report tells the learner a choice was not carried out or writes the drop entry (/ship pass 1 SM7 and pass 2 SM26 and SM27, Cycle 0056 pt3); why_new=the task 17 tests send only a node-history choice, so a notice for any dropped message would pass them; seam=workspaceHarness, readerSeams.receiveFromPanel with the Learning summary view, the harness's information messages, the diagnostics log; no_claim=the notification's look in the editor
+/** The quiet-drop cells: the keyboard-focus report is answered before the reader initializes, so only the ready report has a "closed while initializing" cell. */
+const QUIET_DROP_CELLS = [
+  'closed',
+  'closing',
+  'left',
+  'closed while initializing',
+].flatMap((reason) =>
+  [
+    { name: 'ready report', message: { type: 'ready' } },
+    {
+      name: 'keyboard-focus report',
+      message: { type: 'pane-focus', focused: true },
+    },
+  ]
+    .filter(
+      (report) =>
+        !(
+          reason === 'closed while initializing' &&
+          report.message.type === 'pane-focus'
+        ),
+    )
+    .map((report) => ({ reason, report })),
+)
+for (const { reason, report } of QUIET_DROP_CELLS)
+  test(`a Learning summary ${report.name} dropped because the reader is ${reason} tells the learner nothing and writes no entry`, async () => {
+    // Arrange
+    const harness = await workspaceHarness()
+    const logged: CodebookDiagnostic[] = []
+    harness.reader.diagnostics = {
+      log: (entry) => logged.push(entry),
+      show: () => undefined,
+    }
+    try {
+      await openByOpenReplay(harness)
+
+      // Act
+      if (reason === 'closed while initializing') {
+        const held = holdNextInitialize(harness)
+        const received = sendFromSummary(harness, report.message)
+        await held.entered
+        await harness.reader.close()
+        held.release()
+        await received
+      } else {
+        if (reason === 'closed') await harness.reader.close()
+        if (reason === 'closing') harness.reader['closing'] = true
+        if (reason === 'left') await harness.reader.action('return-current')
+        await sendFromSummary(harness, report.message)
+      }
+
+      // Assert
+      assert.deepEqual(
+        {
+          notices: droppedChoiceNotices(harness),
+          entries: logged.map((entry) => entry.surface),
+        },
+        { notices: [], entries: [] },
+      )
+    } finally {
+      harness.reader['closing'] = false
+      await harness.close()
+    }
+  })
+
+// Value: protects=an Application group the editor reports active later than the preparation's 150 ms wait: the open is refused with a report of the late activation, never a half-arranged reader; fails_when=the open succeeds with no report or ends in another failure, or the report no longer lists the group change the late activation caused (local open-code-review OCR-L2, Cycle 0056 pt3); why_new=task 17's test pinned only a report that arrives within the bound; seam=workspaceHarness with activateNewGroupLateAfterInsertion(four times the wait), the diagnostics log; no_claim=that Cursor ever reports later than the bound (N56 on 5b39b767 and 02acefaa: 13 opens, no refusal)
+test('a test replay whose Application group the editor activates after the preparation’s wait is refused with a placement report', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  harness.activateNewGroupLateAfterInsertion(LATE_GROUP_ACTIVATION_WAIT_MS * 4)
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.open()
+
+    // Act
+    harness.receiveContext({
+      type: 'node-history',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+    })
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 ||
+        logged.some((entry) => entry.surface === 'open:test-replay'),
+      'the choice lands on the first stop or is refused',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(
+      logged.map((entry) => entry.surface),
+      ['presentation:placement-refused', 'open:test-replay'],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+/**
+ * Holds the reader's next `open()` at its start until the test releases it, so a test acts while an entry for a test replay waits in the closed reader.
+ * @param harness - The workspace harness.
+ * @param refusal - When given, the held open throws it once released instead of running, as an editor that refuses the arrangement does.
+ * @returns `entered` (settles when the open began), `release()` (lets it go on) and `restore()` (puts the reader's own open back).
+ * @example const held = holdNextReaderOpen(harness); void harness.reader.openLearningReplay(id); await held.entered; held.release()
+ */
+function holdNextReaderOpen(harness: Harness, refusal?: Error) {
+  const open = harness.reader.open.bind(harness.reader)
+  let release = (): void => {}
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  let entered = (): void => {}
+  const hasEntered = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  let isFirst = true
+  harness.reader.open = async (...openArguments): Promise<void> => {
+    if (isFirst) {
+      isFirst = false
+      entered()
+      await gate
+      if (refusal) throw refusal
+    }
+    return open(...openArguments)
+  }
+  return {
+    entered: hasEntered,
+    release,
+    restore: (): void => {
+      harness.reader.open = open
+    },
+  }
+}
+
+/**
+ * Reads which replay the reader holds back from its views now.
+ * @param harness - The workspace harness.
+ * @returns The held-back replay's study id; `undefined` when nothing is held back.
+ * @example heldBackStudyId(harness) // => undefined
+ */
+function heldBackStudyId(harness: Harness): string | undefined {
+  // A renamed field would read `undefined` and let every "nothing is held back" assertion pass without meaning; the guard fails the test instead.
+  assert.equal('heldBackReplay' in harness.reader, true)
+  return harness.reader['heldBackReplay']
+    ? harness.reader.inspect().view?.nodeHistory?.header.studyId
+    : undefined
+}
+
+// Value: protects=the replay a closed reader showed being drawn again in the Learning summary and the bottom panel when the entry for another replay opened the reader and then ended without showing its replay; fails_when=releasing the held-back replay publishes nothing, so both views stay on the opening state until an unrelated publish (local red team RT1, Cycle 0056 pt3); why_new=OCR-L3 kept the selection but left the views unpublished at the release; seam=the reader's openNodeHistory ending superseded after the open, the summary's and bottom panel's postMessage; no_claim=the native frames
+test('an Open replay of another test replay that ends after it opened the closed reader draws the closed reader’s replay again in both views', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.reader.diagnostics = { log: () => undefined, show: () => undefined }
+  try {
+    const chosenReplay = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    const closedReplay = await openByOpenReplay(harness)
+    await harness.reader.close()
+    harness.reader['openNodeHistory'] = async () => ({
+      status: 'superseded' as const,
+    })
+    const summaryDrawn = recordDrawnTestReplays(harness.summary),
+      bottomPanelDrawn = recordDrawnTestReplays(harness.playbackPanel)
+
+    // Act
+    await harness.reader.openLearningReplay(chosenReplay.studyId)
+
+    // Assert
+    assert.deepEqual(
+      [summaryDrawn.at(-1), bottomPanelDrawn.at(-1)],
+      [closedReplay.studyId, closedReplay.studyId],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=every dropped Learning summary choice raising its notification and writing its Output entry, however often the learner repeats it; fails_when=a repeated drop raises no notice because an earlier one was told (the notice suppression removed in /ship pass 3 DN, which let a notice that auto-hid into the notification centre silence a reason for good), or a drop writes no entry; why_new=pass 2 pinned a suppression that is gone: the editor replaces an identical visible notification by itself; seam=workspaceHarness, readerSeams.receiveFromPanel with the Learning summary view, the harness's information messages, the diagnostics log; no_claim=that the editor shows one notification for identical texts (VS Code's notification model, checked in its 1.142 bundle)
+test('every repeated Saved studies choice dropped for one reason raises its notification and writes its Output entry', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  // Every notice stays open, as one that auto-hid into the notification centre does.
+  harness.answerInformationMessages(
+    () => new Promise<string | undefined>(() => undefined),
+  )
+  try {
+    const history = await openByOpenReplay(harness)
+    const choose = (): Promise<void> =>
+      sendFromSummary(harness, {
+        type: 'node-history',
+        revision: lastView(harness)!.revision,
+        studyId: history.studyId,
+        openRequest: 31,
+      })
+    await harness.reader.close()
+
+    // Act
+    await choose()
+    await choose()
+    await choose()
+
+    // Assert
+    assert.deepEqual(
+      [droppedChoiceNotices(harness).length, logged.length],
+      [3, 3],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=what a test replay entry does to the replay a closed reader showed, per state of the entry (another replay or the same one, refused or superseded); fails_when=an entry for another replay leaves the closed reader's replay held back after it ended, loses it, or draws it while the other replay opens, or an entry for the same replay sets a hold at all (coverage review SM1 to SM3, Cycle 0056 pt3); why_new=the held-back replay was tested only for an entry that completed and one that was refused; seam=the reader's open held at its start, openLearningReplay, the summary's postMessage and the reader's heldBackReplay; no_claim=the native frames
+for (const cell of [
+  {
+    name: 'another replay whose entry a newer Open replay of a third replay supersedes',
+    entryFor: 'other',
+    ends: 'superseded by a newer entry',
+    holdsDuringEntry: true,
+    shownAfterwards: 'newer',
+  },
+  {
+    name: 'another replay whose entry Return to Live supersedes',
+    entryFor: 'other',
+    ends: 'superseded by Return to Live',
+    holdsDuringEntry: true,
+    shownAfterwards: 'none',
+  },
+  {
+    name: 'another replay whose entry is refused',
+    entryFor: 'other',
+    ends: 'refused',
+    holdsDuringEntry: true,
+    shownAfterwards: 'closed',
+  },
+  {
+    name: 'the same replay whose entry is refused',
+    entryFor: 'same',
+    ends: 'refused',
+    holdsDuringEntry: false,
+    shownAfterwards: 'closed',
+  },
+  {
+    name: 'the same replay whose entry Return to Live supersedes',
+    entryFor: 'same',
+    ends: 'superseded by Return to Live',
+    holdsDuringEntry: false,
+    shownAfterwards: 'none',
+  },
+  {
+    name: 'the same replay whose entry a newer Open replay of another replay supersedes',
+    entryFor: 'same',
+    ends: 'superseded by a newer entry',
+    holdsDuringEntry: false,
+    shownAfterwards: 'newer',
+  },
+] as const)
+  test(`an entry for ${cell.name} leaves the closed reader's replay ${cell.shownAfterwards === 'closed' ? 'for Open Study Workspace' : cell.shownAfterwards === 'none' ? 'retired by the return' : 'replaced by the newer replay'}, and draws it only when it is shown`, async () => {
+    // Arrange
+    const harness = await workspaceHarness()
+    harness.reader.diagnostics = {
+      log: () => undefined,
+      show: () => undefined,
+    }
+    try {
+      const otherReplay = await saveTwoStopNodeHistory(
+        harness.service.nodeHistoryStore!,
+      )
+      const newerReplay = await saveTwoStopNodeHistory(
+        harness.service.nodeHistoryStore!,
+      )
+      const closedReplay = await openByOpenReplay(harness)
+      await harness.reader.close()
+      const held = holdNextReaderOpen(
+        harness,
+        cell.ends === 'refused'
+          ? new Error('The editor refused the arrangement.')
+          : undefined,
+      )
+      const drawn = recordDrawnTestReplays(harness.summary)
+      const entry = harness.reader.openLearningReplay(
+        cell.entryFor === 'same' ? closedReplay.studyId : otherReplay.studyId,
+      )
+      await held.entered
+
+      // Act
+      const heldDuringEntry = heldBackStudyId(harness)
+      if (cell.ends === 'superseded by a newer entry') {
+        const newer = harness.reader.openLearningReplay(newerReplay.studyId)
+        held.release()
+        await Promise.all([entry, newer])
+        await landsOn(harness, 2, 'the newer replay lands on its first stop')
+      } else if (cell.ends === 'superseded by Return to Live') {
+        const returned = harness.reader.action('return-current')
+        held.release()
+        await Promise.all([entry, returned])
+      } else {
+        // Refused: the held open throws once released.
+        held.release()
+        await entry
+        held.restore()
+      }
+      const shownAfterwards =
+        harness.reader.inspect().view?.nodeHistory?.header.studyId
+      const heldAfterwards = heldBackStudyId(harness)
+
+      // Assert
+      assert.deepEqual(
+        {
+          heldDuringEntry,
+          heldAfterwards,
+          shownAfterwards,
+          refusalsTold: harness.errorMessages.length,
+          // The same replay's entry may legitimately draw it; another replay's entry never does.
+          closedReplayDrawn:
+            cell.entryFor === 'same' && cell.shownAfterwards === 'closed'
+              ? undefined
+              : drawn.includes(closedReplay.studyId),
+        },
+        {
+          heldDuringEntry: cell.holdsDuringEntry
+            ? closedReplay.studyId
+            : undefined,
+          heldAfterwards: undefined,
+          refusalsTold: cell.ends === 'refused' ? 1 : 0,
+          shownAfterwards:
+            cell.shownAfterwards === 'closed'
+              ? closedReplay.studyId
+              : cell.shownAfterwards === 'newer'
+                ? newerReplay.studyId
+                : undefined,
+          closedReplayDrawn:
+            cell.entryFor === 'same' && cell.shownAfterwards === 'closed'
+              ? undefined
+              : false,
+        },
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=a browser recording the closed reader showed staying selected, with no replay held back, when a test replay entry is refused at the one-replay-at-a-time notice or superseded by a newer entry; fails_when=the entry sets a held-back replay for a browser recording, or drops the recording selection without the learner's answer (coverage review SM4 and SM5, Cycle 0056 pt3); why_new=the hold is set only for a retained test replay, and nothing pinned that a recording is left alone; seam=recordedReaderHarness, the unanswered warning dialog, the reader's heldBackReplay; no_claim=the notice's wording
+for (const ending of ['refused', 'superseded'] as const)
+  test(`a test replay entry ${ending === 'refused' ? 'the learner leaves unanswered at the browser replay notice' : 'that a newer entry supersedes at the browser replay notice'} leaves the closed browser recording selected with no replay held back`, async () => {
+    // Arrange
+    const harness = await recordedReaderHarness(true)
+    try {
+      const history = await saveTwoStopNodeHistory(
+        harness.service.nodeHistoryStore!,
+      )
+      await harness.reader.action('retry')
+      await harness.reader.openRecording(harness.studyId)
+      await harness.controller.settle()
+      await harness.reader.close()
+      // The first notice is dismissed; a newer entry's notice is dismissed too, so the recording stays.
+      harness.answerWarningDialogs(async () => undefined)
+
+      // Act
+      const first = harness.reader.openLearningReplay(history.studyId)
+      const second =
+        ending === 'superseded'
+          ? harness.reader.openLearningReplay(history.studyId)
+          : Promise.resolve()
+      await Promise.all([first, second])
+
+      // Assert
+      assert.deepEqual(
+        {
+          held: heldBackStudyId(harness),
+          selectedStudy: harness.reader.inspect().view?.model.selection.studyId,
+        },
+        { held: undefined, selectedStudy: harness.studyId },
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+/**
+ * Holds the reader's next `initialize()` until the test releases it, so a Learning summary message waits between the reader's two owner checks.
+ * @param harness - The workspace harness.
+ * @returns `entered` (settles when the message reached `initialize()`) and `release()`.
+ * @example const held = holdNextInitialize(harness); harness.receive(message); await held.entered; await harness.reader.close(); held.release()
+ */
+function holdNextInitialize(harness: Harness) {
+  const initialize = harness.reader['initialize'].bind(harness.reader)
+  let release = (): void => {}
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  let entered = (): void => {}
+  const hasEntered = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  let isFirst = true
+  harness.reader['initialize'] = async (): Promise<void> => {
+    if (isFirst) {
+      isFirst = false
+      entered()
+      await gate
+    }
+    return initialize()
+  }
+  return { entered: hasEntered, release }
+}
+
+// Value: protects=a message of a Study pane that a handoff retired being dropped without a notification or a choice:dropped entry and without changing the reader, whether the handoff came before the message or while the reader initialized; fails_when=a retired Study pane's choice tells the learner, writes the Learning summary's drop entry, or changes the shown tab (coverage review SM8 and SM9 and /ship pass 2 T6, Cycle 0056 pt3); why_new=only the Learning summary's drop was tested; seam=readerSeams.receiveFromPanel with a pane that is not the reader's Study pane, the reader's initialize held, a tab choice from the live Study pane as the sentinel, the information messages, the diagnostics log; no_claim=the replacement pane's behaviour
+for (const handoff of ['before', 'while'] as const)
+  test(`a choice from a Study pane that a handoff retired ${handoff} the reader initialized is dropped without a notification, an entry or a change`, async () => {
+    // Arrange
+    const harness = await workspaceHarness()
+    const logged: CodebookDiagnostic[] = []
+    harness.reader.diagnostics = {
+      log: (entry) => logged.push(entry),
+      show: () => undefined,
+    }
+    try {
+      await harness.reader.open()
+      const studyPane = harness.reader['contextPanel']
+      const tabBefore = harness.reader.inspect().view?.contentTab
+      // A tab the reader is not showing, so a carried-out choice would change what it shows.
+      const otherTab = tabBefore === 'live' ? 'overview' : 'live'
+      const noticesBefore = harness.informationMessages.length
+      const message = {
+        type: 'tab',
+        revision: lastView(harness)!.revision,
+        tab: otherTab,
+      }
+
+      // Act
+      if (handoff === 'before') {
+        await readerSeams(harness).receiveFromPanel(message, 'context', {})
+      } else {
+        const held = holdNextInitialize(harness)
+        const received = readerSeams(harness).receiveFromPanel(
+          message,
+          'context',
+          studyPane,
+        )
+        await held.entered
+        // The handoff: another pane replaces the Study pane while the reader initializes.
+        harness.reader['contextPanel'] = {} as never
+        held.release()
+        await received
+        harness.reader['contextPanel'] = studyPane
+      }
+      const tabAfterDrop = harness.reader.inspect().view?.contentTab
+      // The live Study pane's own choice is carried out: the reader was handling messages all along.
+      await readerSeams(harness).receiveFromPanel(
+        { ...message, revision: lastView(harness)!.revision },
+        'context',
+        studyPane,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          newNotices: harness.informationMessages.length - noticesBefore,
+          entries: logged.map((entry) => entry.surface),
+          tabAfterDrop,
+          tabAfterSentinel: harness.reader.inspect().view?.contentTab,
+        },
+        {
+          newNotices: 0,
+          entries: [],
+          tabAfterDrop: tabBefore,
+          tabAfterSentinel: otherTab,
+        },
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=the replay a closed reader showed staying out of the Learning summary and the bottom panel while a newer entry loads, when the entry that opened the reader ends superseded first; fails_when=the first entry's end releases and republishes the held-back replay while the newer entry still loads, so both views draw the closed reader's replay for a moment (/ship pass 2 RT2-1, Cycle 0056 pt3); why_new=the hold was released by the entry that set it, though the newer entry takes the standing-composition branch and sets none; seam=the reader's openNodeHistory held per entry, the summary's and bottom panel's postMessage; no_claim=the native frames
+test('a newer Open replay that supersedes the entry which opened the closed reader keeps the closed reader’s replay out of both views while it loads', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.reader.diagnostics = { log: () => undefined, show: () => undefined }
+  try {
+    const firstReplay = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    const newerReplay = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    const closedReplay = await openByOpenReplay(harness)
+    await harness.reader.close()
+    const openNodeHistory = harness.reader['openNodeHistory'].bind(
+      harness.reader,
+    )
+    const gates: { entered: Promise<void>; release: () => void }[] = []
+    let calls = 0
+    harness.reader['openNodeHistory'] = async (...openArguments) => {
+      let release = (): void => {}
+      let entered = (): void => {}
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const hasEntered = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+      gates.push({ entered: hasEntered, release })
+      entered()
+      await gate
+      // The first entry's open ends superseded, as a newer entry makes it; the newer entry's runs.
+      return calls++ === 0
+        ? { status: 'superseded' as const }
+        : openNodeHistory(...openArguments)
+    }
+    const summaryDrawn = recordDrawnTestReplays(harness.summary),
+      bottomPanelDrawn = recordDrawnTestReplays(harness.playbackPanel)
+    const first = harness.reader.openLearningReplay(firstReplay.studyId)
+    await waitUntil(
+      () => gates.length === 1,
+      'the first entry reaches its open',
+      READER_RESULT_BOUND_MS,
+    )
+    const newer = harness.reader.openLearningReplay(newerReplay.studyId)
+    await waitUntil(
+      () => gates.length === 2,
+      'the newer entry reaches its open',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Act: the first entry ends while the newer one still loads, then the newer one finishes.
+    gates[0]!.release()
+    await first
+    const drawnWhileNewerLoads = [...summaryDrawn, ...bottomPanelDrawn]
+    gates[1]!.release()
+    await newer
+    await landsOn(harness, 2, 'the newer replay lands on its first stop')
+
+    // Assert
+    assert.deepEqual(
+      {
+        closedReplayDrawnWhileNewerLoads: drawnWhileNewerLoads.includes(
+          closedReplay.studyId,
+        ),
+        summaryLast: summaryDrawn.at(-1),
+      },
+      {
+        closedReplayDrawnWhileNewerLoads: false,
+        summaryLast: newerReplay.studyId,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Close while an entry for another replay holds the closed reader's replay back leaving no hold, so the next Open Study Workspace draws that replay; fails_when=the hold outlives the Close and the reopened reader's views never draw the replay (/ship pass 2 RT2-1, Cycle 0056 pt3); why_new=the hold was cleared only by the entry that set it; seam=the reader's open held at its start, the summary's postMessage; no_claim=the native frames
+test('a Close while an entry for another replay holds the closed reader’s replay back leaves the next Open Study Workspace drawing that replay', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.reader.diagnostics = { log: () => undefined, show: () => undefined }
+  try {
+    const otherReplay = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    const closedReplay = await openByOpenReplay(harness)
+    await harness.reader.close()
+    const held = holdNextReaderOpen(harness)
+    const entry = harness.reader.openLearningReplay(otherReplay.studyId)
+    await held.entered
+    const heldDuringEntry = heldBackStudyId(harness)
+
+    // Act
+    await harness.reader.close()
+    const heldAfterClose = heldBackStudyId(harness)
+    held.release()
+    await entry
+    held.restore()
+    const drawn = recordDrawnTestReplays(harness.summary)
+    await harness.reader.open()
+    await waitUntil(
+      () => drawn.at(-1) === closedReplay.studyId,
+      'the reopened reader draws the closed reader’s replay',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(
+      [heldDuringEntry, heldAfterClose],
+      [closedReplay.studyId, undefined],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a view update that throws at the release of the held-back replay being reported and never replacing the entry's own result; fails_when=the republish at the release throws out of openLearningReplay, so the learner's Open replay fails for a drawing error (/ship pass 2 RT2-2, Cycle 0056 pt3); why_new=the release republished unguarded; seam=the reader's openNodeHistory ending superseded and its publish throwing once; no_claim=why a publish would throw
+test('a publish that throws when the held-back replay is released is reported and does not fail the Open replay', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.reader.diagnostics = { log: () => undefined, show: () => undefined }
+  try {
+    const chosenReplay = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openByOpenReplay(harness)
+    await harness.reader.close()
+    const publish = harness.reader['publish'].bind(harness.reader)
+    let armed = false
+    harness.reader['publish'] = (): void => {
+      if (armed && harness.reader['heldBackReplay'] === undefined) {
+        armed = false
+        throw new Error('The view refused the update.')
+      }
+      publish()
+    }
+    harness.reader['openNodeHistory'] = async () => {
+      armed = true
+      return { status: 'superseded' as const }
+    }
+
+    // Act
+    const result = await harness.reader
+      .openLearningReplay(chosenReplay.studyId)
+      .then(
+        () => 'resolved',
+        (error: unknown) => String(error),
+      )
+
+    // Assert
+    assert.deepEqual(
+      [result, readerSeams(harness).errorLines().join(' | ')],
+      ['resolved', 'Error: The view refused the update.'],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the closed reader's replay, reselected while an older entry for another replay still reads, being drawn by the Learning summary and the bottom panel at once, and still being the drawn replay once the older entry's read returns; fails_when=the hold on the closed reader's replay is matched by study id alone, so the reselected replay (the same id, newly opened) is dropped from both views until the older entry's stale read returns, or the older entry draws its own replay when its read returns (Codex adversarial CX2, Cycle 0056 pt3); why_new=the held-back replay was released only when every entry ended and matched by id; seam=the reader's readNodeHistoryOpening held for the first entry, the summary's and bottom panel's postMessage; no_claim=the native frames
+test('a closed reader’s replay that is chosen again while an older entry for another replay still reads is drawn at once and stays drawn after the older read returns', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.reader.diagnostics = { log: () => undefined, show: () => undefined }
+  try {
+    const otherReplay = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    const closedReplay = await openByOpenReplay(harness)
+    await harness.reader.close()
+    const readOpening = harness.reader['readNodeHistoryOpening'].bind(
+      harness.reader,
+    )
+    let release = (): void => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let isFirst = true
+    let entered = (): void => {}
+    const hasEntered = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    harness.reader['readNodeHistoryOpening'] = async (...readArguments) => {
+      if (isFirst) {
+        isFirst = false
+        entered()
+        await gate
+      }
+      return readOpening(...readArguments)
+    }
+    const summaryDrawn = recordDrawnTestReplays(harness.summary),
+      bottomPanelDrawn = recordDrawnTestReplays(harness.playbackPanel)
+    const older = harness.reader.openLearningReplay(otherReplay.studyId)
+    await hasEntered
+
+    // Act: the learner chooses the closed reader's replay again; it loads while the older entry still reads.
+    const newer = harness.reader.openLearningReplay(closedReplay.studyId)
+    await waitUntil(
+      () =>
+        summaryDrawn.at(-1) === closedReplay.studyId &&
+        bottomPanelDrawn.at(-1) === closedReplay.studyId,
+      'both views draw the chosen again replay while the older read waits',
+      READER_RESULT_BOUND_MS,
+    )
+    release()
+    await Promise.all([older, newer])
+
+    // Assert
+    assert.deepEqual(
+      {
+        summaryLast: summaryDrawn.at(-1),
+        bottomPanelLast: bottomPanelDrawn.at(-1),
+        otherReplayDrawn:
+          summaryDrawn.includes(otherReplay.studyId) ||
+          bottomPanelDrawn.includes(otherReplay.studyId),
+      },
+      {
+        summaryLast: closedReplay.studyId,
+        bottomPanelLast: closedReplay.studyId,
+        otherReplayDrawn: false,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an Open replay of another replay on a closed reader posting each message of the chosen replay to the Learning summary once; fails_when=the release of the held-back replay resets the publish memory and republishes after the entry adopted its replay, so the summary receives the same message twice in a row and can reset its page state (red team RT3-3, Cycle 0056 pt3); why_new=the release republished whether or not the held selection was still the selected one; seam=the summary's postMessage with every message kept as text; no_claim=the native frames
+test('an Open replay of another test replay after Close posts no message twice in a row to the Learning summary', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.reader.diagnostics = { log: () => undefined, show: () => undefined }
+  try {
+    const chosenReplay = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openByOpenReplay(harness)
+    await harness.reader.close()
+    const posted: string[] = [],
+      post = harness.summary.webview.postMessage.bind(harness.summary.webview)
+    harness.summary.webview.postMessage = async (message: StudyViewMessage) => {
+      posted.push(JSON.stringify(message))
+      return post(message)
+    }
+
+    // Act
+    await harness.reader.openLearningReplay(chosenReplay.studyId)
+    await landsOn(harness, 2, 'the chosen replay lands on its first stop')
+
+    // Assert
+    assert.deepEqual(
+      posted.filter((text, index) => index > 0 && text === posted[index - 1]),
+      [],
+    )
+  } finally {
     await harness.close()
   }
 })

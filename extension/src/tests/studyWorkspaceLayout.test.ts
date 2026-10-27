@@ -4332,15 +4332,10 @@ for (const cursor of [false, true])
           .slice(reveals)
           .filter((reveal) => reveal.kind === 'codebook.scopedBrowser'),
         [
-          // R3 Return parked App2; explicit source-derived entry first restores its owned App1 destination.
+          // R3 Return parked App2; explicit source-derived entry first restores its owned App1 destination. That reveal fronts the Application, so the entry's own reveal is skipped: a pane that already fronts its group needs none (Cycle 0056 task 17, H2-a).
           {
             kind: 'codebook.scopedBrowser',
             column: 1,
-            preserveFocus: true,
-          },
-          {
-            kind: 'codebook.scopedBrowser',
-            column: undefined,
             preserveFocus: true,
           },
         ],

@@ -156,7 +156,7 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
     { read: undefined, freshness: undefined }
   /** Whether the tree view handle exists; an editor may read the provider while it is being created. */
   let isTreeViewCreated = false
-  /** The message the tree view shows now; the next one is applied when the tree reads the new rows. */
+  /** The message the tree view shows now; the model's next one is written when the tree reads its root children ({@link show}). */
   let appliedMessage: string | undefined
   let pollTimer: NodeJS.Timeout | undefined
   let isDisposed = false
@@ -179,9 +179,8 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
       onDidChangeTreeData: treeChanges.event,
       getChildren: (element) => {
         if (element) return []
-        // The message follows the rows in one render: it is written here, when the tree reads the new model's root children after the change event, not when the model is set.
-        // A root read inside createTreeView finds no handle yet; the next root read writes the message.
-        // After dispose the handle is gone: nothing is written.
+        // Task 16 (N56): the message leaves the extension host in the same macrotask as the reply carrying the new rows, so both paint together; see {@link show}.
+        // A root read inside createTreeView finds no handle yet (the first model has no message); after dispose nothing is written.
         if (
           isTreeViewCreated &&
           !isDisposed &&
@@ -222,17 +221,14 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
   })
 
   isTreeViewCreated = true
-  // A root read inside createTreeView found no handle; the message of the model shown now is applied once, not left to a later change.
-  if (model.message !== appliedMessage) {
-    appliedMessage = model.message
-    treeView.message = model.message
-  }
   // The editor reports whether the view is shown now; a collapsed view runs no poll.
   isViewVisible = treeView.visible
 
   /**
    * Shows a model: sets the context key and fires one tree change, only for what differs from what is shown.
-   * The message is not written here; the tree writes it when the provider's getChildren next reads the root children.
+   *
+   * Task 16 (N56): the editor's extension host merges tree changes and message writes through a leading 200 ms debounce (`Event.debounce(merge, 200, true)` in `ExtHostTreeView`). Its handler sends `$setMessage` at once but only queues the refresh, which takes a round trip (`$refresh` to the main thread, `$getChildren` back, then the render) before the rows paint. A message written here, with the change, paints a round trip ahead of the rows (native take of the earlier fix: one frame before); one written in `getChildren` during the leading emission's window goes out 200 ms late (first native take).
+   * So a changed message is not written here: the current message is written again (a same-value write that goes out at once and opens the window), and the tree change merges into the trailing emission, which closes the window. The new message is then written in the root `getChildren` the refresh causes, a new leading emission that leaves with the reply carrying the new rows.
    */
   const show = (next: LlmWikiViewModel): void => {
     // A read that finished after dispose shows nothing.
@@ -249,6 +245,8 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
         LLM_WIKI_STATE_CONTEXT_KEY,
         next.state,
       )
+    // The leading emission carries only this same-value write, which changes nothing on screen; it opens the debounce window so the tree change below merges into the trailing emission.
+    if (next.message !== appliedMessage) treeView.message = appliedMessage
     treeChanges.fire()
   }
 
@@ -349,7 +347,7 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
   }
 
   /**
-   * Puts the watcher on the nearest existing folder of the output, and makes it again when that folder or the output changed.
+   * Puts the watcher on the folder {@link chooseWikiWatchFolder} picks (the project root for an output inside the project, so a deleted Wiki folder is seen), and makes it again when that folder or the output changed.
    * @param readyFacts - The facts just read.
    * @returns Whether a new watcher now stands, so the caller reads once more: an event between the read and the registration is in neither.
    */

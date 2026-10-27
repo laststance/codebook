@@ -409,6 +409,8 @@ function fallowArguments(reference, coverage, format) {
     'health',
     '--fail-on-issues',
     '--quiet',
+    // Fallow's incremental cache in the checkout can outlive the source it describes: a reused graph cache once scored functions the tests reach as unreached (Cycle 0056 pt3). Each measured run builds its graph from the current source.
+    '--no-cache',
     '--baseline',
     reference.baseline.file,
     '--coverage',

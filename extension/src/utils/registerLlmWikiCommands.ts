@@ -5,10 +5,12 @@ import type * as vscode from 'vscode'
 import {
   COPY_DETAILS_ACTION,
   COPY_WIKI_RECOVERY_REQUEST_COMMAND,
+  LLM_WIKI_MANAGE_TRUST_FAILED_NOTICE,
   LLM_WIKI_MANAGE_TRUST_FALLBACK_NOTICE,
   llmWikiFolderLocationFailedNotice,
   LLM_WIKI_RECOVERY_REQUEST_COPIED_NOTICE,
   LLM_WIKI_ROW_ACTIONS,
+  MANAGE_WORKSPACE_TRUST_COMMAND,
   OPEN_CHAT_COMMAND,
   OPEN_FOLDER_COMMAND,
   OPEN_SETTINGS_COMMAND,
@@ -22,7 +24,6 @@ import {
 
 import { describeUnrevealableWikiFolder } from './describeUnrevealableWikiFolder'
 import type { LlmWikiView } from './llmWikiView'
-import { resolveManageTrustCommand } from './resolveManageTrustCommand'
 import { thrownMessage } from './thrownMessage'
 import { wikiFolderKindOf } from './wikiFolderKindOf'
 import { wikiOutputLabel } from './wikiOutputLabel'
@@ -79,22 +80,33 @@ async function showRowDetail(
 }
 
 /**
- * Runs the editor's command that manages workspace trust, or says where to find it when the editor lists none of the known ids.
+ * Runs the editor's Manage Workspace Trust command; says where to find it when the editor's command list lacks it, and that it could not open when the editor has the command and it rejects.
+ *
+ * Trigger: the Manage Workspace Trust action of the view's trust row ({@link registerLlmWikiCommands}).
  * @param options - The window's closures.
- * @returns Nothing.
+ * @returns Nothing; a rejection is recorded in Output › Codebook; the learner gets the Command Palette notice for a missing command and the could-not-open notice for any other rejection.
  * @example await manageTrust(options)
  */
 async function manageTrust(options: LlmWikiCommandOptions): Promise<void> {
-  const available = await options.editor.commands.getCommands(true)
-  const commandId = resolveManageTrustCommand(available)
-  if (commandId === undefined) {
+  try {
+    await options.editor.commands.executeCommand(MANAGE_WORKSPACE_TRUST_COMMAND)
+  } catch (cause) {
+    options.recordFailure('Manage Workspace Trust could not run', cause)
+    // Whether the editor has the command decides the notice, never the wording of its error: absent, the learner is pointed to the Command Palette; present, the command failed.
+    // A list that cannot be read (a rejection or a synchronous throw) leaves the command's presence unknown: the Command Palette route always works, so the hint is shown.
+    let editorCommands: readonly string[] = []
+    try {
+      editorCommands = await options.editor.commands.getCommands(true)
+    } catch {
+      // Unknown list: assume the command is absent.
+    }
     void options.showNotice(
       'information',
-      LLM_WIKI_MANAGE_TRUST_FALLBACK_NOTICE,
+      editorCommands.includes(MANAGE_WORKSPACE_TRUST_COMMAND)
+        ? LLM_WIKI_MANAGE_TRUST_FAILED_NOTICE
+        : LLM_WIKI_MANAGE_TRUST_FALLBACK_NOTICE,
     )
-    return
   }
-  await options.editor.commands.executeCommand(commandId)
 }
 
 /**

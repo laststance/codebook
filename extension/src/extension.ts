@@ -88,6 +88,7 @@ import {
 import { assertNoLinkOnWikiPath } from './utils/assertNoLinkOnWikiPath'
 import { buildWikiGeneratePrompt } from './utils/buildWikiGeneratePrompt'
 import { buildWikiUpdatePrompt } from './utils/buildWikiUpdatePrompt'
+import { causeRootsFor } from './utils/causeRootsFor'
 import {
   claimWikiUpdateMarker,
   type TakenOverWikiReservation,
@@ -163,6 +164,7 @@ import { resolveDeepWikiSource } from './utils/resolveDeepWikiSource'
 import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
 import { runCursorWikiUpdate } from './utils/runCursorWikiUpdate'
 import { runUnderAbortSignal } from './utils/runUnderAbortSignal'
+import { sanitizeCause } from './utils/sanitizeCause'
 import {
   wikiLastRunSchema,
   type WikiLastRun,
@@ -3186,7 +3188,18 @@ export function activate(
     /** Writes a failure of the LLM Wiki view or its commands to Output › Codebook; the view and Reveal Wiki Folder use it. */
     const recordLlmWikiFailure = (message: string, cause: unknown): void => {
       try {
-        output?.error(`${message}: ${thrownMessage(cause)}`)
+        // The cause is worded as the Study workspace's are: the home directory, storage and repository read `~`, `<storage>` and `<workspace>`, and control characters become spaces.
+        output?.error(
+          sanitizeCause(
+            `${message}: ${thrownMessage(cause)}`,
+            causeRootsFor(
+              [context.globalStorageUri.fsPath],
+              (vscode.workspace.workspaceFolders ?? []).map(
+                (folder) => folder.uri.fsPath,
+              ),
+            ),
+          ),
+        )
       } catch {
         // A disposed channel has nowhere to write.
       }

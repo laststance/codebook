@@ -8,7 +8,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.8'
-export const EXTENSION_VERSION = '0.2.48'
+export const EXTENSION_VERSION = '0.2.49'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -1030,11 +1030,8 @@ export const COPY_WIKI_RECOVERY_REQUEST_COMMAND =
 export const REVEAL_WIKI_FOLDER_COMMAND = 'codebook.revealWikiFolder'
 /** The button of the attention notice that copies its sentence. */
 export const COPY_DETAILS_ACTION = 'Copy details'
-/** The ids of the editor's command that manages workspace trust, in the order Codebook prefers them; the view runs the first one the editor lists (`workbench.trust.manage` is VS Code's own id; vscode-go calls `workbench.action.manageTrust`). Unverified in each host until the native trial. */
-export const MANAGE_WORKSPACE_TRUST_COMMAND_IDS = [
-  'workbench.trust.manage',
-  'workbench.action.manageTrust',
-] as const
+/** The editor's command that manages workspace trust. Native trial N56 (2026-10-27): VS Code 1.142.0 and Cursor 3.27.12 both open their Workspace Trust editor with it; Cursor's Keyboard Shortcuts editor lists `workbench.trust.manage` and registers no `workbench.action.manageTrust`. */
+export const MANAGE_WORKSPACE_TRUST_COMMAND = 'workbench.trust.manage'
 /** What one inline action of an LLM Wiki view row is: the command it runs and the words of its title. The row function names an action by its key, the manifest contributes each command with a menu entry that tests `viewItem` for the key. */
 export const LLM_WIKI_ROW_ACTIONS = {
   update: { command: UPDATE_DEEP_WIKI_COMMAND, title: 'Update LLM Wiki' },
@@ -1069,9 +1066,13 @@ export const LLM_WIKI_ROW_ACTIONS = {
   },
 } as const
 
-/** What the LLM Wiki view says when the editor lists none of the known ids of its Manage Workspace Trust command ({@link resolveManageTrustCommand}, run by {@link registerLlmWikiCommands}). */
+/** What the LLM Wiki view says when the editor's command list lacks (or cannot list) its Manage Workspace Trust command ({@link MANAGE_WORKSPACE_TRUST_COMMAND}, run by {@link registerLlmWikiCommands}). */
 export const LLM_WIKI_MANAGE_TRUST_FALLBACK_NOTICE =
   'Run "Workspaces: Manage Workspace Trust" from the Command Palette to trust this folder.'
+
+/** What the LLM Wiki view says when the editor has the Manage Workspace Trust command ({@link MANAGE_WORKSPACE_TRUST_COMMAND}) but it failed to open; the cause is in Output › Codebook. */
+export const LLM_WIKI_MANAGE_TRUST_FAILED_NOTICE =
+  'Manage Workspace Trust could not open. Try "Workspaces: Manage Workspace Trust" from the Command Palette; the cause is in Output › Codebook.'
 
 /** What the LLM Wiki view says once the recovery request is copied. */
 export const LLM_WIKI_RECOVERY_REQUEST_COPIED_NOTICE =
@@ -1849,5 +1850,31 @@ export const REFUSAL_REPORT_GROUP_TABS = 8
 /** The longest tab label a placement refusal report shows, in characters. */
 export const REFUSAL_REPORT_LABEL_CHARS = 48
 
+/** What a placement refusal report prints as its failed checks when the guard refused with none of the compared parts differing. */
+export const REFUSAL_REPORT_UNATTRIBUTED_CHECKS =
+  'unattributed (none of the compared parts differ)'
+
 /** The most editor events a {@link PlacementEventLog} keeps and a placement refusal report lists, in events. */
 export const REFUSAL_REPORT_EVENTS = 24
+
+/** The most native effects Codebook itself issued (reveals, disposals, editor commands, shown documents) that a {@link PlacementEventLog} keeps for a placement refusal report, in effects. */
+export const REFUSAL_REPORT_EFFECTS = 48
+
+/** How long a new Application group's preparation waits for the editor's own report that it activated the group, in ms; Cursor sends it after the command that made the group answered (N55-F4, row 650). It ends at the report, or here when the editor sends none. The bound is empirical, not derived: N56 on candidates `5b39b767` and `02acefaa` opened the Study workspace 13 times in Cursor 3.27.12 and the report always arrived within it, with no refusal; a report that arrives later is read by the guards as a change the learner made and refuses the open with a report naming the late activation. */
+export const LATE_GROUP_ACTIVATION_WAIT_MS = 150
+
+/** Why the reader did not carry out a choice the Learning summary sent while the Study workspace was closed; completes "The … choice from the Learning summary was not carried out: " in Output › Codebook and "Codebook did not carry out your choice: " in the notice the learner sees. */
+export const SUMMARY_CHOICE_DROPPED_REASON_CLOSED =
+  'the Study workspace is closed. To continue, run “Codebook: Open Study Workspace”, then make your choice again.'
+
+/** The reason when the choice arrived while the Study workspace was closing. See {@link SUMMARY_CHOICE_DROPPED_REASON_CLOSED}. */
+export const SUMMARY_CHOICE_DROPPED_REASON_CLOSING =
+  'the Study workspace is closing. When it has closed, run “Codebook: Open Study Workspace”, then make your choice again.'
+
+/** The reason when the reader had left the summary composition (the Study pane stands again). See {@link SUMMARY_CHOICE_DROPPED_REASON_CLOSED}. */
+export const SUMMARY_CHOICE_DROPPED_REASON_COMPOSITION_LEFT =
+  'the Learning summary is not showing a replay. Open a replay from Saved studies, then make your choice again.'
+
+/** What the learner's notice for a dropped Learning summary choice starts with, before the reason. */
+export const SUMMARY_CHOICE_DROPPED_NOTICE_PREFIX =
+  'Codebook did not carry out your choice: '

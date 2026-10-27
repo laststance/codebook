@@ -151,3 +151,180 @@ test('the first Open replay after a window reload retires the restored empty loc
     await harness.close()
   }
 })
+
+// Value: protects=the refusal report of N55-F4 refusal 1's diagnostics: a refusal of the focus guard names its call site, the comparison that failed, the tab each group showed, the focused tab at arming against the active tab at the refusal and the editor command Codebook itself issued since arming; fails_when=the report names only the guard and the groups, so a native take cannot tell the editor's late report from Codebook's own focus effect; why_new=Cycle 0056 task 17 stage 1; seam=workspaceHarness with two groups, the guard armed through its seam, Codebook's own focus command, the diagnostics log; no_claim=which of Cursor's reports caused the native refusal (N56 step 1)
+test('a refused focus guard names its call site, the failed comparison, the front tabs and Codebook’s own effect', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  try {
+    harness.focusMutableDraft('first.ts', 1)
+    harness.focusMutableDraft('second.ts', 2)
+    const assertPlacement = harness.reader['retainPresentationPlacement'](
+      'exampleCaller/assertExample',
+    )
+
+    // Act: Codebook itself moves the keyboard to the first group while the guard waits.
+    await harness.reader['executeEditorCommand'](
+      'workbench.action.focusFirstEditorGroup',
+    )
+    let refusal: unknown
+    try {
+      assertPlacement()
+    } catch (error) {
+      refusal = error
+    }
+
+    // Assert
+    assert.equal(
+      String(refusal),
+      'Error: Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.',
+    )
+    const entries = logged.filter(
+      (entry) => entry.surface === 'presentation:placement-refused',
+    )
+    assert.equal(entries.length, 1)
+    const lines = entries[0]!.cause.split('\n')
+    assert.deepEqual(lines.slice(0, 3), [
+      'Guard: retainPresentationPlacement',
+      'Call site: exampleCaller/assertExample',
+      'Failed checks: focus group, source',
+    ])
+    assert.deepEqual(
+      lines.filter(
+        (line) =>
+          line.startsWith('Front tabs') ||
+          line.startsWith('Focused tab') ||
+          line.startsWith('Active tab'),
+      ),
+      [
+        'Front tabs before: 1 "first.ts" (text) | 2* "second.ts" (text)',
+        'Front tabs after: 1* "first.ts" (text) | 2 "second.ts" (text)',
+        'Focused tab at arming: "second.ts" (text)',
+        'Active tab at refusal: "first.ts" (text)',
+      ],
+    )
+    assert.match(
+      entries[0]!.cause,
+      /Codebook’s own effects since arming:\n {2}\+\d+ ms command workbench\.action\.focusFirstEditorGroup$/,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the editor reports a refusal's entry lists besides the group changes: the tab operation (which tab closed) and the view-state report of an owned pane (active, visible, column); fails_when=a refusal after a tab closed or a pane reported its view state lists no such event, so a native take cannot tell which report preceded the refusal; why_new=Cycle 0056 task 17 stage 1 (the group events were all the log held); seam=workspaceHarness with an open reader, the guard armed through its seam, closeTabByHand, the Application pane's view-state notification, the diagnostics log; no_claim=the order Cursor sends them in
+test('a refused guard lists the tab operation and the pane view-state report the editor sent while it waited', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  try {
+    const learnerDraft = harness.focusMutableDraft('learner.ts', 2)
+    await harness.reader.open()
+    const application = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')
+    assert.ok(application)
+    const assertPlacement = harness.reader['retainPresentationPlacement'](
+      'exampleCaller/assertEvents',
+    )
+
+    // Act
+    application.notifyViewState()
+    harness.closeTabByHand(learnerDraft.tab)
+    // The learner then puts the keyboard in another file, which the guard refuses.
+    harness.focusMutableDraft('other.ts', 1)
+    try {
+      assertPlacement()
+    } catch {
+      // The refusal is written to the log; the test reads it there.
+    }
+
+    // Assert
+    const entries = logged.filter(
+      (entry) => entry.surface === 'presentation:placement-refused',
+    )
+    assert.equal(entries.length, 1)
+    assert.match(
+      entries[0]!.cause,
+      /Events while armed:\n(?:.*\n)*? {2}\+\d+ ms Application view state active=(?:true|false) visible=(?:true|false) column=\d+\n(?:.*\n)*? {2}\+\d+ ms tabs opened \[\] closed \["learner\.ts"\] changed \[\]/,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an editor view-state report of an Application pane the editor already disposed neither throws out of the reader's listener nor is lost from a refusal's report; fails_when=the view-state note reads the disposed pane's column unguarded, so `Webview is disposed` escapes the listener and a refusal lists no such report; why_new=Cycle 0056 task 17 stage 1 added the note to the view-state listeners, and the disposed-pane tests cover only the close's effect notes; seam=workspaceHarness whose disposed panels throw from viewType and viewColumn, the guard armed through its seam, the diagnostics log; no_claim=the order Cursor sends the report in
+test('a view-state report of a disposed Application pane ends quietly and is listed in a refusal as a disposed pane', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.throwFromDisposedPanelGetters()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  try {
+    const learnerDraft = harness.focusMutableDraft('learner.ts', 2)
+    await harness.reader.open()
+    const application = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')
+    assert.ok(application)
+    const assertPlacement = harness.reader['retainPresentationPlacement'](
+      'exampleCaller/assertDisposed',
+    )
+
+    // Act
+    application.dispose()
+    application.notifyViewState()
+    harness.closeTabByHand(learnerDraft.tab)
+    try {
+      assertPlacement()
+    } catch {
+      // The refusal is written to the log; the test reads it there.
+    }
+
+    // Assert
+    const entries = logged.filter(
+      (entry) => entry.surface === 'presentation:placement-refused',
+    )
+    assert.equal(entries.length, 1)
+    assert.match(
+      entries[0]!.cause,
+      / {2}\+\d+ ms Application view state of a disposed pane\n/,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Codebook: Close Study Workspace after a replay opened (N56 native finding on 8b76a578): panes the editor already disposed with their tabs are disposed again without reading their identity, so the close ends without `Webview is disposed`; fails_when=the effect note reads viewType or viewColumn of a disposed panel, which throws as the editor's WebviewPanel does, and the close rejects; why_new=Cycle 0056 task 17 stage 1 (the new disposal note); seam=workspaceHarness whose disposed panels throw from viewType and viewColumn, an open reader with both panes; no_claim=the editor's own dialog
+test('closing the Study workspace ends without an error when the editor already disposed its panes', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.throwFromDisposedPanelGetters()
+  try {
+    await harness.reader.open()
+
+    // Act
+    const closing = harness.reader.close().then(
+      () => 'closed',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.equal(await closing, 'closed')
+  } finally {
+    await harness.close()
+  }
+})

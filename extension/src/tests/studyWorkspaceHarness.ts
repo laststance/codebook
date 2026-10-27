@@ -53,6 +53,8 @@ const NATIVE_VARIABLES_REFRESH_MS = 400
 const NATIVE_VARIABLES_FIRST_RENDER_MS = 60
 /** How long the fake editor's worker takes to close a disposed panel's tab when no layout read is answered before it runs; shorter than one poll of the reader's wait for that close. */
 const DISPOSED_TAB_CLOSE_DELAY_MS = 20
+/** How long after a pane's disposal the fake Cursor group model reports the next tab active, before it closes the disposed tab (`activateNextTabBeforeDisposedPaneTabCloses`); shorter than {@link DISPOSED_TAB_CLOSE_DELAY_MS}. */
+const NEXT_TAB_ACTIVATION_DELAY_MS = 8
 /** How long after a disposed pane's tab closed the fake editor removes the group that tab left empty, in the model of `removeEmptiedGroupsLater`: Cursor 3.23.12 removed the captured source's group 57 ms after its tab at "Codebook: Close Study Workspace", and the Study pane's 12 ms after its tab (Cycle 0046 row 66). The longer of the two is modelled: it is longer than one poll of the reader's wait for the panes' tabs, so the group is still there when that wait ends. */
 const EMPTIED_GROUP_CLOSE_DELAY_MS = 57
 /** How long after a pane's move into another group the fake editor removes the group the move left empty, in the model of `removeGroupLeftByPanelMoveLater`: VS Code 1.140.0 closes a moved webview's editor in its old group only once the open in the new group has begun (`workbench.desktop.main.js` 4037:7120 calls the old group's `closeEditor` from `onWillOpenEditor`), and that close awaits its confirmation before it removes the emptied group (1106:79300, 1106:79400, 1106:80531); in C58 round 1d the leftover was gone about 130 ms after the Application's move (frames at +0.45 s and +0.58 s, group events +513 to +571 ms of the Return; Cycle 0046 row 658). */
@@ -1086,6 +1088,59 @@ export async function workspaceHarness(
   /** The removals of groups a pane's move left empty that the fake editor has not run yet; see `removeGroupLeftByPanelMoveLater`. */
   const pendingMoveRemovals: (() => void)[] = []
   let closeDisposedPanelTabsLater = false
+  /** Whether a disposed pane that is the front tab of a group shared with other tabs first makes the next tab the active one through a tab notification, and closes its own tab later; see `activateNextTabBeforeDisposedPaneTabCloses`. */
+  let activatesNextTabBeforeDisposedPaneTabCloses = false
+  /** Whether a disposed panel's `viewType` and `viewColumn` throw `Webview is disposed`, as the editor's WebviewPanel does; see `throwFromDisposedPanelGetters`. */
+  let throwsFromDisposedPanelGetters = false
+  /** The next-tab notification of a disposed pane that the fake editor has not delivered yet; the first layout read after the disposal delivers it while the read is in flight. */
+  let pendingNextTabActivation: (() => void) | undefined
+  /** Whether the fake Cursor reports the Application's group active a moment after a reveal of the Application that keeps the keyboard answered; see `activateApplicationGroupLateAfterReveal`. */
+  let activatesApplicationGroupLateAfterReveal = false
+  /** Whether the fake Cursor reports the group `workbench.action.newGroupAbove` made active only after the command answered; see `activateNewGroupLateAfterInsertion`. */
+  let activatesNewGroupLateAfterInsertion = false,
+    newGroupActivationDelayMs: number | undefined
+  /** The late group activations the fake editor has not reported yet; the first layout read after them reports them while it is in flight, else a timer does. */
+  const pendingLateGroupActivations: {
+    report: () => void
+    atRead: () => boolean
+  }[] = []
+  /** How many late group activations reached the fake editor's live group model; see `lateGroupActivationsReported`. */
+  let reportedLateGroupActivations = 0
+  /** The copy that replaced each group object at a rebuild of the fake group model, so a reference taken before the rebuild finds its group again ({@link currentGroupOf}). */
+  const groupSuccessors = new WeakMap<
+    (typeof groups)[number],
+    (typeof groups)[number]
+  >()
+  /**
+   * Records that a copy replaces a group object in the fake group model, as Cursor's extension host gives its groups new objects; every copy that keeps a group's identity goes through here (a replacement reported as an opened group is another group and records none).
+   * @returns The copy, for the rebuilt list.
+   * @example groups.map((group) => replacedBy(group, { ...group, tabs: [...group.tabs] }))
+   */
+  function replacedBy(
+    previous: (typeof groups)[number],
+    next: (typeof groups)[number],
+  ): (typeof groups)[number] {
+    groupSuccessors.set(previous, next)
+    return next
+  }
+  /**
+   * Follows a group object through the rebuilds since it was taken to the object the fake model holds now; called by late reports that name a group taken before they run.
+   * @returns The live object, or `undefined` when the group left the model.
+   * @example currentGroupOf(inserted) // => the inserted group's object after two rebuilds
+   */
+  function currentGroupOf(
+    group: (typeof groups)[number],
+  ): (typeof groups)[number] | undefined {
+    let current = group
+    // A chain of rebuilds: each copy may itself have been replaced since.
+    for (
+      let next = groupSuccessors.get(current);
+      next;
+      next = groupSuccessors.get(current)
+    )
+      current = next
+    return groups.includes(current) ? current : undefined
+  }
   // Cursor 3.23.12 keeps naming the chat's group as the active tab group after `workbench.action.focusFirstEditorGroup` gave the main editor the keyboard. Only a group event corrects the name: a whole tab-model rebuild names the active group (`workbench.desktop.main.js` 17269:31013, `extensionHostProcess.js` 131:33177), as does a group's activation (17269:28123, 131:33740); a tab notification is a tab operation, which leaves the named group as it is (131:34068), so it does not (Cycle 0046 row 673).
   let staleNamedGroup: (typeof groups)[number] | undefined
   // The tab that had the keyboard was closed while the focus was to be preserved, or its pane was disposed: no editor has the keyboard, the page body does (Cursor 3.23.12 after Close Study Workspace, Cycle 0045 obs15 P4), until something is focused again.
@@ -1246,6 +1301,32 @@ export async function workspaceHarness(
     pendingEditorTimers.add(timer)
     return timer
   }
+  /**
+   * Queues one late report of a group's activation, as Cursor sends `$acceptTabGroupUpdate` for a group after the command that caused it has answered: the group becomes the active one and the editor tells its group listeners that it changed. The first layout read after the call reports it while the read is in flight, else a timer does {@link NEXT_TAB_ACTIVATION_DELAY_MS} later.
+   * @param group - The group, or a function that names it when the report is made.
+   * @param atRead - Whether a layout read that arrives now reports it; the timer reports it whatever this says. Defaults to every read.
+   * @example queueLateGroupActivation(() => groups.find((candidate) => candidate.tabs.includes(nativeTab)))
+   */
+  function queueLateGroupActivation(
+    group: () => (typeof groups)[number] | undefined,
+    atRead: () => boolean = () => true,
+    delayMs: number = NEXT_TAB_ACTIVATION_DELAY_MS,
+  ): void {
+    const pending = { report: (): void => {}, atRead }
+    const report = (): void => {
+      const index = pendingLateGroupActivations.indexOf(pending)
+      if (index < 0) return
+      pendingLateGroupActivations.splice(index, 1)
+      const activated = group()
+      if (!activated || !groups.includes(activated)) return
+      reportedLateGroupActivations++
+      activeTabGroup = activated
+      changedGroups({ opened: [], closed: [], changed: [activated] })
+    }
+    pending.report = report
+    pendingLateGroupActivations.push(pending)
+    runEditorChangeLater(report, delayMs)
+  }
   const automaticallyClosedColumns: number[] = []
   let transientLayout = false,
     settledLayout: unknown,
@@ -1351,7 +1432,10 @@ export async function workspaceHarness(
     const replacements = new Map(
       groups
         .filter((group) => group !== opened)
-        .map((group) => [group, { ...group, tabs: [...group.tabs] }]),
+        .map((group) => [
+          group,
+          replacedBy(group, { ...group, tabs: [...group.tabs] }),
+        ]),
     )
     /** Names the new object of a group that survived, and leaves a group that is gone as it is. */
     const replaced = (group: (typeof groups)[number]) =>
@@ -1473,7 +1557,9 @@ export async function workspaceHarness(
     }
     // Cursor replaces surviving wrappers in the same event that announces an opened group.
     const retained = cursorGroupWrappers
-      ? groups.map((previous) => ({ ...previous, tabs: [...previous.tabs] }))
+      ? groups.map((previous) =>
+          replacedBy(previous, { ...previous, tabs: [...previous.tabs] }),
+        )
       : []
     if (cursorGroupWrappers) {
       if (separateEditorPart)
@@ -2828,9 +2914,14 @@ export async function workspaceHarness(
     let actualViewColumn = options?.viewColumn
       ? nativeReaderColumn(options.viewColumn)
       : options?.viewColumn
+    let isDisposed = false
     const value = {
-      // As the editor's WebviewPanel names it, so a test can find one panel among the native ones.
-      viewType: kind,
+      // As the editor's WebviewPanel names it, so a test can find one panel among the native ones; after its disposal it throws, as the editor's does, once a test asks for that (`throwFromDisposedPanelGetters`).
+      get viewType(): string {
+        if (throwsFromDisposedPanelGetters && isDisposed)
+          throw new Error('Webview is disposed')
+        return kind
+      },
       blockInnerFocus: false,
       webview: {
         html: '',
@@ -2989,6 +3080,8 @@ export async function workspaceHarness(
       emit,
       /** The panel's column as the editor's WebviewPanel reports it: its tab's group's column, unless `reportPanelColumn` makes it report another. */
       get viewColumn(): number | undefined {
+        if (throwsFromDisposedPanelGetters && isDisposed)
+          throw new Error('Webview is disposed')
         return reportedPanelColumns.has(kind)
           ? reportedPanelColumns.get(kind)
           : actualViewColumn
@@ -3049,6 +3142,17 @@ export async function workspaceHarness(
         )
       },
       reveal(column?: number, preserveFocus?: boolean): void {
+        // The editor reports the reveal's own group active a moment after the reveal answered, although the reveal keeps the keyboard.
+        if (
+          activatesApplicationGroupLateAfterReveal &&
+          kind === 'codebook.scopedBrowser' &&
+          preserveFocus &&
+          column === undefined &&
+          !applyingLaterReveal
+        )
+          queueLateGroupActivation(() =>
+            groups.find((candidate) => candidate.tabs.includes(nativeTab)),
+          )
         // The pane comes to the front of its group, or moves to another column, with the tab events of that, one turn after this call returned.
         const revealsInPlaceLater =
             revealsPanelsLater &&
@@ -3310,6 +3414,7 @@ export async function workspaceHarness(
         }
       },
       dispose(): void {
+        isDisposed = true
         if (!panels.delete(value)) return
         // A disposed pane that had the keyboard leaves it to no editor.
         if (
@@ -3381,11 +3486,31 @@ export async function workspaceHarness(
             }
           } else replaceGroupObjects()
         }
-        // VS Code closes a disposed editor from a worker with a 0 ms delay; a layout read that reached the busy window with the disposal is answered before that worker runs.
-        if (
+        // Cursor's group model selects the next tab before it closes the disposed one: `$acceptTabOperation` kind 2 reaches the extension host first, with no group event and the disposed tab still listed (Cycle 0056, N55-F4 refusal 2).
+        const sharedGroup = groups.find(
+          (group) => group.activeTab === nativeTab && group.tabs.length > 1,
+        )
+        if (activatesNextTabBeforeDisposedPaneTabCloses && sharedGroup) {
+          const nextTab = sharedGroup.tabs.find((tab) => tab !== nativeTab)!
+          // The notification arrives while the first layout read after the disposal is in flight (`pendingNextTabActivation`), or {@link NEXT_TAB_ACTIVATION_DELAY_MS} after the disposal when no read comes.
+          const activateNextTab = (): void => {
+            if (pendingNextTabActivation !== activateNextTab) return
+            pendingNextTabActivation = undefined
+            // Looked up again: a rebuild of the group objects since the disposal would leave `sharedGroup` stale.
+            const holder = groups.find((group) => group.tabs.includes(nextTab))
+            if (holder) holder.activeTab = nextTab
+            for (const listener of tabChangeListeners)
+              listener({ opened: [], closed: [], changed: [nextTab] })
+          }
+          pendingNextTabActivation = activateNextTab
+          runEditorChangeLater(activateNextTab, NEXT_TAB_ACTIVATION_DELAY_MS)
+          pendingDisposedTabCloses.push(closeTab)
+          applyByItselfLater(closeTab)
+        } else if (
           closeDisposedPanelTabsLater ||
           closeDisposedPanelTabsDuringLayoutRead
         ) {
+          // VS Code closes a disposed editor from a worker with a 0 ms delay; a layout read that reached the busy window with the disposal is answered before that worker runs.
           pendingDisposedTabCloses.push(closeTab)
           // Without a layout read the worker closes the tab by itself a moment later.
           applyByItselfLater(closeTab)
@@ -4063,6 +4188,16 @@ export async function workspaceHarness(
           }
           if (name === 'workbench.action.newGroupAbove') {
             insertNativeAppGroup()
+            // The editor reports the new group active only after the command answered.
+            if (activatesNewGroupLateAfterInsertion) {
+              const inserted = activeTabGroup
+              // The report comes after the preparation's focus return has left the new group, so a guard armed by then sees the keyboard move there.
+              queueLateGroupActivation(
+                () => currentGroupOf(inserted),
+                () => activeTabGroup !== currentGroupOf(inserted),
+                newGroupActivationDelayMs,
+              )
+            }
             return
           }
           if (name === 'workbench.action.lockEditorGroup') {
@@ -4298,6 +4433,20 @@ export async function workspaceHarness(
           if (name === 'workbench.action.toggleMaximizedPanel')
             returnHiddenEditorArea()
           if (name === 'vscode.getEditorLayout') {
+            // Cursor reports a group's late activation while a layout read armed after the command is in flight.
+            const dueGroupActivations = pendingLateGroupActivations.filter(
+              (pending) => pending.atRead(),
+            )
+            if (dueGroupActivations.length) {
+              await new Promise<void>((resolve) => setImmediate(resolve))
+              for (const pending of dueGroupActivations) pending.report()
+            }
+            // Cursor reports the next tab active while a layout read that was armed after the disposal is in flight.
+            const deliverNextTabActivation = pendingNextTabActivation
+            if (deliverNextTabActivation) {
+              await new Promise<void>((resolve) => setImmediate(resolve))
+              deliverNextTabActivation()
+            }
             if (reactivatesPreviousGroupAtLayoutRead) {
               layoutReadsUntilReactivation -= 1
               if (layoutReadsUntilReactivation <= 0) {
@@ -4444,7 +4593,10 @@ export async function workspaceHarness(
                     .map((group) =>
                       group === separateEditorPart?.group
                         ? group
-                        : { ...group, tabs: [...group.tabs] },
+                        : replacedBy(group, {
+                            ...group,
+                            tabs: [...group.tabs],
+                          }),
                     ),
                 )
                 if (cursorTwoEventContraction)
@@ -4498,7 +4650,10 @@ export async function workspaceHarness(
                     .map((group) =>
                       group === separateEditorPart?.group
                         ? group
-                        : { ...group, tabs: [...group.tabs] },
+                        : replacedBy(group, {
+                            ...group,
+                            tabs: [...group.tabs],
+                          }),
                     ),
                 )
               }
@@ -5910,6 +6065,49 @@ export async function workspaceHarness(
       closeDisposedPanelTabsLater = true
     },
     /**
+     * Makes the fake editor, when a pane that is the front tab of a group shared with other tabs is disposed, first make the group's next tab the active one through a tab notification only (no group event, the disposed tab still listed), and close the disposed tab {@link DISPOSED_TAB_CLOSE_DELAY_MS} later, as Cursor's group model does (`doCloseEditor` selects the next tab, then removes the closed one; Cycle 0056, N55-F4 refusal 2).
+     * @example harness.activateNextTabBeforeDisposedPaneTabCloses()
+     */
+    activateNextTabBeforeDisposedPaneTabCloses(): void {
+      activatesNextTabBeforeDisposedPaneTabCloses = true
+    },
+    /**
+     * Makes the fake editor report the Application's group active a moment after every reveal of the Application that keeps the keyboard, as Cursor reports `app?.reveal(undefined, true)` late (N55-F4 hypothesis H2-a).
+     * @example harness.activateApplicationGroupLateAfterReveal()
+     */
+    activateApplicationGroupLateAfterReveal(): void {
+      activatesApplicationGroupLateAfterReveal = true
+    },
+    /**
+     * Counts the late group activations the fake editor reported to a group of its live model; a report whose group is no longer in the model is dropped and not counted.
+     * @returns How many late activations reached a live group so far.
+     * @example harness.lateGroupActivationsReported() // => 1 after activateNewGroupLateAfterInsertion and one Application group insertion
+     */
+    lateGroupActivationsReported: () => reportedLateGroupActivations,
+    /**
+     * Counts the late group reports the fake editor has queued and not yet made, reported or dropped.
+     * @returns How many late reports still wait.
+     * @example harness.lateGroupReportsWaiting() // => 0 once the editor's late report has run
+     */
+    lateGroupReportsWaiting: () => pendingLateGroupActivations.length,
+    /**
+     * Makes the fake editor report the group `workbench.action.newGroupAbove` made active only after the command answered, as Cursor activates a new group late (N55-F4 hypothesis H2-b, row 650).
+     * @param delayMs - How long after the command the report comes; omitted for the editor's usual short delay.
+     * @example harness.activateNewGroupLateAfterInsertion()
+     * @example harness.activateNewGroupLateAfterInsertion(600) // later than the preparation's wait
+     */
+    activateNewGroupLateAfterInsertion(delayMs?: number): void {
+      activatesNewGroupLateAfterInsertion = true
+      newGroupActivationDelayMs = delayMs
+    },
+    /**
+     * Makes a disposed panel's `viewType` and `viewColumn` throw `Webview is disposed`, as the editor's WebviewPanel does (`dispose()` itself stays idempotent).
+     * @example harness.throwFromDisposedPanelGetters()
+     */
+    throwFromDisposedPanelGetters(): void {
+      throwsFromDisposedPanelGetters = true
+    },
+    /**
      * Delivers queued native tab changes after a regression changes window focus, for delayed pane-disposal checks.
      * @returns Once the pending changes ran; their automatic timers then have nothing left to deliver.
      * @example harness.closePendingDisposedPanelTabs() // the disposed Application tab leaves its group
@@ -6900,6 +7098,8 @@ export async function workspaceHarness(
             replacement = { ...previous, tabs: [...previous.tabs] }
           // The unchanged empty chat part is not a new native group; explicit lifecycle events cannot inherit it.
           if (change === 'move') replacement.viewColumn++
+          // An opened replacement is another group; the others keep the group's identity.
+          if (change !== 'opened') replacedBy(previous, replacement)
           groups[groups.indexOf(previous)] = replacement
           separateEditorPart!.group = replacement
           changedGroups({
@@ -7551,18 +7751,24 @@ export async function workspaceHarness(
       groups.splice(
         0,
         groups.length,
-        ...groups.map((group) => ({
-          ...group,
-          tabs: group.tabs.map((tab) => {
-            const refreshed = {
-              ...tab,
-              label: preserveLabels ? tab.label : 'Recorded application',
-              input: resyncedInput(tab.input),
-            }
-            refreshedTabs.set(tab, refreshed)
-            return refreshed
-          }),
-        })),
+        ...groups.map((group) => {
+          const replacement = {
+            ...group,
+            tabs: group.tabs.map((tab) => {
+              const refreshed = {
+                ...tab,
+                label: preserveLabels ? tab.label : 'Recorded application',
+                input: resyncedInput(tab.input),
+              }
+              refreshedTabs.set(tab, refreshed)
+              return refreshed
+            }),
+          }
+          // A replace reports each group closed and its copy opened: another group, which a late report must not reach.
+          return change === 'replace'
+            ? replacement
+            : replacedBy(group, replacement)
+        }),
       )
       // A full tab-model resync changes API objects, never the native webview handle that later reveal and dispose operate on.
       for (const current of panels) {
@@ -7621,6 +7827,8 @@ export async function workspaceHarness(
       const previous = groups.find((group) => group.viewColumn === column)
       assert.ok(previous)
       const replacement = { ...previous, tabs: [...previous.tabs] }
+      // An opened replacement is another group; the others keep the group's identity.
+      if (change !== 'opened') replacedBy(previous, replacement)
       changeTabs?.(replacement.tabs)
       groups[groups.indexOf(previous)] = replacement
       if (activeTabGroup === previous) activeTabGroup = replacement

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -1285,7 +1286,8 @@ test('a refused placement guard sanitizes the tab labels of its two snapshots fo
     harness.focusMutableDraft('auth.ts', 3)
     harness.focusMutableDraft('actions.ts', 2)
     let arms = 0
-    let sanitizedLabels = 0
+    const sanitizedLabels = new Set<string>()
+    let sanitizedLabelCalls = 0
     const reader = harness.reader as unknown as Record<
       string,
       (...args: unknown[]) => unknown
@@ -1305,8 +1307,10 @@ test('a refused placement guard sanitizes the tab labels of its two snapshots fo
           harness.groups.some((group) =>
             group.tabs.some((tab) => tab.label === args[0]),
           )
-        )
-          sanitizedLabels++
+        ) {
+          sanitizedLabelCalls++
+          sanitizedLabels.add(String(args[0]))
+        }
         return sanitize(...args)
       },
     )
@@ -1355,7 +1359,22 @@ test('a refused placement guard sanitizes the tab labels of its two snapshots fo
       ).length,
       1,
     )
-    assert.equal(sanitizedLabels, 10)
+    // The exact number of label sanitizations stays pinned beside the set check: a report that sanitizes more or fewer labels than before is a change to review.
+    assert.equal(sanitizedLabelCalls, 17)
+    // Every tab label the report names went through the sanitizer; the check follows the report's own lines, so a new report line needs no new count.
+    const cause = logged.find(
+      (entry) => entry.surface === 'presentation:placement-refused',
+    )!.cause
+    const labelsInReport = [
+      ...new Set(
+        harness.groups.flatMap((group) => group.tabs.map((tab) => tab.label)),
+      ),
+    ].filter((label) => cause.includes(label))
+    assert.equal(labelsInReport.length > 0, true)
+    assert.deepEqual(
+      labelsInReport.filter((label) => !sanitizedLabels.has(label)),
+      [],
+    )
   } finally {
     context.mock.restoreAll()
     await harness.close()
@@ -8625,6 +8644,184 @@ test('Open Study Workspace refused for an unreported main editor focus writes on
     await harness.close()
   }
 })
+
+// Value: protects=the Output › Codebook entry of an unreported main editor focus never carrying the home directory or a control character that a tab label or an event note held; fails_when=the entry lists the editor's events unsanitized, as refusePlacement's sanitized ones are not (local CodeRabbit, Cycle 0056 pt3 CR3); why_new=the F389 entry's test read the group and tab lines, with no private path in any note; seam=the reader's placementEvents note recorded with a home path and a bell character, the entry's cause; no_claim=the native editor's own labels
+test('the Output entry of an unreported main editor focus hides the home directory and control characters in the editor events', async (context) => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.leavePaneFocusUnreportedBesideChat()
+  const home = homedir()
+  try {
+    harness.focusOpaqueTab(harness.addOpaqueTab('Cursor Settings', 1))
+    chat.focusTab()
+    const commands = harness.editor.commands as {
+      executeCommand: (name: string, ...rest: unknown[]) => Thenable<unknown>
+    }
+    const runCommand = commands.executeCommand.bind(commands)
+    commands.executeCommand = async (name, ...rest) => {
+      if (name === 'workbench.action.focusFirstEditorGroup')
+        harness.reader['placementEvents'].record(
+          performance.now(),
+          `tab opened ${home}/private/notes.ts\u0007`,
+        )
+      await advanceClock(context, 100)
+      return runCommand(name, ...rest)
+    }
+
+    // Act
+    const opening = harness.reader.open().then(
+      () => 'opened',
+      (error: unknown) => String(error),
+    )
+    enableFakeClock(context)
+    await advanceClockUntilSettled(context, opening, 6_000)
+    await opening
+    resetFakeClock(context)
+
+    // Assert
+    const entries = logged.filter(
+      (entry) => entry.surface === 'presentation:focus-unreported',
+    )
+    assert.equal(entries.length, 1)
+    assert.match(entries[0]!.cause, /tab opened ~\/private\/notes\.ts/)
+    assert.equal(entries[0]!.cause.includes(home), false)
+    assert.equal(entries[0]!.cause.includes('\u0007'), false)
+  } finally {
+    resetFakeClock(context)
+    await harness.close()
+  }
+})
+
+// Value: protects=a cancelled Application group preparation ending its wait for the editor's late activation report at once; fails_when=the wait runs its full bound when its signal is already aborted, so a Close or a newer entry holds the next arrangement for 150 ms (local open-code-review OCR-L2, Cycle 0056 pt3); why_new=the wait registered its abort listener after the signal had aborted, which never fires; seam=the reader's waitForLateGroupActivation with an aborted signal; no_claim=the native timing of the editor's report
+test('the wait for an Application group’s late activation ends at once when its preparation is already cancelled', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    // Act
+    const wait = harness.reader['waitForLateGroupActivation'](
+      Symbol('group'),
+      AbortSignal.abort(),
+    ).then(() => 'ended' as const)
+    // The next macrotask: a wait that ended at once has settled before it; one that waits for a timer or a report has not.
+    const nextTask = new Promise<'still waiting'>((resolve) =>
+      setImmediate(() => resolve('still waiting')),
+    )
+
+    // Assert
+    assert.equal(await Promise.race([wait, nextTask]), 'ended')
+    await wait
+  } finally {
+    await harness.close()
+  }
+})
+
+/**
+ * Starts the reader's wait for an Application group's late activation report on the harness, with its tab-group subscriptions counted.
+ * @param harness - The workspace harness.
+ * @param signal - The preparation's cancellation, when the wait has one.
+ * @returns `wait` (settles when the wait ends), `isEnded()`, `reportActivation()` (the editor reports the group changed) and `subscriptions()` (how many listeners the wait registered and how many it disposed).
+ * @example const late = startLateActivationWait(harness); late.reportActivation(); await late.wait
+ */
+function startLateActivationWait(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+  signal?: AbortSignal,
+) {
+  const identity = Symbol('allocated group')
+  const group = harness.groups[0]!
+  harness.reader['editorGroupIdentities'].set(group as never, identity)
+  const tabGroups = harness.editor.window.tabGroups
+  const subscribe = tabGroups.onDidChangeTabGroups.bind(tabGroups)
+  const counts = { registered: 0, disposed: 0 }
+  const listeners = new Set<Parameters<typeof subscribe>[0]>()
+  tabGroups.onDidChangeTabGroups = (callback) => {
+    counts.registered++
+    listeners.add(callback)
+    const subscription = subscribe(callback)
+    return {
+      dispose(): void {
+        counts.disposed++
+        listeners.delete(callback)
+        subscription.dispose()
+      },
+    }
+  }
+  let isEnded = false
+  const wait = harness.reader['waitForLateGroupActivation'](
+    identity,
+    signal,
+  ).then(() => {
+    isEnded = true
+  })
+  return {
+    wait,
+    isEnded: (): boolean => isEnded,
+    /** The editor reports the allocated group as changed, as Cursor does after the command answered. */
+    reportActivation: (): void => {
+      for (const listener of [...listeners])
+        listener({ opened: [], closed: [], changed: [group] })
+    },
+    subscriptions: () => ({ ...counts }),
+  }
+}
+
+// Value: protects=the wait for an Application group's late activation ending at the first report, at its 150 ms bound when the editor reports nothing, and at once when its preparation is cancelled in any of those states, with its listener disposed each time; fails_when=a cancelled wait goes on to the bound or leaves its listener registered, a report does not end the wait, or the bound is not what ends a silent editor's wait; why_new=the coverage review found the wait's state cells (report, silence, cancellation) untested apart from an already aborted signal; seam=the reader's waitForLateGroupActivation on the workspace harness with the faked clock and counted tab-group listeners; no_claim=the native editor's report
+for (const cell of [
+  { name: 'a report of the group’s activation', ends: 'report' },
+  { name: 'the 150 ms bound when the editor reports nothing', ends: 'bound' },
+  {
+    name: 'a cancellation while the activation would still have come',
+    ends: 'abort',
+    reportsAfterwards: true,
+  },
+  {
+    name: 'a cancellation while the editor reports nothing',
+    ends: 'abort',
+    reportsAfterwards: false,
+  },
+] as const)
+  test(`the wait for an Application group’s late activation ends at ${cell.name} and disposes its listener`, async (context) => {
+    // Arrange
+    const harness = await workspaceHarness()
+    try {
+      const abort = new AbortController()
+      enableFakeClock(context)
+      const late = startLateActivationWait(harness, abort.signal)
+      const settledAfterEvents = async (): Promise<boolean> => {
+        await Promise.resolve()
+        return late.isEnded()
+      }
+      assert.equal(await settledAfterEvents(), false)
+
+      // Act
+      if (cell.ends === 'report') late.reportActivation()
+      if (cell.ends === 'bound') {
+        await advanceClock(context, 149)
+        assert.equal(await settledAfterEvents(), false)
+        await advanceClock(context, 1)
+      }
+      if (cell.ends === 'abort') abort.abort()
+      await late.wait
+      // A report after the wait ended changes nothing.
+      if ('reportsAfterwards' in cell && cell.reportsAfterwards)
+        late.reportActivation()
+
+      // Assert
+      assert.deepEqual(late.subscriptions(), { registered: 1, disposed: 1 })
+    } finally {
+      resetFakeClock(context)
+      await harness.close()
+    }
+  })
 
 for (const entry of [
   "an agent's Study workspace request",

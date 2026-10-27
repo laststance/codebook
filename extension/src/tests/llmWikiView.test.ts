@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { existsSync } from 'node:fs'
 import {
   mkdir,
   mkdtemp,
@@ -447,32 +448,141 @@ test('a window without a folder offers Open Folder and an untrusted folder offer
   )
 })
 
-// Value: protects=the manage-trust id decision; fails_when=the action runs an id the editor does not list, or runs none and says nothing; no_claim=that the id exists in Cursor (native trial); seam=the stubbed editor's command list
-test('Manage Workspace Trust runs the first known trust command the editor lists, and says where to find it when it lists none', async (context) => {
+// Value: protects=Manage Workspace Trust in VS Code and Cursor (both list only workbench.trust.manage, N56 step 2); fails_when=the action asks the editor for its command list first and shows the notice instead of running the command because the list names neither id; why_new=the old lookup hid the command whenever getCommands did not list it; seam=the stubbed editor, whose command list holds neither trust id; no_claim=that the native editors open their trust editor (native trial)
+test('Manage Workspace Trust runs workbench.trust.manage without consulting the editor’s command list', async (context) => {
   // Arrange
-  const { window: listed } = await openPublishedWiki(context, {
-    trusted: false,
-    extraEditorCommands: ['workbench.action.manageTrust'],
-  })
-  const { window: unlisted } = await openPublishedWiki(context, {
-    trusted: false,
-  })
+  const { window } = await openPublishedWiki(context, { trusted: false })
 
   // Act
-  await listed.runCommand('codebook.llmWiki.manageTrust')
-  await unlisted.runCommand('codebook.llmWiki.manageTrust')
+  await window.runCommand('codebook.llmWiki.manageTrust')
 
   // Assert
   assert.deepEqual(
-    [listed.executedCommands, unlisted.executedCommands, unlisted.notices],
+    [window.executedCommands, window.notices],
+    [['workbench.trust.manage'], []],
+  )
+})
+
+// Value: protects=the learner knowing where to trust a folder in an editor without the command; fails_when=a rejected trust command leaves no notice or no cause in Output › Codebook; why_new=the old code never ran the command when it was not listed, so a rejection was unhandled; seam=the stubbed editor refusing workbench.trust.manage; no_claim=the wording of a native editor's own error
+test('Manage Workspace Trust says where to find the command and records the cause when the editor rejects it', async (context) => {
+  // Arrange
+  const { window } = await openPublishedWiki(context, {
+    trusted: false,
+    missingEditorCommands: ['workbench.trust.manage'],
+  })
+
+  // Act
+  await window.runCommand('codebook.llmWiki.manageTrust')
+
+  // Assert
+  assert.deepEqual(
     [
-      ['workbench.action.manageTrust'],
-      [],
+      window.notices,
+      window.outputLines.some(
+        (line) =>
+          line.startsWith('error: ') &&
+          line.includes("command 'workbench.trust.manage' not found"),
+      ),
+    ],
+    [
       [
         'Run "Workspaces: Manage Workspace Trust" from the Command Palette to trust this folder.',
       ],
+      true,
     ],
   )
+})
+
+// Value: protects=the learner told that a trust command the editor has could not open, with the Command Palette route and the cause in Output; fails_when=any rejection of workbench.trust.manage shows the missing-command sentence, the failure notice names no route, or the editor's own wording of the error decides which notice shows (local review D5/RT3, /ship pass 2 M3 and D8, Cycle 0056 pt3); why_new=the earlier test rejected only with a missing-command error; seam=the stubbed editor's command throwing a failure of its own; no_claim=the wording of a native editor's own error
+test('Manage Workspace Trust says it could not open, and records the cause, when the editor has the command and it fails', async (context) => {
+  // Arrange
+  const { window } = await openPublishedWiki(context, {
+    trusted: false,
+    editorCommand: (name) => {
+      if (name === 'workbench.trust.manage')
+        throw new Error('The trust editor crashed')
+    },
+  })
+
+  // Act
+  await window.runCommand('codebook.llmWiki.manageTrust')
+
+  // Assert
+  assert.deepEqual(
+    [
+      window.notices,
+      window.outputLines.some(
+        (line) =>
+          line.startsWith('error: ') &&
+          line.includes('The trust editor crashed'),
+      ),
+    ],
+    [
+      [
+        'Manage Workspace Trust could not open. Try "Workspaces: Manage Workspace Trust" from the Command Palette; the cause is in Output › Codebook.',
+      ],
+      true,
+    ],
+  )
+})
+
+// Value: protects=the learner still being pointed to the Command Palette, and the cause recorded, when the editor's command list cannot be read (it rejects or throws at once), because the command's presence is then unknown and the palette route always works; fails_when=a failing command list makes the trust action reject with no notice, or shows the could-not-open notice for a command that may be missing (/ship pass 3 G-SYNC, Cycle 0056 pt3); why_new=pass 2 asked the list through Promise.resolve, which misses a synchronous throw, and the failing list was untested; seam=the stubbed editor's getCommands failing after workbench.trust.manage rejected; no_claim=the wording of a native editor's own error
+for (const listFailure of ['rejects', 'throws at once'] as const)
+  test(`Manage Workspace Trust points to the Command Palette and records the cause when the editor’s command is rejected and its command list ${listFailure}`, async (context) => {
+    // Arrange
+    const { window } = await openPublishedWiki(context, {
+      trusted: false,
+      commandListFails: listFailure === 'rejects' ? 'reject' : 'throw',
+      editorCommand: (name) => {
+        if (name === 'workbench.trust.manage')
+          throw new Error('The trust editor crashed')
+      },
+    })
+
+    // Act
+    await window.runCommand('codebook.llmWiki.manageTrust')
+
+    // Assert
+    assert.deepEqual(
+      [
+        window.notices,
+        window.outputLines.some(
+          (line) =>
+            line.startsWith('error: ') &&
+            line.includes('The trust editor crashed'),
+        ),
+      ],
+      [
+        [
+          'Run "Workspaces: Manage Workspace Trust" from the Command Palette to trust this folder.',
+        ],
+        true,
+      ],
+    )
+  })
+
+// Value: protects=the Output entry of a failed Manage Workspace Trust never carrying the home directory or a control character that the editor's error held; fails_when=the cause reaches Output as the editor worded it (/ship pass 2 S1, Cycle 0056 pt3); why_new=the view's failure recorder wrote the raw error text; seam=the stubbed editor's trust command throwing a message with the home path and a bell character; no_claim=the wording of a native editor's own error
+test('a failed Manage Workspace Trust records its cause in Output without the home directory or control characters', async (context) => {
+  // Arrange
+  const home = homedir()
+  const { window } = await openPublishedWiki(context, {
+    trusted: false,
+    editorCommand: (name) => {
+      if (name === 'workbench.trust.manage')
+        throw new Error(`Failed at ${home}/private/trust.json\u0007`)
+    },
+  })
+
+  // Act
+  await window.runCommand('codebook.llmWiki.manageTrust')
+
+  // Assert
+  const line = window.outputLines.find((entry) =>
+    entry.includes('Manage Workspace Trust could not run'),
+  )
+  assert.equal(line?.includes('~/private/trust.json'), true)
+  assert.equal(line?.includes(home), false)
+  assert.equal(line?.includes('\u0007'), false)
 })
 
 // Value: protects=AC 2 (error row); fails_when=a read that throws leaves the tree empty or on loading, writes no cause to Output, or does not recover at Refresh; no_claim=the cause's wording; seam=a folder that no longer exists
@@ -534,7 +644,7 @@ test('a manifest created in the output folder shows the Wiki row after the watch
   )
 })
 
-// Value: protects=AC 2 (the trailing debounce); fails_when=a burst of events reads the state once per event (more than the burst's read and the one follow-up read of the watcher's move), or the last event of the burst is dropped; no_claim=the 1 second value (a constant); seam=five events 10 ms apart, with the debounce shortened to 40 ms
+// Value: protects=AC 2 (the trailing debounce); fails_when=a burst of events reads the state once per event (more than the burst's one read), or the last event of the burst is dropped; no_claim=the 1 second value (a constant); seam=five events 10 ms apart, with the debounce shortened to 40 ms
 test('five file events inside the debounce become one read that shows the last state', async (context) => {
   // Arrange
   const project = await openEmptyProject(context)
@@ -552,8 +662,8 @@ test('five file events inside the debounce become one read that shows the last s
   await project.llmWiki.whenIdle()
 
   // Assert
-  // Two reads: the burst's one, and the single follow-up read that the watcher's move from the project to .codebook adds once the Wiki's folders exist.
-  assert.equal(project.looks.publishTokenReads - readsAtStart, 2)
+  // One read: the burst's. The watcher stays on the project root, so the Wiki's folders appearing moves it no more and adds no follow-up read.
+  assert.equal(project.looks.publishTokenReads - readsAtStart, 1)
 })
 
 // Value: protects=AC 2 (refresh on the setting and on visibility); fails_when=changing codebook.wikiOutputDirectory or showing the view again does not read the state, or the watcher stays on the old folder; no_claim=VS Code's settings UI; seam=the stubbed configuration event and visibility event
@@ -586,7 +696,7 @@ test('changing the output setting and showing the view again read the state agai
       watchedAfterTheSetting?.pattern,
       window.llmWiki.contextKeys[STATE_KEY],
     ],
-    [true, join(wiki.projectRoot, 'docs'), globFor([], 'wiki'), 'none'],
+    [true, wiki.projectRoot, globFor(['docs'], 'wiki'), 'none'],
   )
 })
 
@@ -644,8 +754,8 @@ test('an output folder outside the project shows its Wiki with the absolute fold
   )
 })
 
-// Value: protects=AC 2 (a missing output parent) and Eng decision 78; fails_when=the watcher stands on a folder that does not exist, or is not made again on the folder a run creates; no_claim=VS Code's watcher on the root; seam=a Cursor generation whose agent waits
-test('in a fresh project the watcher stands on the project and moves to .codebook once a run makes it', async (context) => {
+// Value: protects=AC 2 (a missing output parent), Eng decision 78 and N56-F3; fails_when=the watcher stands on a folder that does not exist, or moves down onto .codebook once a run makes it, where a delete of .codebook would be unseen; why_changed=the watcher now stays on the project root instead of moving to .codebook (N56 step 2 saw a deleted .codebook unnoticed); no_claim=VS Code's watcher on the root; seam=a Cursor generation whose agent waits
+test('in a fresh project the watcher stands on the project and stays there once a run makes .codebook', async (context) => {
   // Arrange
   const project = await openEmptyProject(context, {
     cursor: true,
@@ -655,29 +765,38 @@ test('in a fresh project the watcher stands on the project and moves to .codeboo
       ),
   })
   const watchedAtStart = project.watchedPatterns().at(-1)
+  const watcherCountAtStart = project.watchedPatterns().length
 
   // Act
   void project.runCommand(GENERATE_COMMAND)
   await untilRow(project, 'run')
   await waitUntil(
-    () => project.watchedPatterns().at(-1)?.base !== watchedAtStart?.base,
-    'the watcher on .codebook',
+    () => existsSync(join(project.projectRoot, '.codebook')),
+    'the .codebook folder the run makes',
     6_000,
   )
+  await project.runCommand('codebook.refreshLlmWiki')
+  // The refresh settles before the cancel, so a slow re-registration of the watcher would already show in the count.
+  await project.llmWiki.whenIdle()
   await project.runCommand('codebook.llmWiki.cancelRun')
 
   // Assert
   assert.deepEqual(
-    [watchedAtStart, project.watchedPatterns().at(-1)],
+    [
+      watchedAtStart,
+      project.watchedPatterns().at(-1),
+      project.watchedPatterns().length - watcherCountAtStart,
+    ],
     [
       {
         base: project.projectRoot,
         pattern: globFor(['.codebook'], 'wiki'),
       },
       {
-        base: join(project.projectRoot, '.codebook'),
-        pattern: globFor([], 'wiki'),
+        base: project.projectRoot,
+        pattern: globFor(['.codebook'], 'wiki'),
       },
+      0,
     ],
   )
 })
@@ -1224,7 +1343,7 @@ test('a collapsed view runs no freshness check for a manifest event and checks o
   )
 })
 
-// Value: protects=N55-F3 (the message and the rows change in one render); fails_when=the view writes the tree message when it sets its model, before the editor reads the new rows, so the message shows in one frame and the rows in another; no_claim=the editor's frames (N56 step 4); seam=the fake tree's render log of change events, root reads and message writes
+// Value: protects=N55-F3 and task 16 (the message and the rows change together); fails_when=the view writes the tree message when it sets its model or with the change event (before the editor reads the new rows, N55-F3; the native take of the earlier task 16 fix showed it one frame ahead of the rows because the host sends a message at once and the rows a round trip later); why_changed=same expectation as before task 16 again: the new message is written when the root children are read, after the change event, with only a same-value write of the old message before it; no_claim=the editor's frames and the host's debounce (the read-loop test models it; N56 step 4); seam=the harness's render log of change events, root reads and message writes
 test('the message changes only when the tree reads the new rows, not when the change event fires', async (context) => {
   // Arrange
   const project = await openEmptyProject(context, {
@@ -1236,6 +1355,13 @@ test('the message changes only when the tree reads the new rows, not when the ch
     'Codebook is watching the chat. Stop watching does not stop the chat; stop it in the chat.'
   const stoppedMessage =
     'Codebook stopped watching the chat, which may still publish this Wiki. To stop it, stop the request in the chat.'
+  // The run row shows before the message does; the stop is pressed only once the view shows the watching message and has settled, so the log starts from that state.
+  await waitUntil(
+    () => project.llmWiki.message() === watchingMessage,
+    'the view shows the watching message',
+    6_000,
+  )
+  await project.llmWiki.whenIdle()
 
   // Act
   await project.runCommand('codebook.llmWiki.stopWatching')
@@ -1825,6 +1951,53 @@ test('a delete event of the output folder alone, for a deleted or a renamed Wiki
       renamed.window.llmWiki.contextKeys[STATE_KEY],
     ],
     ['none', 'none'],
+  )
+})
+
+// Value: protects=N56-F3, the view following a deleted .codebook folder; fails_when=the watcher stands on .codebook itself, so deleting that folder matches no planned path and the view keeps showing the deleted Wiki until Refresh; why_new=N56 step 2 saw the deleted Wiki's row for 40+ s; seam=the fake file watching, which like the editor reports nothing for the watched folder itself; no_claim=the native editor's event delivery for a recursive delete (native recheck)
+test('deleting the .codebook folder that holds the Wiki brings back the no-Wiki welcome without a Refresh', async (context) => {
+  // Arrange
+  const { wiki, window } = await openPublishedWiki(context)
+  const codebookFolder = join(wiki.projectRoot, '.codebook')
+
+  // Act
+  await rm(codebookFolder, { recursive: true })
+  window.reportFileEvent('delete', codebookFolder)
+  await untilRow(window, 'wiki', false)
+
+  // Assert
+  assert.deepEqual(
+    [window.llmWiki.contextKeys[STATE_KEY], idsOf(window)],
+    ['none', []],
+  )
+})
+
+// Value: protects=N56-F3 for an output below several folders; fails_when=the watcher stands on the output's parent, so deleting a folder between the project root and the output (or the watched one) is not seen; why_new=same defect as the .codebook case for a nested output setting; seam=the fake file watching with the setting docs/site/wiki; no_claim=the native editor's event delivery for a recursive delete (native recheck)
+test('deleting a folder between the project root and a nested Wiki output brings back the no-Wiki welcome without a Refresh', async (context) => {
+  // Arrange
+  const wiki = await publishedWikiFixture('docs/site/wiki')
+  const window = await openWikiUpdateWindow({
+    constants: FAST,
+    projectRoot: wiki.projectRoot,
+    outputSetting: 'docs/site/wiki',
+    openReader: false,
+  })
+  context.after(async () => {
+    await window.close()
+    await wiki.cleanup()
+  })
+  await untilFirstRead(window)
+  const siteFolder = join(wiki.projectRoot, 'docs', 'site')
+
+  // Act
+  await rm(siteFolder, { recursive: true })
+  window.reportFileEvent('delete', siteFolder)
+  await untilRow(window, 'wiki', false)
+
+  // Assert
+  assert.deepEqual(
+    [window.llmWiki.contextKeys[STATE_KEY], idsOf(window)],
+    ['none', []],
   )
 })
 

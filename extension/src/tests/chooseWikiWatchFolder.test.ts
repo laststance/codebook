@@ -23,6 +23,23 @@ test('a missing .codebook inside the project is watched from the project root', 
   assert.equal(folder, '/work/repo')
 })
 
+// Value: protects=N56-F3, a deleted .codebook being seen; fails_when=the watcher stands on .codebook (or a deeper folder) once it exists, where deleting that folder is an event of the watched folder itself and the editor reports none; why_new=the old choice returned the nearest existing folder; no_claim=the editor's watcher; seam=the pure function
+test('an existing .codebook inside the project is still watched from the project root', () => {
+  // Arrange
+  const choice = {
+    projectRoot: '/work/repo',
+    outputDirectory: '/work/repo/.codebook/wiki',
+    nearestExistingFolder: '/work/repo/.codebook',
+    homeDirectory: HOME,
+  }
+
+  // Act
+  const folder = chooseWikiWatchFolder(choice)
+
+  // Assert
+  assert.equal(folder, '/work/repo')
+})
+
 // Value: protects=the editor from a recursive watch of the home folder or the root; fails_when=an output outside the project whose parent does not exist is watched from the nearest existing ancestor, here the home folder; no_claim=what the view shows instead (host test); seam=the pure function
 test('an output outside the project whose parent is missing gets no watcher, even when an ancestor exists', () => {
   // Arrange
@@ -87,4 +104,21 @@ test('the home folder and a file-system root are never watched', () => {
 
   // Assert
   assert.deepEqual(folders, [undefined, undefined, undefined])
+})
+
+// Value: protects=a project opened at the home folder whose .codebook exists: the watcher stands on .codebook, never on the home folder the project root names; fails_when=the project-root preference ignores the home-folder rule and watches the home folder recursively; why_new=Cycle 0056 task 33 added the project-root preference, and the home-folder test only covers a nearest folder that is the home folder itself; seam=the pure function; no_claim=the editor's watcher
+test('a project at the home folder is watched from the existing .codebook below it, not from the home folder', () => {
+  // Arrange
+  const choice = {
+    projectRoot: HOME,
+    outputDirectory: `${HOME}/.codebook/wiki`,
+    nearestExistingFolder: `${HOME}/.codebook`,
+    homeDirectory: HOME,
+  }
+
+  // Act
+  const folder = chooseWikiWatchFolder(choice)
+
+  // Assert
+  assert.equal(folder, '/Users/ada/.codebook')
 })

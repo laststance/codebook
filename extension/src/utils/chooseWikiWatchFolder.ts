@@ -20,7 +20,9 @@ type WikiWatchChoice = {
  * Why: walking up from a Wiki output whose parents do not exist yet could end at the home folder or the file-system root, and a recursive watch there costs the editor far more than the view is worth.
  * Trigger: {@link createLlmWikiView} at each read that shows a ready state.
  *
- * Inside the project the watcher never stands above the project root; for an output outside it, only on the output's own parent when that exists. The home folder and a file-system root are never watched.
+ * Inside the project the watcher stands on the project root, so a delete or move of any folder from the root down to the output (the folder holding the Wiki included) is reported; the editor reports nothing for the watched folder itself. For an output outside the project it stands only on the output's own parent when that exists, so deleting that parent is not seen there: its ancestor could be the home folder or a root, which are never watched. When the project root is the home folder or a root, the nearest existing folder at or below it is used instead.
+ *
+ * Residual: the editor reports nothing for the watched folder itself, so deleting or renaming the project folder (or a folder above it) is not seen until Refresh or the next time the view is shown. When the project root is the home folder or a root, the nearest existing folder is watched and deleting that folder is seen the same way.
  *
  * @param choice - The project, the output, the nearest existing folder and the home folder.
  * @returns The folder to watch; `undefined` for the no-watcher fallback (the view then refreshes on visibility and its Refresh action only).
@@ -44,14 +46,22 @@ export function chooseWikiWatchFolder(
     )
   }
   const isInsideProject = isAtOrBelow(projectRoot, outputDirectory)
-  // Inside the project the nearest folder is the project root at the highest; outside, only the output's own parent counts.
+  /** Whether a folder is a file-system root or the home folder, which are never watched. */
+  const isTooBroad = (folder: string): boolean =>
+    pathApi.dirname(folder) === folder ||
+    (homeDirectory !== '' && pathApi.relative(homeDirectory, folder) === '')
+  // Inside the project the watcher stands on the project root, so deleting the folder the Wiki lies in (.codebook, or any folder down to the output) is an event below the watched folder; a watcher on that folder itself hears nothing when it is deleted.
+  if (
+    isInsideProject &&
+    isAtOrBelow(projectRoot, nearestExistingFolder) &&
+    !isTooBroad(projectRoot)
+  )
+    return projectRoot
+  // Otherwise the nearest folder is the project root at the highest inside the project; outside, only the output's own parent counts.
   const isAcceptable = isInsideProject
     ? isAtOrBelow(projectRoot, nearestExistingFolder)
     : nearestExistingFolder === pathApi.dirname(outputDirectory)
-  const isRoot =
-    pathApi.dirname(nearestExistingFolder) === nearestExistingFolder
-  const isHome =
-    homeDirectory !== '' &&
-    pathApi.relative(homeDirectory, nearestExistingFolder) === ''
-  return isAcceptable && !isRoot && !isHome ? nearestExistingFolder : undefined
+  return isAcceptable && !isTooBroad(nearestExistingFolder)
+    ? nearestExistingFolder
+    : undefined
 }
