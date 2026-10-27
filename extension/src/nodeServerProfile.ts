@@ -12,7 +12,7 @@ import {
 } from './constants'
 
 /** What `codebook_status` says about the repository's own tsx: it depends on the declared entry, so it is checked at start, not here. */
-export const NODE_SERVER_LOADER_NOTE =
+const NODE_SERVER_LOADER_NOTE =
   "The repository's own tsx is checked at start, for a TypeScript entry only; a missing or outside-the-repository tsx is refused with NODE_SERVER_SOURCE_REFUSED."
 
 /**

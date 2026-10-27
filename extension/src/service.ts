@@ -270,7 +270,7 @@ export interface NodeServerRecordState {
   loggedFailures: Set<string>
 }
 /** A node-server run's record with its server state, as the narrowing {@link isNodeServerRecord} gives. */
-export type NodeServerStudyRecord = StudyRecord & {
+type NodeServerStudyRecord = StudyRecord & {
   profile: typeof NODE_SERVER_PROFILE
   nodeServer: NodeServerRecordState
 }
@@ -400,6 +400,29 @@ interface StudyRecordState {
   }
   /** Why a browser recording's finish or read-back failed at the run's stop, sanitized when it was assigned; a `codebook_stop` of the run answers `HISTORY_SEAL_FAILED` with it. */
   recordingSealFailure?: string
+}
+
+/** The profiles a start can name, in the order the refusal lists them. */
+const SUPPORTED_PROFILES: readonly string[] = [
+  REPOSITORY_BROWSER_PROFILE,
+  NODE_TEST_PROFILE,
+  NODE_SERVER_PROFILE,
+]
+
+/**
+ * Gives the fields a new run's record starts with because it is a node-server run: its events, its server state and its exclusion from history (D3: evictable, no read-history, never saved).
+ * @param profile - The profile of the start.
+ * @returns The fields for a node-server run; none for another profile.
+ * @example nodeServerRecordFields('node-server').historyExcluded // => 'server-run-not-saved'
+ */
+function nodeServerRecordFields(profile: string) {
+  return profile === NODE_SERVER_PROFILE
+    ? {
+        nodeEvents: [],
+        nodeServer: { loggedFailures: new Set<string>() },
+        historyExcluded: 'server-run-not-saved' as const,
+      }
+    : {}
 }
 
 /**
@@ -744,17 +767,6 @@ export class StudyService {
             ],
             ...vitestSearch,
           }
-    const nodeServerPrerequisites =
-      profilePrerequisites?.[NODE_SERVER_PROFILE] ?? commonPrerequisites
-    const nodeServerMissing = [
-      ...nodeServerPrerequisites.missing,
-      ...(!this.environment.createNodeServerRun
-        ? ['The owned Node server adapter is unavailable.']
-        : []),
-      ...(!this.repository
-        ? ['Repository source/book storage is unavailable.']
-        : []),
-    ]
     return {
       instanceId: this.instanceId,
       apiVersion: API_VERSION,
@@ -804,11 +816,9 @@ export class StudyService {
               'Test output, executed source and recorded debugger stops; no application video',
           },
         },
-        describeNodeServerProfile({
-          ready:
-            nodeServerPrerequisites.ready && nodeServerMissing.length === 0,
-          missing: nodeServerMissing,
-        }),
+        this.nodeServerProfileEntry(
+          profilePrerequisites?.[NODE_SERVER_PROFILE] ?? commonPrerequisites,
+        ),
       ],
       capabilities: [
         'start',
@@ -891,6 +901,31 @@ export class StudyService {
       recovery:
         'Same instance: initialize a new transport and read the existing run. Server restart: copy new credentials first. Never automatically repeat a click.',
     }
+  }
+
+  /**
+   * Describes the node-server profile for `codebook_status` with everything that keeps it from starting here: the environment's missing items (Node, a listener tool, `ps`, a supported system), a missing run factory and missing repository storage.
+   * @param reported - The environment's prerequisites for the profile, or the shared ones when it reports none.
+   * @returns The profile entry ({@link describeNodeServerProfile}).
+   * @example this.nodeServerProfileEntry({ ready: true, missing: [] }).prerequisites.ready // => true when the adapter and storage exist
+   */
+  private nodeServerProfileEntry(reported: {
+    ready: boolean
+    missing: string[]
+  }) {
+    const missing = [
+      ...reported.missing,
+      ...(this.environment.createNodeServerRun
+        ? []
+        : ['The owned Node server adapter is unavailable.']),
+      ...(this.repository
+        ? []
+        : ['Repository source/book storage is unavailable.']),
+    ]
+    return describeNodeServerProfile({
+      ready: reported.ready && missing.length === 0,
+      missing,
+    })
   }
 
   /** Returns only currently owned repository storage without imposing runtime prerequisites. @example service.repositoryStore(instanceId) */
@@ -1228,25 +1263,13 @@ export class StudyService {
         'IDEMPOTENCY_CONFLICT',
         'Start key already names different arguments.',
       )
-    if (
-      input.profile !== REPOSITORY_BROWSER_PROFILE &&
-      input.profile !== NODE_TEST_PROFILE &&
-      input.profile !== NODE_SERVER_PROFILE
-    )
+    if (!SUPPORTED_PROFILES.includes(input.profile))
       throw new StudyError(
         'UNSUPPORTED_PROFILE',
-        `Available profiles: ${REPOSITORY_BROWSER_PROFILE}, ${NODE_TEST_PROFILE}, ${NODE_SERVER_PROFILE}`,
+        `Available profiles: ${SUPPORTED_PROFILES.join(', ')}`,
       )
     // The tool boundary accepts any node-server object, so this is where every violation is listed (D4).
-    if (!previous && input.profile === NODE_SERVER_PROFILE) {
-      const declaration = nodeServerConfigSchema.safeParse(input.configuration)
-      if (!declaration.success) {
-        const message = describeNodeServerConfigurationIssues(
-          declaration.error.issues,
-        )
-        throw new StudyError('INVALID_CONFIGURATION', message)
-      }
-    }
+    if (!previous) this.assertNodeServerDeclaration(input)
     const parsed = startIntentSchema.safeParse(input)
     if (!parsed.success)
       throw new StudyError(
@@ -1290,13 +1313,7 @@ export class StudyService {
         ? { nodeStops: [], nodeEvents: [], nodePhase: 'preparing' as const }
         : {}),
       // A server run holds no history from its start (D3): evictable, no read-history, never saved.
-      ...(intent.profile === NODE_SERVER_PROFILE
-        ? {
-            nodeEvents: [],
-            nodeServer: { loggedFailures: new Set<string>() },
-            historyExcluded: 'server-run-not-saved' as const,
-          }
-        : {}),
+      ...nodeServerRecordFields(intent.profile),
       // A reader refresh can arrive before the admission answers; until then the run is not a checkpoint candidate.
       ...(intent.profile === REPOSITORY_BROWSER_PROFILE && this.recordings
         ? { historyExcluded: 'awaiting-admission' as const }
@@ -1306,6 +1323,22 @@ export class StudyService {
     this.startKeys.set(input.key, record)
     record.preparation = this.prepare(record)
     return this.receipt(record)
+  }
+
+  /**
+   * Refuses a node-server start whose declaration does not parse, listing every violation with its field path and naming `codebook://help/node-server`; called by {@link StudyService.start} for a start that begins a new run.
+   * @param input - The start as the tool received it.
+   * @throws `INVALID_CONFIGURATION` with {@link describeNodeServerConfigurationIssues} for a node-server start; nothing for another profile.
+   * @example this.assertNodeServerDeclaration({ ...input, configuration: { ...declaration, port: 80 } }) // throws 'configuration.port: expected an integer from 1024 to 65535, …'
+   */
+  private assertNodeServerDeclaration(input: StartInput): void {
+    if (input.profile !== NODE_SERVER_PROFILE) return
+    const declaration = nodeServerConfigSchema.safeParse(input.configuration)
+    if (!declaration.success)
+      throw new StudyError(
+        'INVALID_CONFIGURATION',
+        describeNodeServerConfigurationIssues(declaration.error.issues),
+      )
   }
 
   /**
@@ -1385,20 +1418,33 @@ export class StudyService {
       if (keyedRecord === record) this.startKeys.delete(key)
   }
 
+  /**
+   * Finds the receipt an action key already holds, so a repeat after a lost response gets the original answer; called first by {@link StudyService.action} and {@link StudyService.requestNodeServer}.
+   * @param record - The run.
+   * @param key - The action's key.
+   * @param signature - The key and action as this call names them.
+   * @returns The stored receipt for the same key and action; `undefined` for a key no action used.
+   * @throws `IDEMPOTENCY_CONFLICT` when the key names another action.
+   * @example this.replayedAction(record, 'send-1', JSON.stringify(['send-1', 'http-request'])) // => the receipt of the first call
+   */
+  private replayedAction(record: StudyRecord, key: string, signature: string) {
+    const previous = record.actions.get(key)
+    if (!previous) return undefined
+    if (previous.signature === signature) return previous.receipt
+    throw new StudyError(
+      'IDEMPOTENCY_CONFLICT',
+      'Action key already names different arguments.',
+      `Read ${this.uri(record.id)} for retained receipts.`,
+    )
+  }
+
   /** Admits the next fixed action while replaying every original receipt across later steps and cleanup. @example service.action({...run, key:'operation', action:'repository-click'}) */
   action(input: ActionInput) {
     this.assertMutable(input.instanceId)
     const record = this.record(input)
     const signature = JSON.stringify([input.key, input.action])
-    const previous = record.actions.get(input.key)
-    if (previous) {
-      if (previous.signature === signature) return previous.receipt
-      throw new StudyError(
-        'IDEMPOTENCY_CONFLICT',
-        'Action key already names different arguments.',
-        `Read ${this.uri(record.id)} for retained receipts.`,
-      )
-    }
+    const replayed = this.replayedAction(record, input.key, signature)
+    if (replayed) return replayed
     this.presentationController?.assertPresentationIdle()
     if (
       !record.prepared ||
@@ -4232,15 +4278,8 @@ export class StudyService {
     input: ActionInput,
   ) {
     const signature = JSON.stringify([input.key, input.action])
-    const previous = record.actions.get(input.key)
-    if (previous) {
-      if (previous.signature === signature) return previous.receipt
-      throw new StudyError(
-        'IDEMPOTENCY_CONFLICT',
-        'Action key already names different arguments.',
-        `Read ${this.uri(record.id)} for retained receipts.`,
-      )
-    }
+    const replayed = this.replayedAction(record, input.key, signature)
+    if (replayed) return replayed
     const pending = record.nodeServer.pendingRequest
     // A repeat of the key being confirmed joins the one confirmation instead of asking the learner twice.
     if (pending?.key === input.key && pending.signature === signature)

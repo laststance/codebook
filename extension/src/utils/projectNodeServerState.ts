@@ -24,7 +24,7 @@ export type NodeServerProjectionInput = {
  * @returns The state word.
  * @example nodeServerStateWord({ state: 'ready' }, false, false) // => 'ready'
  */
-export function nodeServerStateWord(
+function nodeServerStateWord(
   view: Pick<NodeServerView, 'state' | 'runFailure'> | undefined,
   stopped: boolean,
   ending: boolean,

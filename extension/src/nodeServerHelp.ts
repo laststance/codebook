@@ -43,7 +43,7 @@ const SAMPLE_SOURCE = {
 }
 
 /** The three declarations the help shows: a minimal GET, a POST with a JSON body, and a server in a monorepo package. None names a repository's own code; each is a shape to adapt. */
-export const NODE_SERVER_HELP_SAMPLES = {
+const NODE_SERVER_HELP_SAMPLES = {
   minimalGet: sampleStart({
     entry: 'src/server.ts',
     port: 4100,

@@ -26,6 +26,7 @@ import type {
 } from './runtime'
 import type { BrowserViewportFactory } from './runtimeSupport/browserViewport'
 import type { HostConfiguration } from './runtimeSupport/hostBrowser'
+import { askToSendStateChangingRequest } from './utils/askToSendStateChangingRequest'
 import { assertConfiguredSourceDocuments } from './utils/assertConfiguredSourceDocuments'
 import {
   assertDevelopmentWorkspace,
@@ -36,6 +37,7 @@ import { checkNodeTestFiles } from './utils/checkNodeTestFiles'
 import { configuredStops } from './utils/configuredStops'
 import { createChromeExecutableLookup } from './utils/createChromeExecutableLookup'
 import { listVitestForRootClaim } from './utils/listVitestForRootClaim'
+import { nodeServerMachineGaps } from './utils/nodeServerMachineGaps'
 import {
   planNodeTestExecution,
   type NodeTestExecutionPlan,
@@ -277,25 +279,31 @@ export async function createEnvironment(
         }
         if (ownedConfiguredLock) break
       }
-      const [{ ready, missing, nodeMissing }, checkedConfigured, vitestSearch] =
-        await Promise.all([
-          resolvePrerequisites(),
-          // Even during a run, recheck dependencies and directories; only its exact live lock is permitted.
-          assertDevelopmentWorkspace(
-            workspace,
-            new AbortController().signal,
-            ownedConfiguredLock,
-          ).then(
-            () => [],
-            (error) => [String(error)],
-          ),
-          // A usable Vitest at the root or in a package up to two levels below it is named before any start (X9); a start checks its test's own.
-          searchRepositoryVitest(workspace).catch((error: unknown) => ({
-            vitestSearch: 'incomplete' as const,
-            // The reason reaches the agent in codebook_status, so it names no private path (F10).
-            missing: `node-test could not finish looking for Vitest in the repository: ${sanitizeCause(error, causeRootsFor([], workspace))}. A start still checks the cited test's own package.`,
-          })),
-        ])
+      const [
+        { ready, missing, nodeMissing },
+        checkedConfigured,
+        vitestSearch,
+        machineMissing,
+      ] = await Promise.all([
+        resolvePrerequisites(),
+        // Even during a run, recheck dependencies and directories; only its exact live lock is permitted.
+        assertDevelopmentWorkspace(
+          workspace,
+          new AbortController().signal,
+          ownedConfiguredLock,
+        ).then(
+          () => [],
+          (error) => [String(error)],
+        ),
+        // A usable Vitest at the root or in a package up to two levels below it is named before any start (X9); a start checks its test's own.
+        searchRepositoryVitest(workspace).catch((error: unknown) => ({
+          vitestSearch: 'incomplete' as const,
+          // The reason reaches the agent in codebook_status, so it names no private path (F10).
+          missing: `node-test could not finish looking for Vitest in the repository: ${sanitizeCause(error, causeRootsFor([], workspace))}. A start still checks the cited test's own package.`,
+        })),
+        // The machine's part of node-server: a supported system, a listener tool and ps.
+        nodeServerMachineGaps(),
+      ])
       // A preparing run may have created its lock before it has sealed ownership; never label that interval foreign.
       const configured = releasingConfiguredRun
         ? [
@@ -330,6 +338,10 @@ export async function createEnvironment(
               ...('missing' in vitestSearch ? [vitestSearch.missing] : []),
             ],
             vitestSearch: vitestSearch.vitestSearch,
+          },
+          'node-server': {
+            ready: nodeMissing.length === 0 && machineMissing.length === 0,
+            missing: [...nodeMissing, ...machineMissing],
           },
         },
       }
@@ -460,6 +472,17 @@ export async function createEnvironment(
         plan,
       )
     },
+    confirmStateChangingRequest: (request, signal) =>
+      askToSendStateChangingRequest(
+        (message, detail, ...items) =>
+          vscode.window.showWarningMessage(
+            message,
+            { modal: true, detail },
+            ...items,
+          ),
+        request,
+        signal,
+      ),
     dispose(): void {
       tracker.dispose()
       termination.dispose()
