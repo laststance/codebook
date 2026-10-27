@@ -27,29 +27,34 @@ export type FakeTreeRow = {
 export function createFakeLlmWikiEditor(
   fakeOptions: {
     readsRootInsideCreateTreeView?: boolean
-    /** Models the extension host's `ExtHostTreeView`: tree changes and message writes feed one leading 200 ms debounce whose emission sends the message, then refreshes the root (`emissions()` records each). Uses `setTimeout`, so a test enables mock timers and ticks 200 ms. */
+    /** Models the extension host's `ExtHostTreeView`: tree changes and message writes feed one leading 200 ms debounce. An emission sends the message synchronously (`$setMessage`) and only queues the refresh (`refreshQueue.then`, a microtask here); the refresh then makes the main thread read the root children (`$refresh`, then `$getChildren` back), and a message written during that read is a new emission. `hostLog()` records emissions and root reads in order. Uses `setTimeout`, so a test enables mock timers, ticks 200 ms and awaits a microtask. */
     modelsExtensionHostDebounce?: boolean
   } = {},
 ) {
   const renderLog: string[] = []
-  /** What each emission of the modelled extension host's debounce carried. */
-  const emissions: Array<{
-    hasMessage: boolean
-    message: string | undefined
-    refreshesRoot: boolean
-  }> = []
+  /** What the modelled extension host did, in order: `emit message(<text>)` and/or `+refresh` for each emission of its debounce, `root-read` and `root-return` around each root read the refresh caused. */
+  const hostLog: string[] = []
   /** What the modelled debounce has merged since its last emission. */
   let pending = { hasMessage: false, refreshesRoot: false }
   let debounceHandle: NodeJS.Timeout | undefined
   let debounceCalls = 0
   const emit = (carried: typeof pending): void => {
-    emissions.push({
-      hasMessage: carried.hasMessage,
-      message: carried.hasMessage ? shownMessage : undefined,
-      refreshesRoot: carried.refreshesRoot,
-    })
-    // The handler sends the message first, then refreshes the root (`$getChildren`).
-    if (carried.refreshesRoot) provider?.getChildren()
+    // The handler sends the message first, synchronously, and only queues the refresh.
+    hostLog.push(
+      `emit ${[
+        carried.hasMessage ? `message(${shownMessage ?? 'none'})` : undefined,
+        carried.refreshesRoot ? 'refresh' : undefined,
+      ]
+        .filter((part) => part !== undefined)
+        .join(' + ')}`,
+    )
+    if (carried.refreshesRoot)
+      queueMicrotask(() => {
+        // The main thread's `$getChildren` back to the extension host.
+        hostLog.push('root-read')
+        const ids = provider?.getChildren() ?? []
+        hostLog.push(`root-return(${ids.join(',')})`)
+      })
   }
   /** `Event.debounce(merge, 200, true)`: the first event of a quiet period is emitted at once with its own data, later ones merge into one emission when 200 ms pass without an event. */
   const feedDebounce = (event: Partial<typeof pending>): void => {
@@ -190,8 +195,8 @@ export function createFakeLlmWikiEditor(
       }),
     contextKeys,
     files,
-    /** The emissions of the modelled extension host's debounce so far ({@link createFakeLlmWikiEditor} option `modelsExtensionHostDebounce`). */
-    emissions: () => emissions.map((emission) => ({ ...emission })),
+    /** What the modelled extension host did so far ({@link createFakeLlmWikiEditor} option `modelsExtensionHostDebounce`). */
+    hostLog: () => [...hostLog],
     /** The message the tree view shows now. */
     message: (): string | undefined => shownMessage,
     /** What the fake tree did, in order: `getChildren` for each root read and `message:<text>` for each message write. */

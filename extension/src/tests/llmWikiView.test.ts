@@ -1249,8 +1249,8 @@ test('a collapsed view runs no freshness check for a manifest event and checks o
   )
 })
 
-// Value: protects=N55-F3 and task 16 (the message and the rows change in one emission of the extension host's debounce); fails_when=the view writes the new message apart from the tree change (before it with no window open: N55-F3; in getChildren after the leading change: about 200 ms late, N56), or omits the same-value write that opens the debounce window; why_changed=the message is written in the same tick as the change event (old message again, new message, change) instead of when the tree reads the rows; no_claim=the editor's frames and the debounce itself (the read-loop test models it; N56 step 4); seam=the harness's render log of change events and message writes
-test('a changed message is written right before the tree change, after a same-value write of the old message', async (context) => {
+// Value: protects=N55-F3 and task 16 (the message and the rows change together); fails_when=the view writes the tree message when it sets its model or with the change event (before the editor reads the new rows, N55-F3; the native take of the earlier task 16 fix showed it one frame ahead of the rows because the host sends a message at once and the rows a round trip later); why_changed=same expectation as before task 16 again: the new message is written when the root children are read, after the change event, with only a same-value write of the old message before it; no_claim=the editor's frames and the host's debounce (the read-loop test models it; N56 step 4); seam=the harness's render log of change events, root reads and message writes
+test('the message changes only when the tree reads the new rows, not when the change event fires', async (context) => {
   // Arrange
   const project = await openEmptyProject(context, {
     chatReply: () => new Promise<never>(() => {}),
@@ -1270,14 +1270,10 @@ test('a changed message is written right before the tree change, after a same-va
   const log = project.llmWiki.renderLog()
   const writeIndex = log.indexOf(`message:${stoppedMessage}`)
   assert.deepEqual(
-    [project.llmWiki.message(), log.slice(writeIndex - 1, writeIndex + 2)],
+    [project.llmWiki.message(), log.slice(writeIndex - 2, writeIndex + 1)],
     [
       stoppedMessage,
-      [
-        `message:${watchingMessage}`,
-        `message:${stoppedMessage}`,
-        `change:${stoppedMessage}`,
-      ],
+      [`change:${watchingMessage}`, 'getChildren', `message:${stoppedMessage}`],
     ],
   )
 })

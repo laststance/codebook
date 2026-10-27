@@ -154,7 +154,9 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
   /** The key ({@link failureKeyOf}) of the last failure recorded in Output, per kind: `read` is cleared when a good model is shown, `freshness` when a freshness check succeeds, so a failure that persists across poll ticks is recorded once and a different one is recorded too. */
   const recordedFailureKeys: Record<'read' | 'freshness', string | undefined> =
     { read: undefined, freshness: undefined }
-  /** The message the tree view shows now; {@link show} writes a changed one together with the tree change. */
+  /** Whether the tree view handle exists; an editor may read the provider while it is being created. */
+  let isTreeViewCreated = false
+  /** The message the tree view shows now; the model's next one is written when the tree reads its root children ({@link show}). */
   let appliedMessage: string | undefined
   let pollTimer: NodeJS.Timeout | undefined
   let isDisposed = false
@@ -177,6 +179,16 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
       onDidChangeTreeData: treeChanges.event,
       getChildren: (element) => {
         if (element) return []
+        // Task 16 (N56): the message leaves the extension host in the same macrotask as the reply carrying the new rows, so both paint together; see {@link show}.
+        // A root read inside createTreeView finds no handle yet (the first model has no message); after dispose nothing is written.
+        if (
+          isTreeViewCreated &&
+          !isDisposed &&
+          model.message !== appliedMessage
+        ) {
+          appliedMessage = model.message
+          treeView.message = model.message
+        }
         return model.rows.map((row) => row.id)
       },
       getTreeItem: (rowId) => {
@@ -208,13 +220,15 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
     },
   })
 
+  isTreeViewCreated = true
   // The editor reports whether the view is shown now; a collapsed view runs no poll.
   isViewVisible = treeView.visible
 
   /**
    * Shows a model: sets the context key and fires one tree change, only for what differs from what is shown.
    *
-   * Task 16 (N56): the editor's extension host merges tree changes and message writes into one emission through a leading 200 ms debounce (`Event.debounce(merge, 200, true)` in `ExtHostTreeView`), sending the message first and the root refresh right after. The first event of a quiet period goes out alone at once, every later one within 200 ms goes out together at the window's end. A message written in `getChildren` (a reaction to the leading tree change) therefore reached the screen about 200 ms after the rows, and one written before the tree change reached it before them (N55-F3). So a changed message is written as: the current message again (a same-value write that goes out at once and opens the window), then the new message, then the tree change, all in this tick; the last two merge into one emission that carries both.
+   * Task 16 (N56): the editor's extension host merges tree changes and message writes through a leading 200 ms debounce (`Event.debounce(merge, 200, true)` in `ExtHostTreeView`). Its handler sends `$setMessage` at once but only queues the refresh, which takes a round trip (`$refresh` to the main thread, `$getChildren` back, then the render) before the rows paint. A message written here, with the change, paints a round trip ahead of the rows (native take of the earlier fix: one frame before); one written in `getChildren` during the leading emission's window goes out 200 ms late (first native take).
+   * So a changed message is not written here: the current message is written again (a same-value write that goes out at once and opens the window), and the tree change merges into the trailing emission, which closes the window. The new message is then written in the root `getChildren` the refresh causes, a new leading emission that leaves with the reply carrying the new rows.
    */
   const show = (next: LlmWikiViewModel): void => {
     // A read that finished after dispose shows nothing.
@@ -231,12 +245,8 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
         LLM_WIKI_STATE_CONTEXT_KEY,
         next.state,
       )
-    if (next.message !== appliedMessage) {
-      // The leading emission carries only this same-value write, which changes nothing on screen.
-      treeView.message = appliedMessage
-      appliedMessage = next.message
-      treeView.message = next.message
-    }
+    // The leading emission carries only this same-value write, which changes nothing on screen; it opens the debounce window so the tree change below merges into the trailing emission.
+    if (next.message !== appliedMessage) treeView.message = appliedMessage
     treeChanges.fire()
   }
 
