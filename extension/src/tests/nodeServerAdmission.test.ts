@@ -410,3 +410,30 @@ test('codebook_explain and codebook_reveal refuse a node-server stop as EVIDENCE
   assert.ok(revealed instanceof StudyError)
   assert.equal(revealed.code, 'EVIDENCE_UNAVAILABLE')
 })
+
+// protects=a node-server start waits only on its own start prerequisites (Node and the machine), not on the repository-wide search: a failing prerequisites() does not stop it, and an unready start hook ends it with PREREQUISITE_MISSING; fails_when=the start reads the shared prerequisites or ignores the hook; no_claim=how the environment finds them
+test('a node-server start uses the narrow start prerequisites hook instead of the shared prerequisites', async (context) => {
+  // Arrange
+  const failingShared = async () => {
+    throw new Error('the shared search must not be asked')
+  }
+  const readyHarness = await createHarness({ prerequisites: failingShared })
+  context.after(() => readyHarness.close())
+  readyHarness.service.environment.nodeServerStartPrerequisites = async () => ({
+    ready: true,
+    missing: [],
+  })
+  const unreadyHarness = await createHarness({ prerequisites: failingShared })
+  context.after(() => unreadyHarness.close())
+  unreadyHarness.service.environment.nodeServerStartPrerequisites =
+    async () => ({ ready: false, missing: ['node-server needs lsof or ss.'] })
+  // Act
+  const ready = await startFakeNodeServerRun(readyHarness)
+  const unready = await startFakeNodeServerRun(unreadyHarness)
+  // Assert
+  assert.equal(ready.record.error, undefined)
+  assert.equal(ready.service.state(ready.record).state, 'ready')
+  assert.equal(unready.record.error?.code, 'PREREQUISITE_MISSING')
+  assert.equal(unready.record.error?.message, 'node-server needs lsof or ss.')
+  assert.equal(unready.created.length, 0)
+})

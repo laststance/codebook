@@ -148,6 +148,7 @@ const NODE_SERVER_EVENT_FIELDS: Record<
  * Called by {@link createNodeServerJournal} for each event a run records.
  * @param type - The event type, `node-server.<name>`.
  * @param detail - What the run recorded with it.
+ * @param sanitize - Replaces the private roots of a text ({@link StudyService.causeRoots}); applied to every text field before it is masked and cut. Identity when left out.
  * @returns The event's whitelisted fields (text masked and bounded); `{ omitted: true }` for a type without a row in {@link NODE_SERVER_EVENT_FIELDS}.
  * @example
  * nodeServerEventDetail('node-server.request', { method: 'GET', path: '/api/healthz', bodyBytes: 0, address: '127.0.0.1:4100', cwd: '/Users/ada/repo' })
@@ -157,14 +158,21 @@ const NODE_SERVER_EVENT_FIELDS: Record<
 export function nodeServerEventDetail(
   type: string,
   detail: unknown,
+  sanitize: (text: string) => string = (text) => text,
 ): EventFields {
   const fields = Object.hasOwn(NODE_SERVER_EVENT_FIELDS, type)
     ? NODE_SERVER_EVENT_FIELDS[type]
     : undefined
   if (!fields) return { omitted: true }
+  const entries =
+    detail && typeof detail === 'object' ? Object.entries(detail) : []
+  // Private roots go before any cut, so a path at a cut can never survive as a fragment.
   return fields(
-    detail && typeof detail === 'object'
-      ? Object.fromEntries(Object.entries(detail))
-      : {},
+    Object.fromEntries(
+      entries.map(([name, value]) => [
+        name,
+        typeof value === 'string' ? sanitize(value) : value,
+      ]),
+    ),
   )
 }

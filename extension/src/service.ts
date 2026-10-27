@@ -2696,6 +2696,7 @@ export class StudyService {
             record.stopping ||
             Boolean(record.cleanupError) ||
             Boolean(record.error),
+          sanitize: (text) => this.sanitizedCause(text),
         })
       : undefined
     const nodeStop = record.nodeStops?.at(-1)
@@ -3175,6 +3176,11 @@ export class StudyService {
     const prepared = record.nodeServer.prepared
     return {
       state: server.state,
+      // A server run is never saved: it reads pending-teardown while it lives and not-demonstrated once it ended.
+      finalOutcome:
+        record.stopped || record.error
+          ? ('not-demonstrated' as const)
+          : ('pending-teardown' as const),
       runtimeState: server.state,
       runtimeRunId: record.nodeServer.run?.id,
       nodeServer: server.nodeServer && {
@@ -3369,12 +3375,29 @@ export class StudyService {
     if (this.now() < record.deadlineAt) return
     // The deadline bounds a run that is still on its way; a result that was observed is not turned into a failure while the run waits for its release.
     if (this.hasRunEnded(record)) return
+    // A server whose request was answered or failed reaches the deadline as a normal stop: its request was observed, so no error is added.
+    if (this.endNodeServerAtDeadline(record)) return
     record.error ??= new StudyError(
       'RUNTIME_FAILED',
       'Study wall deadline expired; history only.',
     )
     record.runtime?.fail(record.error.message)
     this.failUnfinishedNodePhase(record)
+  }
+
+  /**
+   * Releases a node-server run whose request ended (`responded` or `request-failed`) when the whole-run deadline passes, without an error; called by {@link StudyService.expireAtDeadline}.
+   * @param record - The run whose deadline passed.
+   * @returns `true` when the run is such a server run (its release was started); `false` otherwise, so the deadline error applies.
+   * @example this.endNodeServerAtDeadline(record) // => true for a responded server run
+   */
+  private endNodeServerAtDeadline(record: StudyRecord): boolean {
+    const state = record.nodeServer?.run?.view().state
+    if (state !== 'responded' && state !== 'request-failed') return false
+    void this.stopRecord(record).catch((error) => {
+      this.failByRelease(record, error)
+    })
+    return true
   }
 
   /**
@@ -4444,9 +4467,14 @@ export class StudyService {
         'LEARNER_PAUSED',
         'The server is paused by the learner in the native debugger, which Codebook never resumes. Ask the learner to continue it there, then read the run.',
       )
+    // A run the environment has not created yet has no pause at all.
+    if (!run)
+      throw new StudyError(
+        'NO_PAUSE',
+        'The server run is not started yet, so nothing is paused. Read the run resource until it is ready.',
+      )
     // A run that is ending, failed or past its deadline has only historical pauses.
     if (
-      !run ||
       record.stopping ||
       record.stopped ||
       record.error ||
@@ -4564,7 +4592,7 @@ export class StudyService {
   }
 
   /**
-   * Writes a failure of a node-server run to the Output › Codebook channel once per code, for failures the run reported no `node-server.failure` event for (a refused start, a failure of the request or of the run).
+   * Writes a failure of a node-server run to the Output › Codebook channel once per code and message, for failures the run reported no `node-server.failure` event for (a refused start, a failure of the request or of the run).
    * @param record - The node-server run.
    * @param failure - The failure, already sanitized.
    * @example this.logNodeServerFailure(record, record.error)
@@ -4574,8 +4602,9 @@ export class StudyService {
     failure: { code: string; message: string },
   ): void {
     const logged = record.nodeServer?.loggedFailures
-    if (!logged || logged.has(failure.code)) return
-    logged.add(failure.code)
+    const identity = `${failure.code}\u0000${failure.message}`
+    if (!logged || logged.has(identity)) return
+    logged.add(identity)
     this.writeOutputLine(
       describeNodeServerFailureLine(record.id, failure.code, failure.message),
     )
@@ -4646,9 +4675,14 @@ export class StudyService {
       this.now,
     )
     this.environment.assertWorkspace?.()
-    const prerequisites = await this.environment
-      .prerequisites()
-      .then((reported) => reported.profiles?.[NODE_SERVER_PROFILE] ?? reported)
+    // A start waits only on what it needs (the editor's own, Node and the machine), not on the other profiles' searches.
+    const prerequisites = this.environment.nodeServerStartPrerequisites
+      ? await this.environment.nodeServerStartPrerequisites()
+      : await this.environment
+          .prerequisites()
+          .then(
+            (reported) => reported.profiles?.[NODE_SERVER_PROFILE] ?? reported,
+          )
     if (!prerequisites.ready)
       throw new StudyError(
         'PREREQUISITE_MISSING',
@@ -4692,7 +4726,9 @@ export class StudyService {
     const line = describeNodeServerOutputLine(record.id, type, detail)
     if (!line) return
     if (type === 'node-server.failure' && typeof detail.code === 'string')
-      record.nodeServer?.loggedFailures.add(detail.code)
+      record.nodeServer?.loggedFailures.add(
+        `${detail.code}\u0000${String(detail.cause)}`,
+      )
     this.writeOutputLine(line)
   }
 

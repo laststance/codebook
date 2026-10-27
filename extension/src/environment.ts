@@ -27,7 +27,7 @@ import type {
 } from './runtime'
 import type { BrowserViewportFactory } from './runtimeSupport/browserViewport'
 import type { HostConfiguration } from './runtimeSupport/hostBrowser'
-import { askToSendStateChangingRequest } from './utils/askToSendStateChangingRequest'
+import { createStateChangingRequestAsker } from './utils/askToSendStateChangingRequest'
 import { assertConfiguredSourceDocuments } from './utils/assertConfiguredSourceDocuments'
 import {
   assertDevelopmentWorkspace,
@@ -288,6 +288,15 @@ export async function createEnvironment(
       chrome,
     }
   }
+  // One asker for the window's life, so a retry joins a modal still on screen.
+  const askToSendStateChangingRequest = createStateChangingRequestAsker(
+    (message, detail, ...items) =>
+      vscode.window.showWarningMessage(
+        message,
+        { modal: true, detail },
+        ...items,
+      ),
+  )
   return {
     workspace,
     host,
@@ -439,6 +448,14 @@ export async function createEnvironment(
       runs.set(run.id, run)
       return run
     },
+    async nodeServerStartPrerequisites() {
+      const [{ nodeMissing }, machineMissing] = await Promise.all([
+        resolveNodePrerequisites(),
+        nodeServerMachineGaps(),
+      ])
+      const missing = [...nodeMissing, ...machineMissing]
+      return { ready: missing.length === 0, missing }
+    },
     async nodeTestStartPrerequisites() {
       const { nodeMissing } = await resolveNodePrerequisites()
       return { ready: nodeMissing.length === 0, missing: nodeMissing }
@@ -525,17 +542,7 @@ export async function createEnvironment(
         }),
       })
     },
-    confirmStateChangingRequest: (request, signal) =>
-      askToSendStateChangingRequest(
-        (message, detail, ...items) =>
-          vscode.window.showWarningMessage(
-            message,
-            { modal: true, detail },
-            ...items,
-          ),
-        request,
-        signal,
-      ),
+    confirmStateChangingRequest: askToSendStateChangingRequest,
     dispose(): void {
       tracker.dispose()
       termination.dispose()

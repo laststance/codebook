@@ -152,3 +152,25 @@ test('the environment confirmation hook asks through the editor modal and confir
   assert.equal((sending.questions[0]?.[1] as { modal: boolean }).modal, true)
   assert.equal(sending.questions[0]?.[2], 'Send')
 })
+
+// protects=the environment's node-server start hook answers Node plus the machine's gaps and nothing else; fails_when=the hook is missing or ignores a gap; no_claim=the real lsof or ps
+test('the environment node-server start prerequisites name the machine gaps only', async (context) => {
+  // Arrange
+  const ready = await createEnvironmentWith(context, { gaps: [] })
+  const missing = await createEnvironmentWith(context, {
+    gaps: ['node-server needs lsof or ss.'],
+  })
+  // Act
+  const readyAnswer = await ready.environment.nodeServerStartPrerequisites?.()
+  const missingAnswer =
+    await missing.environment.nodeServerStartPrerequisites?.()
+  // Assert
+  assert.deepEqual(JSON.parse(JSON.stringify(readyAnswer)), {
+    ready: true,
+    missing: [],
+  })
+  assert.deepEqual(JSON.parse(JSON.stringify(missingAnswer)), {
+    ready: false,
+    missing: ['node-server needs lsof or ss.'],
+  })
+})

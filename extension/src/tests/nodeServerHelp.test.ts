@@ -1,12 +1,17 @@
 import assert from 'node:assert/strict'
+import { resolve } from 'node:path'
 import { test } from 'node:test'
 
+import * as constants from '../constants'
 import { ERROR_RECOVERY } from '../errors'
 import { nodeServerConfigSchema } from '../nodeServerConfigSchemas'
+import type * as HelpModule from '../nodeServerHelp'
+import type * as ProfileModule from '../nodeServerProfile'
 import { readResource } from '../resources'
 import { startSchema } from '../schemas'
 
 import { createHarness } from './helpers'
+import { loadModule } from './utils/loadModule'
 
 /** Reads the served node-server help as its JSON body. */
 async function servedHelp() {
@@ -232,4 +237,38 @@ test('codebook://help/errors serves the recovery of every node-server code', asy
   } finally {
     await harness.close()
   }
+})
+
+// protects=help and status take their stop, capture and timing numbers from the constants that govern behavior; fails_when=the help or the profile entry keeps a hard-coded 8, 16, 300 s or 30 s while the constants move; no_claim=the numbers' values
+test('the node-server help and profile follow the constants they describe', async () => {
+  // Arrange
+  const changed = {
+    ...constants,
+    CONFIGURED_OBSERVATION_LIMIT: 9,
+    NODE_SERVER_REQUEST_CAPTURE_LIMIT: 17,
+    REPOSITORY_PAUSE_HOLD_TIMEOUT_MS: 301_000,
+    NODE_SERVER_READY_TIMEOUT_MS: 31_000,
+    NODE_SERVER_REQUEST_TIMEOUT_MS: 32_000,
+  }
+  const help = await loadModule<typeof HelpModule>(
+    resolve(__dirname, '../nodeServerHelp.js'),
+    { './constants': changed },
+  )
+  const profile = await loadModule<typeof ProfileModule>(
+    resolve(__dirname, '../nodeServerProfile.js'),
+    { './constants': changed },
+  )
+  // Act
+  const body = JSON.parse(JSON.stringify(help.nodeServerHelp()))
+  const entry = profile.describeNodeServerProfile({ ready: true, missing: [] })
+  // Assert
+  assert.match(body.limits.join('\n'), /At most 9 stops and 17 captured pauses/)
+  assert.match(body.limits.join('\n'), /longer than 301 s/)
+  const when = (code: string) =>
+    body.codes.find((entry: { code: string }) => entry.code === code).when
+  assert.match(when('REQUEST_NOT_CONFIRMED'), /within 301 s/)
+  assert.match(when('SERVER_NOT_LISTENING'), /within 31 s/)
+  assert.match(when('REQUEST_TIMEOUT'), /within 32 s/)
+  assert.match(when('PAUSE_HOLD_EXPIRED'), /longer than 301 s/)
+  assert.equal(entry.limits.stops, 9)
 })

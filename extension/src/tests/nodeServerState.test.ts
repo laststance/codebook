@@ -214,26 +214,63 @@ test('a server that exits ends the run with SERVER_EXITED as its error and relea
   assert.equal(run.calls.at(-1), 'stop')
 })
 
-// protects=D2: the repository run deadline (600 s) applies to a node-server run, also after its response: the deadline error and a release follow; fails_when=a server outlives the run deadline; no_claim=the request's 15-minute backstop (part R)
-test('the run deadline stops a node-server run even after its request was answered', async (context) => {
+// protects=D2: the repository run deadline (600 s) ends a node-server run after its request was answered or failed as a normal stop, with no error and no history wording; fails_when=the server outlives the deadline or the stop reads as RUNTIME_FAILED 'history only'; no_claim=the request's 15-minute backstop (part R)
+test('the run deadline stops a responded or request-failed node-server run without an error', async (context) => {
+  for (const ended of ['responded', 'request-failed'] as const) {
+    // Arrange
+    const clock = createManualClock()
+    const harness = await createHarness({ now: clock.now })
+    context.after(() => harness.close())
+    const { service, record, run } = await startFakeNodeServerRun(harness, {
+      key: ended,
+    })
+    await run.enter(ended)
+    // Act
+    clock.advance(600_001)
+    service.maintain()
+    await record.stopPromise
+    const state = service.state(record)
+    // Assert
+    assert.equal(state.state, 'stopped', ended)
+    assert.equal(record.error, undefined, ended)
+    assert.equal(state.terminalReason, undefined, ended)
+    assert.equal(run.calls.at(-1), 'stop', ended)
+  }
+})
+
+// protects=D2: a server still paused or in flight at the deadline fails with the deadline error; fails_when=an unfinished request outlives the deadline; no_claim=none
+test('the run deadline fails a node-server run whose request is still unfinished', async (context) => {
   // Arrange
   const clock = createManualClock()
   const harness = await createHarness({ now: clock.now })
   context.after(() => harness.close())
   const { service, record, run } = await startFakeNodeServerRun(harness)
-  await run.enter('responded')
+  await run.enter('request-in-flight')
   // Act
   clock.advance(600_001)
   service.maintain()
   await record.stopPromise
-  const state = service.state(record)
   // Assert
-  assert.equal(state.state, 'stopped')
   assert.equal(
-    state.error?.message,
+    service.state(record).error?.message,
     'Study wall deadline expired; history only.',
   )
-  assert.equal(run.calls.at(-1), 'stop')
+})
+
+// protects=a released server run does not read pending-teardown forever: finalOutcome reads pending-teardown while it lives and not-demonstrated once it is stopped (nothing of it is saved); fails_when=a stopped clean run still reads pending-teardown; no_claim=the wording of a saved study (server runs are not saved)
+test('a stopped node-server run no longer reads finalOutcome pending-teardown', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { service, record, run } = await startFakeNodeServerRun(harness)
+  await run.enter('responded')
+  // Act
+  const live = service.state(record).finalOutcome
+  await service.stop({ instanceId: service.instanceId, runId: record.id })
+  const stopped = service.state(record).finalOutcome
+  // Assert
+  assert.equal(live, 'pending-teardown')
+  assert.equal(stopped, 'not-demonstrated')
 })
 
 // protects=the run resource family answers for a node-server run: its manifest freezes the declaration and its hash, and images and snapshots are refused; fails_when=the manifest is the browser's, or an image read answers a file; no_claim=none
