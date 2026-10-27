@@ -1236,6 +1236,14 @@ export const BOOK_PREPARE_TIMEOUT_MS = 20_000
 export const BOOK_SOURCE_CONCURRENCY = 4
 export const REPOSITORY_BROWSER_PROFILE = 'repository-browser'
 export const NODE_TEST_PROFILE = 'node-test'
+/** The lowest port a node-server declaration may name: a lower one needs privileges a development server does not run with, and Codebook never raises them. */
+export const NODE_SERVER_PORT_MIN = 1_024
+/** The highest TCP port a node-server declaration may name. */
+export const NODE_SERVER_PORT_MAX = 65_535
+/** The longest request path, its query string included, a node-server declaration may send. */
+export const NODE_SERVER_REQUEST_PATH_LIMIT_CHARS = 2_048
+/** The largest request body, in UTF-8 bytes, a node-server declaration may send. */
+export const NODE_SERVER_REQUEST_BODY_LIMIT_BYTES = 16_384
 /** The command id of the status item's Save learning replay and its Retry; registered by the extension, run by a click. */
 export const SAVE_LEARNING_REPLAY_COMMAND = 'codebook.saveLearningReplay'
 /** The command id of the status item's Open replay and Open retained history. */

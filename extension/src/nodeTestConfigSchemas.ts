@@ -12,7 +12,7 @@ import {
   nodeTestStopInspectionsSchema,
 } from './repositoryConfigSchemas'
 import { repositoryHashSchema, repositoryPathSchema } from './sourceSchemas'
-import { missingValueInspectionMessage } from './utils/missingValueInspectionMessage'
+import { addStopInspectionIssues } from './utils/addStopInspectionIssues'
 
 const testFileSchema = repositoryPathSchema
   .refine(
@@ -29,7 +29,8 @@ const testTitleSchema = z
   .min(1)
   .max(BOOK_TITLE_LIMIT_CHARS)
   .regex(/^[^\x00-\x1f\x7f]+$/)
-const nodeTestStopSchema = repositorySourceStopSchema.extend({
+/** One additional stop of a Node profile: a cited source position, the book anchor it explains and its inspections; shared by {@link nodeTestConfigSchema} and {@link nodeServerConfigSchema}. */
+export const nodeTestStopSchema = repositorySourceStopSchema.extend({
   anchorIndex: repositoryBookSelectionSchema.shape.anchorIndex,
   inspections: nodeTestStopInspectionsSchema,
 })
@@ -74,25 +75,7 @@ export const nodeTestConfigSchema = z
         message: 'Cite the test with testTitles only.',
       })
     // Every requested stop needs a concrete value; type-only output cannot prove the test's runtime state. The refusal names the stop and what it declares.
-    for (const [index, inspections] of [
-      configuration.inspections,
-      ...(configuration.additionalStops ?? []).map((stop) => stop.inspections),
-    ].entries()) {
-      const missingValueInspection = missingValueInspectionMessage(
-        inspections,
-        index
-          ? `configuration.additionalStops[${index - 1}].inspections`
-          : 'configuration.inspections',
-      )
-      if (!missingValueInspection) continue
-      context.addIssue({
-        code: 'custom',
-        path: index
-          ? ['additionalStops', index - 1, 'inspections']
-          : ['inspections'],
-        message: missingValueInspection,
-      })
-    }
+    addStopInspectionIssues(configuration, context)
     if (
       Buffer.byteLength(JSON.stringify(configuration)) >
       REPOSITORY_CONFIG_LIMIT_BYTES

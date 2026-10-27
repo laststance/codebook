@@ -49,6 +49,8 @@ export const ERROR_RECOVERY = {
     'Correct the named configuration field against the selected immutable article and supported bounds before a new deliberate start. Reuse an accepted key only with identical input.',
   HISTORY_SEAL_FAILED:
     'The run is stopped and its resources are released; nothing reruns. Do not call codebook_stop again and do not claim saved learning. Tell the learner the save failed; its recorded part, when readable, opens from Saved studies. Start a new run only if the learner asks.',
+  NODE_SERVER_SOURCE_REFUSED:
+    "Correct the field the message names so its real path lies inside the opened repository: packageRoot a folder, entry a file inside it, and for a TypeScript entry the repository's own tsx installed by the repository's install command. Nothing was started. Start again once with a new key after the fix; the same refusal again means the prerequisite is still unmet, so tell the learner what is missing instead of retrying.",
   PLAYBACK_PROFILE_UNSUPPORTED:
     'codebook_playback controls browser recordings only. Do not start, continue or stop a run to open a test replay; ask the learner to open it.',
 } as const
