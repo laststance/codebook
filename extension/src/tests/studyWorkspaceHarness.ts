@@ -1097,7 +1097,8 @@ export async function workspaceHarness(
   /** Whether the fake Cursor reports the Application's group active a moment after a reveal of the Application that keeps the keyboard answered; see `activateApplicationGroupLateAfterReveal`. */
   let activatesApplicationGroupLateAfterReveal = false
   /** Whether the fake Cursor reports the group `workbench.action.newGroupAbove` made active only after the command answered; see `activateNewGroupLateAfterInsertion`. */
-  let activatesNewGroupLateAfterInsertion = false
+  let activatesNewGroupLateAfterInsertion = false,
+    newGroupActivationDelayMs: number | undefined
   /** The late group activations the fake editor has not reported yet; the first layout read after them reports them while it is in flight, else a timer does. */
   const pendingLateGroupActivations: {
     report: () => void
@@ -1272,6 +1273,7 @@ export async function workspaceHarness(
   function queueLateGroupActivation(
     group: () => (typeof groups)[number] | undefined,
     atRead: () => boolean = () => true,
+    delayMs: number = NEXT_TAB_ACTIVATION_DELAY_MS,
   ): void {
     const pending = { report: (): void => {}, atRead }
     const report = (): void => {
@@ -1285,7 +1287,7 @@ export async function workspaceHarness(
     }
     pending.report = report
     pendingLateGroupActivations.push(pending)
-    runEditorChangeLater(report, NEXT_TAB_ACTIVATION_DELAY_MS)
+    runEditorChangeLater(report, delayMs)
   }
   const automaticallyClosedColumns: number[] = []
   let transientLayout = false,
@@ -4148,6 +4150,7 @@ export async function workspaceHarness(
               queueLateGroupActivation(
                 () => inserted,
                 () => activeTabGroup !== inserted,
+                newGroupActivationDelayMs,
               )
             }
             return
@@ -6026,10 +6029,13 @@ export async function workspaceHarness(
     },
     /**
      * Makes the fake editor report the group `workbench.action.newGroupAbove` made active only after the command answered, as Cursor activates a new group late (N55-F4 hypothesis H2-b, row 650).
+     * @param delayMs - How long after the command the report comes; omitted for the editor's usual short delay.
      * @example harness.activateNewGroupLateAfterInsertion()
+     * @example harness.activateNewGroupLateAfterInsertion(600) // later than the preparation's wait
      */
-    activateNewGroupLateAfterInsertion(): void {
+    activateNewGroupLateAfterInsertion(delayMs?: number): void {
       activatesNewGroupLateAfterInsertion = true
+      newGroupActivationDelayMs = delayMs
     },
     /**
      * Makes a disposed panel's `viewType` and `viewColumn` throw `Webview is disposed`, as the editor's WebviewPanel does (`dispose()` itself stays idempotent).

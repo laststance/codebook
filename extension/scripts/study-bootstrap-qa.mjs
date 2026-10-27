@@ -8724,6 +8724,24 @@ async function check(page, options, collected) {
       afterReaderOpened.chosen === shownStudy.id,
   })
 
+  // Arrange: the learner chose a saved study that cannot be opened, to delete it, and the Study workspace closes (the bottom panel's Saved studies survives the close and offers the delete control).
+  await library([shownStudy, staleStudy], shownStudy.id)
+  await page.selectOption('#studies', staleStudy.id)
+  // Act
+  await library([shownStudy, staleStudy], shownStudy.id, {
+    readerClosed: true,
+  })
+  const unopenableWhileReaderClosed = await removalControl()
+  // Assert
+  // Value: protects=the learner's own choice of a saved study that cannot be opened, to delete it, surviving Close Study Workspace; fails_when=the closed reader empties the list and the delete control loses the study the learner chose (task 31 clears only the study the reader showed: a study that cannot be opened has no open for a repeated choice to miss); why_new=local CodeRabbit CR2 (Cycle 0056 pt3), decided as not a defect; seam=the Study messages the host posts; no_claim=the host's delete
+  cases.push({
+    name: 'a saved study that cannot be opened and was chosen for deletion stays chosen, with its delete control, after Close Study Workspace',
+    actual: { unopenableWhileReaderClosed },
+    passed:
+      unopenableWhileReaderClosed.chosen === staleStudy.id &&
+      unopenableWhileReaderClosed.ariaDisabled === null,
+  })
+
   // Arrange: a delete request the host refuses, shown under the button (A-L5, AD-14, DR-26).
   const sameRefusal = {
     status: 'refused',

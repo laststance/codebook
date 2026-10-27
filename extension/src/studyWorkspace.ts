@@ -81,6 +81,10 @@ import {
   STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH,
   STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE,
   STUDY_SOURCE_SCHEME,
+  SUMMARY_CHOICE_DROPPED_NOTICE_PREFIX,
+  SUMMARY_CHOICE_DROPPED_REASON_CLOSED,
+  SUMMARY_CHOICE_DROPPED_REASON_CLOSING,
+  SUMMARY_CHOICE_DROPPED_REASON_COMPOSITION_LEFT,
   SUMMARY_DISPLACED_OFFER,
   SUMMARY_FOCUS_RELEASE_WAIT_MS,
   SUMMARY_PLACEMENT_ACTION,
@@ -983,6 +987,10 @@ export class StudyWorkspace {
   private nodeHistoryEntryTurn: Promise<void> = Promise.resolve()
   /** `true` while {@link openNodeHistoryFromHost} enters the summary composition for a test replay that has not begun opening ({@link testReplayHoldsComposition}). */
   private hostOpeningTestReplay = false
+  /**
+   * The replay a closed reader keeps selected for its next Open Study Workspace while an entry for another replay opens; the Learning summary and the bottom panel receive no message that carries it ({@link publish}). It is released when the entry ends ({@link openNodeHistoryFromHost}), and it holds nothing once the chosen replay replaces the selection.
+   */
+  private heldBackReplay: { entry: number; studyId: string } | undefined
   /** The editor's recent group and active text editor changes, for {@link refusePlacement}'s report (F382). */
   private readonly placementEvents = new PlacementEventLog()
   /** The native effects this host itself issued (reveals, disposals, editor commands, shown documents), for {@link refusePlacement}'s report (N55-F4). */
@@ -11872,51 +11880,59 @@ export class StudyWorkspace {
   ): Promise<void> {
     const entry = this.supersedeNodeHistoryEntries(),
       overtaken = this.nodeHistoryEntryCancellation.signal
-    // Entries take turns entering the composition; a newer entry made meanwhile is the learner's latest choice (EN19).
-    const previousTurn = this.nodeHistoryEntryTurn
-    let releaseTurn!: () => void
-    this.nodeHistoryEntryTurn = new Promise<void>((resolve) => {
-      releaseTurn = resolve
-    })
-    this.nodeHistoryEntriesUnderWay++
-    let entered = false
     try {
-      await previousTurn
-      entered = await this.enterCompositionForEntry(studyId, entry, overtaken)
-    } finally {
-      this.nodeHistoryEntriesUnderWay--
-      releaseTurn()
-    }
-    if (!entered) {
-      // The last superseded entry to end leaves the summary composition an earlier one built, when no entry is under way to fill it: a Return or a Close superseded them all (Cycle 0052 task 12).
-      if (
-        entry !== this.nodeHistoryEntryRequest &&
-        this.nodeHistoryEntriesUnderWay === 0
+      // Entries take turns entering the composition; a newer entry made meanwhile is the learner's latest choice (EN19).
+      const previousTurn = this.nodeHistoryEntryTurn
+      let releaseTurn!: () => void
+      this.nodeHistoryEntryTurn = new Promise<void>((resolve) => {
+        releaseTurn = resolve
+      })
+      this.nodeHistoryEntriesUnderWay++
+      let entered = false
+      try {
+        await previousTurn
+        entered = await this.enterCompositionForEntry(studyId, entry, overtaken)
+      } finally {
+        this.nodeHistoryEntriesUnderWay--
+        releaseTurn()
+      }
+      if (!entered) {
+        // The last superseded entry to end leaves the summary composition an earlier one built, when no entry is under way to fill it: a Return or a Close superseded them all (Cycle 0052 task 12).
+        if (
+          entry !== this.nodeHistoryEntryRequest &&
+          this.nodeHistoryEntriesUnderWay === 0
+        )
+          await this.leaveEmptySummaryComposition()
+        return
+      }
+      if (entry !== this.nodeHistoryEntryRequest) return
+      const outcome = await this.openNodeHistory(
+        studyId,
+        revision ?? this.revision,
       )
-        await this.leaveEmptySummaryComposition()
-      return
+      if (outcome.status === 'superseded') {
+        // A superseded open leaves the summary composition it entered when no newer replay stands in it, as a failed open does (Cycle 0052 task 13); an entry still under way fills or leaves that composition itself (task 35).
+        if (this.nodeHistoryEntriesUnderWay === 0)
+          await this.leaveEmptySummaryComposition()
+        return
+      }
+      if (outcome.status !== 'failed') {
+        // The learner's own replay open, after the replay is shown: the summary moves beside the chat once per profile (F209).
+        await this.moveSummaryBesideChatOnce()
+        return
+      }
+      if (
+        (await this.answerFailedTestReplayOpen(studyId, outcome.error)) ===
+        'retry'
+      )
+        return this.openNodeHistoryFromHost(studyId)
+    } finally {
+      // The closed reader's replay held back for this entry is drawn again, by the next Open Study Workspace if this entry did not replace it (Cycle 0056 task 32).
+      if (this.heldBackReplay?.entry === entry) {
+        this.heldBackReplay = undefined
+        this.lastPublished = undefined
+      }
     }
-    if (entry !== this.nodeHistoryEntryRequest) return
-    const outcome = await this.openNodeHistory(
-      studyId,
-      revision ?? this.revision,
-    )
-    if (outcome.status === 'superseded') {
-      // A superseded open leaves the summary composition it entered when no newer replay stands in it, as a failed open does (Cycle 0052 task 13); an entry still under way fills or leaves that composition itself (task 35).
-      if (this.nodeHistoryEntriesUnderWay === 0)
-        await this.leaveEmptySummaryComposition()
-      return
-    }
-    if (outcome.status !== 'failed') {
-      // The learner's own replay open, after the replay is shown: the summary moves beside the chat once per profile (F209).
-      await this.moveSummaryBesideChatOnce()
-      return
-    }
-    if (
-      (await this.answerFailedTestReplayOpen(studyId, outcome.error)) ===
-      'retry'
-    )
-      return this.openNodeHistoryFromHost(studyId)
   }
 
   /**
@@ -12034,7 +12050,7 @@ export class StudyWorkspace {
   /**
    * Opens the summary composition for a test replay that is about to open (Cycle 0051, DS-A): a closed reader opens, and the Live composition and the Study composition give way to it, so the Study pane closes and the Learning summary takes the chat's place; called by {@link openNodeHistoryFromHost}.
    * Only a reader that already stands in the summary composition for a test replay (another test replay was shown) is left as it is; an earlier entry that failed after it left the Live composition is opened again, so the Application, the slot and the debugger never show without a transport (F384).
-   * A closed reader keeps the replay it showed for the next Open Study Workspace ({@link close}); an entry for another replay retires that selection before {@link open} publishes, so the Learning summary never draws the closed reader's replay (its title, result and stop) while the chosen one opens (Cycle 0056 task 32). An entry for the same replay keeps it and shows it at once.
+   * A closed reader keeps the replay it showed for the next Open Study Workspace ({@link close}); an entry for another replay holds that selection back ({@link heldBackReplay}) before {@link open} publishes, so the Learning summary never draws the closed reader's replay (its title, result and stop) while the chosen one opens, and a refused entry leaves it selected for the next Open Study Workspace (Cycle 0056 task 32). An entry for the same replay keeps it and shows it at once.
    * @throws What {@link open} throws; the caller tells it.
    * @param studyId - The test replay's study id.
    * @param entry - The entry's ticket ({@link nodeHistoryEntryRequest}); an entry a newer one or a Return overtook while it waited for the work window reveals nothing.
@@ -12062,15 +12078,16 @@ export class StudyWorkspace {
     }
     this.hostOpeningTestReplay = true
     try {
-      // A closed reader still holds the replay it showed: another replay's entry drops it before open() publishes the summary, and the retirement's native work is rechecked against the entry.
+      // A closed reader still holds the replay it showed for the next Open Study Workspace: while another replay's entry opens, no view draws it, and a refused entry leaves it selected (Cycle 0056 task 32).
       if (
         !this.opened &&
         this.selectedNodeHistory &&
         this.selectedNodeHistory.header.studyId !== studyId
-      ) {
-        await this.retireNodeHistorySelection()
-        overtaken.throwIfAborted()
-      }
+      )
+        this.heldBackReplay = {
+          entry,
+          studyId: this.selectedNodeHistory.header.studyId,
+        }
       // The open's waits for the work window end too when a newer entry, a Return or a Close supersedes this one (Cycle 0052 task 44).
       await this.open(overtaken)
     } finally {
@@ -13933,13 +13950,17 @@ export class StudyWorkspace {
     this.lastPublished = signature
     void this.contextPanel?.webview.postMessage(compact)
     // The Learning summary draws only a shown replay: a publish while the reader leaves one would draw the Live Study page there (Cycle 0052 task 2, N51-V2).
-    if (this.summaryComposition && compact.replayFamily)
+    // A replay held back for another replay's entry is drawn by no view (Cycle 0056 task 32).
+    const isHeldBack =
+      this.heldBackReplay !== undefined &&
+      this.selectedNodeHistory?.header.studyId === this.heldBackReplay.studyId
+    if (this.summaryComposition && compact.replayFamily && !isHeldBack)
       void this.summaryView?.webview.postMessage(compact)
     if (this.moments)
       this.moments.title = this.summaryComposition
         ? 'Learning replay'
         : 'Observed moments'
-    void this.moments?.webview.postMessage(compact)
+    if (!isHeldBack) void this.moments?.webview.postMessage(compact)
     if (this.outline)
       this.outline.message = message.model.currentSourceAvailable
         ? `${message.model.understoodCount} of ${message.model.progressByItem.length} understood for current source · ${message.model.reviewCount} needs review`
@@ -22211,6 +22232,8 @@ export class StudyWorkspace {
     identity: symbol,
     signal: AbortSignal | undefined,
   ): Promise<void> {
+    // A preparation cancelled before the wait begins waits for nothing.
+    if (signal?.aborted) return
     await new Promise<void>((resolve) => {
       const subscription = vscode.window.tabGroups.onDidChangeTabGroups(
         (event) => {
@@ -22553,6 +22576,7 @@ export class StudyWorkspace {
 
   /**
    * Writes one Output › Codebook entry for a main editor that reported no keyboard focus, and returns the refusal sentence the entry throws; called by {@link readMainEditorGrid} when its wait ends (F389).
+   * The entry's tab labels and events are sanitized as {@link refusePlacement}'s are, so no home, storage or repository path reaches Output.
    * The entry names the groups and tabs before the first group was focused and now, so the next native take tells what the first group held while the editor reported nothing.
    * @param armed - The time the wait began and the groups before the focus command.
    * @returns The sentence {@link unreportedEditorFocusObstacle} words.
@@ -22570,7 +22594,9 @@ export class StudyWorkspace {
         nowMs: performance.now(),
         before: this.sanitizeRefusalGroups(armed.before),
         after: this.sanitizeRefusalGroups(this.refusalGroupViews()),
-        events: this.placementEvents.since(armed.atMs),
+        events: this.sanitizeRefusalNotes(
+          this.placementEvents.since(armed.atMs),
+        ),
       }),
     })
     return unreportedEditorFocusObstacle(
@@ -22696,7 +22722,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Runs an editor command and notes it as one of Codebook's own effects; every command this class sends goes through here, instead of `this.executeEditorCommand`, except the reads of the layout and context keys, which change nothing.
+   * Runs an editor command and notes it as one of Codebook's own effects; every command this class sends goes through here, instead of `vscode.commands.executeCommand`, except the reads of the layout and context keys, which change nothing.
    * @param command - The command id.
    * @param rest - Its arguments.
    * @returns What the editor's command returns.
@@ -22725,9 +22751,11 @@ export class StudyWorkspace {
     this.noteNativeEffect(
       `showTextDocument column ${options?.viewColumn ?? 'active'} preserveFocus ${options?.preserveFocus ?? false}`,
     )
-    return 'fsPath' in target
-      ? vscode.window.showTextDocument(target, options)
-      : vscode.window.showTextDocument(target, options)
+    // The editor's API takes a document or its uri in one call; its typings declare them as two overloads, which a union does not match.
+    return vscode.window.showTextDocument(
+      target as vscode.TextDocument,
+      options,
+    )
   }
 
   /**
@@ -23506,7 +23534,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Writes one Output › Codebook entry for a learner's choice (a Saved studies entry, a tab or an item) that the Learning summary sent while the Study workspace was closed, so a dropped choice leaves a trace instead of nothing (N55-F4, Cycle 0056 task 17); called by {@link receive} when {@link isMessageOwnerRetired} drops a message.
+   * Writes one Output › Codebook entry, and shows the learner one non-modal information notice with the same reason, for a learner's choice (a Saved studies entry, a tab or an item) that the Learning summary sent while the Study workspace was closed, closing or had left the summary composition, so a dropped choice leaves a trace and a notice instead of nothing (N55-F4, Cycle 0056 tasks 17 and the local review); called by {@link receive} when {@link isMessageOwnerRetired} drops a message.
    * The pane that sent the choice is released by {@link receivePaneMessage}'s reply, which is posted whether or not the message was carried out. A renderer a handoff retired is no learner's choice and writes nothing.
    * @param value - The raw message that was dropped.
    * @param owner - The view that sent it.
@@ -23523,13 +23551,25 @@ export class StudyWorkspace {
       !CONTROL_RETIRING_MESSAGE_TYPES.has(parsed.data.type)
     )
       return
+    // The reason the gate dropped it: closing wins, then closed, else the composition was left.
+    const reason = this.closing
+      ? SUMMARY_CHOICE_DROPPED_REASON_CLOSING
+      : this.opened
+        ? SUMMARY_CHOICE_DROPPED_REASON_COMPOSITION_LEFT
+        : SUMMARY_CHOICE_DROPPED_REASON_CLOSED
     this.diagnostics?.log({
       surface: 'choice:dropped',
       ...('studyId' in parsed.data && typeof parsed.data.studyId === 'string'
         ? { studyId: parsed.data.studyId }
         : {}),
-      cause: `The "${parsed.data.type}" choice from the Learning summary was not carried out: the Study workspace is closed. Open Study Workspace, then choose it again.`,
+      cause: `The "${parsed.data.type}" choice from the Learning summary was not carried out: ${reason}`,
     })
+    // The learner sees the drop too: a pane that only released its list would otherwise show nothing happened.
+    void showPlainNotice(
+      vscode.window,
+      'information',
+      `${SUMMARY_CHOICE_DROPPED_NOTICE_PREFIX}${reason}`,
+    )
   }
 
   /** Accepts only bounded named UI messages, rejecting stale controls before dispatch. @example await this.receive(message) */

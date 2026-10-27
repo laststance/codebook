@@ -1852,5 +1852,21 @@ export const REFUSAL_REPORT_EVENTS = 24
 /** The most native effects Codebook itself issued (reveals, disposals, editor commands, shown documents) that a {@link PlacementEventLog} keeps for a placement refusal report, in effects. */
 export const REFUSAL_REPORT_EFFECTS = 48
 
-/** How long a new Application group's preparation waits for the editor's own report that it activated the group, in ms; Cursor sends it after the command that made the group answered (N55-F4, row 650). It ends at the report, or here when the editor sends none. */
+/** How long a new Application group's preparation waits for the editor's own report that it activated the group, in ms; Cursor sends it after the command that made the group answered (N55-F4, row 650). It ends at the report, or here when the editor sends none. The bound is empirical, not derived: N56 on candidates `5b39b767` and `02acefaa` opened the Study workspace 13 times in Cursor 3.27.12 and the report always arrived within it, with no refusal; a report that arrives later is read by the guards as a change the learner made and refuses the open with a report naming the late activation. */
 export const LATE_GROUP_ACTIVATION_WAIT_MS = 150
+
+/** Why the reader did not carry out a choice the Learning summary sent while the Study workspace was closed; completes "The … choice from the Learning summary was not carried out: " in Output › Codebook and "Codebook did not carry out your choice: " in the notice the learner sees. */
+export const SUMMARY_CHOICE_DROPPED_REASON_CLOSED =
+  'the Study workspace is closed. Open Study Workspace, then choose it again.'
+
+/** The reason when the choice arrived while the Study workspace was closing. See {@link SUMMARY_CHOICE_DROPPED_REASON_CLOSED}. */
+export const SUMMARY_CHOICE_DROPPED_REASON_CLOSING =
+  'the Study workspace is closing. Wait until it has closed, open it with Open Study Workspace, then choose it again.'
+
+/** The reason when the reader had left the summary composition (the Study pane stands again). See {@link SUMMARY_CHOICE_DROPPED_REASON_CLOSED}. */
+export const SUMMARY_CHOICE_DROPPED_REASON_COMPOSITION_LEFT =
+  'the Learning summary no longer shows a replay. Choose it again from Saved studies in the Study workspace.'
+
+/** What the learner's notice for a dropped Learning summary choice starts with, before the reason. */
+export const SUMMARY_CHOICE_DROPPED_NOTICE_PREFIX =
+  'Codebook did not carry out your choice: '

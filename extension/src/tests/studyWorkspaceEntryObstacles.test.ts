@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -8622,6 +8623,83 @@ test('Open Study Workspace refused for an unreported main editor focus writes on
     assert.match(entries[0]!.cause, /1\*? \[Cursor Settings \(/)
   } finally {
     resetFakeClock(context)
+    await harness.close()
+  }
+})
+
+// Value: protects=the Output › Codebook entry of an unreported main editor focus never carrying the home directory or a control character that a tab label or an event note held; fails_when=the entry lists the editor's events unsanitized, as refusePlacement's sanitized ones are not (local CodeRabbit, Cycle 0056 pt3 CR3); why_new=the F389 entry's test read the group and tab lines, with no private path in any note; seam=the reader's placementEvents note recorded with a home path and a bell character, the entry's cause; no_claim=the native editor's own labels
+test('the Output entry of an unreported main editor focus hides the home directory and control characters in the editor events', async (context) => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.leavePaneFocusUnreportedBesideChat()
+  const home = homedir()
+  try {
+    harness.focusOpaqueTab(harness.addOpaqueTab('Cursor Settings', 1))
+    chat.focusTab()
+    const commands = harness.editor.commands as {
+      executeCommand: (name: string, ...rest: unknown[]) => Thenable<unknown>
+    }
+    const runCommand = commands.executeCommand.bind(commands)
+    commands.executeCommand = async (name, ...rest) => {
+      if (name === 'workbench.action.focusFirstEditorGroup')
+        harness.reader['placementEvents'].record(
+          performance.now(),
+          `tab opened ${home}/private/notes.ts\u0007`,
+        )
+      await advanceClock(context, 100)
+      return runCommand(name, ...rest)
+    }
+
+    // Act
+    const opening = harness.reader.open().then(
+      () => 'opened',
+      (error: unknown) => String(error),
+    )
+    enableFakeClock(context)
+    await advanceClockUntilSettled(context, opening, 6_000)
+    await opening
+    resetFakeClock(context)
+
+    // Assert
+    const entries = logged.filter(
+      (entry) => entry.surface === 'presentation:focus-unreported',
+    )
+    assert.equal(entries.length, 1)
+    assert.match(entries[0]!.cause, /tab opened ~\/private\/notes\.ts/)
+    assert.equal(entries[0]!.cause.includes(home), false)
+    assert.equal(entries[0]!.cause.includes('\u0007'), false)
+  } finally {
+    resetFakeClock(context)
+    await harness.close()
+  }
+})
+
+// Value: protects=a cancelled Application group preparation ending its wait for the editor's late activation report at once; fails_when=the wait runs its full bound when its signal is already aborted, so a Close or a newer entry holds the next arrangement for 150 ms (local open-code-review OCR-L2, Cycle 0056 pt3); why_new=the wait registered its abort listener after the signal had aborted, which never fires; seam=the reader's waitForLateGroupActivation with an aborted signal; no_claim=the native timing of the editor's report
+test('the wait for an Application group’s late activation ends at once when its preparation is already cancelled', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const startedAtMs = performance.now()
+
+    // Act
+    await harness.reader['waitForLateGroupActivation'](
+      Symbol('group'),
+      AbortSignal.abort(),
+    )
+
+    // Assert
+    assert.equal(performance.now() - startedAtMs < 50, true)
+  } finally {
     await harness.close()
   }
 })
