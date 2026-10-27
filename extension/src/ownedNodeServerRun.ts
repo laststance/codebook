@@ -150,6 +150,9 @@ export type NodeServerRunInput = {
   dependencies: NodeServerRunDependencies
 }
 
+/** A stop's release that detaches the debugger before it signals (no kill-first), while its close is under way: whether it is a retry, and whether a late pause already asked to end the group. */
+type DetachRelease = { isRetry: boolean; killed: boolean }
+
 /** A pause of the debugger that the run reports as the current declared-stop pause. */
 type OwnedPause = {
   identity: PauseIdentity
@@ -226,7 +229,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   /** The launched leader's start as read after the spawn (read again before the attach when that failed), kept for the identity check of a retried stop. */
   private launchedStartedAt?: string
   /** The release that detaches the debugger before it signals (no kill-first), while its close is under way; a pause reported meanwhile ends the group at once. */
-  private detachRelease?: { isRetry: boolean; killed: boolean }
+  private detachRelease?: DetachRelease
   // Pauses.
   private generation = 0
   private pause?: OwnedPause
@@ -1395,7 +1398,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
 
   /**
    * Ends the group at once when a pause is reported while a stop's detach (no kill-first) is under way: the detach would resume the paused code and let it run until SIGTERM.
-   * A first release signals unconditionally; a retry signals as soon as the identity check answers `launched` (an unverifiable group receives nothing; the release's own failure path then applies). The close goes on with its own SIGTERM sequence meanwhile.
+   * A first release signals at once; a retry signals as soon as the identity check answers `launched` (an unverifiable group receives nothing; the release's own failure path then applies). The close goes on with its own SIGTERM sequence meanwhile.
    * Called by {@link onDebuggerPause} once per release.
    */
   private killDuringDetach(): void {
@@ -1405,18 +1408,32 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     const { pid, processGroup } = server
     release.killed = true
     if (!release.isRetry) {
-      this.sendLateKill(pid, processGroup)
+      this.sendLateKill(release, pid, processGroup)
       return
     }
     // A retry confirms the group first; a check that fails or cannot tell sends nothing.
     void this.maySignal(server, true).then(
-      (confirmed) => confirmed && this.sendLateKill(pid, processGroup),
+      (confirmed) => confirmed && this.sendLateKill(release, pid, processGroup),
       () => undefined,
     )
   }
 
-  /** Sends SIGKILL to the group for a pause reported during the detach and journals it; a signal the system refuses is left to the close's own sequence. */
-  private sendLateKill(pid: number | undefined, processGroup: number): void {
+  /**
+   * Sends SIGKILL to the group for a pause reported during the detach and journals it, only while that release's close is still under way and the group still has members.
+   * Why: once the close returned, or the group ended, nothing of the run is left to end and the group id may be another group's; a signal the system refuses is left to the close's own sequence. Called by {@link killDuringDetach}, at once on a first release and after the identity check on a retry.
+   * @param release - The release the pause was reported during; another or none under way now means its close already returned.
+   * @param pid - The leader's pid, journaled with the event.
+   * @param processGroup - The group to end.
+   * @example this.sendLateKill(release, 4242, 4242) // SIGKILL to group 4242 and `node-server.late-pause-killed` { pid: 4242 }
+   */
+  private sendLateKill(
+    release: DetachRelease,
+    pid: number | undefined,
+    processGroup: number,
+  ): void {
+    // The close returned meanwhile, or the group ended: the id may be another group's now.
+    if (this.detachRelease !== release || this.safeGroupGone(processGroup))
+      return
     try {
       this.dependencies.signalGroup(processGroup, 'SIGKILL')
       this.record('node-server.late-pause-killed', { pid })

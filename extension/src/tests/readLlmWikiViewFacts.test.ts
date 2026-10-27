@@ -7,6 +7,7 @@ import {
   readLlmWikiViewFacts,
   type LlmWikiViewFactsDependencies,
 } from '../utils/readLlmWikiViewFacts'
+import type { WikiUpdateStatus } from '../utils/wikiUpdateRun'
 
 import { defer } from './utils/defer'
 
@@ -215,6 +216,71 @@ test('the receipt is read first, then the start block, the token and the marker 
       true,
       ['receipt', 'start-block', 'token', 'marker'],
       'receipt@1',
+    ],
+  )
+})
+
+// protects=task 13 and ship review pass 1: this window's own live marker reads as settling only in the moment after its run ended (until a failed marker change is asked for again), so the view keeps its message for that moment and never for a marker left standing; fails_when=a running run's own marker, one with no run of this window, or one still standing 10 s after the end reads as settling, or one a second after the end does not; why_new=the read loop covers the model message only; seam=none; no_claim=the file work that removes the marker
+test('this window’s own live marker is settling only for 10 s after its run ended, and another window’s marker is elsewhere', async () => {
+  // Arrange
+  const ownLive = (windowId: string): WikiUpdateMarkerLook => ({
+    kind: 'live',
+    heldBy: {
+      pid: 1,
+      windowId,
+      host: 'vscode',
+      startedAtMs: NOW_MS - 60_000,
+      runKind: 'update',
+    },
+  })
+  const endedAgo = (agoMs: number): WikiUpdateStatus => ({
+    state: 'cancelled',
+    site: 'kept',
+    host: 'vscode',
+    finishedAt: new Date(NOW_MS - agoMs).toISOString(),
+    outputDirectory: '/repo/.codebook/wiki',
+    outputLabel: '.codebook/wiki',
+  })
+  const running: WikiUpdateStatus = {
+    state: 'running',
+    host: 'vscode',
+    startedAt: new Date(NOW_MS - 60_000).toISOString(),
+    timeoutMs: 1_800_000,
+    candidateStaged: false,
+    outputDirectory: '/repo/.codebook/wiki',
+    outputLabel: '.codebook/wiki',
+  }
+  const read = (windowId: string, status: WikiUpdateStatus) =>
+    readLlmWikiViewFacts(
+      dependencies({
+        readMarker: async () => ownLive(windowId),
+        runStatus: () => status,
+      }),
+    )
+
+  // Act
+  const justEnded = await read('this-window', endedAgo(1_000))
+  const endedLongAgo = await read('this-window', endedAgo(10_000))
+  const noRun = await read('this-window', { state: 'idle' })
+  const stillRunning = await read('this-window', running)
+  const otherWindow = await read('other-window', endedAgo(1_000))
+
+  // Assert
+  assert.deepEqual(
+    [justEnded, endedLongAgo, noRun, stillRunning, otherWindow].map((facts) =>
+      facts.kind === 'ready'
+        ? {
+            isMarkerSettling: facts.isMarkerSettling,
+            elsewhere: facts.elsewhere?.kind,
+          }
+        : 'not ready',
+    ),
+    [
+      { isMarkerSettling: true, elsewhere: undefined },
+      { isMarkerSettling: undefined, elsewhere: undefined },
+      { isMarkerSettling: undefined, elsewhere: undefined },
+      { isMarkerSettling: undefined, elsewhere: undefined },
+      { isMarkerSettling: undefined, elsewhere: 'update' },
     ],
   )
 })

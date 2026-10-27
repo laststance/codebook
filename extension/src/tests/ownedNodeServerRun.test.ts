@@ -1564,6 +1564,51 @@ test('a pause reported during the detach of a retried stop sends no signal to a 
   )
 })
 
+// protects=task 4 on a retried stop (ship review pass 1): the late SIGKILL belongs to the release it was asked for, so an identity check that answers only after that release's close returned sends nothing; fails_when=the check's answer still signals the group id (and journals the kill) after the close returned; no_claim=the close's own SIGTERM sequence
+test('a pause reported during a retried detach sends no SIGKILL when its identity check answers after the close returned', async () => {
+  // Arrange
+  const harness = await readyHarness({ holdClose: true })
+  const { detach, retry } = await retryHoldingItsDetach(harness)
+  const startRead = defer<void>()
+  harness.calls.leader.startGate = startRead.promise
+  harness.debug.learnerPause()
+  detach.resolve()
+  harness.server.closeGate.resolve()
+  await retry
+  // Act
+  startRead.resolve()
+  await new Promise((resolve) => setImmediate(resolve))
+  await new Promise((resolve) => setImmediate(resolve))
+  // Assert
+  assert.deepEqual(harness.calls.signals, [])
+  assert.deepEqual(
+    harness.events.filter((event) => event.type.endsWith('late-pause-killed')),
+    [],
+  )
+})
+
+// protects=task 4 on a first stop (ship review pass 1): a pause reported after the group already ended (the close has not returned yet) signals nothing, since the freed id may be another group's; fails_when=the late SIGKILL goes to a group the probe reads as gone, or the kill is journaled; no_claim=a group whose probe cannot answer (it counts as still there)
+test('a pause reported during the detach of a first stop sends no SIGKILL to a group that already ended', async () => {
+  // Arrange
+  const harness = await readyHarness()
+  const detach = defer<void>()
+  harness.debug.releaseGate = detach.promise
+  const stopping = harness.run.stop()
+  await releaseCalls(harness, 1)
+  harness.calls.groupGone = true
+  // Act
+  harness.debug.learnerPause()
+  const signalsBeforeDetachSettled = [...harness.calls.signals]
+  detach.resolve()
+  await stopping
+  // Assert
+  assert.deepEqual(signalsBeforeDetachSettled, [])
+  assert.deepEqual(
+    harness.events.filter((event) => event.type.endsWith('late-pause-killed')),
+    [],
+  )
+})
+
 // protects=task 3: a leader start that could not be read at launch is read again before the attach and recorded for the orphan sweep; fails_when=the run records nothing (the sweep could never match it) or only the first read is tried; no_claim=the real ps read
 test('a leader start that failed at the launch is read again before the attach and recorded', async () => {
   // Arrange

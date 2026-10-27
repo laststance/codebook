@@ -1494,3 +1494,85 @@ test('the message stays the watching message from the run’s end until the stop
     `message:${STOPPED_MESSAGE}`,
   ])
 })
+
+// Value: protects=ship review pass 1 on task 13 (the message kept while this window's marker settles never outlives the settle); fails_when=the watching message stays once the marker still stands 10 s after the run's end (its change failed), or only a file or run event would replace it; no_claim=the file work that removes the marker; seam=the real facts reader with this window's own marker held live, a clock the test moves and the view's own poll
+test('the watching message kept after the run’s end gives way by itself when the marker still stands 10 s later', async (context) => {
+  // Arrange
+  let nowMs = 1_790_000_000_000
+  const ownLiveMarker: WikiUpdateMarkerLook = {
+    kind: 'live',
+    heldBy: {
+      pid: 1,
+      windowId: 'this-window',
+      host: 'vscode',
+      startedAtMs: nowMs - 60_000,
+      runKind: 'generate',
+    },
+  }
+  let status: WikiUpdateStatus = {
+    state: 'running',
+    host: 'vscode',
+    startedAt: new Date(nowMs - 60_000).toISOString(),
+    timeoutMs: 3_300_000,
+    candidateStaged: false,
+    runKind: 'generate',
+    outputDirectory: WATCHED_OUTPUT,
+    outputLabel: '.codebook/wiki',
+  }
+  const { fake, view } = openView(context, {
+    readFacts: () =>
+      readLlmWikiViewFacts({
+        host: 'vscode',
+        isFolderOpen: () => true,
+        isTrusted: () => true,
+        wikiLocation: async () => ({
+          projectRoot: WATCHED_PROJECT,
+          outputDirectory: WATCHED_OUTPUT,
+        }),
+        readPublishToken: async () => undefined,
+        readPublication: async () => undefined,
+        findStartBlock: async () => undefined,
+        readGeneration: async () => ({}),
+        isWikiOwnedBy: async () => true,
+        readMarker: async () => ownLiveMarker,
+        ownWindowId: 'this-window',
+        isStartUnderWay: () => false,
+        hasPublishEndedWait: async () => false,
+        runStatus: () => status,
+        isAwaitingChat: () => false,
+        lastAgentExit: () => undefined,
+        now: () => nowMs,
+      }),
+  })
+  await view.whenIdle()
+  fake.rows()
+  status = {
+    state: 'cancelled',
+    site: 'kept',
+    runKind: 'generate',
+    host: 'vscode',
+    finishedAt: new Date(nowMs).toISOString(),
+    outputDirectory: WATCHED_OUTPUT,
+    outputLabel: '.codebook/wiki',
+  }
+  await view.refresh()
+  fake.rows()
+  const messageWhileSettling = fake.message()
+
+  // Act
+  nowMs += 10_000
+  await waitUntil(
+    () => {
+      fake.rows()
+      return fake.message() !== WATCHING_MESSAGE || undefined
+    },
+    'the view to read again by itself',
+    1_000,
+  ).catch(() => undefined)
+
+  // Assert
+  assert.deepEqual(
+    [messageWhileSettling, fake.message()],
+    [WATCHING_MESSAGE, undefined],
+  )
+})

@@ -9,7 +9,7 @@ const nodeServerOrphanRecordSchema = z.strictObject({
   processGroup: z.number().int().positive(),
   /** The leader's start as {@link readProcessStart} names it. */
   leaderStartedAt: z.string().min(1),
-  /** The working folder's realpath. */
+  /** The working folder's realpath at the launch. No identity input since 0.2.53.0 (a server may change its folder, and the start time decides); still written and required so a record parses in every version: the schema is strict and drops a malformed entry, which would lose the only trace of a running server. */
   cwd: z.string().min(1),
   inspectorPort: z.number().int().positive(),
   declaredPort: z.number().int().positive(),
