@@ -322,3 +322,22 @@ test('the node-server help names a stop’s file among the paths NODE_SERVER_SOU
     "start: packageRoot, entry, a stop's file or the repository's own tsx is missing or is not a real path inside the opened repository",
   )
 })
+
+// protects=the help naming the one request time limit that can fire and the run deadline that ends a waiting request (Cycle 0057 item 10; README and help once named a 15-minute limit the run deadline pre-empts); fails_when=the help drops the 30 s running-time limit, the RUNTIME_FAILED end at the run deadline, or names the 15-minute backstop; no_claim=the README wording (readmeDelivery pins it)
+test('the node-server help states the 30 s running-time limit and the run deadline ending a waiting request, without a 15-minute limit', async () => {
+  // Arrange / Act
+  const { body } = await servedHelp()
+  const limit = body.limits.find((line: string) =>
+    line.includes('REQUEST_TIMEOUT counts running time only'),
+  )
+
+  // Assert
+  assert.ok(limit)
+  assert.ok(limit.includes('(30 s, paused time excluded)'))
+  assert.ok(
+    limit.includes(
+      'A run whose request still waits at the run deadline ends with RUNTIME_FAILED.',
+    ),
+  )
+  assert.ok(!limit.includes('15'))
+})

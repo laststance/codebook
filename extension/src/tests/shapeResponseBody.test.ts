@@ -88,7 +88,7 @@ test('a credential starting just before the 8192-byte cut shows none of its pref
   // Act
   const shown = shapeResponseBody(body, 'text/plain')
   // Assert
-  assert.equal(shown, `${'a'.repeat(8_189)} [m … 28 more bytes`)
+  assert.equal(shown, `${'a'.repeat(8_189)} [m … 6 more bytes`)
 })
 
 // protects=a run of invalid bytes at the cut does not erase the shown text; fails_when=the back-off walks past 3 bytes; no_claim=valid text
@@ -103,7 +103,7 @@ test('a long run of invalid continuation bytes keeps the shown text near 8192 by
   // Assert
   assert.equal(
     shown,
-    `${'a'.repeat(10)}${'\uFFFD'.repeat(2_727)} … 819 more bytes (not valid UTF-8)`,
+    `${'a'.repeat(10)}${'\uFFFD'.repeat(2_727)} … 18819 more bytes (not valid UTF-8)`,
   )
 })
 
@@ -161,5 +161,18 @@ test('a private path straddling the shown cut is hidden before the cut', () => {
   // Act
   const shown = shapeResponseBody(body, 'text/plain', false, hideRoot)
   // Assert
-  assert.equal(shown, `${'a'.repeat(8_180)}<workspace>/ … 14 more bytes`)
+  assert.equal(shown, `${'a'.repeat(8_180)}<workspace>/ … 7 more bytes`)
+})
+
+// protects=the remainder count never goes negative or mixes texts when a sanitizer lengthens the body (Cycle 0057 item 2: '… -192 more bytes'); fails_when=the count subtracts a cut taken on the sanitized text from the original byte length; no_claim=which roots the real sanitizer hides
+test('a sanitizer that lengthens the body still reports the remaining bytes of the shown text, never a negative count', () => {
+  // Arrange: 4,000 two-byte "/a" become "<workspace>" (11 bytes) each
+  const body = Buffer.from('/a'.repeat(4_000))
+  const hideRoot = (text: string): string =>
+    text.replaceAll('/a', '<workspace>')
+  // Act
+  const shown = shapeResponseBody(body, 'text/plain', false, hideRoot)
+  // Assert: 44,000 bytes after hiding, 8,192 shown, 35,808 remain
+  assert.ok(shown.endsWith(' … 35808 more bytes'))
+  assert.equal(shown.length, 8_192 + ' … 35808 more bytes'.length)
 })
