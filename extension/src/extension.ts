@@ -111,6 +111,7 @@ import { describeBrokenWikiWatch } from './utils/describeBrokenWikiWatch'
 import { describeExistingWiki } from './utils/describeExistingWiki'
 import { describeJoinedWikiStart } from './utils/describeJoinedWikiStart'
 import { describeMissingWiki } from './utils/describeMissingWiki'
+import type { NodeServerOutputLine } from './utils/describeNodeServerOutputLine'
 import { describeOtherWikiWindow } from './utils/describeOtherWikiWindow'
 import {
   describeSecondWikiUpdateStart,
@@ -270,6 +271,15 @@ export function activate(
         )
       } catch {
         // A disposed channel has nowhere to write; the failure is already in the run's own answer.
+      }
+    },
+    // The plain request, response and failure lines of a node-server run (D10); a disposed channel has nowhere to write.
+    line: (line: NodeServerOutputLine): void => {
+      try {
+        if (line.level === 'error') output?.error(line.text)
+        else output?.info(line.text)
+      } catch {
+        // The line is also in the run's events.
       }
     },
     show: (): void => {
@@ -602,6 +612,7 @@ export function activate(
         const storageRoot = await realpath(directory)
         service = new StudyService(environment, storageRoot)
         service.diagnostics = diagnostics.log
+        service.outputLog = diagnostics.line
         // Every storage folder of the extension stays out of the causes the learner and the agent read (EN12).
         service.extraStorageRoots = [context.globalStorageUri.fsPath]
         await workspace().attach(service)

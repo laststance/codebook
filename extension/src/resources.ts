@@ -20,6 +20,7 @@ import {
   REPOSITORY_RUN_TIMEOUT_MS,
   SOURCE_LIMIT_BYTES,
   NODE_TEST_MINIMUM_VITEST_MAJOR,
+  NODE_SERVER_PROFILE,
   NODE_TEST_PROFILE,
   ACTIVE_TIMEOUT_MS,
   MAX_EXPLANATIONS,
@@ -32,6 +33,7 @@ import {
   REPOSITORY_ANNOUNCED_PAUSE_RESUME_LIMIT_MS,
 } from './constants'
 import { ERROR_RECOVERY, EvidenceIntegrityError, StudyError } from './errors'
+import { nodeServerHelp } from './nodeServerHelp'
 import { nodeTestConfigSchema } from './nodeTestConfigSchemas'
 import { retainedRepositoryConfigSchema } from './repositoryConfigSchemas'
 import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
@@ -225,6 +227,7 @@ export async function readResource(
       retainedFormats:
         'Configured Study v3/v4, books v1/v2, progress v1-v4, recordings v1/v2/v3. Version 2 intent saves Study v4 and recording v3 with per-stop source and participant identity. Corrupt or unsupported preferred formats fail without fallback or deletion. A study saved in a newer format is refused as saved by a newer Codebook and is kept. Direct entry offers Open article; Return to Wiki requires a saved actual origin.',
     })
+  if (uri === 'codebook://help/node-server') return json(nodeServerHelp())
   if (uri === 'codebook://help/node-test')
     return json({
       profile: NODE_TEST_PROFILE,
@@ -373,6 +376,19 @@ export async function readResource(
           ? `pages/${manifestPage[1]}/${manifestPage[2]}`
           : undefined,
       )
+    if (record.profile === NODE_SERVER_PROFILE && record.nodeServer?.prepared)
+      return readJsonPage(
+        service.uri(record.id, 'manifest'),
+        {
+          profile: NODE_SERVER_PROFILE,
+          configurationHash: record.nodeServer.prepared.configurationHash,
+          configuration: record.nodeServer.prepared.configuration,
+          descriptor: record.nodeServer.prepared.descriptor,
+        },
+        manifestPage
+          ? `pages/${manifestPage[1]}/${manifestPage[2]}`
+          : undefined,
+      )
     const manifest = record.runtime?.view().manifest
     if (!manifest)
       throw new StudyError(
@@ -393,7 +409,8 @@ export async function readResource(
       )
     const cursor = Number(cursorText),
       events =
-        record.profile === NODE_TEST_PROFILE
+        record.profile === NODE_TEST_PROFILE ||
+        record.profile === NODE_SERVER_PROFILE
           ? (record.nodeEvents ?? [])
           : (record.runtime?.view().events ?? [])
     const page = events
@@ -485,6 +502,11 @@ export async function readResource(
     return json(explanation)
   }
   if (suffix.startsWith('images/')) {
+    if (record.profile === NODE_SERVER_PROFILE)
+      throw new StudyError(
+        'EVIDENCE_UNAVAILABLE',
+        'Server runs have no application images: read the run resource for the stop, the response and the failure.',
+      )
     if (record.profile === NODE_TEST_PROFILE)
       throw new StudyError(
         'EVIDENCE_UNAVAILABLE',

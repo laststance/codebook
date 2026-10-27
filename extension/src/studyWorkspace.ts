@@ -35,6 +35,7 @@ import {
   MAIN_THREAD_WEBVIEW_PREFIX,
   MAX_DEFERRED_OPEN_REPLIES,
   MAX_SOURCE_DOCUMENTS,
+  NODE_SERVER_PROFILE,
   NODE_TEST_PROFILE,
   MILLISECONDS_PER_SECOND,
   NATIVE_RUN_AND_DEBUG_VIEW_COMMAND,
@@ -238,6 +239,7 @@ import {
   describeNodeRecordedSource,
   NODE_RECORDED_SOURCE_TEXT,
 } from './utils/describeNodeRecordedSource'
+import { describeNodeServerStatus } from './utils/describeNodeServerStatus'
 import { describeNodeTestReplay } from './utils/describeNodeTestReplay'
 import { describePaneIdentity } from './utils/describePaneIdentity'
 import { describeStudy } from './utils/describeStudy'
@@ -340,6 +342,7 @@ import {
   recordedLeftoverGroups,
 } from './utils/recordedLeftoverGroups'
 import { recordingNotShownReason } from './utils/recordingNotShownReason'
+import { refuseSavingServerRun } from './utils/refuseSavingServerRun'
 import { replacedTabAddresses } from './utils/replacedTabAddresses'
 import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition'
 import { type CauseRoots, sanitizeCause } from './utils/sanitizeCause'
@@ -10944,7 +10947,8 @@ export class StudyWorkspace {
       )
         return 'render'
     }
-    return this.currentRecord()?.profile === NODE_TEST_PROFILE
+    const profile = this.currentRecord()?.profile
+    return profile === NODE_TEST_PROFILE || profile === NODE_SERVER_PROFILE
       ? 'save-item'
       : 'none'
   }
@@ -11374,6 +11378,7 @@ export class StudyWorkspace {
   async saveLearningReplay(expectedStudyId?: string): Promise<void> {
     const service = this.service,
       record = this.currentRecord()
+    refuseSavingServerRun(record)
     // A test run's Save belongs to NodeLearningSave; a delayed click for another run is refused as for a browser save.
     if (service && record?.profile === NODE_TEST_PROFILE) {
       if (
@@ -11489,6 +11494,12 @@ export class StudyWorkspace {
             this.learningSave.signature))
         ? this.learningSave
         : undefined
+    // A server run has nothing to save: its item says where the run stands and that no replay exists yet, with no command.
+    if (record?.profile === NODE_SERVER_PROFILE && this.service && studyId) {
+      const view = describeNodeServerStatus(this.service.state(record))
+      this.showLearningSaveItem(view.text, view.tooltip, undefined, studyId)
+      return
+    }
     // A test run's item shows what NodeLearningSave says of it.
     if (record?.profile === NODE_TEST_PROFILE) {
       const view = this.nodeLearningSave.item(record)
@@ -13574,7 +13585,9 @@ export class StudyWorkspace {
                   : 'partial'))
     const descriptor = describeStudy(study ?? this.selection)
     const liveDescriptor =
-      record && record.profile !== NODE_TEST_PROFILE
+      record &&
+      record.profile !== NODE_TEST_PROFILE &&
+      record.profile !== NODE_SERVER_PROFILE
         ? describeStudy(
             record.profile === REPOSITORY_BROWSER_PROFILE
               ? { ...record, descriptor: record.definition?.descriptor }
@@ -13806,8 +13819,12 @@ export class StudyWorkspace {
         UNRETRYABLE_READER_ERROR_KINDS.has(kind),
       ).length,
       nextAction,
+      // A test run and a server run have no browser Study to show.
       liveProfile:
-        live?.profile === NODE_TEST_PROFILE ? undefined : live?.profile,
+        live?.profile === NODE_TEST_PROFILE ||
+        live?.profile === NODE_SERVER_PROFILE
+          ? undefined
+          : live?.profile,
       liveTitle: liveDescriptor?.title,
       profiles: [descriptor].map((profile) => ({
         id: profile.id,

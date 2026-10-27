@@ -2,6 +2,8 @@ import { z } from 'zod'
 
 import { configuredFactPathSchema } from './configuredStudySchemas'
 import {
+  NODE_SERVER_ACTION,
+  NODE_SERVER_PROFILE,
   NODE_TEST_PROFILE,
   REPOSITORY_BROWSER_ACTION,
   REPOSITORY_BROWSER_PROFILE,
@@ -12,6 +14,7 @@ import {
 } from './constants'
 import { learningSummarySchema } from './learningSummarySchemas'
 import { studyIdSchema } from './legacyStudySchemas'
+import { nodeServerConfigSchema } from './nodeServerConfigSchemas'
 import { nodeTestConfigSchema } from './nodeTestConfigSchemas'
 import { nodeTestLearningMaterialContentSchema } from './nodeTestHistorySchemas'
 import {
@@ -22,15 +25,48 @@ import {
 const instanceShape = { instanceId: z.uuid() }
 const runShape = { ...instanceShape, runId: z.uuid() }
 const key = z.string().min(1).max(KEY_LENGTH_LIMIT)
+/** The configurations of the profiles whose declarations the tool boundary validates itself (repository-browser and node-test): a refusal there is the SDK's input validation error, as before node-server existed. */
+const checkedStartConfigurationSchema = z.union([
+  retainedRepositoryConfigSchema,
+  nodeTestConfigSchema,
+])
+/** The node-server member of the start's configuration: any object. The SDK validates the input before the handler runs, so a strict member would answer the SDK's "Input validation error" and never reach `INVALID_CONFIGURATION`, which lists every violation and names `codebook://help/node-server` (D4); {@link StudyService.start} parses it with {@link nodeServerConfigSchema}. */
+const nodeServerStartConfigurationSchema = z
+  .record(z.string(), z.unknown())
+  .describe(
+    'For profile node-server: the declaration described by codebook://help/node-server. A wrong one is answered with INVALID_CONFIGURATION listing every violation.',
+  )
 // MCP requires an object root; the service resolves its closed domain variant before reserving any effects.
-export const startSchema = z.strictObject({
-  ...instanceShape,
-  profile: z.string().min(1).max(KEY_LENGTH_LIMIT),
-  key,
-  configuration: z
-    .union([retainedRepositoryConfigSchema, nodeTestConfigSchema])
-    .optional(),
-})
+export const startSchema = z
+  .strictObject({
+    ...instanceShape,
+    profile: z.string().min(1).max(KEY_LENGTH_LIMIT),
+    key,
+    configuration: z
+      .union([
+        retainedRepositoryConfigSchema,
+        nodeTestConfigSchema,
+        nodeServerStartConfigurationSchema,
+      ])
+      .optional(),
+  })
+  .superRefine((input, context) => {
+    // The permissive node-server member must not loosen the other profiles: their configurations are checked exactly as before.
+    if (
+      input.profile === NODE_SERVER_PROFILE ||
+      input.configuration === undefined
+    )
+      return
+    const checked = checkedStartConfigurationSchema.safeParse(
+      input.configuration,
+    )
+    if (!checked.success)
+      for (const issue of checked.error.issues)
+        context.addIssue({
+          ...issue,
+          path: ['configuration', ...issue.path],
+        })
+  })
 export const startIntentSchema = z.discriminatedUnion('profile', [
   z.strictObject({
     ...instanceShape,
@@ -44,12 +80,18 @@ export const startIntentSchema = z.discriminatedUnion('profile', [
     key,
     configuration: nodeTestConfigSchema,
   }),
+  z.strictObject({
+    ...instanceShape,
+    profile: z.literal(NODE_SERVER_PROFILE),
+    key,
+    configuration: nodeServerConfigSchema,
+  }),
 ])
 export const runSchema = z.strictObject(runShape)
 export const actionSchema = z.strictObject({
   ...runShape,
   key,
-  action: z.literal(REPOSITORY_BROWSER_ACTION),
+  action: z.enum([REPOSITORY_BROWSER_ACTION, NODE_SERVER_ACTION]),
 })
 export const continueSchema = z.strictObject({
   ...runShape,

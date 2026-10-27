@@ -1410,6 +1410,19 @@ export const NODE_TEST_EXIT_GRACE_MS = 2_000
 /** Budget for each owned Node test phase: attach through the entry pause, reaching a declared stop while the test runs, and capturing it. */
 export const NODE_TEST_ATTACH_TIMEOUT_MS = 45_000
 export const REPOSITORY_BROWSER_ACTION = 'repository-click'
+/** The first extension version that offers the node-server profile, for the profile entry of `codebook_status`. */
+export const NODE_SERVER_MINIMUM_EXTENSION_VERSION = '0.2.51'
+/** The longest sanitized failure cause a node-server event and its Output entry keep; the run resource keeps the error whole (up to {@link MAX_UI_TEXT_CHARS}). */
+export const NODE_SERVER_FAILURE_CAUSE_LIMIT_CHARS = 1_024
+/** The most UTF-8 bytes of a response's shown body a `node-server.response` event keeps, so one event stays far under {@link EVENT_DETAIL_LIMIT_BYTES}; the run resource keeps the whole shown body. */
+export const NODE_SERVER_EVENT_BODY_LIMIT_BYTES = 4_096
+/** The methods of a declared request that change the repository's data; each needs the learner's confirmation before it is sent (D6). */
+export const NODE_SERVER_STATE_CHANGING_METHODS = [
+  'POST',
+  'PUT',
+  'PATCH',
+  'DELETE',
+]
 export const REPOSITORY_CONFIG_VERSION = 1
 export const CROSS_RUNTIME_CONFIG_VERSION = 2
 export const CONFIGURED_STUDY_VERSION = 3
