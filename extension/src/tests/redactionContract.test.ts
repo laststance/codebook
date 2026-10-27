@@ -534,7 +534,7 @@ test('complete output lines and a trailing plain word are released at once while
   // Assert
   assert.equal(released, 'ready on port 3000\nlistening ht')
   assert.equal(plainRest, 'tp\nconnect ')
-  assert.equal(urlRest, 'postgres://app:[masked]@db/x\n')
+  assert.equal(urlRest, `${POSTGRES}app:[masked]@db/x\n`)
 })
 
 // protects=causes and the Output channel; fails_when=a token in an error cause or a diagnostic entry is logged
