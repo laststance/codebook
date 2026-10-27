@@ -1260,6 +1260,20 @@ export const NODE_SERVER_OUTPUT_PENDING_LIMIT_BYTES = 1_048_576
 export const NODE_SERVER_DEBUGGER_DETACH_TIMEOUT_MS = 1_000
 /** How long a server's process group has after SIGTERM before SIGKILL, and again after SIGKILL before its close fails. */
 export const NODE_SERVER_SHUTDOWN_GRACE_MS = 5_000
+/** How long one readiness probe waits for a loopback connection to be accepted before it counts as refused. */
+export const NODE_SERVER_READY_CONNECT_TIMEOUT_MS = 250
+/** The pause between two readiness rounds, so a server still starting is not hammered. */
+export const NODE_SERVER_READY_POLL_INTERVAL_MS = 50
+/** The most of a response a node-server run reads; the socket is destroyed there and the response reads `(cut at 1 MiB)`. */
+export const NODE_SERVER_RESPONSE_READ_LIMIT_BYTES = 1_048_576
+/** How many leading bytes of a text response are shown to the chat and in Output. */
+export const NODE_SERVER_RESPONSE_SHOWN_BYTES = 8_192
+/** The workspace-storage key under which the node-server runs' process groups are recorded until they are closed, so a later activation can close an orphan. */
+export const NODE_SERVER_ORPHANS_STORAGE_KEY = 'codebook.nodeServerOrphans'
+/** How long one `ps` or `lsof` query about a process (group, command, folder) may run before it is ended. */
+export const NODE_SERVER_PROCESS_QUERY_TIMEOUT_MS = 3_000
+/** The most a `ps` or `lsof` query about one process may print. */
+export const NODE_SERVER_PROCESS_QUERY_MAX_BYTES = 65_536
 /** How much of an owned process's output is kept: its first bytes for the inspector announcement, its last ones as the redacted tail. */
 export const PROCESS_OUTPUT_LIMIT_BYTES = 32_768
 /** The longest text of one stamped output event of an owned process. */
