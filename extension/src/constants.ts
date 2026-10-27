@@ -1556,7 +1556,7 @@ export const REPOSITORY_APPLICATION_LOG_LIMIT_BYTES = 262_144
 export const REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS = 10_000
 /** Next's own development port, used when the dev script declares no port. */
 export const DEVELOPMENT_SERVER_DEFAULT_PORT = 3000
-export const DEVELOPMENT_SERVER_MAX_PORT = 65_535
+export const DEVELOPMENT_SERVER_MAX_PORT = TCP_PORT_MAX
 /** Bounds one loopback connect that asks whether something already listens on the project's port; a connect that times out proves nothing (Windows reports a refused loopback connect only after its SYN retries, 1 to 2 s), so the bind probe decides. */
 export const DEVELOPMENT_PORT_PROBE_CONNECT_TIMEOUT_MS = 500
 /** Bounds the wait for a port that Codebook's own earlier run is still releasing (its owned process group is exiting) before the start is refused as that run's. */

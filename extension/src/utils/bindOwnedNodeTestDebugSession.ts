@@ -1,6 +1,7 @@
 import type * as vscode from 'vscode'
 import { z } from 'zod'
 
+import { TCP_PORT_MAX } from '../constants'
 import { Cdp } from '../runtimeSupport/cdp'
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 
@@ -8,7 +9,7 @@ import { verifyNodeTestInspectorOwnership } from './verifyNodeTestInspectorOwner
 
 const proxySchema = z.strictObject({
   host: z.enum(['127.0.0.1', 'localhost', '::1']),
-  port: z.number().int().min(1).max(65_535),
+  port: z.number().int().min(1).max(TCP_PORT_MAX),
   path: z.string().startsWith('/').max(512),
 })
 

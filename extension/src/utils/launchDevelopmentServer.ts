@@ -16,6 +16,7 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { createOutputRedactor } from './createOutputRedactor'
 import { buildDevelopmentServerEnvironment } from './developmentServerEnvironment'
 import { isProcessGroupGone } from './isProcessGroupGone'
+import { keepUtf8Tail } from './keepUtf8Tail'
 import {
   beginReleaseOfOwnedDevelopmentPort,
   claimOwnedDevelopmentPort,
@@ -71,12 +72,18 @@ export function launchDevelopmentServer(
       -REPOSITORY_APPLICATION_LOG_LIMIT_BYTES,
     )
   }
+  // The published tail is cut back to its byte limit only once it has doubled, so a chatty server pays no copy of the whole tail per chunk.
   const publish = (text: string): void => {
     if (!text) return
-    publishedLog = Buffer.from(publishedLog + text)
-      .subarray(-REPOSITORY_APPLICATION_LOG_LIMIT_BYTES)
-      .toString('utf8')
+    publishedLog += text
+    if (publishedLog.length > 2 * REPOSITORY_APPLICATION_LOG_LIMIT_BYTES)
+      publishedLog = keepUtf8Tail(
+        publishedLog,
+        REPOSITORY_APPLICATION_LOG_LIMIT_BYTES,
+      )
   }
+  const publishedTail = (): string =>
+    keepUtf8Tail(publishedLog, REPOSITORY_APPLICATION_LOG_LIMIT_BYTES)
   // Each channel is redacted statefully, so a credential the server prints across chunks is masked before it is kept for publication.
   for (const stream of [child.stdout, child.stderr]) {
     const decoder = new StringDecoder('utf8')
@@ -183,7 +190,7 @@ export function launchDevelopmentServer(
             throw (
               error ??
               new Error(
-                `Application exited: ${child.exitCode}: ${publishedLog}`,
+                `Application exited: ${child.exitCode}: ${publishedTail()}`,
               )
             )
           // Process chunks may split a port; only a received delimiter proves its complete value. Only the declared port counts: another local URL in the log (an API, a proxy) is not the app's origin (F552).
@@ -206,7 +213,7 @@ export function launchDevelopmentServer(
         await response.body?.cancel()
         if (!response.ok)
           throw new Error(
-            `Application root failed: ${response.status}: ${publishedLog}`,
+            `Application root failed: ${response.status}: ${publishedTail()}`,
           )
       } else {
         const entry = await fetch(`${origin}${entryPath}`, {
@@ -266,7 +273,7 @@ export function launchDevelopmentServer(
           origin,
           exitCode: child.exitCode,
           signal: child.signalCode,
-          log: publishedLog,
+          log: publishedTail(),
         })
       })())
       // Preserve successful release, while allowing a later stop to retry a failed signal or exit check.

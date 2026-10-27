@@ -158,6 +158,75 @@ test('a long run that only mentions a URL and a task- word stays visible, and an
   assert.equal(keyOutput.endsWith('server ready on 4000\n'), true)
 })
 
+// protects=an oversized private-key block never takes the output after it (pt1 pass 2 QA finding: a real process wrote the block and its next line in one chunk); fails_when=the line that follows the block in the same chunk is dropped with it; no_claim=lines inside the dropped block
+test('a line that follows an oversized private key in the same chunk is still released', () => {
+  // Arrange
+  const redactor = createOutputRedactor()
+  // Act
+  const output =
+    redactor.write(`${PEM_HEADER}\n${'QUJD'.repeat(7_500)}\nserver ready\n`) +
+    redactor.end()
+  // Assert
+  assert.equal(output, '[masked]server ready\n')
+})
+
+// protects=the drop limit counts only dropped key text (pt1 pass 2 security finding: the kept 80-character tail was counted again on every chunk); fails_when=a private key delivered in small chunks reaches the limit early and its body is released; no_claim=keys of unknown shape
+test('a private key delivered in small chunks never releases its body', () => {
+  // Arrange
+  const body = Array.from({ length: 200 }, () => 'QUJD'.repeat(16)).join('\n')
+  const stream = `${PEM_HEADER}\n${body}\n${['-----END', 'PRIVATE KEY-----'].join(' ')}\ndone\n`
+  const redactor = createOutputRedactor()
+  // Act
+  let output = ''
+  for (let index = 0; index < stream.length; index += 7)
+    output += redactor.write(stream.slice(index, index + 7))
+  output += redactor.end()
+  // Assert
+  assert.equal(output.includes('QUJD'), false)
+  assert.equal(output.startsWith('[masked]'), true)
+  assert.equal(output.endsWith('\ndone\n'), true)
+})
+
+// protects=a token whose drop is still pending when the stream ends releases nothing more (pt1 pass 2 state-machine cell token x end); fails_when=end() returns part of the dropped token; no_claim=none
+test('a stream that ends while an oversized token is being dropped releases nothing more at its end', () => {
+  // Arrange
+  const redactor = createOutputRedactor()
+  const token = ['ghp', 'a'.repeat(9_000)].join('_')
+  // Act
+  const written = redactor.write(`using ${token}`)
+  const ended = redactor.end()
+  // Assert
+  assert.equal(written, 'using [masked]')
+  assert.equal(ended, '')
+})
+
+// protects=the streaming redactor's fail-closed trigger knows every provider prefix redactSecretText masks (pt1 pass 2 maintainability finding: the two lists are kept apart); fails_when=a provider key longer than the hold is released unmasked because the trigger lacks its prefix; no_claim=prefixes added to neither list
+test('every provider key longer than the hold fails closed in streamed output', () => {
+  // Arrange
+  const keys = [
+    ['sk', 'a'.repeat(9_000)].join('-'),
+    ['sk', 'live', 'a'.repeat(9_000)].join('_'),
+    ['ghp', 'a'.repeat(9_000)].join('_'),
+    ['github', 'pat', 'a'.repeat(9_000)].join('_'),
+    ['xoxb', 'a'.repeat(9_000)].join('-'),
+    ['AIza', 'a'.repeat(9_000)].join(''),
+    ['npm', 'a'.repeat(9_000)].join('_'),
+    ['AKIA', 'A'.repeat(9_000)].join(''),
+    ['ASIA', 'A'.repeat(9_000)].join(''),
+    ['eyJ', 'a'.repeat(9_000)].join(''),
+  ]
+  // Act
+  const outputs = keys.map((key) => {
+    const redactor = createOutputRedactor()
+    return redactor.write(`key ${key}`) + redactor.end()
+  })
+  // Assert
+  assert.deepEqual(
+    outputs,
+    keys.map(() => 'key [masked]'),
+  )
+})
+
 // protects=each value pattern; fails_when=a URL password, JWT, Bearer token, sk-, ghp_, github_pat_, AKIA key or PEM block survives, or the URL user name / the word Bearer is lost; no_claim=other providers' keys
 test('text shaped like a credential reads [masked] and keeps its harmless words', () => {
   // Arrange / Act / Assert

@@ -928,3 +928,79 @@ test('a credential the dev server prints, split across chunks, reads [masked] in
   )
   assert.equal(JSON.stringify(journal).includes(token.slice(4, 20)), false)
 })
+
+// Value: protects=the dev server's stderr is redacted too, and a credential still held at a stream's end is masked when the stream ends (pt1 pass 2 testing finding); fails_when=stderr bypasses the redactor or the end flush releases the held token raw; why_new=the first redaction test drives stdout and the exit path only; seam=the launcher run in an isolated module context with a stub child; no_claim=a real next dev process
+test('a credential the dev server prints last on stderr, without a line end, reads [masked] once the stream ends', async (context) => {
+  // Arrange
+  const filename = join(__dirname, '../utils/launchDevelopmentServer.js'),
+    nativeRequire = createRequire(filename)
+  const exports: Partial<typeof ServerModule> = {},
+    journal: { type: string; detail: unknown }[] = []
+  const token = ['ghp', 'ZYXWVUTSRQPONMLKJIHGFEDCBA9876543210'].join('_')
+  const child = Object.assign(new EventEmitter(), {
+    pid: 42000,
+    exitCode: null,
+    signalCode: null,
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+  })
+  let groupAlive = true
+  context.mock.method(
+    process,
+    'kill',
+    (_pid: number, signal?: string | number): true => {
+      if (signal === 'SIGTERM') {
+        groupAlive = false
+        child.emit('exit')
+      }
+      if (signal === 0 && !groupAlive)
+        throw Object.assign(new Error('missing group'), { code: 'ESRCH' })
+      return true
+    },
+  )
+  runInNewContext(
+    await readFile(filename, 'utf8'),
+    {
+      exports,
+      AbortSignal,
+      Buffer,
+      process: { env: {} },
+      require(name: string) {
+        if (name === 'node:child_process') return { spawn: () => child }
+        if (name.endsWith('/utils/waitUntil'))
+          return {
+            waitUntil: async (read: () => unknown): Promise<unknown> => {
+              const value = await read()
+              if (!value) throw new Error('not ready')
+              return value
+            },
+          }
+        return nativeRequire(name)
+      },
+    },
+    { filename },
+  )
+  assert.ok(exports.launchDevelopmentServer)
+  const server = exports.launchDevelopmentServer(
+    '/isolated-target',
+    '/node',
+    (type, detail) => journal.push({ type, detail }),
+    false,
+    3000,
+  )
+  // Act
+  child.stderr.emit(
+    'data',
+    Buffer.from(`fatal: bad credential ${token.slice(0, 9)}`),
+  )
+  child.stderr.emit('data', Buffer.from(token.slice(9)))
+  child.stderr.emit('end')
+  await server.close()
+  // Assert
+  const closed = journal.find((entry) => entry.type === 'application.closed')
+  assert.equal(
+    JSON.stringify(closed?.detail).includes('fatal: bad credential [masked]'),
+    true,
+  )
+  assert.equal(JSON.stringify(journal).includes(token.slice(4, 20)), false)
+})

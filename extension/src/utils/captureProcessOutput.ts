@@ -8,6 +8,7 @@ import {
 import { NANOSECONDS_PER_MILLISECOND } from '../runtimeSupport/constants'
 
 import { createOutputRedactor } from './createOutputRedactor'
+import { keepUtf8Tail } from './keepUtf8Tail'
 
 /** One stamped chunk of an owned process's output, already redacted: its order, its time since the launch, its channel and its text (at most {@link PROCESS_OUTPUT_EVENT_LIMIT_CHARS} characters). */
 export type ProcessOutputEvent = {
@@ -106,9 +107,7 @@ export function captureProcessOutput(
     text: string,
   ): void => {
     if (!text) return
-    tail = Buffer.from(tail + text)
-      .subarray(-PROCESS_OUTPUT_LIMIT_BYTES)
-      .toString('utf8')
+    tail = keepUtf8Tail(tail + text, PROCESS_OUTPUT_LIMIT_BYTES)
     let part = ''
     // Events are cut by characters, never inside a code point.
     for (const character of text) {
