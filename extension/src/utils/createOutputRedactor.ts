@@ -189,17 +189,37 @@ function dropBlockChunk(
   return undefined
 }
 
+/** A URL whose numeric port and a following path, query or fragment close its authority (`http://db.internal:5432/app`): no password can follow, so the stream's end releases it. */
+const URL_CLOSED_BY_PORT =
+  /^[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/(?:\[[\dA-Fa-f:.]+\]|[^\s/@:[]*):\d{1,5}(?=[/?#])/
+
+/** A loopback or IP-literal URL whose numeric port ends the held run (`http://127.0.0.1:4100`): no user name is written as such a host, so the stream's end releases it. */
+const URL_ENDING_IN_HOST_PORT =
+  /^[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/(?:localhost|\d{1,3}(?:\.\d{1,3}){3}|\[[\dA-Fa-f:.]+\]):\d{1,5}$/
+
 /**
- * Masks a held run from its first secret start when the stream ends, so a token cut off by the end of output is never released in part.
+ * Masks a held run from its first secret start when the stream ends, so a token cut off by the end of output is never released in part; a URL whose port already closes its authority is complete, so it is released and only what follows it is judged again.
  * @param held - The text still held.
- * @returns The held text redacted, with any part from a secret start on replaced by {@link REDACTION_MASK}.
- * @example maskHeldStart('token ghp_abc') // => 'token [masked]'
+ * @returns The held text redacted, with any part from a secret start on replaced by {@link REDACTION_MASK}, except a complete host:port URL.
+ * @example
+ * maskHeldStart('token ghp_abc') // => 'token [masked]'
+ * maskHeldStart('on http://127.0.0.1:4100') // => 'on http://127.0.0.1:4100'
+ * maskHeldStart('on http://admin:1234') // => 'on [masked]'
  */
 function maskHeldStart(held: string): string {
   const start = SECRET_START.exec(held)
-  return start
-    ? redactSecretText(held.slice(0, start.index)) + REDACTION_MASK
-    : redactSecretText(held)
+  if (!start) return redactSecretText(held)
+  const fromStart = held.slice(start.index)
+  const completeUrl =
+    URL_CLOSED_BY_PORT.exec(fromStart) ??
+    URL_ENDING_IN_HOST_PORT.exec(fromStart)
+  // A URL that a port closes holds no password once no more output can come; only the rest may still be a cut secret.
+  if (completeUrl)
+    return (
+      redactSecretText(held.slice(0, start.index + completeUrl[0].length)) +
+      maskHeldStart(fromStart.slice(completeUrl[0].length))
+    )
+  return redactSecretText(held.slice(0, start.index)) + REDACTION_MASK
 }
 
 /**

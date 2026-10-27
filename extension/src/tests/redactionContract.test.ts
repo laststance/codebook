@@ -369,6 +369,51 @@ test('a token start still held when the stream ends reads [masked]', () => {
   assert.equal(output, 'fatal: token [masked]')
 })
 
+// protects=the origin a server prints last without a line break (local CodeRabbit r4: the whole URL was masked at the stream's end); fails_when=a loopback or IP host:port URL that ends the output reads [masked]; no_claim=a URL held mid-stream
+test("a server's last line without a line break keeps its loopback or IP origin when the stream ends", () => {
+  // Arrange
+  const lines = [
+    'listening on http://127.0.0.1:4100',
+    'listening on http://localhost:4100',
+    'listening on http://[::1]:4100',
+  ]
+  // Act
+  const outputs = lines.map((line) => {
+    const redactor = createOutputRedactor()
+    return redactor.write(line) + redactor.end()
+  })
+  // Assert
+  assert.deepEqual(outputs, [
+    'listening on http://127.0.0.1:4100',
+    'listening on http://localhost:4100',
+    'listening on http://[::1]:4100',
+  ])
+})
+
+// protects=a URL whose port and path close its authority is complete at the stream's end; fails_when=it reads [masked]; no_claim=URLs without a port
+test("a URL whose port and path close its authority is released whole at the stream's end", () => {
+  // Arrange
+  const redactor = createOutputRedactor()
+  // Act
+  const output =
+    redactor.write('GET http://db.internal:5432/app?x=1') + redactor.end()
+  // Assert
+  assert.equal(output, 'GET http://db.internal:5432/app?x=1')
+})
+
+// protects=a URL cut off after a user name keeps its possible password masked at the stream's end; fails_when=`user:digits` or `user:text` without a closing path is released; no_claim=none
+test("a URL cut off after a user name at the stream's end still reads [masked]", () => {
+  // Arrange
+  const cutOffs = ['connect http://admin:1234', 'connect http://admin:hunt']
+  // Act
+  const outputs = cutOffs.map((text) => {
+    const redactor = createOutputRedactor()
+    return redactor.write(text) + redactor.end()
+  })
+  // Assert
+  assert.deepEqual(outputs, ['connect [masked]', 'connect [masked]'])
+})
+
 // protects=a type inspection never returns the variable's real value (pt1 Step 11 Codex structured finding: variables[] kept it while facts showed the type); fails_when=the kept variable of a type inspection carries a secret value; no_claim=none
 test('a node test type inspection of a password keeps no real value in its returned variables', async () => {
   // Arrange
