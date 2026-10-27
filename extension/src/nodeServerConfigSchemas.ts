@@ -4,7 +4,6 @@ import {
   CONFIGURED_OBSERVATION_LIMIT,
   NODE_SERVER_PORT_MAX,
   NODE_SERVER_PORT_MIN,
-  NODE_SERVER_REQUEST_BODY_LIMIT_BYTES,
   REPOSITORY_CONFIG_LIMIT_BYTES,
 } from './constants'
 import { nodeTestStopSchema } from './nodeTestConfigSchemas'
@@ -15,6 +14,7 @@ import {
 } from './repositoryConfigSchemas'
 import { repositoryPathSchema } from './sourceSchemas'
 import { addStopInspectionIssues } from './utils/addStopInspectionIssues'
+import { describeNodeServerRequestBodyIssues } from './utils/describeNodeServerRequestBodyIssues'
 import { nodeServerRequestPathProblem } from './utils/nodeServerRequestPathProblem'
 
 /** The entry files node runs: TypeScript ones through the repository's own tsx, JavaScript ones directly. */
@@ -60,29 +60,11 @@ const requestSchema = z
     body: z.string().optional(),
   })
   .superRefine((request, context) => {
-    const addIssue = (field: 'body' | 'contentType', message: string): void =>
+    for (const { field, message } of describeNodeServerRequestBodyIssues(
+      request,
+      CONTENT_TYPES,
+    ))
       context.addIssue({ code: 'custom', path: [field], message })
-    // A body rides only on a method that carries one, always with its content type; a content type alone describes nothing.
-    if (request.body === undefined) {
-      if (request.contentType !== undefined)
-        addIssue('contentType', 'expected a contentType only beside a body.')
-      return
-    }
-    if (request.method === 'GET' || request.method === 'DELETE')
-      addIssue('body', `expected no body for ${request.method}.`)
-    if (request.contentType === undefined)
-      addIssue(
-        'contentType',
-        `expected the body's content type: ${CONTENT_TYPES.join(', ')}.`,
-      )
-    if (
-      Buffer.byteLength(request.body, 'utf8') >
-      NODE_SERVER_REQUEST_BODY_LIMIT_BYTES
-    )
-      addIssue(
-        'body',
-        `expected at most ${NODE_SERVER_REQUEST_BODY_LIMIT_BYTES} bytes of UTF-8 text.`,
-      )
   })
 
 /**
