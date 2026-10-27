@@ -65,6 +65,76 @@ export type NodeServerCloseOptions = {
   isGroupGone?: typeof isProcessGroupGone
 }
 
+/** A close's options with the product's own clock, bounds, signal and probe filled in ({@link resolveCloseOptions}). */
+type ResolvedCloseOptions = Required<
+  Pick<
+    NodeServerCloseOptions,
+    | 'sinceAdmissionMs'
+    | 'killByMs'
+    | 'deadlineMs'
+    | 'signalGroup'
+    | 'isGroupGone'
+  >
+>
+
+/**
+ * Fills a close's options with the product's own: the stop's clock counted from the close call, {@link NODE_SERVER_KILL_BY_MS}, {@link NODE_SERVER_STOP_DEADLINE_MS}, {@link signalProcessGroup} and {@link isProcessGroupGone}.
+ * Why: a test names its own clock, bounds and signals, and the run names the stop's admission clock; the close reads one resolved set. Called by the close of {@link launchNodeServer}.
+ * @param options - What the caller named ({@link NodeServerCloseOptions}).
+ * @param closeStartedAt - When the close began (`performance.now()`), the clock's start when no admission clock was named.
+ * @returns The resolved clock, bounds, signal and probe.
+ * @example
+ * resolveCloseOptions({}, performance.now()).killByMs // => 5000
+ */
+function resolveCloseOptions(
+  options: NodeServerCloseOptions,
+  closeStartedAt: number,
+): ResolvedCloseOptions {
+  return {
+    sinceAdmissionMs:
+      options.sinceAdmissionMs ??
+      ((): number => performance.now() - closeStartedAt),
+    killByMs: options.killByMs ?? NODE_SERVER_KILL_BY_MS,
+    deadlineMs: options.deadlineMs ?? NODE_SERVER_STOP_DEADLINE_MS,
+    signalGroup: options.signalGroup ?? signalProcessGroup,
+    isGroupGone: options.isGroupGone ?? isProcessGroupGone,
+  }
+}
+
+/**
+ * Ends an owned process group with SIGTERM, then SIGKILL when it has not ended by the kill bound, each signal only while the group may still be signalled.
+ * Why: a server or a process it started may ignore SIGTERM, so the escalation covers the whole group and lands by the kill bound; a retried close confirms the group before each signal. Called by the close of {@link launchNodeServer}.
+ * @param input - The group, the identity check before each signal, the signal, the wait for the group's end and the two bounds.
+ * @returns
+ * - `false` when the group ended after SIGTERM, or nothing was signalled
+ * - `true` when SIGTERM did not end it by the kill bound (SIGKILL followed unless the second check left the group alone)
+ * @throws When an identity check cannot tell whose group it is, or the group outlives SIGKILL until the deadline.
+ * @example
+ * await endGroupBySignals({ processGroup: 4242, mayStillSignal: async () => true, signalGroup, waitForRelease, killByMs: 5_000, deadlineMs: 10_000 }) // => false
+ */
+async function endGroupBySignals(input: {
+  processGroup: number
+  mayStillSignal: () => Promise<boolean>
+  signalGroup: typeof signalProcessGroup
+  waitForRelease: (boundMs: number) => Promise<void>
+  killByMs: number
+  deadlineMs: number
+}): Promise<boolean> {
+  if (!(await input.mayStillSignal())) return false
+  input.signalGroup(input.processGroup, 'SIGTERM')
+  try {
+    await input.waitForRelease(input.killByMs)
+    return false
+  } catch {
+    // SIGTERM did not end the group by the kill bound: SIGKILL, unless the group is no longer the launched one.
+    if (await input.mayStillSignal()) {
+      input.signalGroup(input.processGroup, 'SIGKILL')
+      await input.waitForRelease(input.deadlineMs)
+    }
+    return true
+  }
+}
+
 /**
  * Writes a launch path as the journal names it: inside the repository as `<workspace>/<path>`.
  * @param workspace - The repository's real root.
@@ -203,14 +273,13 @@ export async function launchNodeServer(
       options: NodeServerCloseOptions = {},
     ): Promise<NodeServerExit> {
       const attempt = (closing ??= (async () => {
-        const closeStartedAt = performance.now()
-        const sinceAdmissionMs =
-          options.sinceAdmissionMs ??
-          ((): number => performance.now() - closeStartedAt)
-        const killByMs = options.killByMs ?? NODE_SERVER_KILL_BY_MS
-        const deadlineMs = options.deadlineMs ?? NODE_SERVER_STOP_DEADLINE_MS
-        const signalGroup = options.signalGroup ?? signalProcessGroup
-        const isGroupGone = options.isGroupGone ?? isProcessGroupGone
+        const {
+          sinceAdmissionMs,
+          killByMs,
+          deadlineMs,
+          signalGroup,
+          isGroupGone,
+        } = resolveCloseOptions(options, performance.now())
         // A stop the run retries is a retry here too, even when its first attempt failed before any close ran.
         const isRetry = closeAttempts++ > 0 || options.retried === true
         // The time left until a bound of the stop, never less than one poll so a check that is already true still runs.
@@ -270,20 +339,14 @@ export async function launchNodeServer(
             NODE_SERVER_GROUP_EXIT_POLL_MS,
           )
         }
-        let killed = false
-        if (await mayStillSignal()) {
-          signalGroup(processGroup, 'SIGTERM')
-          // A server or a process it started may ignore SIGTERM; the escalation covers its whole group and lands by the kill bound.
-          try {
-            await waitForRelease(killByMs)
-          } catch {
-            killed = true
-            if (await mayStillSignal()) {
-              signalGroup(processGroup, 'SIGKILL')
-              await waitForRelease(deadlineMs)
-            }
-          }
-        }
+        const killed = await endGroupBySignals({
+          processGroup,
+          mayStillSignal,
+          signalGroup,
+          waitForRelease,
+          killByMs,
+          deadlineMs,
+        })
         await capture.settled()
         record('node-server.closed', { pid: child.pid, ...exitOf(), killed })
         return exitOf()
