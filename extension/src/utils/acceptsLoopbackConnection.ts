@@ -15,9 +15,9 @@ export type LoopbackHost = '127.0.0.1' | '::1'
  * - `false` when it refused, failed or did not answer within `timeoutMs`
  * @throws The signal's reason when it aborts.
  * @example
- * await probeLoopbackPort('127.0.0.1', 4100, 250, signal) // => true while a server accepts on 127.0.0.1:4100
+ * await acceptsLoopbackConnection('127.0.0.1', 4100, 250, signal) // => true while a server accepts on 127.0.0.1:4100
  */
-export function probeLoopbackPort(
+export function acceptsLoopbackConnection(
   host: LoopbackHost,
   port: number,
   timeoutMs: number,

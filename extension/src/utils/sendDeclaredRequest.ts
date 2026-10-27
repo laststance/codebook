@@ -9,8 +9,8 @@ import { StudyError } from '../errors'
 import type { NodeServerConfiguration } from '../nodeServerConfigSchemas'
 import type { NodeServerResponse } from '../runtime'
 
+import type { LoopbackHost } from './acceptsLoopbackConnection'
 import { describeRedirectLocation } from './describeRedirectLocation'
-import type { LoopbackHost } from './probeLoopbackPort'
 import { redactSecretText } from './redactSecretText'
 import { shapeResponseBody } from './shapeResponseBody'
 

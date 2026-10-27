@@ -2,7 +2,7 @@ import { basename } from 'node:path'
 
 import type { ErrorCode } from '../errors'
 
-import type { LoopbackHost } from './probeLoopbackPort'
+import type { LoopbackHost } from './acceptsLoopbackConnection'
 import {
   readPortListeners,
   type PortListener,

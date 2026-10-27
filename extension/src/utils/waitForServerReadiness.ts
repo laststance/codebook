@@ -5,7 +5,10 @@ import {
   NODE_SERVER_READY_POLL_INTERVAL_MS,
 } from '../constants'
 
-import { probeLoopbackPort, type LoopbackHost } from './probeLoopbackPort'
+import {
+  acceptsLoopbackConnection,
+  type LoopbackHost,
+} from './acceptsLoopbackConnection'
 
 /** What {@link waitForServerReadiness} waits with. */
 export type ServerReadinessInput = {
@@ -45,13 +48,18 @@ export async function waitForServerReadiness(
   while (input.hasTimeLeft()) {
     input.signal.throwIfAborted()
     const [ipv4, ipv6] = await Promise.all([
-      probeLoopbackPort(
+      acceptsLoopbackConnection(
         '127.0.0.1',
         input.port,
         connectTimeoutMs,
         input.signal,
       ),
-      probeLoopbackPort('::1', input.port, connectTimeoutMs, input.signal),
+      acceptsLoopbackConnection(
+        '::1',
+        input.port,
+        connectTimeoutMs,
+        input.signal,
+      ),
     ])
     if (ipv4) return { host: '127.0.0.1', bothAccept: ipv6 }
     if (ipv6) return { host: '::1', bothAccept: false }
