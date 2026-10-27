@@ -236,6 +236,7 @@ export function fakeRequestSender(order: string[]) {
     stateAtCall?: string
     headers?: string
     signal?: AbortSignal
+    sanitize?: (text: string) => string
   }> = []
   let current = {
     written: defer<void>(),
@@ -257,7 +258,12 @@ export function fakeRequestSender(order: string[]) {
       stateAtCall: string,
     ) {
       order.push('sendRequest')
-      calls.push({ stateAtCall, headers: input.runId, signal: input.signal })
+      calls.push({
+        stateAtCall,
+        headers: input.runId,
+        signal: input.signal,
+        sanitize: input.sanitize,
+      })
       const answers = {
         written: defer<void>(),
         response: defer<NodeServerResponse>(),

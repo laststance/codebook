@@ -1266,3 +1266,17 @@ test('the peer check accepts only the launched server as the holder of the conne
   assert.equal(extra.sender.bytesWritten, 0)
   assert.equal(alone.sender.bytesWritten, 1)
 })
+
+// protects=the sender hides the run's workspace root in the response body before the body is cut; fails_when=the run hands the sender no sanitizer, so a root straddling the 8192-byte cut keeps its prefix; no_claim=home or storage roots
+test('the run gives the request sender a sanitizer that hides the workspace root', async () => {
+  // Arrange
+  const harness = await readyHarness()
+  // Act
+  await sendRequest(harness)
+  const sanitize = harness.sender.calls[0]?.sanitize
+  // Assert
+  assert.equal(
+    sanitize?.(`failed at ${WORKSPACE}/src/app.ts`),
+    'failed at <workspace>/src/app.ts',
+  )
+})

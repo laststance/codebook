@@ -32,6 +32,7 @@ import type {
 } from './runtime'
 import type { PauseIdentity } from './runtimeSupport/pauseGate'
 import type { ProcessOutputEvent } from './utils/captureProcessOutput'
+import { causeRootsFor } from './utils/causeRootsFor'
 import {
   sanitizeRunCause,
   serverExitedError,
@@ -51,6 +52,7 @@ import {
 import type { resolveNodeServerLaunch } from './utils/resolveNodeServerLaunch'
 import type { resolveNodeServerStops } from './utils/resolveNodeServerStops'
 import { RunningTimeLimit, type RunClock } from './utils/runningTimeLimit'
+import { sanitizeCause } from './utils/sanitizeCause'
 import type { signalProcessGroup } from './utils/signalProcessGroup'
 
 /** The server the launcher started ({@link launchNodeServer}). */
@@ -108,6 +110,8 @@ export type NodeServerRunDependencies = {
       remotePort: number
     }) => Promise<void>
     signal: AbortSignal
+    /** Hides private roots in the response body before it is cut for display. */
+    sanitize?: (text: string) => string
   }): { written: Promise<void>; response: Promise<NodeServerResponse> }
   rememberProcess(record: {
     runId: string
@@ -980,6 +984,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
         runId: this.input.runId,
         verifyPeer: (connection) => this.verifyPeer(connection, server, port),
         signal: this.requestAbort.signal,
+        sanitize: (text) =>
+          sanitizeCause(text, causeRootsFor([], this.input.workspace)),
       })
     } catch (error) {
       // The sender never started: the window closes and the request may be tried again.

@@ -308,3 +308,22 @@ test('the abort listener is removed once the request settles', async (t) => {
   // Assert
   assert.equal(getEventListeners(controller.signal, 'abort').length, 0)
 })
+
+// protects=the sanitizer runs on the body before the 8192-byte cut; fails_when=the sender passes no sanitizer to the shaper; no_claim=the roots the run hides
+test('the response body is sanitized before it is cut for display', async (t) => {
+  // Arrange
+  const server = await startFixtureServer(t)
+  // Act
+  const { response } = sendDeclaredRequest({
+    host: '127.0.0.1',
+    port: server.port,
+    request: { method: 'GET', path: '/health' },
+    runId: 'run-1',
+    verifyPeer: acceptPeer,
+    signal: new AbortController().signal,
+    sanitize: (text) => text.replaceAll('ok', '<hidden>'),
+  })
+  const observed = await response
+  // Assert
+  assert.equal(observed.body, '{"status":"<hidden>"}')
+})
