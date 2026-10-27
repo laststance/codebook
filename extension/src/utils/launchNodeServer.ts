@@ -18,6 +18,7 @@ import {
   confirmLaunchedGroup,
   type LaunchedGroupVerdict,
 } from './confirmLaunchedGroup'
+import { isProcessGone } from './isProcessGone'
 import { isProcessGroupGone } from './isProcessGroupGone'
 import { readNodeInspectorEndpoint } from './readNodeInspectorEndpoint'
 import { readProcessCwd } from './readProcessCwd'
@@ -245,6 +246,7 @@ export async function launchNodeServer(
                 readProcessStart,
                 readProcessCwd,
                 isGroupGone,
+                isProcessGone,
               }))
           )()
           if (verdict === 'unverifiable')

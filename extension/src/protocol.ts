@@ -345,12 +345,12 @@ export function createProtocol(service: StudyService): McpServer {
     'codebook_start',
     {
       description:
-        "Prepare the declared profile asynchronously; this starts the declared application or server and sends no request and posts no data (a node-server request is sent only later by codebook_action). repository-browser binds browser/server stops to an immutable article; node-test binds ordered native Node stops and a Vitest test to exact retained citations; node-server runs the repository's own Node HTTP server and binds ordered native Node stops to exact retained citations (one declared request, sent by codebook_action http-request). Read the selected profile help. Same key/arguments returns its original run. A node-test configuration is checked during preparation, before its history begins: a refusal there ends the run with its error (code, message with both hashes and the fix), so read the run until its first stop or its error before continuing, and start again with a new key after the fix. Poll readiness and copy only current continuation arguments; one active run maximum.",
+        "Prepare the declared profile asynchronously; this starts the declared application, test or server. A node-server start sends no request to the server and posts no data: its one declared request is sent only later, by codebook_action http-request (a repository-browser start loads the application's page; a node-test start runs the declared test). repository-browser binds browser/server stops to an immutable article; node-test binds ordered native Node stops and a Vitest test to exact retained citations; node-server runs the repository's own Node HTTP server and binds ordered native Node stops to exact retained citations (one declared request, sent by codebook_action http-request). Read the selected profile help. Same key/arguments returns its original run. A node-test configuration is checked during preparation, before its history begins: a refusal there ends the run with its error (code, message with both hashes and the fix), so read the run until its first stop or its error before continuing, and start again with a new key after the fix. Poll readiness and copy only current continuation arguments; one active run maximum.",
       inputSchema: startSchema,
       annotations: {
         ...execution,
         idempotentHint: true,
-        title: 'Start the declared Codebook run (sends no request)',
+        title: 'Start the declared Codebook run',
       },
     },
     (input) => toolResult(service, () => service.startOnStoredBook(input)),

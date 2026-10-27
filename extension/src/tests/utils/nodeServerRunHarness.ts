@@ -49,6 +49,8 @@ export type HarnessOptions = {
   listener?: Awaited<ReturnType<NodeServerRunDependencies['verifyListener']>>
   /** Replaces the readiness wait; it gets the run's input. */
   waitForReadiness?: NodeServerRunDependencies['waitForReadiness']
+  /** Answers the server's inspector endpoint in place of the fake's at once, so a test can hold the run before it reads its leader. */
+  inspectorEndpoint?: (signal?: AbortSignal) => Promise<string>
   listeningPorts?: number[]
   /** The real debugger reports `onResume` when the editor's continue request is sent, before the adapter answers. */
   resumeEmitsOnResume?: boolean
@@ -69,6 +71,8 @@ export type HarnessOptions = {
   holdClose?: boolean
   occupant?: { pid: number; command?: string }
   groupGone?: boolean
+  /** What the pid probe answers for the launched leader's id; a process still has it unless a test says otherwise. */
+  processGone?: boolean
   /** Also receives every event the run journals, as the service's record does when the service owns the run. */
   record?: (type: string, detail?: unknown) => unknown
   /** The run id the service gave the run; `run-1` by default. */
@@ -221,7 +225,8 @@ export function fakeServer(
     async waitForExit(): Promise<NodeServerExit | undefined> {
       return state.exit
     },
-    async inspectorEndpoint(): Promise<string> {
+    async inspectorEndpoint(signal?: AbortSignal): Promise<string> {
+      if (options.inspectorEndpoint) return options.inspectorEndpoint(signal)
       return `ws://127.0.0.1:${options.inspectorPort ?? 9229}/abc`
     },
     async close(
@@ -458,6 +463,7 @@ export function createHarness(options: HarnessOptions = {}) {
       }
     },
     isGroupGone: () => options.groupGone ?? false,
+    isProcessGone: () => options.processGone ?? false,
     readProcessStart: async () => calls.leader.start,
     readProcessCwd: async () => calls.leader.cwd,
     findPortOccupant: async () => {

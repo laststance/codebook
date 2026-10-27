@@ -12,6 +12,7 @@ import { z } from 'zod'
 import { Cdp } from '../runtimeSupport/cdp'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { ProcessOutputEvent } from '../utils/captureProcessOutput'
+import type { LaunchedGroupVerdict } from '../utils/confirmLaunchedGroup'
 import { isProcessGroupGone } from '../utils/isProcessGroupGone'
 import { launchNodeServer } from '../utils/launchNodeServer'
 import { resolveNodeServerLaunch } from '../utils/resolveNodeServerLaunch'
@@ -424,7 +425,7 @@ test('a stop sends SIGKILL by its kill bound even when the debugger detach never
 /** Closes a fresh fixture server once so that it fails at its deadline (its group never reads as gone), then retries the close with an identity verdict; returns the retry's outcome and the signals each close sent. */
 async function retryCloseWith(
   t: { after: (cleanup: () => Promise<void>) => void },
-  verdict: 'launched' | 'replaced' | 'unverifiable',
+  verdict: LaunchedGroupVerdict,
 ) {
   const { server } = await launchFixture(t, 'listen')
   t.after(async () => {
@@ -500,4 +501,15 @@ test('the first close of a retried stop leaves a replaced group alone', async (t
   // Assert
   assert.deepEqual(signals, [])
   assert.ok(!(exit instanceof Error))
+})
+
+// protects=a retried close sends nothing to a group the identity check found gone, so an id another group takes after the check is never signalled, and the close still completes; fails_when=a gone group is signalled again or fails the close; no_claim=a real reuse of a process-group id
+test('a retried close sends no signal to a group that is already gone', async (t) => {
+  // Arrange
+  // Act
+  const gone = await retryCloseWith(t, 'gone')
+  // Assert
+  assert.ok(gone.firstClose instanceof Error)
+  assert.deepEqual(gone.signals, ['SIGTERM', 'SIGKILL'])
+  assert.ok(!(gone.retry instanceof Error))
 })

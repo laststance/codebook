@@ -1,6 +1,7 @@
 import type { NodeServerRunDependencies } from './ownedNodeServerRun'
 import { assertNodeServerPortFree } from './utils/assertNodeServerPortFree'
 import { findPortOccupant } from './utils/findPortOccupant'
+import { isProcessGone } from './utils/isProcessGone'
 import { isProcessGroupGone } from './utils/isProcessGroupGone'
 import { launchNodeServer } from './utils/launchNodeServer'
 import { readProcessCwd } from './utils/readProcessCwd'
@@ -49,6 +50,7 @@ export function createProductNodeServerRunDependencies(input: {
     launch: launchNodeServer,
     signalGroup: signalProcessGroup,
     isGroupGone: isProcessGroupGone,
+    isProcessGone,
     readProcessStart: (pid) => readProcessStart(pid),
     readProcessCwd: (pid) => readProcessCwd(pid),
     findPortOccupant,

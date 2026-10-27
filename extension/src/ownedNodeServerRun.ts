@@ -47,6 +47,7 @@ import {
 } from './utils/describeNodeServerRunFailure'
 import type { PortOccupant } from './utils/findPortOccupant'
 import { isGroupCertainlyGone } from './utils/isGroupCertainlyGone'
+import type { isProcessGone } from './utils/isProcessGone'
 import type { isProcessGroupGone } from './utils/isProcessGroupGone'
 import type { launchNodeServer, NodeServerExit } from './utils/launchNodeServer'
 import {
@@ -58,7 +59,7 @@ import {
 import type { resolveNodeServerLaunch } from './utils/resolveNodeServerLaunch'
 import type { resolveNodeServerStops } from './utils/resolveNodeServerStops'
 import { RunningTimeLimit, type RunClock } from './utils/runningTimeLimit'
-import { sanitizeCause } from './utils/sanitizeCause'
+import { hidePrivateRoots } from './utils/sanitizeCause'
 import type { signalProcessGroup } from './utils/signalProcessGroup'
 
 /** The server the launcher started ({@link launchNodeServer}). */
@@ -80,6 +81,8 @@ export type NodeServerRunDependencies = {
   launch: typeof launchNodeServer
   signalGroup: typeof signalProcessGroup
   isGroupGone: typeof isProcessGroupGone
+  /** Whether no process has an id (signal 0 to the pid), to tell the survivors of a leader that exited from a group that took its id ({@link confirmLaunchedGroup}). */
+  isProcessGone: typeof isProcessGone
   readProcessStart(pid: number): Promise<string | undefined>
   /** Reads a process's working-folder realpath, to confirm a group is still the launched one before a retried stop signals it. */
   readProcessCwd(pid: number): Promise<string | undefined>
@@ -470,6 +473,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       (event) => this.onServerOutput(event),
     )
     this.server = server
+    // The launch folder identifies the group from the spawn on; the leader's start time joins it once read, so a stop before that read can still be retried.
+    this.launchedLeader = { cwd: launched.packageRoot }
     this.portClaim = claimOwnedDevelopmentPort(this.input.configuration.port)
     void server.whenExited().then((exit) => this.onServerExit(exit))
     return server
@@ -999,8 +1004,9 @@ class OwnedNodeServerRun implements NodeServerRuntime {
         runId: this.input.runId,
         verifyPeer: (connection) => this.verifyPeer(connection, server, port),
         signal: this.requestAbort.signal,
+        // The body is the server's own text: only private roots are hidden, its spacing and lines stay.
         sanitize: (text) =>
-          sanitizeCause(text, causeRootsFor([], this.input.workspace)),
+          hidePrivateRoots(text, causeRootsFor([], this.input.workspace)),
       })
     } catch (error) {
       // The sender never started: the window closes and the request may be tried again.
@@ -1347,6 +1353,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       readProcessStart: this.dependencies.readProcessStart,
       readProcessCwd: this.dependencies.readProcessCwd,
       isGroupGone: this.dependencies.isGroupGone,
+      isProcessGone: this.dependencies.isProcessGone,
     })
   }
 
@@ -1354,7 +1361,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
    * Decides whether the run's own SIGKILL may be sent: the first release always, a retried one only while the group is still the launched one, so a reused group id never receives it.
    * @param server - The launched server.
    * @param isRetry - Whether an earlier release of this run already began.
-   * @returns `true` to signal, `false` when the group id belongs to another process now (nothing is signalled; the launcher's close finds the same).
+   * @returns `true` to signal, `false` when the group has no member left or its id belongs to another process now (nothing is signalled; the launcher's close finds the same).
    * @throws When a retry cannot tell whose group it is: the stop fails retryably and names the pid.
    */
   private async maySignal(
