@@ -60,6 +60,7 @@ import {
   WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON,
   OPEN_LEARNING_REPLAY_COMMAND,
   SAVE_LEARNING_REPLAY_COMMAND,
+  NODE_SERVER_SHUTDOWN_GRACE_MS,
 } from './constants'
 import {
   deployCursorSkill,
@@ -152,6 +153,7 @@ import { readWikiFileToOpen } from './utils/readWikiFileToOpen'
 import { readWikiPublicationIdentity } from './utils/readWikiPublicationIdentity'
 import { readWikiPublishToken } from './utils/readWikiPublishToken'
 import { readWikiWatchStamp } from './utils/readWikiWatchStamp'
+import { reapNodeServerOrphans } from './utils/reapNodeServerOrphans'
 import {
   captureOwnedCursorMcpCatalogGeneration,
   refreshCursorMcpCatalog,
@@ -290,6 +292,13 @@ export function activate(
       }
     },
   }
+  // A node-server run's server outlives a window that closed or crashed before its stop: its recorded group is closed once here, only while its leader still has the recorded start and folder (TD-7); a host without workspace storage has none to read.
+  if (context.workspaceState)
+    void reapNodeServerOrphans({
+      store: context.workspaceState,
+      graceMs: NODE_SERVER_SHUTDOWN_GRACE_MS,
+      log: (text) => diagnostics.line({ level: 'info', text }),
+    }).catch(() => undefined)
   const isCursorHost =
     vscode.env?.appName?.toLowerCase().includes('cursor') ?? false
   /** The editor host as the LLM Wiki code names it ({@link WikiUpdateHost}). */

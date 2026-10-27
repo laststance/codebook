@@ -41,7 +41,7 @@ function nodeServerStateWord(
  * @param input - The service's record of the run ({@link NodeServerProjectionInput}).
  * @returns
  * - `state`: one of the ten {@link NodeServerState} words
- * - `nextActions`: `http-request` while `ready`, `continue` while paused at a declared stop, `stop` until the run is released
+ * - `nextActions`: `http-request` while `ready`, `continue-server` while paused at a declared stop, `stop` until the run is released
  * - `participant`: the server participant; `continueArguments` (`answer: 'next'`, session, thread, generation) only while paused at a declared stop and controllable
  * - `nodeServer`: address, stops, stops hit at start and reached, the pause with its capture's facts, a held pause, the request, the response, the request failure, the capture count, whether the capture budget was exhausted and the count of failed stops
  * @example
@@ -55,7 +55,7 @@ export function projectNodeServerState(input: NodeServerProjectionInput) {
   const isResumable = Boolean(input.controllable && pause && state === 'paused')
   const nextActions = [
     input.controllable && state === 'ready' ? 'http-request' : undefined,
-    isResumable ? 'continue' : undefined,
+    isResumable ? 'continue-server' : undefined,
     !input.stopped ? 'stop' : undefined,
   ].filter((action) => action !== undefined)
   return {

@@ -46,3 +46,32 @@ test('Cursor bridge accepts only an absolute external Node 24 executable', async
     /external Node.js >=24/,
   )
 })
+
+// protects=the node-server start journal names the Node that ran the server: the resolver returns the verified path with its version; fails_when=the version is dropped or a refused Node still resolves; no_claim=the launcher's journal
+test('a node-server run resolves its external Node with the version it records, and refuses Node below 24', async () => {
+  // Arrange
+  const responses = [
+    { version: '26.10.0', executable: '/opt/homebrew/bin/node' },
+    { version: '22.16.0', executable: '/opt/homebrew/bin/node' },
+  ]
+  const module = await loadModule<typeof ResolveExternalNodeExecutableModule>(
+    resolve(__dirname, '../utils/resolveExternalNodeExecutable.js'),
+    {
+      'node:util': {
+        promisify: () => async () => ({
+          stdout: JSON.stringify(responses.shift()),
+        }),
+      },
+    },
+    { process: { execPath: '/Applications/Code.app/Contents/MacOS/Electron' } },
+  )
+  // Act
+  const resolved = await module.resolveExternalNode('node')
+  const refused = module.resolveExternalNode('node')
+  // Assert
+  assert.deepEqual(resolved, {
+    version: '26.10.0',
+    executable: '/opt/homebrew/bin/node',
+  })
+  await assert.rejects(refused, /external Node.js >=24/)
+})

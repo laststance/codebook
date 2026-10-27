@@ -1,5 +1,7 @@
 import {
   NODE_SERVER_EVENT_BODY_LIMIT_BYTES,
+  NODE_SERVER_EVENT_PATH_LIMIT_CHARS,
+  NODE_SERVER_EVENT_SHORT_TEXT_LIMIT_CHARS,
   NODE_SERVER_FAILURE_CAUSE_LIMIT_CHARS,
   NODE_SERVER_REQUEST_PATH_LIMIT_CHARS,
   PROCESS_OUTPUT_EVENT_LIMIT_CHARS,
@@ -10,10 +12,6 @@ import { redactSecretText } from './redactSecretText'
 
 type EventFields = Record<string, unknown>
 
-/** Longest content type, reason, address, version or signal name an event keeps. */
-const SHORT_TEXT_LIMIT_CHARS = 256
-/** Longest repository path an event keeps. */
-const PATH_LIMIT_CHARS = 512
 /** The HTTP methods a declared request may use. */
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
 
@@ -71,39 +69,77 @@ const NODE_SERVER_EVENT_FIELDS: Record<
     method: METHODS.includes(String(input.method)) ? input.method : null,
     path: boundedText(input.path, NODE_SERVER_REQUEST_PATH_LIMIT_CHARS),
     bodyBytes: integerField(input.bodyBytes),
-    address: boundedText(input.address, SHORT_TEXT_LIMIT_CHARS),
+    address: boundedText(
+      input.address,
+      NODE_SERVER_EVENT_SHORT_TEXT_LIMIT_CHARS,
+    ),
   }),
   'node-server.response': (input) => ({
     status: integerField(input.status),
-    contentType: boundedText(input.contentType, SHORT_TEXT_LIMIT_CHARS),
+    contentType: boundedText(
+      input.contentType,
+      NODE_SERVER_EVENT_SHORT_TEXT_LIMIT_CHARS,
+    ),
     body: bodyField(input.body),
     bodyBytes: integerField(input.bodyBytes),
     readCut: input.readCut === true,
+    location: boundedText(input.location, NODE_SERVER_EVENT_PATH_LIMIT_CHARS),
     elapsedMs: integerField(input.elapsedMs),
   }),
   'node-server.learner-paused': (input) => ({
-    path: boundedText(input.path, PATH_LIMIT_CHARS),
+    kind: input.kind === 'unattributed' ? 'unattributed' : 'learner',
+    declaredStopIndex: integerField(input.declaredStopIndex),
+    path: boundedText(input.path, NODE_SERVER_EVENT_PATH_LIMIT_CHARS),
     line: integerField(input.line),
-    reason: boundedText(input.reason, SHORT_TEXT_LIMIT_CHARS) ?? 'paused',
+    reason:
+      boundedText(input.reason, NODE_SERVER_EVENT_SHORT_TEXT_LIMIT_CHARS) ??
+      'paused',
   }),
   'node-server.learner-resumed': (input) => ({
-    path: boundedText(input.path, PATH_LIMIT_CHARS),
-    line: integerField(input.line),
+    declaredStopIndex: integerField(input.declaredStopIndex),
   }),
   'node-server.failure': (input) => ({
-    code: boundedText(input.code, SHORT_TEXT_LIMIT_CHARS),
+    code: boundedText(input.code, NODE_SERVER_EVENT_SHORT_TEXT_LIMIT_CHARS),
     cause: boundedText(input.cause, NODE_SERVER_FAILURE_CAUSE_LIMIT_CHARS),
   }),
   // The launch journal's paths and variable names stay in the run; the chat reads what ran and with which Node.
   'node-server.started': (input) => ({
     pid: integerField(input.pid),
     loader: input.loader === 'node' ? 'node' : 'tsx',
-    nodeVersion: boundedText(input.nodeVersion, SHORT_TEXT_LIMIT_CHARS),
+    nodeVersion: boundedText(
+      input.nodeVersion,
+      NODE_SERVER_EVENT_SHORT_TEXT_LIMIT_CHARS,
+    ),
   }),
+  'node-server.ready': (input) => ({
+    host: input.host === '::1' ? '::1' : '127.0.0.1',
+    port: integerField(input.port),
+  }),
+  'node-server.stop-hit-at-start': (input) => ({
+    declaredStopIndex: integerField(input.declaredStopIndex),
+  }),
+  'node-server.pause': (input) => ({
+    declaredStopIndex: integerField(input.declaredStopIndex),
+    stopNumber: integerField(input.stopNumber),
+    pauseGeneration: integerField(input.pauseGeneration),
+  }),
+  'node-server.capture-budget-exhausted': (input) => ({
+    limit: integerField(input.limit),
+  }),
+  'node-server.port-held-by-other': (input) => ({
+    port: integerField(input.port),
+    pid: integerField(input.pid),
+    command: boundedText(
+      input.command,
+      NODE_SERVER_EVENT_SHORT_TEXT_LIMIT_CHARS,
+    ),
+  }),
+  'node-server.attached': (input) => ({ pid: integerField(input.pid) }),
+  'node-server.stopped': (input) => ({ pid: integerField(input.pid) }),
   'node-server.closed': (input) => ({
     pid: integerField(input.pid),
     exitCode: integerField(input.exitCode),
-    signal: boundedText(input.signal, SHORT_TEXT_LIMIT_CHARS),
+    signal: boundedText(input.signal, NODE_SERVER_EVENT_SHORT_TEXT_LIMIT_CHARS),
   }),
 }
 

@@ -1416,6 +1416,10 @@ export const NODE_SERVER_MINIMUM_EXTENSION_VERSION = '0.2.51'
 export const NODE_SERVER_FAILURE_CAUSE_LIMIT_CHARS = 1_024
 /** The most UTF-8 bytes of a response's shown body a `node-server.response` event keeps, so one event stays far under {@link EVENT_DETAIL_LIMIT_BYTES}; the run resource keeps the whole shown body. */
 export const NODE_SERVER_EVENT_BODY_LIMIT_BYTES = 4_096
+/** The longest short text (address, content type, stopped reason, signal, command) a node-server event keeps. */
+export const NODE_SERVER_EVENT_SHORT_TEXT_LIMIT_CHARS = 256
+/** The longest repository path or redirect location a node-server event keeps. */
+export const NODE_SERVER_EVENT_PATH_LIMIT_CHARS = 512
 /** The methods of a declared request that change the repository's data; each needs the learner's confirmation before it is sent (D6). */
 export const NODE_SERVER_STATE_CHANGING_METHODS = [
   'POST',

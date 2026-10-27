@@ -48,7 +48,7 @@ test('a ready node-server run shows its address, stops and the http-request acti
   assert.equal(state.terminalReason, undefined)
 })
 
-// protects=a pause at a declared stop shows the stop with its captured facts, attribution timing, the generation and the exact continuation arguments, and offers continue; fails_when=the facts, the generation or the arguments are missing or the action is named continue-server; no_claim=the facts' correctness (part R)
+// protects=a pause at a declared stop shows the stop with its captured facts, attribution timing, the generation and the exact continuation arguments, and offers continue-server as the other profiles name it; fails_when=the facts, the generation or the arguments are missing or the action has another name; no_claim=the facts' correctness (part R)
 test('a node-server run paused at a declared stop shows the stop, its facts and the continuation arguments', async (context) => {
   // Arrange
   const harness = await createHarness()
@@ -60,7 +60,7 @@ test('a node-server run paused at a declared stop shows the stop, its facts and 
   const state = service.state(record)
   // Assert
   assert.equal(state.state, 'paused')
-  assert.deepEqual(state.nextActions, ['continue', 'stop'])
+  assert.deepEqual(state.nextActions, ['continue-server', 'stop'])
   assert.deepEqual(state.nodeServer?.pause, {
     declaredStopIndex: 1,
     stopNumber: 2,

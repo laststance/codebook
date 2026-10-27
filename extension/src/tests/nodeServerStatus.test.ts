@@ -83,8 +83,8 @@ test('codebook_status shows a node-server run with its state', async (context) =
   )
 })
 
-// protects=D8: the real environment reports node-server beside the others, from its Node and the machine's gaps, and exposes the confirmation hook; fails_when=profiles['node-server'] is missing, a machine gap does not reach it, or the hook is absent; no_claim=the real lsof or ps
-test('the environment reports node-server prerequisites from Node and the machine, and offers the confirmation hook', async (context) => {
+// protects=D8: the real environment reports node-server beside the others, from its Node and the machine's gaps, and exposes the confirmation hook and the run factory; fails_when=profiles['node-server'] is missing, a machine gap does not reach it, or the hook or the factory is absent; no_claim=the real lsof or ps
+test('the environment reports node-server prerequisites from Node and the machine, and offers the confirmation hook and the run factory', async (context) => {
   // Arrange
   const ready = await createEnvironmentWith(context, { gaps: [] })
   const missing = await createEnvironmentWith(context, {
@@ -109,7 +109,7 @@ test('the environment reports node-server prerequisites from Node and the machin
     { ready: false, missing: ['node-server needs lsof or ss.'] },
   )
   assert.equal(typeof ready.environment.confirmStateChangingRequest, 'function')
-  assert.equal(ready.environment.createNodeServerRun, undefined)
+  assert.equal(typeof ready.environment.createNodeServerRun, 'function')
   // the machine's gap belongs to node-server alone
   assert.equal(
     missingProfiles?.['repository-browser']?.missing.includes(

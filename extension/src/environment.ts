@@ -15,6 +15,7 @@ import {
   WSL_REMOTE_NAME,
 } from './constants'
 import { StudyError } from './errors'
+import type { NodeServerConfiguration } from './nodeServerConfigSchemas'
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
 import type {
   NodeTestPreparationControl,
@@ -36,13 +37,19 @@ import { causeRootsFor } from './utils/causeRootsFor'
 import { checkNodeTestFiles } from './utils/checkNodeTestFiles'
 import { configuredStops } from './utils/configuredStops'
 import { createChromeExecutableLookup } from './utils/createChromeExecutableLookup'
+import { createMemoryOrphanStore } from './utils/createMemoryOrphanStore'
+import { createNodeServerRunUtilities } from './utils/createNodeServerRunUtilities'
 import { listVitestForRootClaim } from './utils/listVitestForRootClaim'
 import { nodeServerMachineGaps } from './utils/nodeServerMachineGaps'
+import type { NodeServerOrphanStore } from './utils/nodeServerOrphanRecords'
 import {
   planNodeTestExecution,
   type NodeTestExecutionPlan,
 } from './utils/planNodeTestExecution'
-import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
+import {
+  resolveExternalNode,
+  resolveExternalNodeExecutable,
+} from './utils/resolveExternalNodeExecutable'
 import { sanitizeCause } from './utils/sanitizeCause'
 import { searchRepositoryVitest } from './utils/searchRepositoryVitest'
 
@@ -138,11 +145,15 @@ function requireChromeVersion(output: string): string {
 
 /** Installs tracking before creating any runtime; commands retain these observers until owned teardown completes. @example const environment = await createEnvironment(context) */
 export async function createEnvironment(
-  context: Pick<vscode.ExtensionContext, 'extensionPath'>,
+  context: Pick<vscode.ExtensionContext, 'extensionPath'> & {
+    /** Where a node-server run keeps its process record for the next activation's orphan check; without it the record lives only in memory. */
+    workspaceState?: NodeServerOrphanStore
+  },
   presentation?: StudyPresentation,
 ): Promise<StudyEnvironment & { dispose(): void }> {
   const workspace = requireWorkspace(),
     runs = new Map<string, ConfiguredBrowserRun>()
+  const orphanStore = context.workspaceState ?? createMemoryOrphanStore()
   const product = productSchema.parse(
     JSON.parse(
       await readFile(join(vscode.env.appRoot, 'product.json'), 'utf8'),
@@ -213,6 +224,29 @@ export async function createEnvironment(
       )
     }
     return { nodeMissing, nodeExecutable }
+  }
+  /**
+   * Refuses a Node run whose editor prerequisites or external Node are missing, or whose window's workspace changed, before anything is created; called by the node-test and node-server run factories.
+   * @param runName - How the run is named in the stale-workspace refusal (`the Node test`, `the Node server run`).
+   * @returns The configured external Node executable.
+   * @throws `PREREQUISITE_MISSING` naming every gap; `STALE_INSTANCE` after a workspace change.
+   * @example await requireNodeRunPrerequisites('the Node test') // => '/usr/local/bin/node'
+   */
+  const requireNodeRunPrerequisites = async (
+    runName: string,
+  ): Promise<string> => {
+    const prerequisites = await resolveNodePrerequisites()
+    if (prerequisites.nodeMissing.length || !prerequisites.nodeExecutable)
+      throw new StudyError(
+        'PREREQUISITE_MISSING',
+        prerequisites.nodeMissing.join('; '),
+      )
+    if (requireWorkspace() !== workspace)
+      throw new StudyError(
+        'STALE_INSTANCE',
+        `Workspace identity changed before ${runName}.`,
+      )
+    return prerequisites.nodeExecutable
   }
   const resolvePrerequisites = async () => {
     const { nodeMissing, nodeExecutable } = await resolveNodePrerequisites()
@@ -450,27 +484,46 @@ export async function createEnvironment(
           'PREREQUISITE_MISSING',
           'The node-test run has no execution plan from its preparation check.',
         )
-      const prerequisites = await resolveNodePrerequisites()
-      if (prerequisites.nodeMissing.length || !prerequisites.nodeExecutable)
-        throw new StudyError(
-          'PREREQUISITE_MISSING',
-          prerequisites.nodeMissing.join('; '),
-        )
-      if (requireWorkspace() !== workspace)
-        throw new StudyError(
-          'STALE_INSTANCE',
-          'Workspace identity changed before the Node test.',
-        )
+      const nodeExecutable = await requireNodeRunPrerequisites('the Node test')
       // Load the VS Code-backed owner only after a caller selects this profile; environment unit tests run in plain Node.
       const { OwnedNodeTestRun } = await import('./ownedNodeTestRun.js')
       return new OwnedNodeTestRun(
         workspace,
         configuration,
-        prerequisites.nodeExecutable,
+        nodeExecutable,
         record,
         citedSources,
         plan,
       )
+    },
+    async createNodeServerRun(
+      configuration: NodeServerConfiguration,
+      record: (type: string, detail?: unknown) => unknown,
+      citedSources: ConfiguredDescriptor['sources'],
+      runId: string,
+    ) {
+      const node = await resolveExternalNode(
+        await requireNodeRunPrerequisites('the Node server run'),
+      )
+      // Load the VS Code-backed run only after a caller selects this profile; environment unit tests run in plain Node.
+      const [
+        { createOwnedNodeServerRun },
+        { createProductNodeServerRunDependencies },
+      ] = await Promise.all([
+        import('./ownedNodeServerRun.js'),
+        import('./nodeServerRunDependencies.js'),
+      ])
+      return createOwnedNodeServerRun({
+        workspace,
+        configuration,
+        record,
+        citedSources,
+        runId,
+        dependencies: createProductNodeServerRunDependencies({
+          node,
+          utilities: createNodeServerRunUtilities(orphanStore),
+        }),
+      })
     },
     confirmStateChangingRequest: (request, signal) =>
       askToSendStateChangingRequest(

@@ -49,19 +49,19 @@ test('node-server events publish only their whitelisted fields, masked and bound
     body: '{"id":7}',
     bodyBytes: 8,
     readCut: false,
+    location: '/api/items/7',
     elapsedMs: 31,
     rawHeaders: ['set-cookie'],
   })
   run.record('node-server.learner-paused', {
+    kind: 'unattributed',
     path: 'src/routes/items.ts',
     line: 12,
     reason: 'breakpoint',
+    declaredStopIndex: 1,
     threadId: 3,
   })
-  run.record('node-server.learner-resumed', {
-    path: 'src/routes/items.ts',
-    line: 12,
-  })
+  run.record('node-server.learner-resumed', { declaredStopIndex: 1 })
   run.record('node-server.failure', {
     code: 'REQUEST_FAILED',
     cause: `ECONNRESET at '${privateFile}'`,
@@ -98,16 +98,18 @@ test('node-server events publish only their whitelisted fields, masked and bound
     body: '{"id":7}',
     bodyBytes: 8,
     readCut: false,
+    location: '/api/items/7',
     elapsedMs: 31,
   })
   assert.deepEqual(byType['node-server.learner-paused'], {
+    kind: 'unattributed',
+    declaredStopIndex: 1,
     path: 'src/routes/items.ts',
     line: 12,
     reason: 'breakpoint',
   })
   assert.deepEqual(byType['node-server.learner-resumed'], {
-    path: 'src/routes/items.ts',
-    line: 12,
+    declaredStopIndex: 1,
   })
   assert.equal(byType['node-server.failure']?.code, 'REQUEST_FAILED')
   assert.equal(
@@ -201,6 +203,47 @@ test('a node-server event over the per-event byte bound is replaced by the trunc
     (record.nodeEvents ?? []).map((event) => event.type),
     ['node-server.events-truncated'],
   )
+})
+
+// protects=the run's lifecycle events reach the events resource with their listed fields only (ready, a stop hit at start, a pause, the capture budget, a port held by another process, attach and stop); fails_when=one of them reads omitted or keeps an unlisted field; no_claim=the run emitting them (ownedNodeServerRun.test.ts)
+test('node-server lifecycle events keep their listed fields and drop the rest', () => {
+  // Arrange
+  const emitted: Array<[string, Record<string, unknown>]> = [
+    ['node-server.ready', { host: '::1', port: 4100, socket: 'x' }],
+    ['node-server.stop-hit-at-start', { declaredStopIndex: 0, frame: 'x' }],
+    [
+      'node-server.pause',
+      { declaredStopIndex: 1, stopNumber: 2, pauseGeneration: 3, threadId: 9 },
+    ],
+    ['node-server.capture-budget-exhausted', { limit: 16, hits: 17 }],
+    [
+      'node-server.port-held-by-other',
+      { port: 4100, pid: 77, command: 'postgres', cwd: '/x' },
+    ],
+    ['node-server.attached', { pid: 4242, endpoint: 'ws://127.0.0.1:1/x' }],
+    ['node-server.stopped', { pid: 4242, signal: 'SIGKILL' }],
+  ]
+  // Act
+  const details = emitted.map(([type, detail]) => [
+    type,
+    nodeServerEventDetail(type, detail),
+  ])
+  // Assert
+  assert.deepEqual(details, [
+    ['node-server.ready', { host: '::1', port: 4100 }],
+    ['node-server.stop-hit-at-start', { declaredStopIndex: 0 }],
+    [
+      'node-server.pause',
+      { declaredStopIndex: 1, stopNumber: 2, pauseGeneration: 3 },
+    ],
+    ['node-server.capture-budget-exhausted', { limit: 16 }],
+    [
+      'node-server.port-held-by-other',
+      { port: 4100, pid: 77, command: 'postgres' },
+    ],
+    ['node-server.attached', { pid: 4242 }],
+    ['node-server.stopped', { pid: 4242 }],
+  ])
 })
 
 /** Starts a run whose Output › Codebook lines a test reads. */
