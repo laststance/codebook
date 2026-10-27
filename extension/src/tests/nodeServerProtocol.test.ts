@@ -271,7 +271,7 @@ test('the MCP server names node-server and http-request in its instructions, too
   )
 })
 
-// protects=the tool text an editor builds its confirmation summary from (VS Code shows a tool's title and description): codebook_start promises no request only for a node-server start (a browser start loads the application's page, a test start runs the test), and codebook_action says its method comes from the run's declaration and a GET changes nothing; fails_when=either tool is described as posting data, the start promises no traffic for every profile, or the action's method is left unsaid; no_claim=what a model-written summary says
+// protects=the tool text an editor builds its confirmation summary from (VS Code shows a tool's title and description): codebook_start promises no request only for a node-server start (a browser start loads the application's page, a test start runs the test), and codebook_action says its method comes from the run's declaration and that a GET is sent without the dialog while the server's handler decides whether it changes data, with no promise that a GET changes nothing; fails_when=either tool is described as posting data, the start promises no traffic for every profile, or the action's method is left unsaid; no_claim=what a model-written summary says
 test('codebook_start and codebook_action describe themselves so an editor’s confirmation summary follows the run', async (context) => {
   // Arrange
   const harness = await createHarness()
@@ -293,8 +293,9 @@ test('codebook_start and codebook_action describe themselves so an editor’s co
   assert.equal(start.annotations?.title, 'Start the declared Codebook run')
   assert.match(
     action.description ?? '',
-    /HTTP method comes from the declaration of the run, never from this tool, and a GET changes nothing/,
+    /HTTP method comes from the declaration of the run, never from this tool; a GET is sent without the confirmation dialog, and the server's own handler decides whether it changes data\./,
   )
+  assert.doesNotMatch(action.description ?? '', /a GET changes nothing/)
   assert.equal(
     action.annotations?.title,
     "Send the run's declared action (method as declared)",

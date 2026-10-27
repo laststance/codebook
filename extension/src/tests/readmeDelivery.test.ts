@@ -42,3 +42,28 @@ test('the packaged README tells that a continuation refused for an unreadable re
   // Assert
   assert.equal(tellsPausedRun, true)
 })
+
+// Value: protects=the packaged README stating the one request time limit that can fire and the run deadline that ends a waiting request (Cycle 0057 item 10); fails_when=the README names a 15-minute request limit again or drops the 30 s running-time limit or the RUNTIME_FAILED end at the 10-minute deadline; no_claim=the rest of the section
+test('the README states the 30 s running-time request limit and the 10-minute run deadline without a 15-minute request limit', async () => {
+  // Arrange
+  const readme = await readFile(join(__dirname, '../../README.md'), 'utf8')
+
+  // Act
+  const reports = readme
+    .split('\n')
+    .find((line) => line.startsWith('- **What the run reports.**'))
+
+  // Assert
+  assert.ok(reports)
+  assert.ok(
+    reports.includes(
+      'within 30 s of running time (paused time excluded), ends the request with `REQUEST_FAILED` or `REQUEST_TIMEOUT`',
+    ),
+  )
+  assert.ok(
+    reports.includes(
+      "a run whose request still waits at the run's 10-minute deadline ends with `RUNTIME_FAILED`",
+    ),
+  )
+  assert.ok(!reports.includes('15 minutes'))
+})

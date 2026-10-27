@@ -483,6 +483,62 @@ test('a stop whose stack is still being read counts as an unreported pause until
   await debug.release()
 })
 
+// protects=D14 v3 / Cycle 0058 task 4: a stop that arrives after the release began (the detach is under way) is still reported to the run for the bound session, so the run can kill the group before the detach resumes it; a stop of a child session is never reported; fails_when=the debugger drops the stop once its release began, or reports a child session's stop; no_claim=the run's reaction (its own test)
+test(
+  'a stop after the release began is reported for the bound session and a child session stays silent',
+  { timeout: 10_000 },
+  async () => {
+    // Arrange
+    const editor = await editorHarness({ stopFailures: 1 })
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    await assert.rejects(debug.release(), /the adapter did not answer/)
+    // Act
+    await editor.adapter.childStops()
+    // The run hears a stop during the release in the turn it arrives, so the wait is taken first.
+    const nextPause = heard.nextPause()
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+      file: STOP_FILE,
+      line: 14,
+    })
+    const pause = await nextPause
+    // Assert
+    assert.equal(pause.sessionId, 'node-server-session')
+    assert.equal(pause.reason, 'breakpoint')
+    assert.equal(heard.pauses.length, 1)
+    assert.equal(debug.hasUnreportedPause(), false)
+    await debug.release()
+  },
+)
+
+// protects=Cycle 0058 task 4 (ship Codex adversarial review): a stop the adapter reports while the release is under way reaches the run even when the detach's `continued` follows in the same turn, so the run can end the group; fails_when=the stop waits in the classification queue and the `continued` drops it before the run hears of it; no_claim=the run's reaction (its own test)
+test(
+  'a stop during the release is reported to the run even when a continue follows it at once',
+  { timeout: 10_000 },
+  async () => {
+    // Arrange
+    const stopHeld = defer<void>()
+    const editor = await editorHarness({ stopGate: stopHeld.promise })
+    const { debug, heard } = await armedDebugger(editor)
+    await debug.releaseEntry(AbortSignal.timeout(5_000))
+    const releasing = debug.release()
+    // Act
+    editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+      file: STOP_FILE,
+      line: 14,
+    })
+    editor.adapter.continued(1, true)
+    stopHeld.resolve()
+    await releasing
+    await new Promise((resolve) => setImmediate(resolve))
+    // Assert
+    assert.deepEqual(
+      heard.pauses.map((pause) => [pause.sessionId, pause.reason]),
+      [['node-server-session', 'breakpoint']],
+    )
+  },
+)
+
 // protects=a stop the learner continues before its stack arrives is no pause any more; fails_when=a server running on is still read as paused, so a stop kills it instead of letting it shut down; no_claim=none
 test('a stop the learner continues before its stack arrives no longer counts as an unreported pause', async () => {
   // Arrange

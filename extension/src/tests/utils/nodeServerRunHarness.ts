@@ -71,6 +71,8 @@ export type HarnessOptions = {
   holdClose?: boolean
   occupant?: { pid: number; command?: string }
   groupGone?: boolean
+  /** The leader's start as each successive read answers it, before the reads fall back to the harness's `leader.start`; `undefined` is a read that failed. */
+  leaderStartReads?: Array<string | undefined>
   /** What the pid probe answers for the launched leader's id; a process still has it unless a test says otherwise. */
   processGone?: boolean
   /** Also receives every event the run journals, as the service's record does when the service owns the run. */
@@ -383,7 +385,11 @@ export function createHarness(options: HarnessOptions = {}) {
     leader: { start: 'start-1', cwd: WORKSPACE } as {
       start: string | undefined
       cwd: string | undefined
+      /** Holds every start read until it settles, so a test can let a close return while an identity check still reads. */
+      startGate?: Promise<void>
     },
+    /** What the group probe answers from now on, in place of the `groupGone` option; a test sets it when the group ends mid-stop. */
+    groupGone: undefined as boolean | undefined,
     /** A signal that fails once, as the system refuses one for a member the user may not signal (EPERM); a test sets it before the call. */
     failSignal: undefined as NodeJS.Signals | undefined,
     readiness: [] as Array<
@@ -462,9 +468,14 @@ export function createHarness(options: HarnessOptions = {}) {
         })
       }
     },
-    isGroupGone: () => options.groupGone ?? false,
+    isGroupGone: () => calls.groupGone ?? options.groupGone ?? false,
     isProcessGone: () => options.processGone ?? false,
-    readProcessStart: async () => calls.leader.start,
+    readProcessStart: async () => {
+      await calls.leader.startGate
+      return options.leaderStartReads?.length
+        ? options.leaderStartReads.shift()
+        : calls.leader.start
+    },
     readProcessCwd: async () => calls.leader.cwd,
     findPortOccupant: async () => {
       await options.occupantGate

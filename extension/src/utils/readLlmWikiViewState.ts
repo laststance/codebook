@@ -132,6 +132,8 @@ export type LlmWikiViewFacts =
         startedAtMs: number
         retryAtMs: number
       }
+      /** Set while this window's run is over but its marker still stands as the run's, about to be removed or turned into a reservation: the message of that moment is not known, so the view keeps the one it shows. */
+      isMarkerSettling?: true
       lastAttempt?: LlmWikiStoppedGeneration
       /** A start block, or a manifest that cannot be used; `cause` is a conflict cause, `foreign-manifest`, or one a later version adds. */
       attention?: { cause: string; sentence: string }

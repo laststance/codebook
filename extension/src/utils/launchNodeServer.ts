@@ -4,6 +4,7 @@ import {
   NODE_SERVER_DEBUGGER_DETACH_TIMEOUT_MS,
   NODE_SERVER_GROUP_EXIT_POLL_MS,
   NODE_SERVER_KILL_BY_MS,
+  NODE_SERVER_KILL_CHECK_LEAD_MS,
   NODE_SERVER_OUTPUT_PENDING_LIMIT_BYTES,
   NODE_SERVER_STOP_DEADLINE_MS,
   NODE_TEST_ATTACH_TIMEOUT_MS,
@@ -102,36 +103,93 @@ function resolveCloseOptions(
 }
 
 /**
- * Ends an owned process group with SIGTERM, then SIGKILL when it has not ended by the kill bound, each signal only while the group may still be signalled.
- * Why: a server or a process it started may ignore SIGTERM, so the escalation covers the whole group and lands by the kill bound; a retried close confirms the group before each signal. Called by the close of {@link launchNodeServer}.
- * @param input - The group, the identity check before each signal, the signal, the wait for the group's end and the two bounds.
- * @returns
- * - `false` when the group ended after SIGTERM, or nothing was signalled
- * - `true` when SIGTERM did not end it by the kill bound (SIGKILL followed unless the second check left the group alone)
- * @throws When an identity check cannot tell whose group it is, or the group outlives SIGKILL until the deadline.
+ * Starts a retried close's second identity check of its group shortly before the kill bound and keeps its answer for the bound.
+ * Why: the group id a retried close signalled with SIGTERM may belong to another process group by the kill bound, so SIGKILL goes only to a group confirmed then; started {@link NODE_SERVER_KILL_CHECK_LEAD_MS} early, the check never pushes SIGKILL past the bound. Called by {@link endGroupBySignals} right after SIGTERM.
+ * @param mayStillSignal - The identity check: `true` for the launched group, `false` for one gone or replaced; it throws when it cannot tell.
+ * @param delayMs - How long after now the check starts (at once when not positive).
+ * @returns `answer()`, read at the kill bound: the check's verdict; it throws the check's own error, or one naming the bound when the check has not answered yet. `cancel()`: drops a check that has not started.
  * @example
- * await endGroupBySignals({ processGroup: 4242, mayStillSignal: async () => true, signalGroup, waitForRelease, killByMs: 5_000, deadlineMs: 10_000 }) // => false
+ * const killCheck = scheduleKillCheck(mayStillSignal, msUntil(killByMs) - NODE_SERVER_KILL_CHECK_LEAD_MS)
+ * killCheck.answer() // => true at the bound for the launched group
+ */
+function scheduleKillCheck(
+  mayStillSignal: () => Promise<boolean>,
+  delayMs: number,
+): { answer: () => boolean; cancel: () => void } {
+  let outcome:
+    | { kind: 'pending' }
+    | { kind: 'answered'; isLaunched: boolean }
+    | { kind: 'failed'; error: unknown } = { kind: 'pending' }
+  const timer = setTimeout(
+    () => {
+      mayStillSignal().then(
+        (isLaunched) => {
+          outcome = { kind: 'answered', isLaunched }
+        },
+        (error: unknown) => {
+          outcome = { kind: 'failed', error }
+        },
+      )
+    },
+    Math.max(0, delayMs),
+  )
+  return {
+    answer: () => {
+      if (outcome.kind === 'answered') return outcome.isLaunched
+      if (outcome.kind === 'failed') throw outcome.error
+      // A check still running at the bound would push SIGKILL past it: nothing is signalled.
+      throw new Error(
+        'Node server process group could not be confirmed as the launched one by the kill bound, so it was not signalled again.',
+      )
+    },
+    cancel: (): void => clearTimeout(timer),
+  }
+}
+
+/**
+ * Ends an owned process group with SIGTERM, then SIGKILL when it has not ended by the kill bound.
+ * Why: a server or a process it started may ignore SIGTERM, so the escalation covers the whole group and lands by the kill bound. A retried close confirms the group before SIGTERM and again just before the kill bound ({@link scheduleKillCheck}), since the group id may have gone to another group in between; that second check starts early enough that it never pushes SIGKILL past the bound. Called by the close of {@link launchNodeServer}.
+ * @param input - The group, the identity check, whether the close is a retry, the signal, the group probe, the wait for the group's end, the time left until a bound and the two bounds.
+ * @returns
+ * - `false` when the group ended after SIGTERM, was gone or replaced at the kill bound, or nothing was signalled
+ * - `true` only when SIGKILL was sent
+ * @throws When an identity check cannot tell whose group it is or has not answered by the kill bound, when the probe at the kill bound cannot tell whether members remain (no SIGKILL is sent in these cases), or the group outlives SIGKILL until the deadline.
+ * @example
+ * await endGroupBySignals({ processGroup: 4242, mayStillSignal: async () => true, isRetry: false, signalGroup, isGroupGone, waitForRelease, msUntil: (boundMs) => boundMs, killByMs: 5_000, deadlineMs: 10_000 }) // => false
  */
 async function endGroupBySignals(input: {
   processGroup: number
   mayStillSignal: () => Promise<boolean>
+  isRetry: boolean
   signalGroup: typeof signalProcessGroup
+  isGroupGone: typeof isProcessGroupGone
   waitForRelease: (boundMs: number) => Promise<void>
+  msUntil: (boundMs: number) => number
   killByMs: number
   deadlineMs: number
 }): Promise<boolean> {
   if (!(await input.mayStillSignal())) return false
   input.signalGroup(input.processGroup, 'SIGTERM')
+  // A retried close checks the group again shortly before the kill bound: an id signalled with SIGTERM may belong to another group by then.
+  const killCheck = input.isRetry
+    ? scheduleKillCheck(
+        input.mayStillSignal,
+        input.msUntil(input.killByMs) - NODE_SERVER_KILL_CHECK_LEAD_MS,
+      )
+    : undefined
   try {
     await input.waitForRelease(input.killByMs)
     return false
   } catch {
-    // SIGTERM did not end the group by the kill bound: SIGKILL, unless the group is no longer the launched one.
-    if (await input.mayStillSignal()) {
-      input.signalGroup(input.processGroup, 'SIGKILL')
-      await input.waitForRelease(input.deadlineMs)
-    }
+    // SIGTERM did not end the group by the kill bound. A retry kills only a group its second check confirmed; a check that failed or has not answered throws, and nothing is killed.
+    if (killCheck && !killCheck.answer()) return false
+    // A probe that throws cannot tell, so it propagates and nothing is killed.
+    if (input.isGroupGone(input.processGroup)) return false
+    input.signalGroup(input.processGroup, 'SIGKILL')
+    await input.waitForRelease(input.deadlineMs)
     return true
+  } finally {
+    killCheck?.cancel()
   }
 }
 
@@ -310,7 +368,6 @@ export async function launchNodeServer(
               confirmLaunchedGroup({
                 pid: processGroup,
                 startedAt: await launchedStart,
-                cwd: launch.packageRoot,
                 leaderExited: hasExited(),
                 readProcessStart,
                 readProcessCwd,
@@ -342,8 +399,11 @@ export async function launchNodeServer(
         const killed = await endGroupBySignals({
           processGroup,
           mayStillSignal,
+          isRetry,
           signalGroup,
+          isGroupGone,
           waitForRelease,
+          msUntil: (boundMs) => boundMs - sinceAdmissionMs(),
           killByMs,
           deadlineMs,
         })

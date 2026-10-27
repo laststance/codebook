@@ -69,7 +69,7 @@ function isValidUtf8(bytes: Buffer, readCut: boolean): boolean {
  * @param sanitize - Hides the run's private roots; applied to the whole redacted text before the cut, so a path straddling the shown limit keeps no prefix. Identity unless given.
  * @returns
  * - `''` for an empty body
- * - The redacted text, cut at a code point with ` … <n> more bytes` (`at least <n>` and ` (cut at 1 MiB)` when the read was cut; n counts the original bytes) when longer than 8,192 bytes, and ` (not valid UTF-8)` after U+FFFD replacements, for `text/*`, `application/json` and `*+json`
+ * - The redacted text, cut at a code point with ` … <n> more bytes` (`at least <n>` and ` (cut at 1 MiB)` when the read was cut; n counts the bytes of the redacted, sanitized text that remain after the shown cut) when longer than 8,192 bytes, and ` (not valid UTF-8)` after U+FFFD replacements, for `text/*`, `application/json` and `*+json`
  * - `(binary, <n> bytes)` (`at least <n> bytes, cut at 1 MiB`) for every other media type
  * @example
  * shapeResponseBody(Buffer.from('{"ok":true}'), 'application/json') // => '{"ok":true}'
@@ -94,7 +94,7 @@ export function shapeResponseBody(
   const text = redacted.subarray(0, cut).toString('utf8')
   const more =
     redacted.length > cut
-      ? ` … ${readCut ? 'at least ' : ''}${bytes.length - cut} more bytes`
+      ? ` … ${readCut ? 'at least ' : ''}${redacted.length - cut} more bytes`
       : ''
   const note = readCut ? ' (cut at 1 MiB)' : ''
   const invalid = isValidUtf8(bytes, readCut) ? '' : ' (not valid UTF-8)'

@@ -24,6 +24,7 @@ type FrameAt = { file: string; line: number; column?: number }
  * A fake editor with a `pwa-node` adapter behind it: sessions, the DAP tracker, `setBreakpoints` requests and replies for the breakpoints the editor holds, stops and continues. It loads the real {@link OwnedRepositoryBreakpoint} and the debugger under test.
  * @param options.verifiedLine - The line the adapter verifies the breakpoints on when it differs from the requested one.
  * @param options.stopFailures - How many first `stopDebugging` calls the editor rejects.
+ * @param options.stopGate - Holds every `stopDebugging` call until it settles.
  * @param options.documents - The editor's open documents.
  * @example
  * const editor = await editorHarness(); const debug = editor.debug({ stops }); await debug.attach(...)
@@ -38,6 +39,8 @@ export async function editorHarness(
     stackTraceFails?: boolean
     /** Holds the adapter's stack trace of a pause after the entry pause until the test settles it. */
     stackTraceGate?: Promise<void>
+    /** Holds every `stopDebugging` call until the test settles it, so a release stays under way. */
+    stopGate?: Promise<void>
     documents?: Array<{
       uri: { scheme: string; fsPath: string }
       getText: () => string
@@ -253,6 +256,7 @@ export async function editorHarness(
       },
       async stopDebugging(): Promise<void> {
         calls.push('stopDebugging')
+        await options.stopGate
         stopRequests += 1
         if (stopRequests <= (options.stopFailures ?? 0))
           throw new Error(`the adapter did not answer (stop ${stopRequests})`)
@@ -357,6 +361,22 @@ export async function editorHarness(
         type: 'event',
         event: 'continued',
         body: { threadId, allThreadsContinued },
+      })
+    },
+    /** A child session of the run's attach (a debuggee it spawned) reports a stop; the run's debugger must not report it. */
+    async childStops(reason = 'breakpoint'): Promise<void> {
+      const child = {
+        ...session,
+        id: 'child-session',
+        parentSession: session,
+        configuration: { type: 'pwa-node', name: 'child', request: 'attach' },
+      }
+      const childTracker =
+        await trackerFactory?.createDebugAdapterTracker(child)
+      childTracker?.onDidSendMessage?.({
+        type: 'event',
+        event: 'stopped',
+        body: { threadId: 2, reason },
       })
     },
     /** The editor ends the session. */

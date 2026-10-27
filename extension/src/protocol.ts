@@ -359,7 +359,7 @@ export function createProtocol(service: StudyService): McpServer {
     'codebook_action',
     {
       description:
-        'Accept the next declared action from nextActions and immediately return its receipt. The action does what the run declared: for node-server its HTTP method comes from the declaration of the run, never from this tool, and a GET changes nothing. Reuse the same key with identical action on response loss, including after later actions. Wrong-order or repeated actions with new keys are rejected. For node-server the action is http-request: it sends the one declared request of the run (a POST, PUT, PATCH or DELETE first waits for the learner to confirm it in the editor and answers REQUEST_NOT_CONFIRMED if they do not); a lost response is recovered by reading the run, never by sending again.',
+        "Accept the next declared action from nextActions and immediately return its receipt. The action does what the run declared: for node-server its HTTP method comes from the declaration of the run, never from this tool; a GET is sent without the confirmation dialog, and the server's own handler decides whether it changes data. Reuse the same key with identical action on response loss, including after later actions. Wrong-order or repeated actions with new keys are rejected. For node-server the action is http-request: it sends the one declared request of the run (a POST, PUT, PATCH or DELETE first waits for the learner to confirm it in the editor and answers REQUEST_NOT_CONFIRMED if they do not); a lost response is recovered by reading the run, never by sending again.",
       inputSchema: actionSchema,
       annotations: {
         ...execution,

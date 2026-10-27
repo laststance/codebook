@@ -190,6 +190,19 @@ export function sendDeclaredRequest(input: DeclaredRequestInput): {
       incoming,
       (bytes, readCut) => {
         if (settled) return
+        // Shape the body first: a throwing shaper or sanitizer must reject `response`, not leave it pending. The message says the server answered (a POST reached it) and never quotes the thrown error.
+        let body: string
+        try {
+          body = shapeResponseBody(bytes, contentType, readCut, input.sanitize)
+        } catch {
+          fail(
+            new StudyError(
+              'REQUEST_FAILED',
+              `The server answered with HTTP ${incoming.statusCode}, but Codebook could not prepare the response body for display.`,
+            ),
+          )
+          return
+        }
         settled = true
         input.signal.removeEventListener('abort', abort)
         const location = incoming.headers.location
@@ -203,7 +216,7 @@ export function sendDeclaredRequest(input: DeclaredRequestInput): {
                   NODE_SERVER_EVENT_SHORT_TEXT_LIMIT_CHARS,
                 ),
               }),
-          body: shapeResponseBody(bytes, contentType, readCut, input.sanitize),
+          body,
           bodyBytes: bytes.length,
           readCut,
           ...(location === undefined

@@ -8,7 +8,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.8'
-export const EXTENSION_VERSION = '0.2.52'
+export const EXTENSION_VERSION = '0.2.53'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -1291,6 +1291,8 @@ export const NODE_SERVER_READY_POLL_INTERVAL_MS = 50
 export const NODE_SERVER_GROUP_EXIT_POLL_MS = 50
 /** By when, counted from a stop's admission, a node-server stop has sent SIGKILL: its debugger detach and its SIGTERM grace share this time, so the kill never lands later whatever the detach took. */
 export const NODE_SERVER_KILL_BY_MS = 5_000
+/** How long before the kill bound ({@link NODE_SERVER_KILL_BY_MS}) a retried stop starts its second identity check of the group, so the SIGKILL that may follow goes only to a group confirmed then and still lands by the bound; the check (a `ps` read) takes tens of milliseconds, and one that has not answered by the bound sends nothing. */
+export const NODE_SERVER_KILL_CHECK_LEAD_MS = 1_000
 /** The most of a response a node-server run reads; the socket is destroyed there and the response reads `(cut at 1 MiB)`. */
 export const NODE_SERVER_RESPONSE_READ_LIMIT_BYTES = 1_048_576
 /** How many leading bytes of a text response are shown to the chat and in Output. */

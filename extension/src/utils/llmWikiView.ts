@@ -399,6 +399,19 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
   }
 
   /**
+   * Makes the model of some facts; while this window's run is over but its marker is not settled yet, the message the view shows now stays, so it never empties between the watching and the stopped-watch message.
+   * @param facts - What a read found.
+   * @returns The model to show.
+   */
+  const readStateKeepingMessage = (
+    facts: LlmWikiViewFacts,
+  ): LlmWikiViewModel => {
+    const next = readLlmWikiViewState(facts)
+    if (facts.kind !== 'ready' || !facts.isMarkerSettling) return next
+    return { ...next, message: next.message ?? model.message }
+  }
+
+  /**
    * Runs the freshness check for facts and shows its answer, unless the rows now show another Wiki or the window is gone.
    * A failed check shows the unknown label for this read only and is not cached, so the next refresh checks again.
    */
@@ -429,7 +442,7 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
     )
       return
     show(
-      readLlmWikiViewState({
+      readStateKeepingMessage({
         ...shown,
         wiki: { ...shown.wiki, freshness: value },
       }),
@@ -596,7 +609,7 @@ export function createLlmWikiView(options: LlmWikiViewOptions): LlmWikiView {
   const showRead = (read: LlmWikiViewFacts): void => {
     const nextFacts = read.kind === 'ready' ? withViewState(read) : read
     if (nextFacts.kind === 'ready') noteLatePublication(nextFacts)
-    const next = readLlmWikiViewState(nextFacts)
+    const next = readStateKeepingMessage(nextFacts)
     if (nextFacts.kind === 'ready') rememberPublication(nextFacts, next)
     shownReadyFacts = nextFacts.kind === 'ready' ? nextFacts : undefined
     show(next)

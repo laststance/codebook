@@ -10,7 +10,14 @@ const readBundledSkill = (): Promise<string> =>
     'utf8',
   )
 
-/** The **Server runs.** paragraph of the skill, so each rule is pinned where the chat reads it. */
+/**
+ * Reads the **Server runs.** paragraph of the bundled skill, so each rule is pinned where the chat reads it.
+ * Why: the server-run rules live in one paragraph; every test below asserts on it. Called by each test in this file.
+ * @returns The paragraph's single line, starting with `**Server runs.**`.
+ * @throws When the skill has no such paragraph.
+ * @example
+ * const paragraph = await readServerRuns() // => '**Server runs.** A request about a repository\'s own Node HTTP server ...'
+ */
 async function readServerRuns(): Promise<string> {
   const skill = await readBundledSkill()
   const paragraph = skill
@@ -148,5 +155,18 @@ test('the bundled skill says a long pause can change the application’s answer 
   assert.match(
     paragraph,
     /deadlines and timeouts keep running while the server is paused, so a long pause can change the application's answer \(a timeout or a 500 after a long pause, for example\); say so when it happens/,
+  )
+})
+
+// protects=the chat reading the run's output tail and failure cause before it attributes a failed run or a 5xx, and naming a cause the output shows as observed output (N57 O-1: a refused database connection went unnamed); fails_when=the skill drops the instruction to read the output and failure cause first, or to label the named cause as observed output; no_claim=what the chat answers in a trial
+test('the bundled skill has the chat read the run output and failure cause before attributing a failure or a 5xx', async () => {
+  // Arrange / Act
+  const paragraph = await readServerRuns()
+
+  // Assert
+  assert.ok(
+    paragraph.includes(
+      "When a run fails or the response is a 5xx, read the run's output tail and failure cause before you attribute the failure, and name a cause that output shows (a refused database connection, for example), labeled as observed output",
+    ),
   )
 })
