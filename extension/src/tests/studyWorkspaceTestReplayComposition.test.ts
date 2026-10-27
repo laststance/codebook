@@ -325,9 +325,19 @@ test('a test replay chosen while the Application is alone in its group opens wit
   }
 })
 
-// Value: protects=N55-F4 H2-b: a test replay opens although the editor reports the Application's new group active only after newGroupAbove answered; fails_when=the entry arms a guard while the editor's late report of Codebook's own placement is still on its way, reads the report as the learner's focus change and refuses with "Native pane, group or focus changed while presentation waited"; why_new=Cycle 0056 task 17 stage 2 (N55-F4 refusal 1 is a rare race, hardened against both hypotheses); seam=workspaceHarness with activateNewGroupLateAfterInsertion, the diagnostics log, and in the second cell replaceGroupObjectsOnTabChanges (Cursor's extension host gives groups new objects at tab changes; the late report follows the inserted group through them, PR #138 review); no_claim=that Cursor reports it this way (N56 step 1 checks natively)
-for (const rebuildsGroupObjects of [false, true])
-  test(`a test replay whose Application group the editor activates late opens without a placement refusal${rebuildsGroupObjects ? ', also when the editor rebuilds its group objects at every tab change' : ''}`, async () => {
+// Value: protects=N55-F4 H2-b: a test replay opens although the editor reports the Application's new group active only after newGroupAbove answered; fails_when=the entry arms a guard while the editor's late report of Codebook's own placement is still on its way, reads the report as the learner's focus change and refuses with "Native pane, group or focus changed while presentation waited"; why_new=Cycle 0056 task 17 stage 2 (N55-F4 refusal 1 is a rare race, hardened against both hypotheses); seam=workspaceHarness with activateNewGroupLateAfterInsertion, the diagnostics log, and in the other cells replaceGroupObjectsOnTabChanges or useCursorGroupWrappers (Cursor's extension host gives groups new objects at tab changes and when it opens a group; the late report follows the inserted group through them, PR #138 review); no_claim=that Cursor reports it this way (N56 step 1 checks natively)
+for (const [rebuild, shown] of [
+  ['none', ''],
+  [
+    'tab changes',
+    ', also when the editor rebuilds its group objects at every tab change',
+  ],
+  [
+    'opened groups',
+    ', also when the editor gives its groups new wrappers whenever it opens a group',
+  ],
+] as const)
+  test(`a test replay whose Application group the editor activates late opens without a placement refusal${shown}`, async () => {
     // Arrange
     const harness = await workspaceHarness()
     const logged: CodebookDiagnostic[] = []
@@ -336,7 +346,8 @@ for (const rebuildsGroupObjects of [false, true])
       show: () => undefined,
     }
     harness.activateNewGroupLateAfterInsertion()
-    if (rebuildsGroupObjects) harness.replaceGroupObjectsOnTabChanges()
+    if (rebuild === 'tab changes') harness.replaceGroupObjectsOnTabChanges()
+    if (rebuild === 'opened groups') harness.useCursorGroupWrappers()
     try {
       const history = await saveTwoStopNodeHistory(
         harness.service.nodeHistoryStore!,

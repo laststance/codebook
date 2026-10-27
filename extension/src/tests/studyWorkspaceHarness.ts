@@ -1112,7 +1112,7 @@ export async function workspaceHarness(
     (typeof groups)[number]
   >()
   /**
-   * Records that a copy replaces a group object in the fake group model, as Cursor's extension host gives its groups new objects; every rebuild of the model goes through here.
+   * Records that a copy replaces a group object in the fake group model, as Cursor's extension host gives its groups new objects; every copy that keeps a group's identity goes through here (a replacement reported as an opened group is another group and records none).
    * @returns The copy, for the rebuilt list.
    * @example groups.map((group) => replacedBy(group, { ...group, tabs: [...group.tabs] }))
    */
@@ -1557,7 +1557,9 @@ export async function workspaceHarness(
     }
     // Cursor replaces surviving wrappers in the same event that announces an opened group.
     const retained = cursorGroupWrappers
-      ? groups.map((previous) => ({ ...previous, tabs: [...previous.tabs] }))
+      ? groups.map((previous) =>
+          replacedBy(previous, { ...previous, tabs: [...previous.tabs] }),
+        )
       : []
     if (cursorGroupWrappers) {
       if (separateEditorPart)
@@ -7090,6 +7092,8 @@ export async function workspaceHarness(
             replacement = { ...previous, tabs: [...previous.tabs] }
           // The unchanged empty chat part is not a new native group; explicit lifecycle events cannot inherit it.
           if (change === 'move') replacement.viewColumn++
+          // An opened replacement is another group; the others keep the group's identity.
+          if (change !== 'opened') replacedBy(previous, replacement)
           groups[groups.indexOf(previous)] = replacement
           separateEditorPart!.group = replacement
           changedGroups({
@@ -7813,6 +7817,8 @@ export async function workspaceHarness(
       const previous = groups.find((group) => group.viewColumn === column)
       assert.ok(previous)
       const replacement = { ...previous, tabs: [...previous.tabs] }
+      // An opened replacement is another group; the others keep the group's identity.
+      if (change !== 'opened') replacedBy(previous, replacement)
       changeTabs?.(replacement.tabs)
       groups[groups.indexOf(previous)] = replacement
       if (activeTabGroup === previous) activeTabGroup = replacement
