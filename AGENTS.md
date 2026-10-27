@@ -79,6 +79,7 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 - Per cycle: local CodeRabbit CLI + `open-code-review-delegate` → `/ship` as PR → required CI → separate exact-HEAD gate → merge as its own step with `--match-head-commit`.
 - A large cycle may use up to three PRs (`cycle100-pt1`, `cycle100-pt2`, …), each passing reviews, CI and gate alone, merged in order; the Issue closes after the last.
 - Codex automatic review off (no Codex cloud step). No `@coderabbitai ignore` in PR bodies (owner, 2026-10-05).
+- Hosted CodeRabbit off from Cycle 0057 (owner, 2026-10-27: 「次のサイクルからGitHubのコード、Rabbitのレビューはトリガーさせないでください。」): `.coderabbit.yaml` keeps `reviews.auto_review.enabled: false` (CodeRabbit reads the PR branch's file); never post `@coderabbitai review`.
 
 **Delivery parameters.**
 
@@ -102,7 +103,7 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 - Third cycle still has findings (`converged:false`) → the owner's 2026-10-23 rule, feature and bug-fix cycles alike: fix every last-round finding, Minor and below included (Critical always fixed before merge, per the delivery rules); record only still-open Critical/Major defects in a GitHub Issue (next cycle's tasks); merge after required CI + exact-HEAD gate, reporting `converged:false` in the PR. This overrides no-carry for those recorded defects only.
 - The limit is `/ship`'s alone (owner, 2026-10-23): one round is long; full convergence would stall delivery. It records defects of `/ship` rounds the PR cannot close (e.g. a Major finding whose fix/proof needs an unknown root cause or a native check).
 - A Critical finding never merges open: one the PR cannot close holds the merge until fixed (cycle + delivery rules).
-- Local CodeRabbit CLI and hosted CodeRabbit: no round limit; their findings follow the cycle rule at every review, as do gate, CI and native-check failures.
+- Local CodeRabbit CLI: no round limit; its findings follow the cycle rule at every review, as do gate, CI and native-check failures.
 
 **Skills** (read each installed SKILL.md at invocation; this map guides, copies no workflow):
 
@@ -144,10 +145,7 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 - [.coderabbit.yaml](.coderabbit.yaml) = policy + exclusions: keep its guidelines current; validate with `coderabbit config validate .coderabbit.yaml`; pass it via `--config` beside extra context.
 - Required: local CodeRabbit CLI, findings triage, CI, `open-code-review-delegate` (OCR picks files and rules, the host reviews; each eligible file reviewed or skipped with a reason; default exclusions reported apart; no independent external review).
 - Review against the implementation base; record completion, source cut, covered files, findings.
-- Hosted CodeRabbit (triggered on each PR; owner, 2026-10-23):
-  - wait for it beside CI; fix its findings under the cycle rule every review, no round limit (ship limit is `/ship`'s alone);
-  - rate limit or failed trigger → report "not run", never APPROVED; continue with the local review (runs every cycle anyway);
-  - a PR it reviewed merges only after CodeRabbit approved its exact head (owner, 2026-10-23): follow installed `/coderabbit-resolver` (each finding fixed or dispositioned with evidence; threads resolved via GraphQL `resolveReviewThread`; outside-diff findings audited), then wait for the `coderabbitai[bot]` review on that head to read APPROVED (`request_changes_workflow` in `.coderabbit.yaml` approves once threads are resolved). CHANGES_REQUESTED, no approval or approval of an earlier head → merge held, beside required CI + exact-HEAD gate.
+- Hosted CodeRabbit is not triggered (owner, 2026-10-27; [Delivery](#delivery)): merge waits for no hosted review or approval. A hosted review that still appears is reported in the PR; its findings follow the cycle rule like the local review's. Run the local CodeRabbit CLI on the PR's final range before merge.
 - Missing/private provider context = coverage limit.
 - Every user-visible behavior a CHANGELOG entry names needs a sentence in the packaged README (`extension/README.md`), as `.coderabbit.yaml`'s `CHANGELOG.md` instruction checks. A fix changing user-visible behavior changes that README in the same commit; fixers' briefs say so.
 - Claude Code CLI review: owner-skipped; no native chat acceptance.
@@ -214,7 +212,7 @@ Standing rules, stated as rules (no decision log); delivery chain and ship limit
 - Never an easier repository, never a tenth acceptance target. Recheck its revision, settings, dirty state; tell the owner before occupying the desktop; record unsupported behavior and missing setup. Docs-only work needs no native launch.
 - Development results earn no nine-project credit, fill no final row. Final acceptance freezes its own targets and candidate; Stage 1 starts only when its prerequisites hold.
 - Use real opened repositories; isolated inputs verify mechanisms only, never as bundled demos or practical trials. Retired local trial resources are removed; old records in Git are no current proof.
-- Development chats: VS Code = Copilot Chat, model **GPT6 Luna** (owner, 2026-10-21: the cheaper model); Cursor = Agent, model **Grok 4.6 high**, Fast on allowed (owner, 2026-10-24 JST: 「これからGrok4.6Hiのファストオンで大丈夫ですよ。」); after observed credit exhaustion (either host) = the installed **Codex Extension** (Claude Code extension fallback retired).
+- Development chats: VS Code = Copilot Chat, model **GPT6 Luna** (owner, 2026-10-21: the cheaper model; 2026-10-27: switch to GPT-6.1 Terra or GPT-6.1 Luna once the picker lists one; search the picker for `terra` and `6.1` before each VS Code trial, absent on 2026-10-27); Cursor = Agent, model **Grok 4.6 high**, Fast on allowed (owner, 2026-10-24 JST: 「これからGrok4.6Hiのファストオンで大丈夫ですよ。」); after observed credit exhaustion (either host) = the installed **Codex Extension** (Claude Code extension fallback retired).
   - Model missing from the picker → that host's trial is NOT RUN, picker list recorded.
   - Record the actual chat and fallback reason; buy no credits; never label fallback evidence Copilot.
   - Final acceptance has its own standard-chat rules. Historical Claude extension observations keep their identities.

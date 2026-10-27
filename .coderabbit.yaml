@@ -17,7 +17,8 @@ reviews:
   poem: false
   in_progress_fortune: false
   auto_review:
-    enabled: true
+    # Owner, 2026-10-27: no hosted review on GitHub from Cycle 0057; the local CodeRabbit CLI reviews each cycle (AGENTS.md Delivery).
+    enabled: false
     auto_incremental_review: true
     auto_pause_after_reviewed_commits: 0
     drafts: false
