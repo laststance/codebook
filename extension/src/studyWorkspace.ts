@@ -11942,7 +11942,7 @@ export class StudyWorkspace {
       return false
     if (entry !== this.nodeHistoryEntryRequest) return false
     try {
-      await this.enterSummaryCompositionForReplay(entry, overtaken)
+      await this.enterSummaryCompositionForReplay(studyId, entry, overtaken)
     } catch (error) {
       // A newer entry answers for the learner now; an entry whose focus wait its supersession aborted ends here quietly too.
       if (entry !== this.nodeHistoryEntryRequest) return false
@@ -12034,13 +12034,16 @@ export class StudyWorkspace {
   /**
    * Opens the summary composition for a test replay that is about to open (Cycle 0051, DS-A): a closed reader opens, and the Live composition and the Study composition give way to it, so the Study pane closes and the Learning summary takes the chat's place; called by {@link openNodeHistoryFromHost}.
    * Only a reader that already stands in the summary composition for a test replay (another test replay was shown) is left as it is; an earlier entry that failed after it left the Live composition is opened again, so the Application, the slot and the debugger never show without a transport (F384).
+   * A closed reader keeps the replay it showed for the next Open Study Workspace ({@link close}); an entry for another replay retires that selection before {@link open} publishes, so the Learning summary never draws the closed reader's replay (its title, result and stop) while the chosen one opens (Cycle 0056 task 32). An entry for the same replay keeps it and shows it at once.
    * @throws What {@link open} throws; the caller tells it.
+   * @param studyId - The test replay's study id.
    * @param entry - The entry's ticket ({@link nodeHistoryEntryRequest}); an entry a newer one or a Return overtook while it waited for the work window reveals nothing.
    * @param overtaken - Aborts the waits for the work window and for the Learning summary view, in a standing composition and in {@link open}, when a newer entry, a Return or a Close supersedes the ticket, so the next entry's turn is not held for their bounds (Cycle 0052 tasks 40, 44 and 45).
    * @throws The abort's reason when the wait is overtaken; the caller ends quietly for a superseded ticket.
-   * @example await this.enterSummaryCompositionForReplay(entry, overtaken)
+   * @example await this.enterSummaryCompositionForReplay(studyId, entry, overtaken)
    */
   private async enterSummaryCompositionForReplay(
+    studyId: string,
     entry: number,
     overtaken: AbortSignal,
   ): Promise<void> {
@@ -12059,6 +12062,15 @@ export class StudyWorkspace {
     }
     this.hostOpeningTestReplay = true
     try {
+      // A closed reader still holds the replay it showed: another replay's entry drops it before open() publishes the summary, and the retirement's native work is rechecked against the entry.
+      if (
+        !this.opened &&
+        this.selectedNodeHistory &&
+        this.selectedNodeHistory.header.studyId !== studyId
+      ) {
+        await this.retireNodeHistorySelection()
+        overtaken.throwIfAborted()
+      }
       // The open's waits for the work window end too when a newer entry, a Return or a Close supersedes this one (Cycle 0052 task 44).
       await this.open(overtaken)
     } finally {

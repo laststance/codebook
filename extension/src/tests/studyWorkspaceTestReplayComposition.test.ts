@@ -4077,6 +4077,25 @@ test('a failed move whose return to the last moment fails too does not say the l
   }
 })
 
+/**
+ * Records the study ids of the test replays every Study message a view's webview receives from now on names, by wrapping its `postMessage`; the closed-reader open tests read it to prove that a view never draws another replay while a chosen one opens.
+ * @param view - The harness's Learning summary view.
+ * @returns The live list of each received Study message's shown test replay id (`'none'` for a message that names no test replay).
+ * @example const drawn = recordDrawnTestReplays(harness.summary) // => ['none', 'node_run-b']
+ */
+function recordDrawnTestReplays(view: {
+  webview: { postMessage: (message: StudyViewMessage) => Promise<boolean> }
+}): string[] {
+  const drawn: string[] = [],
+    post = view.webview.postMessage.bind(view.webview)
+  view.webview.postMessage = async (message: StudyViewMessage) => {
+    if (message.type === 'study')
+      drawn.push(message.nodeHistory?.header.studyId ?? 'none')
+    return post(message)
+  }
+  return drawn
+}
+
 // Value: protects=Saved studies naming no study while the reader is closed, so the learner can choose the study the closed reader showed and have it open, and naming the replay again once Open Study Workspace restores it; fails_when=a closed reader's Study message omits readerClosed, or an open reader sets it (Cycle 0056 task 31, N56-F1: the list kept naming the shown replay, so choosing it fired no change); why_new=the list rule lived in the page only, with no host signal for a closed reader; seam=the reader's inspected Study message; no_claim=the list's rendering (Reader DOM check study-bootstrap-qa)
 test('a closed reader tells Saved studies that it is closed, and a reopened reader that shows its replay does not', async () => {
   // Arrange
@@ -4106,6 +4125,153 @@ test('a closed reader tells Saved studies that it is closed, and a reopened read
         replay: history.studyId,
       },
     )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Open replay from the status item after Close never draws the replay the closed reader showed in the Learning summary while the chosen one opens; fails_when=the summary receives a Study message that names the closed reader's replay once the open starts (Cycle 0056 task 32, N56-F2: 1 to 2 frames of the earlier replay's title, result and stop beside "The recorded source is opening"); why_new=Cycle 0052 task 2 covered Return to Live, not an open from a closed reader that keeps its selection; seam=the harness's summary webview postMessage; no_claim=the native frames, which the N56 rerun checks
+test('Open replay of another test replay after Close never draws the replay the closed reader showed in the Learning summary', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    // Saved before the first open, whose Retry storage / refresh lists both replays in Saved studies.
+    const chosenReplay = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    const closedReplay = await openByOpenReplay(harness)
+    await harness.reader.close()
+    const drawn = recordDrawnTestReplays(harness.summary)
+
+    // Act
+    await harness.reader.openLearningReplay(chosenReplay.studyId)
+    await landsOn(harness, 2, 'the chosen replay lands on its first stop')
+
+    // Assert
+    await waitUntil(
+      () => drawn.at(-1) === chosenReplay.studyId,
+      'the summary draws the chosen replay',
+      READER_RESULT_BOUND_MS,
+    )
+    assert.equal(drawn.includes(closedReplay.studyId), false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a Saved studies choice of another test replay after Close never draws the replay the closed reader showed in the Learning summary while the chosen one opens; fails_when=the summary receives a Study message that names the closed reader's replay once the choice arrives (Cycle 0056 task 32, N56-F2); why_new=the status item's Open replay and a Saved studies choice enter the closed reader through the same entry but each is its own learner path; seam=the harness's summary webview postMessage and the Study pane's node-history message; no_claim=the native frames, which the N56 rerun checks
+test('a Saved studies choice of another test replay after Close never draws the replay the closed reader showed in the Learning summary', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    // Saved before the first open, whose Retry storage / refresh lists both replays in Saved studies.
+    const chosenReplay = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    const closedReplay = await openByOpenReplay(harness)
+    await harness.reader.close()
+    const drawn = recordDrawnTestReplays(harness.summary)
+
+    // Act
+    await readerSeams(harness).receive(
+      {
+        type: 'node-history',
+        revision: harness.reader.inspect().view!.revision,
+        studyId: chosenReplay.studyId,
+      },
+      'context',
+    )
+    await landsOn(harness, 2, 'the chosen replay lands on its first stop')
+
+    // Assert
+    await waitUntil(
+      () => drawn.at(-1) === chosenReplay.studyId,
+      'the summary draws the chosen replay',
+      READER_RESULT_BOUND_MS,
+    )
+    assert.equal(drawn.includes(closedReplay.studyId), false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=choosing again the test replay the closed reader showed still opens it at once, with the Learning summary drawing that replay; fails_when=retiring the closed reader's selection for another replay also retires the same replay's, or the summary never draws it (Cycle 0056 task 32); why_new=the fix retires a closed reader's selection only for another replay; seam=the harness's summary webview postMessage; no_claim=the native frames
+test('Open replay of the test replay the closed reader showed draws that replay in the Learning summary', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const closedReplay = await openByOpenReplay(harness)
+    await harness.reader.close()
+    const drawn = recordDrawnTestReplays(harness.summary)
+
+    // Act
+    await harness.reader.openLearningReplay(closedReplay.studyId)
+    await landsOn(harness, 2, 'the replay lands on its first stop')
+
+    // Assert
+    await waitUntil(
+      () => drawn.at(-1) === closedReplay.studyId,
+      'the summary draws the replay again',
+      READER_RESULT_BOUND_MS,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a browser recording chosen after Close of a test replay never draws the test replay in the Learning summary while the recording opens; fails_when=the summary receives a Study message that names the closed reader's test replay once the recording's open starts (Cycle 0056 task 32, the browser side of N56-F2); why_new=the task's fix covers a test replay entering a closed reader, and the reverse entry needed its own proof; seam=recordedReaderHarness, the summary webview's postMessage; no_claim=the native frames, which the N56 rerun checks
+test('a browser recording opened after Close of a test replay never draws the test replay in the Learning summary', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(history.studyId)
+    await landsOn(harness, 2, 'the test replay lands on its first stop')
+    await harness.reader.close()
+    const drawn = recordDrawnTestReplays(harness.summary)
+
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert: the summary was published to, and none of it named the test replay.
+    assert.equal(drawn.length > 0, true)
+    assert.equal(drawn.includes(history.studyId), false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a test replay chosen after Close of a browser recording never draws the recording in the Learning summary while the replay opens; fails_when=the summary receives a Study message that carries the closed reader's recording once the test replay's open starts (Cycle 0056 task 32, the browser side of N56-F2); why_new=the task's fix covers a test replay closed before another test replay, and the reverse entry needed its own proof; seam=recordedReaderHarness, the summary webview's postMessage; no_claim=the native frames, which the N56 rerun checks
+test('a test replay opened after Close of a browser recording never draws the recording in the Learning summary', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    await harness.reader.close()
+    harness.answerWarningDialogs(async () => 'Close browser replay')
+    const recordingsDrawn: (string | undefined)[] = [],
+      post = harness.summary.webview.postMessage.bind(harness.summary.webview)
+    harness.summary.webview.postMessage = async (message: StudyViewMessage) => {
+      if (message.type === 'study' && message.recording !== undefined)
+        recordingsDrawn.push(message.nodeHistory?.header.studyId)
+      return post(message)
+    }
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+    await landsOn(harness, 2, 'the test replay lands on its first stop')
+
+    // Assert
+    assert.deepEqual(recordingsDrawn, [])
   } finally {
     await harness.close()
   }
