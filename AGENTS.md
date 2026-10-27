@@ -209,6 +209,7 @@ Standing rules, stated as rules (no decision log); delivery chain and ship limit
 ## Development target
 
 - Until nine-project final acceptance starts, actual-editor trials use the owner-designated `nextjs-dashboard` (same repository and revision): Mac **`/Users/ryotamurakami/repository/nextjs-dashboard`**; its macOS Space **`/Users/lume/repository/nextjs-dashboard`**; Windows host **`/home/murakami/laststance/nextjs-dashboard`**.
+- Exception (owner, 2026-10-27): the Node server execution form, which `nextjs-dashboard` lacks, is trialled on a pinned clone of P08 `laststance/switch-time` in the Space (`/Users/lume/qa/c57/switch-time`, revision recorded in the cycle Issue), with its documented local stack. Development evidence only; no final-row credit.
 - Never an easier repository, never a tenth acceptance target. Recheck its revision, settings, dirty state; tell the owner before occupying the desktop; record unsupported behavior and missing setup. Docs-only work needs no native launch.
 - Development results earn no nine-project credit, fill no final row. Final acceptance freezes its own targets and candidate; Stage 1 starts only when its prerequisites hold.
 - Use real opened repositories; isolated inputs verify mechanisms only, never as bundled demos or practical trials. Retired local trial resources are removed; old records in Git are no current proof.
