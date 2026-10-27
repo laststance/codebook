@@ -2784,9 +2784,8 @@ for (const besideChat of [false, true])
       harness.holdDisposedPanelTabCloses()
       // Observe actual native effects without changing their arguments, responses or timing, from before the run starts: the live entry's final arrangement can run while the run prepares, on a loaded machine before the explicit open below (F154).
       harness.editor.commands.executeCommand = async (...args) => {
-        if (args[0] === 'vscode.getEditorLayout')
+        if (args[0] === 'vscode.getEditorLayout') {
           chatKeyboardAtReads.push(chat?.focused() === true)
-        if (args[0] === 'vscode.getEditorLayout')
           readsWithRetiredTab.push(
             harness.groups.some((group) =>
               group.tabs.some(
@@ -2796,12 +2795,14 @@ for (const besideChat of [false, true])
               ),
             ),
           )
+        }
         return executeCommand.call(harness.editor.commands, ...args)
       }
       harness.reader['arrange'] = async (...args): Promise<void> => {
         const start = harness.commands.length,
           readsStart = readsWithRetiredTab.length
-        if (args[5] !== undefined) chat?.focusTab() // PROBE
+        // The learner types in the chat when the final arrangement begins beside it: the measurement then meets a chat that holds the keyboard, which is the premise of the extra layout read asserted below.
+        if (args[5] !== undefined) chat?.focusTab()
         const arranged = arrange.apply(harness.reader, args)
         // The arrangement that retires the context pane runs up to its wait for the tab's close in this turn; the editor closes the tab in the next one.
         if (args[5] !== undefined)
@@ -2853,8 +2854,9 @@ for (const besideChat of [false, true])
       const layoutReadsBeforeBatch = commands
         .slice(0, batch)
         .filter((command) => command === 'vscode.getEditorLayout').length
-      const chatHadKeyboardAtFirstRead = finalChatKeyboardAtReads[0] === true
-      assert.equal(layoutReadsBeforeBatch, chatHadKeyboardAtFirstRead ? 2 : 1)
+      // The premise: the chat holds the keyboard at the first read exactly when the arrangement stands beside the chat.
+      assert.equal(finalChatKeyboardAtReads[0], besideChat)
+      assert.equal(layoutReadsBeforeBatch, besideChat ? 2 : 1)
       if (chat) {
         assert.equal(chat.focused(), true)
         assert.deepEqual(
