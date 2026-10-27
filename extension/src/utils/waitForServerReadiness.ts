@@ -55,7 +55,13 @@ export async function waitForServerReadiness(
     ])
     if (ipv4) return { host: '127.0.0.1', bothAccept: ipv6 }
     if (ipv6) return { host: '::1', bothAccept: false }
-    await delay(pollIntervalMs, undefined, { signal: input.signal })
+    await delay(pollIntervalMs, undefined, { signal: input.signal }).catch(
+      (error: unknown) => {
+        // The pause ends with an AbortError of its own; the wait rejects with the signal's reason, as a probe does.
+        if (input.signal.aborted) throw input.signal.reason
+        throw error
+      },
+    )
   }
   return undefined
 }

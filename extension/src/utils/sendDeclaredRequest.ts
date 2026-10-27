@@ -1,13 +1,17 @@
 import { request as httpRequest, type IncomingMessage } from 'node:http'
 import type { Socket } from 'node:net'
 
-import { NODE_SERVER_RESPONSE_READ_LIMIT_BYTES } from '../constants'
+import {
+  NODE_SERVER_EVENT_SHORT_TEXT_LIMIT_CHARS,
+  NODE_SERVER_RESPONSE_READ_LIMIT_BYTES,
+} from '../constants'
 import { StudyError } from '../errors'
 import type { NodeServerConfiguration } from '../nodeServerConfigSchemas'
 import type { NodeServerResponse } from '../runtime'
 
 import { describeRedirectLocation } from './describeRedirectLocation'
 import type { LoopbackHost } from './probeLoopbackPort'
+import { redactSecretText } from './redactSecretText'
 import { shapeResponseBody } from './shapeResponseBody'
 
 /** What {@link sendDeclaredRequest} sends and checks. */
@@ -115,6 +119,7 @@ export function sendDeclaredRequest(input: DeclaredRequestInput): {
   const fail = (error: unknown): void => {
     if (settled) return
     settled = true
+    input.signal.removeEventListener('abort', abort)
     rejectWritten(error)
     rejectResponse(error)
     outgoing?.destroy()
@@ -152,7 +157,9 @@ export function sendDeclaredRequest(input: DeclaredRequestInput): {
     return { written, response }
   }
 
-  const abort = (): void => fail(input.signal.reason)
+  function abort(): void {
+    fail(input.signal.reason)
+  }
   if (input.signal.aborted) abort()
   else input.signal.addEventListener('abort', abort, { once: true })
 
@@ -178,11 +185,19 @@ export function sendDeclaredRequest(input: DeclaredRequestInput): {
       (bytes, readCut) => {
         if (settled) return
         settled = true
+        input.signal.removeEventListener('abort', abort)
         const location = incoming.headers.location
         resolveResponse({
           status: incoming.statusCode ?? 0,
-          ...(contentType === undefined ? {} : { contentType }),
-          body: shapeResponseBody(bytes, contentType),
+          ...(contentType === undefined
+            ? {}
+            : {
+                contentType: redactSecretText(contentType).slice(
+                  0,
+                  NODE_SERVER_EVENT_SHORT_TEXT_LIMIT_CHARS,
+                ),
+              }),
+          body: shapeResponseBody(bytes, contentType, readCut),
           bodyBytes: bytes.length,
           readCut,
           ...(location === undefined
