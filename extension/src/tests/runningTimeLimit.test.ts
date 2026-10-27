@@ -4,7 +4,15 @@ import { test } from 'node:test'
 import { RunningTimeLimit } from '../utils/runningTimeLimit'
 import type { RunClock } from '../utils/runningTimeLimit'
 
-/** A hand-moved clock: `advance` fires the armed timer once its delay passed. */
+/**
+ * Builds a hand-moved {@link RunClock} for the limit's tests: `advance` fires the armed timer once its delay passed.
+ * Why: the limit's timers must be driven without real time. Called by the tests in this file.
+ * @returns The clock and `advance(ms)`, which moves `now()` forward and runs the armed callback when due.
+ * @example
+ * const { clock, advance } = createClock()
+ * clock.set(() => fired.push(true), 100)
+ * advance(100) // fired is [true]; clock.now() is 100
+ */
 function createClock() {
   let nowMs = 0
   let timer: { at: number; callback: () => void } | undefined

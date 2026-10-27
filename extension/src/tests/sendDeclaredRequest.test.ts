@@ -327,3 +327,35 @@ test('the response body is sanitized before it is cut for display', async (t) =>
   // Assert
   assert.equal(observed.body, '{"status":"<hidden>"}')
 })
+
+// protects=the response promise settling when the body cannot be prepared (Cycle 0057 item 8: a throwing sanitizer left it pending); fails_when=the sender marks the request settled before shaping so the throw leaves `response` unsettled, or the message quotes the thrown error; no_claim=the sanitizer's own contract
+test('a sanitizer that throws rejects the response with REQUEST_FAILED and a fixed message', async (t) => {
+  // Arrange
+  const server = await startFixtureServer(t)
+  // Act
+  const { response } = sendDeclaredRequest({
+    host: '127.0.0.1',
+    port: server.port,
+    request: { method: 'GET', path: '/health' },
+    runId: 'run-1',
+    verifyPeer: acceptPeer,
+    signal: new AbortController().signal,
+    sanitize: () => {
+      throw new Error('secret-detail')
+    },
+  })
+  const outcome = await Promise.race([
+    response.then(
+      () => 'resolved',
+      (error: unknown) => error,
+    ),
+    new Promise((resolve) => setTimeout(() => resolve('pending'), 1_000)),
+  ])
+  // Assert
+  assert.ok(outcome instanceof StudyError)
+  assert.equal(outcome.code, 'REQUEST_FAILED')
+  assert.equal(
+    outcome.message,
+    'Codebook could not prepare the response body for display.',
+  )
+})
