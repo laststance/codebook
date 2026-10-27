@@ -994,13 +994,11 @@ export class StudyWorkspace {
   /** `true` while {@link openNodeHistoryFromHost} enters the summary composition for a test replay that has not begun opening ({@link testReplayHoldsComposition}). */
   private hostOpeningTestReplay = false
   /**
-   * The replay a closed reader keeps selected for its next Open Study Workspace while an entry for another replay opens; the Learning summary and the bottom panel receive no message that carries it ({@link publish}). It is released when the last entry in progress ends ({@link openNodeHistoryFromHost}, {@link nodeHistoryEntriesInProgress}) or at {@link close}, and it holds nothing once the chosen replay replaces the selection.
+   * The replay a closed reader keeps selected for its next Open Study Workspace while an entry for another replay opens; the Learning summary and the bottom panel receive no message that carries it ({@link publish}). It is released when the last entry in progress ends ({@link openNodeHistoryFromHost}, {@link nodeHistoryEntriesInProgress}) or at {@link close}, and the hold is bound to the retained selection (its open token), so it holds nothing once any history, the same replay included, is adopted.
    */
-  private heldBackReplay: { studyId: string } | undefined
+  private heldBackReplay: { openToken: number | undefined } | undefined
   /** How many test replay entries ({@link openNodeHistoryFromHost}) have not ended yet, from the turn they wait for to their open's end; the held-back replay is released when the last one ends. */
   private nodeHistoryEntriesInProgress = 0
-  /** The last notice told for a dropped Learning summary choice, with whether the learner has not dismissed it yet: a repeat of its reason raises no second notice while it is open ({@link noteDroppedSummaryChoice}); forgotten at {@link open}, {@link close} and when the summary composition is entered. */
-  private droppedChoiceNotice: { reason: string; isOpen: boolean } | undefined
   /** The editor's recent group and active text editor changes, for {@link refusePlacement}'s report (F382). */
   private readonly placementEvents = new PlacementEventLog()
   /** The native effects this host itself issued (reveals, disposals, editor commands, shown documents), for {@link refusePlacement}'s report (N55-F4). */
@@ -8168,8 +8166,6 @@ export class StudyWorkspace {
     forAgent = false,
   ): Promise<void> {
     if (origin !== 'presentation') this.assertPresentationIdle()
-    // A reader that opens again tells a dropped Learning summary choice anew (the notice is once per reason and state).
-    this.droppedChoiceNotice = undefined
     signal?.throwIfAborted()
     const lifetime = this.lifetime
     this.assertLifetime(lifetime)
@@ -8289,8 +8285,6 @@ export class StudyWorkspace {
         this.presentationConfirmed = false
         this.liveComposition = liveComposition
         this.summaryComposition = summaryComposition
-        // Entering the summary composition tells a dropped choice anew.
-        if (summaryComposition) this.droppedChoiceNotice = undefined
       }
       if (this.liveComposition || this.summaryComposition) {
         // Live uses the host chat; disposing only our panel never closes another editor's tabs.
@@ -8302,6 +8296,9 @@ export class StudyWorkspace {
         if (disposedStudyPane && this.hasRetiredStudyPaneTab())
           await this.retiredStudyPaneClosed(signal)
       }
+      // A Close or a newer Open that completed during the wait owns the reader's state: this Open writes none of it (Cycle 0056 pt3, CX1).
+      this.assertLifetime(lifetime)
+      signal?.throwIfAborted()
       this.opened = true
       this.closing = false
       // Explicit Study after actual Return uses the same retained layout proof as a Wiki evidence link.
@@ -9593,7 +9590,6 @@ export class StudyWorkspace {
     // Read before anything is closed or shown: the tab outside the text editors and the Study panes that has the keyboard now (Cursor's chat), which gets it back when this close shows a side bar.
     const giveKeyboardBackToChat = this.retainForeignTabFocus(undefined)
     this.closing = true
-    this.droppedChoiceNotice = undefined
     this.heldBackReplay = undefined
     this.revision++
     this.lifetime++
@@ -11947,10 +11943,12 @@ export class StudyWorkspace {
       // The closed reader's replay held back for the entries is drawn again, by the next Open Study Workspace if no entry replaced it; a newer entry still in progress keeps the hold, so the views never draw the retained replay while it loads (Cycle 0056 task 32).
       this.nodeHistoryEntriesInProgress--
       if (this.nodeHistoryEntriesInProgress === 0 && this.heldBackReplay) {
+        // Republish only when the held selection is still the selected replay; an entry that adopted a history posted it already.
+        const isStillHeld = this.isHeldBackSelection()
         this.heldBackReplay = undefined
-        this.lastPublished = undefined
-        // An entry that opened the reader and then failed or was superseded leaves the views on what the hold showed; they draw the retained replay again now. A failing publish is reported and never replaces the entry's own result.
-        if (this.opened && !this.closing && !this.disposed) {
+        if (isStillHeld && this.opened && !this.closing && !this.disposed) {
+          this.lastPublished = undefined
+          // A failing publish is reported and never replaces the entry's own result.
           try {
             this.publish()
           } catch (error) {
@@ -12110,9 +12108,7 @@ export class StudyWorkspace {
         this.selectedNodeHistory &&
         this.selectedNodeHistory.header.studyId !== studyId
       )
-        this.heldBackReplay = {
-          studyId: this.selectedNodeHistory.header.studyId,
-        }
+        this.heldBackReplay = { openToken: this.nodeHistoryOpenToken }
       // The open's waits for the work window end too when a newer entry, a Return or a Close supersedes this one (Cycle 0052 task 44).
       await this.open(overtaken)
     } finally {
@@ -13940,15 +13936,26 @@ export class StudyWorkspace {
   }
 
   /**
+   * Says whether the selected replay is the closed reader's replay held back for another replay's entry; read by {@link postToReplayViews} and by the release in {@link openNodeHistoryFromHost}.
+   * @returns `true` while a hold stands and the selection is still the one it was taken on (the same open token); `false` once any history was adopted, the same replay again included.
+   * @example if (this.isHeldBackSelection()) return
+   */
+  private isHeldBackSelection(): boolean {
+    return (
+      this.heldBackReplay !== undefined &&
+      this.selectedNodeHistory !== undefined &&
+      this.nodeHistoryOpenToken === this.heldBackReplay.openToken
+    )
+  }
+
+  /**
    * Posts a published message to the Learning summary and the bottom panel; called by {@link publish}.
    * The Learning summary draws only a shown replay: a publish while the reader leaves one would draw the Live Study page there (Cycle 0052 task 2, N51-V2). A replay held back for another replay's entry ({@link heldBackReplay}) is drawn by neither view (Cycle 0056 task 32).
    * @param compact - The message {@link publish} built.
    * @example this.postToReplayViews(compact)
    */
   private postToReplayViews(compact: StudyViewMessage): void {
-    const isHeldBack =
-      this.heldBackReplay !== undefined &&
-      this.selectedNodeHistory?.header.studyId === this.heldBackReplay.studyId
+    const isHeldBack = this.isHeldBackSelection()
     if (this.summaryComposition && compact.replayFamily && !isHeldBack)
       void this.summaryView?.webview.postMessage(compact)
     if (this.moments)
@@ -22259,6 +22266,7 @@ export class StudyWorkspace {
    * @param identity - The allocated group's identity ({@link editorGroupIdentities}).
    * @param signal - The preparation's cancellation.
    * @returns Once the report arrived, the bound passed or the signal aborted; never rejects.
+   * It does not end early when the allocated group is already the active group: the editor makes the group active in its model before it reports the activation, so the report is still on its way (N55-F4 H2-b, pinned by the late-activation test).
    * @example await this.waitForLateGroupActivation(identity, signal)
    */
   private async waitForLateGroupActivation(
@@ -23605,27 +23613,11 @@ export class StudyWorkspace {
         : {}),
       cause: `The "${parsed.data.type}" choice from the Learning summary was not carried out: ${reason}`,
     })
-    // The learner sees the drop too, once while the notice for this reason stays open; once it is dismissed the next drop tells again. Every drop above still has its Output entry.
-    if (
-      this.droppedChoiceNotice?.reason === reason &&
-      this.droppedChoiceNotice.isOpen
-    )
-      return
-    const told = { reason, isOpen: true }
-    this.droppedChoiceNotice = told
-    void Promise.resolve(
-      showPlainNotice(
-        vscode.window,
-        'information',
-        `${SUMMARY_CHOICE_DROPPED_NOTICE_PREFIX}${reason}`,
-      ),
-    ).then(
-      () => {
-        told.isOpen = false
-      },
-      () => {
-        told.isOpen = false
-      },
+    // The learner sees every drop; the editor replaces an identical visible notification instead of stacking it. Every drop also has its Output entry above.
+    void showPlainNotice(
+      vscode.window,
+      'information',
+      `${SUMMARY_CHOICE_DROPPED_NOTICE_PREFIX}${reason}`,
     )
   }
 

@@ -148,6 +148,7 @@ export type HeldUpdateStep =
  * @param options.chatReply - What VS Code's chat command resolves with once it took the request, as it does with `blockOnResponse` when the chat's response completed (`{}`), completed with an error (`{ errorDetails }`) or waits for a confirmation (`{ type: 'confirmation' }`); a reply that waits for a confirmation, at once, when omitted, so the chat counts as working. A promise that never settles is a chat that never answers.
  * @param options.chatAnswerClock - Sleep handed to the start of the update in the chat (the hand-over of the request, the looks at the Wiki's output and the wait for the first answer), so a test can pass the bound of the session's start and the 30 second bound without waiting.
  * @param options.missingEditorCommands - Commands this editor does not have: the list of its commands leaves them out, and running one throws the editor's "command not found". An editor has the chat's commands when omitted.
+ * @param options.commandListFails - Makes the editor's list of its commands fail: `reject` rejects the promise, `throw` throws before returning one.
  * @param options.signWatchFails - Makes the editor throw this message when the extension registers its listener for opened documents.
  * @param options.editorCommand - What the editor does when the extension runs a command other than the chat request (the reveal of the chat, which is the chat command without a query, the editor's New Chat, the chat's Cancel and its "Remove All Queued", for example): it gets the command's name, and what it returns or throws is the command's result. Such a command returns nothing when omitted.
  * @param options.remoteName - The editor's `env.remoteName`, as a window connected to a remote host reports it (for example `ssh-remote`); absent for a local window.
@@ -187,6 +188,7 @@ export async function openWikiUpdateWindow(options: {
   }
   editorCommand?: (name: string) => unknown
   missingEditorCommands?: string[]
+  commandListFails?: 'reject' | 'throw'
   signWatchFails?: string
   cursorAgent?: (
     root: string,
@@ -557,16 +559,25 @@ export async function openWikiUpdateWindow(options: {
             return { dispose(): void {} }
           },
           // The commands of the chat a supported editor has, and its trust command, without those the test takes away.
-          getCommands: async () =>
-            [
-              'workbench.trust.manage',
-              'workbench.action.chat.open',
-              'workbench.action.chat.newChat',
-              'workbench.action.chat.cancel',
-              'workbench.action.chat.removeAllPendingRequests',
-            ].filter(
-              (command) => !options.missingEditorCommands?.includes(command),
-            ),
+          getCommands: (): Promise<string[]> => {
+            if (options.commandListFails === 'throw')
+              throw new Error('The command list is unavailable')
+            if (options.commandListFails === 'reject')
+              return Promise.reject(
+                new Error('The command list is unavailable'),
+              )
+            return Promise.resolve(
+              [
+                'workbench.trust.manage',
+                'workbench.action.chat.open',
+                'workbench.action.chat.newChat',
+                'workbench.action.chat.cancel',
+                'workbench.action.chat.removeAllPendingRequests',
+              ].filter(
+                (command) => !options.missingEditorCommands?.includes(command),
+              ),
+            )
+          },
           executeCommand: async (
             name: string,
             argument?: unknown,

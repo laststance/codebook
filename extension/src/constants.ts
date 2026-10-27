@@ -1066,7 +1066,7 @@ export const LLM_WIKI_ROW_ACTIONS = {
   },
 } as const
 
-/** What the LLM Wiki view says when the editor rejects its Manage Workspace Trust command ({@link MANAGE_WORKSPACE_TRUST_COMMAND}, run by {@link registerLlmWikiCommands}). */
+/** What the LLM Wiki view says when the editor's command list lacks (or cannot list) its Manage Workspace Trust command ({@link MANAGE_WORKSPACE_TRUST_COMMAND}, run by {@link registerLlmWikiCommands}). */
 export const LLM_WIKI_MANAGE_TRUST_FALLBACK_NOTICE =
   'Run "Workspaces: Manage Workspace Trust" from the Command Palette to trust this folder.'
 
@@ -1850,6 +1850,10 @@ export const REFUSAL_REPORT_GROUP_TABS = 8
 /** The longest tab label a placement refusal report shows, in characters. */
 export const REFUSAL_REPORT_LABEL_CHARS = 48
 
+/** What a placement refusal report prints as its failed checks when the guard refused with none of the compared parts differing. */
+export const REFUSAL_REPORT_UNATTRIBUTED_CHECKS =
+  'unattributed (none of the compared parts differ)'
+
 /** The most editor events a {@link PlacementEventLog} keeps and a placement refusal report lists, in events. */
 export const REFUSAL_REPORT_EVENTS = 24
 
@@ -1861,15 +1865,15 @@ export const LATE_GROUP_ACTIVATION_WAIT_MS = 150
 
 /** Why the reader did not carry out a choice the Learning summary sent while the Study workspace was closed; completes "The … choice from the Learning summary was not carried out: " in Output › Codebook and "Codebook did not carry out your choice: " in the notice the learner sees. */
 export const SUMMARY_CHOICE_DROPPED_REASON_CLOSED =
-  'the Study workspace is closed. To continue, run Codebook: Open Study Workspace, then choose it again.'
+  'the Study workspace is closed. To continue, run “Codebook: Open Study Workspace”, then make your choice again.'
 
 /** The reason when the choice arrived while the Study workspace was closing. See {@link SUMMARY_CHOICE_DROPPED_REASON_CLOSED}. */
 export const SUMMARY_CHOICE_DROPPED_REASON_CLOSING =
-  'the Study workspace is closing. When it has closed, run Codebook: Open Study Workspace, then choose it again.'
+  'the Study workspace is closing. When it has closed, run “Codebook: Open Study Workspace”, then make your choice again.'
 
 /** The reason when the reader had left the summary composition (the Study pane stands again). See {@link SUMMARY_CHOICE_DROPPED_REASON_CLOSED}. */
 export const SUMMARY_CHOICE_DROPPED_REASON_COMPOSITION_LEFT =
-  'the Learning summary no longer shows that replay. Open a replay from Saved studies, then choose it again.'
+  'the Learning summary is not showing a replay. Open a replay from Saved studies, then make your choice again.'
 
 /** What the learner's notice for a dropped Learning summary choice starts with, before the reason. */
 export const SUMMARY_CHOICE_DROPPED_NOTICE_PREFIX =

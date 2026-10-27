@@ -142,7 +142,7 @@ test('names the call site, the failed checks, the front tabs, the focused tab an
   )
 })
 
-// Value: protects=a guard that retains no focus tab and has no effects still prints a report without the new lines' guesses: no front tabs, no focus lines and an empty effects list that says none; fails_when=the report invents a front tab or leaves the effects heading without a line; why_new=Cycle 0056 task 17 stage 1; seam=none; no_claim=the guards that name them
+// Value: protects=a guard that refused with none of the compared parts differing saying so (unattributed) instead of a bare none, and still printing a report without the new lines' guesses: no front tabs, no focus lines and an empty effects list that says none; fails_when=the report invents a front tab, leaves the effects heading without a line, or prints `Failed checks: none` for a refusal no comparison explains (/ship pass 3 FC, Cycle 0056 pt3); why_new=Cycle 0056 task 17 stage 1; seam=none; no_claim=the guards that name them
 test('says none when no effect of Codebook’s own was issued since arming and shows no focus lines without them', () => {
   // Arrange
   const group = { viewColumn: 1, isActive: true, tabs: [] }
@@ -164,7 +164,7 @@ test('says none when no effect of Codebook’s own was issued since arming and s
     report,
     [
       'Guard: placement',
-      'Failed checks: none',
+      'Failed checks: unattributed (none of the compared parts differ)',
       'Armed 5 ms before the refusal',
       'Groups before: 1* []',
       'Groups after: 1* []',

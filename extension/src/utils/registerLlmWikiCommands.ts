@@ -93,9 +93,13 @@ async function manageTrust(options: LlmWikiCommandOptions): Promise<void> {
   } catch (cause) {
     options.recordFailure('Manage Workspace Trust could not run', cause)
     // Whether the editor has the command decides the notice, never the wording of its error: absent, the learner is pointed to the Command Palette; present, the command failed.
-    const editorCommands = await Promise.resolve(
-      options.editor.commands.getCommands(true),
-    ).catch((): string[] => [])
+    // A list that cannot be read (a rejection or a synchronous throw) leaves the command's presence unknown: the Command Palette route always works, so the hint is shown.
+    let editorCommands: readonly string[] = []
+    try {
+      editorCommands = await options.editor.commands.getCommands(true)
+    } catch {
+      // Unknown list: assume the command is absent.
+    }
     void options.showNotice(
       'information',
       editorCommands.includes(MANAGE_WORKSPACE_TRUST_COMMAND)

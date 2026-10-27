@@ -526,6 +526,41 @@ test('Manage Workspace Trust says it could not open, and records the cause, when
   )
 })
 
+// Value: protects=the learner still being pointed to the Command Palette, and the cause recorded, when the editor's command list cannot be read (it rejects or throws at once), because the command's presence is then unknown and the palette route always works; fails_when=a failing command list makes the trust action reject with no notice, or shows the could-not-open notice for a command that may be missing (/ship pass 3 G-SYNC, Cycle 0056 pt3); why_new=pass 2 asked the list through Promise.resolve, which misses a synchronous throw, and the failing list was untested; seam=the stubbed editor's getCommands failing after workbench.trust.manage rejected; no_claim=the wording of a native editor's own error
+for (const listFailure of ['rejects', 'throws at once'] as const)
+  test(`Manage Workspace Trust points to the Command Palette and records the cause when the editor’s command is rejected and its command list ${listFailure}`, async (context) => {
+    // Arrange
+    const { window } = await openPublishedWiki(context, {
+      trusted: false,
+      commandListFails: listFailure === 'rejects' ? 'reject' : 'throw',
+      editorCommand: (name) => {
+        if (name === 'workbench.trust.manage')
+          throw new Error('The trust editor crashed')
+      },
+    })
+
+    // Act
+    await window.runCommand('codebook.llmWiki.manageTrust')
+
+    // Assert
+    assert.deepEqual(
+      [
+        window.notices,
+        window.outputLines.some(
+          (line) =>
+            line.startsWith('error: ') &&
+            line.includes('The trust editor crashed'),
+        ),
+      ],
+      [
+        [
+          'Run "Workspaces: Manage Workspace Trust" from the Command Palette to trust this folder.',
+        ],
+        true,
+      ],
+    )
+  })
+
 // Value: protects=the Output entry of a failed Manage Workspace Trust never carrying the home directory or a control character that the editor's error held; fails_when=the cause reaches Output as the editor worded it (/ship pass 2 S1, Cycle 0056 pt3); why_new=the view's failure recorder wrote the raw error text; seam=the stubbed editor's trust command throwing a message with the home path and a bell character; no_claim=the wording of a native editor's own error
 test('a failed Manage Workspace Trust records its cause in Output without the home directory or control characters', async (context) => {
   // Arrange
@@ -1320,6 +1355,13 @@ test('the message changes only when the tree reads the new rows, not when the ch
     'Codebook is watching the chat. Stop watching does not stop the chat; stop it in the chat.'
   const stoppedMessage =
     'Codebook stopped watching the chat, which may still publish this Wiki. To stop it, stop the request in the chat.'
+  // The run row shows before the message does; the stop is pressed only once the view shows the watching message and has settled, so the log starts from that state.
+  await waitUntil(
+    () => project.llmWiki.message() === watchingMessage,
+    'the view shows the watching message',
+    6_000,
+  )
+  await project.llmWiki.whenIdle()
 
   // Act
   await project.runCommand('codebook.llmWiki.stopWatching')

@@ -3194,7 +3194,9 @@ export function activate(
             `${message}: ${thrownMessage(cause)}`,
             causeRootsFor(
               [context.globalStorageUri.fsPath],
-              vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+              (vscode.workspace.workspaceFolders ?? []).map(
+                (folder) => folder.uri.fsPath,
+              ),
             ),
           ),
         )

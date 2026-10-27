@@ -2,6 +2,7 @@ import {
   REFUSAL_REPORT_EVENTS,
   REFUSAL_REPORT_GROUP_TABS,
   REFUSAL_REPORT_LABEL_CHARS,
+  REFUSAL_REPORT_UNATTRIBUTED_CHECKS,
 } from '../constants'
 
 /** One tab as a refusal report names the active tab of a group: its label, input kind and whether it is a preview or a pinned tab. */
@@ -150,7 +151,7 @@ export function describePlacementRefusal(input: {
     ...(input.failedChecks === undefined
       ? []
       : [
-          `Failed checks: ${input.failedChecks.length ? input.failedChecks.join(', ') : 'none'}`,
+          `Failed checks: ${input.failedChecks.length ? input.failedChecks.join(', ') : REFUSAL_REPORT_UNATTRIBUTED_CHECKS}`,
         ]),
     `Armed ${Math.round(input.nowMs - input.armedAtMs)} ms before the refusal`,
     `Groups before: ${describeRefusalGroups(input.before).join(' | ')}`,

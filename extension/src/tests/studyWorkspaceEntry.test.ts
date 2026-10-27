@@ -11,6 +11,11 @@ import {
   saveOneStopNodeHistory,
   workspaceHarness,
 } from './studyWorkspaceHarness'
+import {
+  advanceClockUntilSettled,
+  enableFakeClock,
+  resetFakeClock,
+} from './utils/fakeClock'
 
 for (const replaceWrappers of [false, true])
   test(`MCP-first App preparation reserves its own locked group and preserves both learner groups${replaceWrappers ? ' across native wrapper replacement' : ''}`, async () => {
@@ -3249,3 +3254,54 @@ for (const row of [
       await harness.close()
     }
   })
+
+// Value: protects=a Close Study Workspace that completes while an Open waits for a retired Study tab's close staying closed: the stale Open writes none of its state over the Close; fails_when=the Open sets opened and clears closing after the wait, so the reader reports open with no panes and its next Open skips the first-open work (Codex adversarial and structured CX1, Cycle 0056 pt3); why_new=open() wrote opened and closing before it rechecked its lifetime; seam=holdDisposedPanelTabCloses for the Study context tab, the live run that makes the Open dispose the Study pane, a Close completed meanwhile; no_claim=the native tab model
+test('a Close that completes while an Open waits for the retired Study tab leaves the reader closed', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
+    await harness.reader.open()
+    harness.closeDisposedPanelTabsLater()
+    harness.holdDisposedPanelTabCloses()
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await [...harness.service.records.values()][0]!.preparation
+    // No AbortSignal: a Return to Live and a command Open wait this way.
+    const opening = harness.reader.open().then(
+      () => 'opened',
+      (error: unknown) => String(error),
+    )
+    await waitUntil(
+      () => harness.reader['hasRetiredStudyPaneTab'](),
+      'the Open disposes the Study pane and waits for its tab to close',
+      5_000,
+    )
+
+    // Act: the Close completes while the Open waits, then the editor closes the tab.
+    // The Close drains the editor for the native bound; the faked clock passes it.
+    const closing = harness.reader.close()
+    enableFakeClock(context)
+    await advanceClockUntilSettled(context, closing, 10_000)
+    await closing
+    resetFakeClock(context)
+    harness.closePendingDisposedPanelTabs()
+    await opening
+
+    // Assert
+    assert.deepEqual(
+      [
+        harness.reader.inspect().opened,
+        harness.reader.inspect().view?.readerClosed,
+      ],
+      [false, true],
+    )
+  } finally {
+    resetFakeClock(context)
+    await harness.close()
+  }
+})
