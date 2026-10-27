@@ -310,6 +310,22 @@ test('a complete passing run reports health and discloses its skipped test', asy
   assert.deepEqual(await runDirectoriesIn(fixture.temporary), [])
 })
 
+// Value: protects=a maintainer or CI job that reads the exit of `pnpm health` as the verdict of the current source; fails_when=the measured Fallow runs read or write Fallow's incremental cache in the checkout (`.fallow/`), so a graph cache left by earlier runs decides which functions tests reach and the CRAP estimates of unmatched functions (Cycle 0056 pt3's gate: 35 findings with a reused cache, 0 with a fresh graph, same source); why_new=Cycle 0056 pt3 gate; seam=the fixture checkout's `.fallow` folder after a passing run; no_claim=how Fallow's incremental cache goes stale
+test("a measured run leaves no Fallow cache in the checkout, so an earlier run's cache never decides its verdict", async (context) => {
+  // Arrange
+  const fixture = await createFixture(context)
+
+  // Act
+  const result = await runChecker(fixture)
+
+  // Assert: the run passed, and Fallow wrote no cache beside the sources (it read none either: `--no-cache` disables both).
+  assert.equal(result.code, 0, result.stderr)
+  assert.deepEqual(
+    (await readdir(fixture.root)).filter((name) => name === '.fallow'),
+    [],
+  )
+})
+
 test('a failing test refuses health instead of scoring the coverage of a failed run', async (context) => {
   // Arrange
   const fixture = await createFixture(context, {
