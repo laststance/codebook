@@ -268,3 +268,39 @@ test('the modal names the run it asks for', async () => {
   // Assert
   assert.match(shown[0]?.detail ?? '', /for run 68ca83a9,/)
 })
+
+// protects=the learner sees the content type and the size of the body they confirm, never its content; fails_when=the detail omits the type or the byte count, or prints the body; no_claim=how the editor draws the modal
+test('the confirmation names the content type and the body size in bytes but not the body', async () => {
+  // Arrange
+  const { show, shown } = modalAnswering('Send')
+  // Act
+  await createStateChangingRequestAsker(show)(
+    {
+      runId: 'run-1',
+      method: 'POST',
+      path: '/api/items',
+      contentType: 'application/json',
+      body: '{"token":"ひらがな"}',
+    },
+    new AbortController().signal,
+  )
+  // Assert: 12 ASCII bytes of JSON plus the 12 bytes of four 3-byte characters = 24
+  assert.match(
+    shown[0]?.detail ?? '',
+    /The request body is 24 bytes of application\/json\./,
+  )
+  assert.doesNotMatch(shown[0]?.detail ?? '', /token/)
+})
+
+// protects=a request without a body says so; fails_when=the detail claims a body or a size for a DELETE with none; no_claim=none
+test('the confirmation of a request without a body says it has none', async () => {
+  // Arrange
+  const { show, shown } = modalAnswering('Send')
+  // Act
+  await createStateChangingRequestAsker(show)(
+    { runId: 'run-1', method: 'DELETE', path: '/api/items/7' },
+    new AbortController().signal,
+  )
+  // Assert
+  assert.match(shown[0]?.detail ?? '', /The request has no body\./)
+})

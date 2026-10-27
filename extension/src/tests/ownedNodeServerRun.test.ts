@@ -1380,3 +1380,17 @@ test('the close measures the stop from its admission, not from the close call', 
   // Assert
   assert.equal(sinceAdmission, 3_000)
 })
+
+// protects=the sender hides the run's workspace root in the response body before the body is cut; fails_when=the run hands the sender no sanitizer, so a root straddling the 8192-byte cut keeps its prefix; no_claim=home or storage roots
+test('the run gives the request sender a sanitizer that hides the workspace root', async () => {
+  // Arrange
+  const harness = await readyHarness()
+  // Act
+  await sendRequest(harness)
+  const sanitize = harness.sender.calls[0]?.sanitize
+  // Assert
+  assert.equal(
+    sanitize?.(`failed at ${WORKSPACE}/src/app.ts`),
+    'failed at <workspace>/src/app.ts',
+  )
+})

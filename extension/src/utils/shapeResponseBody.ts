@@ -42,14 +42,18 @@ function codePointCut(bytes: Buffer, limit: number): number {
 }
 
 /**
- * Tells whether the bytes are valid UTF-8, allowing a code point cut off at the end (a read cut at 1 MiB).
+ * Tells whether the bytes are valid UTF-8, allowing a code point cut off at the end only when the read itself was cut at 1 MiB.
  * @param bytes - The body read.
- * @returns `false` when a byte sequence inside the body is invalid.
- * @example isValidUtf8(Buffer.from([0x41, 0xff])) // => false
+ * @param readCut - True when the read stopped at 1 MiB, so an incomplete last character is the cut's, not the server's.
+ * @returns `false` when a byte sequence inside the body is invalid, or the last character is incomplete in a body that was read whole.
+ * @example isValidUtf8(Buffer.from([0x41, 0xff]), false) // => false
+ * isValidUtf8(Buffer.from([0x41, 0xe3, 0x81]), true) // => true
  */
-function isValidUtf8(bytes: Buffer): boolean {
+function isValidUtf8(bytes: Buffer, readCut: boolean): boolean {
   try {
-    new TextDecoder('utf-8', { fatal: true }).decode(bytes, { stream: true })
+    new TextDecoder('utf-8', { fatal: true }).decode(bytes, {
+      stream: readCut,
+    })
     return true
   } catch {
     return false
@@ -62,6 +66,7 @@ function isValidUtf8(bytes: Buffer): boolean {
  * @param bytes - The body bytes that were read (at most 1 MiB).
  * @param contentType - The response's `Content-Type` header.
  * @param readCut - True when the read stopped at 1 MiB, so the remainder is a lower bound.
+ * @param sanitize - Hides the run's private roots; applied to the whole redacted text before the cut, so a path straddling the shown limit keeps no prefix. Identity unless given.
  * @returns
  * - `''` for an empty body
  * - The redacted text, cut at a code point with ` … <n> more bytes` (`at least <n>` and ` (cut at 1 MiB)` when the read was cut; n counts the original bytes) when longer than 8,192 bytes, and ` (not valid UTF-8)` after U+FFFD replacements, for `text/*`, `application/json` and `*+json`
@@ -74,14 +79,17 @@ export function shapeResponseBody(
   bytes: Buffer,
   contentType: string | undefined,
   readCut = false,
+  sanitize: (text: string) => string = (text) => text,
 ): string {
   if (bytes.length === 0) return ''
   if (!isTextContentType(contentType))
     return readCut
       ? `(binary, at least ${bytes.length} bytes, cut at 1 MiB)`
       : `(binary, ${bytes.length} bytes)`
-  // Redact the whole read first, then choose the shown cut on the redacted text.
-  const redacted = Buffer.from(redactSecretText(bytes.toString('utf8')))
+  // Redact and hide private roots on the whole read first, then choose the shown cut on that text.
+  const redacted = Buffer.from(
+    sanitize(redactSecretText(bytes.toString('utf8'))),
+  )
   const cut = codePointCut(redacted, NODE_SERVER_RESPONSE_SHOWN_BYTES)
   const text = redacted.subarray(0, cut).toString('utf8')
   const more =
@@ -89,6 +97,6 @@ export function shapeResponseBody(
       ? ` … ${readCut ? 'at least ' : ''}${bytes.length - cut} more bytes`
       : ''
   const note = readCut ? ' (cut at 1 MiB)' : ''
-  const invalid = isValidUtf8(bytes) ? '' : ' (not valid UTF-8)'
+  const invalid = isValidUtf8(bytes, readCut) ? '' : ' (not valid UTF-8)'
   return `${text}${more}${note}${invalid}`
 }

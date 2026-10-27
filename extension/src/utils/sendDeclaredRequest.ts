@@ -29,6 +29,8 @@ export type DeclaredRequestInput = {
   }) => Promise<void>
   /** Aborts the request: the socket is destroyed and `response` rejects with the signal's reason. */
   signal: AbortSignal
+  /** Hides the run's private roots in the response body; applied before the body is cut for display ({@link shapeResponseBody}). */
+  sanitize?: (text: string) => string
   /** A clock in milliseconds for `elapsedMs`; `performance.now` unless a test names its own. */
   now?: () => number
 }
@@ -201,7 +203,7 @@ export function sendDeclaredRequest(input: DeclaredRequestInput): {
                   NODE_SERVER_EVENT_SHORT_TEXT_LIMIT_CHARS,
                 ),
               }),
-          body: shapeResponseBody(bytes, contentType, readCut),
+          body: shapeResponseBody(bytes, contentType, readCut, input.sanitize),
           bodyBytes: bytes.length,
           readCut,
           ...(location === undefined
