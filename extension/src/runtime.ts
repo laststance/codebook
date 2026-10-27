@@ -183,7 +183,7 @@ export interface NodeServerRuntime {
   sendRequest(key: string): Promise<void>
   /** Continues the current pause: reserves its generation atomically, then resumes; resolves once the debugger resumed. Throws `STALE_PAUSE`, `NO_PAUSE` or `LEARNER_PAUSED`. */
   continue(pause: PauseIdentity): Promise<void>
-  /** Stops the server within one 10 s deadline (D14: a server paused in the request is ended before its debugger detaches, so the paused code never runs on; otherwise detach, SIGTERM, SIGKILL after 5 s); idempotent, retryable after a failure. */
+  /** Stops the server within one 10 s deadline (D14 v3: a server paused in the debugger, or with its request under way, is ended before its debugger detaches, so the paused code never runs on; otherwise detach, SIGTERM, SIGKILL after 5 s); idempotent, retryable after a failure. */
   stop(): Promise<void>
 }
 

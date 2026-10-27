@@ -184,7 +184,9 @@ else if (mode === 'fork' && !isForkChild) {
   )
 
 // A graceful shutdown, as switch-time's server.ts has: with a debugger still attached, node waits for it before exiting.
+// In `ignore-sigterm` mode the server swallows SIGTERM, as a server stuck in its own shutdown does, so only SIGKILL ends it.
 process.on('SIGTERM', () => {
+  if (mode === 'ignore-sigterm') return
   forkChild?.kill('SIGTERM')
   if (forkChild) process.exit(0)
   server.close(() => process.exit(0))
