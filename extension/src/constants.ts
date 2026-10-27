@@ -1240,6 +1240,10 @@ export const BOOK_PREPARE_TIMEOUT_MS = 20_000
 export const BOOK_SOURCE_CONCURRENCY = 4
 export const REPOSITORY_BROWSER_PROFILE = 'repository-browser'
 export const NODE_TEST_PROFILE = 'node-test'
+/** The profile of a run of the repository's own Node HTTP server: one declared request, stopped in its handler source. */
+export const NODE_SERVER_PROFILE = 'node-server'
+/** The one action a node-server run offers: send its declared request. */
+export const NODE_SERVER_ACTION = 'http-request'
 /** The lowest port a node-server declaration may name: a lower one needs privileges a development server does not run with, and Codebook never raises them. */
 export const NODE_SERVER_PORT_MIN = 1_024
 /** The highest TCP port. */
