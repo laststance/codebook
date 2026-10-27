@@ -556,9 +556,10 @@ export async function openWikiUpdateWindow(options: {
             commands.set(name, action)
             return { dispose(): void {} }
           },
-          // The commands of the chat a supported editor has, without those the test takes away.
+          // The commands of the chat a supported editor has, and its trust command, without those the test takes away.
           getCommands: async () =>
             [
+              'workbench.trust.manage',
               'workbench.action.chat.open',
               'workbench.action.chat.newChat',
               'workbench.action.chat.cancel',

@@ -742,6 +742,12 @@ type NodeHistoryPositionWriter = {
   running?: Promise<void>
 }
 
+/** The editor commands {@link StudyWorkspace.executeEditorCommand} runs without noting them as Codebook's own effects, because they change nothing: the layout read and the context-key write. */
+const UNNOTED_EDITOR_COMMANDS: ReadonlySet<string> = new Set([
+  'vscode.getEditorLayout',
+  'setContext',
+])
+
 /** Owns the retained learner reader while {@link StudyService} owns execution; activation constructs it before MCP-first runs. @example await workspace.open() */
 export class StudyWorkspace {
   private service?: StudyService
@@ -988,11 +994,13 @@ export class StudyWorkspace {
   /** `true` while {@link openNodeHistoryFromHost} enters the summary composition for a test replay that has not begun opening ({@link testReplayHoldsComposition}). */
   private hostOpeningTestReplay = false
   /**
-   * The replay a closed reader keeps selected for its next Open Study Workspace while an entry for another replay opens; the Learning summary and the bottom panel receive no message that carries it ({@link publish}). It is released when the entry ends ({@link openNodeHistoryFromHost}), and it holds nothing once the chosen replay replaces the selection.
+   * The replay a closed reader keeps selected for its next Open Study Workspace while an entry for another replay opens; the Learning summary and the bottom panel receive no message that carries it ({@link publish}). It is released when the last entry in progress ends ({@link openNodeHistoryFromHost}, {@link nodeHistoryEntriesInProgress}) or at {@link close}, and it holds nothing once the chosen replay replaces the selection.
    */
-  private heldBackReplay: { entry: number; studyId: string } | undefined
-  /** The reason of the last dropped Learning summary choice the learner was told, so repeated clicks in one state raise one notice ({@link noteDroppedSummaryChoice}); forgotten at {@link open} and {@link close}. */
-  private lastToldDroppedChoiceReason: string | undefined
+  private heldBackReplay: { studyId: string } | undefined
+  /** How many test replay entries ({@link openNodeHistoryFromHost}) have not ended yet, from the turn they wait for to their open's end; the held-back replay is released when the last one ends. */
+  private nodeHistoryEntriesInProgress = 0
+  /** The last notice told for a dropped Learning summary choice, with whether the learner has not dismissed it yet: a repeat of its reason raises no second notice while it is open ({@link noteDroppedSummaryChoice}); forgotten at {@link open}, {@link close} and when the summary composition is entered. */
+  private droppedChoiceNotice: { reason: string; isOpen: boolean } | undefined
   /** The editor's recent group and active text editor changes, for {@link refusePlacement}'s report (F382). */
   private readonly placementEvents = new PlacementEventLog()
   /** The native effects this host itself issued (reveals, disposals, editor commands, shown documents), for {@link refusePlacement}'s report (N55-F4). */
@@ -8161,7 +8169,7 @@ export class StudyWorkspace {
   ): Promise<void> {
     if (origin !== 'presentation') this.assertPresentationIdle()
     // A reader that opens again tells a dropped Learning summary choice anew (the notice is once per reason and state).
-    this.lastToldDroppedChoiceReason = undefined
+    this.droppedChoiceNotice = undefined
     signal?.throwIfAborted()
     const lifetime = this.lifetime
     this.assertLifetime(lifetime)
@@ -8281,6 +8289,8 @@ export class StudyWorkspace {
         this.presentationConfirmed = false
         this.liveComposition = liveComposition
         this.summaryComposition = summaryComposition
+        // Entering the summary composition tells a dropped choice anew.
+        if (summaryComposition) this.droppedChoiceNotice = undefined
       }
       if (this.liveComposition || this.summaryComposition) {
         // Live uses the host chat; disposing only our panel never closes another editor's tabs.
@@ -9583,7 +9593,8 @@ export class StudyWorkspace {
     // Read before anything is closed or shown: the tab outside the text editors and the Study panes that has the keyboard now (Cursor's chat), which gets it back when this close shows a side bar.
     const giveKeyboardBackToChat = this.retainForeignTabFocus(undefined)
     this.closing = true
-    this.lastToldDroppedChoiceReason = undefined
+    this.droppedChoiceNotice = undefined
+    this.heldBackReplay = undefined
     this.revision++
     this.lifetime++
     this.pendingHistory = undefined
@@ -11885,6 +11896,7 @@ export class StudyWorkspace {
   ): Promise<void> {
     const entry = this.supersedeNodeHistoryEntries(),
       overtaken = this.nodeHistoryEntryCancellation.signal
+    this.nodeHistoryEntriesInProgress++
     try {
       // Entries take turns entering the composition; a newer entry made meanwhile is the learner's latest choice (EN19).
       const previousTurn = this.nodeHistoryEntryTurn
@@ -11932,12 +11944,19 @@ export class StudyWorkspace {
       )
         return this.openNodeHistoryFromHost(studyId)
     } finally {
-      // The closed reader's replay held back for this entry is drawn again, by the next Open Study Workspace if this entry did not replace it (Cycle 0056 task 32).
-      if (this.heldBackReplay?.entry === entry) {
+      // The closed reader's replay held back for the entries is drawn again, by the next Open Study Workspace if no entry replaced it; a newer entry still in progress keeps the hold, so the views never draw the retained replay while it loads (Cycle 0056 task 32).
+      this.nodeHistoryEntriesInProgress--
+      if (this.nodeHistoryEntriesInProgress === 0 && this.heldBackReplay) {
         this.heldBackReplay = undefined
         this.lastPublished = undefined
-        // An entry that opened the reader and then failed or was superseded leaves the views on what the hold showed; they draw the retained replay again now.
-        if (this.opened && !this.closing && !this.disposed) this.publish()
+        // An entry that opened the reader and then failed or was superseded leaves the views on what the hold showed; they draw the retained replay again now. A failing publish is reported and never replaces the entry's own result.
+        if (this.opened && !this.closing && !this.disposed) {
+          try {
+            this.publish()
+          } catch (error) {
+            this.report('control', error)
+          }
+        }
       }
     }
   }
@@ -12092,7 +12111,6 @@ export class StudyWorkspace {
         this.selectedNodeHistory.header.studyId !== studyId
       )
         this.heldBackReplay = {
-          entry,
           studyId: this.selectedNodeHistory.header.studyId,
         }
       // The open's waits for the work window end too when a newer entry, a Return or a Close supersedes this one (Cycle 0052 task 44).
@@ -13921,6 +13939,25 @@ export class StudyWorkspace {
     return this.recordingReloadStudyId !== undefined ? 'browser' : undefined
   }
 
+  /**
+   * Posts a published message to the Learning summary and the bottom panel; called by {@link publish}.
+   * The Learning summary draws only a shown replay: a publish while the reader leaves one would draw the Live Study page there (Cycle 0052 task 2, N51-V2). A replay held back for another replay's entry ({@link heldBackReplay}) is drawn by neither view (Cycle 0056 task 32).
+   * @param compact - The message {@link publish} built.
+   * @example this.postToReplayViews(compact)
+   */
+  private postToReplayViews(compact: StudyViewMessage): void {
+    const isHeldBack =
+      this.heldBackReplay !== undefined &&
+      this.selectedNodeHistory?.header.studyId === this.heldBackReplay.studyId
+    if (this.summaryComposition && compact.replayFamily && !isHeldBack)
+      void this.summaryView?.webview.postMessage(compact)
+    if (this.moments)
+      this.moments.title = this.summaryComposition
+        ? 'Learning replay'
+        : 'Observed moments'
+    if (!isHeldBack) void this.moments?.webview.postMessage(compact)
+  }
+
   /** Publishes a matching projection with stable DOM controls, excluding images from the context channel. @example this.publish() */
   private publish(): void {
     this.publishLearningSave()
@@ -13956,18 +13993,7 @@ export class StudyWorkspace {
     if (signature === this.lastPublished) return
     this.lastPublished = signature
     void this.contextPanel?.webview.postMessage(compact)
-    // The Learning summary draws only a shown replay: a publish while the reader leaves one would draw the Live Study page there (Cycle 0052 task 2, N51-V2).
-    // A replay held back for another replay's entry is drawn by no view (Cycle 0056 task 32).
-    const isHeldBack =
-      this.heldBackReplay !== undefined &&
-      this.selectedNodeHistory?.header.studyId === this.heldBackReplay.studyId
-    if (this.summaryComposition && compact.replayFamily && !isHeldBack)
-      void this.summaryView?.webview.postMessage(compact)
-    if (this.moments)
-      this.moments.title = this.summaryComposition
-        ? 'Learning replay'
-        : 'Observed moments'
-    if (!isHeldBack) void this.moments?.webview.postMessage(compact)
+    this.postToReplayViews(compact)
     if (this.outline)
       this.outline.message = message.model.currentSourceAvailable
         ? `${message.model.understoodCount} of ${message.model.progressByItem.length} understood for current source · ${message.model.reviewCount} needs review`
@@ -22467,6 +22493,7 @@ export class StudyWorkspace {
     callSite?: string
     armedAtMs: number
     before: RefusalGroupView[]
+    reportsFocus: true
     focusedTab: RefusalTabView | undefined
   } {
     return {
@@ -22474,6 +22501,7 @@ export class StudyWorkspace {
       ...(callSite === undefined ? {} : { callSite }),
       armedAtMs: performance.now(),
       before: this.refusalGroupViews(),
+      reportsFocus: true,
       focusedTab: this.refusalTabView(
         vscode.window.tabGroups.activeTabGroup.activeTab,
       ),
@@ -22486,6 +22514,10 @@ export class StudyWorkspace {
    * @returns The view, or `undefined`; the label still needs {@link sanitizeRefusalGroups}'s treatment before it is shown.
    * @example this.refusalTabView(group.activeTab) // => { label: 'auth.ts', kind: 'text', isPreview: false, isPinned: false }
    */
+  private refusalTabView(tab: vscode.Tab): RefusalTabView
+  private refusalTabView(
+    tab: vscode.Tab | undefined,
+  ): RefusalTabView | undefined
   private refusalTabView(
     tab: vscode.Tab | undefined,
   ): RefusalTabView | undefined {
@@ -22518,7 +22550,7 @@ export class StudyWorkspace {
         viewColumn: group.viewColumn,
         isActive: group === active,
         tabs: group.tabs.slice(0, REFUSAL_REPORT_GROUP_TABS).map((tab) => {
-          const { label, kind } = this.refusalTabView(tab)!
+          const { label, kind } = this.refusalTabView(tab)
           return { label, kind }
         }),
         ...(activeTab ? { activeTab } : {}),
@@ -22625,6 +22657,8 @@ export class StudyWorkspace {
       callSite?: string
       armedAtMs: number
       before: RefusalGroupView[]
+      /** `true` for an arm that noted the focused tab ({@link armPlacementReport}); the report then lists the focus at arming and at refusal. */
+      reportsFocus?: true
       focusedTab?: RefusalTabView | undefined
     },
     failedChecks?: readonly string[],
@@ -22638,7 +22672,7 @@ export class StudyWorkspace {
       nowMs,
       before: this.sanitizeRefusalGroups(armed.before),
       after: this.sanitizeRefusalGroups(this.refusalGroupViews()),
-      ...('focusedTab' in armed
+      ...(armed.reportsFocus
         ? {
             focus: {
               atArming: this.sanitizeRefusalTab(armed.focusedTab),
@@ -22729,7 +22763,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Runs an editor command and notes it as one of Codebook's own effects; every command this class sends goes through here, instead of `vscode.commands.executeCommand`, except the reads of the layout and context keys, which change nothing.
+   * Runs an editor command and notes it as one of Codebook's own effects; every command this class sends goes through here, instead of `vscode.commands.executeCommand`. The layout read and `setContext` are run the same way but are not noted as effects, because they change nothing ({@link UNNOTED_EDITOR_COMMANDS}).
    * @param command - The command id.
    * @param rest - Its arguments.
    * @returns What the editor's command returns.
@@ -22739,7 +22773,7 @@ export class StudyWorkspace {
     command: string,
     ...rest: unknown[]
   ): Thenable<Result> {
-    if (command !== 'vscode.getEditorLayout' && command !== 'setContext')
+    if (!UNNOTED_EDITOR_COMMANDS.has(command))
       this.noteNativeEffect(`command ${command}`)
     return vscode.commands.executeCommand<Result>(command, ...rest)
   }
@@ -22785,7 +22819,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Disposes an owned pane and notes it as one of Codebook's own effects, with the group tabs it leaves listed by the editor.
+   * Disposes an owned pane and notes it as one of Codebook's own effects, with the pane's type and column ({@link describePaneIdentity}).
    * @param panel - The pane; `undefined` disposes nothing.
    * @example this.disposePane(this.contextPanel)
    */
@@ -23571,13 +23605,27 @@ export class StudyWorkspace {
         : {}),
       cause: `The "${parsed.data.type}" choice from the Learning summary was not carried out: ${reason}`,
     })
-    // The learner sees the drop too, once per reason while the reader stays in that state; every drop above still has its Output entry.
-    if (this.lastToldDroppedChoiceReason === reason) return
-    this.lastToldDroppedChoiceReason = reason
-    void showPlainNotice(
-      vscode.window,
-      'information',
-      `${SUMMARY_CHOICE_DROPPED_NOTICE_PREFIX}${reason}`,
+    // The learner sees the drop too, once while the notice for this reason stays open; once it is dismissed the next drop tells again. Every drop above still has its Output entry.
+    if (
+      this.droppedChoiceNotice?.reason === reason &&
+      this.droppedChoiceNotice.isOpen
+    )
+      return
+    const told = { reason, isOpen: true }
+    this.droppedChoiceNotice = told
+    void Promise.resolve(
+      showPlainNotice(
+        vscode.window,
+        'information',
+        `${SUMMARY_CHOICE_DROPPED_NOTICE_PREFIX}${reason}`,
+      ),
+    ).then(
+      () => {
+        told.isOpen = false
+      },
+      () => {
+        told.isOpen = false
+      },
     )
   }
 

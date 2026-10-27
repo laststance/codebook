@@ -80,7 +80,7 @@ async function showRowDetail(
 }
 
 /**
- * Runs the editor's Manage Workspace Trust command; says where to find it when the editor lacks the command, and that the command could not open when it rejects for another cause.
+ * Runs the editor's Manage Workspace Trust command; says where to find it when the editor's command list lacks it, and that it could not open when the editor has the command and it rejects.
  *
  * Trigger: the Manage Workspace Trust action of the view's trust row ({@link registerLlmWikiCommands}).
  * @param options - The window's closures.
@@ -92,15 +92,15 @@ async function manageTrust(options: LlmWikiCommandOptions): Promise<void> {
     await options.editor.commands.executeCommand(MANAGE_WORKSPACE_TRUST_COMMAND)
   } catch (cause) {
     options.recordFailure('Manage Workspace Trust could not run', cause)
-    // The editor says "command '<id>' not found" when it lacks the command; only then the learner learns where else to trust the folder. Any other rejection is a command that exists and failed.
-    const lacksCommand = thrownMessage(cause).includes(
-      `command '${MANAGE_WORKSPACE_TRUST_COMMAND}' not found`,
-    )
+    // Whether the editor has the command decides the notice, never the wording of its error: absent, the learner is pointed to the Command Palette; present, the command failed.
+    const editorCommands = await Promise.resolve(
+      options.editor.commands.getCommands(true),
+    ).catch((): string[] => [])
     void options.showNotice(
       'information',
-      lacksCommand
-        ? LLM_WIKI_MANAGE_TRUST_FALLBACK_NOTICE
-        : LLM_WIKI_MANAGE_TRUST_FAILED_NOTICE,
+      editorCommands.includes(MANAGE_WORKSPACE_TRUST_COMMAND)
+        ? LLM_WIKI_MANAGE_TRUST_FAILED_NOTICE
+        : LLM_WIKI_MANAGE_TRUST_FALLBACK_NOTICE,
     )
   }
 }

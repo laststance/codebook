@@ -1287,6 +1287,7 @@ test('a refused placement guard sanitizes the tab labels of its two snapshots fo
     harness.focusMutableDraft('actions.ts', 2)
     let arms = 0
     const sanitizedLabels = new Set<string>()
+    let sanitizedLabelCalls = 0
     const reader = harness.reader as unknown as Record<
       string,
       (...args: unknown[]) => unknown
@@ -1306,8 +1307,10 @@ test('a refused placement guard sanitizes the tab labels of its two snapshots fo
           harness.groups.some((group) =>
             group.tabs.some((tab) => tab.label === args[0]),
           )
-        )
+        ) {
+          sanitizedLabelCalls++
           sanitizedLabels.add(String(args[0]))
+        }
         return sanitize(...args)
       },
     )
@@ -1356,6 +1359,8 @@ test('a refused placement guard sanitizes the tab labels of its two snapshots fo
       ).length,
       1,
     )
+    // The exact number of label sanitizations stays pinned beside the set check: a report that sanitizes more or fewer labels than before is a change to review.
+    assert.equal(sanitizedLabelCalls, 17)
     // Every tab label the report names went through the sanitizer; the check follows the report's own lines, so a new report line needs no new count.
     const cause = logged.find(
       (entry) => entry.surface === 'presentation:placement-refused',

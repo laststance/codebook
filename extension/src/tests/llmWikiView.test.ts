@@ -493,7 +493,7 @@ test('Manage Workspace Trust says where to find the command and records the caus
   )
 })
 
-// Value: protects=the learner not being sent to the Command Palette for a trust command the editor has but could not open; fails_when=any rejection of workbench.trust.manage shows the Command Palette sentence as if the command were missing, or a failure that is not a missing command is not recorded in Output › Codebook (local review D5/RT3, Cycle 0056 pt3); why_new=the earlier test rejected only with a missing-command error; seam=the stubbed editor's command throwing a failure of its own; no_claim=the wording of a native editor's own error
+// Value: protects=the learner told that a trust command the editor has could not open, with the Command Palette route and the cause in Output; fails_when=any rejection of workbench.trust.manage shows the missing-command sentence, the failure notice names no route, or the editor's own wording of the error decides which notice shows (local review D5/RT3, /ship pass 2 M3 and D8, Cycle 0056 pt3); why_new=the earlier test rejected only with a missing-command error; seam=the stubbed editor's command throwing a failure of its own; no_claim=the wording of a native editor's own error
 test('Manage Workspace Trust says it could not open, and records the cause, when the editor has the command and it fails', async (context) => {
   // Arrange
   const { window } = await openPublishedWiki(context, {
@@ -519,11 +519,35 @@ test('Manage Workspace Trust says it could not open, and records the cause, when
     ],
     [
       [
-        'Manage Workspace Trust could not open. The cause is in Output › Codebook.',
+        'Manage Workspace Trust could not open. Try "Workspaces: Manage Workspace Trust" from the Command Palette; the cause is in Output › Codebook.',
       ],
       true,
     ],
   )
+})
+
+// Value: protects=the Output entry of a failed Manage Workspace Trust never carrying the home directory or a control character that the editor's error held; fails_when=the cause reaches Output as the editor worded it (/ship pass 2 S1, Cycle 0056 pt3); why_new=the view's failure recorder wrote the raw error text; seam=the stubbed editor's trust command throwing a message with the home path and a bell character; no_claim=the wording of a native editor's own error
+test('a failed Manage Workspace Trust records its cause in Output without the home directory or control characters', async (context) => {
+  // Arrange
+  const home = homedir()
+  const { window } = await openPublishedWiki(context, {
+    trusted: false,
+    editorCommand: (name) => {
+      if (name === 'workbench.trust.manage')
+        throw new Error(`Failed at ${home}/private/trust.json\u0007`)
+    },
+  })
+
+  // Act
+  await window.runCommand('codebook.llmWiki.manageTrust')
+
+  // Assert
+  const line = window.outputLines.find((entry) =>
+    entry.includes('Manage Workspace Trust could not run'),
+  )
+  assert.equal(line?.includes('~/private/trust.json'), true)
+  assert.equal(line?.includes(home), false)
+  assert.equal(line?.includes('\u0007'), false)
 })
 
 // Value: protects=AC 2 (error row); fails_when=a read that throws leaves the tree empty or on loading, writes no cause to Output, or does not recover at Refresh; no_claim=the cause's wording; seam=a folder that no longer exists
