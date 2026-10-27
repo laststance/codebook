@@ -204,7 +204,7 @@ test('the node-server help states the supported shape, the index bases and the l
   assert.match(limits, /local or test database/)
   assert.match(
     body.request,
-    /confirms it in a modal naming the method and path/,
+    /confirms it in a modal naming the method, the path, the run, the content type and the body size \(never the body\)/,
   )
   assert.match(limits, /Server runs are not saved yet/)
   assert.equal(body.configurationSchema.properties.request.type, 'object')

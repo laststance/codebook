@@ -191,7 +191,7 @@ export function nodeServerHelp() {
       'No watch mode and no process manager: the process Codebook starts is the one that must listen. A listener in a forked or cluster child, or in a foreign process, is refused as LISTENER_NOT_OWNED.',
       'A server bound to 0.0.0.0 or :: is accepted; Codebook sends its request to loopback (127.0.0.1, then ::1) only.',
     ],
-    request: `One request per run: method GET, POST, PUT, PATCH or DELETE, a path from the server root (a query string allowed), and for POST, PUT or PATCH an optional body of at most ${NODE_SERVER_REQUEST_BODY_LIMIT_BYTES} bytes with its content type. Redirects are not followed; HTTP 4xx and 5xx are observed responses. A state-changing request changes the repository's own configured database, so it is sent only after the learner confirms it in a modal naming the method and path.`,
+    request: `One request per run: method GET, POST, PUT, PATCH or DELETE, a path from the server root (a query string allowed), and for POST, PUT or PATCH an optional body of at most ${NODE_SERVER_REQUEST_BODY_LIMIT_BYTES} bytes with its content type. Redirects are not followed; HTTP 4xx and 5xx are observed responses. A state-changing request changes the repository's own configured database, so it is sent only after the learner confirms it in a modal naming the method, the path, the run, the content type and the body size (never the body).`,
     indexBases:
       'declaredStopIndex is zero-based (0 is the configuration source, then additionalStops in order); stopNumber is one-based; stopsReached and stopsHitAtStart list declaredStopIndex values in hit order; pauseGeneration grows with every pause and is part of the continuation arguments.',
     states: [
