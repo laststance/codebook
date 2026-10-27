@@ -3453,7 +3453,9 @@ export async function workspaceHarness(
           const activateNextTab = (): void => {
             if (pendingNextTabActivation !== activateNextTab) return
             pendingNextTabActivation = undefined
-            sharedGroup.activeTab = nextTab
+            // Looked up again: a rebuild of the group objects since the disposal would leave `sharedGroup` stale.
+            const holder = groups.find((group) => group.tabs.includes(nextTab))
+            if (holder) holder.activeTab = nextTab
             for (const listener of tabChangeListeners)
               listener({ opened: [], closed: [], changed: [nextTab] })
           }

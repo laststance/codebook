@@ -2,13 +2,13 @@
 
 ## [0.2.49.0] - 2026-10-27 (development candidate)
 
-Cycle 0056 ([Issue #135](https://github.com/laststance/codebook/issues/135)), a bug-fix cycle, last of its three pull requests: a saved test replay opens in Cursor every time it is chosen, the Saved studies list and the Learning summary say what is true around **Codebook: Close Study Workspace**, and the LLM Wiki view follows its folder, trusts through the editor's own command and changes its message with its rows. Every behaviour was also checked in the real editors (native trial N56, VS Code 1.142.0 and Cursor 3.27.12).
+Cycle 0056 ([Issue #135](https://github.com/laststance/codebook/issues/135)), a bug-fix cycle, last of its three pull requests: a saved test replay opens in Cursor when it is chosen, the Saved studies list and the Learning summary say what is true around **Codebook: Close Study Workspace**, and the LLM Wiki view follows its folder, trusts through the editor's own command and changes its message with its rows. The native trial N56 checked part of this in the real editors, on this part's development candidates (`02acefaa`, `7ff3ab57`, `932cdae3`), not on the released build: VS Code 1.142.0 and Cursor 3.27.12 on macOS 26 (a virtual machine), with the development target `nextjs-dashboard`. It covered the test replay's opens and the Saved studies list after Close in Cursor, the trust command in both editors, and the view's message and rows and a deleted Wiki folder in VS Code; the other changes are covered by tests only. Each step's host, candidate and result, and the hashes of its recordings (kept private), are in [Issue #135's comments](https://github.com/laststance/codebook/issues/135#issuecomment-6431339240).
 
 **Saved test replays.**
 
-- **A saved test replay opens in Cursor each time you choose it**: choosing it from a Study pane that stands in a group with your own tabs, or while Cursor reports the Application's new group late, no longer refuses with `Native pane, group or focus changed while presentation waited`; five opens in a row open without a refusal.
+- **A saved test replay opens in Cursor when you choose it**: choosing it from a Study pane that stands in a group with your own tabs, or while Cursor reports the Application's new group a moment late, no longer refuses with `Native pane, group or focus changed while presentation waited`; in N56, five opens in a row opened without a refusal.
 - **A refused or failed open never holds up your next choice**: its notice is shown and recorded at once, and your next Saved studies choice or **Open replay** is carried out; a choice the Learning summary sends while the Study workspace is closed, closing or no longer showing a replay is not carried out, and you are told so in a notice that starts `Codebook did not carry out your choice:` and says what to do next, with one `choice:dropped` entry in **Output › Codebook**.
-- **After Close Study Workspace the Saved studies list names no study** (it reads `Choose a saved study`), so choosing any entry opens it, the one the closed reader showed included; **Codebook: Open Study Workspace** still shows that replay again.
+- **After Close Study Workspace the Saved studies list names no study** (it reads `Choose a saved study`), so choosing any entry that can be opened opens it, the one the closed reader showed included; **Codebook: Open Study Workspace** still shows that replay again. An entry that cannot be opened and that you chose before the Close stays chosen with its delete control.
 - **Opening another replay after Close never shows the closed one first**: the Learning summary goes from its opening state straight to the replay you chose.
 - **Close Study Workspace no longer fails with `Webview is disposed`** after the editor closed the panes itself, and a Close made while an open is still waiting leaves the workspace closed.
 - **A refused placement says why** in **Output › Codebook**: which call refused, which compared parts differed (or that none did), each group's front tab and the editor changes and Codebook's own effects since the guard was armed, with your folders' paths shortened.
@@ -40,7 +40,7 @@ Cycle 0056 ([Issue #135](https://github.com/laststance/codebook/issues/135)), a 
   - a link whose target is missing;
   - a path that cannot be read (with its error code, also when the disk does not answer within 3 seconds);
   - a folder in a remote window (`Reveal Wiki Folder opens folders on this computer only; the Wiki folder is on <remote>. …`).
-  A WSL window reveals the folder like a local one.
+    A WSL window reveals the folder like a local one.
 - **View actions have decided names and icons**: inline actions in Title Case (**Stop Watching** with an eye-closed icon, **Try Again** with a restart icon, **Change Location**, **Open Chat**, **Open Folder**, **Show Output**, **Copy Recovery Request**); **Cancel** keeps the stop icon because it stops the agent.
 - **The welcome names the default folder**: `The Wiki is written to .codebook/wiki unless the setting codebook.wikiOutputDirectory names another folder.` with the **Change location** link, and a click on the **Output** row opens the same setting.
 
