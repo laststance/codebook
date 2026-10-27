@@ -5,6 +5,7 @@ import {
   NODE_TEST_HISTORY_LIMIT_BYTES,
   REPOSITORY_RUN_TIMEOUT_MS,
 } from '../constants'
+import { NANOSECONDS_PER_MILLISECOND } from '../runtimeSupport/constants'
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
@@ -88,7 +89,8 @@ export async function launchNodeTest(
   return {
     pid: child.pid,
     processGroup: child.pid,
-    elapsedMs: () => Number(process.hrtime.bigint() - started) / 1_000_000,
+    elapsedMs: () =>
+      Number(process.hrtime.bigint() - started) / NANOSECONDS_PER_MILLISECOND,
     output: () => capture.tail(),
     /** Waits for the launched test command's actual exit before sealing its output result. @example const result = await testRun.result(signal) */
     async result(signal: AbortSignal): Promise<{

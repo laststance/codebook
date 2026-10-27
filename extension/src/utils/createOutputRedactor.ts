@@ -1,4 +1,5 @@
 import {
+  OUTPUT_REDACTION_BLOCK_DROP_LIMIT_CHARS,
   OUTPUT_REDACTION_CARRY_CHARS,
   OUTPUT_REDACTION_END_MARKER_TAIL_CHARS,
   OUTPUT_REDACTION_HOLD_LIMIT_CHARS,
@@ -17,9 +18,9 @@ export type OutputRedactor = {
 
 /** A private-key block's end marker, searched while a block's body is being dropped. */
 const PRIVATE_KEY_END = /-----END [A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*-----/
-/** Where any secret shape this contract masks begins; a run of 8 KiB with none of these cannot be a secret yet. */
+/** Where a secret shape this contract masks begins, each anchored as {@link redactSecretText} matches it (a URL only with a userinfo colon, a prefix only at a word start), so an ordinary long run that merely mentions `https://` or a `task-` word is not taken for one. */
 const SECRET_START =
-  /eyJ|Bearer|:\/\/|sk-|gh[pousr]_|github_pat_|AKIA|-----BEGIN/i
+  /eyJ[A-Za-z0-9_-]|[Bb][Ee][Aa][Rr][Ee][Rr][ \t]|:\/\/[^\s/@]*:|(?<![A-Za-z0-9])(?:sk-|[sr]k_|gh[pousr]_|github_pat_|xox[abprs]-|npm_|AIza|AKIA|ASIA)|-----BEGIN/
 
 /**
  * Finds where the text that may still grow into a secret begins; everything before it can be released.
@@ -53,6 +54,26 @@ function holdStart(text: string): number {
 }
 
 /**
+ * Finds where the output after a dropped private-key block resumes: past its END marker, or, once more than {@link OUTPUT_REDACTION_BLOCK_DROP_LIMIT_CHARS} of it was dropped without one, past the next line break.
+ * Why: a channel that prints a private-key header and never its end must not lose all later output; called by {@link createOutputRedactor} while it drops an oversized block.
+ * @param text - Held tail plus the new chunk.
+ * @param droppedChars - How much of the block was dropped before this chunk.
+ * @returns The text after the block, or `undefined` while the whole chunk still belongs to it.
+ * @example afterDroppedBlock('QUJD\n-----END PRIVATE KEY-----\nready\n', 0) // => '\nready\n'
+ */
+function afterDroppedBlock(
+  text: string,
+  droppedChars: number,
+): string | undefined {
+  const end = PRIVATE_KEY_END.exec(text)
+  if (end) return text.slice(end.index + end[0].length)
+  if (droppedChars + text.length <= OUTPUT_REDACTION_BLOCK_DROP_LIMIT_CHARS)
+    return undefined
+  const lineBreak = text.indexOf('\n')
+  return lineBreak === -1 ? undefined : text.slice(lineBreak + 1)
+}
+
+/**
  * Makes the stateful redactor of one output channel (stdout or stderr), so a secret split over chunks is still masked before the output is cut, split or saved.
  * Holds back at most {@link OUTPUT_REDACTION_HOLD_LIMIT_CHARS} of an incomplete trailing token or private-key block; past that, a run that may be a secret fails closed (released as {@link REDACTION_MASK}, the rest of that token or block dropped) and a run showing no secret shape is released with a short carry. Called by {@link captureProcessOutput} for each channel of an owned test or server, before any truncation or event split.
  * @returns A fresh {@link OutputRedactor}; one per channel, never shared.
@@ -65,18 +86,21 @@ export function createOutputRedactor(): OutputRedactor {
   let held = ''
   // Set after an overflow: the rest of the oversized token (until whitespace) or block (until its END marker) is dropped.
   let dropping: 'token' | 'block' | undefined
+  // How much of an oversized block has been dropped; past its limit the block ends at the next line break, so a header without an END marker cannot silence the channel.
+  let droppedChars = 0
 
   const write = (text: string): string => {
     let combined = held + text
     held = ''
     // Finish dropping what a previous overflow began.
     if (dropping === 'block') {
-      const end = PRIVATE_KEY_END.exec(combined)
-      if (!end) {
+      const rest = afterDroppedBlock(combined, droppedChars)
+      if (rest === undefined) {
+        droppedChars += combined.length
         held = combined.slice(-OUTPUT_REDACTION_END_MARKER_TAIL_CHARS)
         return ''
       }
-      combined = combined.slice(end.index + end[0].length)
+      combined = rest
       dropping = undefined
     } else if (dropping === 'token') {
       const rest = /^\S*/.exec(combined)![0]
@@ -91,6 +115,7 @@ export function createOutputRedactor(): OutputRedactor {
       if (SECRET_START.test(held)) {
         // Fail closed: a possible secret outgrew the hold, so mask it and drop the rest of that token or block.
         dropping = held.includes('-----BEGIN') ? 'block' : 'token'
+        droppedChars = held.length
         held = ''
         released += REDACTION_MASK
       } else {

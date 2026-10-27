@@ -6,6 +6,7 @@ import {
   NODE_SERVER_SHUTDOWN_GRACE_MS,
   NODE_TEST_ATTACH_TIMEOUT_MS,
 } from '../constants'
+import { NANOSECONDS_PER_MILLISECOND } from '../runtimeSupport/constants'
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
@@ -114,7 +115,8 @@ export async function launchNodeServer(
   return {
     pid: child.pid,
     processGroup: child.pid,
-    elapsedMs: () => Number(process.hrtime.bigint() - startedAt) / 1_000_000,
+    elapsedMs: () =>
+      Number(process.hrtime.bigint() - startedAt) / NANOSECONDS_PER_MILLISECOND,
     /** The last redacted output, for a failure's cause. @example server.output() // => 'fixture listening on 127.0.0.1:4100\n' */
     output: () => capture.tail(),
     /** How the process ended, or `undefined` while it runs. @example server.exited() // => { exitCode: 3, signal: null } */

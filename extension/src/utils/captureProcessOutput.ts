@@ -5,6 +5,7 @@ import {
   PROCESS_OUTPUT_EVENT_LIMIT_CHARS,
   PROCESS_OUTPUT_LIMIT_BYTES,
 } from '../constants'
+import { NANOSECONDS_PER_MILLISECOND } from '../runtimeSupport/constants'
 
 import { createOutputRedactor } from './createOutputRedactor'
 
@@ -79,7 +80,8 @@ export function captureProcessOutput(
     const event = {
       sequence: ++sequence,
       elapsedMs:
-        Number(process.hrtime.bigint() - options.startedAt) / 1_000_000,
+        Number(process.hrtime.bigint() - options.startedAt) /
+        NANOSECONDS_PER_MILLISECOND,
       channel,
       text,
     }

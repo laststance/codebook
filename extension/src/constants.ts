@@ -1242,8 +1242,10 @@ export const REPOSITORY_BROWSER_PROFILE = 'repository-browser'
 export const NODE_TEST_PROFILE = 'node-test'
 /** The lowest port a node-server declaration may name: a lower one needs privileges a development server does not run with, and Codebook never raises them. */
 export const NODE_SERVER_PORT_MIN = 1_024
+/** The highest TCP port. */
+export const TCP_PORT_MAX = 65_535
 /** The highest TCP port a node-server declaration may name. */
-export const NODE_SERVER_PORT_MAX = 65_535
+export const NODE_SERVER_PORT_MAX = TCP_PORT_MAX
 /** The longest request path, its query string included, a node-server declaration may send. */
 export const NODE_SERVER_REQUEST_PATH_LIMIT_CHARS = 2_048
 /** The largest request body, in UTF-8 bytes, a node-server declaration may send. */
@@ -1912,3 +1914,6 @@ export const OUTPUT_REDACTION_CARRY_CHARS = 16
 
 /** The characters of a dropped private-key body kept to find an END marker split across chunks ({@link createOutputRedactor}). */
 export const OUTPUT_REDACTION_END_MARKER_TAIL_CHARS = 80
+
+/** How much of an oversized private-key block an output redactor drops before it ends the block at the next line break, so a header without an END marker cannot silence the channel ({@link createOutputRedactor}); four times a 4096-bit RSA key's PEM. */
+export const OUTPUT_REDACTION_BLOCK_DROP_LIMIT_CHARS = 16_384

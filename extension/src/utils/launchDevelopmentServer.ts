@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { join } from 'node:path'
+import { StringDecoder } from 'node:string_decoder'
 
 import {
   REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS,
@@ -12,6 +13,7 @@ import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 import { isEndpointClosed } from '../runtimeSupport/utils/isEndpointClosed'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
+import { createOutputRedactor } from './createOutputRedactor'
 import { buildDevelopmentServerEnvironment } from './developmentServerEnvironment'
 import { isProcessGroupGone } from './isProcessGroupGone'
 import {
@@ -48,7 +50,9 @@ export function launchDevelopmentServer(
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
+  // The raw tail serves origin detection only and is never published; `publishedLog` is its redacted counterpart, the one the journal and failure messages carry.
   let log = Buffer.alloc(0),
+    publishedLog = '',
     inspectorLog = Buffer.alloc(0),
     inspectorCandidate: string | undefined,
     inspectorError: Error | undefined
@@ -67,9 +71,25 @@ export function launchDevelopmentServer(
       -REPOSITORY_APPLICATION_LOG_LIMIT_BYTES,
     )
   }
-  child.stdout.on('data', receive)
+  const publish = (text: string): void => {
+    if (!text) return
+    publishedLog = Buffer.from(publishedLog + text)
+      .subarray(-REPOSITORY_APPLICATION_LOG_LIMIT_BYTES)
+      .toString('utf8')
+  }
+  // Each channel is redacted statefully, so a credential the server prints across chunks is masked before it is kept for publication.
+  for (const stream of [child.stdout, child.stderr]) {
+    const decoder = new StringDecoder('utf8')
+    const redactor = createOutputRedactor()
+    stream.on('data', (chunk: Buffer) => {
+      receive(chunk)
+      publish(redactor.write(decoder.write(chunk)))
+    })
+    stream.on('end', () =>
+      publish(redactor.write(decoder.end()) + redactor.end()),
+    )
+  }
   child.stderr.on('data', (chunk: Buffer) => {
-    receive(chunk)
     if (!inspectServer || inspectorError) return
     inspectorLog = Buffer.concat([inspectorLog, chunk]).subarray(
       -REPOSITORY_APPLICATION_LOG_LIMIT_BYTES,
@@ -162,7 +182,9 @@ export function launchDevelopmentServer(
           if (error || child.exitCode !== null)
             throw (
               error ??
-              new Error(`Application exited: ${child.exitCode}: ${log}`)
+              new Error(
+                `Application exited: ${child.exitCode}: ${publishedLog}`,
+              )
             )
           // Process chunks may split a port; only a received delimiter proves its complete value. Only the declared port counts: another local URL in the log (an API, a proxy) is not the app's origin (F552).
           return new RegExp(`http://127\\.0\\.0\\.1:${port}(?=\\D)`).exec(
@@ -183,7 +205,9 @@ export function launchDevelopmentServer(
         })
         await response.body?.cancel()
         if (!response.ok)
-          throw new Error(`Application root failed: ${response.status}: ${log}`)
+          throw new Error(
+            `Application root failed: ${response.status}: ${publishedLog}`,
+          )
       } else {
         const entry = await fetch(`${origin}${entryPath}`, {
           redirect: 'manual',
@@ -242,7 +266,7 @@ export function launchDevelopmentServer(
           origin,
           exitCode: child.exitCode,
           signal: child.signalCode,
-          log: log.toString('utf8'),
+          log: publishedLog,
         })
       })())
       // Preserve successful release, while allowing a later stop to retry a failed signal or exit check.

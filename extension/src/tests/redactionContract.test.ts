@@ -55,13 +55,50 @@ test('a secret-named variable is masked by its final word while count and sort n
     'credentials',
     'APIKey',
   ]
-  const visible = [
-    'tokenCount',
-    'sortKey',
-    'passwordPolicy',
+  const visible = ['tokenCount', 'sortKey', 'passwordPolicy', 'key', 'amount']
+  // Act
+  const maskedResults = masked.map(isSecretName)
+  const visibleResults = visible.map(isSecretName)
+  // Assert
+  assert.deepEqual(
+    maskedResults,
+    masked.map(() => true),
+  )
+  assert.deepEqual(
+    visibleResults,
+    visible.map(() => false),
+  )
+})
+
+// protects=credential names the pt1 security review found visible (secret/access/signing keys, passphrases, short password names, JWTs, session ids); fails_when=AWS_SECRET_ACCESS_KEY, secretKey, passphrase, pwd, jwt or sessionId reads its value, or publicKey/primaryKey/cacheKey/idempotencyKey is masked; no_claim=names outside these words
+test('a key named for secret, access, signing or session use, a passphrase, a JWT and a session id are masked while public and index keys stay visible', () => {
+  // Arrange
+  const masked = [
+    'secretAccessKey',
+    'AWS_SECRET_ACCESS_KEY',
+    'secretKey',
+    'accessKey',
+    'signingKey',
+    'encryption_key',
+    'masterKey',
+    'clientKey',
+    'authKey',
+    'sessionKey',
+    'passphrase',
+    'pwd',
+    'dbPass',
+    'jwt',
     'sessionId',
-    'key',
-    'amount',
+    'session_id',
+    'sid',
+  ]
+  const visible = [
+    'publicKey',
+    'primaryKey',
+    'cacheKey',
+    'idempotencyKey',
+    'foreignKey',
+    'userId',
   ]
   // Act
   const maskedResults = masked.map(isSecretName)
@@ -75,6 +112,50 @@ test('a secret-named variable is masked by its final word while count and sort n
     visibleResults,
     visible.map(() => false),
   )
+})
+
+// protects=provider keys the pt1 security review named (Stripe live/test secret and restricted keys, Slack tokens, Google API keys, npm tokens, AWS session keys); fails_when=any of them survives in captured text; no_claim=unprefixed secrets
+test('Stripe, Slack, Google, npm and AWS session keys in captured text read [masked]', () => {
+  // Arrange
+  const keys = [
+    ['sk', 'live', 'a1B2c3D4e5F6g7H8i9J0k1L2'].join('_'),
+    ['rk', 'test', 'Z9y8X7w6V5u4T3s2R1q0P9o8'].join('_'),
+    ['xoxb', '123456789012', '123456789012', 'AbCdEfGhIjKlMnOpQrStUvWx'].join(
+      '-',
+    ),
+    ['AIza', 'SyA1234567890abcdefghijklmnopqrstuv'].join(''),
+    ['npm', 'abcdefghijklmnopqrstuvwxyz0123456789'].join('_'),
+    ['ASIA', 'ABCDEFGHIJKLMNOP'].join(''),
+  ]
+  // Act
+  const redacted = keys.map((key) => redactSecretText(`key ${key} end`))
+  // Assert
+  assert.deepEqual(
+    redacted,
+    keys.map(() => 'key [masked] end'),
+  )
+})
+
+// protects=fail-closed masking only for secret shapes, not for ordinary long runs (pt1 red-team finding); fails_when=a 9 KiB run that only mentions a task- word and an https URL is masked or dropped, or a private-key header without an end drops the rest of the channel; no_claim=secrets of unknown shape
+test('a long run that only mentions a URL and a task- word stays visible, and an unterminated private key no longer silences the channel', () => {
+  // Arrange
+  const benign = `task-runner:https://example.com/chunk/${'a'.repeat(9_000)}`
+  const benignRedactor = createOutputRedactor()
+  const keyRedactor = createOutputRedactor()
+  // Act
+  const benignOutput =
+    benignRedactor.write(benign) +
+    benignRedactor.write('\n') +
+    benignRedactor.end()
+  const keyOutput =
+    keyRedactor.write(`${PEM_HEADER}\n${'QUJD'.repeat(6_000)}`) +
+    keyRedactor.write(`${' x'.repeat(10_000)}\nserver ready on 4000\n`) +
+    keyRedactor.end()
+  // Assert
+  assert.equal(benignOutput, `${benign}\n`)
+  assert.equal(keyOutput.startsWith('[masked]'), true)
+  assert.equal(keyOutput.includes('QUJD'), false)
+  assert.equal(keyOutput.endsWith('server ready on 4000\n'), true)
 })
 
 // protects=each value pattern; fails_when=a URL password, JWT, Bearer token, sk-, ghp_, github_pat_, AKIA key or PEM block survives, or the URL user name / the word Bearer is lost; no_claim=other providers' keys
@@ -501,7 +582,7 @@ test('node test output masks a token the event split and the tail cut would have
   }
 })
 
-// Value: protects=an inspected path is secret when any step names a secret, in dotted, bracketed, quoted and optional-chaining forms; fails_when=headers["authorization"], user?.password or items[0].token reads its value, or tokenCount/sessionId path is masked; why_new=existing rows inspect only dotted paths; seam=none; no_claim=other providers' paths (unit only)
+// Value: protects=an inspected path is secret when any step names a secret, in dotted, bracketed, quoted and optional-chaining forms; fails_when=headers["authorization"], user?.password or items[0].token reads its value, or a tokenCount or publicKey path is masked; why_new=existing rows inspect only dotted paths; seam=none; no_claim=other providers' paths (unit only)
 test('an inspected path through a bracket, quote or optional chain to a secret name reads [masked]', () => {
   // Arrange
   const secretPaths = [
@@ -511,7 +592,7 @@ test('an inspected path through a bracket, quote or optional chain to a secret n
     'items[0].token',
     'config.apiKey',
   ]
-  const plainPaths = ['tokenCount', 'user.name', 'items[0].sessionId']
+  const plainPaths = ['tokenCount', 'user.name', 'items[0].publicKey']
   // Act
   const secretReadings = secretPaths.map((path) =>
     redactInspectedValue({ mode: 'value', path }, 'hunter2'),

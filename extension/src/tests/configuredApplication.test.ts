@@ -843,3 +843,88 @@ process.on('SIGTERM', () => {
     code: 'ENOENT',
   })
 })
+
+// Value: protects=the redaction contract on the repository-browser dev server's output, which the run journals in application.closed and quotes in failure messages (pt1 red-team finding); fails_when=a credential the server prints, even split across chunks, reaches the journal or the readiness failure; why_new=no test fed the dev server's log through redaction; seam=the launcher run in an isolated module context with a stub child, as the other tests here; no_claim=a real next dev process
+test('a credential the dev server prints, split across chunks, reads [masked] in the closed journal and in a readiness failure', async (context) => {
+  // Arrange
+  const filename = join(__dirname, '../utils/launchDevelopmentServer.js'),
+    nativeRequire = createRequire(filename)
+  const exports: Partial<typeof ServerModule> = {},
+    journal: { type: string; detail: unknown }[] = []
+  const token = ['ghp', '0123456789abcdefghijKLMNOPqrstuvwxyz'].join('_')
+  const child = Object.assign(new EventEmitter(), {
+    pid: 42000,
+    exitCode: null as number | null,
+    signalCode: null,
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+  })
+  let groupAlive = true
+  context.mock.method(
+    process,
+    'kill',
+    (_pid: number, signal?: string | number): true => {
+      if (signal === 'SIGTERM') {
+        groupAlive = false
+        child.emit('exit')
+      }
+      if (signal === 0 && !groupAlive)
+        throw Object.assign(new Error('missing group'), { code: 'ESRCH' })
+      return true
+    },
+  )
+  runInNewContext(
+    await readFile(filename, 'utf8'),
+    {
+      exports,
+      AbortSignal,
+      Buffer,
+      process: { env: {} },
+      require(name: string) {
+        if (name === 'node:child_process') return { spawn: () => child }
+        if (name.endsWith('/utils/waitUntil'))
+          return {
+            waitUntil: async (read: () => unknown): Promise<unknown> => {
+              const value = await read()
+              if (!value) throw new Error('not ready')
+              return value
+            },
+          }
+        return nativeRequire(name)
+      },
+    },
+    { filename },
+  )
+  assert.ok(exports.launchDevelopmentServer)
+  const server = exports.launchDevelopmentServer(
+    '/isolated-target',
+    '/node',
+    (type, detail) => journal.push({ type, detail }),
+    false,
+    3000,
+  )
+  child.stdout.emit('data', Buffer.from(`using token ${token.slice(0, 12)}`))
+  child.stdout.emit('data', Buffer.from(`${token.slice(12)} for the api\n`))
+  child.exitCode = 1
+  // Act
+  const failure = await server
+    .ready(new AbortController().signal)
+    .catch((error: unknown) => error)
+  await server.close()
+  // Assert
+  // The launcher runs in its own realm, so its Error is read by its message, not by instanceof.
+  const failureMessage =
+    typeof failure === 'object' && failure !== null
+      ? Reflect.get(failure, 'message')
+      : undefined
+  assert.equal(
+    failureMessage,
+    'Application exited: 1: using token [masked] for the api\n',
+  )
+  const closed = journal.find((entry) => entry.type === 'application.closed')
+  assert.equal(
+    JSON.stringify(closed?.detail).includes('using token [masked] for the api'),
+    true,
+  )
+  assert.equal(JSON.stringify(journal).includes(token.slice(4, 20)), false)
+})

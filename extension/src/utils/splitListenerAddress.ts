@@ -1,3 +1,5 @@
+import { TCP_PORT_MAX } from '../constants'
+
 /**
  * Splits a listening socket's local endpoint as `lsof` and `ss` print it (`*:4100`, `127.0.0.1:4100`, `[::1]:4100`, `0.0.0.0%lo:4100`) into its address and port.
  * Called by {@link parseLsofListeners} and {@link parseSsListeners}.
@@ -17,7 +19,7 @@ export function splitListenerAddress(
   const portText = endpoint.slice(separator + 1)
   if (separator <= 0 || !/^\d{1,5}$/.test(portText)) return undefined
   const port = Number(portText)
-  if (port < 1 || port > 65_535) return undefined
+  if (port < 1 || port > TCP_PORT_MAX) return undefined
   const address = endpoint
     .slice(0, separator)
     .replace(/^\[(.*)\]$/, '$1')
