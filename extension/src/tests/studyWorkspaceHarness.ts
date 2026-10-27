@@ -6090,6 +6090,12 @@ export async function workspaceHarness(
      * @example harness.lateGroupActivationsReported() // => 1 after activateNewGroupLateAfterInsertion and one Application group insertion
      */
     lateGroupActivationsReported: () => reportedLateGroupActivations,
+    /**
+     * Counts the late group reports the fake editor has queued and not yet made, reported or dropped.
+     * @returns How many late reports still wait.
+     * @example harness.lateGroupReportsWaiting() // => 0 once the editor's late report has run
+     */
+    lateGroupReportsWaiting: () => pendingLateGroupActivations.length,
     activateNewGroupLateAfterInsertion(delayMs?: number): void {
       activatesNewGroupLateAfterInsertion = true
       newGroupActivationDelayMs = delayMs
@@ -7745,8 +7751,8 @@ export async function workspaceHarness(
       groups.splice(
         0,
         groups.length,
-        ...groups.map((group) =>
-          replacedBy(group, {
+        ...groups.map((group) => {
+          const replacement = {
             ...group,
             tabs: group.tabs.map((tab) => {
               const refreshed = {
@@ -7757,8 +7763,12 @@ export async function workspaceHarness(
               refreshedTabs.set(tab, refreshed)
               return refreshed
             }),
-          }),
-        ),
+          }
+          // A replace reports each group closed and its copy opened: another group, which a late report must not reach.
+          return change === 'replace'
+            ? replacement
+            : replacedBy(group, replacement)
+        }),
       )
       // A full tab-model resync changes API objects, never the native webview handle that later reveal and dispose operate on.
       for (const current of panels) {

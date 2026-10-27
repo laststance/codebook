@@ -325,6 +325,39 @@ test('a test replay chosen while the Application is alone in its group opens wit
   }
 })
 
+for (const [rewrap, reported] of [
+  [undefined, 1],
+  ['replace', 0],
+] as const)
+  // Value: protects=the fidelity of the workspace harness's late group reports, on which the H2-b cells rest: a late report follows its group through a rebuild that keeps the group (new wrappers) and is dropped when the editor replaced the group by an opened one; fails_when=the fake editor carries the report to a group it reported as opened in place of the inserted one (closed + opened), so a cell can pass on an activation the editor never made; why_new=PR #138 CodeRabbit review on 896e4212; seam=workspaceHarness, activateNewGroupLateAfterInsertion, the fake editor's newGroupAbove, resyncEditorGroups, lateGroupActivationsReported and lateGroupReportsWaiting; no_claim=any editor's own behaviour
+  test(`the fake editor ${reported ? 'makes' : 'drops'} a late group report when it ${rewrap ? 'replaced the group by an opened one' : 'gave the group new wrappers'} before the report`, async () => {
+    // Arrange
+    const harness = await workspaceHarness()
+    harness.activateNewGroupLateAfterInsertion(LATE_GROUP_ACTIVATION_WAIT_MS)
+    try {
+      // The command acts on the first group, as the preparation's own call does.
+      await harness.editor.commands.executeCommand(
+        'workbench.action.focusFirstEditorGroup',
+      )
+      await harness.editor.commands.executeCommand(
+        'workbench.action.newGroupAbove',
+      )
+
+      // Act: the editor rebuilds its groups while the late report waits.
+      harness.resyncEditorGroups(rewrap)
+      await waitUntil(
+        () => harness.lateGroupReportsWaiting() === 0,
+        'the late group report has run',
+        READER_RESULT_BOUND_MS,
+      )
+
+      // Assert
+      assert.equal(harness.lateGroupActivationsReported(), reported)
+    } finally {
+      await harness.close()
+    }
+  })
+
 // Value: protects=N55-F4 H2-b: a test replay opens although the editor reports the Application's new group active only after newGroupAbove answered; fails_when=the entry arms a guard while the editor's late report of Codebook's own placement is still on its way, reads the report as the learner's focus change and refuses with "Native pane, group or focus changed while presentation waited"; why_new=Cycle 0056 task 17 stage 2 (N55-F4 refusal 1 is a rare race, hardened against both hypotheses); seam=workspaceHarness with activateNewGroupLateAfterInsertion, the diagnostics log, and in the other cells replaceGroupObjectsOnTabChanges or useCursorGroupWrappers (Cursor's extension host gives groups new objects at tab changes and when it opens a group; the late report follows the inserted group through them, PR #138 review); no_claim=that Cursor reports it this way (N56 step 1 checks natively)
 for (const [rebuild, shown] of [
   ['none', ''],

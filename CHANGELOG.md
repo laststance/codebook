@@ -15,7 +15,7 @@ Cycle 0056 ([Issue #135](https://github.com/laststance/codebook/issues/135)), a 
 
 **The LLM Wiki view.**
 
-- **Message and rows change together**: at a run's start and end the message above the tree changes in the same frame as the rows.
+- **Message and rows change together**: the view hands the editor the message above the tree with its rows, so in VS Code, at a run's start and end, the message changes in the same frame as the rows.
 - **The view follows its folder**: deleting or moving the Wiki folder, or any folder above it inside your project (for example `rm -rf .codebook`), brings back the welcome without **Refresh**.
 - **Manage Workspace Trust opens the editor's trust editor** in both editors through `workbench.trust.manage`; if the editor lacks that command, the view points you to “Workspaces: Manage Workspace Trust” in the Command Palette, and if the command fails it says so and records the cause, with your folders' paths shortened, in **Output › Codebook**.
 
