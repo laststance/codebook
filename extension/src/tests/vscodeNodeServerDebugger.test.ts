@@ -501,3 +501,100 @@ test('a stop the learner continues before its stack arrives no longer counts as 
   stackTrace.resolve()
   await debug.release()
 })
+
+// protects=the entry pause, which the run never hears of and which nothing of the request has reached, is no unreported pause: a Stop during preparation lets the debugger go first; fails_when=the entry pause reads as an unreported stop; no_claim=none
+test('the entry pause does not count as an unreported pause', async () => {
+  // Arrange
+  const editor = await editorHarness()
+  const { debug } = await armedDebugger(editor)
+  // Act
+  const beforeRelease = debug.hasUnreportedPause()
+  // Assert
+  assert.equal(beforeRelease, false)
+  await debug.release()
+})
+
+// protects=a learner Continue the adapter rejects leaves the stop being read counted, since the target stays paused; fails_when=the request alone clears it and a Stop detaches a paused server; no_claim=a real adapter's rejection reasons
+test('a learner Continue the adapter rejects keeps a stop being read counted as unreported', async () => {
+  // Arrange
+  const stackTrace = defer<void>()
+  const editor = await editorHarness({ stackTraceGate: stackTrace.promise })
+  const { debug } = await armedDebugger(editor)
+  await debug.releaseEntry(AbortSignal.timeout(5_000))
+  editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+    file: STOP_FILE,
+    line: 14,
+  })
+  // Act
+  editor.adapter.learnerContinues({ rejected: true })
+  // Assert
+  assert.equal(debug.hasUnreportedPause(), true)
+  stackTrace.resolve()
+  await debug.release()
+})
+
+// protects=a learner Continue the adapter rejects keeps the reported pause current, so the run's own continue of it still works; fails_when=the pause is dropped on the request and a retry answers 'no longer current'; no_claim=none
+test('a learner Continue the adapter rejects keeps the reported pause current for the next continue', async () => {
+  // Arrange
+  const editor = await editorHarness()
+  const { debug, heard } = await armedDebugger(editor)
+  await debug.releaseEntry(AbortSignal.timeout(5_000))
+  editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+    file: STOP_FILE,
+    line: 14,
+  })
+  const pause = await heard.nextPause()
+  // Act
+  editor.adapter.learnerContinues({ rejected: true })
+  const resumesAfterRejection = [...heard.resumes]
+  await debug.resume(pause, AbortSignal.timeout(5_000))
+  // Assert
+  assert.deepEqual(plain(resumesAfterRejection), [])
+  assert.deepEqual(plain(heard.resumes), [pause.token])
+  await debug.release()
+})
+
+// protects=another thread running on clears only that thread's stops: a stop still being read on its own thread stays counted; fails_when=a continued event of thread 2 clears thread 1's unreported stop; no_claim=js-debug's thread model
+test("another thread's continued event keeps this thread's stop counted as unreported", async () => {
+  // Arrange
+  const stackTrace = defer<void>()
+  const editor = await editorHarness({ stackTraceGate: stackTrace.promise })
+  const { debug } = await armedDebugger(editor)
+  await debug.releaseEntry(AbortSignal.timeout(5_000))
+  editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+    file: STOP_FILE,
+    line: 14,
+  })
+  // Act
+  editor.adapter.continued(2, false)
+  // Assert
+  assert.equal(debug.hasUnreportedPause(), true)
+  stackTrace.resolve()
+  await debug.release()
+})
+
+// protects=a stop that ran on while its stack was read is never reported as the current pause, even when the thread stopped again meanwhile; fails_when=the resumed stop and the new one are both reported, mixing two pauses' facts; no_claim=a real adapter's timing
+test('a stop resumed while its stack was read is not reported when the thread stops again', async () => {
+  // Arrange
+  const stackTrace = defer<void>()
+  const editor = await editorHarness({ stackTraceGate: stackTrace.promise })
+  const { debug, heard } = await armedDebugger(editor)
+  await debug.releaseEntry(AbortSignal.timeout(5_000))
+  editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+    file: STOP_FILE,
+    line: 14,
+  })
+  // Act
+  editor.adapter.learnerContinues()
+  editor.adapter.stop('breakpoint', [OWNED_IDS[1]!], {
+    file: STOP_FILE,
+    line: 20,
+  })
+  stackTrace.resolve()
+  const reported = await heard.nextPause()
+  // Assert
+  // Tokens count the adapter's stops: 1 the entry, 2 the resumed stop, 3 the current one.
+  assert.equal(reported.token, 3)
+  assert.equal(reported.declaredStopIndex, 1)
+  await debug.release()
+})

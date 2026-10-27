@@ -230,6 +230,36 @@ test('aborting the signal destroys the request and rejects with the abort reason
   await assert.rejects(response, reason)
 })
 
+// protects=once the request was handed to the socket, an abort counts it as written (its bytes may be on the wire) and abandons only the response, so a Stop never reports "nothing was sent" for a request that went out; fails_when=written rejects after end() was called; no_claim=whether the server read the bytes
+test('an abort after the request was handed to the socket counts it as written and abandons only the response', async (t) => {
+  // Arrange
+  const server = await startFixtureServer(t)
+  const controller = new AbortController()
+  const reason = new Error('stopped')
+  // Act
+  const { written, response } = sendDeclaredRequest({
+    host: '127.0.0.1',
+    port: server.port,
+    request: {
+      method: 'POST',
+      path: '/echo',
+      contentType: 'text/plain',
+      body: 'sent',
+    },
+    runId: 'run-1',
+    verifyPeer: () => {
+      const accepted = Promise.resolve()
+      // This reaction runs before the sender's own continuation, which calls end(); the abort it queues runs right after end().
+      void accepted.then(() => queueMicrotask(() => controller.abort(reason)))
+      return accepted
+    },
+    signal: controller.signal,
+  })
+  // Assert
+  await assert.doesNotReject(written)
+  await assert.rejects(response, reason)
+})
+
 // protects=a server's Content-Type cannot carry a credential or unbounded text into the chat; fails_when=the header is returned raw; no_claim=body redaction (covered)
 test('a response Content-Type is redacted and bounded to 256 characters', async (t) => {
   // Arrange

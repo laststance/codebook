@@ -1265,6 +1265,8 @@ export const NODE_SERVER_DEBUGGER_DISCONNECT_NOTICE =
   'Waiting for the debugger to disconnect'
 /** From which failed stop the message names the server's pid for the learner to end. */
 export const NODE_SERVER_FAILED_STOPS_NAMING_PID = 2
+/** How many characters of the run id a state-changing request's confirmation modal shows, enough to tell two modals left on screen apart. */
+export const NODE_SERVER_MODAL_RUN_ID_CHARS = 8
 /** The lowest port a node-server declaration may name: a lower one needs privileges a development server does not run with, and Codebook never raises them. */
 export const NODE_SERVER_PORT_MIN = 1_024
 /** The highest TCP port. */

@@ -112,7 +112,7 @@ const NODE_SERVER_CODES: readonly { code: ErrorCode; when: string }[] = [
   },
   {
     code: 'PORT_OWNER_UNKNOWN',
-    when: 'start: no lsof or ss answered which process listens on the port',
+    when: 'start or request: no lsof or ss answered which process listens on the port or holds the connection',
   },
   {
     code: 'RUN_NOT_READY',

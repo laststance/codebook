@@ -194,3 +194,77 @@ test('a request with another body asks in its own modal', async () => {
   assert.equal(await changedAnswer, false)
   assert.equal(modals.length, 2)
 })
+
+// protects=the shared modal belongs to one content type too: the same body declared with another content type asks again; fails_when=a Send given for one content type sends another; no_claim=none
+test('a request with another content type asks in its own modal', async () => {
+  // Arrange
+  const modals: ReturnType<typeof defer<string | undefined>>[] = []
+  const show: ShowModalQuestion = () => {
+    const learner = defer<string | undefined>()
+    modals.push(learner)
+    return learner.promise
+  }
+  const ask = createStateChangingRequestAsker(show)
+  const declared = {
+    runId: 'run-a',
+    method: 'POST',
+    path: '/api/items',
+    contentType: 'application/json',
+    body: 'name=a',
+  }
+  const changed = { ...declared, contentType: 'text/plain' }
+  const gaveUp = new AbortController()
+  // Act
+  const declaredAnswer = ask(declared, gaveUp.signal)
+  gaveUp.abort()
+  const changedAnswer = ask(changed, new AbortController().signal)
+  modals[0]?.resolve('Send')
+  modals[1]?.resolve(undefined)
+  // Assert
+  assert.equal(await declaredAnswer, false)
+  assert.equal(await changedAnswer, false)
+  assert.equal(modals.length, 2)
+})
+
+// protects=a retry of an earlier run still joins that run's modal after another run asked: the editor never stacks a second identical modal for it; fails_when=the earlier run's retry opens a new modal; no_claim=the editor's modal queue
+test("a retry of an earlier run joins that run's modal still on screen after another run asked", async () => {
+  // Arrange
+  const modals: ReturnType<typeof defer<string | undefined>>[] = []
+  const show: ShowModalQuestion = () => {
+    const learner = defer<string | undefined>()
+    modals.push(learner)
+    return learner.promise
+  }
+  const ask = createStateChangingRequestAsker(show)
+  const earlierRun = { runId: 'run-a', method: 'POST', path: '/api/items' }
+  const laterRun = { runId: 'run-b', method: 'POST', path: '/api/items' }
+  const gaveUp = new AbortController()
+  // Act
+  void ask(earlierRun, gaveUp.signal)
+  gaveUp.abort()
+  const laterAnswer = ask(laterRun, new AbortController().signal)
+  const earlierRetry = ask(earlierRun, new AbortController().signal)
+  modals[0]?.resolve('Send')
+  modals[1]?.resolve(undefined)
+  // Assert
+  assert.equal(await earlierRetry, true)
+  assert.equal(await laterAnswer, false)
+  assert.equal(modals.length, 2)
+})
+
+// protects=two modals left on screen can be told apart: the detail names the run it asks for; fails_when=modals of different runs read the same; no_claim=how the editor draws the detail
+test('the modal names the run it asks for', async () => {
+  // Arrange
+  const { show, shown } = modalAnswering('Send')
+  // Act
+  await createStateChangingRequestAsker(show)(
+    {
+      runId: '68ca83a9-c358-4df9-ac94-f6d8e85a887e',
+      method: 'POST',
+      path: '/api/items',
+    },
+    new AbortController().signal,
+  )
+  // Assert
+  assert.match(shown[0]?.detail ?? '', /for run 68ca83a9,/)
+})

@@ -81,7 +81,7 @@ function readBody(
  * Called by the node-server run for `codebook_action` `http-request`.
  * @param input - The address, port, declared request, run id, peer check, abort signal and clock ({@link DeclaredRequestInput}).
  * @returns
- * - `written`: resolves when the request is written; rejects with the `verifyPeer` error (zero bytes sent), a `REQUEST_FAILED` error when the connection fails first, or the abort reason
+ * - `written`: resolves when the request is written, or when an abort comes after it was handed to the socket (its bytes may be on the wire); rejects with the `verifyPeer` error (zero bytes sent), a `REQUEST_FAILED` error when the connection fails first, or the abort reason of an abort before any byte was handed over
  * - `response`: resolves with the observed response (4xx, 5xx and 3xx included); rejects with `StudyError('REQUEST_FAILED')` on a reset or close before a complete response, with the `verifyPeer` error when refused, or with the signal's reason on abort
  * @example
  * const { written, response } = sendDeclaredRequest({ host: '127.0.0.1', port: 4100, request: { method: 'GET', path: '/health' }, runId: 'r1', verifyPeer, signal })
@@ -98,6 +98,8 @@ export function sendDeclaredRequest(input: DeclaredRequestInput): {
   const body =
     declared.body === undefined ? undefined : Buffer.from(declared.body, 'utf8')
   let settled = false
+  // Set once the request is handed to the socket: from then on its bytes may be on the wire.
+  let handedToSocket = false
   let outgoing: ReturnType<typeof httpRequest> | undefined
   let resolveWritten!: () => void
   let rejectWritten!: (error: unknown) => void
@@ -158,6 +160,8 @@ export function sendDeclaredRequest(input: DeclaredRequestInput): {
   }
 
   function abort(): void {
+    // A request already handed to the socket counts as written; the abort abandons only its response.
+    if (handedToSocket) resolveWritten()
     fail(input.signal.reason)
   }
   if (input.signal.aborted) abort()
@@ -235,6 +239,7 @@ export function sendDeclaredRequest(input: DeclaredRequestInput): {
       return
     }
     if (settled || !outgoing) return
+    handedToSocket = true
     outgoing.end(body, resolveWritten)
   }
 

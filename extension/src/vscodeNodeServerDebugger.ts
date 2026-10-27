@@ -64,10 +64,16 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   private readonly name: string
   private readonly abort = new AbortController()
   private readonly active = new Map<string, vscode.DebugSession>()
-  private readonly pausedSessions = new Set<string>()
+  /** The threads the adapter reported stopped that have not run on since, by session. */
+  private readonly pausedThreads = new Map<string, Set<number>>()
   private readonly sessionStops: NativeStop[] = []
-  /** The stops the adapter reported that the run has not been told about yet, by token, with their session. */
-  private readonly unreportedStops = new Map<number, string>()
+  /** The bound session's stops queued for the run that it has not been told about yet, by token. */
+  private readonly unreportedStops = new Map<number, NativeStop>()
+  /** The resume requests waiting for the adapter's answer, by session and request sequence. */
+  private readonly pendingResumes = new Map<
+    string,
+    { command: string; threadId?: number; singleThread: boolean }
+  >()
   /** The pauses the run knows, by token, with the stack read when they were classified. */
   private readonly livePauses = new Map<
     number,
@@ -155,7 +161,15 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     // A pause request makes the next stop the learner's, not the declared request's.
     if (request.command === 'pause')
       codebookStopLedger.closeWindow([session.id])
-    if (RESUME_COMMANDS.has(request.command)) this.resumeSession(session.id)
+    // Whether the thread runs on is the adapter's answer: a rejected resume leaves it paused.
+    if (RESUME_COMMANDS.has(request.command)) {
+      const threadId: unknown = request.arguments?.threadId
+      this.pendingResumes.set(`${session.id}:${request.seq}`, {
+        command: request.command,
+        threadId: typeof threadId === 'number' ? threadId : undefined,
+        singleThread: request.arguments?.singleThread === true,
+      })
+    }
   }
 
   /** A message the adapter sends: replies and news for the breakpoints, a `continued` and a `stopped`. */
@@ -163,15 +177,27 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     session: vscode.DebugSession,
     message: DebugProtocol.ProtocolMessage,
   ): void {
-    if (message.type === 'response')
+    if (message.type === 'response') {
+      const response = message as DebugProtocol.Response
       for (const { breakpoint } of this.armed)
-        breakpoint.onResponse(session, message as DebugProtocol.Response)
+        breakpoint.onResponse(session, response)
+      this.onResumeAnswered(session.id, response)
+    }
     if (message.type !== 'event') return
     const event = message as DebugProtocol.Event
     if (event.event === 'breakpoint')
       for (const { breakpoint } of this.armed)
         breakpoint.onEvent(session, event)
-    if (event.event === 'continued') this.resumeSession(session.id)
+    if (event.event === 'continued') {
+      const continued = (event as DebugProtocol.ContinuedEvent).body
+      // Omitted or true, every thread of the session ran on.
+      this.resumeThreads(
+        session.id,
+        continued.allThreadsContinued === false
+          ? continued.threadId
+          : undefined,
+      )
+    }
     if (event.event === 'stopped')
       this.onStopped(session, (event as DebugProtocol.StoppedEvent).body)
   }
@@ -182,7 +208,9 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     body: DebugProtocol.StoppedEvent['body'],
   ): void {
     if (!Number.isInteger(body.threadId)) return
-    this.pausedSessions.add(session.id)
+    const threads = this.pausedThreads.get(session.id) ?? new Set<number>()
+    threads.add(body.threadId!)
+    this.pausedThreads.set(session.id, threads)
     // Each stop gets the next number, so a classification never answers a later stop.
     const sequence = ++this.nextToken
     const stop: NativeStop = {
@@ -195,7 +223,6 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
         : undefined,
     }
     this.sessionStops.push(stop)
-    this.unreportedStops.set(sequence, session.id)
     this.input.record('node-server.dap-stopped', {
       sessionId: session.id,
       threadId: stop.threadId,
@@ -204,21 +231,47 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     if (this.entryReleased) this.enqueueClassification(stop)
   }
 
-  /** Reports to the run that the session's reported pauses ran on (Codebook's resume, the learner's Continue or a step). */
-  private resumeSession(sessionId: string): void {
-    this.pausedSessions.delete(sessionId)
-    this.forgetUnreportedStops(sessionId)
+  /** The adapter answered a resume request: an accepted one lets its thread, or every thread, run on; a rejected one leaves the pause as it was. */
+  private onResumeAnswered(
+    sessionId: string,
+    response: DebugProtocol.Response,
+  ): void {
+    const key = `${sessionId}:${response.request_seq}`
+    const pending = this.pendingResumes.get(key)
+    if (!pending) return
+    this.pendingResumes.delete(key)
+    if (!response.success) return
+    // A continue says whether every thread ran on; a step resumes every thread unless it asked for its own only.
+    const everyThread =
+      pending.command === 'continue'
+        ? response.body?.allThreadsContinued !== false
+        : !pending.singleThread
+    this.resumeThreads(sessionId, everyThread ? undefined : pending.threadId)
+  }
+
+  /**
+   * Records that paused threads ran on (Codebook's resume, the learner's Continue or a step, the adapter's own continue) and reports each reported pause among them to the run.
+   * @param sessionId - The session whose threads ran on.
+   * @param threadId - The one thread that ran on; `undefined` for every thread of the session.
+   */
+  private resumeThreads(sessionId: string, threadId?: number): void {
+    const ranOn = (stop: NativeStop): boolean =>
+      stop.sessionId === sessionId &&
+      (threadId === undefined || stop.threadId === threadId)
+    if (threadId === undefined) this.pausedThreads.delete(sessionId)
+    else this.pausedThreads.get(sessionId)?.delete(threadId)
+    for (const [token, stop] of this.unreportedStops)
+      if (ranOn(stop)) this.unreportedStops.delete(token)
     for (const [token, { stop }] of this.livePauses)
-      if (stop.sessionId === sessionId) {
+      if (ranOn(stop)) {
         this.livePauses.delete(token)
         this.handlers?.onResume(token)
       }
   }
 
-  /** The session's reported stops ran on or ended, so none of them can still hold the target. */
-  private forgetUnreportedStops(sessionId: string): void {
-    for (const [token, stopSession] of this.unreportedStops)
-      if (stopSession === sessionId) this.unreportedStops.delete(token)
+  /** Whether the adapter reported the thread stopped and it has not run on since. */
+  private isThreadPaused(sessionId: string, threadId: number): boolean {
+    return this.pausedThreads.get(sessionId)?.has(threadId) === true
   }
 
   hasUnreportedPause(): boolean {
@@ -226,8 +279,10 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   }
 
   private onSessionTerminated(session: vscode.DebugSession): void {
-    this.pausedSessions.delete(session.id)
-    this.forgetUnreportedStops(session.id)
+    this.pausedThreads.delete(session.id)
+    // An ended session holds no target, so none of its stops can be paused any more.
+    for (const [token, stop] of this.unreportedStops)
+      if (stop.sessionId === session.id) this.unreportedStops.delete(token)
     codebookStopLedger.forget(session.id)
     if (!this.active.delete(session.id)) return
     this.input.record('node-server.session-terminated', {
@@ -394,8 +449,10 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
 
   // ---------------------------------------------------------------- classification of pauses
 
-  /** Reads one stop's stack and reports it to the run, in arrival order. */
+  /** Reads one stop's stack and reports it to the run, in arrival order; a stop of the bound session counts as unreported until then. */
   private enqueueClassification(stop: NativeStop): void {
+    if (stop.sessionId === this.bound?.session.id)
+      this.unreportedStops.set(stop.token, stop)
     this.classification = this.classification
       .then(() => this.classifyAndReport(stop))
       .catch((error: unknown) => {
@@ -439,8 +496,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     if (!session || this.releaseBegun || session.id !== this.bound?.session.id)
       return
     const trace = await this.readStack(session, stop)
-    // A thread that ran on while its stack was read is no pause any more.
-    if (!this.pausedSessions.has(stop.sessionId)) return
+    // A stop whose thread ran on while its stack was read is no pause any more, even if the thread stopped again since.
+    if (!this.unreportedStops.has(stop.token)) return
     const frame = trace.stackFrames[0]
     // Without a readable top frame the hit cannot be verified, so it is no declared stop.
     const declaredStopIndex = frame
@@ -602,7 +659,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     signal: AbortSignal,
   ): Promise<void> {
     const session = this.active.get(pause.sessionId)
-    if (!session || !this.pausedSessions.has(pause.sessionId))
+    if (!session || !this.isThreadPaused(pause.sessionId, pause.threadId))
       throw new Error('The owned pause is no longer current.')
     await awaitResponse(
       session.customRequest('continue', { threadId: pause.threadId }),

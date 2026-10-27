@@ -1042,6 +1042,106 @@ test('a declared stop reached after the Stop was admitted is killed before the d
   assert.deepEqual(harness.debug.resumed, [])
 })
 
+// protects=D14 v2: a Stop while the request is under way kills the group before the debugger lets go, even with no pause reported, so a stop the handler reaches during the detach cannot be resumed by it; fails_when=the debugger detaches first while the request is in flight; no_claim=the real adapter's event order
+test('a Stop while the request is under way kills the group before the debugger lets go, with no pause reported', async () => {
+  // Arrange
+  const harness = await readyHarness()
+  await sendRequest(harness)
+  // Act
+  await harness.run.stop()
+  // Assert
+  assert.deepEqual(harness.calls.signals, [[4242, 'SIGKILL']])
+  assert.deepEqual(harness.server.closeWithDetach, [false])
+  assert.ok(
+    harness.order.indexOf('signal:SIGKILL') <
+      harness.order.indexOf('debugger.release'),
+  )
+})
+
+// protects=a Stop after the request's first byte ends the request without a failure: the run reads stopped, the request stays recorded as sent, and the sender's signal is aborted; fails_when=the stop journals a request failure, forgets the sent request, or leaves the socket open; no_claim=the real socket
+test('a Stop after the first byte ends the request without a failure and keeps it recorded as sent', async () => {
+  // Arrange
+  const harness = await readyHarness()
+  await sendRequest(harness)
+  // Act
+  await harness.run.stop()
+  // Assert
+  assert.equal(harness.run.view().state, 'stopped')
+  assert.equal(harness.run.view().request?.method, 'GET')
+  assert.equal(harness.sender.calls[0]?.signal?.aborted, true)
+  assert.equal(
+    harness.events.some((event) => event.type === 'node-server.failure'),
+    false,
+  )
+})
+
+// protects=D14: a learner pause inside the request at the Stop is killed first, never resumed; fails_when=the debugger detaches first; no_claim=none
+test('stopping while the learner paused inside the request kills the group before the debugger lets go', async () => {
+  // Arrange
+  const harness = await readyHarness()
+  await sendRequest(harness)
+  harness.debug.learnerPause()
+  // Act
+  await harness.run.stop()
+  // Assert
+  assert.deepEqual(harness.calls.signals, [[4242, 'SIGKILL']])
+  assert.deepEqual(harness.server.closeWithDetach, [false])
+  assert.deepEqual(harness.debug.resumed, [])
+})
+
+// protects=D14: a learner pause that arrives inside the request after the Stop was admitted is killed first; fails_when=the detach resumes it; no_claim=the real adapter's event order
+test('a learner pause arriving inside the request after the Stop was admitted is killed before the debugger lets go', async () => {
+  // Arrange
+  const harness = await readyHarness()
+  await sendRequest(harness)
+  // Act
+  const stopping = harness.run.stop()
+  harness.debug.learnerPause()
+  await stopping
+  // Assert
+  assert.deepEqual(harness.calls.signals, [[4242, 'SIGKILL']])
+  assert.deepEqual(harness.server.closeWithDetach, [false])
+})
+
+// protects=D14: a learner pause that arrives outside the request after the Stop was admitted still takes Stop v2 (detach, SIGTERM), so the server's own shutdown runs; fails_when=any pause arriving while stopping is killed; no_claim=none
+test('a learner pause arriving outside the request after the Stop was admitted lets the debugger go first', async () => {
+  // Arrange
+  const harness = await readyHarness()
+  // Act
+  const stopping = harness.run.stop()
+  harness.debug.learnerPause()
+  await stopping
+  // Assert
+  assert.deepEqual(harness.calls.signals, [])
+  assert.deepEqual(harness.server.closeWithDetach, [true])
+})
+
+// protects=D14: a stop the editor reports after the Stop was admitted, and is still reading at the release, is killed first; fails_when=only the admission looks at unreported stops; no_claim=the real adapter's timing
+test('a stop the editor reports after the Stop was admitted and still reads at the release is killed first', async () => {
+  // Arrange
+  const harness = await readyHarness()
+  // Act
+  const stopping = harness.run.stop()
+  harness.debug.unreportedPause = true
+  await stopping
+  // Assert
+  assert.deepEqual(harness.calls.signals, [[4242, 'SIGKILL']])
+  assert.deepEqual(harness.server.closeWithDetach, [false])
+})
+
+// protects=the journal records the request only once its bytes were handed to the socket: a connection that reaches another process leaves no sent request in the events or Output; fails_when=a refused request reads as sent; no_claim=the Output wording (service tests)
+test('a connection that reaches another process journals no sent request', async () => {
+  // Arrange
+  const harness = await readyHarness({ connectionHolders: [9999] })
+  // Act
+  await rejectsWith(harness.run.sendRequest('k'), 'LISTENER_NOT_OWNED')
+  // Assert
+  assert.equal(
+    harness.events.some((event) => event.type === 'node-server.request'),
+    false,
+  )
+})
+
 // protects=a learner pause outside the window still takes Stop v2; fails_when=SIGKILL for a plain learner pause outside the request; no_claim=none
 test('stopping while the learner paused outside the request window detaches first', async () => {
   // Arrange

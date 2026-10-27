@@ -272,3 +272,21 @@ test('the node-server help and profile follow the constants they describe', asyn
   assert.match(when('PAUSE_HOLD_EXPIRED'), /longer than 301 s/)
   assert.equal(entry.limits.stops, 9)
 })
+
+// protects=the recovery of a refused request (LISTENER_NOT_OWNED, PORT_OWNER_UNKNOWN at the request) says the run still reads ready and nothing was sent, and how to go on, not only the start's "closed, start again"; fails_when=an agent following it starts a new run while the old one still holds the slot (BUSY); no_claim=the rest of the wording
+test('the ownership refusals tell how to recover when they come at the request', () => {
+  // Arrange
+  const refusals = [
+    ERROR_RECOVERY.LISTENER_NOT_OWNED,
+    ERROR_RECOVERY.PORT_OWNER_UNKNOWN,
+  ]
+  // Act
+  const missing = refusals.filter(
+    (recovery) =>
+      !recovery.includes(
+        'At the request, nothing was sent and the run still reads ready',
+      ) || !recovery.includes('codebook_stop'),
+  )
+  // Assert
+  assert.deepEqual(missing, [])
+})

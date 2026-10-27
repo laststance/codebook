@@ -997,6 +997,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     )
     try {
       await handle.written
+      this.recordSentRequest(token)
     } catch (error) {
       // Any other failure is reported by the response promise, which rejects with it too.
       // A listener that is not the server, or a stop admitted before the first byte: nothing was sent.
@@ -1035,13 +1036,18 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       NODE_SERVER_REQUEST_WALL_LIMIT_MS,
     )
     this.debugger().setRequestWindow(true)
+    this.notify()
+  }
+
+  /** Journals the request once its bytes were handed to the socket, so a refused or stopped request never reads as sent. */
+  private recordSentRequest(token: number): void {
+    if (token !== this.requestToken || !this.request) return
     this.record('node-server.request', {
       method: this.request.method,
       path: this.request.path,
       bodyBytes: this.request.bodyBytes,
       address: this.request.address,
     })
-    this.notify()
   }
 
   /** Takes the window back when the request was refused before its bytes were written. */
@@ -1264,7 +1270,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   }
 
   /**
-   * Releases everything the run owns: the process group (killed first when it is paused inside the request, D14; otherwise the debugger detaches, SIGTERM, SIGKILL by 5 s), the debug session, the orphan record and the port claim. A foreign listener on the port never keeps the run from stopping; it is reported apart.
+   * Releases everything the run owns: the process group (killed first while its request is under way or it is paused at a declared stop, D14 v2; otherwise the debugger detaches, SIGTERM, SIGKILL by 5 s), the debug session, the orphan record and the port claim. A foreign listener on the port never keeps the run from stopping; it is reported apart.
    */
   private async releaseOwned(): Promise<void> {
     const server = this.server
@@ -1293,9 +1299,10 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     if (claim) releaseOwnedDevelopmentPort(claim)
   }
 
-  /** D14: a server paused at a declared stop (inside the request or outside it), paused by the learner inside the request, paused at a stop the run has not classified yet, or whose pause hold expired, is killed before its debugger lets go. */
+  /** D14 v2: a server whose request is under way (paused or not: a stop it reaches during the detach would be resumed by it), paused at a declared stop, paused at a stop the run has not classified yet, or whose pause hold expired, is killed before its debugger lets go. */
   private mustKillFirst(): boolean {
     if (this.holdExpired) return true
+    if (this.inRequestWindow()) return true
     if (this.debug?.hasUnreportedPause()) return true
     if (this.nativeHolds.size === 0) return false
     return this.ownedHits.size > 0 || this.inRequestWindow()

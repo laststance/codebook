@@ -232,7 +232,11 @@ export function fakeServer(
 
 /** The request sender's stand-in: the test settles `written` and `response`. */
 export function fakeRequestSender(order: string[]) {
-  const calls: Array<{ stateAtCall?: string; headers?: string }> = []
+  const calls: Array<{
+    stateAtCall?: string
+    headers?: string
+    signal?: AbortSignal
+  }> = []
   let current = {
     written: defer<void>(),
     response: defer<NodeServerResponse>(),
@@ -253,7 +257,7 @@ export function fakeRequestSender(order: string[]) {
       stateAtCall: string,
     ) {
       order.push('sendRequest')
-      calls.push({ stateAtCall, headers: input.runId })
+      calls.push({ stateAtCall, headers: input.runId, signal: input.signal })
       const answers = {
         written: defer<void>(),
         response: defer<NodeServerResponse>(),

@@ -128,14 +128,25 @@ export async function editorHarness(
       arguments_?: unknown,
     ): Promise<unknown> {
       // The editor passes Codebook's own requests through the same tracker as the learner's.
+      const sequence = ++requestSequence
       tracker?.onWillReceiveMessage?.({
         type: 'request',
-        seq: ++requestSequence,
+        seq: sequence,
         command,
         arguments: arguments_,
       })
       requests.push({ command, arguments: arguments_ })
       if (command === 'continue') entryDone = true
+      // The adapter's reply passes the tracker too, before the request resolves.
+      if (command === 'continue')
+        tracker?.onDidSendMessage?.({
+          type: 'response',
+          seq: sequence + 1_000,
+          request_seq: sequence,
+          command,
+          success: true,
+          body: { allThreadsContinued: true },
+        })
       if (command === 'stackTrace' && options.stackTraceFails && entryDone)
         throw new Error('stackTrace timed out')
       if (command === 'stackTrace' && entryDone) await options.stackTraceGate
@@ -302,26 +313,50 @@ export async function editorHarness(
   )
   /** The adapter's side: stops and the learner's resume. */
   const adapter = {
-    /** The adapter reports a stop of the thread; with a frame, the stack answers it. */
-    stop(reason: string, hitBreakpointIds?: number[], frame?: FrameAt): void {
+    /** The adapter reports a stop of the thread (thread 1 unless named); with a frame, the stack answers it. */
+    stop(
+      reason: string,
+      hitBreakpointIds?: number[],
+      frame?: FrameAt,
+      threadId = 1,
+    ): void {
       currentFrame = frame
       tracker?.onDidSendMessage?.({
         type: 'event',
         event: 'stopped',
         body: {
-          threadId: 1,
+          threadId,
           reason,
           ...(hitBreakpointIds ? { hitBreakpointIds } : {}),
         },
       })
     },
-    /** The learner presses Continue: the editor's request reaches the adapter. */
-    learnerContinues(): void {
+    /** The learner presses Continue: the editor's request reaches the adapter, which accepts it (every thread runs on) or rejects it (the thread stays paused). */
+    learnerContinues(answer: { rejected?: boolean } = {}): void {
+      const sequence = ++requestSequence
       tracker?.onWillReceiveMessage?.({
         type: 'request',
-        seq: ++requestSequence,
+        seq: sequence,
         command: 'continue',
         arguments: { threadId: 1 },
+      })
+      tracker?.onDidSendMessage?.({
+        type: 'response',
+        seq: sequence + 1_000,
+        request_seq: sequence,
+        command: 'continue',
+        success: !answer.rejected,
+        ...(answer.rejected
+          ? { message: 'the thread is not paused' }
+          : { body: { allThreadsContinued: true } }),
+      })
+    },
+    /** The adapter reports that a thread ran on by itself; `allThreadsContinued: false` limits it to that thread. */
+    continued(threadId: number, allThreadsContinued: boolean): void {
+      tracker?.onDidSendMessage?.({
+        type: 'event',
+        event: 'continued',
+        body: { threadId, allThreadsContinued },
       })
     },
     /** The editor ends the session. */
