@@ -73,7 +73,7 @@ export type LlmWikiViewFactsDependencies = {
 /** What a read of the facts found about the marker. */
 type MarkerFacts = Pick<
   Extract<LlmWikiViewFacts, { kind: 'ready' }>,
-  'elsewhere' | 'reservation'
+  'elsewhere' | 'reservation' | 'isMarkerSettling'
 >
 
 /**
@@ -110,6 +110,20 @@ function sentenceOfBlock(
 }
 
 /**
+ * Says whether this window's run is over while its own marker still stands as a run's.
+ *
+ * Why: a run's end reaches the view before the file work that removes its marker or turns it into the reservation of a stopped watch, so a read in that gap sees neither a run nor a reservation.
+ * Trigger: {@link readMarkerFacts} asks it for this window's own live marker.
+ *
+ * @param dependencies - The editor window's closures.
+ * @returns `true` when this window has no running run; `false` while one runs.
+ * @example isOwnRunOver({ ...dependencies, runStatus: () => ({ state: 'idle' }) }) // => true
+ */
+function isOwnRunOver(dependencies: LlmWikiViewFactsDependencies): boolean {
+  return dependencies.runStatus().state !== 'running'
+}
+
+/**
  * Reads the marker beside the Wiki into this window's view of the other windows: a live run of another window, or the reservation of a stopped watch.
  * @param dependencies - The editor window's closures.
  * @param outputDirectory - The Wiki folder.
@@ -131,11 +145,12 @@ async function readMarkerFacts(
   }
   if (look?.kind !== 'live') return {}
   const held: WikiUpdateMarker = look.heldBy
-  if (held.watchEndedAtMs === undefined)
+  if (held.watchEndedAtMs === undefined) {
     // This window's own live marker is row 2's, never "another window".
-    return held.windowId === dependencies.ownWindowId
-      ? {}
-      : { elsewhere: { kind: held.runKind, startedAtMs: held.startedAtMs } }
+    if (held.windowId === dependencies.ownWindowId)
+      return isOwnRunOver(dependencies) ? { isMarkerSettling: true } : {}
+    return { elsewhere: { kind: held.runKind, startedAtMs: held.startedAtMs } }
+  }
   // A start refuses for this reservation only until its own deadline, the same one the start check uses; a live owner process does not extend it.
   const retryAtMs = held.watchEndedAtMs + wikiRunBoundMs(held.runKind, 'vscode')
   if (dependencies.now() >= retryAtMs) return {}
