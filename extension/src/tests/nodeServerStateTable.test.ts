@@ -163,7 +163,7 @@ for (const row of STATE_TABLE) {
       service.start({
         instanceId: service.instanceId,
         profile: NODE_SERVER_PROFILE,
-        key: 'another-start',
+        key: 'anotherstart',
         configuration: nodeServerConfigurationOf(harness),
       }),
     )

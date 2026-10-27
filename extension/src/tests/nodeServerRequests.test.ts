@@ -458,7 +458,7 @@ test('a continuation answers the state the request reached: responded, request-f
   // Act
   for (const [index, [word, reach]] of outcomes.entries()) {
     const { service, record, run } = await startFakeNodeServerRun(harness, {
-      key: `run-${index}`,
+      key: String(index),
     })
     await run.enter('paused')
     const answering = service.continueToNextState(

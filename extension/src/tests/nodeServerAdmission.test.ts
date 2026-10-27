@@ -207,7 +207,7 @@ test('a node-server stop whose hash is not the published citation ends the prepa
   const receipt = harness.service.start({
     instanceId: harness.service.instanceId,
     profile: NODE_SERVER_PROFILE,
-    key: 'changed-hash',
+    key: 'changed',
     configuration: {
       ...declaration,
       source: { ...declaration.source, hash: 'b'.repeat(64) },
@@ -231,7 +231,7 @@ test('a node-server start on a node the book revision lacks is refused as BOOK_U
     .startOnStoredBook({
       instanceId: harness.service.instanceId,
       profile: NODE_SERVER_PROFILE,
-      key: 'missing-node',
+      key: 'missing',
       configuration: {
         ...declaration,
         book: { ...declaration.book, nodeId: 'missing' },
@@ -269,7 +269,7 @@ test('missing node-server prerequisites and a missing run factory end the prepar
   const receipt = withoutFactory.service.start({
     instanceId: withoutFactory.service.instanceId,
     profile: NODE_SERVER_PROFILE,
-    key: 'no-factory',
+    key: 'nofactory',
     configuration: nodeServerConfigurationOf(withoutFactory),
   })
   const withoutFactoryRecord = withoutFactory.service.record(receipt)
@@ -310,7 +310,7 @@ test('a node-server run that rejects its preparation ends with that error, is st
     service.start({
       instanceId: service.instanceId,
       profile: NODE_SERVER_PROFILE,
-      key: 'after-failed-start',
+      key: 'after',
       configuration: nodeServerConfigurationOf(harness),
     }),
   )
@@ -371,7 +371,7 @@ test('stopped node-server runs are evicted for the next start instead of filling
   // Act
   for (let index = 0; index < 17; index++) {
     const { service, record } = await startFakeNodeServerRun(harness, {
-      key: `run-${index}`,
+      key: String(index),
     })
     await service.stop({ instanceId: service.instanceId, runId: record.id })
   }

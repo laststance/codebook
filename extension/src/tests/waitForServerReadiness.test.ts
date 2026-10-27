@@ -123,6 +123,7 @@ test('a server that starts listening after the first round is found by a later r
     pollIntervalMs: 20,
   })
   // Act
+  // gstack-timing-ok: the pause only lets the first refused rounds pass before the server starts; the wait has no deadline (hasTimeLeft stays true), so a slower start still ends ready and the assertion never depends on the timing.
   await new Promise((resolve) => setTimeout(resolve, 100))
   await listenOn(t, '127.0.0.1', port)
   // Assert
@@ -159,6 +160,7 @@ test('aborting during the pause between rounds rejects with the signal reason it
     pollIntervalMs: 60_000,
   })
   // Act: the refused probes end in milliseconds, so the wait is inside its 60 s pause
+  // gstack-timing-ok: refused loopback probes end in milliseconds, far within the 150 ms before the abort, and the 60 s pause keeps the wait in its pause for any slower machine.
   await new Promise((resolve) => setTimeout(resolve, 150))
   controller.abort(reason)
   // Assert

@@ -181,8 +181,10 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   ): void {
     if (!Number.isInteger(body.threadId)) return
     this.pausedSessions.add(session.id)
+    // Each stop gets the next number, so a classification never answers a later stop.
+    const sequence = ++this.nextToken
     const stop: NativeStop = {
-      token: ++this.nextToken,
+      token: sequence,
       sessionId: session.id,
       threadId: body.threadId!,
       reason: body.reason,
