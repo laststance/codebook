@@ -227,6 +227,33 @@ test('every provider key longer than the hold fails closed in streamed output', 
   )
 })
 
+// protects=a stream that ends while an oversized private key is being dropped releases nothing more (pt1 pass 3 state-machine cell block-drop x end); fails_when=end() returns part of the dropped block; no_claim=none
+test('a stream that ends while an oversized private key is being dropped releases nothing more at its end', () => {
+  // Arrange
+  const redactor = createOutputRedactor()
+  // Act
+  const written = redactor.write(`${PEM_HEADER}\n${'A'.repeat(9_000)}`)
+  const ended = redactor.end()
+  // Assert
+  assert.equal(written, '[masked]')
+  assert.equal(ended, '')
+})
+
+// protects=a token drop goes on across a chunk without whitespace and resumes at the first whitespace (pt1 pass 3 state-machine cell token-drop x write-continue); fails_when=the continuing chunk is released or the text after the token is lost; no_claim=none
+test('an oversized token keeps being dropped across a chunk without whitespace and output resumes after it', () => {
+  // Arrange
+  const redactor = createOutputRedactor()
+  const token = ['ghp', 'b'.repeat(9_000)].join('_')
+  // Act
+  const first = redactor.write(`token ${token}`)
+  const continuing = redactor.write('c'.repeat(500))
+  const resumed = redactor.write('ccc ok\n')
+  // Assert
+  assert.equal(first, 'token [masked]')
+  assert.equal(continuing, '')
+  assert.equal(resumed, ' ok\n')
+})
+
 // protects=each value pattern; fails_when=a URL password, JWT, Bearer token, sk-, ghp_, github_pat_, AKIA key or PEM block survives, or the URL user name / the word Bearer is lost; no_claim=other providers' keys
 test('text shaped like a credential reads [masked] and keeps its harmless words', () => {
   // Arrange / Act / Assert
