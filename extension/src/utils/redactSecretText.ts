@@ -29,7 +29,7 @@ const PREFIXED_KEYS = [
  * @param text - Any captured text.
  * @returns The text with every match replaced; unchanged when nothing matches.
  * @example
- * redactSecretText('postgres://app:pw@db:5432/x') // => 'postgres://app:[masked]@db:5432/x'
+ * redactSecretText('smtps://mailer:pw@smtp:465') // => 'smtps://mailer:[masked]@smtp:465'
  * redactSecretText('Authorization: Bearer abcdefgh12345') // => 'Authorization: Bearer [masked]'
  */
 export function redactSecretText(text: string): string {

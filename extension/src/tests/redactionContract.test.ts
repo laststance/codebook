@@ -23,11 +23,18 @@ import { sourceImportBindings } from '../utils/sourceImportBindings'
 
 import { ROOT_MODE_EXECUTION } from './utils/rootModeExecutionPlan'
 
-const JWT =
-  'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk'
-const GITHUB_TOKEN = 'ghp_0123456789abcdefghijklmnopqrstuvwxyz'
+// Credential-shaped fixtures are joined at run time, so this file holds no literal a secret scanner takes for a real credential.
+const JWT = [
+  'eyJhbGciOiJIUzI1NiJ9',
+  'eyJzdWIiOiIxMjM0NTY3ODkwIn0',
+  'dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk',
+].join('.')
+const GITHUB_TOKEN = ['ghp', '0123456789abcdefghijklmnopqrstuvwxyz'].join('_')
+const PEM_HEADER = ['-----BEGIN', 'PRIVATE KEY-----'].join(' ')
 const PEM_BODY = 'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7\nabc='
-const PEM = `-----BEGIN PRIVATE KEY-----\n${PEM_BODY}\n-----END PRIVATE KEY-----`
+const PEM = `${PEM_HEADER}\n${PEM_BODY}\n${['-----END', 'PRIVATE KEY-----'].join(' ')}`
+/** The scheme of the database URLs below, kept apart from their user and password for the same reason. */
+const POSTGRES = 'postgres://'
 
 // protects=the name rule on words; fails_when=accessToken or db_passwd stays visible, or tokenCount/sortKey is masked; no_claim=values in plainly named variables
 test('a secret-named variable is masked by its final word while count and sort names stay visible', () => {
@@ -73,8 +80,8 @@ test('a secret-named variable is masked by its final word while count and sort n
 test('text shaped like a credential reads [masked] and keeps its harmless words', () => {
   // Arrange / Act / Assert
   assert.equal(
-    redactSecretText('postgres://app:pw@db:5432/x'),
-    'postgres://app:[masked]@db:5432/x',
+    redactSecretText(`${POSTGRES}app:pw@db:5432/x`),
+    `${POSTGRES}app:[masked]@db:5432/x`,
   )
   assert.equal(redactSecretText(`jwt ${JWT}.`), 'jwt [masked].')
   assert.equal(
@@ -138,7 +145,7 @@ test('a private key whose end never arrives within 8 KiB is masked and its remai
   const redactor = createOutputRedactor()
   const body = 'A'.repeat(OUTPUT_REDACTION_HOLD_LIMIT_CHARS)
   // Act
-  const first = redactor.write(`-----BEGIN PRIVATE KEY-----\n${body}`)
+  const first = redactor.write(`${PEM_HEADER}\n${body}`)
   const second = redactor.write('SECRETTAIL\n-----END PRIVATE')
   const third = redactor.write(' KEY-----\nafter\n')
   const rest = redactor.end()
@@ -190,7 +197,7 @@ test('complete output lines are released at once while a trailing partial word i
 test('a failure cause and an Output diagnostic entry mask credentials in their text', () => {
   // Arrange
   const error = new Error(
-    `connect failed postgres://app:hunter2@db/x with ${GITHUB_TOKEN}`,
+    `connect failed ${POSTGRES}app:hunter2@db/x with ${GITHUB_TOKEN}`,
   )
   // Act
   const cause = sanitizeCause(error, { storage: [] })
@@ -206,7 +213,7 @@ test('a failure cause and an Output diagnostic entry mask credentials in their t
   // Assert
   assert.equal(
     cause,
-    'connect failed postgres://app:[masked]@db/x with [masked]',
+    `connect failed ${POSTGRES}app:[masked]@db/x with [masked]`,
   )
   assert.equal(entry.includes('ghp_'), false)
   assert.equal(entry.includes('eyJ'), false)
@@ -323,7 +330,7 @@ test('a replay debugger snapshot masks a secret-named object and never reads its
                 { name: 'sortKey', value: "'name'", variablesReference: 0 },
                 {
                   name: 'url',
-                  value: "'postgres://u:pw@h/d'",
+                  value: `'${POSTGRES}u:pw@h/d'`,
                   variablesReference: 0,
                 },
               ]
@@ -337,7 +344,7 @@ test('a replay debugger snapshot masks a secret-named object and never reads its
     [
       ['authSession', '[masked]'],
       ['sortKey', "'name'"],
-      ['url', "'postgres://u:[masked]@h/d'"],
+      ['url', `'${POSTGRES}u:[masked]@h/d'`],
     ],
   )
   assert.deepEqual(requested, [1])

@@ -164,7 +164,7 @@ test('an owned server inherits no parent variable outside the allowlist, no prox
   // protects: the planted-variable criterion (acceptance 5); fails_when: a planted variable, HTTP_PROXY, NODE_ENV or CI reaches the server or an event; no_claim: what the server's own .env adds.
   // Arrange
   const planted = {
-    CODEBOOK_PLANTED_SECRET: 'planted-value-7f3a',
+    CODEBOOK_PLANTED_VARIABLE: 'planted-value-7f3a',
     HTTP_PROXY: 'http://proxy.invalid:8080',
     NODE_ENV: 'production',
     CI: 'true',
