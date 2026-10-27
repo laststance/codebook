@@ -15,6 +15,7 @@ import type { ProcessOutputEvent } from '../utils/captureProcessOutput'
 import { isProcessGroupGone } from '../utils/isProcessGroupGone'
 import { launchNodeServer } from '../utils/launchNodeServer'
 import { resolveNodeServerLaunch } from '../utils/resolveNodeServerLaunch'
+import { signalProcessGroup } from '../utils/signalProcessGroup'
 
 /** The test-only HTTP server as compiled beside this test; it never ships. */
 const FIXTURE_SERVER = join(__dirname, 'fixtures/node-server/server.js')
@@ -350,4 +351,125 @@ test('a server whose Node cannot be started fails its inspector wait with the st
   // Assert
   assert.ok(failure instanceof Error)
   assert.match(failure.message, /ENOENT/)
+})
+
+/** Launches the fixture server in a mode and returns it with its folder. */
+async function launchFixture(
+  t: { after: (cleanup: () => Promise<void>) => void },
+  mode: string,
+) {
+  const port = await freePort()
+  const workspace = await fixtureRepository(t, {
+    port,
+    host: '127.0.0.1',
+    mode,
+  })
+  const launch = await resolveNodeServerLaunch(workspace, {
+    packageRoot: '.',
+    entry: 'server.cjs',
+    loader: 'node',
+  })
+  const server = await launchNodeServer(
+    {
+      ...launch,
+      workspace,
+      node: { executable: process.execPath, version: process.versions.node },
+    },
+    () => undefined,
+  )
+  return { server, port }
+}
+
+// protects=a stop's SIGKILL lands by its kill bound counted from the admission, with the debugger detach and the SIGTERM grace inside it, for a server that ignores SIGTERM and a detach that never returns; fails_when=the kill waits for the detach and then a whole grace after it (about 6 s with the product's bounds); no_claim=the product's 5 s and 10 s values (the bounds are named here so the test stays short)
+test('a stop sends SIGKILL by its kill bound even when the debugger detach never returns and SIGTERM is ignored', async (t) => {
+  // Arrange
+  const { server, port } = await launchFixture(t, 'ignore-sigterm')
+  const inspector = await Cdp.connect(
+    await server.inspectorEndpoint(AbortSignal.timeout(10_000)),
+    () => undefined,
+  )
+  await inspector.request('Runtime.runIfWaitingForDebugger', undefined)
+  await waitUntil(
+    async () => ((await accepts(port)) ? true : undefined),
+    'fixture readiness',
+    10_000,
+  )
+  const admittedAt = performance.now()
+  const signals: Array<{ signal: string; atMs: number }> = []
+  // Act
+  const exit = await server.close(() => new Promise<void>(() => undefined), {
+    sinceAdmissionMs: () => performance.now() - admittedAt,
+    killByMs: 1_200,
+    deadlineMs: 4_000,
+    signalGroup: (group, signal) => {
+      signals.push({ signal, atMs: performance.now() - admittedAt })
+      signalProcessGroup(group, signal)
+    },
+  })
+  inspector.close()
+  // Assert
+  assert.deepEqual(
+    signals.map((entry) => entry.signal),
+    ['SIGTERM', 'SIGKILL'],
+  )
+  const [term, kill] = signals
+  assert.ok(term && term.atMs >= 900 && term.atMs < 1_200, `${term?.atMs}`)
+  assert.ok(kill && kill.atMs >= 1_150 && kill.atMs < 1_900, `${kill?.atMs}`)
+  assert.equal(exit.signal, 'SIGKILL')
+  assert.equal(isProcessGroupGone(server.processGroup!), true)
+})
+
+/** Closes a fresh fixture server once so that it fails at its deadline (its group never reads as gone), then retries the close with an identity verdict; returns the retry's outcome and the signals each close sent. */
+async function retryCloseWith(
+  t: { after: (cleanup: () => Promise<void>) => void },
+  verdict: 'launched' | 'replaced' | 'unverifiable',
+) {
+  const { server } = await launchFixture(t, 'listen')
+  t.after(async () => {
+    if (!isProcessGroupGone(server.processGroup!))
+      signalProcessGroup(server.processGroup!, 'SIGKILL')
+  })
+  const signals: string[] = []
+  const quickly = {
+    killByMs: 300,
+    deadlineMs: 600,
+    // Only the first close really signals; the retry's signals are recorded alone, since its group id is gone.
+    signalGroup: (group: number, signal: NodeJS.Signals): void => {
+      if (signals.length < 2) signalProcessGroup(group, signal)
+      signals.push(signal)
+    },
+  }
+  const firstClose = await server
+    .close(undefined, { ...quickly, isGroupGone: () => false })
+    .catch((error: unknown) => error)
+  const signalsOfFirstClose = [...signals]
+  const retry = await server
+    .close(undefined, {
+      ...quickly,
+      isGroupGone: () => true,
+      confirmGroup: async () => verdict,
+    })
+    .catch((error: unknown) => error)
+  return { firstClose, signalsOfFirstClose, retry, signals }
+}
+
+// protects=a retried close signals the group only after the leader's identity was confirmed: a replaced group is left alone, an unverifiable one fails the close, the launched one is signalled again; fails_when=a retry signals a group id another process may hold; no_claim=a real reuse of a process-group id (the verdicts are tested on their own)
+test('a retried close signals only a group confirmed as the launched one', async (t) => {
+  // Arrange
+  // Act
+  const replaced = await retryCloseWith(t, 'replaced')
+  const unverifiable = await retryCloseWith(t, 'unverifiable')
+  const launched = await retryCloseWith(t, 'launched')
+  // Assert
+  for (const outcome of [replaced, unverifiable, launched]) {
+    assert.ok(outcome.firstClose instanceof Error)
+    assert.deepEqual(outcome.signalsOfFirstClose, ['SIGTERM', 'SIGKILL'])
+  }
+  assert.deepEqual(replaced.signals, ['SIGTERM', 'SIGKILL'])
+  assert.ok(!(replaced.retry instanceof Error))
+  assert.deepEqual(unverifiable.signals, ['SIGTERM', 'SIGKILL'])
+  assert.ok(unverifiable.retry instanceof Error)
+  assert.match(unverifiable.retry.message, /could not be confirmed/)
+  assert.deepEqual(launched.signals, ['SIGTERM', 'SIGKILL', 'SIGTERM'])
+  assert.ok(!(launched.retry instanceof Error))
 })
