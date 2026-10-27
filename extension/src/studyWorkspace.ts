@@ -13778,6 +13778,8 @@ export class StudyWorkspace {
         elapsedMs: observation.elapsedMs,
       })),
       studies: studyCatalog,
+      // A closed reader keeps its selection for the next Open Study Workspace, but Saved studies must not name it (task 31).
+      ...(this.opened ? {} : { readerClosed: true as const }),
       studyRemoval: this.studyRemoval,
       ...(this.studyRemovalAvailability() === 'no-trash'
         ? {

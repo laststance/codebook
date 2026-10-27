@@ -103,6 +103,8 @@ export interface StudyViewMessage {
   }[]
   studies: StudyCatalogEntry[]
   studyRemoval?: StudyRemovalView
+  /** Set while the Study reader is closed (before its first open and after Close Study Workspace): the Saved studies list names no entry, so every entry, the one the closed reader showed included, fires a `change` and opens on choice. */
+  readerClosed?: true
   /** Set in a window without a Trash (a WSL remote window): a delete request moves nothing there and is answered with the study's files for removal by hand. */
   removalWithoutTrash?: true
   /** The files and folders the host listed for removal by hand in a window without a Trash, by study: every list a pane asked for, so each pane shows the one of the entry it has chosen. */
@@ -1302,7 +1304,7 @@ function studyClient(
   const listedOrNone = (message: StudyViewMessage, studyId: string): string =>
     message.studies.some((study) => study.id === studyId) ? studyId : ''
   /**
-   * Puts the Saved studies list on the entry this pane keeps chosen, else on the entry the host shows, and renders the delete control for it.
+   * Puts the Saved studies list on the entry this pane keeps chosen, else on the entry the host shows (none while the reader is closed), and renders the delete control for it.
    * Called on every Study message after the list's options are set, and when the host answers this pane's open request.
    * @param message - The current Study message.
    * @param fallback - The list's value to keep when neither this pane nor the host names an entry.
@@ -1314,10 +1316,11 @@ function studyClient(
   ): void => {
     const studies = element('studies')
     if (!(studies instanceof HTMLSelectElement)) return
-    studies.value = listedOrNone(
-      message,
-      keptChoice() ?? shownStudyId(message) ?? fallback,
-    )
+    // A closed reader keeps its selection for the next Open Study Workspace but shows nothing: naming it would make choosing it again fire no `change`.
+    const shownOrFallback = message.readerClosed
+      ? ''
+      : (shownStudyId(message) ?? fallback)
+    studies.value = listedOrNone(message, keptChoice() ?? shownOrFallback)
     renderStudyRemoval(message)
   }
   /** Follows the host's reply to an open request: when it names the request this pane still waits for, the open ended without showing the entry (refused, discarded or failed), so the list returns to the shown study and the delete button is released. A reply to an earlier request changes nothing. @example settleOpenRequest({ type: 'open-request-settled', openRequest: 3 }) */

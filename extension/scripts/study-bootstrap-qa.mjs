@@ -8684,6 +8684,46 @@ async function check(page, options, collected) {
       !promptOption.rendered,
   })
 
+  // Arrange: the reader showed a saved study and was closed (Close Study Workspace keeps its selection, so the message still names it).
+  await library([shownStudy, otherStudy], shownStudy.id)
+  const whileReaderOpen = await removalControl()
+  await page.evaluate(() => {
+    window.sent = []
+  })
+  // Act: the reader closes, then the learner chooses the entry the closed reader showed.
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    readerClosed: true,
+  })
+  const whileReaderClosed = await removalControl()
+  await page.selectOption('#studies', shownStudy.id)
+  const openAskedAfterClose = await page.evaluate(
+    (studyId) =>
+      window.sent.filter(
+        (message) => message.type === 'history' && message.studyId === studyId,
+      ).length,
+    shownStudy.id,
+  )
+  // The host opens the reader again with that study.
+  await library([shownStudy, otherStudy], shownStudy.id)
+  const afterReaderOpened = await removalControl()
+  // Assert
+  // Value: protects=the learner choosing, right after Close Study Workspace, the saved study the closed reader showed and having it open (the list named it, so the choice fired no change event); fails_when=a closed reader's list names the study the reader showed, or the list stops naming the study once the reader is open again; why_new=Cycle 0056 task 31 (N56-F1, found in Cursor); seam=none; no_claim=the host's own open (studyWorkspace tests) (stand-ins: the Study messages the host posts)
+  cases.push({
+    name: 'after Close Study Workspace the Saved studies list names no study, so choosing the study the closed reader showed opens it, and an open reader names its study again',
+    actual: {
+      whileReaderOpen,
+      whileReaderClosed,
+      openAskedAfterClose,
+      afterReaderOpened,
+    },
+    passed:
+      whileReaderOpen.chosen === shownStudy.id &&
+      whileReaderClosed.chosen === '' &&
+      whileReaderClosed.shownText === 'Choose a saved study' &&
+      openAskedAfterClose === 1 &&
+      afterReaderOpened.chosen === shownStudy.id,
+  })
+
   // Arrange: a delete request the host refuses, shown under the button (A-L5, AD-14, DR-26).
   const sameRefusal = {
     status: 'refused',

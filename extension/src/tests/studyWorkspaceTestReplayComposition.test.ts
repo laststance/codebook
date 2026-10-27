@@ -4076,3 +4076,37 @@ test('a failed move whose return to the last moment fails too does not say the l
     await harness.close()
   }
 })
+
+// Value: protects=Saved studies naming no study while the reader is closed, so the learner can choose the study the closed reader showed and have it open, and naming the replay again once Open Study Workspace restores it; fails_when=a closed reader's Study message omits readerClosed, or an open reader sets it (Cycle 0056 task 31, N56-F1: the list kept naming the shown replay, so choosing it fired no change); why_new=the list rule lived in the page only, with no host signal for a closed reader; seam=the reader's inspected Study message; no_claim=the list's rendering (Reader DOM check study-bootstrap-qa)
+test('a closed reader tells Saved studies that it is closed, and a reopened reader that shows its replay does not', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await openByOpenReplay(harness)
+    const whileOpen = harness.reader.inspect().view?.readerClosed
+
+    // Act
+    await harness.reader.close()
+    const afterClose = harness.reader.inspect().view?.readerClosed
+    await harness.reader.open()
+    const afterReopen = harness.reader.inspect().view
+
+    // Assert
+    assert.deepEqual(
+      {
+        whileOpen,
+        afterClose,
+        afterReopen: afterReopen?.readerClosed,
+        replay: afterReopen?.nodeHistory?.header.studyId,
+      },
+      {
+        whileOpen: undefined,
+        afterClose: true,
+        afterReopen: undefined,
+        replay: history.studyId,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
