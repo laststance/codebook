@@ -100,7 +100,7 @@ const PAUSE_HOLD_SECONDS =
 const NODE_SERVER_CODES: readonly { code: ErrorCode; when: string }[] = [
   {
     code: 'NODE_SERVER_SOURCE_REFUSED',
-    when: 'start: packageRoot, entry or the repository tsx is not a real path inside the opened repository',
+    when: "start: packageRoot, entry, a stop's file or the repository's own tsx is missing or is not a real path inside the opened repository",
   },
   {
     code: 'PORT_UNAVAILABLE',
@@ -204,6 +204,7 @@ export function nodeServerHelp() {
       "The inspector listens on 127.0.0.1 for the run only; readiness probes (connections to the declared port before the first request) appear in the server's logs.",
       `The run deadline is ${REPOSITORY_RUN_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s (it caps the request); a pause longer than ${REPOSITORY_PAUSE_HOLD_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s ends the run (PAUSE_HOLD_EXPIRED); a continuation answer waits at most about ${(ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND).toFixed(0)} s and then reports the latest state without a next word, which you read again.`,
       `At most ${CONFIGURED_OBSERVATION_LIMIT} stops and ${NODE_SERVER_REQUEST_CAPTURE_LIMIT} captured pauses per request; port ${NODE_SERVER_PORT_MIN} to ${NODE_SERVER_PORT_MAX}.`,
+      "The target's own clocks (its request deadlines and timeouts) keep running while the server is paused, but Codebook's REQUEST_TIMEOUT counts running time only: a long pause can change the application's answer, a timeout or a 500 for example, which is not the normal path.",
       "Use a local or test database: a state-changing request really changes what the repository's server is configured to use.",
       'Server runs are not saved yet: no replay, no saved study and no learning save exist for them.',
     ],
