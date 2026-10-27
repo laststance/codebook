@@ -18,6 +18,7 @@ import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 
 import { isSecretName } from './isSecretName'
 import { redactSecretText } from './redactSecretText'
+import { redactValuePreview } from './redactValuePreview'
 import { shouldCaptureReplayScope } from './shouldCaptureReplayScope'
 
 const scopeResponse = z.object({
@@ -159,13 +160,13 @@ export async function captureReplayDebugSnapshot(
             unavailable: 'Historical variable count limit reached.',
           }
         const index = snapshot.variables.length
-        // Redaction contract: a secret-named variable keeps its name and type but reads [masked], and its subtree is neither read nor saved; any other value is masked only where it looks like a credential. Masking comes before shortening.
+        // Redaction contract: a secret-named variable keeps its name and type but reads [masked], and its subtree is neither read nor saved; any other value is masked where a secret-named member shows in its preview or where it looks like a credential. Masking comes before shortening.
         const isSecretVariable = isSecretName(variable.name)
         const saved: ReplayDebugSnapshot['variables'][number] = {
           name: shorten(redactSecretText(variable.name)),
           value: isSecretVariable
             ? REDACTION_MASK
-            : shorten(redactSecretText(variable.value)),
+            : shorten(redactSecretText(redactValuePreview(variable.value))),
           type: variable.type && shorten(variable.type),
           children: [],
         }

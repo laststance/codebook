@@ -17,6 +17,7 @@ import { inspectNodeTestVariables } from '../utils/inspectNodeTestVariables'
 import { isSecretName } from '../utils/isSecretName'
 import { launchNodeTest } from '../utils/launchNodeTest'
 import { redactSecretText } from '../utils/redactSecretText'
+import { redactValuePreview } from '../utils/redactValuePreview'
 import { sanitizeCause } from '../utils/sanitizeCause'
 import { sourceImportBindings } from '../utils/sourceImportBindings'
 
@@ -340,6 +341,106 @@ test('a replay debugger snapshot masks a secret-named object and never reads its
     ],
   )
   assert.deepEqual(requested, [1])
+})
+
+// protects=secret-named members shown inside an expandable value's preview (CodeRabbit pt1 finding); fails_when=a member value of a secret-named key survives in the preview text; no_claim=secrets under plainly named keys
+test('a value preview masks the members of secret-named keys and keeps the others', () => {
+  // Arrange
+  const previews = [
+    "{apiKey: 'plain-secret', host: 'x'}",
+    "Map(2) {'authorization' => 'Bearer x', 'accept' => '*/*'}",
+    "{auth: {password: 'p', user: 'u'}, n: 1}",
+    '{session: {id: 1, role: "admin"}, n: 2}',
+    "['a', 'b']",
+  ]
+  // Act
+  const redacted = previews.map((preview) => redactValuePreview(preview))
+  // Assert
+  assert.deepEqual(redacted, [
+    "{apiKey: [masked], host: 'x'}",
+    "Map(2) {'authorization' => [masked], 'accept' => '*/*'}",
+    "{auth: {password: [masked], user: 'u'}, n: 1}",
+    '{session: [masked], n: 2}',
+    "['a', 'b']",
+  ])
+})
+
+// protects=debugger snapshots of an expandable value whose preview names a secret member (CodeRabbit pt1 finding); fails_when=the parent's saved preview carries the secret member's value
+test('a replay debugger snapshot never saves a secret member through its parent preview', async () => {
+  // Act
+  const snapshot = await captureReplayDebugSnapshot({
+    stack: {
+      stackFrames: [{ id: 77, name: 'f', line: 1, column: 1 }],
+      totalFrames: 1,
+    },
+    verifiedSource: { name: 'a.ts', text: 'x', hash: 'a'.repeat(64), line: 1 },
+    assertCurrent() {},
+    request(command, arguments_) {
+      if (command === 'scopes')
+        return Promise.resolve({
+          scopes: [{ name: 'Locals', variablesReference: 1 }],
+        })
+      return Promise.resolve({
+        variables:
+          arguments_.variablesReference === 1
+            ? [
+                {
+                  name: 'config',
+                  value: "{apiKey: 'plain-secret', host: 'x'}",
+                  variablesReference: 2,
+                },
+              ]
+            : [
+                {
+                  name: 'apiKey',
+                  value: "'plain-secret'",
+                  variablesReference: 0,
+                },
+                { name: 'host', value: "'x'", variablesReference: 0 },
+              ],
+      })
+    },
+  })
+  // Assert
+  assert.deepEqual(
+    snapshot.variables.map((variable) => [variable.name, variable.value]),
+    [
+      ['config', "{apiKey: [masked], host: 'x'}"],
+      ['apiKey', '[masked]'],
+      ['host', "'x'"],
+    ],
+  )
+  assert.equal(JSON.stringify(snapshot).includes('plain-secret'), false)
+})
+
+// protects=node-test facts of an object path whose preview names a secret member (CodeRabbit pt1 finding); fails_when=the fact or the kept variable carries the member's value
+test('a node test inspection of an object keeps its secret member masked in the fact', async () => {
+  // Arrange
+  const debugSession = {
+    customRequest: async () => ({
+      variables: [
+        {
+          name: 'config',
+          value: "{apiKey: 'plain-secret', host: 'x'}",
+          variablesReference: 0,
+        },
+      ],
+    }),
+  } as unknown as Pick<vscode.DebugSession, 'customRequest'>
+  // Act
+  const result = await inspectNodeTestVariables(
+    debugSession,
+    [{ name: 'Local', variablesReference: 1, expensive: false }],
+    [{ path: 'config', mode: 'value', required: true }],
+    sourceImportBindings(''),
+    AbortSignal.timeout(1_000),
+  )
+  // Assert
+  assert.deepEqual(
+    result.facts.map((fact) => fact.display),
+    ["{apiKey: [masked], host: 'x'}"],
+  )
+  assert.equal(JSON.stringify(result).includes('plain-secret'), false)
 })
 
 // protects=masking before the 4,096-character event split and the 32 KiB tail cut, split across real child-process writes; fails_when=a fragment of the token is in any event or in the kept tail
