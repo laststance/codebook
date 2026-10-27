@@ -34,6 +34,8 @@ export async function editorHarness(
     /** The first stop the adapter reports after the attach, in place of the entry pause. */
     firstStop?: { reason: string; ids?: number[]; frame?: FrameAt }
     stopFailures?: number
+    /** The adapter rejects the stack trace of a pause after the entry pause. */
+    stackTraceFails?: boolean
     documents?: Array<{
       uri: { scheme: string; fsPath: string }
       getText: () => string
@@ -81,6 +83,8 @@ export async function editorHarness(
   const editorBreakpoints: SourceBreakpoint[] = []
   const adapterReplies = new Map<SourceBreakpoint, DebugProtocol.Breakpoint>()
   let armed = 0
+  // The entry pause is read normally; the pauses after it fail when asked.
+  let entryDone = false
   /** Passes the editor's replacement of the file's breakpoints, and the adapter's reply, through the debugger's tracker. */
   const replaceBreakpoints = (): void => {
     const sequence = ++requestSequence
@@ -129,6 +133,9 @@ export async function editorHarness(
         arguments: arguments_,
       })
       requests.push({ command, arguments: arguments_ })
+      if (command === 'continue') entryDone = true
+      if (command === 'stackTrace' && options.stackTraceFails && entryDone)
+        throw new Error('stackTrace timed out')
       if (command === 'stackTrace')
         return {
           stackFrames: currentFrame

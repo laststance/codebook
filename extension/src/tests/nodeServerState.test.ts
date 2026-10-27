@@ -55,7 +55,7 @@ test('a node-server run paused at a declared stop shows the stop, its facts and 
   context.after(() => harness.close())
   const { service, record, run } = await startFakeNodeServerRun(harness)
   await run.enter('request-in-flight')
-  run.pauseAt(1, { nextTheme: 'dark' })
+  run.pauseAt(1, { 'value:nextTheme': 'dark' })
   // Act
   const state = service.state(record)
   // Assert
@@ -70,7 +70,7 @@ test('a node-server run paused at a declared stop shows the stop, its facts and 
     path: 'src/theme.ts',
     line: 1,
     sourceHash: 'a'.repeat(64),
-    facts: { nextTheme: 'dark' },
+    facts: { 'value:nextTheme': 'dark' },
     unavailable: [],
     attribution: 'timing',
     capturedAtMs: 21,

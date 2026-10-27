@@ -1,6 +1,8 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
+import { NODE_SERVER_PROCESS_QUERY_TIMEOUT_MS } from '../constants'
+
 import { psProgramPath } from './psProgramPath'
 import { readPortListeners } from './readPortListeners'
 
@@ -18,7 +20,7 @@ async function commandOf(pid: number): Promise<string | undefined> {
     const { stdout } = await promisify(execFile)(
       await psProgramPath('The port occupant check'),
       ['-o', 'comm=', '-p', String(pid)],
-      { timeout: 3_000 },
+      { timeout: NODE_SERVER_PROCESS_QUERY_TIMEOUT_MS },
     )
     return stdout.trim().split('/').at(-1) || undefined
   } catch {

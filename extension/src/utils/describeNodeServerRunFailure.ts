@@ -1,5 +1,8 @@
+import { homedir } from 'node:os'
+
 import {
   NODE_SERVER_FAILED_STOPS_NAMING_PID,
+  NODE_SERVER_FAILURE_CAUSE_LIMIT_CHARS,
   NODE_SERVER_READY_TIMEOUT_MS,
   NODE_SERVER_STOP_DEADLINE_MS,
   PROCESS_OUTPUT_EVENT_LIMIT_CHARS,
@@ -9,26 +12,53 @@ import { StudyError } from '../errors'
 import { redactSecretText } from './redactSecretText'
 import { thrownMessage } from './thrownMessage'
 
-/** Longest cause text a run failure names. */
-const CAUSE_LIMIT_CHARS = 300
-/** An absolute POSIX path of two segments or more; a private path never reaches the agent. */
-const ABSOLUTE_PATH = /(?:\/[\w.@+~-]+){2,}\/?/g
+/** An absolute POSIX path of two segments or more that is not already a placeholder's tail (`<workspace>/…`, `~/…`); a segment is any run of characters but whitespace, separators and quotes, so non-ASCII names count. */
+const ABSOLUTE_PATH = /(?<![\w~>.])(?:\/[^\s/'"`]+){2,}\/?/g
 
 /**
- * Makes a thrown cause fit for the agent: secrets masked, the repository's root as `<workspace>`, any other absolute path as `<path>`, cut to a sentence-sized length.
+ * Hides the private paths of a text: the repository's root as `<workspace>`, the home directory as `~` (the repository-relative rest stays readable), and any other absolute path as `<path>`.
+ * Called by {@link sanitizeRunCause} for causes and by {@link serverExitedError} for the server's output tail, whose stack traces carry the learner's paths.
+ * @param text - Any text.
+ * @param workspace - The opened repository's real root.
+ * @param home - The user's home directory.
+ * @returns The text with those paths replaced; newlines are kept.
+ * @example hidePrivatePaths('at /work/repo/src/a.ts:3 and /Users/村上/x/y', '/work/repo', '/Users/ada') // => 'at <workspace>/src/a.ts:3 and <path>'
+ */
+function hidePrivatePaths(
+  text: string,
+  workspace: string,
+  home: string,
+): string {
+  const withoutWorkspace = workspace
+    ? text.split(workspace).join('<workspace>')
+    : text
+  // A bare "/" home would turn every path into "~…".
+  const withoutHome =
+    home.length > 1 ? withoutWorkspace.split(home).join('~') : withoutWorkspace
+  return withoutHome.replace(ABSOLUTE_PATH, '<path>')
+}
+
+/**
+ * Makes a thrown cause fit for the agent: secrets masked, private paths hidden ({@link hidePrivatePaths}), whitespace collapsed, cut to {@link NODE_SERVER_FAILURE_CAUSE_LIMIT_CHARS}.
  * Called by every run failure that names a cause.
  * @param cause - Whatever was thrown.
  * @param workspace - The opened repository's real root.
+ * @param home - The user's home directory; the current user's unless a test names another.
  * @returns The sanitized one-line cause.
  * @example sanitizeRunCause(new Error('ENOENT /repo/src/a.ts'), '/repo') // => 'ENOENT <workspace>/src/a.ts'
  */
-export function sanitizeRunCause(cause: unknown, workspace: string): string {
-  return redactSecretText(thrownMessage(cause))
-    .split(workspace)
-    .join('<workspace>')
-    .replace(ABSOLUTE_PATH, '<path>')
+export function sanitizeRunCause(
+  cause: unknown,
+  workspace: string,
+  home = homedir(),
+): string {
+  return hidePrivatePaths(
+    redactSecretText(thrownMessage(cause)),
+    workspace,
+    home,
+  )
     .replaceAll(/\s+/g, ' ')
-    .slice(0, CAUSE_LIMIT_CHARS)
+    .slice(0, NODE_SERVER_FAILURE_CAUSE_LIMIT_CHARS)
 }
 
 /**
@@ -56,15 +86,22 @@ export function stepFailedError(
  * Builds the `SERVER_EXITED` error of a server that ended by itself, with its exit and the masked last output.
  * @param exit - The exit code and signal.
  * @param output - The server's redacted last output.
+ * @param workspace - The opened repository's real root; paths in the output are hidden ({@link hidePrivatePaths}).
  * @returns The typed error; the output is cut to its last 4,096 characters.
- * @example serverExitedError({ exitCode: 3, signal: null }, 'cannot start\n').message // => 'The server exited with code 3. Its last output:\ncannot start\n'
+ * @example serverExitedError({ exitCode: 3, signal: null }, 'cannot start\n', '/repo').message // => 'The server exited with code 3. Its last output:\ncannot start\n'
  */
 export function serverExitedError(
   exit: { exitCode: number | null; signal: NodeJS.Signals | null },
   output: string,
+  workspace: string,
+  home = homedir(),
 ): StudyError {
   const how = exit.signal ? `signal ${exit.signal}` : `code ${exit.exitCode}`
-  const tail = output.slice(-PROCESS_OUTPUT_EVENT_LIMIT_CHARS)
+  const tail = hidePrivatePaths(
+    output.slice(-PROCESS_OUTPUT_EVENT_LIMIT_CHARS),
+    workspace,
+    home,
+  )
   return new StudyError(
     'SERVER_EXITED',
     `The server exited with ${how}.${tail ? ` Its last output:\n${tail}` : ' It printed nothing.'}`,

@@ -112,9 +112,9 @@ test('the preparation runs the checks, then launches, attaches, arms, remembers 
     'resolveLaunch',
     'assertPortFree',
     'launch',
+    'rememberProcess',
     'attach',
     'armStops',
-    'rememberProcess',
     'releaseEntry',
     'waitForReadiness',
     'verifyListener',
@@ -425,15 +425,14 @@ test('the request window opens before the request is written and the run reads r
 // protects=a connection that reaches another process sends zero bytes and the run stays ready; fails_when=bytes are written or the state stays in flight; no_claim=the real socket
 test('a connection that reaches another process than the launched server sends nothing and the run stays ready', async () => {
   // Arrange
-  const harness = await readyHarness()
-  harness.sender.serverPid = 9999
+  const harness = await readyHarness({ connectionHolders: [9999] })
   // Act
   const error = await rejectsWith(
     harness.run.sendRequest('k'),
     'LISTENER_NOT_OWNED',
   )
   // Assert
-  assert.match(error.message, /Process 9999 answers on port/)
+  assert.match(error.message, /Process 9999 /)
   assert.equal(harness.sender.bytesWritten, 0)
   assert.equal(harness.run.view().state, 'ready')
   assert.equal(harness.run.view().request, undefined)
@@ -458,7 +457,14 @@ test('an owned hit inside the request window pauses the run with its stop number
     captureIndex: 0,
   })
   assert.deepEqual(view.stopsReached, [1])
-  assert.equal(view.captures[0]?.facts['user.id'], '7')
+  assert.deepEqual(view.captures[0]?.facts, {
+    'value:user.id': '7',
+    'type:user.id': 'number',
+  })
+  assert.deepEqual(
+    view.captures[0]?.unavailable.map((entry) => entry.path),
+    ['type:user.name'],
+  )
   assert.equal(view.captures[0]?.attribution, 'timing')
   assert.equal(view.captures[0]?.stopNumber, 2)
 })
@@ -842,6 +848,7 @@ test('a foreign listener on the declared port does not hold the stop and is repo
   })
   // Act
   await harness.run.stop()
+  await harness.eventSeen('node-server.port-held-by-other')
   // Assert
   assert.equal(harness.run.view().state, 'stopped')
   assert.equal(ownedDevelopmentPortState(harness.port), undefined)
@@ -853,14 +860,36 @@ test('a foreign listener on the declared port does not hold the stop and is repo
   )
 })
 
-// protects=Node's notice that only the debugger keeps a finished program alive makes the run let its debugger go; fails_when=a crashed server stays alive for the readiness budget; no_claim=js-debug's own handling of an ended target
-test('the notice that only the debugger keeps a finished server alive releases the debugger', async () => {
+// protects=Node's own stderr notice, printed when the program is finished and no port is listened on, makes the run let its debugger go; fails_when=a crashed server stays alive for the readiness budget; no_claim=js-debug's own handling of an ended target
+test('the notice on stderr of a finished server that listens nowhere releases the debugger', async () => {
   // Arrange
-  const harness = await readyHarness()
+  const harness = await readyHarness({ listeningPorts: [9229] })
   // Act
-  await harness.emitOutput('Waiting for the debugger to disconnect...\n')
+  await harness.emitOutput(
+    'Waiting for the debugger to disconnect...\n',
+    'stderr',
+  )
   // Assert
   assert.equal(harness.debug.releaseCount, 1)
+})
+
+// protects=output an application logs is never taken for Node's notice: not on stdout, not while the server still listens, not during the request; fails_when=a logged sentence drops the debugger and the stops; no_claim=other texts
+test('the notice sentence in application output never releases the debugger', async () => {
+  // Arrange
+  const notice = 'Waiting for the debugger to disconnect...\n'
+  const stdout = await readyHarness({ listeningPorts: [] })
+  const listening = await readyHarness({ listeningPorts: [4100] })
+  const inRequest = await readyHarness({ listeningPorts: [] })
+  await sendRequest(inRequest)
+  // Act
+  await stdout.emitOutput(notice, 'stdout')
+  await listening.emitOutput(notice, 'stderr')
+  await inRequest.emitOutput(notice, 'stderr')
+  await stdout.emitOutput(`user said: ${notice}`, 'stderr')
+  // Assert
+  assert.equal(stdout.debug.releaseCount, 0)
+  assert.equal(listening.debug.releaseCount, 0)
+  assert.equal(inRequest.debug.releaseCount, 0)
 })
 
 // ---------------------------------------------------------------- events and changes
@@ -940,4 +969,150 @@ test('onDidChange fires for each change of the view and not after it is disposed
   // Assert
   assert.ok(afterPreparation > 0)
   assert.equal(changes, afterPreparation)
+})
+
+// ---------------------------------------------------------------- review fixes
+
+// protects=D14 also for a declared stop held outside the request window: a stop never resumes that code; fails_when=detach runs first for an unattributed or post-response hit; no_claim=a real server
+test('stopping while a declared stop is held outside the request window kills the group first', async () => {
+  // Arrange
+  const unattributed = await readyHarness()
+  unattributed.debug.hit(0)
+  const afterResponse = await readyHarness()
+  await sendRequest(afterResponse)
+  afterResponse.sender.response.resolve(RESPONSE_200)
+  await until(afterResponse, (view) => view.state === 'responded')
+  afterResponse.debug.hit(0)
+  // Act
+  await unattributed.run.stop()
+  await afterResponse.run.stop()
+  // Assert
+  assert.deepEqual(unattributed.calls.signals, [[4242, 'SIGKILL']])
+  assert.deepEqual(unattributed.server.closeWithDetach, [false])
+  assert.deepEqual(afterResponse.calls.signals, [[4242, 'SIGKILL']])
+})
+
+// protects=a learner pause outside the window still takes Stop v2; fails_when=SIGKILL for a plain learner pause outside the request; no_claim=none
+test('stopping while the learner paused outside the request window detaches first', async () => {
+  // Arrange
+  const harness = await readyHarness()
+  harness.debug.learnerPause()
+  // Act
+  await harness.run.stop()
+  // Assert
+  assert.deepEqual(harness.calls.signals, [])
+  assert.deepEqual(harness.server.closeWithDetach, [true])
+})
+
+// protects=a continue that fails after the editor reported the resume leaves the run paused and retryable; fails_when=the state reads request-in-flight while paused, or the retry answers NO_PAUSE; no_claim=a real adapter timeout
+test('a continue the adapter fails keeps the run paused and the same arguments usable again', async () => {
+  // Arrange
+  const harness = await readyHarness({
+    resumeFails: new Error('adapter timeout'),
+  })
+  const pause = await pausedAtStop(harness)
+  // Act
+  const first = await rejectsWith(harness.run.continue(pause), 'RUNTIME_FAILED')
+  const afterFailure = harness.run.view()
+  const retry = await rejectsWith(harness.run.continue(pause), 'RUNTIME_FAILED')
+  // Assert
+  assert.match(first.message, /adapter timeout/)
+  assert.equal(afterFailure.state, 'paused')
+  assert.deepEqual(afterFailure.pause?.generation, pause.generation)
+  assert.match(retry.message, /adapter timeout/)
+})
+
+// protects=a second continue while the first one's resume is under way is STALE_PAUSE even after the editor reported the resume; fails_when=NO_PAUSE answers it or the pause is cleared early; no_claim=real latency
+test('a second continue during the first one is STALE_PAUSE when the resume event came first', async () => {
+  // Arrange
+  const gate = defer<void>()
+  const harness = await readyHarness({ resumeEmitsOnResume: true })
+  const pause = await pausedAtStop(harness)
+  harness.debug.resumeGate = gate.promise
+  const first = harness.run.continue(pause)
+  // Act
+  const second = await rejectsWith(harness.run.continue(pause), 'STALE_PAUSE')
+  const stateDuring = harness.run.view().state
+  gate.resolve()
+  await first
+  // Assert
+  assert.ok(second)
+  assert.equal(stateDuring, 'paused')
+  assert.equal(harness.run.view().state, 'request-in-flight')
+})
+
+// protects=the foreign-listener lookup is no part of the stop's deadline; fails_when=a slow lookup fails or delays a complete stop; no_claim=a real lsof
+test('a stop completes while the lookup of a foreign listener is still pending', async () => {
+  // Arrange
+  const gate = defer<void>()
+  const harness = await readyHarness({
+    occupant: { pid: 777, command: 'node' },
+    occupantGate: gate.promise,
+  })
+  // Act
+  await harness.run.stop()
+  const stateAtStop = harness.run.view().state
+  gate.resolve()
+  await harness.eventSeen('node-server.port-held-by-other')
+  // Assert
+  assert.equal(stateAtStop, 'stopped')
+  assert.equal(harness.run.view().failedStops, 0)
+})
+
+// protects=a synchronous throw of the request sender closes the window and fails the call with REQUEST_FAILED; fails_when=the run reads request-in-flight for good; no_claim=the real sender
+test('a request sender that throws leaves no open request window', async () => {
+  // Arrange
+  const harness = await readyHarness({
+    sendThrows: new Error('socket setup failed'),
+  })
+  // Act
+  const error = await rejectsWith(
+    harness.run.sendRequest('k'),
+    'REQUEST_FAILED',
+  )
+  // Assert
+  assert.match(error.message, /socket setup failed/)
+  assert.equal(harness.run.view().state, 'ready')
+  assert.equal(harness.run.view().request, undefined)
+  assert.equal(harness.order.at(-1), 'window:false')
+})
+
+// protects=the SERVER_EXITED output tail names no private path; fails_when=a stack trace's absolute path reaches the message; no_claim=paths inside the application's own text
+test('the output tail of SERVER_EXITED shows the repository as <workspace> and hides other absolute paths', async () => {
+  // Arrange
+  const harness = createHarness({
+    serverOutput: `Error at /Users/someone/secret-project/node_modules/x/a.js:3\n    at ${WORKSPACE}/src/app.ts:9\n`,
+    waitForReadiness: () => new Promise<never>(() => undefined),
+  })
+  const preparing = harness.run.prepare()
+  await harness.readinessStarted
+  // Act
+  harness.server.exitNow({ exitCode: 1, signal: null })
+  const error = await rejectsWith(preparing, 'SERVER_EXITED')
+  // Assert
+  assert.match(error.message, /<workspace>\/src\/app\.ts:9/)
+  assert.doesNotMatch(error.message, /Users|someone/)
+})
+
+// protects=verifyPeer needs exactly the launched pid among the holders; fails_when=an empty, foreign or extra holder passes; no_claim=real sockets
+test('the peer check accepts only the launched server as the holder of the connection', async () => {
+  // Arrange
+  const none = await readyHarness({ connectionHolders: [] })
+  const extra = await readyHarness({ connectionHolders: [4242, 9999] })
+  const alone = await readyHarness({ connectionHolders: [4242] })
+  // Act
+  const unknown = await rejectsWith(
+    none.run.sendRequest('k'),
+    'PORT_OWNER_UNKNOWN',
+  )
+  const shared = await rejectsWith(
+    extra.run.sendRequest('k'),
+    'LISTENER_NOT_OWNED',
+  )
+  await alone.run.sendRequest('k')
+  // Assert
+  assert.ok(unknown)
+  assert.match(shared.message, /9999/)
+  assert.equal(extra.sender.bytesWritten, 0)
+  assert.equal(alone.sender.bytesWritten, 1)
 })

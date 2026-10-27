@@ -211,7 +211,7 @@ test('a real server runs the loop: ready, paused in its handler with a readable 
   // Assert
   assert.equal(ready.state, 'ready')
   assert.deepEqual(ready.address, { host: '127.0.0.1', port })
-  assert.equal(paused.captures[0]?.facts.requestPath, '/health')
+  assert.equal(paused.captures[0]?.facts['value:requestPath'], '/health')
   assert.deepEqual(paused.stopsReached, [0])
   assert.equal(answered.response?.status, 200)
   assert.equal(answered.response?.body, '{"status":"ok"}')
