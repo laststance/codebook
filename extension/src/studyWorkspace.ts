@@ -35,6 +35,7 @@ import {
   MAIN_THREAD_WEBVIEW_PREFIX,
   MAX_DEFERRED_OPEN_REPLIES,
   MAX_SOURCE_DOCUMENTS,
+  NODE_SERVER_PROFILE,
   NODE_TEST_PROFILE,
   MILLISECONDS_PER_SECOND,
   NATIVE_RUN_AND_DEBUG_VIEW_COMMAND,
@@ -13574,7 +13575,9 @@ export class StudyWorkspace {
                   : 'partial'))
     const descriptor = describeStudy(study ?? this.selection)
     const liveDescriptor =
-      record && record.profile !== NODE_TEST_PROFILE
+      record &&
+      record.profile !== NODE_TEST_PROFILE &&
+      record.profile !== NODE_SERVER_PROFILE
         ? describeStudy(
             record.profile === REPOSITORY_BROWSER_PROFILE
               ? { ...record, descriptor: record.definition?.descriptor }
@@ -13806,8 +13809,12 @@ export class StudyWorkspace {
         UNRETRYABLE_READER_ERROR_KINDS.has(kind),
       ).length,
       nextAction,
+      // A test run and a server run have no browser Study to show.
       liveProfile:
-        live?.profile === NODE_TEST_PROFILE ? undefined : live?.profile,
+        live?.profile === NODE_TEST_PROFILE ||
+        live?.profile === NODE_SERVER_PROFILE
+          ? undefined
+          : live?.profile,
       liveTitle: liveDescriptor?.title,
       profiles: [descriptor].map((profile) => ({
         id: profile.id,

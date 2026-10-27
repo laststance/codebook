@@ -12,6 +12,7 @@ import { z } from 'zod'
 import {
   API_VERSION,
   EXTENSION_VERSION,
+  NODE_SERVER_PROFILE,
   NUMBERED_SOURCE_LINES_HELP,
   REFERENCE_LENGTH_LIMIT,
 } from './constants'
@@ -86,6 +87,54 @@ async function stopToolResult(
         structuredContent: { ok: true, data: state },
       }
     const failure = sealFailure.describe()
+    return {
+      isError: true,
+      content: [
+        { type: 'text', text: JSON.stringify({ error: failure, state }) },
+      ],
+      structuredContent: { ok: false, error: failure, state },
+    }
+  } catch (error) {
+    const failure = service.unexpectedFailure(error).describe()
+    return {
+      isError: true,
+      content: [{ type: 'text', text: JSON.stringify(failure) }],
+      structuredContent: { ok: false, error: failure },
+    }
+  }
+}
+
+/**
+ * Answers `codebook_continue`: the service's answer, or, for a node-server run whose wait ended in a failure of the request (`request-failed`) or of the run (`failure`), `isError` with that error and the run's state beside it, so an agent never reads a failed request as a successful continuation (D1). A learner pause and a stop during the wait are results, not errors.
+ * Every other profile's answer is unchanged.
+ * @param service - The service that continues the run.
+ * @param input - The continuation arguments the run resource gave.
+ * @param signal - The request's cancellation.
+ * @returns The tool result: `ok` with the answer, the failure with the state, or the domain error of a refused continuation.
+ * @example
+ * ```ts
+ * await continueToolResult(service, args, signal) // => { isError: true, structuredContent: { ok: false, error: { code: 'REQUEST_FAILED', … }, state } } after a reset connection
+ * ```
+ */
+async function continueToolResult(
+  service: StudyService,
+  input: Parameters<StudyService['continueToNextState']>[0],
+  signal?: AbortSignal,
+): Promise<CallToolResult> {
+  try {
+    const answer = await service.continueToNextState(input, signal)
+    const ended: string | undefined = 'next' in answer ? answer.next : undefined
+    const state = 'state' in answer ? answer.state : undefined
+    const failure =
+      state?.profile === NODE_SERVER_PROFILE &&
+      (ended === 'request-failed' || ended === 'failure')
+        ? state.error
+        : undefined
+    if (!failure)
+      return {
+        content: [{ type: 'text', text: JSON.stringify(answer) }],
+        structuredContent: { ok: true, data: answer },
+      }
     return {
       isError: true,
       content: [
@@ -302,7 +351,7 @@ export function createProtocol(service: StudyService): McpServer {
       inputSchema: actionSchema,
       annotations: { ...execution, idempotentHint: true },
     },
-    (input) => toolResult(service, () => service.action(input)),
+    (input) => toolResult(service, () => service.performAction(input)),
   )
   server.registerTool(
     'codebook_continue',
@@ -312,10 +361,7 @@ export function createProtocol(service: StudyService): McpServer {
       inputSchema: continueSchema,
       annotations: execution,
     },
-    (input, extra) =>
-      toolResult(service, () =>
-        service.continueToNextState(input, extra.signal),
-      ),
+    (input, extra) => continueToolResult(service, input, extra.signal),
   )
   server.registerTool(
     'codebook_stop',

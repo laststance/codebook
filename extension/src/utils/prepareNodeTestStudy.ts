@@ -1,4 +1,3 @@
-import { configuredDescriptorSchema } from '../configuredStudySchemas'
 import { StudyError } from '../errors'
 import {
   nodeTestConfigSchema,
@@ -8,13 +7,7 @@ import type { RepositoryBookStore } from '../repositoryBook'
 import type { RepositorySourceService } from '../repositorySource'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
-import {
-  assertCitedSourceStops,
-  CitedStopMismatchError,
-} from './assertConfiguredDescriptor'
-import { citationContext } from './citationContext'
-import { describeCitedStopMismatch } from './describeCitedStopMismatch'
-import { describeMissingBookNode } from './describeMissingBookNode'
+import { pinCitedBookNode } from './pinCitedBookNode'
 import { requireNodeTestTitles } from './requireNodeTestTitles'
 
 /** Pins a Node test's checked source stops to the exact retained article revision before an owned test can launch. Called during Node profile preparation. @param input - Validated test and citation intent. @param books - Current workspace's retained articles. @param control - Shared cancellation and preparation deadline. @example await prepareNodeTestStudy(config, books, { signal, deadlineAt }) */
@@ -37,76 +30,13 @@ export async function prepareNodeTestStudy(
   const configuration = nodeTestConfigSchema.parse(input)
   // Refuse a retired or missing test identity before a history exists for this run.
   requireNodeTestTitles(configuration)
-  const selected = await books.readDefinition(
-    configuration.book.bookId,
-    configuration.book.revision,
+  const descriptor = await pinCitedBookNode(
+    configuration,
+    books,
+    control,
+    'Node test',
+    assertActive,
   )
-  assertActive()
-  const node = selected.revision.document.nodes.find(
-    (candidate) => candidate.id === configuration.book.nodeId,
-  )
-  if (!node)
-    throw new StudyError(
-      'BOOK_UNAVAILABLE',
-      describeMissingBookNode(
-        configuration.book,
-        selected.revision.document.nodes.map((candidate) => candidate.id),
-      ),
-    )
-  if (node.learningItemId !== undefined)
-    throw new StudyError(
-      'INVALID_CONFIGURATION',
-      'Node test book node must retain its default repository identity.',
-    )
-  const paths = new Set(node.anchors.map((anchor) => anchor.path))
-  const descriptor = configuredDescriptorSchema.parse({
-    itemId: `repository/${configuration.book.bookId}/${node.id}`,
-    bookTitle: selected.revision.document.title,
-    nodeTitle: node.title,
-    anchors: node.anchors,
-    citationContext: citationContext(node.anchors),
-    sources: selected.revision.sources.filter((source) =>
-      paths.has(source.path),
-    ),
-  })
-  const declaredStops = [
-    {
-      label: 'source',
-      source: configuration.source,
-      anchorIndex: configuration.book.anchorIndex,
-    },
-    ...(configuration.additionalStops ?? []).map((stop, index) => ({
-      label: `additionalStops[${index}]`,
-      source: stop,
-      anchorIndex: stop.anchorIndex,
-    })),
-  ]
-  try {
-    assertCitedSourceStops(descriptor, declaredStops)
-  } catch (error) {
-    const declared =
-      error instanceof CitedStopMismatchError
-        ? declaredStops[error.stopIndex]
-        : undefined
-    // Name the stop, its anchor and the failed condition, so the chat does not guess among them (inventory row 14, D17).
-    throw new StudyError(
-      'INVALID_CONFIGURATION',
-      error instanceof CitedStopMismatchError && declared
-        ? describeCitedStopMismatch(
-            declared.label,
-            error.mismatch,
-            declared.source,
-            declared.anchorIndex,
-            descriptor,
-          )
-        : 'Node test stops must identify exact positions in their retained citations.',
-      String(error),
-    )
-  }
-  const prepared = await books.sources.prepare(node.anchors, control)
-  await prepared.revalidate()
-  await prepared.verifyIdentities()
-  assertActive()
   return {
     configuration,
     configurationHash: sha256(JSON.stringify(configuration)),
