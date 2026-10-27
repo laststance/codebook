@@ -8,7 +8,6 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises'
-import { request as httpRequest } from 'node:http'
 import { connect, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -20,20 +19,26 @@ import {
   createOwnedNodeServerRun,
   type NodeServerRunDependencies,
 } from '../ownedNodeServerRun'
-import type { NodeServerResponse } from '../runtime'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { assertNodeServerPortFree } from '../utils/assertNodeServerPortFree'
 import { findPortOccupant } from '../utils/findPortOccupant'
+import { forgetNodeServerProcess } from '../utils/forgetNodeServerProcess'
 import { isProcessGroupGone } from '../utils/isProcessGroupGone'
 import { launchNodeServer } from '../utils/launchNodeServer'
+import { readNodeServerOrphanRecords } from '../utils/nodeServerOrphanRecords'
+import { readConnectionServerPid } from '../utils/readConnectionServerPid'
+import { readListeningPortsOfProcess } from '../utils/readListeningPortsOfProcess'
 import { readProcessStart } from '../utils/readProcessStart'
+import { rememberNodeServerProcess } from '../utils/rememberNodeServerProcess'
 import { resolveNodeServerLaunch } from '../utils/resolveNodeServerLaunch'
 import { resolveNodeServerStops } from '../utils/resolveNodeServerStops'
+import { sendDeclaredRequest } from '../utils/sendDeclaredRequest'
 import { signalProcessGroup } from '../utils/signalProcessGroup'
 import { REAL_DEADLINE_TIMERS } from '../utils/slotDeadline'
+import { verifyListenerOwnership } from '../utils/verifyListenerOwnership'
+import { waitForServerReadiness } from '../utils/waitForServerReadiness'
 
 import { createCdpNodeServerDebugger } from './utils/cdpNodeServerDebugger'
-import { defer } from './utils/defer'
 
 /** The test-only HTTP server as compiled beside this test; it never ships. */
 const FIXTURE_SERVER = join(__dirname, 'fixtures/node-server/server.js')
@@ -63,12 +68,12 @@ async function accepts(port: number): Promise<boolean> {
 }
 
 /**
- * The stand-ins for the readiness, listener and request utilities of the parallel part: minimal and test-local, to be replaced by the real utilities when the parts are integrated.
+ * The real readiness, listener, request and orphan-record utilities (part U), with orphan records kept in an in-memory store.
  * `giveUpMs` ends the readiness wait early for the not-listening test, which would otherwise wait the real 30 s of running time.
  */
-function standInUtilities(
+function realUtilities(
   giveUpMs: number,
-  serverPid: () => number | undefined,
+  orphanStore: Map<string, unknown>,
 ): Pick<
   NodeServerRunDependencies,
   | 'waitForReadiness'
@@ -79,80 +84,29 @@ function standInUtilities(
   | 'rememberProcess'
   | 'forgetProcess'
 > {
+  const store = {
+    get: (key: string) => orphanStore.get(key),
+    update: async (key: string, value: unknown): Promise<void> => {
+      orphanStore.set(key, value)
+    },
+  }
   return {
-    async waitForReadiness({ port, hasTimeLeft, signal }) {
+    waitForReadiness: (input) => {
       const startedAt = performance.now()
-      while (hasTimeLeft() && performance.now() - startedAt < giveUpMs) {
-        signal.throwIfAborted()
-        if (await accepts(port)) return { host: '127.0.0.1', bothAccept: false }
-        await new Promise((resolve) => setTimeout(resolve, 25))
-      }
-      return undefined
-    },
-    verifyListener: async () => ({ owned: true }),
-    readListeningPorts: async () => [],
-    readConnectionServerPid: async () => serverPid(),
-    sendRequest(input) {
-      const written = defer<void>()
-      const response = defer<NodeServerResponse>()
-      const startedAt = performance.now()
-      const outgoing = httpRequest({
-        host: input.host,
-        port: input.port,
-        path: input.request.path,
-        method: input.request.method,
-        agent: false,
-        signal: input.signal,
-        headers: {
-          host: `localhost:${input.port}`,
-          'x-codebook-run': input.runId,
-          'accept-encoding': 'identity',
-          connection: 'close',
-        },
+      return waitForServerReadiness({
+        ...input,
+        hasTimeLeft: () =>
+          input.hasTimeLeft() && performance.now() - startedAt < giveUpMs,
       })
-      // Nothing is written before the connected socket's server was verified.
-      outgoing.once('socket', (socket) =>
-        socket.once('connect', () => {
-          input
-            .verifyPeer({
-              localPort: socket.localPort ?? 0,
-              remotePort: socket.remotePort ?? 0,
-            })
-            .then(
-              () => {
-                outgoing.end()
-                written.resolve()
-              },
-              (error: unknown) => {
-                outgoing.destroy()
-                written.reject(error)
-                response.reject(error)
-              },
-            )
-        }),
-      )
-      outgoing.once('response', (incoming) => {
-        const chunks: Buffer[] = []
-        incoming.on('data', (chunk: Buffer) => chunks.push(chunk))
-        incoming.on('end', () => {
-          const body = Buffer.concat(chunks)
-          response.resolve({
-            status: incoming.statusCode ?? 0,
-            contentType: incoming.headers['content-type'],
-            body: body.toString('utf8'),
-            bodyBytes: body.length,
-            readCut: false,
-            elapsedMs: performance.now() - startedAt,
-          })
-        })
-      })
-      outgoing.once('error', (error) =>
-        response.reject(new StudyError('REQUEST_FAILED', error.message)),
-      )
-      return { written: written.promise, response: response.promise }
     },
-    rememberProcess: async () => undefined,
-    forgetProcess: async () => undefined,
+    verifyListener: verifyListenerOwnership,
+    readListeningPorts: (pid) => readListeningPortsOfProcess(pid),
+    readConnectionServerPid: (input) => readConnectionServerPid(input),
+    sendRequest: sendDeclaredRequest,
+    rememberProcess: (record): Promise<void> =>
+      rememberNodeServerProcess(store, record),
+    forgetProcess: (runId): Promise<void> =>
+      forgetNodeServerProcess(store, runId),
   }
 }
 
@@ -197,6 +151,7 @@ async function fixtureRun(
     additionalStops: undefined,
   }
   const events: Array<{ type: string; detail: unknown }> = []
+  const orphanStore = new Map<string, unknown>()
   let launchedPid: number | undefined
   const run = createOwnedNodeServerRun({
     workspace,
@@ -225,18 +180,20 @@ async function fixtureRun(
       isGroupGone: isProcessGroupGone,
       readProcessStart: (pid) => readProcessStart(pid),
       findPortOccupant,
-      ...standInUtilities(options.giveUpMs ?? 20_000, () => launchedPid),
+      ...realUtilities(options.giveUpMs ?? 20_000, orphanStore),
     },
   })
   // A failed test still ends the server it started.
   t.after(() => run.stop().catch(() => undefined))
-  return { run, port, events, workspace, pid: () => launchedPid }
+  return { run, port, events, workspace, orphanStore, pid: () => launchedPid }
 }
 
 // protects=the full loop against a real process: start, ready, the request pauses in the handler with a readable local, continue, the response, stop with the group and port freed; fails_when=any step of the loop fails or a process or the port is left; no_claim=the DAP binding and pwa-node attach (a direct inspector connection stands in)
 test('a real server runs the loop: ready, paused in its handler with a readable local, response observed, stopped with the port and group free', async (t) => {
   // Arrange
-  const { run, port, pid } = await fixtureRun(t, { mode: 'listen' })
+  const { run, port, pid, orphanStore } = await fixtureRun(t, {
+    mode: 'listen',
+  })
   // Act
   await run.prepare()
   const ready = run.view()
@@ -246,6 +203,10 @@ test('a real server runs the loop: ready, paused in its handler with a readable 
   await run.continue(paused.pause)
   const answered = await untilView(run, (view) => view.state === 'responded')
   const group = pid()!
+  const recordedWhileRunning = readNodeServerOrphanRecords({
+    get: (key) => orphanStore.get(key),
+    update: async () => undefined,
+  }).map((record) => record.pid)
   await run.stop()
   // Assert
   assert.equal(ready.state, 'ready')
@@ -257,6 +218,14 @@ test('a real server runs the loop: ready, paused in its handler with a readable 
   assert.equal(run.view().state, 'stopped')
   assert.equal(isProcessGroupGone(group), true)
   assert.equal(await accepts(port), false)
+  assert.deepEqual(recordedWhileRunning, [group])
+  assert.deepEqual(
+    readNodeServerOrphanRecords({
+      get: (key) => orphanStore.get(key),
+      update: async () => undefined,
+    }),
+    [],
+  )
 })
 
 // protects=D14 against a real process: stopping while paused in the handler kills the group first, so the handler's next line never runs; fails_when=the paused handler runs on (its log line appears) or the group or port stays; no_claim=a database write after the stop
