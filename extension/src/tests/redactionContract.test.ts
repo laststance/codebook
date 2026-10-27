@@ -16,6 +16,7 @@ import { inspectConfiguredValues } from '../utils/inspectConfiguredValues'
 import { inspectNodeTestVariables } from '../utils/inspectNodeTestVariables'
 import { isSecretName } from '../utils/isSecretName'
 import { launchNodeTest } from '../utils/launchNodeTest'
+import { redactInspectedValue } from '../utils/redactInspectedValue'
 import { redactSecretText } from '../utils/redactSecretText'
 import { redactValuePreview } from '../utils/redactValuePreview'
 import { sanitizeCause } from '../utils/sanitizeCause'
@@ -498,4 +499,43 @@ test('node test output masks a token the event split and the tail cut would have
     await owned.close()
     await rm(workspace, { recursive: true, force: true })
   }
+})
+
+// Value: protects=an inspected path is secret when any step names a secret, in dotted, bracketed, quoted and optional-chaining forms; fails_when=headers["authorization"], user?.password or items[0].token reads its value, or tokenCount/sessionId path is masked; why_new=existing rows inspect only dotted paths; seam=none; no_claim=other providers' paths (unit only)
+test('an inspected path through a bracket, quote or optional chain to a secret name reads [masked]', () => {
+  // Arrange
+  const secretPaths = [
+    'headers["authorization"]',
+    "headers['set-cookie']",
+    'user?.password',
+    'items[0].token',
+    'config.apiKey',
+  ]
+  const plainPaths = ['tokenCount', 'user.name', 'items[0].sessionId']
+  // Act
+  const secretReadings = secretPaths.map((path) =>
+    redactInspectedValue({ mode: 'value', path }, 'hunter2'),
+  )
+  const plainReadings = plainPaths.map((path) =>
+    redactInspectedValue({ mode: 'value', path }, 'hunter2'),
+  )
+  const typeReading = redactInspectedValue(
+    { mode: 'type', path: 'user.password' },
+    'string',
+  )
+  const credentialInNote = redactInspectedValue(
+    { mode: 'value', path: 'note' },
+    `see ${GITHUB_TOKEN}`,
+  )
+  // Assert
+  assert.deepEqual(
+    secretReadings,
+    secretPaths.map(() => '[masked]'),
+  )
+  assert.deepEqual(
+    plainReadings,
+    plainPaths.map(() => 'hunter2'),
+  )
+  assert.equal(typeReading, 'string')
+  assert.equal(credentialInNote, 'see [masked]')
 })
