@@ -440,3 +440,22 @@ test('capturing an owned pause returns its facts and source hash, and resuming c
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+// protects=a pause whose stack cannot be read is still reported, as a held pause without a declared stop; fails_when=the pause is swallowed so the run reads in-flight and a stop resumes the paused code; no_claim=a real adapter timeout
+test('a pause whose stack trace fails is reported as a pause that is no declared stop', async () => {
+  // Arrange
+  const editor = await editorHarness({ stackTraceFails: true })
+  const { debug, heard } = await armedDebugger(editor)
+  await debug.releaseEntry(AbortSignal.timeout(5_000))
+  // Act
+  editor.adapter.stop('breakpoint', [OWNED_IDS[0]!], {
+    file: STOP_FILE,
+    line: 14,
+  })
+  const pause = await heard.nextPause()
+  // Assert
+  assert.equal(pause.declaredStopIndex, undefined)
+  assert.equal(pause.reason, 'breakpoint')
+  assert.equal(pause.location, undefined)
+  await debug.release()
+})

@@ -47,6 +47,18 @@ export type HarnessOptions = {
   /** Replaces the readiness wait; it gets the run's input. */
   waitForReadiness?: NodeServerRunDependencies['waitForReadiness']
   listeningPorts?: number[]
+  /** The real debugger reports `onResume` when the editor's continue request is sent, before the adapter answers. */
+  resumeEmitsOnResume?: boolean
+  /** The adapter rejects the continue request. */
+  resumeFails?: Error
+  /** The request sender throws synchronously. */
+  sendThrows?: Error
+  /** Holds the answer of the port-occupant lookup until the test settles it. */
+  occupantGate?: Promise<void>
+  /** The server's last output, as it prints before it exits. */
+  serverOutput?: string
+  /** The pids that hold the server end of the request's connection; the launched server by default. */
+  connectionHolders?: number[]
   inspectorPort?: number
   /** The server ends the close call by hand: the test settles `closeGate`. */
   holdClose?: boolean
@@ -110,14 +122,20 @@ export class FakeNodeServerDebugger implements NodeServerDebugger {
       path: 'src/routes/users.ts',
       line: 14 + (pause.declaredStopIndex ?? 0),
       sourceHash: 'cited-hash',
-      facts: [{ path: 'user.id', mode: 'value', display: '7' }],
-      unavailable: [],
+      facts: [
+        { path: 'user.id', mode: 'value', display: '7' },
+        { path: 'user.id', mode: 'type', display: 'number' },
+      ],
+      unavailable: ['type:user.name'],
       snapshot: { version: 1, frames: [], variables: [], limitations: [] },
     }
   }
   async resume(pause: NodeServerDebuggerPause): Promise<void> {
     this.order.push(`resume:${pause.token}`)
+    if (this.options.resumeEmitsOnResume || this.options.resumeFails)
+      this.handlers?.onResume(pause.token)
     await this.resumeGate
+    if (this.options.resumeFails) throw this.options.resumeFails
     this.resumed.push(pause.token)
   }
   async retireStops(): Promise<void> {
@@ -206,35 +224,49 @@ export function fakeServer(
 }
 
 /** The request sender's stand-in: the test settles `written` and `response`. */
-export function fakeRequestSender(order: string[], serverPid: number) {
+export function fakeRequestSender(order: string[]) {
   const calls: Array<{ stateAtCall?: string; headers?: string }> = []
-  const written = defer<void>()
-  const response = defer<NodeServerResponse>()
+  let current = {
+    written: defer<void>(),
+    response: defer<NodeServerResponse>(),
+  }
   return {
     calls,
-    written,
-    response,
+    /** The answers of the latest request; each send makes new ones, so a retry is testable. */
+    get written() {
+      return current.written
+    },
+    get response() {
+      return current.response
+    },
     bytesWritten: 0,
     connection: { localPort: 50_000, remotePort: 4100 },
-    serverPid,
     send(
       input: Parameters<NodeServerRunDependencies['sendRequest']>[0],
       stateAtCall: string,
     ) {
       order.push('sendRequest')
       calls.push({ stateAtCall, headers: input.runId })
+      const answers = {
+        written: defer<void>(),
+        response: defer<NodeServerResponse>(),
+      }
+      current = answers
       // The sender verifies the connected socket before it writes a byte; a failure leaves zero bytes sent.
       void input.verifyPeer(this.connection).then(
         () => {
           this.bytesWritten += 1
-          written.resolve()
+          answers.written.resolve()
         },
         (error: unknown) => {
-          written.reject(error)
-          response.reject(error)
+          answers.written.reject(error)
+          answers.response.reject(error)
         },
       )
-      return { written: written.promise, response: response.promise }
+      return {
+        written: answers.written.promise,
+        response: answers.response.promise,
+      }
     },
   }
 }
@@ -293,10 +325,10 @@ export function createHarness(options: HarnessOptions = {}) {
   const clock = createManualClock()
   const port = options.port ?? uniquePort()
   const serverState: { exit?: NodeServerExit; output: string } = {
-    output: 'server log line\n',
+    output: options.serverOutput ?? 'server log line\n',
   }
   const server = fakeServer(order, options, serverState)
-  const sender = fakeRequestSender(order, server.pid)
+  const sender = fakeRequestSender(order)
   const calls = {
     launch: 0,
     remembered: [] as Array<
@@ -310,7 +342,10 @@ export function createHarness(options: HarnessOptions = {}) {
   }
   const debuggers: FakeNodeServerDebugger[] = []
   /** Hands the server's output to the run, as the launcher does. */
-  let emitServerOutput: (text: string) => Promise<void> = async () => undefined
+  let emitServerOutput: (
+    text: string,
+    channel?: 'stdout' | 'stderr',
+  ) => Promise<void> = async () => undefined
   /** Settles when the run starts waiting for readiness. */
   const readinessStarted = defer<void>()
   const stopTargets = (stops: 1 | 2) =>
@@ -357,11 +392,11 @@ export function createHarness(options: HarnessOptions = {}) {
     launch: async (_launch, _record, onOutput) => {
       order.push('launch')
       calls.launch += 1
-      emitServerOutput = async (text) =>
+      emitServerOutput = async (text, channel = 'stdout') =>
         void (await onOutput?.({
           sequence: 1,
           elapsedMs: 5,
-          channel: 'stdout',
+          channel,
           text,
         }))
       await emitServerOutput('server log line\n')
@@ -373,7 +408,10 @@ export function createHarness(options: HarnessOptions = {}) {
     },
     isGroupGone: () => options.groupGone ?? false,
     readProcessStart: async () => 'start-1',
-    findPortOccupant: async () => options.occupant,
+    findPortOccupant: async () => {
+      await options.occupantGate
+      return options.occupant
+    },
     waitForReadiness: async (input) => {
       order.push('waitForReadiness')
       calls.readiness.push(input)
@@ -386,8 +424,12 @@ export function createHarness(options: HarnessOptions = {}) {
       return options.listener ?? { owned: true }
     },
     readListeningPorts: async () => options.listeningPorts ?? [],
-    readConnectionServerPid: async () => sender.serverPid,
-    sendRequest: (input) => sender.send(input, runtime.view().state),
+    readConnectionServerPid: async () =>
+      options.connectionHolders ?? [server.pid],
+    sendRequest: (input) => {
+      if (options.sendThrows) throw options.sendThrows
+      return sender.send(input, runtime.view().state)
+    },
     rememberProcess: async (record) => {
       order.push('rememberProcess')
       calls.remembered.push(record)
@@ -397,11 +439,21 @@ export function createHarness(options: HarnessOptions = {}) {
       calls.forgotten.push(runId)
     },
   }
+  /** One promise per event type, settled when the type was journaled. */
+  const seen = new Map<string, ReturnType<typeof defer<void>>>()
   const citedSources: ConfiguredDescriptor['sources'] = []
   const runtime: NodeServerRuntime = createOwnedNodeServerRun({
     workspace: WORKSPACE,
     configuration: declaration(port, options.stops ?? 1),
-    record: (type, detail) => events.push({ type, detail }),
+    record: (type, detail) => {
+      events.push({ type, detail })
+      seen.get(type)?.resolve()
+      if (!seen.has(type)) {
+        const settled = defer<void>()
+        settled.resolve()
+        seen.set(type, settled)
+      }
+    },
     citedSources,
     runId: 'run-1',
     dependencies,
@@ -415,7 +467,12 @@ export function createHarness(options: HarnessOptions = {}) {
     server,
     sender,
     calls,
-    emitOutput: (text: string): Promise<void> => emitServerOutput(text),
+    emitOutput: (text: string, channel?: 'stdout' | 'stderr'): Promise<void> =>
+      emitServerOutput(text, channel),
+    /** Settles when the run journals an event of this type (it may already have). */
+    eventSeen: (type: string): Promise<void> =>
+      seen.get(type)?.promise ??
+      (seen.set(type, defer<void>()), seen.get(type)!.promise),
     readinessStarted: readinessStarted.promise,
     debuggers,
     get debug(): FakeNodeServerDebugger {

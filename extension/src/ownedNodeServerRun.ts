@@ -97,7 +97,7 @@ export type NodeServerRunDependencies = {
   readConnectionServerPid(input: {
     clientPort: number
     serverPort: number
-  }): Promise<number | undefined>
+  }): Promise<number[]>
   sendRequest(input: {
     host: '127.0.0.1' | '::1'
     port: number
@@ -164,11 +164,12 @@ function toCapture(
     path: read.path,
     line: read.line,
     sourceHash: read.sourceHash,
+    // Keyed by mode and path (`value:user.id`, `type:user.id`), as the other profiles' captures are, so both kinds of one path stay.
     facts: Object.fromEntries(
-      read.facts.map((fact) => [fact.path, fact.display]),
+      read.facts.map((fact) => [`${fact.mode}:${fact.path}`, fact.display]),
     ),
     unavailable: read.unavailable.map((required) => ({
-      path: required.slice(required.indexOf(':') + 1),
+      path: required,
       reason: 'The debugger could not read this required value at the stop.',
     })),
     snapshot: read.snapshot,
@@ -350,7 +351,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       return error
     const server = this.server
     const exit = server && (server.exited() ?? (await this.settledExit()))
-    if (server && exit) return serverExitedError(exit, server.output())
+    if (server && exit)
+      return serverExitedError(exit, server.output(), this.input.workspace)
     return error instanceof StudyError
       ? error
       : stepFailedError('preparing', error, this.input.workspace)
@@ -398,7 +400,6 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     ])
     const debug = this.debugger()
     await this.attachAndArm(server, launched.packageRoot, stops, attachSignal)
-    await this.rememberLaunchedProcess(server, launched.packageRoot)
     this.readiness.start()
     await this.step('releasing the server', () => debug.releaseEntry(signal))
     await this.becomeReady(server)
@@ -470,21 +471,42 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     return { pid, processGroup }
   }
 
-  /** Journals one chunk of the server's output; Node's notice that only the debugger keeps a finished program alive lets the run's debugger go, so the exit follows and is reported as one. */
-  private onServerOutput(event: ProcessOutputEvent): Promise<void> {
+  /**
+   * Journals one chunk of the server's output. Node's own notice on stderr that only the attached debugger keeps a finished program alive lets the run's debugger go, so the exit follows and is reported as one.
+   * The notice must be a line of stderr by itself, outside the request, and the process must listen on nothing but its inspector: output an application logs (stdout, a request's body, a database value) never counts.
+   * @param event - The stamped chunk.
+   */
+  private async onServerOutput(event: ProcessOutputEvent): Promise<void> {
     if (
-      event.text.includes(NODE_SERVER_DEBUGGER_DISCONNECT_NOTICE) &&
-      this.lifecycle === 'live'
+      event.channel === 'stderr' &&
+      this.lifecycle === 'live' &&
+      !this.inRequestWindow() &&
+      event.text
+        .split('\n')
+        .some(
+          (line) =>
+            line.trim().replace(/\.+$/, '') ===
+            NODE_SERVER_DEBUGGER_DISCONNECT_NOTICE,
+        )
     )
-      this.debug?.release().catch(() => undefined)
-    return Promise.resolve(
-      this.record('node-server.output', {
-        sequence: event.sequence,
-        elapsedMs: event.elapsedMs,
-        channel: event.channel,
-        text: event.text,
-      }),
-    ).then(() => undefined)
+      await this.releaseFinishedServer()
+    this.record('node-server.output', {
+      sequence: event.sequence,
+      elapsedMs: event.elapsedMs,
+      channel: event.channel,
+      text: event.text,
+    })
+  }
+
+  /** Lets the debugger go of a server that printed Node's notice, when it is really finished: it listens on nothing but its inspector. A lookup that cannot answer lets nothing go. */
+  private async releaseFinishedServer(): Promise<void> {
+    const pid = this.server?.pid
+    if (pid === undefined) return
+    const ports = await this.dependencies
+      .readListeningPorts(pid)
+      .catch(() => undefined)
+    if (!ports || ports.some((port) => port !== this.inspectorPort)) return
+    await this.debug?.release().catch(() => undefined)
   }
 
   /** Attaches the debugger, verifies the inspector, listens to its pauses and arms every declared stop. */
@@ -500,6 +522,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       server.inspectorEndpoint(signal),
     )
     this.inspectorPort = Number(new URL(endpoint).port)
+    // The record is written before the attach, while the server waits paused: a window that dies now leaves a record the next activation reaps.
+    await this.rememberLaunchedProcess(server, packageRoot)
     await this.step('attaching the debugger', () =>
       debug.attach({ endpoint, packageRoot, pid, processGroup, signal }),
     )
@@ -584,7 +608,11 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       exited.then((exit) => ({ exit })),
     ])
     if (outcome && 'exit' in outcome)
-      throw serverExitedError(outcome.exit, server.output())
+      throw serverExitedError(
+        outcome.exit,
+        server.output(),
+        this.input.workspace,
+      )
     if (outcome) return outcome
     if (this.runFailure) throw this.runFailure
     throw serverNotListeningError(port, await this.listeningElsewhere(server))
@@ -609,7 +637,9 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   /** The server exited by itself (or its debug session ended): before readiness the preparation reports it, afterwards it is the run's failure. */
   private onServerExit(exit: NodeServerExit): void {
     if (this.lifecycle !== 'live' || !this.prepared || !this.server) return
-    this.failRun(serverExitedError(exit, this.server.output()))
+    this.failRun(
+      serverExitedError(exit, this.server.output(), this.input.workspace),
+    )
   }
 
   /** The debug session ended while the run lived: an exit of the server explains it, else the session was ended from outside. */
@@ -846,6 +876,13 @@ class OwnedNodeServerRun implements NodeServerRuntime {
 
   /** The paused thread ran on (the debugger's `onResume`): Codebook's own resume is its own business, a learner's Continue is journaled and the state returns to what it was. */
   private onDebuggerResume(token: number): void {
+    // Codebook's own resume under way: continue() settles the pause when the adapter answers, or restores it when the adapter fails.
+    if (
+      this.reservedGeneration !== undefined &&
+      this.pause?.token === token &&
+      this.ownResumes.has(token)
+    )
+      return
     const ownResume = this.ownResumes.delete(token)
     const wasHeld = this.endHold(token)
     const declaredStopIndex = this.ownedHits.get(token)
@@ -928,14 +965,26 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     const declared = this.input.configuration.request
     const token = ++this.requestToken
     this.openRequestWindow(key, host, port, declared)
-    const handle = this.dependencies.sendRequest({
-      host,
-      port,
-      request: declared,
-      runId: this.input.runId,
-      verifyPeer: (connection) => this.verifyPeer(connection, server, port),
-      signal: this.requestAbort.signal,
-    })
+    let handle: ReturnType<NodeServerRunDependencies['sendRequest']>
+    try {
+      handle = this.dependencies.sendRequest({
+        host,
+        port,
+        request: declared,
+        runId: this.input.runId,
+        verifyPeer: (connection) => this.verifyPeer(connection, server, port),
+        signal: this.requestAbort.signal,
+      })
+    } catch (error) {
+      // The sender never started: the window closes and the request may be tried again.
+      this.closeRequestWindow(token)
+      throw error instanceof StudyError
+        ? error
+        : new StudyError(
+            'REQUEST_FAILED',
+            `The request could not be started: ${sanitizeRunCause(error, this.input.workspace)}`,
+          )
+    }
     handle.response.then(
       (response) => this.onResponse(response, token),
       (error: unknown) => void this.onRequestError(error, token),
@@ -943,6 +992,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     try {
       await handle.written
     } catch (error) {
+      // Any other failure is reported by the response promise, which rejects with it too.
       // A listener that is not the server: nothing was sent, and the request may be tried again.
       if (
         error instanceof StudyError &&
@@ -1004,19 +1054,21 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     server: OwnedNodeServer,
     port: number,
   ): Promise<void> {
-    const pid = await this.dependencies.readConnectionServerPid({
+    const holders = await this.dependencies.readConnectionServerPid({
       clientPort: connection.localPort,
       serverPort: connection.remotePort,
     })
-    if (pid === undefined)
+    if (holders.length === 0)
       throw new StudyError(
         'PORT_OWNER_UNKNOWN',
         `Codebook could not read which process answers on port ${port}, so it sent nothing.`,
       )
-    if (pid !== server.pid)
+    // Exactly the launched server may hold the connection's server end; a socket it shares with another process does not pass.
+    const others = holders.filter((pid) => pid !== server.pid)
+    if (others.length > 0)
       throw new StudyError(
         'LISTENER_NOT_OWNED',
-        `Process ${pid} answers on port ${port}, not the server Codebook started (process ${server.pid}); nothing was sent.`,
+        `Process ${others.join(', ')} answers on port ${port}, not the server Codebook started alone (process ${server.pid}); nothing was sent.`,
       )
   }
 
@@ -1154,6 +1206,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     this.heldPauses.clear()
     this.record('node-server.stopped', { pid: this.server?.pid })
     this.notify()
+    // Reported apart: a slow lookup never delays or fails a complete stop.
+    void this.reportForeignListener().catch(() => undefined)
   }
 
   /** Lets a preparation under way unwind (it was aborted at admission), then releases what it started. */
@@ -1221,14 +1275,13 @@ class OwnedNodeServerRun implements NodeServerRuntime {
         }),
       )
     if (claim) releaseOwnedDevelopmentPort(claim)
-    await this.reportForeignListener()
   }
 
-  /** D14: a server paused inside the request, or whose pause hold expired, is killed before its debugger lets go. */
+  /** D14: a server paused at a declared stop (inside the request or outside it), paused by the learner inside the request, or whose pause hold expired, is killed before its debugger lets go. */
   private mustKillFirst(): boolean {
-    return (
-      this.holdExpired || (this.nativeHolds.size > 0 && this.inRequestWindow())
-    )
+    if (this.holdExpired) return true
+    if (this.nativeHolds.size === 0) return false
+    return this.ownedHits.size > 0 || this.inRequestWindow()
   }
 
   /** Reports a process that holds the declared port after the owned cleanup, apart from the stop's outcome. */

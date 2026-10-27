@@ -8,18 +8,19 @@ import { splitListenerAddress } from './splitListenerAddress'
 type ConnectionEnds = { clientPort: number; serverPort: number }
 
 /**
- * Finds the pid on the server end in `lsof -Fpn` output: a `p<pid>` line opens a process, an `n<local>-><remote>` line is one of its connections.
+ * Finds every pid on the server end in `lsof -Fpn` output: a `p<pid>` line opens a process, an `n<local>-><remote>` line is one of its connections.
  * @param stdout - What `lsof` printed.
  * @param ends - The connection's ports.
  * @param ownPid - This process's pid, never the server end.
- * @returns The pid, or `undefined` when no line has the server port as local and the client port as remote.
- * @example findInLsof('p77\nn127.0.0.1:4100->127.0.0.1:55000\n', { clientPort: 55000, serverPort: 4100 }, 1) // => 77
+ * @returns The distinct pids in order of appearance; empty when no line has the server port as local and the client port as remote.
+ * @example findInLsof('p77\nn127.0.0.1:4100->127.0.0.1:55000\n', { clientPort: 55000, serverPort: 4100 }, 1) // => [77]
  */
 function findInLsof(
   stdout: string,
   ends: ConnectionEnds,
   ownPid: number,
-): number | undefined {
+): number[] {
+  const holders = new Set<number>()
   let pid: number | undefined
   for (const line of stdout.split('\n')) {
     if (line.startsWith('p')) pid = Number(line.slice(1))
@@ -31,24 +32,25 @@ function findInLsof(
       splitListenerAddress(local)?.port === ends.serverPort &&
       splitListenerAddress(remote)?.port === ends.clientPort
     )
-      return pid
+      holders.add(pid)
   }
-  return undefined
+  return [...holders]
 }
 
 /**
- * Finds the pid on the server end in `ss -Htnp state established` output: columns Recv-Q, Send-Q, local, peer, then `users:(("node",pid=1,fd=3))`.
+ * Finds every pid on the server end in `ss -Htnp state established` output: columns Recv-Q, Send-Q, local, peer, then `users:(("node",pid=1,fd=3))`.
  * @param stdout - What `ss` printed.
  * @param ends - The connection's ports.
  * @param ownPid - This process's pid, never the server end.
- * @returns The first other pid, or `undefined`.
- * @example findInSs('0 0 127.0.0.1:4100 127.0.0.1:55000 users:(("node",pid=77,fd=3))\n', { clientPort: 55000, serverPort: 4100 }, 1) // => 77
+ * @returns The distinct other pids in order of appearance; empty when none.
+ * @example findInSs('0 0 127.0.0.1:4100 127.0.0.1:55000 users:(("node",pid=77,fd=3))\n', { clientPort: 55000, serverPort: 4100 }, 1) // => [77]
  */
 function findInSs(
   stdout: string,
   ends: ConnectionEnds,
   ownPid: number,
-): number | undefined {
+): number[] {
+  const holders = new Set<number>()
   for (const line of stdout.split('\n')) {
     const columns = line.trim().split(/\s+/)
     const local = columns[2]
@@ -61,32 +63,44 @@ function findInSs(
     )
       continue
     for (const match of line.matchAll(/pid=(\d+)/g))
-      if (Number(match[1]) !== ownPid) return Number(match[1])
+      if (Number(match[1]) !== ownPid) holders.add(Number(match[1]))
   }
-  return undefined
+  return [...holders]
 }
 
 /**
- * Reads which process holds the server end of an established loopback connection, so that the request sender can check, before writing a byte, that the peer is the launched server and not another process that took the port.
+ * Reads which processes hold the server end of an established loopback connection, so that the request sender can check, before writing a byte, that the peer is the launched server alone and not another process that took the port or shares the socket.
  * Called through the `verifyPeer` of {@link sendDeclaredRequest} by the node-server run, once the request's socket is connected.
  * @param input - The connection's client port (this process's end) and server port (the declared port).
  * @param inputs - The tool lookup and the runner ({@link ListenerToolQueryInputs}); the real ones when left out.
- * @returns The pid of the process holding the server end, never this process's own; `undefined` when it is unreadable (no tool, timeout, no matching line).
+ * @returns The distinct pids of the processes holding the server end, never this process's own; empty when it is unreadable (no tool, timeout, no matching line).
  * @example
- * await readConnectionServerPid({ clientPort: 55000, serverPort: 4100 }) // => 48633
+ * await readConnectionServerPid({ clientPort: 55000, serverPort: 4100 }) // => [48633]
  */
 export async function readConnectionServerPid(
   input: ConnectionEnds,
   inputs: ListenerToolQueryInputs = {},
-): Promise<number | undefined> {
+): Promise<number[]> {
   const answer = await queryListenerTool(
     (kind) =>
       kind === 'lsof'
         ? ['-nP', `-iTCP:${input.clientPort}`, '-sTCP:ESTABLISHED', '-Fpn']
-        : ['-H', '-t', '-n', '-p', 'state', 'established'],
+        : [
+            '-H',
+            '-t',
+            '-n',
+            '-p',
+            'state',
+            'established',
+            '(',
+            'sport',
+            '=',
+            `:${input.serverPort}`,
+            ')',
+          ],
     inputs,
   )
-  if (!answer) return undefined
+  if (!answer) return []
   return answer.kind === 'lsof'
     ? findInLsof(answer.stdout, input, process.pid)
     : findInSs(answer.stdout, input, process.pid)

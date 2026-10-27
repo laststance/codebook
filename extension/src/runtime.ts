@@ -76,9 +76,9 @@ export type NodeServerCapture = {
   line: number
   /** SHA-256 of the executed source file's text at the hit. */
   sourceHash: string
-  /** The declared inspections' values by inspection path, redacted ({@link redactInspectedValue}). */
+  /** The declared inspections' values by `<mode>:<path>` (`value:user.id`, `type:user.id`), redacted ({@link redactInspectedValue}). */
   facts: Record<string, unknown>
-  /** Declared inspections the debugger could not read, each with its reason. */
+  /** Declared inspections the debugger could not read, each as `<mode>:<path>` with its reason. */
   unavailable: Array<{ path: string; reason: string }>
   /** The redacted debugger snapshot (frames, scopes, variables) of the hit. */
   snapshot?: ReplayDebugSnapshot

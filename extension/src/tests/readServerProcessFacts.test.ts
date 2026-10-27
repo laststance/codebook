@@ -70,7 +70,7 @@ test('the pid holding the server end of a real established connection is the fix
     serverPort: server.port,
   })
   // Assert
-  assert.equal(serverPid, server.pid)
+  assert.deepEqual(serverPid, [server.pid])
 })
 
 // protects=the lsof parser picks the server end not the client end; fails_when=the client line wins; no_claim=real lsof timing
@@ -85,7 +85,7 @@ test('lsof output with both ends of a connection yields the server end only', as
     { findTool: async () => LSOF, run: answering(stdout) },
   )
   // Assert
-  assert.equal(serverPid, 77)
+  assert.deepEqual(serverPid, [77])
 })
 
 // protects=ss output yields the server end; fails_when=the ss parser misses the users column; no_claim=real ss
@@ -99,11 +99,11 @@ test('ss output for an established connection yields the process on the server p
     { findTool: async () => SS, run: answering(stdout) },
   )
   // Assert
-  assert.equal(serverPid, 77)
+  assert.deepEqual(serverPid, [77])
 })
 
-// protects=an unreadable connection is undefined never a guess; fails_when=a failed tool returns a pid; no_claim=none
-test('an unreadable connection owner is undefined', async () => {
+// protects=an unreadable connection has no holder never a guess; fails_when=a failed tool returns a pid; no_claim=none
+test('an unreadable connection owner is no holder', async () => {
   // Arrange / Act
   const serverPid = await readConnectionServerPid(
     { clientPort: 55000, serverPort: 4100 },
@@ -115,7 +115,7 @@ test('an unreadable connection owner is undefined', async () => {
     },
   )
   // Assert
-  assert.equal(serverPid, undefined)
+  assert.deepEqual(serverPid, [])
 })
 
 // protects=the orphan sweep's folder match uses the process's real folder; fails_when=the folder of another process or an unresolved link is returned; no_claim=Windows
@@ -126,4 +126,54 @@ test('the working folder of a real server process is its realpath', async (t) =>
   const folder = await readProcessCwd(server.pid)
   // Assert
   assert.equal(folder, server.workspace)
+})
+
+// protects=every distinct process holding the server end is returned, so a shared socket cannot pass as one process; fails_when=only the first holder is returned or a duplicate pid repeats; no_claim=real forked servers
+test('several processes sharing the server end of a connection are all returned once', async () => {
+  // Arrange
+  const stdout =
+    `p${process.pid}\nn127.0.0.1:55000->127.0.0.1:4100\n` +
+    'p77\nn127.0.0.1:4100->127.0.0.1:55000\n' +
+    'p78\nn127.0.0.1:4100->127.0.0.1:55000\n' +
+    'p78\nn127.0.0.1:4100->127.0.0.1:55000\n'
+  // Act
+  const holders = await readConnectionServerPid(
+    { clientPort: 55000, serverPort: 4100 },
+    { findTool: async () => LSOF, run: answering(stdout) },
+  )
+  // Assert
+  assert.deepEqual(holders, [77, 78])
+})
+
+// protects=the ss query is limited to the server port, so a busy host cannot overflow its output bound; fails_when=ss lists every established connection; no_claim=real ss output
+test('the ss query for a connection filters by the server port', async () => {
+  // Arrange
+  const queries: string[][] = []
+  // Act
+  await readConnectionServerPid(
+    { clientPort: 55000, serverPort: 4100 },
+    {
+      findTool: async () => SS,
+      run: async (_file, queryArguments) => {
+        queries.push(queryArguments)
+        return { stdout: '' }
+      },
+    },
+  )
+  // Assert
+  assert.deepEqual(queries, [
+    [
+      '-H',
+      '-t',
+      '-n',
+      '-p',
+      'state',
+      'established',
+      '(',
+      'sport',
+      '=',
+      ':4100',
+      ')',
+    ],
+  ])
 })

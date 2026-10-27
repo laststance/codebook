@@ -388,24 +388,47 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
       })
   }
 
+  /**
+   * Reads the paused stack of a stop. A stack that cannot be read leaves an empty one: the pause is then reported as a pause that is no declared stop, so the run holds it and never lets a stop resume code it could not classify.
+   * @param session - The bound session.
+   * @param stop - The adapter's stop.
+   * @returns The stack, or an empty one when the adapter failed to answer.
+   */
+  private async readStack(
+    session: vscode.DebugSession,
+    stop: NativeStop,
+  ): Promise<StackBody> {
+    try {
+      return (await awaitResponse(
+        session.customRequest('stackTrace', {
+          threadId: stop.threadId,
+          startFrame: 0,
+          levels: NODE_REPLAY_DEBUG_MAX_FRAMES,
+        }),
+        'the paused stack',
+        this.abort.signal,
+      )) as StackBody
+    } catch (error) {
+      this.input.record('node-server.debugger-error', {
+        message: error instanceof Error ? error.message : String(error),
+      })
+      return { stackFrames: [] }
+    }
+  }
+
   private async classifyAndReport(stop: NativeStop): Promise<void> {
     const session = this.active.get(stop.sessionId)
     // Only the bound session's pauses are the run's; a child session's stop is not reported.
     if (!session || this.releaseBegun || session.id !== this.bound?.session.id)
       return
-    const trace = (await awaitResponse(
-      session.customRequest('stackTrace', {
-        threadId: stop.threadId,
-        startFrame: 0,
-        levels: NODE_REPLAY_DEBUG_MAX_FRAMES,
-      }),
-      'the paused stack',
-      this.abort.signal,
-    )) as StackBody
+    const trace = await this.readStack(session, stop)
     // A thread that ran on while its stack was read is no pause any more.
     if (!this.pausedSessions.has(stop.sessionId)) return
     const frame = trace.stackFrames[0]
-    const declaredStopIndex = this.ownedHitIndexOf(stop, session, frame)
+    // Without a readable top frame the hit cannot be verified, so it is no declared stop.
+    const declaredStopIndex = frame
+      ? this.ownedHitIndexOf(stop, session, frame)
+      : undefined
     // Inside the request's window an owned hit is Codebook's stop; every other stop stays the learner's.
     codebookStopLedger.recordStop(
       session.id,
