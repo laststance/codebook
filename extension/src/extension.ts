@@ -60,6 +60,7 @@ import {
   WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON,
   OPEN_LEARNING_REPLAY_COMMAND,
   SAVE_LEARNING_REPLAY_COMMAND,
+  NODE_SERVER_SHUTDOWN_GRACE_MS,
 } from './constants'
 import {
   deployCursorSkill,
@@ -111,6 +112,7 @@ import { describeBrokenWikiWatch } from './utils/describeBrokenWikiWatch'
 import { describeExistingWiki } from './utils/describeExistingWiki'
 import { describeJoinedWikiStart } from './utils/describeJoinedWikiStart'
 import { describeMissingWiki } from './utils/describeMissingWiki'
+import type { NodeServerOutputLine } from './utils/describeNodeServerOutputLine'
 import { describeOtherWikiWindow } from './utils/describeOtherWikiWindow'
 import {
   describeSecondWikiUpdateStart,
@@ -151,6 +153,7 @@ import { readWikiFileToOpen } from './utils/readWikiFileToOpen'
 import { readWikiPublicationIdentity } from './utils/readWikiPublicationIdentity'
 import { readWikiPublishToken } from './utils/readWikiPublishToken'
 import { readWikiWatchStamp } from './utils/readWikiWatchStamp'
+import { reapNodeServerOrphans } from './utils/reapNodeServerOrphans'
 import {
   captureOwnedCursorMcpCatalogGeneration,
   refreshCursorMcpCatalog,
@@ -272,6 +275,15 @@ export function activate(
         // A disposed channel has nowhere to write; the failure is already in the run's own answer.
       }
     },
+    // The plain request, response and failure lines of a node-server run (D10); a disposed channel has nowhere to write.
+    line: (line: NodeServerOutputLine): void => {
+      try {
+        if (line.level === 'error') output?.error(line.text)
+        else output?.info(line.text)
+      } catch {
+        // The line is also in the run's events.
+      }
+    },
     show: (): void => {
       try {
         output?.show(true)
@@ -280,6 +292,13 @@ export function activate(
       }
     },
   }
+  // A node-server run's server outlives a window that closed or crashed before its stop: its recorded group is closed once here, only while its leader still has the recorded start and folder (TD-7); a host without workspace storage has none to read.
+  if (context.workspaceState)
+    void reapNodeServerOrphans({
+      store: context.workspaceState,
+      graceMs: NODE_SERVER_SHUTDOWN_GRACE_MS,
+      log: (text) => diagnostics.line({ level: 'info', text }),
+    }).catch(() => undefined)
   const isCursorHost =
     vscode.env?.appName?.toLowerCase().includes('cursor') ?? false
   /** The editor host as the LLM Wiki code names it ({@link WikiUpdateHost}). */
@@ -602,6 +621,7 @@ export function activate(
         const storageRoot = await realpath(directory)
         service = new StudyService(environment, storageRoot)
         service.diagnostics = diagnostics.log
+        service.outputLog = diagnostics.line
         // Every storage folder of the extension stays out of the causes the learner and the agent read (EN12).
         service.extraStorageRoots = [context.globalStorageUri.fsPath]
         await workspace().attach(service)

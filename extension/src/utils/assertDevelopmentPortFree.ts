@@ -12,6 +12,7 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import {
   isOwnedDevelopmentPortReleasing,
   ownedDevelopmentPortState,
+  type OwnedDevelopmentPortState,
 } from './ownedDevelopmentPorts'
 import type { DeclaredDevelopmentPort } from './readDeclaredDevelopmentPort'
 
@@ -28,6 +29,16 @@ export type BindProbe = (
 
 /** What one look at a port found. */
 type PortState = 'free' | 'in-use' | 'not-permitted'
+
+/** Why a port cannot be used, for a caller that words the refusal itself ({@link PortCheckOptions.refuse}). */
+export type PortRefusal = {
+  port: number
+  reason: 'in-use' | 'not-permitted' | 'held-by-codebook' | 'unreadable'
+  /** For `held-by-codebook`: whether the earlier run still runs or is stopping. */
+  heldBy?: OwnedDevelopmentPortState
+  /** For `unreadable`: the operating system's error code of the bind probe. */
+  errorCode?: string
+}
 
 /**
  * Asks whether something accepts a TCP connection on one loopback address.
@@ -91,6 +102,7 @@ async function lookAtPort(
   connect: ConnectLoopback,
   bind: BindProbe,
   signal?: AbortSignal,
+  refuse?: PortCheckOptions['refuse'],
 ): Promise<PortState> {
   if (
     (await isListeningAt(connect, '127.0.0.1', port, signal)) ||
@@ -107,11 +119,63 @@ async function lookAtPort(
   const code = /^[A-Z0-9_]{1,32}$/.test(failure.code ?? '')
     ? failure.code
     : 'unknown error'
+  if (refuse)
+    throw await refuse({ port, reason: 'unreadable', errorCode: code })
   throw new StudyError(
     'PREREQUISITE_MISSING',
     `Codebook could not check whether port ${port} is free (${code}), and the project declares it, so Codebook never starts the app on another port. Ask the learner to resolve the network problem on this machine or to declare another port for the project, then start again.`,
     `bind ${code} on 127.0.0.1:${port}`,
   )
+}
+
+/**
+ * Waits, within the release budget, for a Codebook run that is stopping to let go of a port, looking at the port again on each poll.
+ * @param port - The declared port.
+ * @param first - What the first look found.
+ * @param look - Looks at the port once.
+ * @param options - The release wait and the run's cancellation.
+ * @returns The last look; a wait that ran out of budget is not an error here, the caller refuses on what was last seen.
+ * @example await waitForOwnedRelease(3165, 'in-use', look, {}) // => 'free' once the earlier run has released it
+ */
+async function waitForOwnedRelease(
+  port: number,
+  first: PortState,
+  look: () => Promise<PortState>,
+  options: PortCheckOptions,
+): Promise<PortState> {
+  const latest: { state: PortState } = { state: first }
+  await waitUntil(
+    async () => {
+      latest.state = await look()
+      return !isOwnedDevelopmentPortReleasing(port) && latest.state !== 'in-use'
+    },
+    `port ${port} released by Codebook's earlier run`,
+    options.releaseWaitMs ?? DEVELOPMENT_PORT_RELEASE_WAIT_MS,
+    options.signal,
+    DEVELOPMENT_PORT_RELEASE_POLL_MS,
+  ).catch((error: unknown) => {
+    // Only the end of the budget is expected; a cancel or a probe failure surfaces.
+    if (!(error instanceof WaitTimeoutError)) throw error
+  })
+  return latest.state
+}
+
+/**
+ * Names why a port that is not free cannot be used, for a caller that words the refusal itself.
+ * @param port - The declared port.
+ * @param state - What the last look found.
+ * @param owned - Whether a Codebook run holds the port, and in which state.
+ * @returns The reason: not permitted, in use by someone else, or held by a Codebook run.
+ * @example refusalOf(3165, 'in-use', undefined) // => { port: 3165, reason: 'in-use' }
+ */
+function refusalOf(
+  port: number,
+  state: PortState,
+  owned: OwnedDevelopmentPortState | undefined,
+): PortRefusal {
+  if (state === 'not-permitted') return { port, reason: 'not-permitted' }
+  if (owned === undefined) return { port, reason: 'in-use' }
+  return { port, reason: 'held-by-codebook', heldBy: owned }
 }
 
 /** Test seams of {@link assertDevelopmentPortFree}; production passes none. */
@@ -122,6 +186,8 @@ export type PortCheckOptions = {
   releaseWaitMs?: number
   /** Ends the wait for a stopping run when the run is cancelled. */
   signal?: AbortSignal
+  /** Words the refusal in place of the Next wording and error code, as the node-server run does with `PORT_UNAVAILABLE`; the check itself is the same. */
+  refuse?: (refusal: PortRefusal) => StudyError | Promise<StudyError>
 }
 
 /**
@@ -133,7 +199,7 @@ export type PortCheckOptions = {
  * A port that Codebook's own earlier run is still releasing is waited for within {@link DEVELOPMENT_PORT_RELEASE_WAIT_MS}; if it stays busy the refusal names that run, not the learner's dev server.
  *
  * @param declared - The port and where it was declared ({@link readDeclaredDevelopmentPort}).
- * @param options - Test seams: the connect, the bind and the release wait.
+ * @param options - Test seams: the connect, the bind and the release wait; and `refuse`, which words the refusal for another profile.
  * @throws `PREREQUISITE_MISSING` naming the port, why it matters and the recovery, when the port is in use, held by a Codebook run, or not permitted to Codebook.
  *
  * @example
@@ -148,30 +214,16 @@ export async function assertDevelopmentPortFree(
   const connect = options.connect ?? createConnection
   const bind = options.bind ?? tryBind
   const { port, source } = declared
-  let state = await lookAtPort(port, connect, bind, options.signal)
+  const look = (): Promise<PortState> =>
+    lookAtPort(port, connect, bind, options.signal, options.refuse)
+  let state = await look()
   // A run Codebook is stopping releases the port within moments, and a new listener would break its listener check; wait for the release whatever the first look found.
-  if (isOwnedDevelopmentPortReleasing(port)) {
-    const latest: { state: PortState } = { state }
-    await waitUntil(
-      async () => {
-        latest.state = await lookAtPort(port, connect, bind, options.signal)
-        return (
-          !isOwnedDevelopmentPortReleasing(port) && latest.state !== 'in-use'
-        )
-      },
-      `port ${port} released by Codebook's earlier run`,
-      options.releaseWaitMs ?? DEVELOPMENT_PORT_RELEASE_WAIT_MS,
-      options.signal,
-      DEVELOPMENT_PORT_RELEASE_POLL_MS,
-    ).catch((error: unknown) => {
-      // Only the end of the budget is expected; a cancel or a probe failure surfaces.
-      if (!(error instanceof WaitTimeoutError)) throw error
-    })
-    state = latest.state
-  }
+  if (isOwnedDevelopmentPortReleasing(port))
+    state = await waitForOwnedRelease(port, state, look, options)
   const owned = ownedDevelopmentPortState(port)
   // A free port holds no listener, whatever a stuck (stopping) claim says. Another run's live claim still refuses: that run has claimed the port and its `next dev` has not bound yet, so a free probe only means it is early (F449).
   if (state === 'free' && owned !== 'running') return
+  if (options.refuse) throw await options.refuse(refusalOf(port, state, owned))
   const pinned = `the project declares it (${source}): the app's own origin, such as AUTH_URL, points there, so Codebook never starts it on another port.`
   if (state === 'not-permitted')
     throw new StudyError(

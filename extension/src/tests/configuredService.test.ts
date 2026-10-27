@@ -3924,6 +3924,8 @@ test('the input schema of codebook_start states the inspection rule for the firs
           anyOf: z.tuple([
             z.object({ anyOf: z.array(variantSchema) }),
             variantSchema,
+            // The node-server member: any object (Issue #139 D4), so the tool boundary lets its strict parse list every violation.
+            z.object({ type: z.literal('object') }),
           ]),
         }),
       }),
@@ -3981,6 +3983,8 @@ test("the input schema of codebook_start says that a required value is read befo
           anyOf: z.tuple([
             z.object({ anyOf: z.array(variantSchema) }),
             variantSchema,
+            // The node-server member: any object (Issue #139 D4), so the tool boundary lets its strict parse list every violation.
+            z.object({ type: z.literal('object') }),
           ]),
         }),
       }),

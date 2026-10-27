@@ -4753,3 +4753,75 @@ test('a Remove Managed Cursor Skill in a Cursor where Codebook was never set up 
     await cursor.dispose()
   }
 })
+
+// protects=TD-7 at activation: the window's workspace storage is handed to the orphan reaper once, with the shutdown grace, before any run starts; fails_when=activation never reaps, reaps another store, or uses another grace; no_claim=the reaper's matching and signals (nodeServerOrphans.test.ts)
+test('activation hands the workspace storage to the node-server orphan reaper once', async () => {
+  // Arrange
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-orphan-reap-')),
+  )
+  const reaped: Array<{ store: unknown; graceMs: number }> = []
+  const workspaceState = {
+    get: () => undefined,
+    update: async (): Promise<void> => {},
+  }
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        RelativePattern: FakeRelativePattern,
+        commands: {
+          registerCommand: () => ({ dispose(): void {} }),
+        },
+        workspace: {
+          getConfiguration: () => ({ get: () => '.codebook/wiki' }),
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+          createFileSystemWatcher:
+            createFakeFileWatching().createFileSystemWatcher,
+        },
+        env: { asExternalUri: keepLocalAddress },
+        Uri: {
+          parse: parseFakeUri,
+          file: (fsPath: string) => ({ fsPath }),
+        },
+        window: {},
+      },
+      './environment': { requireWorkspace: () => projectRoot },
+      './repositoryReader': {
+        RepositoryReader: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+      './utils/reapNodeServerOrphans': {
+        reapNodeServerOrphans: async (input: {
+          store: unknown
+          graceMs: number
+        }) => {
+          reaped.push({ store: input.store, graceMs: input.graceMs })
+          return 0
+        },
+      },
+    },
+  )
+  try {
+    // Act
+    boundary.activate({
+      extensionPath: resolve(__dirname, '../..'),
+      globalStorageUri: { fsPath: projectRoot },
+      subscriptions: [],
+      workspaceState,
+    })
+    // Assert
+    assert.equal(reaped.length, 1)
+    assert.equal(reaped[0]?.store, workspaceState)
+    assert.equal(reaped[0]?.graceMs, 5_000)
+  } finally {
+    await boundary.deactivate()
+    await rm(projectRoot, { recursive: true, force: true })
+  }
+})

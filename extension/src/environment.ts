@@ -15,6 +15,7 @@ import {
   WSL_REMOTE_NAME,
 } from './constants'
 import { StudyError } from './errors'
+import type { NodeServerConfiguration } from './nodeServerConfigSchemas'
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
 import type {
   NodeTestPreparationControl,
@@ -26,6 +27,7 @@ import type {
 } from './runtime'
 import type { BrowserViewportFactory } from './runtimeSupport/browserViewport'
 import type { HostConfiguration } from './runtimeSupport/hostBrowser'
+import { createStateChangingRequestAsker } from './utils/askToSendStateChangingRequest'
 import { assertConfiguredSourceDocuments } from './utils/assertConfiguredSourceDocuments'
 import {
   assertDevelopmentWorkspace,
@@ -35,12 +37,19 @@ import { causeRootsFor } from './utils/causeRootsFor'
 import { checkNodeTestFiles } from './utils/checkNodeTestFiles'
 import { configuredStops } from './utils/configuredStops'
 import { createChromeExecutableLookup } from './utils/createChromeExecutableLookup'
+import { createMemoryOrphanStore } from './utils/createMemoryOrphanStore'
+import { createNodeServerRunUtilities } from './utils/createNodeServerRunUtilities'
 import { listVitestForRootClaim } from './utils/listVitestForRootClaim'
+import { nodeServerMachineGaps } from './utils/nodeServerMachineGaps'
+import type { NodeServerOrphanStore } from './utils/nodeServerOrphanRecords'
 import {
   planNodeTestExecution,
   type NodeTestExecutionPlan,
 } from './utils/planNodeTestExecution'
-import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
+import {
+  resolveExternalNode,
+  resolveExternalNodeExecutable,
+} from './utils/resolveExternalNodeExecutable'
 import { sanitizeCause } from './utils/sanitizeCause'
 import { searchRepositoryVitest } from './utils/searchRepositoryVitest'
 
@@ -136,11 +145,15 @@ function requireChromeVersion(output: string): string {
 
 /** Installs tracking before creating any runtime; commands retain these observers until owned teardown completes. @example const environment = await createEnvironment(context) */
 export async function createEnvironment(
-  context: Pick<vscode.ExtensionContext, 'extensionPath'>,
+  context: Pick<vscode.ExtensionContext, 'extensionPath'> & {
+    /** Where a node-server run keeps its process record for the next activation's orphan check; without it the record lives only in memory. */
+    workspaceState?: NodeServerOrphanStore
+  },
   presentation?: StudyPresentation,
 ): Promise<StudyEnvironment & { dispose(): void }> {
   const workspace = requireWorkspace(),
     runs = new Map<string, ConfiguredBrowserRun>()
+  const orphanStore = context.workspaceState ?? createMemoryOrphanStore()
   const product = productSchema.parse(
     JSON.parse(
       await readFile(join(vscode.env.appRoot, 'product.json'), 'utf8'),
@@ -212,6 +225,29 @@ export async function createEnvironment(
     }
     return { nodeMissing, nodeExecutable }
   }
+  /**
+   * Refuses a Node run whose editor prerequisites or external Node are missing, or whose window's workspace changed, before anything is created; called by the node-test and node-server run factories.
+   * @param runName - How the run is named in the stale-workspace refusal (`the Node test`, `the Node server run`).
+   * @returns The configured external Node executable.
+   * @throws `PREREQUISITE_MISSING` naming every gap; `STALE_INSTANCE` after a workspace change.
+   * @example await requireNodeRunPrerequisites('the Node test') // => '/usr/local/bin/node'
+   */
+  const requireNodeRunPrerequisites = async (
+    runName: string,
+  ): Promise<string> => {
+    const prerequisites = await resolveNodePrerequisites()
+    if (prerequisites.nodeMissing.length || !prerequisites.nodeExecutable)
+      throw new StudyError(
+        'PREREQUISITE_MISSING',
+        prerequisites.nodeMissing.join('; '),
+      )
+    if (requireWorkspace() !== workspace)
+      throw new StudyError(
+        'STALE_INSTANCE',
+        `Workspace identity changed before ${runName}.`,
+      )
+    return prerequisites.nodeExecutable
+  }
   const resolvePrerequisites = async () => {
     const { nodeMissing, nodeExecutable } = await resolveNodePrerequisites()
     const missing = [...nodeMissing]
@@ -252,6 +288,15 @@ export async function createEnvironment(
       chrome,
     }
   }
+  // One asker for the window's life, so a retry joins a modal still on screen.
+  const askToSendStateChangingRequest = createStateChangingRequestAsker(
+    (message, detail, ...items) =>
+      vscode.window.showWarningMessage(
+        message,
+        { modal: true, detail },
+        ...items,
+      ),
+  )
   return {
     workspace,
     host,
@@ -277,25 +322,31 @@ export async function createEnvironment(
         }
         if (ownedConfiguredLock) break
       }
-      const [{ ready, missing, nodeMissing }, checkedConfigured, vitestSearch] =
-        await Promise.all([
-          resolvePrerequisites(),
-          // Even during a run, recheck dependencies and directories; only its exact live lock is permitted.
-          assertDevelopmentWorkspace(
-            workspace,
-            new AbortController().signal,
-            ownedConfiguredLock,
-          ).then(
-            () => [],
-            (error) => [String(error)],
-          ),
-          // A usable Vitest at the root or in a package up to two levels below it is named before any start (X9); a start checks its test's own.
-          searchRepositoryVitest(workspace).catch((error: unknown) => ({
-            vitestSearch: 'incomplete' as const,
-            // The reason reaches the agent in codebook_status, so it names no private path (F10).
-            missing: `node-test could not finish looking for Vitest in the repository: ${sanitizeCause(error, causeRootsFor([], workspace))}. A start still checks the cited test's own package.`,
-          })),
-        ])
+      const [
+        { ready, missing, nodeMissing },
+        checkedConfigured,
+        vitestSearch,
+        machineMissing,
+      ] = await Promise.all([
+        resolvePrerequisites(),
+        // Even during a run, recheck dependencies and directories; only its exact live lock is permitted.
+        assertDevelopmentWorkspace(
+          workspace,
+          new AbortController().signal,
+          ownedConfiguredLock,
+        ).then(
+          () => [],
+          (error) => [String(error)],
+        ),
+        // A usable Vitest at the root or in a package up to two levels below it is named before any start (X9); a start checks its test's own.
+        searchRepositoryVitest(workspace).catch((error: unknown) => ({
+          vitestSearch: 'incomplete' as const,
+          // The reason reaches the agent in codebook_status, so it names no private path (F10).
+          missing: `node-test could not finish looking for Vitest in the repository: ${sanitizeCause(error, causeRootsFor([], workspace))}. A start still checks the cited test's own package.`,
+        })),
+        // The machine's part of node-server: a supported system, a listener tool and ps.
+        nodeServerMachineGaps(),
+      ])
       // A preparing run may have created its lock before it has sealed ownership; never label that interval foreign.
       const configured = releasingConfiguredRun
         ? [
@@ -330,6 +381,10 @@ export async function createEnvironment(
               ...('missing' in vitestSearch ? [vitestSearch.missing] : []),
             ],
             vitestSearch: vitestSearch.vitestSearch,
+          },
+          'node-server': {
+            ready: nodeMissing.length === 0 && machineMissing.length === 0,
+            missing: [...nodeMissing, ...machineMissing],
           },
         },
       }
@@ -393,6 +448,14 @@ export async function createEnvironment(
       runs.set(run.id, run)
       return run
     },
+    async nodeServerStartPrerequisites() {
+      const [{ nodeMissing }, machineMissing] = await Promise.all([
+        resolveNodePrerequisites(),
+        nodeServerMachineGaps(),
+      ])
+      const missing = [...nodeMissing, ...machineMissing]
+      return { ready: missing.length === 0, missing }
+    },
     async nodeTestStartPrerequisites() {
       const { nodeMissing } = await resolveNodePrerequisites()
       return { ready: nodeMissing.length === 0, missing: nodeMissing }
@@ -438,28 +501,48 @@ export async function createEnvironment(
           'PREREQUISITE_MISSING',
           'The node-test run has no execution plan from its preparation check.',
         )
-      const prerequisites = await resolveNodePrerequisites()
-      if (prerequisites.nodeMissing.length || !prerequisites.nodeExecutable)
-        throw new StudyError(
-          'PREREQUISITE_MISSING',
-          prerequisites.nodeMissing.join('; '),
-        )
-      if (requireWorkspace() !== workspace)
-        throw new StudyError(
-          'STALE_INSTANCE',
-          'Workspace identity changed before the Node test.',
-        )
+      const nodeExecutable = await requireNodeRunPrerequisites('the Node test')
       // Load the VS Code-backed owner only after a caller selects this profile; environment unit tests run in plain Node.
       const { OwnedNodeTestRun } = await import('./ownedNodeTestRun.js')
       return new OwnedNodeTestRun(
         workspace,
         configuration,
-        prerequisites.nodeExecutable,
+        nodeExecutable,
         record,
         citedSources,
         plan,
       )
     },
+    async createNodeServerRun(
+      configuration: NodeServerConfiguration,
+      record: (type: string, detail?: unknown) => unknown,
+      citedSources: ConfiguredDescriptor['sources'],
+      runId: string,
+    ) {
+      const node = await resolveExternalNode(
+        await requireNodeRunPrerequisites('the Node server run'),
+      )
+      // Load the VS Code-backed run only after a caller selects this profile; environment unit tests run in plain Node.
+      const [
+        { createOwnedNodeServerRun },
+        { createProductNodeServerRunDependencies },
+      ] = await Promise.all([
+        import('./ownedNodeServerRun.js'),
+        import('./nodeServerRunDependencies.js'),
+      ])
+      return createOwnedNodeServerRun({
+        workspace,
+        configuration,
+        record,
+        citedSources,
+        runId,
+        dependencies: createProductNodeServerRunDependencies({
+          node,
+          utilities: createNodeServerRunUtilities(orphanStore),
+        }),
+      })
+    },
+    confirmStateChangingRequest: askToSendStateChangingRequest,
     dispose(): void {
       tracker.dispose()
       termination.dispose()

@@ -8,7 +8,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.8'
-export const EXTENSION_VERSION = '0.2.50'
+export const EXTENSION_VERSION = '0.2.51'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -105,6 +105,8 @@ export const MAX_EXPLANATIONS = 32
 export const MAX_VALUE_PATHS = 10
 export const EVENT_PAGE_SIZE = 50
 export const EVENT_DETAIL_LIMIT_BYTES = 8_192
+/** The longest event type a run's journal keeps. */
+export const EVENT_TYPE_LIMIT_CHARS = 128
 /**
  * What ends a text {@link cutTextToFit} cut to fit a bound, so a reader sees that the text went on: the reason of the one run failure the evidence keeps past a refusal, cut to fit {@link EVENT_DETAIL_LIMIT_BYTES} (Cycle 0046 row 698).
  * @example cutTextToFit('x'.repeat(100), (candidate) => candidate.length <= 20) // => 'xxxxxxxxxxxxx… [cut]'
@@ -1240,6 +1242,31 @@ export const BOOK_PREPARE_TIMEOUT_MS = 20_000
 export const BOOK_SOURCE_CONCURRENCY = 4
 export const REPOSITORY_BROWSER_PROFILE = 'repository-browser'
 export const NODE_TEST_PROFILE = 'node-test'
+/** The profile of a run of the repository's own Node HTTP server: one declared request, stopped in its handler source. */
+export const NODE_SERVER_PROFILE = 'node-server'
+/** The one action a node-server run offers: send its declared request. */
+export const NODE_SERVER_ACTION = 'http-request'
+/** The prefix of the debug session name of a node-server run (`codebook node server <runId>`): the run recognizes only sessions whose root carries its own name. */
+export const NODE_SERVER_SESSION_NAME_PREFIX = 'codebook node server '
+/** How long a started server has, in running time, to accept connections on its declared port; time it spends held by a learner's pause does not count. */
+export const NODE_SERVER_READY_TIMEOUT_MS = 30_000
+/** How long the declared request may wait for its answer, in running time; time the server spends paused does not count. */
+export const NODE_SERVER_REQUEST_TIMEOUT_MS = 30_000
+/** The wall-time backstop of the declared request: it ends as timed out after this long whatever the pauses were. */
+export const NODE_SERVER_REQUEST_WALL_LIMIT_MS = 900_000
+/** The one monotonic deadline of a node-server stop, from its admission: debugger release, group exit, listener checks and output settling share it. */
+export const NODE_SERVER_STOP_DEADLINE_MS = 10_000
+/** How many hits of the declared stops one request captures; the next hit retires the owned breakpoints and continues uncaptured. */
+export const NODE_SERVER_REQUEST_CAPTURE_LIMIT = 16
+/** How long a reset connection waits for the server's exit before it is read as a request failure instead of the server having exited. */
+export const NODE_SERVER_EXIT_SETTLE_MS = 500
+/** What Node prints when its program is finished but an attached debugger keeps it from exiting; the run lets go of its debugger on it, so the exit follows. */
+export const NODE_SERVER_DEBUGGER_DISCONNECT_NOTICE =
+  'Waiting for the debugger to disconnect'
+/** From which failed stop the message names the server's pid for the learner to end. */
+export const NODE_SERVER_FAILED_STOPS_NAMING_PID = 2
+/** How many characters of the run id a state-changing request's confirmation modal shows, enough to tell two modals left on screen apart. */
+export const NODE_SERVER_MODAL_RUN_ID_CHARS = 8
 /** The lowest port a node-server declaration may name: a lower one needs privileges a development server does not run with, and Codebook never raises them. */
 export const NODE_SERVER_PORT_MIN = 1_024
 /** The highest TCP port. */
@@ -1256,6 +1283,22 @@ export const NODE_SERVER_OUTPUT_PENDING_LIMIT_BYTES = 1_048_576
 export const NODE_SERVER_DEBUGGER_DETACH_TIMEOUT_MS = 1_000
 /** How long a server's process group has after SIGTERM before SIGKILL, and again after SIGKILL before its close fails. */
 export const NODE_SERVER_SHUTDOWN_GRACE_MS = 5_000
+/** How long one readiness probe waits for a loopback connection to be accepted before it counts as refused. */
+export const NODE_SERVER_READY_CONNECT_TIMEOUT_MS = 250
+/** The pause between two readiness rounds, so a server still starting is not hammered. */
+export const NODE_SERVER_READY_POLL_INTERVAL_MS = 50
+/** How often the orphan reaper checks whether a signalled server group has exited. */
+export const NODE_SERVER_GROUP_EXIT_POLL_MS = 50
+/** The most of a response a node-server run reads; the socket is destroyed there and the response reads `(cut at 1 MiB)`. */
+export const NODE_SERVER_RESPONSE_READ_LIMIT_BYTES = 1_048_576
+/** How many leading bytes of a text response are shown to the chat and in Output. */
+export const NODE_SERVER_RESPONSE_SHOWN_BYTES = 8_192
+/** The workspace-storage key under which the node-server runs' process groups are recorded until they are closed, so a later activation can close an orphan. */
+export const NODE_SERVER_ORPHANS_STORAGE_KEY = 'codebook.nodeServerOrphans'
+/** How long one `ps` or `lsof` query about a process (group, command, folder) may run before it is ended. */
+export const NODE_SERVER_PROCESS_QUERY_TIMEOUT_MS = 3_000
+/** The most a `ps` or `lsof` query about one process may print. */
+export const NODE_SERVER_PROCESS_QUERY_MAX_BYTES = 65_536
 /** How much of an owned process's output is kept: its first bytes for the inspector announcement, its last ones as the redacted tail. */
 export const PROCESS_OUTPUT_LIMIT_BYTES = 32_768
 /** The longest text of one stamped output event of an owned process. */
@@ -1373,6 +1416,23 @@ export const NODE_TEST_EXIT_GRACE_MS = 2_000
 /** Budget for each owned Node test phase: attach through the entry pause, reaching a declared stop while the test runs, and capturing it. */
 export const NODE_TEST_ATTACH_TIMEOUT_MS = 45_000
 export const REPOSITORY_BROWSER_ACTION = 'repository-click'
+/** The first extension version that offers the node-server profile, for the profile entry of `codebook_status`. */
+export const NODE_SERVER_MINIMUM_EXTENSION_VERSION = '0.2.51'
+/** The longest sanitized failure cause a node-server event and its Output entry keep; the run resource keeps the error whole (up to {@link MAX_UI_TEXT_CHARS}). */
+export const NODE_SERVER_FAILURE_CAUSE_LIMIT_CHARS = 1_024
+/** The most UTF-8 bytes of a response's shown body a `node-server.response` event keeps, so one event stays far under {@link EVENT_DETAIL_LIMIT_BYTES}; the run resource keeps the whole shown body. */
+export const NODE_SERVER_EVENT_BODY_LIMIT_BYTES = 4_096
+/** The longest short text (address, content type, stopped reason, signal, command) a node-server event keeps. */
+export const NODE_SERVER_EVENT_SHORT_TEXT_LIMIT_CHARS = 256
+/** The longest repository path or redirect location a node-server event keeps. */
+export const NODE_SERVER_EVENT_PATH_LIMIT_CHARS = 512
+/** The methods of a declared request that change the repository's data; each needs the learner's confirmation before it is sent (D6). */
+export const NODE_SERVER_STATE_CHANGING_METHODS = [
+  'POST',
+  'PUT',
+  'PATCH',
+  'DELETE',
+]
 export const REPOSITORY_CONFIG_VERSION = 1
 export const CROSS_RUNTIME_CONFIG_VERSION = 2
 export const CONFIGURED_STUDY_VERSION = 3

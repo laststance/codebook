@@ -12,6 +12,7 @@ import {
   BOOK_MAX_FILES,
   BOOK_MAX_SOURCES,
   EVENT_DETAIL_LIMIT_BYTES,
+  EVENT_TYPE_LIMIT_CHARS,
   HTTP_BODY_LIMIT_BYTES,
   INVALID_SAVED_STUDY_LIMIT_MESSAGE,
   MAX_EVENTS,
@@ -25,6 +26,9 @@ import {
   MAX_EXPLANATIONS,
   MAX_RUNS,
   MAX_UI_TEXT_CHARS,
+  NODE_SERVER_ACTION,
+  NODE_SERVER_PROFILE,
+  NODE_SERVER_STATE_CHANGING_METHODS,
   NODE_TEST_MINIMUM_EXTENSION_VERSION,
   NODE_TEST_PROFILE,
   RECORDING_REASON_LIMIT_CHARS,
@@ -52,6 +56,11 @@ import {
   learningSummarySchema,
   type LearningSummary,
 } from './learningSummarySchemas'
+import {
+  nodeServerConfigSchema,
+  type NodeServerConfiguration,
+} from './nodeServerConfigSchemas'
+import { describeNodeServerProfile } from './nodeServerProfile'
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
 import type { NodeTestLearningMaterialContent } from './nodeTestHistorySchemas'
 import type {
@@ -76,6 +85,7 @@ import type {
 } from './repositorySchemas'
 import type { RetainedStudy } from './retainedStudySchemas'
 import type {
+  NodeServerRuntime,
   NodeTestRuntime,
   RuntimeSnapshot,
   RuntimeView,
@@ -101,11 +111,18 @@ import type { StudyWorkspace } from './studyWorkspace'
 import { buildRecordingContext } from './utils/buildRecordingContext'
 import { causeRootsFor } from './utils/causeRootsFor'
 import { configuredStops } from './utils/configuredStops'
+import { createNodeServerJournal } from './utils/createNodeServerJournal'
 import { cutCauseForDisplay } from './utils/cutCauseForDisplay'
 import { cutTextToFit } from './utils/cutTextToFit'
 import { declaredStopOfSnapshot } from './utils/declaredStopOfSnapshot'
 import { describeBoundPlace, type BoundPlace } from './utils/describeBoundPlace'
 import { describeMissingBookNode } from './utils/describeMissingBookNode'
+import { describeNodeServerConfigurationIssues } from './utils/describeNodeServerConfigurationIssues'
+import {
+  describeNodeServerFailureLine,
+  describeNodeServerOutputLine,
+  type NodeServerOutputLine,
+} from './utils/describeNodeServerOutputLine'
 import { describeNodeTestResult } from './utils/describeNodeTestResult'
 import {
   explanationPlace,
@@ -132,11 +149,14 @@ import {
 import type { NodeLearningCapturePart } from './utils/listMissingNodeLearning'
 import type { RetryVitestListingRelease } from './utils/listVitestTestFiles'
 import { namesLineNumber } from './utils/namesLineNumber'
+import { nextNodeServerState } from './utils/nextNodeServerState'
 import { nodeTestResultKind } from './utils/nodeTestResultKind'
 import { numberSourceLines } from './utils/numberSourceLines'
 import type { NodeTestExecutionPlan } from './utils/planNodeTestExecution'
+import { prepareNodeServerStudy } from './utils/prepareNodeServerStudy'
 import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
 import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy'
+import { projectNodeServerState } from './utils/projectNodeServerState'
 import {
   projectNodeTestOutcome,
   type NodeTestHistoryState,
@@ -228,6 +248,33 @@ interface ExplanationReceipt {
   explanationUri: string
   valuePaths: string[]
 }
+/** What the service keeps of a node-server run beside the fields every run has. */
+export interface NodeServerRecordState {
+  run?: NodeServerRuntime
+  /** The declaration with its hash and the pinned article node, once the preparation pinned the cited sources. */
+  prepared?: {
+    configuration: NodeServerConfiguration
+    configurationHash: string
+    descriptor: ConfiguredDescriptor
+  }
+  /** The key of the request that went to the server; another key is refused as `REQUEST_ALREADY_SENT`. */
+  sentKey?: string
+  /** The request being confirmed by the learner or handed to the run, so a repeat of its key joins it and another key waits for it. */
+  pendingRequest?: {
+    key: string
+    signature: string
+    result: Promise<NonNullable<StudyRecord['action']>['receipt']>
+  }
+  /** Stops listening to the run's changes once the run is released. */
+  subscription?: { dispose(): void }
+  /** The failures already written to the Output channel (by code), so one failure is written once. */
+  loggedFailures: Set<string>
+}
+/** A node-server run's record with its server state, as the narrowing {@link isNodeServerRecord} gives. */
+type NodeServerStudyRecord = StudyRecord & {
+  profile: typeof NODE_SERVER_PROFILE
+  nodeServer: NodeServerRecordState
+}
 export type StudyRecord = StudyRecordState &
   StartIntent & {
     definition?: ConfiguredDefinition
@@ -238,6 +285,7 @@ export type StudyRecord = StudyRecordState &
       /** The plan of the pre-history check ({@link StudyEnvironment.checkNodeTestFiles}), kept outside `configuration` so `configurationHash` stays the agent's; the manifest names its facts. */
       execution?: NodeTestExecutionPlan
     }
+    nodeServer?: NodeServerRecordState
   }
 /**
  * Why the reader must not checkpoint a retained run and why its state reports no saved history.
@@ -245,6 +293,7 @@ export type StudyRecord = StudyRecordState &
  * - `refused-at-admission`: the library was full or its limit setting invalid, so the run never started.
  * - `refused-at-preparation`: a node-test run whose preparation refused it before its history began (a changed source or test file, a path that is not a file, a missing prerequisite), so nothing was recorded and its slot and start key are free.
  * - `stopped-before-history`: a learner's stop (or a stop of the window) ended a node-test run before its history began, so nothing was recorded; its slot is free, but its start key stays with it, so a repeat under the same key replays the receipt.
+ * - `server-run-not-saved`: a node-server run holds no history from its start (Issue #139 D3): it is evictable, offers no `read-history` and never reads as saved.
  * - `removed-by-learner`: the learner moved the run's saved study to the system Trash with this window's delete.
  * - `archive-removed`: the run's saved study left the library without a removal of this window, so its archive is gone: its files were removed by hand (a window without a Trash offers nothing else), or another window removed it.
  */
@@ -253,6 +302,7 @@ export type HistoryExclusion =
   | 'refused-at-admission'
   | 'refused-at-preparation'
   | 'stopped-before-history'
+  | 'server-run-not-saved'
   | StudyRemovalExclusion
 /** The two exclusions that say a run's saved study was removed; each has its own sentence for the agent that reads the run, see {@link historyExclusionReason}. */
 export type StudyRemovalExclusion = 'removed-by-learner' | 'archive-removed'
@@ -353,6 +403,43 @@ interface StudyRecordState {
   recordingSealFailure?: string
 }
 
+/** The profiles a start can name, in the order the refusal lists them. */
+const SUPPORTED_PROFILES: readonly string[] = [
+  REPOSITORY_BROWSER_PROFILE,
+  NODE_TEST_PROFILE,
+  NODE_SERVER_PROFILE,
+]
+
+/**
+ * Gives the fields a new run's record starts with because it is a node-server run: its events, its server state and its exclusion from history (D3: evictable, no read-history, never saved).
+ * @param profile - The profile of the start.
+ * @returns The fields for a node-server run; none for another profile.
+ * @example nodeServerRecordFields('node-server').historyExcluded // => 'server-run-not-saved'
+ */
+function nodeServerRecordFields(profile: string) {
+  return profile === NODE_SERVER_PROFILE
+    ? {
+        nodeEvents: [],
+        nodeServer: { loggedFailures: new Set<string>() },
+        historyExcluded: 'server-run-not-saved' as const,
+      }
+    : {}
+}
+
+/**
+ * Narrows a run's record to a node-server run, for the code paths that exist only for that profile.
+ * @param record - Any run's record.
+ * @returns `true` for a record of the node-server profile, which always holds its server state.
+ * @example if (isNodeServerRecord(record)) record.nodeServer.run?.view()
+ */
+function isNodeServerRecord(
+  record: StudyRecord,
+): record is NodeServerStudyRecord {
+  return (
+    record.profile === NODE_SERVER_PROFILE && record.nodeServer !== undefined
+  )
+}
+
 /**
  * Tells {@link StudyService.selectPresentation} whether a command selects a layout that is retired, so that only a reader already in that layout may keep it.
  * @param input - The presentation command.
@@ -401,6 +488,10 @@ export class StudyService {
   }>
   /** Receives one entry per unexpected failure on a test replay's path for the Output › Codebook channel; the extension sets it at activation. */
   diagnostics?: (entry: CodebookDiagnostic) => void
+  /** Receives the plain Output › Codebook lines of a node-server run (its request, its response or failure, each naming the run); the extension sets it at activation. */
+  outputLog?: (line: NodeServerOutputLine) => void
+  /** How long the learner has to answer the confirmation of a state-changing node-server request before it reads as not confirmed (D6); a test sets a short one. */
+  confirmationTimeoutMs = REPOSITORY_PAUSE_HOLD_TIMEOUT_MS
   /** The extension's own storage folders beside {@link storageRoot}, which the extension sets when it creates the service; no shown cause names them. */
   extraStorageRoots: readonly string[] = []
   private readonly repositoryRetirement = new AbortController()
@@ -726,10 +817,14 @@ export class StudyService {
               'Test output, executed source and recorded debugger stops; no application video',
           },
         },
+        this.nodeServerProfileEntry(
+          profilePrerequisites?.[NODE_SERVER_PROFILE] ?? commonPrerequisites,
+        ),
       ],
       capabilities: [
         'start',
         REPOSITORY_BROWSER_ACTION,
+        NODE_SERVER_ACTION,
         'pause-evidence',
         'continue',
         'explain',
@@ -807,6 +902,31 @@ export class StudyService {
       recovery:
         'Same instance: initialize a new transport and read the existing run. Server restart: copy new credentials first. Never automatically repeat a click.',
     }
+  }
+
+  /**
+   * Describes the node-server profile for `codebook_status` with everything that keeps it from starting here: the environment's missing items (Node, a listener tool, `ps`, a supported system), a missing run factory and missing repository storage.
+   * @param reported - The environment's prerequisites for the profile, or the shared ones when it reports none.
+   * @returns The profile entry ({@link describeNodeServerProfile}).
+   * @example this.nodeServerProfileEntry({ ready: true, missing: [] }).prerequisites.ready // => true when the adapter and storage exist
+   */
+  private nodeServerProfileEntry(reported: {
+    ready: boolean
+    missing: string[]
+  }) {
+    const missing = [
+      ...reported.missing,
+      ...(this.environment.createNodeServerRun
+        ? []
+        : ['The owned Node server adapter is unavailable.']),
+      ...(this.repository
+        ? []
+        : ['Repository source/book storage is unavailable.']),
+    ]
+    return describeNodeServerProfile({
+      ready: reported.ready && missing.length === 0,
+      missing,
+    })
   }
 
   /** Returns only currently owned repository storage without imposing runtime prerequisites. @example service.repositoryStore(instanceId) */
@@ -1144,14 +1264,13 @@ export class StudyService {
         'IDEMPOTENCY_CONFLICT',
         'Start key already names different arguments.',
       )
-    if (
-      input.profile !== REPOSITORY_BROWSER_PROFILE &&
-      input.profile !== NODE_TEST_PROFILE
-    )
+    if (!SUPPORTED_PROFILES.includes(input.profile))
       throw new StudyError(
         'UNSUPPORTED_PROFILE',
-        `Available profiles: ${REPOSITORY_BROWSER_PROFILE}, ${NODE_TEST_PROFILE}`,
+        `Available profiles: ${SUPPORTED_PROFILES.join(', ')}`,
       )
+    // The tool boundary accepts any node-server object, so this is where every violation is listed (D4).
+    if (!previous) this.assertNodeServerDeclaration(input)
     const parsed = startIntentSchema.safeParse(input)
     if (!parsed.success)
       throw new StudyError(
@@ -1194,6 +1313,8 @@ export class StudyService {
       ...(intent.profile === NODE_TEST_PROFILE
         ? { nodeStops: [], nodeEvents: [], nodePhase: 'preparing' as const }
         : {}),
+      // A server run holds no history from its start (D3): evictable, no read-history, never saved.
+      ...nodeServerRecordFields(intent.profile),
       // A reader refresh can arrive before the admission answers; until then the run is not a checkpoint candidate.
       ...(intent.profile === REPOSITORY_BROWSER_PROFILE && this.recordings
         ? { historyExcluded: 'awaiting-admission' as const }
@@ -1203,6 +1324,22 @@ export class StudyService {
     this.startKeys.set(input.key, record)
     record.preparation = this.prepare(record)
     return this.receipt(record)
+  }
+
+  /**
+   * Refuses a node-server start whose declaration does not parse, listing every violation with its field path and naming `codebook://help/node-server`; called by {@link StudyService.start} for a start that begins a new run.
+   * @param input - The start as the tool received it.
+   * @throws `INVALID_CONFIGURATION` with {@link describeNodeServerConfigurationIssues} for a node-server start; nothing for another profile.
+   * @example this.assertNodeServerDeclaration({ ...input, configuration: { ...declaration, port: 80 } }) // throws 'configuration.port: expected an integer from 1024 to 65535, …'
+   */
+  private assertNodeServerDeclaration(input: StartInput): void {
+    if (input.profile !== NODE_SERVER_PROFILE) return
+    const declaration = nodeServerConfigSchema.safeParse(input.configuration)
+    if (!declaration.success)
+      throw new StudyError(
+        'INVALID_CONFIGURATION',
+        describeNodeServerConfigurationIssues(declaration.error.issues),
+      )
   }
 
   /**
@@ -1282,20 +1419,33 @@ export class StudyService {
       if (keyedRecord === record) this.startKeys.delete(key)
   }
 
+  /**
+   * Finds the receipt an action key already holds, so a repeat after a lost response gets the original answer; called first by {@link StudyService.action} and {@link StudyService.requestNodeServer}.
+   * @param record - The run.
+   * @param key - The action's key.
+   * @param signature - The key and action as this call names them.
+   * @returns The stored receipt for the same key and action; `undefined` for a key no action used.
+   * @throws `IDEMPOTENCY_CONFLICT` when the key names another action.
+   * @example this.replayedAction(record, 'send-1', JSON.stringify(['send-1', 'http-request'])) // => the receipt of the first call
+   */
+  private replayedAction(record: StudyRecord, key: string, signature: string) {
+    const previous = record.actions.get(key)
+    if (!previous) return undefined
+    if (previous.signature === signature) return previous.receipt
+    throw new StudyError(
+      'IDEMPOTENCY_CONFLICT',
+      'Action key already names different arguments.',
+      `Read ${this.uri(record.id)} for retained receipts.`,
+    )
+  }
+
   /** Admits the next fixed action while replaying every original receipt across later steps and cleanup. @example service.action({...run, key:'operation', action:'repository-click'}) */
   action(input: ActionInput) {
     this.assertMutable(input.instanceId)
     const record = this.record(input)
     const signature = JSON.stringify([input.key, input.action])
-    const previous = record.actions.get(input.key)
-    if (previous) {
-      if (previous.signature === signature) return previous.receipt
-      throw new StudyError(
-        'IDEMPOTENCY_CONFLICT',
-        'Action key already names different arguments.',
-        `Read ${this.uri(record.id)} for retained receipts.`,
-      )
-    }
+    const replayed = this.replayedAction(record, input.key, signature)
+    if (replayed) return replayed
     this.presentationController?.assertPresentationIdle()
     if (
       !record.prepared ||
@@ -1353,6 +1503,15 @@ export class StudyService {
    */
   async continueToNextState(input: ContinueInput, signal?: AbortSignal) {
     const startedAtMs = this.now()
+    const server = this.records.get(input.runId)
+    // A node-server run waits for its request's next state, not for a runtime snapshot.
+    if (server && isNodeServerRecord(server))
+      return this.continueNodeServerToNextState(
+        server,
+        input,
+        startedAtMs,
+        signal,
+      )
     // The snapshots committed before the continuation tell the next observation from the one being continued.
     const committedBefore = new Set(
       this.records
@@ -1496,6 +1655,8 @@ export class StudyService {
     this.assertMutable(input.instanceId)
     const record = this.record(input)
     this.presentationController?.assertPresentationIdle()
+    if (isNodeServerRecord(record))
+      return this.continueNodeServer(record, input)
     if (record.profile === NODE_TEST_PROFILE) {
       const current = record.nodeStops?.at(-1)
       if (
@@ -2164,6 +2325,11 @@ export class StudyService {
         'EVIDENCE_UNAVAILABLE',
         'Node test stops are saved in their durable history instead: read nodeTest.historyUri and its events, then save learning through codebook_explain_node_history.',
       )
+    if (record.profile === NODE_SERVER_PROFILE)
+      throw new StudyError(
+        'EVIDENCE_UNAVAILABLE',
+        'Server stops are explained in the chat: read nodeServer.pause in the run resource (path, line, source hash and the captured facts) and the native debugger, then continue with participants.server.continueArguments. codebook_explain and codebook_reveal take only a repository-browser snapshot, and server runs are not saved yet.',
+      )
     const runtime = record.runtime?.view()
     for (const snapshot of runtime?.snapshots ?? []) {
       if (
@@ -2247,6 +2413,7 @@ export class StudyService {
   private holdsNoStudyHistory(record: StudyRecord): boolean {
     return (
       record.profile === NODE_TEST_PROFILE ||
+      record.profile === NODE_SERVER_PROFILE ||
       historyExclusionState(record.historyExcluded) !== 'kept'
     )
   }
@@ -2517,6 +2684,22 @@ export class StudyService {
       !record.cleanupError &&
       !terminalReason &&
       this.now() < record.deadlineAt
+    // A server run's state, actions, participant and request facts come from its run (D1); a request failure shows in `error` but is never the terminal reason.
+    const server = isNodeServerRecord(record)
+      ? projectNodeServerState({
+          instanceId: this.instanceId,
+          runId: record.id,
+          view: record.nodeServer.run?.view(),
+          itemId: record.nodeServer.prepared?.descriptor.itemId,
+          controllable: canControl,
+          stopped: record.stopped,
+          ending:
+            record.stopping ||
+            Boolean(record.cleanupError) ||
+            Boolean(record.error),
+          sanitize: (text) => this.sanitizedCause(text),
+        })
+      : undefined
     const nodeStop = record.nodeStops?.at(-1)
     const nodeStopUri = nodeStop
       ? this.uri(record.id, `node-stops/${nodeStop.index}`)
@@ -2602,6 +2785,7 @@ export class StudyService {
         ? { server: participantView('server') }
         : {}),
       ...(nodeParticipants ?? {}),
+      ...(server ? { server: server.participant } : {}),
       browser: participantView('browser'),
     }
     const finalOutcome =
@@ -2651,7 +2835,8 @@ export class StudyService {
     ].filter((value) => value !== undefined)
     // After a stop whose release failed, only the stop is offered again (F91, D18).
     const nextActions =
-      record.cleanupError && !record.stopped ? ['stop'] : availableActions
+      server?.nextActions ??
+      (record.cleanupError && !record.stopped ? ['stop'] : availableActions)
     const material = {
       instanceId: this.instanceId,
       runId: record.id,
@@ -2832,6 +3017,9 @@ export class StudyService {
       ),
       eventsUri: this.uri(record.id, 'events/0'),
       runUri: this.uri(record.id),
+      ...(server && isNodeServerRecord(record)
+        ? this.nodeServerMaterial(record, server)
+        : {}),
     }
     // Receipt fields are excluded from the signature to avoid a save/report/save feedback loop.
     const materialSignature = sha256(JSON.stringify(material))
@@ -2975,6 +3163,45 @@ export class StudyService {
   }
 
   /**
+   * Gives the fields of the run resource that a node-server run replaces: its state, its `nodeServer` block, the manifest it freezes and the error that shows a request failure beside the run's own; read by {@link StudyService.state}.
+   * @param record - The node-server run.
+   * @param server - Its projection ({@link projectNodeServerState}).
+   * @returns The fields, which the resource spreads over the generic ones so they enter the material signature.
+   * @example this.nodeServerMaterial(record, server).state // => 'responded'
+   */
+  private nodeServerMaterial(
+    record: NodeServerStudyRecord,
+    server: ReturnType<typeof projectNodeServerState>,
+  ) {
+    const failure = server.nodeServer?.requestFailure
+    const prepared = record.nodeServer.prepared
+    return {
+      state: server.state,
+      // A server run is never saved: it reads pending-teardown while it lives and not-demonstrated once it ended.
+      finalOutcome:
+        record.stopped || record.error
+          ? ('not-demonstrated' as const)
+          : ('pending-teardown' as const),
+      runtimeState: server.state,
+      runtimeRunId: record.nodeServer.run?.id,
+      nodeServer: server.nodeServer && {
+        ...server.nodeServer,
+        configurationHash: prepared?.configurationHash,
+      },
+      manifestUri: prepared ? this.uri(record.id, 'manifest') : undefined,
+      manifestHash: prepared?.configurationHash,
+      // The run's own error wins; a failed request shows beside a run that goes on.
+      error:
+        record.error?.describe() ??
+        (failure
+          ? this.sanitizedError(
+              new StudyError(failure.code, failure.message),
+            ).describe()
+          : undefined),
+    }
+  }
+
+  /**
    * Says where a test run's history stands for {@link projectNodeTestOutcome}; read by {@link StudyService.state}.
    * @param record - The test run.
    * @returns `none` before the history began, else the history's own status.
@@ -3076,6 +3303,8 @@ export class StudyService {
     for (const record of this.records.values()) {
       // A failed release needs an explicit retry; unchanged storage/process failures must not loop.
       if (record.stopped || record.stopping || record.cleanupError) continue
+      // A server's own failure ends its run; a failed request never does (D1).
+      this.adoptNodeServerFailure(record)
       const evidenceFailure = record.runtime?.evidence.failure
       if (evidenceFailure) {
         const message = 'Evidence buffering or persistence failed.'
@@ -3147,12 +3376,29 @@ export class StudyService {
     if (this.now() < record.deadlineAt) return
     // The deadline bounds a run that is still on its way; a result that was observed is not turned into a failure while the run waits for its release.
     if (this.hasRunEnded(record)) return
+    // A server whose request was answered or failed reaches the deadline as a normal stop: its request was observed, so no error is added.
+    if (this.endNodeServerAtDeadline(record)) return
     record.error ??= new StudyError(
       'RUNTIME_FAILED',
       'Study wall deadline expired; history only.',
     )
     record.runtime?.fail(record.error.message)
     this.failUnfinishedNodePhase(record)
+  }
+
+  /**
+   * Releases a node-server run whose request ended (`responded` or `request-failed`) when the whole-run deadline passes, without an error; called by {@link StudyService.expireAtDeadline}.
+   * @param record - The run whose deadline passed.
+   * @returns `true` when the run is such a server run (its release was started); `false` otherwise, so the deadline error applies.
+   * @example this.endNodeServerAtDeadline(record) // => true for a responded server run
+   */
+  private endNodeServerAtDeadline(record: StudyRecord): boolean {
+    const state = record.nodeServer?.run?.view().state
+    if (state !== 'responded' && state !== 'request-failed') return false
+    void this.stopRecord(record).catch((error) => {
+      this.failByRelease(record, error)
+    })
+    return true
   }
 
   /**
@@ -3183,6 +3429,8 @@ export class StudyService {
 
   /** Acquires the adapter once; cancellation after an await drains rather than abandons it. @example await this.prepare(record) */
   private async prepare(record: StudyRecord): Promise<void> {
+    if (record.profile === NODE_SERVER_PROFILE)
+      return this.prepareNodeServer(record)
     try {
       // Reserve intent -> immutable article/all citations -> owned adapter -> input; retries never repeat these reads.
       if (record.profile === REPOSITORY_BROWSER_PROFILE) {
@@ -3507,7 +3755,7 @@ export class StudyService {
             const bounded = safe
             events.push({
               sequence: ++sequence,
-              type: type.slice(0, 128),
+              type: type.slice(0, EVENT_TYPE_LIMIT_CHARS),
               detail: bounded,
             })
             return historyWrite
@@ -3769,9 +4017,15 @@ export class StudyService {
       if (cancelling) void cancelling.catch(() => undefined)
       const cancellingNode = cancellingNodeRun?.stop()
       if (cancellingNode) void cancellingNode.catch(() => undefined)
+      const cancellingServerRun = record.prepared
+        ? undefined
+        : record.nodeServer?.run
+      const cancellingServer = cancellingServerRun?.stop()
+      if (cancellingServer) void cancellingServer.catch(() => undefined)
       await record.preparation
       await cancelling
       await cancellingNode
+      await cancellingServer
       await Promise.allSettled(
         [...record.explanationKeys.values()].map((value) => value.result),
       )
@@ -3812,6 +4066,10 @@ export class StudyService {
       }
       if (record.nodeRun && record.nodeRun !== cancellingNodeRun)
         await record.nodeRun.stop()
+      // The server's process group, debugger and listeners are released in one bounded stop; a failed stop leaves the run stopping and retryable (D9).
+      const serverRun = record.nodeServer?.run
+      if (serverRun && serverRun !== cancellingServerRun) await serverRun.stop()
+      record.nodeServer?.subscription?.dispose()
       // A root listing that was not released is the run's to release: one still running fails this stop, so the run stays unstopped, the next start answers BUSY, and the next stop tries again.
       if (record.unreleasedListings)
         await releaseVitestListings(record.unreleasedListings)
@@ -4013,6 +4271,462 @@ export class StudyService {
           `Evidence write failed: ${historyExclusionReason(record.historyExcluded)}`,
         )
       : error
+  }
+
+  /**
+   * Admits the next declared action of any profile; the `codebook_action` tool calls it. A browser run answers {@link StudyService.action} at once; a node-server run answers its `http-request` receipt after the learner confirmed a state-changing request (D6).
+   * @param input - The action as the tool received it.
+   * @returns The action's receipt: `operationId`, `key` and `runUri`; the original receipt for a repeat of the same key and action.
+   * @throws What {@link StudyService.action} or {@link StudyService.requestNodeServer} throws.
+   * @example await service.performAction({ ...run, key: 'send', action: 'http-request' })
+   */
+  async performAction(input: ActionInput) {
+    this.assertMutable(input.instanceId)
+    const record = this.record(input)
+    return isNodeServerRecord(record)
+      ? this.requestNodeServer(record, input)
+      : this.action(input)
+  }
+
+  /**
+   * Sends the declared request of a node-server run once: replays the receipt of a repeated key, refuses what the run's state refuses, asks the learner to confirm a POST, PUT, PATCH or DELETE (D6), then hands the key to the run.
+   * The refusals come in this order: the stored receipt of the same key and action (also after a lost response); `LEARNER_PAUSED`; `REQUEST_ALREADY_SENT` (another key once sent); `RUN_NOT_READY`.
+   * @param record - The node-server run.
+   * @param input - The action as the tool received it.
+   * @returns The receipt, once the run accepted the request; the original receipt for a repeat.
+   * @throws `IDEMPOTENCY_CONFLICT` for a key that names another action; the refusals above; `BUSY` while another key waits for the learner's confirmation; `REQUEST_NOT_CONFIRMED` when the learner cancelled or did not answer (the state stays `ready` and the key is not consumed); `PREREQUISITE_MISSING` for a state-changing request in an editor that cannot ask; what the run throws.
+   * @example await this.requestNodeServer(record, { ...run, key: 'send', action: 'http-request' })
+   */
+  private async requestNodeServer(
+    record: NodeServerStudyRecord,
+    input: ActionInput,
+  ) {
+    const signature = JSON.stringify([input.key, input.action])
+    const replayed = this.replayedAction(record, input.key, signature)
+    if (replayed) return replayed
+    const pending = record.nodeServer.pendingRequest
+    // A repeat of the key being confirmed joins the one confirmation instead of asking the learner twice.
+    if (pending?.key === input.key && pending.signature === signature)
+      return pending.result
+    this.presentationController?.assertPresentationIdle()
+    this.assertNodeServerRequestable(record, input.action)
+    if (pending)
+      throw new StudyError(
+        'BUSY',
+        'Another request is waiting for the learner to confirm it. Read the run resource; send nothing with a new key.',
+      )
+    const result = this.sendNodeServerRequest(record, input, signature)
+    record.nodeServer.pendingRequest = { key: input.key, signature, result }
+    try {
+      return await result
+    } finally {
+      if (record.nodeServer.pendingRequest?.result === result)
+        record.nodeServer.pendingRequest = undefined
+    }
+  }
+
+  /**
+   * Refuses a node-server request the run's state does not admit, in the order the contract names them; called before the confirmation and again after the learner answered it, since the run can have changed meanwhile.
+   * @param record - The node-server run.
+   * @param action - The action the call named.
+   * @throws `LEARNER_PAUSED` while a pause Codebook does not own holds the server; `REQUEST_ALREADY_SENT` once a request went out; `RUN_NOT_READY` while the run is not `ready`, is ending or is past its deadline; `BUSY` for an action this profile does not offer.
+   * @example this.assertNodeServerRequestable(record, 'http-request')
+   */
+  private assertNodeServerRequestable(
+    record: NodeServerStudyRecord,
+    action: string,
+  ): void {
+    const view = record.nodeServer.run?.view()
+    if (
+      view?.heldPause ||
+      view?.state === 'learner-paused' ||
+      view?.state === 'unattributed'
+    )
+      throw new StudyError(
+        'LEARNER_PAUSED',
+        'The server is paused by the learner in the native debugger, so no request is sent. Ask the learner to continue it there, then read the run.',
+      )
+    if (record.nodeServer.sentKey !== undefined || view?.request)
+      throw new StudyError(
+        'REQUEST_ALREADY_SENT',
+        'The declared request was already sent in this run. Read the run resource for its pause, response or failure; a new request needs a new run.',
+      )
+    if (
+      !record.prepared ||
+      record.stopping ||
+      record.stopped ||
+      record.error ||
+      record.cleanupError ||
+      this.now() >= record.deadlineAt ||
+      view?.state !== 'ready'
+    )
+      throw new StudyError(
+        'RUN_NOT_READY',
+        'The server run is not ready for its request. Read the run resource until its state is ready.',
+      )
+    if (action !== NODE_SERVER_ACTION)
+      throw new StudyError(
+        'BUSY',
+        `Expected ${NODE_SERVER_ACTION}, received ${action}.`,
+        `Read ${this.uri(record.id)} for current nextActions; nothing was dispatched.`,
+      )
+  }
+
+  /**
+   * Confirms a state-changing request with the learner when it needs one, then hands the key to the run and keeps its receipt; the work of {@link StudyService.requestNodeServer} behind its pending entry.
+   * @param record - The node-server run.
+   * @param input - The action as the tool received it.
+   * @param signature - The action's signature, the key of its stored receipt.
+   * @returns The receipt.
+   * @throws See {@link StudyService.requestNodeServer}.
+   * @example await this.sendNodeServerRequest(record, input, signature)
+   */
+  private async sendNodeServerRequest(
+    record: NodeServerStudyRecord,
+    input: ActionInput,
+    signature: string,
+  ) {
+    const run = record.nodeServer.run
+    const declaration = record.nodeServer.prepared?.configuration.request
+    if (!run || !declaration)
+      throw new StudyError(
+        'RUN_NOT_READY',
+        'The server run does not exist yet.',
+      )
+    if (NODE_SERVER_STATE_CHANGING_METHODS.includes(declaration.method)) {
+      await this.confirmNodeServerRequest(record, declaration)
+      // The run can have stopped, failed or been paused while the learner read the modal.
+      this.assertNodeServerRequestable(record, input.action)
+    }
+    await run.sendRequest(input.key)
+    record.nodeServer.sentKey = input.key
+    const receipt = {
+      operationId: randomUUID(),
+      key: input.key,
+      runUri: this.uri(record.id),
+    }
+    record.action = { signature, receipt }
+    record.actions.set(input.key, record.action)
+    return receipt
+  }
+
+  /**
+   * Asks the learner, in the editor's native modal, whether to send a state-changing request; the chat AI cannot answer it (TD-6, D6).
+   * @param record - The node-server run, whose cancellation closes the question and whose id keeps a modal another run left open from answering it.
+   * @param declaration - The declared request, of which the modal names the method and path; the whole declaration identifies the question.
+   * @throws `PREREQUISITE_MISSING` when the editor has no such modal; `REQUEST_NOT_CONFIRMED` when the learner cancelled, dismissed it, or did not answer within {@link StudyService.confirmationTimeoutMs} (the run stays `ready`; asking again needs the same or a new key).
+   * @example await this.confirmNodeServerRequest(record, { method: 'POST', path: '/api/items' })
+   */
+  private async confirmNodeServerRequest(
+    record: StudyRecord,
+    declaration: NodeServerConfiguration['request'],
+  ): Promise<void> {
+    const confirm = this.environment.confirmStateChangingRequest
+    if (!confirm)
+      throw new StudyError(
+        'PREREQUISITE_MISSING',
+        'This editor cannot ask the learner to confirm a state-changing request, so Codebook sends no POST, PUT, PATCH or DELETE here.',
+      )
+    const signal = AbortSignal.any([
+      AbortSignal.timeout(this.confirmationTimeoutMs),
+      record.cancellation.signal,
+    ])
+    const sent = await confirm
+      .call(this.environment, { runId: record.id, ...declaration }, signal)
+      .catch(() => false)
+    if (!sent)
+      throw new StudyError(
+        'REQUEST_NOT_CONFIRMED',
+        `The learner did not confirm the ${declaration.method} ${declaration.path} request, so nothing was sent. The run stays ready.`,
+      )
+  }
+
+  /**
+   * Continues a node-server run's current pause with the arguments the run resource gave, after the refusals of the contract: `LEARNER_PAUSED` first, then a run that is ending or past its deadline, `NO_PAUSE`, and `STALE_PAUSE` for another pause; called by {@link StudyService.continue}.
+   * @param record - The node-server run.
+   * @param input - The continuation arguments.
+   * @returns The acknowledgement: `accepted` and the run's URI.
+   * @throws The codes above; what the run throws when it reserves the pause.
+   * @example await this.continueNodeServer(record, runState.participants.server.continueArguments)
+   */
+  private async continueNodeServer(
+    record: NodeServerStudyRecord,
+    input: ContinueInput,
+  ) {
+    const run = record.nodeServer.run
+    const view = run?.view()
+    if (
+      view?.heldPause ||
+      view?.state === 'learner-paused' ||
+      view?.state === 'unattributed'
+    )
+      throw new StudyError(
+        'LEARNER_PAUSED',
+        'The server is paused by the learner in the native debugger, which Codebook never resumes. Ask the learner to continue it there, then read the run.',
+      )
+    // A run the environment has not created yet has no pause at all.
+    if (!run)
+      throw new StudyError(
+        'NO_PAUSE',
+        'The server run is not started yet, so nothing is paused. Read the run resource until it is ready.',
+      )
+    // A run that is ending, failed or past its deadline has only historical pauses.
+    if (
+      record.stopping ||
+      record.stopped ||
+      record.error ||
+      record.cleanupError ||
+      this.now() >= record.deadlineAt
+    )
+      throw new StudyError(
+        'STALE_PAUSE',
+        'The server run is ending or has ended, so this pause is historical and cannot be resumed.',
+      )
+    const pause = view?.pause
+    if (!pause)
+      throw new StudyError(
+        'NO_PAUSE',
+        'The server is not paused at a declared stop. Read the run resource; continue only a pause it shows.',
+      )
+    if (
+      input.participant !== 'server' ||
+      input.sessionId !== pause.sessionId ||
+      input.threadId !== pause.threadId ||
+      input.generation !== pause.generation
+    )
+      throw new StudyError(
+        'STALE_PAUSE',
+        'This is not the current pause of the server. Copy participants.server.continueArguments from the run resource.',
+      )
+    await run.continue({
+      sessionId: input.sessionId,
+      threadId: input.threadId,
+      generation: input.generation,
+    })
+    return { accepted: true, runUri: this.uri(record.id) }
+  }
+
+  /**
+   * Continues a node-server run and, with `answer: "next"`, waits for what the request does next: the next stop, the response, a request failure, a pause of the learner, an unattributed hit, the end of the run or its failure (bounded as the other profiles' wait).
+   * @param record - The node-server run.
+   * @param input - The continuation arguments.
+   * @param startedAtMs - When the call began, for the call's budget.
+   * @param signal - The request's cancellation.
+   * @returns The acknowledgement; with `answer: "next"` also `next` (the word of {@link nextNodeServerState}, absent at the bound) and the run's `state`.
+   * @throws What {@link StudyService.continueNodeServer} throws; nothing is awaited after a refusal.
+   * @example await this.continueNodeServerToNextState(record, args, this.now())
+   */
+  private async continueNodeServerToNextState(
+    record: NodeServerStudyRecord,
+    input: ContinueInput,
+    startedAtMs: number,
+    signal?: AbortSignal,
+  ) {
+    const generationBefore = record.nodeServer.run?.view().pauseGeneration ?? 0
+    const receipt = await this.continue(input)
+    if (input.answer !== 'next') return receipt
+    const waitEndsAtMs = Math.min(
+      this.now() + ACTIVE_TIMEOUT_MS + CONTINUE_ANSWER_GRACE_MS,
+      startedAtMs + CONTINUE_ANSWER_CALL_BUDGET_MS,
+    )
+    const next = await waitForNextRunState(
+      () => this.nextNodeServerStep(record, generationBefore),
+      () => this.now() >= waitEndsAtMs,
+      signal,
+    )
+    return { ...receipt, ...(next && { next }), state: this.state(record) }
+  }
+
+  /**
+   * Reads what a continued node-server run did, at every turn of the wait of {@link StudyService.continueNodeServerToNextState}.
+   * @param record - The node-server run.
+   * @param generationBefore - The pause generation when the call began.
+   * @returns See {@link nextNodeServerState}.
+   * @example this.nextNodeServerStep(record, 1) // => 'responded' once the response arrived
+   */
+  private nextNodeServerStep(
+    record: NodeServerStudyRecord,
+    generationBefore: number,
+  ) {
+    // The whole-run deadline is the run's own end: apply it now, so the answer carries it.
+    this.expireAtDeadline(record)
+    this.adoptNodeServerFailure(record)
+    const view = record.nodeServer.run?.view()
+    return nextNodeServerState(view, generationBefore, {
+      failed: Boolean(record.error || view?.runFailure),
+      ended: Boolean(
+        record.stopping ||
+        record.stopped ||
+        record.cleanupError ||
+        this.stopping,
+      ),
+    })
+  }
+
+  /**
+   * Gives a node-server run's own failure (the server exited, the pause hold expired, the runtime failed) the run's error and releases the run, so every reader names the same end (D1); a request failure is not one, it ends the request and not the server.
+   * Called when the run reports a change and at each maintenance turn.
+   * @param record - The node-server run.
+   * @example this.adoptNodeServerFailure(record) // record.error?.code === 'SERVER_EXITED' once the run reported it
+   */
+  private adoptNodeServerFailure(record: StudyRecord): void {
+    const failure = record.nodeServer?.run?.view().runFailure
+    if (!failure || record.error || record.stopped) return
+    record.error = this.sanitizedError(failure)
+    this.logNodeServerFailure(record, record.error)
+    void this.stopRecord(record).catch((error) => {
+      this.failByRelease(record, error)
+    })
+  }
+
+  /**
+   * Reacts to a change of a node-server run: a failure of the run ends it; called by the subscription made when the run was created.
+   * @param record - The node-server run.
+   * @example run.onDidChange(() => this.onNodeServerChange(record))
+   */
+  private onNodeServerChange(record: StudyRecord): void {
+    this.adoptNodeServerFailure(record)
+  }
+
+  /**
+   * Writes a failure of a node-server run to the Output › Codebook channel once per code and message, for failures the run reported no `node-server.failure` event for (a refused start, a failure of the request or of the run).
+   * @param record - The node-server run.
+   * @param failure - The failure, already sanitized.
+   * @example this.logNodeServerFailure(record, record.error)
+   */
+  private logNodeServerFailure(
+    record: StudyRecord,
+    failure: { code: string; message: string },
+  ): void {
+    const logged = record.nodeServer?.loggedFailures
+    const identity = `${failure.code}\u0000${failure.message}`
+    if (!logged || logged.has(identity)) return
+    logged.add(identity)
+    this.writeOutputLine(
+      describeNodeServerFailureLine(record.id, failure.code, failure.message),
+    )
+  }
+
+  /**
+   * Writes one line to the Output › Codebook channel; a sink that throws (the channel after deactivation) never escapes the run that reports.
+   * @param line - The plain line.
+   * @example this.writeOutputLine({ level: 'info', text: 'Run r1: sent GET /api/healthz to 127.0.0.1:4100 (0 body bytes).' })
+   */
+  private writeOutputLine(line: NodeServerOutputLine): void {
+    try {
+      this.outputLog?.(line)
+    } catch {
+      // The line is also in the run's events; the channel has nowhere to write.
+    }
+  }
+
+  /**
+   * Prepares a node-server run asynchronously: workspace trust first, the cited sources pinned from the published book node, the profile's prerequisites, then the environment's run and its own preparation; a rejection is the run's error and the run is released (D5, D12).
+   * @param record - The node-server run.
+   * @example record.preparation = this.prepareNodeServer(record)
+   */
+  private async prepareNodeServer(record: StudyRecord): Promise<void> {
+    // Every node-server record is created with its server state.
+    if (!isNodeServerRecord(record)) return
+    try {
+      await this.startNodeServerRun(record)
+    } catch (error) {
+      // A stop cancelled this preparation: the run ends as stopped, with no error of its own.
+      if (record.stopping) return
+      record.error = this.sanitizedError(this.preparationError(record, error))
+      this.logNodeServerFailure(record, record.error)
+    }
+    // Release after preparation settles, so this promise is never awaited from itself.
+    if (record.error)
+      queueMicrotask(() => {
+        void this.stopRecord(record).catch(() => undefined)
+      })
+  }
+
+  /**
+   * The steps of a node-server preparation, each of which can refuse the run before the next one starts.
+   * @param record - The node-server run.
+   * @throws `PREREQUISITE_MISSING` for an untrusted workspace, missing storage, an unready profile or an environment without the run factory; the pinning's refusals; the run's rejection.
+   * @example await this.startNodeServerRun(record)
+   */
+  private async startNodeServerRun(
+    record: NodeServerStudyRecord,
+  ): Promise<void> {
+    this.environment.assertWorkspace?.()
+    if (!this.repository)
+      throw new StudyError(
+        'PREREQUISITE_MISSING',
+        'Repository source/book storage is unavailable in this editor.',
+      )
+    const state = record.nodeServer
+    state.prepared = await prepareNodeServerStudy(
+      record.configuration,
+      this.repository,
+      {
+        signal: record.cancellation.signal,
+        deadlineAt: Math.min(
+          record.deadlineAt,
+          record.createdAt + REPOSITORY_SETUP_TIMEOUT_MS,
+        ),
+      },
+      this.now,
+    )
+    this.environment.assertWorkspace?.()
+    // A start waits only on what it needs (the editor's own, Node and the machine), not on the other profiles' searches.
+    const prerequisites = this.environment.nodeServerStartPrerequisites
+      ? await this.environment.nodeServerStartPrerequisites()
+      : await this.environment
+          .prerequisites()
+          .then(
+            (reported) => reported.profiles?.[NODE_SERVER_PROFILE] ?? reported,
+          )
+    if (!prerequisites.ready)
+      throw new StudyError(
+        'PREREQUISITE_MISSING',
+        prerequisites.missing.join('; '),
+      )
+    if (!this.environment.createNodeServerRun)
+      throw new StudyError(
+        'PREREQUISITE_MISSING',
+        'The owned Node server adapter is unavailable.',
+      )
+    if (this.stopping || record.stopping) return
+    const run = await this.environment.createNodeServerRun(
+      state.prepared.configuration,
+      createNodeServerJournal(record.nodeEvents ?? [], {
+        sanitize: (text) => this.sanitizedCause(text),
+        onEvent: (type, detail) =>
+          this.writeNodeServerEventLine(record, type, detail),
+      }),
+      state.prepared.descriptor.sources,
+      record.id,
+    )
+    state.run = run
+    state.subscription = run.onDidChange(() => this.onNodeServerChange(record))
+    if (this.stopping || record.stopping) return
+    await run.prepare()
+    record.prepared = true
+  }
+
+  /**
+   * Writes the Output › Codebook line of a whitelisted node-server event, when it has one: the request, and the response or the failure.
+   * @param record - The node-server run.
+   * @param type - The event type.
+   * @param detail - The whitelisted detail.
+   * @example this.writeNodeServerEventLine(record, 'node-server.request', detail)
+   */
+  private writeNodeServerEventLine(
+    record: StudyRecord,
+    type: string,
+    detail: Record<string, unknown>,
+  ): void {
+    const line = describeNodeServerOutputLine(record.id, type, detail)
+    if (!line) return
+    if (type === 'node-server.failure' && typeof detail.code === 'string')
+      record.nodeServer?.loggedFailures.add(
+        `${detail.code}\u0000${String(detail.cause)}`,
+      )
+    this.writeOutputLine(line)
   }
 
   /** Returns the original preparing receipt even after later transitions, allowing safe same-key retries. @example this.receipt(record).runId */
