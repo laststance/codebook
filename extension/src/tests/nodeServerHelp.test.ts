@@ -204,7 +204,7 @@ test('the node-server help states the supported shape, the index bases and the l
   assert.match(limits, /local or test database/)
   assert.match(
     body.request,
-    /confirms it in a modal naming the method and path/,
+    /confirms it in a modal naming the method, the path, the run, the content type and the body size \(never the body\)/,
   )
   assert.match(limits, /Server runs are not saved yet/)
   assert.equal(body.configurationSchema.properties.request.type, 'object')
@@ -289,4 +289,36 @@ test('the ownership refusals tell how to recover when they come at the request',
   )
   // Assert
   assert.deepEqual(missing, [])
+})
+
+// protects=an agent is told that the target's own clocks keep running while the server is paused, so a long pause can change the app's answer; fails_when=the limits omit that Codebook's REQUEST_TIMEOUT counts running time only while the app's deadlines count wall time; no_claim=any value of a target's deadline
+test('the node-server help says the target’s own deadlines keep running while the server is paused', async () => {
+  // Arrange
+  const { body } = await servedHelp()
+  const limits: string = body.limits.join('\n')
+
+  // Act
+  const matched = limits.match(
+    /own clocks[^\n]*keep running while the server is paused[^\n]*REQUEST_TIMEOUT counts running time only[^\n]*a timeout or a 500/,
+  )
+
+  // Assert
+  assert.ok(matched, limits)
+})
+
+// protects=the NODE_SERVER_SOURCE_REFUSED row names every file a start can refuse (packageRoot, entry, a stop's file, the repository's tsx); fails_when=the row omits a stop's file, which resolveNodeServerStops refuses; no_claim=the recovery wording
+test('the node-server help names a stop’s file among the paths NODE_SERVER_SOURCE_REFUSED refuses', async () => {
+  // Arrange
+  const { body } = await servedHelp()
+
+  // Act
+  const row = body.codes.find(
+    (entry: { code: string }) => entry.code === 'NODE_SERVER_SOURCE_REFUSED',
+  )
+
+  // Assert
+  assert.equal(
+    row.when,
+    "start: packageRoot, entry, a stop's file or the repository's own tsx is missing or is not a real path inside the opened repository",
+  )
 })

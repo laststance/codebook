@@ -7,10 +7,12 @@ import type {
 import { assertNodeServerPortFree } from '../../utils/assertNodeServerPortFree'
 import { findPortOccupant } from '../../utils/findPortOccupant'
 import { forgetNodeServerProcess } from '../../utils/forgetNodeServerProcess'
+import { isProcessGone } from '../../utils/isProcessGone'
 import { isProcessGroupGone } from '../../utils/isProcessGroupGone'
 import { launchNodeServer } from '../../utils/launchNodeServer'
 import { readConnectionServerPid } from '../../utils/readConnectionServerPid'
 import { readListeningPortsOfProcess } from '../../utils/readListeningPortsOfProcess'
+import { readProcessCwd } from '../../utils/readProcessCwd'
 import { readProcessStart } from '../../utils/readProcessStart'
 import { rememberNodeServerProcess } from '../../utils/rememberNodeServerProcess'
 import { resolveNodeServerLaunch } from '../../utils/resolveNodeServerLaunch'
@@ -66,7 +68,9 @@ export function realNodeServerDependencies(
     launch: launchNodeServer,
     signalGroup: signalProcessGroup,
     isGroupGone: isProcessGroupGone,
+    isProcessGone,
     readProcessStart: (pid) => readProcessStart(pid),
+    readProcessCwd: (pid) => readProcessCwd(pid),
     findPortOccupant,
     waitForReadiness: (input) => {
       const startedAt = performance.now()

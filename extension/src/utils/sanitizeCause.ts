@@ -92,6 +92,35 @@ function rootPatterns(root: string): RegExp[] {
 }
 
 /**
+ * Hides a window's private roots in a text and changes nothing else: storage roots read `<storage>`, the opened repository's root `<workspace>` and the home directory `~`, in every spelling {@link sanitizeCause} recognises, the longest root first.
+ * Why: a server's response body is data the chat relays as observed; it must lose the learner's paths without the normalization a failure's cause gets (collapsed spaces, joined lines, a removed error name). Called by {@link sanitizeCause} and by the node-server run for the response body it hands to {@link sendDeclaredRequest}.
+ * @param text - The text to show.
+ * @param roots - The private roots of this window.
+ * @returns The text with each root replaced by its words; spacing, line breaks and every other character unchanged.
+ * @example
+ * hidePrivateRoots('{"file":"/Users/ada/repo/a.ts",  "n": 1}\n', { storage: [], workspace: '/Users/ada/repo', home: '/Users/ada' })
+ * // => '{"file":"<workspace>/a.ts",  "n": 1}\n'
+ */
+export function hidePrivateRoots(text: string, roots: CauseRoots): string {
+  const replacements: [string, string][] = roots.storage.map(
+    (root): [string, string] => [root, '<storage>'],
+  )
+  for (const root of [roots.workspace ?? []].flat())
+    replacements.push([root, '<workspace>'])
+  for (const root of [roots.home ?? []].flat()) replacements.push([root, '~'])
+  // The longest root first, so a storage folder inside the home directory reads <storage>, not ~/…; an alias spelling counts as its short form, so /private/var/… does not outrank a folder inside it (F214).
+  replacements.sort(
+    (left, right) =>
+      shortSpellingLength(right[0]) - shortSpellingLength(left[0]),
+  )
+  let hidden = text
+  for (const [root, words] of replacements)
+    for (const pattern of rootPatterns(root))
+      hidden = hidden.replace(pattern, words)
+  return hidden
+}
+
+/**
  * Words a failure's cause for a tooltip, a notification, the run resource, an MCP message and the Output › Codebook channel without the private paths it can carry, at the moment the cause is assigned, so every surface shows the same value; called by {@link StudyService} for a test history's failure, the test run's recording reason and the `HISTORY_SEAL_FAILED` cause, by {@link NodeLearningSave} for the save's causes, by {@link StudyWorkspace} for the causes it reports, and by {@link NodeTestHistoryStore} for an unavailable history's reason.
  * The extension's storage roots read `<storage>`, the opened repository's root `<workspace>` and the home directory `~`, in POSIX and Windows forms (either separator, the `\\?\` prefix, any case on Windows) and through the macOS realpath aliases `/var` and `/private/var`. A {@link StudyError} reads as its message naming its cause ({@link messageNamingCause}); any other error loses its leading error name ({@link withoutErrorName}). Control characters, bidirectional ones included, become spaces. The whole text is returned; a surface cuts it for display ({@link cutCauseForDisplay}).
  * @param error - What was thrown, or a cause already in words.
@@ -104,24 +133,7 @@ function rootPatterns(root: string): RegExp[] {
  * // => 'EACCES <workspace>\\a.ts'
  */
 export function sanitizeCause(error: unknown, roots: CauseRoots): string {
-  const replacements: [string, string][] = roots.storage.map(
-    (root): [string, string] => [root, '<storage>'],
-  )
-  for (const root of [roots.workspace ?? []].flat())
-    replacements.push([root, '<workspace>'])
-  for (const root of [roots.home ?? []].flat()) replacements.push([root, '~'])
-  // The longest root first, so a storage folder inside the home directory reads <storage>, not ~/…; an alias spelling counts as its short form, so /private/var/… does not outrank a folder inside it (F214).
-  replacements.sort(
-    (left, right) =>
-      shortSpellingLength(right[0]) - shortSpellingLength(left[0]),
-  )
-  const hideRoots = (text: string): string => {
-    let hidden = text
-    for (const [root, words] of replacements)
-      for (const pattern of rootPatterns(root))
-        hidden = hidden.replace(pattern, words)
-    return hidden
-  }
+  const hideRoots = (text: string): string => hidePrivateRoots(text, roots)
   // A domain error's message and cause lose their roots before they are joined and cut, so a cut never leaves part of a root behind (F263).
   const text =
     error instanceof StudyError

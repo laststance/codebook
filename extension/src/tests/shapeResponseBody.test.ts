@@ -121,3 +121,45 @@ test('a cut read words the remainder as a lower bound and says it was cut at 1 M
   )
   assert.equal(binary, '(binary, at least 3 bytes, cut at 1 MiB)')
 })
+
+// protects=an uncut body that ends in an incomplete UTF-8 sequence is flagged; fails_when=the truncated last character is shown as U+FFFD without the note; no_claim=which bytes were invalid
+test('an uncut body ending in an incomplete UTF-8 sequence is shown with the note', () => {
+  // Arrange: "A" then the first two bytes of the three-byte あ
+  const body = Buffer.from([0x41, 0xe3, 0x81])
+  // Act
+  const shown = shapeResponseBody(body, 'text/plain')
+  // Assert
+  assert.equal(shown, 'A� (not valid UTF-8)')
+})
+
+// protects=a body cut at 1 MiB inside its last character is flagged when invalid bytes precede the cut; fails_when=the earlier invalid byte is hidden behind the cut character; no_claim=the 1 MiB size itself
+test('a read cut inside its last character still shows the note when invalid bytes precede it', () => {
+  // Arrange: "A", an invalid byte, then the first two bytes of あ
+  const body = Buffer.from([0x41, 0xff, 0xe3, 0x81])
+  // Act
+  const shown = shapeResponseBody(body, 'text/plain', true)
+  // Assert
+  assert.equal(shown, 'A�� (cut at 1 MiB) (not valid UTF-8)')
+})
+
+// protects=a read cut inside a character is not called invalid by itself; fails_when=the cut character alone adds the invalid note; no_claim=how the cut character is drawn
+test('a read cut inside its last character without other invalid bytes has no invalid note', () => {
+  // Arrange
+  const body = Buffer.from([0x41, 0xe3, 0x81])
+  // Act
+  const shown = shapeResponseBody(body, 'text/plain', true)
+  // Assert
+  assert.equal(shown, 'A� (cut at 1 MiB)')
+})
+
+// protects=a private path straddling the 8192-byte cut shows none of its prefix; fails_when=private roots are hidden after the cut so the cut leaves the root's first characters; no_claim=which roots the real sanitizer hides
+test('a private path straddling the shown cut is hidden before the cut', () => {
+  // Arrange: "/Users/ada/private" starts 12 bytes before the 8192 limit
+  const body = Buffer.from(`${'a'.repeat(8_180)}/Users/ada/private/file.ts`)
+  const hideRoot = (text: string): string =>
+    text.replaceAll('/Users/ada/private', '<workspace>')
+  // Act
+  const shown = shapeResponseBody(body, 'text/plain', false, hideRoot)
+  // Assert
+  assert.equal(shown, `${'a'.repeat(8_180)}<workspace>/ … 14 more bytes`)
+})

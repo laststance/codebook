@@ -1,4 +1,7 @@
-import { NODE_SERVER_MODAL_RUN_ID_CHARS } from '../constants'
+import {
+  NODE_SERVER_EVENT_SHORT_TEXT_LIMIT_CHARS,
+  NODE_SERVER_MODAL_RUN_ID_CHARS,
+} from '../constants'
 
 /** The label of the modal's one button; the editor adds Cancel itself. */
 const SEND_LABEL = 'Send'
@@ -20,7 +23,25 @@ export type StateChangingRequestQuestion = {
 }
 
 /**
- * Makes the question the environment asks before a state-changing request of a node-server run is sent: a native modal that names the method and path and says the server uses the repository's own configured database. The chat AI cannot answer it (TD-6).
+ * Describes the body a confirmation asks about by its size and content type, never its content (it may hold secrets).
+ * Called by the asker when it words the modal's detail.
+ * @param request - The request the modal asks about.
+ * @returns
+ * - `The request has no body.` when it declares none
+ * - `The request body is <n> bytes of <content type>.` otherwise (`unspecified content type` when none is declared)
+ * @example describeRequestBody({ runId: 'r', method: 'POST', path: '/x', contentType: 'application/json', body: '{}' }) // => 'The request body is 2 bytes of application/json.'
+ */
+function describeRequestBody(request: StateChangingRequestQuestion): string {
+  if (request.body === undefined) return 'The request has no body.'
+  const type = request.contentType?.slice(
+    0,
+    NODE_SERVER_EVENT_SHORT_TEXT_LIMIT_CHARS,
+  )
+  return `The request body is ${Buffer.byteLength(request.body)} bytes of ${type || 'unspecified content type'}.`
+}
+
+/**
+ * Makes the question the environment asks before a state-changing request of a node-server run is sent: a native modal that names the method, path, content type and body size (never the body) and says the server uses the repository's own configured database. The chat AI cannot answer it (TD-6).
  * The editor offers no way to close a modal, so one whose caller gave up (no answer within the bound, a cancelled run) stays on screen. A retry of the same run's same declared request therefore joins that modal instead of opening a second one, also after another run asked, and the learner's single answer belongs to the retry; another run, or another method, path, content type or body, asks in its own modal, which names its run; a click on Send with no retry waiting changes nothing.
  * Called once by the environment; the service awaits the result before it sends the request (D6).
  * @param show - The editor's modal question ({@link ShowModalQuestion}).
@@ -49,7 +70,7 @@ export function createStateChangingRequestAsker(show: ShowModalQuestion) {
       const shown = Promise.resolve(
         show(
           `Send ${request.method} ${request.path} to the repository's server?`,
-          `Codebook will send this ${request.method} request once, to the server it started for run ${request.runId.slice(0, NODE_SERVER_MODAL_RUN_ID_CHARS)}, and nothing else. The server uses the repository's own configured database, so the request may change its data. Use a local or test database. If this question stays after Codebook gave up waiting, Cancel it: a new request asks again.`,
+          `Codebook will send this ${request.method} request once, to the server it started for run ${request.runId.slice(0, NODE_SERVER_MODAL_RUN_ID_CHARS)}, and nothing else. ${describeRequestBody(request)} The server uses the repository's own configured database, so the request may change its data. Use a local or test database. If this question stays after Codebook gave up waiting, Cancel it: a new request asks again.`,
           SEND_LABEL,
         ),
       )

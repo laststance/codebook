@@ -260,3 +260,119 @@ test("a record whose group is not led by its pid, or is the editor's own group, 
   assert.equal(closed, 0)
   assert.deepEqual(signals, [])
 })
+
+/**
+ * Runs one sweep over the single `RECORD` with the given readers.
+ * @param overrides - The readers and signals that differ from a healthy, matching leader whose group is still running.
+ * @returns The store, the signals sent, the log lines and the number closed.
+ * @example await sweepRecord({ readProcessStart: async () => undefined })
+ */
+async function sweepRecord(
+  overrides: Partial<Parameters<typeof reapNodeServerOrphans>[0]>,
+) {
+  const store = memento([RECORD])
+  const signals: string[] = []
+  const lines: string[] = []
+  const closed = await reapNodeServerOrphans({
+    store,
+    readProcessStart: async () => RECORD.leaderStartedAt,
+    readProcessCwd: async () => RECORD.cwd,
+    signalGroup: (group, signal) => signals.push(`${signal}:${group}`),
+    isGroupGone: () => false,
+    readOwnProcessGroup: async () => 1,
+    log: (line) => lines.push(line),
+    graceMs: 20,
+    ...overrides,
+  })
+  return { store, signals, lines, closed }
+}
+
+// protects=a leader whose start cannot be read does not erase a group that still has members, and nobody unidentifiable is signalled; fails_when=the record is dropped, a member is signalled, or the Output line stays silent; no_claim=which members remain
+test('a leaderless group with members left keeps its record, signals nothing and tells the learner', async () => {
+  // Arrange / Act
+  const swept = await sweepRecord({ readProcessStart: async () => undefined })
+  // Assert
+  assert.equal(swept.closed, 0)
+  assert.deepEqual(swept.signals, [])
+  assert.deepEqual(swept.lines, [
+    'A server group left by an earlier window has no verifiable leader, but its members remain (pid 4242, declared port 4100); Codebook did not signal processes it cannot identify.',
+  ])
+  assert.deepEqual(swept.store.value, [RECORD])
+})
+
+// protects=a vanished group leaves no record behind; fails_when=a record of a group that is gone stays forever; no_claim=none
+test('a record whose leader and group are both gone is dropped quietly', async () => {
+  // Arrange / Act
+  const swept = await sweepRecord({
+    readProcessStart: async () => undefined,
+    isGroupGone: () => true,
+  })
+  // Assert
+  assert.deepEqual(swept.signals, [])
+  assert.deepEqual(swept.lines, [])
+  assert.equal(swept.store.value, undefined)
+})
+
+// protects=a pid that is positively another process is dropped even while some group exists; fails_when=a different start time keeps the record or signals; no_claim=none
+test('a different start time drops the record without a signal even when the group still has members', async () => {
+  // Arrange / Act
+  const swept = await sweepRecord({
+    readProcessStart: async () => 'ps:another start',
+  })
+  // Assert
+  assert.deepEqual(swept.signals, [])
+  assert.equal(swept.store.value, undefined)
+})
+
+// protects=a server whose folder changed or could not be read keeps its record; fails_when=the record is dropped while the group still runs, or the group is signalled unverified; no_claim=why the folder differs
+test('a matching start with an unconfirmed folder keeps the record and signals nothing', async () => {
+  // Arrange / Act
+  const changed = await sweepRecord({
+    readProcessCwd: async () => '/elsewhere',
+  })
+  const unreadable = await sweepRecord({
+    readProcessCwd: async () => undefined,
+  })
+  // Assert
+  assert.deepEqual(changed.signals, [])
+  assert.deepEqual(changed.store.value, [RECORD])
+  assert.deepEqual(unreadable.signals, [])
+  assert.deepEqual(unreadable.store.value, [RECORD])
+  assert.deepEqual(changed.lines, [
+    'Could not confirm a server left running by an earlier window (pid 4242, declared port 4100); it was not signalled and its record is kept.',
+  ])
+})
+
+// protects=a failed read or signal never costs the only record of a running server; fails_when=a throwing reader or signal drops the record while the group has members; no_claim=the retry on the next activation
+test('a read or signal that throws keeps the record while the group still has members', async () => {
+  // Arrange / Act
+  const readFails = await sweepRecord({
+    readProcessStart: async () => {
+      throw new Error('ps timed out')
+    },
+  })
+  const signalFails = await sweepRecord({
+    signalGroup: () => {
+      throw new Error('EPERM')
+    },
+  })
+  // Assert
+  assert.deepEqual(readFails.store.value, [RECORD])
+  assert.deepEqual(signalFails.store.value, [RECORD])
+  assert.deepEqual(signalFails.lines, [
+    'Could not close a server left running by an earlier window (pid 4242, declared port 4100).',
+  ])
+})
+
+// protects=a throwing check does not hide that the group is gone; fails_when=a failed signal on a gone group keeps its record; no_claim=none
+test('a signal that throws on a group that is already gone drops the record', async () => {
+  // Arrange / Act
+  const swept = await sweepRecord({
+    isGroupGone: () => true,
+    signalGroup: () => {
+      throw new Error('ESRCH')
+    },
+  })
+  // Assert
+  assert.equal(swept.store.value, undefined)
+})

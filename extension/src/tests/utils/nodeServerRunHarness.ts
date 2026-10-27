@@ -15,7 +15,10 @@ import {
   type NodeServerRunDependencies,
 } from '../../ownedNodeServerRun'
 import type { NodeServerResponse, NodeServerRuntime } from '../../runtime'
-import type { NodeServerExit } from '../../utils/launchNodeServer'
+import type {
+  NodeServerCloseOptions,
+  NodeServerExit,
+} from '../../utils/launchNodeServer'
 
 import { createManualClock } from './createManualClock'
 import { defer } from './defer'
@@ -46,6 +49,8 @@ export type HarnessOptions = {
   listener?: Awaited<ReturnType<NodeServerRunDependencies['verifyListener']>>
   /** Replaces the readiness wait; it gets the run's input. */
   waitForReadiness?: NodeServerRunDependencies['waitForReadiness']
+  /** Answers the server's inspector endpoint in place of the fake's at once, so a test can hold the run before it reads its leader. */
+  inspectorEndpoint?: (signal?: AbortSignal) => Promise<string>
   listeningPorts?: number[]
   /** The real debugger reports `onResume` when the editor's continue request is sent, before the adapter answers. */
   resumeEmitsOnResume?: boolean
@@ -66,6 +71,12 @@ export type HarnessOptions = {
   holdClose?: boolean
   occupant?: { pid: number; command?: string }
   groupGone?: boolean
+  /** What the pid probe answers for the launched leader's id; a process still has it unless a test says otherwise. */
+  processGone?: boolean
+  /** Also receives every event the run journals, as the service's record does when the service owns the run. */
+  record?: (type: string, detail?: unknown) => unknown
+  /** The run id the service gave the run; `run-1` by default. */
+  runId?: string
 }
 
 /** A hand-moved stand-in for the editor's debugger: it records its calls in the shared order and lets the test emit pauses. */
@@ -200,6 +211,8 @@ export function fakeServer(
     processGroup: 4242,
     closeCalls: 0,
     closeWithDetach: [] as boolean[],
+    /** The options each close was given, so a test reads the stop's clock and identity check the run passed. */
+    closeOptions: [] as NodeServerCloseOptions[],
     closeGate,
     exitNow(exit: NodeServerExit): void {
       state.exit = exit
@@ -212,11 +225,16 @@ export function fakeServer(
     async waitForExit(): Promise<NodeServerExit | undefined> {
       return state.exit
     },
-    async inspectorEndpoint(): Promise<string> {
+    async inspectorEndpoint(signal?: AbortSignal): Promise<string> {
+      if (options.inspectorEndpoint) return options.inspectorEndpoint(signal)
       return `ws://127.0.0.1:${options.inspectorPort ?? 9229}/abc`
     },
-    async close(detach?: () => Promise<void>): Promise<NodeServerExit> {
+    async close(
+      detach?: () => Promise<void>,
+      closeOptions: NodeServerCloseOptions = {},
+    ): Promise<NodeServerExit> {
       this.closeCalls += 1
+      this.closeOptions.push(closeOptions)
       this.closeWithDetach.push(Boolean(detach))
       order.push('server.close')
       if (detach) {
@@ -236,6 +254,7 @@ export function fakeRequestSender(order: string[]) {
     stateAtCall?: string
     headers?: string
     signal?: AbortSignal
+    sanitize?: (text: string) => string
   }> = []
   let current = {
     written: defer<void>(),
@@ -257,7 +276,12 @@ export function fakeRequestSender(order: string[]) {
       stateAtCall: string,
     ) {
       order.push('sendRequest')
-      calls.push({ stateAtCall, headers: input.runId, signal: input.signal })
+      calls.push({
+        stateAtCall,
+        headers: input.runId,
+        signal: input.signal,
+        sanitize: input.sanitize,
+      })
       const answers = {
         written: defer<void>(),
         response: defer<NodeServerResponse>(),
@@ -355,6 +379,13 @@ export function createHarness(options: HarnessOptions = {}) {
     >,
     forgotten: [] as string[],
     signals: [] as Array<[number, string]>,
+    /** What the process-start and working-folder readers answer for the launched leader; a test changes it to make the group id another process's. */
+    leader: { start: 'start-1', cwd: WORKSPACE } as {
+      start: string | undefined
+      cwd: string | undefined
+    },
+    /** A signal that fails once, as the system refuses one for a member the user may not signal (EPERM); a test sets it before the call. */
+    failSignal: undefined as NodeJS.Signals | undefined,
     readiness: [] as Array<
       Parameters<NodeServerRunDependencies['waitForReadiness']>[0]
     >,
@@ -424,9 +455,17 @@ export function createHarness(options: HarnessOptions = {}) {
     signalGroup: (group, signal) => {
       order.push(`signal:${signal}`)
       calls.signals.push([group, signal])
+      if (calls.failSignal === signal) {
+        calls.failSignal = undefined
+        throw Object.assign(new Error(`kill ${signal} EPERM`), {
+          code: 'EPERM',
+        })
+      }
     },
     isGroupGone: () => options.groupGone ?? false,
-    readProcessStart: async () => 'start-1',
+    isProcessGone: () => options.processGone ?? false,
+    readProcessStart: async () => calls.leader.start,
+    readProcessCwd: async () => calls.leader.cwd,
     findPortOccupant: async () => {
       await options.occupantGate
       return options.occupant
@@ -468,6 +507,7 @@ export function createHarness(options: HarnessOptions = {}) {
     configuration: declaration(port, options.stops ?? 1),
     record: (type, detail) => {
       events.push({ type, detail })
+      options.record?.(type, detail)
       seen.get(type)?.resolve()
       if (!seen.has(type)) {
         const settled = defer<void>()
@@ -476,7 +516,7 @@ export function createHarness(options: HarnessOptions = {}) {
       }
     },
     citedSources,
-    runId: 'run-1',
+    runId: options.runId ?? 'run-1',
     dependencies,
   })
   return {

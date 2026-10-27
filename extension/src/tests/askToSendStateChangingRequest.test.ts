@@ -268,3 +268,68 @@ test('the modal names the run it asks for', async () => {
   // Assert
   assert.match(shown[0]?.detail ?? '', /for run 68ca83a9,/)
 })
+
+// protects=the learner sees the content type and the size of the body they confirm, never its content; fails_when=the detail omits the type or the byte count, or prints the body; no_claim=how the editor draws the modal
+test('the confirmation names the content type and the body size in bytes but not the body', async () => {
+  // Arrange
+  const { show, shown } = modalAnswering('Send')
+  // Act
+  await createStateChangingRequestAsker(show)(
+    {
+      runId: 'run-1',
+      method: 'POST',
+      path: '/api/items',
+      contentType: 'application/json',
+      body: '{"token":"ひらがな"}',
+    },
+    new AbortController().signal,
+  )
+  // Assert: 12 ASCII bytes of JSON plus the 12 bytes of four 3-byte characters = 24
+  assert.match(
+    shown[0]?.detail ?? '',
+    /The request body is 24 bytes of application\/json\./,
+  )
+  assert.doesNotMatch(shown[0]?.detail ?? '', /token/)
+})
+
+// protects=a request without a body says so; fails_when=the detail claims a body or a size for a DELETE with none; no_claim=none
+test('the confirmation of a request without a body says it has none', async () => {
+  // Arrange
+  const { show, shown } = modalAnswering('Send')
+  // Act
+  await createStateChangingRequestAsker(show)(
+    { runId: 'run-1', method: 'DELETE', path: '/api/items/7' },
+    new AbortController().signal,
+  )
+  // Assert
+  assert.match(shown[0]?.detail ?? '', /The request has no body\./)
+})
+
+// protects=a body with no declared content type says so, and an over-long declared type is bounded to 256 characters in the modal; fails_when=the detail prints "undefined", an empty type, or the whole over-long type; why_new=the other body tests declare a short content type; seam=none; no_claim=how the editor draws the modal
+test('the confirmation says unspecified content type for a typeless body and bounds a very long declared type', async () => {
+  // Arrange
+  const { show, shown } = modalAnswering('Send')
+  const asker = createStateChangingRequestAsker(show)
+  // Act
+  await asker(
+    { runId: 'run-1', method: 'POST', path: '/a', body: 'abc' },
+    new AbortController().signal,
+  )
+  await asker(
+    {
+      runId: 'run-2',
+      method: 'POST',
+      path: '/b',
+      contentType: 'x'.repeat(300),
+      body: 'abc',
+    },
+    new AbortController().signal,
+  )
+  // Assert
+  assert.match(
+    shown[0]?.detail ?? '',
+    /The request body is 3 bytes of unspecified content type\./,
+  )
+  assert.ok((shown[1]?.detail ?? '').includes(`3 bytes of ${'x'.repeat(256)}.`))
+  assert.ok(!(shown[1]?.detail ?? '').includes('x'.repeat(257)))
+})

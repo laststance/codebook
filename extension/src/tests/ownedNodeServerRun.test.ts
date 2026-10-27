@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { StudyError } from '../errors'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { ownedDevelopmentPortState } from '../utils/ownedDevelopmentPorts'
 
 import { defer } from './utils/defer'
@@ -13,6 +14,7 @@ import {
   until,
   WORKSPACE,
   type Harness,
+  type HarnessOptions,
 } from './utils/nodeServerRunHarness'
 
 /** Asserts a promise rejects with a StudyError of this code and returns the error. */
@@ -682,6 +684,10 @@ test('the request times out after 30 s of running time and a pause does not coun
   // Assert
   assert.equal(justBefore, 'request-in-flight')
   assert.equal(view.requestFailure?.code, 'REQUEST_TIMEOUT')
+  assert.equal(
+    view.requestFailure?.message,
+    'The server did not answer within 30 s of running time.',
+  )
   assert.equal(view.runFailure, undefined)
   assert.equal(harness.debug.retireCount, 1)
 })
@@ -697,6 +703,9 @@ test('the request ends as timed out at the 15 minute wall-time backstop even whe
     harness.clock.advance(250_000)
     harness.debug.nativeContinue(token)
   }
+  // The fourth pause is still held when the wall-time backstop falls due, so the running time never reached 30 s.
+  harness.debug.hit(0)
+  await until(harness, (view) => view.state === 'paused')
   // Act
   harness.clock.advance(150_000)
   const view = await until(
@@ -705,6 +714,10 @@ test('the request ends as timed out at the 15 minute wall-time backstop even whe
   )
   // Assert
   assert.equal(view.requestFailure?.code, 'REQUEST_TIMEOUT')
+  assert.equal(
+    view.requestFailure?.message,
+    'The server did not answer within 15 minutes of waiting, however long it was paused.',
+  )
 })
 
 // protects=a server that exits before answering is the run's failure SERVER_EXITED, not a reset; fails_when=request-failed REQUEST_FAILED hides the exit; no_claim=a real crash
@@ -1103,8 +1116,8 @@ test('a learner pause arriving inside the request after the Stop was admitted is
   assert.deepEqual(harness.server.closeWithDetach, [false])
 })
 
-// protects=D14: a learner pause that arrives outside the request after the Stop was admitted still takes Stop v2 (detach, SIGTERM), so the server's own shutdown runs; fails_when=any pause arriving while stopping is killed; no_claim=none
-test('a learner pause arriving outside the request after the Stop was admitted lets the debugger go first', async () => {
+// protects=D14 v3: a learner pause that arrives outside the request after the Stop was admitted is killed first, so the detach never resumes the learner's paused code; fails_when=the debugger lets go first for a pause arriving while stopping; no_claim=the real adapter's event order
+test('a learner pause arriving outside the request after the Stop was admitted is killed before the debugger lets go', async () => {
   // Arrange
   const harness = await readyHarness()
   // Act
@@ -1112,8 +1125,9 @@ test('a learner pause arriving outside the request after the Stop was admitted l
   harness.debug.learnerPause()
   await stopping
   // Assert
-  assert.deepEqual(harness.calls.signals, [])
-  assert.deepEqual(harness.server.closeWithDetach, [true])
+  assert.deepEqual(harness.calls.signals, [[4242, 'SIGKILL']])
+  assert.deepEqual(harness.server.closeWithDetach, [false])
+  assert.deepEqual(harness.debug.resumed, [])
 })
 
 // protects=D14: a stop the editor reports after the Stop was admitted, and is still reading at the release, is killed first; fails_when=only the admission looks at unreported stops; no_claim=the real adapter's timing
@@ -1142,11 +1156,27 @@ test('a connection that reaches another process journals no sent request', async
   )
 })
 
-// protects=a learner pause outside the window still takes Stop v2; fails_when=SIGKILL for a plain learner pause outside the request; no_claim=none
-test('stopping while the learner paused outside the request window detaches first', async () => {
+// protects=D14 v3: a learner pause held outside the request window at the Stop is killed first, never resumed by the detach; fails_when=the debugger detaches first and resumes the learner's paused code; no_claim=none
+test('stopping while the learner paused outside the request window kills the group before the debugger lets go', async () => {
   // Arrange
   const harness = await readyHarness()
   harness.debug.learnerPause()
+  // Act
+  await harness.run.stop()
+  // Assert
+  assert.deepEqual(harness.calls.signals, [[4242, 'SIGKILL']])
+  assert.deepEqual(harness.server.closeWithDetach, [false])
+  assert.deepEqual(harness.debug.resumed, [])
+  assert.ok(
+    harness.order.indexOf('signal:SIGKILL') <
+      harness.order.indexOf('debugger.release'),
+  )
+})
+
+// protects=Stop v2 stays for a server that is not paused and has no request under way, so its own SIGTERM handler runs; fails_when=a ready server with no pause is killed first; no_claim=a real shutdown handler (the process test)
+test('stopping a ready server with no pause and no request detaches first and sends SIGTERM through the launcher', async () => {
+  // Arrange
+  const harness = await readyHarness()
   // Act
   await harness.run.stop()
   // Assert
@@ -1265,4 +1295,184 @@ test('the peer check accepts only the launched server as the holder of the conne
   assert.match(shared.message, /9999/)
   assert.equal(extra.sender.bytesWritten, 0)
   assert.equal(alone.sender.bytesWritten, 1)
+})
+
+// ---------------------------------------------------------------- retried stop (tasks 25, 28)
+
+/** Starts a stop of a run whose request is under way, lets its close hang, and ends it at the 10 s deadline, so the next stop is a retry. */
+async function failFirstStop(harness: Harness): Promise<void> {
+  await sendRequest(harness)
+  const first = harness.run.stop()
+  const outcome = rejectsWith(first, 'RUNTIME_FAILED')
+  harness.clock.advance(10_000)
+  await outcome
+}
+
+// protects=a retried stop sends SIGKILL again only while the leader still has the launch start time and folder; fails_when=a retry signals a group id another process now holds; no_claim=a real reuse of a process-group id (the launcher test and the verdict tests cover the reads)
+test('a retried stop sends no SIGKILL to a group id that another process holds now', async () => {
+  // Arrange
+  const harness = await readyHarness({ holdClose: true })
+  await failFirstStop(harness)
+  harness.calls.leader.start = 'start-of-another-process'
+  harness.server.closeGate.resolve()
+  // Act
+  await harness.run.stop()
+  // Assert
+  assert.deepEqual(harness.calls.signals, [[4242, 'SIGKILL']])
+  assert.equal(harness.server.closeCalls, 2)
+  assert.equal(
+    await harness.server.closeOptions[1]?.confirmGroup?.(),
+    'replaced',
+  )
+  assert.equal(harness.run.view().state, 'stopped')
+})
+
+// protects=a retried stop still ends the launched group when its identity is confirmed; fails_when=the identity check refuses a group that is still the launched one; no_claim=a real process
+test('a retried stop sends SIGKILL again to the group that is still the launched one', async () => {
+  // Arrange
+  const harness = await readyHarness({ holdClose: true })
+  await failFirstStop(harness)
+  harness.server.closeGate.resolve()
+  // Act
+  await harness.run.stop()
+  // Assert
+  assert.deepEqual(harness.calls.signals, [
+    [4242, 'SIGKILL'],
+    [4242, 'SIGKILL'],
+  ])
+  assert.equal(
+    await harness.server.closeOptions[1]?.confirmGroup?.(),
+    'launched',
+  )
+})
+
+// protects=a retried stop that cannot read the leader fails retryably instead of signalling on a guess; fails_when=an unreadable leader is signalled or the stop reports success; no_claim=the wording for the learner
+test('a retried stop that cannot read the leader signals nothing and fails', async () => {
+  // Arrange
+  const harness = await readyHarness({ holdClose: true })
+  await failFirstStop(harness)
+  harness.calls.leader.start = undefined
+  harness.calls.leader.cwd = undefined
+  harness.server.closeGate.resolve()
+  // Act
+  const error = await rejectsWith(harness.run.stop(), 'RUNTIME_FAILED')
+  // Assert
+  assert.deepEqual(harness.calls.signals, [[4242, 'SIGKILL']])
+  assert.match(error.message, /could not be confirmed/)
+  assert.equal(harness.run.view().state, 'stopping')
+})
+
+// protects=a stop whose first SIGKILL failed before any close ran tells the retried stop's close that it is a retry, so that close confirms the group before it signals and a group the run found replaced is never signalled; fails_when=the close of a retried stop is told nothing and signals as a first close; no_claim=the launcher's own checks (its process test)
+test('a retried stop whose first SIGKILL failed tells its close that the stop is a retry', async () => {
+  // Arrange
+  const harness = await readyHarness()
+  await sendRequest(harness)
+  harness.calls.failSignal = 'SIGKILL'
+  await rejectsWith(harness.run.stop(), 'RUNTIME_FAILED')
+  harness.calls.leader.start = 'start-of-another-process'
+  // Act
+  await harness.run.stop()
+  // Assert
+  assert.deepEqual(harness.calls.signals, [[4242, 'SIGKILL']])
+  assert.equal(harness.server.closeCalls, 1)
+  assert.equal(harness.server.closeOptions[0]?.retried, true)
+  assert.equal(
+    await harness.server.closeOptions[0]?.confirmGroup?.(),
+    'replaced',
+  )
+})
+
+// protects=a retried kill-first stop sends nothing to a group that is already gone, so an id another group takes after the check is never signalled, and the stop completes; fails_when=a gone group reads as launched and the retry sends SIGKILL again, or the stop fails; no_claim=a real reuse of a process-group id
+test('a retried kill-first stop sends no signal to a group that is already gone', async () => {
+  // Arrange
+  const options: HarnessOptions = { holdClose: true }
+  const harness = await readyHarness(options)
+  await failFirstStop(harness)
+  harness.calls.leader.start = undefined
+  harness.calls.leader.cwd = undefined
+  options.groupGone = true
+  harness.server.closeGate.resolve()
+  // Act
+  await harness.run.stop()
+  // Assert
+  assert.deepEqual(harness.calls.signals, [[4242, 'SIGKILL']])
+  assert.equal(await harness.server.closeOptions[1]?.confirmGroup?.(), 'gone')
+  assert.equal(harness.run.view().state, 'stopped')
+})
+
+// protects=a stop admitted before the run read its leader's start time can still be retried: the launch folder identifies the group from the spawn on, so the retried close confirms it instead of failing on every retry; fails_when=the retry answers unverifiable without reading the leader, so the run stays stopping and holds its port; no_claim=the real reads
+test('a retried stop of a run stopped before its leader was read still confirms the launched group', async () => {
+  // Arrange
+  const harness = createHarness({
+    holdClose: true,
+    inspectorEndpoint: (signal) =>
+      new Promise((_, reject) =>
+        signal?.addEventListener('abort', () => reject(signal.reason), {
+          once: true,
+        }),
+      ),
+  })
+  const preparing = harness.run.prepare()
+  void preparing.catch(() => undefined)
+  await waitUntil(() => harness.calls.launch === 1, 'the launch', 1_000)
+  const first = rejectsWith(harness.run.stop(), 'RUNTIME_FAILED')
+  harness.clock.advance(10_000)
+  await first
+  harness.server.closeGate.resolve()
+  // Act
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    await harness.server.closeOptions[1]?.confirmGroup?.(),
+    'launched',
+  )
+  assert.equal(harness.run.view().state, 'stopped')
+})
+
+// protects=the close is told how long ago the stop was admitted, so its detach, TERM grace and group wait count from the admission and SIGKILL lands by 5 s; fails_when=the close counts from its own start or is given no clock; no_claim=the launcher's timing (its process test)
+test('the close measures the stop from its admission, not from the close call', async () => {
+  // Arrange
+  const harness = await readyHarness({ holdClose: true })
+  const stopping = harness.run.stop()
+  void stopping.catch(() => undefined)
+  await waitUntil(
+    () => harness.server.closeCalls === 1,
+    'the close to begin',
+    1_000,
+  )
+  // Act
+  harness.clock.advance(3_000)
+  const sinceAdmission = harness.server.closeOptions[0]?.sinceAdmissionMs?.()
+  harness.server.closeGate.resolve()
+  await stopping
+  // Assert
+  assert.equal(sinceAdmission, 3_000)
+})
+
+// protects=the sender hides the run's workspace root in the response body before the body is cut; fails_when=the run hands the sender no sanitizer, so a root straddling the 8192-byte cut keeps its prefix; no_claim=home or storage roots
+test('the run gives the request sender a sanitizer that hides the workspace root', async () => {
+  // Arrange
+  const harness = await readyHarness()
+  // Act
+  await sendRequest(harness)
+  const sanitize = harness.sender.calls[0]?.sanitize
+  // Assert
+  assert.equal(
+    sanitize?.(`failed at ${WORKSPACE}/src/app.ts`),
+    'failed at <workspace>/src/app.ts',
+  )
+})
+
+// protects=the observed response the chat reads is the server's text: the sanitizer hides private roots only and keeps repeated spaces, line breaks and a leading error name; fails_when=the body is normalized like a failure's cause ("Mary  Jane" read as "Mary Jane", CSV lines joined); no_claim=the secret masking (shapeResponseBody tests)
+test('the response sanitizer keeps the body text apart from the workspace root', async () => {
+  // Arrange
+  const harness = await readyHarness()
+  // Act
+  await sendRequest(harness)
+  const sanitize = harness.sender.calls[0]?.sanitize
+  // Assert
+  assert.equal(
+    sanitize?.(`{"name":"Mary  Jane"}\na,b\n1,2\nError: at ${WORKSPACE}/x\n`),
+    '{"name":"Mary  Jane"}\na,b\n1,2\nError: at <workspace>/x\n',
+  )
 })

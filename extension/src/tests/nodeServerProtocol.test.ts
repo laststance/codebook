@@ -270,3 +270,35 @@ test('the MCP server names node-server and http-request in its instructions, too
     ),
   )
 })
+
+// protects=the tool text an editor builds its confirmation summary from (VS Code shows a tool's title and description): codebook_start promises no request only for a node-server start (a browser start loads the application's page, a test start runs the test), and codebook_action says its method comes from the run's declaration and a GET changes nothing; fails_when=either tool is described as posting data, the start promises no traffic for every profile, or the action's method is left unsaid; no_claim=what a model-written summary says
+test('codebook_start and codebook_action describe themselves so an editor’s confirmation summary follows the run', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const client = await connectMcpClient(context, harness.service)
+
+  // Act
+  const { tools } = await client.listTools()
+  const start = tools.find((tool) => tool.name === 'codebook_start')
+  const action = tools.find((tool) => tool.name === 'codebook_action')
+
+  // Assert
+  assert.ok(start && action)
+  assert.match(
+    start.description ?? '',
+    /A node-server start sends no request to the server and posts no data: its one declared request is sent only later, by codebook_action http-request \(a repository-browser start loads the application's page; a node-test start runs the declared test\)\./,
+  )
+  assert.doesNotMatch(start.description ?? '', /server and sends no request/)
+  assert.equal(start.annotations?.title, 'Start the declared Codebook run')
+  assert.match(
+    action.description ?? '',
+    /HTTP method comes from the declaration of the run, never from this tool, and a GET changes nothing/,
+  )
+  assert.equal(
+    action.annotations?.title,
+    "Send the run's declared action (method as declared)",
+  )
+  assert.equal(action.annotations?.readOnlyHint, false)
+  assert.equal(action.annotations?.destructiveHint, true)
+})

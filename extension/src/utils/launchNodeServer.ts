@@ -2,8 +2,10 @@ import { spawn } from 'node:child_process'
 
 import {
   NODE_SERVER_DEBUGGER_DETACH_TIMEOUT_MS,
+  NODE_SERVER_GROUP_EXIT_POLL_MS,
+  NODE_SERVER_KILL_BY_MS,
   NODE_SERVER_OUTPUT_PENDING_LIMIT_BYTES,
-  NODE_SERVER_SHUTDOWN_GRACE_MS,
+  NODE_SERVER_STOP_DEADLINE_MS,
   NODE_TEST_ATTACH_TIMEOUT_MS,
 } from '../constants'
 import { NANOSECONDS_PER_MILLISECOND } from '../runtimeSupport/constants'
@@ -12,8 +14,15 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { buildNodeServerEnvironment } from './buildNodeServerEnvironment'
 import type { ProcessOutputEvent } from './captureProcessOutput'
+import {
+  confirmLaunchedGroup,
+  type LaunchedGroupVerdict,
+} from './confirmLaunchedGroup'
+import { isProcessGone } from './isProcessGone'
 import { isProcessGroupGone } from './isProcessGroupGone'
 import { readNodeInspectorEndpoint } from './readNodeInspectorEndpoint'
+import { readProcessCwd } from './readProcessCwd'
+import { readProcessStart } from './readProcessStart'
 import { repositoryPosixPath } from './repositoryPosixPath'
 import type { ResolvedNodeServerLaunch } from './resolveNodeServerLaunch'
 import { signalProcessGroup } from './signalProcessGroup'
@@ -34,6 +43,96 @@ export type NodeServerLaunchRequest = ResolvedNodeServerLaunch & {
 export type NodeServerExit = {
   exitCode: number | null
   signal: NodeJS.Signals | null
+}
+
+/**
+ * What a close can be told beyond the debugger's detach: the stop's clock and bounds, and the signals and identity check it uses. Every field defaults to the product's own; the run supplies the first two and a test any.
+ */
+export type NodeServerCloseOptions = {
+  /** Milliseconds since the stop was admitted, which the detach, the TERM grace and the group wait share; counted from the close call when absent. */
+  sinceAdmissionMs?: () => number
+  /** Reads whether the group is still the launched one ({@link confirmLaunchedGroup}), before each signal of a retried close; the launcher's own reading of its leader when absent. */
+  confirmGroup?: () => Promise<LaunchedGroupVerdict>
+  /** Whether the stop is a retry of an earlier one that may have signalled the group before any close ran (the run's own count): such a close confirms the group before each signal from its first call on. */
+  retried?: boolean
+  /** By when SIGKILL has been sent; {@link NODE_SERVER_KILL_BY_MS} unless a test names its own. */
+  killByMs?: number
+  /** The stop's whole deadline; {@link NODE_SERVER_STOP_DEADLINE_MS} unless a test names its own. */
+  deadlineMs?: number
+  /** Delivers a signal to the group; {@link signalProcessGroup} unless a test names its own. */
+  signalGroup?: typeof signalProcessGroup
+  /** Says whether the group has no member left; {@link isProcessGroupGone} unless a test names its own. */
+  isGroupGone?: typeof isProcessGroupGone
+}
+
+/** A close's options with the product's own clock, bounds, signal and probe filled in ({@link resolveCloseOptions}). */
+type ResolvedCloseOptions = Required<
+  Pick<
+    NodeServerCloseOptions,
+    | 'sinceAdmissionMs'
+    | 'killByMs'
+    | 'deadlineMs'
+    | 'signalGroup'
+    | 'isGroupGone'
+  >
+>
+
+/**
+ * Fills a close's options with the product's own: the stop's clock counted from the close call, {@link NODE_SERVER_KILL_BY_MS}, {@link NODE_SERVER_STOP_DEADLINE_MS}, {@link signalProcessGroup} and {@link isProcessGroupGone}.
+ * Why: a test names its own clock, bounds and signals, and the run names the stop's admission clock; the close reads one resolved set. Called by the close of {@link launchNodeServer}.
+ * @param options - What the caller named ({@link NodeServerCloseOptions}).
+ * @param closeStartedAt - When the close began (`performance.now()`), the clock's start when no admission clock was named.
+ * @returns The resolved clock, bounds, signal and probe.
+ * @example
+ * resolveCloseOptions({}, performance.now()).killByMs // => 5000
+ */
+function resolveCloseOptions(
+  options: NodeServerCloseOptions,
+  closeStartedAt: number,
+): ResolvedCloseOptions {
+  return {
+    sinceAdmissionMs:
+      options.sinceAdmissionMs ??
+      ((): number => performance.now() - closeStartedAt),
+    killByMs: options.killByMs ?? NODE_SERVER_KILL_BY_MS,
+    deadlineMs: options.deadlineMs ?? NODE_SERVER_STOP_DEADLINE_MS,
+    signalGroup: options.signalGroup ?? signalProcessGroup,
+    isGroupGone: options.isGroupGone ?? isProcessGroupGone,
+  }
+}
+
+/**
+ * Ends an owned process group with SIGTERM, then SIGKILL when it has not ended by the kill bound, each signal only while the group may still be signalled.
+ * Why: a server or a process it started may ignore SIGTERM, so the escalation covers the whole group and lands by the kill bound; a retried close confirms the group before each signal. Called by the close of {@link launchNodeServer}.
+ * @param input - The group, the identity check before each signal, the signal, the wait for the group's end and the two bounds.
+ * @returns
+ * - `false` when the group ended after SIGTERM, or nothing was signalled
+ * - `true` when SIGTERM did not end it by the kill bound (SIGKILL followed unless the second check left the group alone)
+ * @throws When an identity check cannot tell whose group it is, or the group outlives SIGKILL until the deadline.
+ * @example
+ * await endGroupBySignals({ processGroup: 4242, mayStillSignal: async () => true, signalGroup, waitForRelease, killByMs: 5_000, deadlineMs: 10_000 }) // => false
+ */
+async function endGroupBySignals(input: {
+  processGroup: number
+  mayStillSignal: () => Promise<boolean>
+  signalGroup: typeof signalProcessGroup
+  waitForRelease: (boundMs: number) => Promise<void>
+  killByMs: number
+  deadlineMs: number
+}): Promise<boolean> {
+  if (!(await input.mayStillSignal())) return false
+  input.signalGroup(input.processGroup, 'SIGTERM')
+  try {
+    await input.waitForRelease(input.killByMs)
+    return false
+  } catch {
+    // SIGTERM did not end the group by the kill bound: SIGKILL, unless the group is no longer the launched one.
+    if (await input.mayStillSignal()) {
+      input.signalGroup(input.processGroup, 'SIGKILL')
+      await input.waitForRelease(input.deadlineMs)
+    }
+    return true
+  }
 }
 
 /**
@@ -82,6 +181,11 @@ export async function launchNodeServer(
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   let closing: Promise<NodeServerExit> | undefined
+  let closeAttempts = 0
+  // The leader's identity is read at launch, while the leader surely is the launched process, for the checks of a retried close.
+  const launchedStart = child.pid
+    ? readProcessStart(child.pid).catch(() => undefined)
+    : undefined
   const { exit, hasExited, failure, capture } = watchOwnedProcess(child, {
     startedAt,
     onOutput,
@@ -156,19 +260,40 @@ export async function launchNodeServer(
       return exitOf()
     },
     /**
-     * Ends the whole owned process group: the debugger detaches first (a server handling SIGTERM waits for an attached debugger before it exits, and a paused one cannot run its handler), then SIGTERM, then SIGKILL after {@link NODE_SERVER_SHUTDOWN_GRACE_MS}.
-     * @param detachDebugger - Ends the run's debugger session for this process (detach, which resumes it); bounded by {@link NODE_SERVER_DEBUGGER_DETACH_TIMEOUT_MS} and skipped when absent.
+     * Ends the whole owned process group inside the stop's budget: the debugger detaches first (a server handling SIGTERM waits for an attached debugger before it exits, and a paused one cannot run its handler), then SIGTERM, then SIGKILL no later than {@link NODE_SERVER_KILL_BY_MS} after the stop's admission, and the group's exit is awaited until {@link NODE_SERVER_STOP_DEADLINE_MS}. Detach, grace and wait share these two bounds, so a slow detach shortens the grace instead of delaying the kill.
+     * A retried close (an earlier close failed, or the run says its stop is a retry) signals only after {@link confirmLaunchedGroup} found the group still the launched one: a replaced group is left alone, an unverifiable one fails the close.
+     * @param detachDebugger - Ends the run's debugger session for this process (detach, which resumes it); bounded by {@link NODE_SERVER_DEBUGGER_DETACH_TIMEOUT_MS} and by the kill bound, and skipped when absent.
+     * @param options - The stop's clock, bounds and checks ({@link NodeServerCloseOptions}).
      * @returns How the process ended.
-     * @example await server.close(() => session.detach()) // => { exitCode: 0, signal: null }
+     * @throws When a retried close cannot tell whether the group is still the launched one, or the group outlives the SIGKILL until the deadline.
+     * @example await server.close(() => session.detach(), { sinceAdmissionMs: () => performance.now() - admittedAt }) // => { exitCode: 0, signal: null }
      */
-    async close(detachDebugger?: () => Promise<void>): Promise<NodeServerExit> {
+    async close(
+      detachDebugger?: () => Promise<void>,
+      options: NodeServerCloseOptions = {},
+    ): Promise<NodeServerExit> {
       const attempt = (closing ??= (async () => {
+        const {
+          sinceAdmissionMs,
+          killByMs,
+          deadlineMs,
+          signalGroup,
+          isGroupGone,
+        } = resolveCloseOptions(options, performance.now())
+        // A stop the run retries is a retry here too, even when its first attempt failed before any close ran.
+        const isRetry = closeAttempts++ > 0 || options.retried === true
+        // The time left until a bound of the stop, never less than one poll so a check that is already true still runs.
+        const timeLeft = (boundMs: number): number =>
+          Math.max(boundMs - sinceAdmissionMs(), NODE_SERVER_GROUP_EXIT_POLL_MS)
         if (detachDebugger)
           await awaitResponse(
             detachDebugger(),
             'owned Node server debugger detach',
             undefined,
-            NODE_SERVER_DEBUGGER_DETACH_TIMEOUT_MS,
+            Math.min(
+              NODE_SERVER_DEBUGGER_DETACH_TIMEOUT_MS,
+              timeLeft(killByMs),
+            ),
           ).catch(() => undefined)
         const processGroup = child.pid
         // A process that never started has no group to end.
@@ -176,29 +301,52 @@ export async function launchNodeServer(
           await capture.settled()
           return exitOf()
         }
-        signalProcessGroup(processGroup, 'SIGTERM')
-        const waitForRelease = async (): Promise<void> => {
+        // A retried close signals a group id only while it is the launched group's: the first close may have lost it to another process.
+        const mayStillSignal = async (): Promise<boolean> => {
+          if (!isRetry) return true
+          const verdict = await (
+            options.confirmGroup ??
+            (async () =>
+              confirmLaunchedGroup({
+                pid: processGroup,
+                startedAt: await launchedStart,
+                cwd: launch.packageRoot,
+                leaderExited: hasExited(),
+                readProcessStart,
+                readProcessCwd,
+                isGroupGone,
+                isProcessGone,
+              }))
+          )()
+          if (verdict === 'unverifiable')
+            throw new Error(
+              'Node server process group could not be confirmed as the launched one, so it was not signalled again.',
+            )
+          return verdict === 'launched'
+        }
+        const waitForRelease = async (boundMs: number): Promise<void> => {
           await awaitResponse(
             exit,
             'owned Node server exit',
             undefined,
-            NODE_SERVER_SHUTDOWN_GRACE_MS,
+            timeLeft(boundMs),
           )
           await waitUntil(
-            () => isProcessGroupGone(processGroup),
+            () => isGroupGone(processGroup),
             'owned Node server process group exit',
-            NODE_SERVER_SHUTDOWN_GRACE_MS,
+            timeLeft(boundMs),
+            undefined,
+            NODE_SERVER_GROUP_EXIT_POLL_MS,
           )
         }
-        let killed = false
-        // A server or a process it started may ignore SIGTERM; the escalation covers its whole group.
-        try {
-          await waitForRelease()
-        } catch {
-          killed = true
-          signalProcessGroup(processGroup, 'SIGKILL')
-          await waitForRelease()
-        }
+        const killed = await endGroupBySignals({
+          processGroup,
+          mayStillSignal,
+          signalGroup,
+          waitForRelease,
+          killByMs,
+          deadlineMs,
+        })
         await capture.settled()
         record('node-server.closed', { pid: child.pid, ...exitOf(), killed })
         return exitOf()

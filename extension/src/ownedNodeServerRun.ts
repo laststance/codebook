@@ -1,5 +1,6 @@
 import type { ConfiguredDescriptor } from './configuredStudySchemas'
 import {
+  MS_PER_MINUTE,
   NODE_SERVER_DEBUGGER_DISCONNECT_NOTICE,
   NODE_SERVER_EXIT_SETTLE_MS,
   NODE_SERVER_READY_TIMEOUT_MS,
@@ -32,6 +33,11 @@ import type {
 } from './runtime'
 import type { PauseIdentity } from './runtimeSupport/pauseGate'
 import type { ProcessOutputEvent } from './utils/captureProcessOutput'
+import { causeRootsFor } from './utils/causeRootsFor'
+import {
+  confirmLaunchedGroup,
+  type LaunchedGroupVerdict,
+} from './utils/confirmLaunchedGroup'
 import {
   sanitizeRunCause,
   serverExitedError,
@@ -40,6 +46,8 @@ import {
   stopFailedError,
 } from './utils/describeNodeServerRunFailure'
 import type { PortOccupant } from './utils/findPortOccupant'
+import { isGroupCertainlyGone } from './utils/isGroupCertainlyGone'
+import type { isProcessGone } from './utils/isProcessGone'
 import type { isProcessGroupGone } from './utils/isProcessGroupGone'
 import type { launchNodeServer, NodeServerExit } from './utils/launchNodeServer'
 import {
@@ -51,6 +59,7 @@ import {
 import type { resolveNodeServerLaunch } from './utils/resolveNodeServerLaunch'
 import type { resolveNodeServerStops } from './utils/resolveNodeServerStops'
 import { RunningTimeLimit, type RunClock } from './utils/runningTimeLimit'
+import { hidePrivateRoots } from './utils/sanitizeCause'
 import type { signalProcessGroup } from './utils/signalProcessGroup'
 
 /** The server the launcher started ({@link launchNodeServer}). */
@@ -72,7 +81,11 @@ export type NodeServerRunDependencies = {
   launch: typeof launchNodeServer
   signalGroup: typeof signalProcessGroup
   isGroupGone: typeof isProcessGroupGone
+  /** Whether no process has an id (signal 0 to the pid), to tell the survivors of a leader that exited from a group that took its id ({@link confirmLaunchedGroup}). */
+  isProcessGone: typeof isProcessGone
   readProcessStart(pid: number): Promise<string | undefined>
+  /** Reads a process's working-folder realpath, to confirm a group is still the launched one before a retried stop signals it. */
+  readProcessCwd(pid: number): Promise<string | undefined>
   findPortOccupant(port: number): Promise<PortOccupant | undefined>
   waitForReadiness(input: {
     port: number
@@ -108,6 +121,8 @@ export type NodeServerRunDependencies = {
       remotePort: number
     }) => Promise<void>
     signal: AbortSignal
+    /** Hides private roots in the response body before it is cut for display. */
+    sanitize?: (text: string) => string
   }): { written: Promise<void>; response: Promise<NodeServerResponse> }
   rememberProcess(record: {
     runId: string
@@ -202,8 +217,14 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   private failedStops = 0
   private runFailure?: StudyError
   private holdExpired = false
-  /** D14, decided when the stop was admitted: the process group is killed before its debugger lets go. */
+  /** D14 v3, decided when the stop was admitted: the process group is killed before its debugger lets go. */
   private killFirst = false
+  /** The clock's time when the current stop was admitted, which its detach, grace and group wait are counted from. */
+  private stopAdmittedAtMs = 0
+  /** How many releases the run has begun; a later one is a retry that must confirm the group before it signals. */
+  private releaseAttempts = 0
+  /** The launched leader's start (when readable) and folder, kept for the identity check of a retried stop. */
+  private launchedLeader?: { startedAt?: string; cwd: string }
   // Pauses.
   private generation = 0
   private pause?: OwnedPause
@@ -236,7 +257,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     this.requestLimit = new RunningTimeLimit(
       NODE_SERVER_REQUEST_TIMEOUT_MS,
       this.clock,
-      () => this.timeOutRequest(),
+      () => this.timeOutRequest('running-time'),
     )
   }
 
@@ -452,6 +473,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       (event) => this.onServerOutput(event),
     )
     this.server = server
+    // The launch folder identifies the group from the spawn on; the leader's start time joins it once read, so a stop before that read can still be retried.
+    this.launchedLeader = { cwd: launched.packageRoot }
     this.portClaim = claimOwnedDevelopmentPort(this.input.configuration.port)
     void server.whenExited().then((exit) => this.onServerExit(exit))
     return server
@@ -555,6 +578,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   ): Promise<void> {
     const { pid, processGroup } = this.identityOf(server)
     const leaderStartedAt = await this.dependencies.readProcessStart(pid)
+    this.launchedLeader = { startedAt: leaderStartedAt, cwd: packageRoot }
     if (leaderStartedAt === undefined) return
     await this.step('recording the launched process', () =>
       this.dependencies.rememberProcess({
@@ -737,12 +761,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
 
   /** A native pause after the entry pause (the debugger's `onPause`). */
   private onDebuggerPause(pause: NodeServerDebuggerPause): void {
-    // D14 for a pause that arrives after the stop was admitted: a declared stop, or any pause inside the request, is killed before the debugger lets go.
-    if (
-      this.lifecycle === 'stopping' &&
-      (pause.declaredStopIndex !== undefined || this.inRequestWindow())
-    )
-      this.killFirst = true
+    // D14 v3 for a pause that arrives after the stop was admitted: whatever it is (a declared stop, the learner's, inside the request or not), the detach would resume it, so the group is killed first.
+    if (this.lifecycle === 'stopping') this.killFirst = true
     if (this.lifecycle !== 'live') return
     this.generation += 1
     const kind = this.classify(pause)
@@ -906,9 +926,13 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     if (this.heldPauses.size > 0)
       throw new StudyError('LEARNER_PAUSED', this.learnerPausedText())
     const pause = this.pause
-    if (this.lifecycle === 'stopped')
-      throw new StudyError('STALE_PAUSE', 'The run is stopped.')
-    if (!pause || this.lifecycle !== 'live')
+    // A run that is ending or ended has only historical pauses (the state × call table).
+    if (this.lifecycle !== 'live')
+      throw new StudyError(
+        'STALE_PAUSE',
+        'The run is stopping or stopped, so this pause is historical.',
+      )
+    if (!pause)
       throw new StudyError(
         'NO_PAUSE',
         'The server is not paused at a declared stop.',
@@ -980,6 +1004,9 @@ class OwnedNodeServerRun implements NodeServerRuntime {
         runId: this.input.runId,
         verifyPeer: (connection) => this.verifyPeer(connection, server, port),
         signal: this.requestAbort.signal,
+        // The body is the server's own text: only private roots are hidden, its spacing and lines stay.
+        sanitize: (text) =>
+          hidePrivateRoots(text, causeRootsFor([], this.input.workspace)),
       })
     } catch (error) {
       // The sender never started: the window closes and the request may be tried again.
@@ -1032,7 +1059,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     }
     this.requestLimit.start()
     this.cancelWall = this.clock.set(
-      () => this.timeOutRequest(),
+      () => this.timeOutRequest('wall-time'),
       NODE_SERVER_REQUEST_WALL_LIMIT_MS,
     )
     this.debugger().setRequestWindow(true)
@@ -1118,11 +1145,16 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     )
   }
 
-  /** The request ran past its running-time limit or the wall-time backstop. */
-  private timeOutRequest(): void {
+  /**
+   * The request ran past a limit; each limit names itself in the message.
+   * @param limit - `running-time` for the 30 s of running time (paused time excluded), `wall-time` for the 15-minute backstop (paused time included).
+   */
+  private timeOutRequest(limit: 'running-time' | 'wall-time'): void {
     this.failRequest(
       'REQUEST_TIMEOUT',
-      `The server did not answer within ${NODE_SERVER_REQUEST_TIMEOUT_MS / 1_000} s of running time.`,
+      limit === 'running-time'
+        ? `The server did not answer within ${NODE_SERVER_REQUEST_TIMEOUT_MS / 1_000} s of running time.`
+        : `The server did not answer within ${NODE_SERVER_REQUEST_WALL_LIMIT_MS / MS_PER_MINUTE} minutes of waiting, however long it was paused.`,
     )
   }
 
@@ -1173,6 +1205,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     if (this.stopAttempt) return this.stopAttempt
     // D14 is decided at admission, before the holds are cleared.
     this.killFirst ||= this.mustKillFirst()
+    this.stopAdmittedAtMs = this.clock.now()
     this.lifecycle = 'stopping'
     this.abort.abort()
     // A request still checking its connection writes nothing once the stop is admitted.
@@ -1260,32 +1293,35 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     )
   }
 
-  /** Whether the group has no member left; an unreadable group counts as still there. */
+  /** Whether the group has no member left; an unreadable group counts as still there ({@link isGroupCertainlyGone}). */
   private safeGroupGone(processGroup: number): boolean {
-    try {
-      return this.dependencies.isGroupGone(processGroup)
-    } catch {
-      return false
-    }
+    return isGroupCertainlyGone(this.dependencies.isGroupGone, processGroup)
   }
 
   /**
-   * Releases everything the run owns: the process group (killed first while its request is under way or it is paused at a declared stop, D14 v2; otherwise the debugger detaches, SIGTERM, SIGKILL by 5 s), the debug session, the orphan record and the port claim. A foreign listener on the port never keeps the run from stopping; it is reported apart.
+   * Releases everything the run owns: the process group (killed first while its request is under way or it is paused in the debugger, D14 v3; otherwise the debugger detaches, SIGTERM, SIGKILL by 5 s), the debug session, the orphan record and the port claim. A foreign listener on the port never keeps the run from stopping; it is reported apart.
    */
   private async releaseOwned(): Promise<void> {
     const server = this.server
     const claim = this.portClaim
+    const isRetry = this.releaseAttempts++ > 0
     if (claim) beginReleaseOfOwnedDevelopmentPort(claim)
     if (server?.processGroup !== undefined) {
       // A stop the editor reported after the admission and is still reading may be inside the request too.
       if (this.debug?.hasUnreportedPause()) this.killFirst = true
       // The paused code must not run on: the group dies before the debugger lets go of it.
-      if (this.killFirst)
+      if (this.killFirst && (await this.maySignal(server, isRetry)))
         this.dependencies.signalGroup(server.processGroup, 'SIGKILL')
       await server.close(
         this.killFirst
           ? undefined
           : (): Promise<void> => this.debug?.release() ?? Promise.resolve(),
+        {
+          sinceAdmissionMs: () => this.clock.now() - this.stopAdmittedAtMs,
+          confirmGroup: () => this.confirmLaunchedGroup(server),
+          // An earlier stop may have signalled the group before its close ran (a SIGKILL that failed), so the close checks it from its first signal.
+          retried: isRetry,
+        },
       )
     }
     await this.debug?.release()
@@ -1299,13 +1335,55 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     if (claim) releaseOwnedDevelopmentPort(claim)
   }
 
-  /** D14 v2: a server whose request is under way (paused or not: a stop it reaches during the detach would be resumed by it), paused at a declared stop, paused at a stop the run has not classified yet, or whose pause hold expired, is killed before its debugger lets go. */
+  /**
+   * Reads whether the group is still the launched one: the leader's start and folder against the launch's ({@link confirmLaunchedGroup}).
+   * @param server - The launched server.
+   * @returns The verdict; `unverifiable` when the launch left no identity or the server has no pid.
+   */
+  private async confirmLaunchedGroup(
+    server: OwnedNodeServer,
+  ): Promise<LaunchedGroupVerdict> {
+    const leader = this.launchedLeader
+    if (server.pid === undefined || !leader) return 'unverifiable'
+    return confirmLaunchedGroup({
+      pid: server.pid,
+      startedAt: leader.startedAt,
+      cwd: leader.cwd,
+      leaderExited: server.exited() !== undefined,
+      readProcessStart: this.dependencies.readProcessStart,
+      readProcessCwd: this.dependencies.readProcessCwd,
+      isGroupGone: this.dependencies.isGroupGone,
+      isProcessGone: this.dependencies.isProcessGone,
+    })
+  }
+
+  /**
+   * Decides whether the run's own SIGKILL may be sent: the first release always, a retried one only while the group is still the launched one, so a reused group id never receives it.
+   * @param server - The launched server.
+   * @param isRetry - Whether an earlier release of this run already began.
+   * @returns `true` to signal, `false` when the group has no member left or its id belongs to another process now (nothing is signalled; the launcher's close finds the same).
+   * @throws When a retry cannot tell whose group it is: the stop fails retryably and names the pid.
+   */
+  private async maySignal(
+    server: OwnedNodeServer,
+    isRetry: boolean,
+  ): Promise<boolean> {
+    if (!isRetry) return true
+    const verdict = await this.confirmLaunchedGroup(server)
+    if (verdict === 'unverifiable')
+      throw new Error(
+        'The server process group could not be confirmed as the one Codebook started, so it was not signalled again.',
+      )
+    return verdict === 'launched'
+  }
+
+  /** D14 v3: a server paused in the debugger (a declared stop, the learner's own pause, or a stop the run has not classified yet), whose request is under way (paused or not: a stop it reaches during the detach would be resumed by it) or whose pause hold expired, is killed before its debugger lets go; a server that is not paused takes Stop v2. */
   private mustKillFirst(): boolean {
     if (this.holdExpired) return true
     if (this.inRequestWindow()) return true
     if (this.debug?.hasUnreportedPause()) return true
-    if (this.nativeHolds.size === 0) return false
-    return this.ownedHits.size > 0 || this.inRequestWindow()
+    // Every native pause the run holds (declared, learner's, unattributed) is code the detach would resume.
+    return this.nativeHolds.size > 0 || this.heldPauses.size > 0
   }
 
   /** Reports a process that holds the declared port after the owned cleanup, apart from the stop's outcome. */
