@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { getEventListeners } from 'node:events'
 import { test } from 'node:test'
 
 import { z } from 'zod'
@@ -91,7 +92,10 @@ test('a response over 1 MiB is read to the limit and reported cut', async (t) =>
   assert.equal(observed.status, 200)
   assert.equal(observed.bodyBytes, 1_048_576)
   assert.equal(observed.readCut, true)
-  assert.match(observed.body, / … 1040384 more bytes$/)
+  assert.match(
+    observed.body,
+    / … at least 1040384 more bytes \(cut at 1 MiB\)$/,
+  )
 })
 
 // protects=3xx is the observation, never followed, and its Location is bounded; fails_when=the sender follows or relays another origin; no_claim=cookies
@@ -224,4 +228,53 @@ test('aborting the signal destroys the request and rejects with the abort reason
   })
   // Assert
   await assert.rejects(response, reason)
+})
+
+// protects=a server's Content-Type cannot carry a credential or unbounded text into the chat; fails_when=the header is returned raw; no_claim=body redaction (covered)
+test('a response Content-Type is redacted and bounded to 256 characters', async (t) => {
+  // Arrange
+  const server = await startFixtureServer(t)
+  // Act
+  const observed = await sendDeclaredRequest({
+    host: '127.0.0.1',
+    port: server.port,
+    request: { method: 'GET', path: '/odd-content-type' },
+    runId: 'run-1',
+    verifyPeer: acceptPeer,
+    signal: new AbortController().signal,
+  }).response
+  // Assert
+  assert.equal(
+    observed.contentType,
+    `text/plain; note=[masked];${'x'.repeat(230)}`,
+  )
+})
+
+// protects=the run-lifetime signal does not keep a settled request alive; fails_when=the abort listener stays after the response or a refusal; no_claim=listener count of other code
+test('the abort listener is removed once the request settles', async (t) => {
+  // Arrange
+  const server = await startFixtureServer(t)
+  const controller = new AbortController()
+  // Act
+  await sendDeclaredRequest({
+    host: '127.0.0.1',
+    port: server.port,
+    request: { method: 'GET', path: '/health' },
+    runId: 'run-1',
+    verifyPeer: acceptPeer,
+    signal: controller.signal,
+  }).response
+  const refused = sendDeclaredRequest({
+    host: '127.0.0.1',
+    port: server.port,
+    request: { method: 'GET', path: '/health' },
+    runId: 'run-1',
+    verifyPeer: async () => {
+      throw new Error('refused')
+    },
+    signal: controller.signal,
+  })
+  await assert.rejects(refused.written, /refused/)
+  // Assert
+  assert.equal(getEventListeners(controller.signal, 'abort').length, 0)
 })

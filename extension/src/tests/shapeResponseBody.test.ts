@@ -78,3 +78,46 @@ test('a same-origin redirect shows its path and another origin shows a note', ()
     ],
   )
 })
+
+// protects=redaction happens before the cut (task 8 contract); fails_when=a credential starting before byte 8192 shows any of its prefix; no_claim=secrets of unknown shape
+test('a credential starting just before the 8192-byte cut shows none of its prefix', () => {
+  // Arrange
+  const body = Buffer.from(
+    `${'a'.repeat(8_189)} ghp_0123456789abcdefghijKLMNOP`,
+  )
+  // Act
+  const shown = shapeResponseBody(body, 'text/plain')
+  // Assert
+  assert.equal(shown, `${'a'.repeat(8_189)} [m … 28 more bytes`)
+})
+
+// protects=a run of invalid bytes at the cut does not erase the shown text; fails_when=the back-off walks past 3 bytes; no_claim=valid text
+test('a long run of invalid continuation bytes keeps the shown text near 8192 bytes', () => {
+  // Arrange
+  const body = Buffer.concat([
+    Buffer.from('a'.repeat(10)),
+    Buffer.alloc(9_000, 0x80),
+  ])
+  // Act
+  const shown = shapeResponseBody(body, 'text/plain')
+  // Assert
+  assert.equal(
+    shown,
+    `${'a'.repeat(10)}${'\uFFFD'.repeat(2_727)} … 819 more bytes (not valid UTF-8)`,
+  )
+})
+
+// protects=a read cut is never presented as an exact remainder; fails_when=the suffix claims an exact count; no_claim=the 1 MiB limit itself
+test('a cut read words the remainder as a lower bound and says it was cut at 1 MiB', () => {
+  // Arrange
+  const body = Buffer.from('b'.repeat(10_000))
+  // Act
+  const shown = shapeResponseBody(body, 'text/plain', true)
+  const binary = shapeResponseBody(Buffer.from([1, 2, 3]), 'image/png', true)
+  // Assert
+  assert.equal(
+    shown,
+    `${'b'.repeat(8_192)} … at least 1808 more bytes (cut at 1 MiB)`,
+  )
+  assert.equal(binary, '(binary, at least 3 bytes, cut at 1 MiB)')
+})

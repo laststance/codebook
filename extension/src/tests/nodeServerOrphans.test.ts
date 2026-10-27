@@ -186,3 +186,77 @@ test('a store holding a non-list value is emptied without any signal', async () 
   assert.deepEqual(signals, [])
   assert.equal(store.value, undefined)
 })
+
+// protects=one record's failure never skips the others and handled records leave the store; fails_when=a throwing reader aborts the sweep or leaves swept records; no_claim=the log wording
+test('a record whose reader throws does not stop the sweep of the next record', async () => {
+  // Arrange
+  const first = { ...RECORD, runId: 'first', pid: 4242, processGroup: 4242 }
+  const second = { ...RECORD, runId: 'second', pid: 4343, processGroup: 4343 }
+  const store = memento([first, second])
+  const signals: string[] = []
+  // Act
+  const closed = await reapNodeServerOrphans({
+    store,
+    readProcessStart: async (pid) => {
+      if (pid === 4242) throw new Error('ps failed')
+      return RECORD.leaderStartedAt
+    },
+    readProcessCwd: async () => RECORD.cwd,
+    signalGroup: (group, signal) => signals.push(`${signal}:${group}`),
+    isGroupGone: () => true,
+    readOwnProcessGroup: async () => 1,
+    log: () => undefined,
+    graceMs: 50,
+  })
+  // Assert
+  assert.equal(closed, 1)
+  assert.deepEqual(signals, ['SIGTERM:4343'])
+  assert.equal(store.value, undefined)
+})
+
+// protects=a record written while the sweep waits survives it; fails_when=the sweep clears the whole key; no_claim=concurrent writers beyond one
+test('a record written during the sweep is kept when the sweep finishes', async () => {
+  // Arrange
+  const store = memento([RECORD])
+  const live = { ...RECORD, runId: 'live', pid: 9001, processGroup: 9001 }
+  // Act
+  await reapNodeServerOrphans({
+    store,
+    readProcessStart: async () => RECORD.leaderStartedAt,
+    readProcessCwd: async () => RECORD.cwd,
+    signalGroup: () => {
+      // A run starts while the orphan is being closed.
+      store.value = [...(store.value as unknown[]), live]
+    },
+    isGroupGone: () => true,
+    readOwnProcessGroup: async () => 1,
+    log: () => undefined,
+    graceMs: 50,
+  })
+  // Assert
+  assert.deepEqual(store.value, [live])
+})
+
+// protects=a tampered record never makes the sweep signal a group its leader does not lead or the editor's own; fails_when=SIGTERM goes to any recorded group; no_claim=real groups
+test("a record whose group is not led by its pid, or is the editor's own group, is dropped without any signal", async () => {
+  // Arrange
+  const store = memento([
+    { ...RECORD, runId: 'foreign-group', pid: 4242, processGroup: 1111 },
+    { ...RECORD, runId: 'own-group', pid: 5555, processGroup: 5555 },
+  ])
+  const signals: string[] = []
+  // Act
+  const closed = await reapNodeServerOrphans({
+    store,
+    readProcessStart: async () => RECORD.leaderStartedAt,
+    readProcessCwd: async () => RECORD.cwd,
+    signalGroup: (group, signal) => signals.push(`${signal}:${group}`),
+    isGroupGone: () => true,
+    readOwnProcessGroup: async () => 5555,
+    log: () => undefined,
+    graceMs: 50,
+  })
+  // Assert
+  assert.equal(closed, 0)
+  assert.deepEqual(signals, [])
+})

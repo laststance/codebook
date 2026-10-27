@@ -67,24 +67,37 @@ export async function startFixtureServer(
     detached: true,
     stdio: 'ignore',
   })
+  // A spawn failure fails the start instead of surfacing as an uncaught exception.
+  const spawnFailure = new Promise<never>((_, reject) =>
+    child.once('error', reject),
+  )
   const pid = child.pid
-  if (pid === undefined) throw new Error('The fixture server did not start.')
   context.after(async () => {
     try {
-      process.kill(-pid, 'SIGKILL')
-    } catch {
-      // The group is already gone.
+      if (pid !== undefined) {
+        try {
+          process.kill(-pid, 'SIGKILL')
+        } catch {
+          // The group is already gone.
+        }
+        await waitUntil(
+          () => isProcessGroupGone(pid),
+          'the fixture group to end',
+          10_000,
+        )
+      }
+    } finally {
+      // The folder goes even when the group did not end in time.
+      await rm(workspace, { recursive: true, force: true })
     }
-    await waitUntil(
-      () => isProcessGroupGone(pid),
-      'the fixture group to end',
-      10_000,
-    )
-    await rm(workspace, { recursive: true, force: true })
     // Every port the fixture took is free again.
     if (await accepts(host, port))
       throw new Error(`Port ${port} still accepts after the fixture ended.`)
   })
-  await waitUntil(() => accepts(host, port), 'the fixture to listen', 15_000)
+  await Promise.race([
+    spawnFailure,
+    waitUntil(() => accepts(host, port), 'the fixture to listen', 15_000),
+  ])
+  if (pid === undefined) throw new Error('The fixture server did not start.')
   return { pid, processGroup: pid, port, workspace }
 }

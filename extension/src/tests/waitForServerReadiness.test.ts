@@ -145,3 +145,22 @@ test('aborting the signal ends the readiness wait with the abort reason', async 
   // Assert
   await assert.rejects(wait, /run stopped/)
 })
+
+// protects=a run stopped during the poll pause fails with its own reason (not an AbortError); fails_when=the pause rejects with a generic AbortError; no_claim=abort during a probe (covered above)
+test('aborting during the pause between rounds rejects with the signal reason itself', async () => {
+  // Arrange
+  const port = await freeLoopbackPort()
+  const controller = new AbortController()
+  const reason = new Error('pause hold expired')
+  const wait = waitForServerReadiness({
+    port,
+    hasTimeLeft: () => true,
+    signal: controller.signal,
+    pollIntervalMs: 60_000,
+  })
+  // Act: the refused probes end in milliseconds, so the wait is inside its 60 s pause
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  controller.abort(reason)
+  // Assert
+  await assert.rejects(wait, (error: unknown) => error === reason)
+})

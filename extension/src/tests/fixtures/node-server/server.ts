@@ -135,6 +135,11 @@ async function answer(
         'text/plain',
         Buffer.from('token ghp_0123456789abcdefghijKLMNOP'),
       ),
+    '/odd-content-type': () =>
+      bytesReply(
+        `text/plain; note=ghp_0123456789abcdefghijKLMNOP;${'x'.repeat(400)}`,
+        Buffer.from('ok'),
+      ),
     '/redirect-same': () => ({
       status: 302,
       headers: { Location: '/health' },

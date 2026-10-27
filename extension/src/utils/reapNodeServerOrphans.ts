@@ -8,6 +8,7 @@ import {
   type NodeServerOrphanStore,
 } from './nodeServerOrphanRecords'
 import { readProcessCwd } from './readProcessCwd'
+import { readProcessPsField } from './readProcessPsField'
 import { readProcessStart } from './readProcessStart'
 import { signalProcessGroup } from './signalProcessGroup'
 
@@ -22,10 +23,22 @@ export type ReapNodeServerOrphansInput = {
   signalGroup?: (processGroup: number, signal: NodeJS.Signals) => void
   /** Says whether a group has no member left; {@link isProcessGroupGone} by default. */
   isGroupGone?: (processGroup: number) => boolean
+  /** Reads this process's own group id, which is never signalled; `ps -o pgid=` by default. */
+  readOwnProcessGroup?: () => Promise<number | undefined>
   /** Receives one plain line per closed group. */
   log: (line: string) => void
   /** How long the group has after SIGTERM before SIGKILL, in milliseconds. */
   graceMs: number
+}
+
+/**
+ * Reads the editor process's own group id.
+ * @returns The group id, or `undefined` when unreadable.
+ * @example await readOwnProcessGroup() // => 52110
+ */
+async function readOwnProcessGroup(): Promise<number | undefined> {
+  const text = await readProcessPsField(process.pid, 'pgid')
+  return text !== undefined && /^\d+$/.test(text) ? Number(text) : undefined
 }
 
 /**
@@ -35,7 +48,9 @@ export type ReapNodeServerOrphansInput = {
  * @example await closeOrphanGroup(input, record)
  */
 async function closeOrphanGroup(
-  input: Required<Omit<ReapNodeServerOrphansInput, 'store' | 'log'>> &
+  input: Required<
+    Omit<ReapNodeServerOrphansInput, 'store' | 'log' | 'readOwnProcessGroup'>
+  > &
     Pick<ReapNodeServerOrphansInput, 'log'>,
   record: NodeServerOrphanRecord,
 ): Promise<void> {
@@ -73,18 +88,41 @@ export async function reapNodeServerOrphans(
     graceMs: input.graceMs,
     log: input.log,
   }
+  const readOwnGroup = input.readOwnProcessGroup ?? readOwnProcessGroup
   const records = readNodeServerOrphanRecords(input.store)
+  const ownGroup = await readOwnGroup()
   let closed = 0
   for (const record of records) {
-    const [startedAt, cwd] = await Promise.all([
-      readers.readProcessStart(record.pid),
-      readers.readProcessCwd(record.pid),
-    ])
-    // A different start or folder means the pid is another process now: drop the record, signal nothing.
-    if (startedAt !== record.leaderStartedAt || cwd !== record.cwd) continue
-    await closeOrphanGroup(readers, record)
-    closed += 1
+    // One record's failure never skips the others.
+    try {
+      // A group its leader does not lead, or the editor's own group, is never signalled.
+      if (
+        record.processGroup !== record.pid ||
+        record.processGroup === ownGroup
+      )
+        continue
+      const [startedAt, cwd] = await Promise.all([
+        readers.readProcessStart(record.pid),
+        readers.readProcessCwd(record.pid),
+      ])
+      // A different start or folder means the pid is another process now: drop the record, signal nothing.
+      if (startedAt !== record.leaderStartedAt || cwd !== record.cwd) continue
+      await closeOrphanGroup(readers, record)
+      closed += 1
+    } catch {
+      input.log(
+        `Could not close a server left running by an earlier window (pid ${record.pid}, declared port ${record.declaredPort}).`,
+      )
+    }
   }
-  await input.store.update(NODE_SERVER_ORPHANS_STORAGE_KEY, undefined)
+  // Only the swept runs leave the store: a record written during the sweep stays.
+  const swept = new Set(records.map((record) => record.runId))
+  const remaining = readNodeServerOrphanRecords(input.store).filter(
+    (record) => !swept.has(record.runId),
+  )
+  await input.store.update(
+    NODE_SERVER_ORPHANS_STORAGE_KEY,
+    remaining.length > 0 ? remaining : undefined,
+  )
   return closed
 }
