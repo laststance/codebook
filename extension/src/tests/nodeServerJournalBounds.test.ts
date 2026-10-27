@@ -34,7 +34,7 @@ test('the journal ends with one marker once the retained bytes reach the byte bo
   assert.equal(markers.length, 1)
   assert.equal(events.at(-1)?.type, 'node-server.events-truncated')
   assert.ok(events.length < MAX_EVENTS / 2)
-  console.log('KEPT', keptBytes, events.length)
+  assert.equal(keptBytes, 4_190_377)
   assert.ok(keptBytes <= MAX_RETAINED_EVENT_BYTES)
 })
 

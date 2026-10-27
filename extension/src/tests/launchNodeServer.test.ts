@@ -440,7 +440,9 @@ test('a stop sends SIGKILL by its kill bound even when the debugger detach never
   const [term, kill] = signals
   // gstack-timing-ok: SIGTERM waits for the detach to be given up on (a lower limit only: a slow event loop can only make it later), and SIGKILL by the kill bound counted from the admission is the contract under test.
   assert.ok(term && term.atMs >= 900, `${term?.atMs}`)
+  // gstack-timing-ok: SIGTERM before SIGKILL is the order under test, not a time bound.
   assert.ok(kill && term.atMs < kill.atMs, `${term?.atMs} before ${kill?.atMs}`)
+  // gstack-timing-ok: SIGKILL by the kill bound is the contract under test; the upper limit leaves about 700 ms of slack.
   assert.ok(kill && kill.atMs >= 1_150 && kill.atMs < 1_900, `${kill?.atMs}`)
   assert.equal(exit.signal, 'SIGKILL')
   assert.equal(isProcessGroupGone(server.processGroup!), true)
