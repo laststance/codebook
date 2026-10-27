@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.2.49.0] - 2026-10-27 (development candidate)
+
+Cycle 0056 ([Issue #135](https://github.com/laststance/codebook/issues/135)), a bug-fix cycle, last of its three pull requests: a saved test replay opens in Cursor every time it is chosen, the Saved studies list and the Learning summary say what is true around **Codebook: Close Study Workspace**, and the LLM Wiki view follows its folder, trusts through the editor's own command and changes its message with its rows. Every behaviour was also checked in the real editors (native trial N56, VS Code 1.142.0 and Cursor 3.27.12).
+
+**Saved test replays.**
+
+- **A saved test replay opens in Cursor each time you choose it**: choosing it from a Study pane that stands in a group with your own tabs, or while Cursor reports the Application's new group late, no longer refuses with `Native pane, group or focus changed while presentation waited`; five opens in a row open without a refusal.
+- **A refused or failed open never holds up your next choice**: its notice is shown and recorded at once, and your next Saved studies choice or **Open replay** is carried out; a choice the Learning summary sends while the Study workspace is closed, closing or no longer showing a replay is not carried out, and you are told so in a notice that starts `Codebook did not carry out your choice:` and says what to do next, with one `choice:dropped` entry in **Output › Codebook**.
+- **After Close Study Workspace the Saved studies list names no study** (it reads `Choose a saved study`), so choosing any entry opens it, the one the closed reader showed included; **Codebook: Open Study Workspace** still shows that replay again.
+- **Opening another replay after Close never shows the closed one first**: the Learning summary goes from its opening state straight to the replay you chose.
+- **Close Study Workspace no longer fails with `Webview is disposed`** after the editor closed the panes itself, and a Close made while an open is still waiting leaves the workspace closed.
+- **A refused placement says why** in **Output › Codebook**: which call refused, which compared parts differed (or that none did), each group's front tab and the editor changes and Codebook's own effects since the guard was armed, with your folders' paths shortened.
+
+**The LLM Wiki view.**
+
+- **Message and rows change together**: at a run's start and end the message above the tree changes in the same frame as the rows.
+- **The view follows its folder**: deleting or moving the Wiki folder, or any folder above it inside your project (for example `rm -rf .codebook`), brings back the welcome without **Refresh**.
+- **Manage Workspace Trust opens the editor's trust editor** in both editors through `workbench.trust.manage`; if the editor lacks that command, the view points you to “Workspaces: Manage Workspace Trust” in the Command Palette, and if the command fails it says so and records the cause, with your folders' paths shortened, in **Output › Codebook**.
+
+**Compatibility.** The MCP API stays 1.8; the Wiki's published format, the marker format, stored learner data and the bundled skill (1.0.50) do not change.
+
 ## [0.2.48.0] - 2026-10-27 (development candidate)
 
 Cycle 0056 ([Issue #135](https://github.com/laststance/codebook/issues/135)), a bug-fix cycle, second of its three pull requests: the LLM Wiki view and the browser reader say what is true in the states the cycle's tasks list. The Cursor test-replay fix and the native trial N56 follow in the third.
