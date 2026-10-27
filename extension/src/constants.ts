@@ -1244,6 +1244,25 @@ export const NODE_TEST_PROFILE = 'node-test'
 export const NODE_SERVER_PROFILE = 'node-server'
 /** The one action a node-server run offers: send its declared request. */
 export const NODE_SERVER_ACTION = 'http-request'
+/** The prefix of the debug session name of a node-server run (`codebook node server <runId>`): the run recognizes only sessions whose root carries its own name. */
+export const NODE_SERVER_SESSION_NAME_PREFIX = 'codebook node server '
+/** How long a started server has, in running time, to accept connections on its declared port; time it spends held by a learner's pause does not count. */
+export const NODE_SERVER_READY_TIMEOUT_MS = 30_000
+/** How long the declared request may wait for its answer, in running time; time the server spends paused does not count. */
+export const NODE_SERVER_REQUEST_TIMEOUT_MS = 30_000
+/** The wall-time backstop of the declared request: it ends as timed out after this long whatever the pauses were. */
+export const NODE_SERVER_REQUEST_WALL_LIMIT_MS = 900_000
+/** The one monotonic deadline of a node-server stop, from its admission: debugger release, group exit, listener checks and output settling share it. */
+export const NODE_SERVER_STOP_DEADLINE_MS = 10_000
+/** How many hits of the declared stops one request captures; the next hit retires the owned breakpoints and continues uncaptured. */
+export const NODE_SERVER_REQUEST_CAPTURE_LIMIT = 16
+/** How long a reset connection waits for the server's exit before it is read as a request failure instead of the server having exited. */
+export const NODE_SERVER_EXIT_SETTLE_MS = 500
+/** What Node prints when its program is finished but an attached debugger keeps it from exiting; the run lets go of its debugger on it, so the exit follows. */
+export const NODE_SERVER_DEBUGGER_DISCONNECT_NOTICE =
+  'Waiting for the debugger to disconnect'
+/** From which failed stop the message names the server's pid for the learner to end. */
+export const NODE_SERVER_FAILED_STOPS_NAMING_PID = 2
 /** The lowest port a node-server declaration may name: a lower one needs privileges a development server does not run with, and Codebook never raises them. */
 export const NODE_SERVER_PORT_MIN = 1_024
 /** The highest TCP port. */
