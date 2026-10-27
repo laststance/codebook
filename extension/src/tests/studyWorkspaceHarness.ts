@@ -1104,6 +1104,43 @@ export async function workspaceHarness(
     report: () => void
     atRead: () => boolean
   }[] = []
+  /** How many late group activations reached the fake editor's live group model; see `lateGroupActivationsReported`. */
+  let reportedLateGroupActivations = 0
+  /** The copy that replaced each group object at a rebuild of the fake group model, so a reference taken before the rebuild finds its group again ({@link currentGroupOf}). */
+  const groupSuccessors = new WeakMap<
+    (typeof groups)[number],
+    (typeof groups)[number]
+  >()
+  /**
+   * Records that a copy replaces a group object in the fake group model, as Cursor's extension host gives its groups new objects; every rebuild of the model goes through here.
+   * @returns The copy, for the rebuilt list.
+   * @example groups.map((group) => replacedBy(group, { ...group, tabs: [...group.tabs] }))
+   */
+  function replacedBy(
+    previous: (typeof groups)[number],
+    next: (typeof groups)[number],
+  ): (typeof groups)[number] {
+    groupSuccessors.set(previous, next)
+    return next
+  }
+  /**
+   * Follows a group object through the rebuilds since it was taken to the object the fake model holds now; called by late reports that name a group taken before they run.
+   * @returns The live object, or `undefined` when the group left the model.
+   * @example currentGroupOf(inserted) // => the inserted group's object after two rebuilds
+   */
+  function currentGroupOf(
+    group: (typeof groups)[number],
+  ): (typeof groups)[number] | undefined {
+    let current = group
+    // A chain of rebuilds: each copy may itself have been replaced since.
+    for (
+      let next = groupSuccessors.get(current);
+      next;
+      next = groupSuccessors.get(current)
+    )
+      current = next
+    return groups.includes(current) ? current : undefined
+  }
   // Cursor 3.23.12 keeps naming the chat's group as the active tab group after `workbench.action.focusFirstEditorGroup` gave the main editor the keyboard. Only a group event corrects the name: a whole tab-model rebuild names the active group (`workbench.desktop.main.js` 17269:31013, `extensionHostProcess.js` 131:33177), as does a group's activation (17269:28123, 131:33740); a tab notification is a tab operation, which leaves the named group as it is (131:34068), so it does not (Cycle 0046 row 673).
   let staleNamedGroup: (typeof groups)[number] | undefined
   // The tab that had the keyboard was closed while the focus was to be preserved, or its pane was disposed: no editor has the keyboard, the page body does (Cursor 3.23.12 after Close Study Workspace, Cycle 0045 obs15 P4), until something is focused again.
@@ -1282,6 +1319,7 @@ export async function workspaceHarness(
       pendingLateGroupActivations.splice(index, 1)
       const activated = group()
       if (!activated || !groups.includes(activated)) return
+      reportedLateGroupActivations++
       activeTabGroup = activated
       changedGroups({ opened: [], closed: [], changed: [activated] })
     }
@@ -1394,7 +1432,10 @@ export async function workspaceHarness(
     const replacements = new Map(
       groups
         .filter((group) => group !== opened)
-        .map((group) => [group, { ...group, tabs: [...group.tabs] }]),
+        .map((group) => [
+          group,
+          replacedBy(group, { ...group, tabs: [...group.tabs] }),
+        ]),
     )
     /** Names the new object of a group that survived, and leaves a group that is gone as it is. */
     const replaced = (group: (typeof groups)[number]) =>
@@ -4150,8 +4191,8 @@ export async function workspaceHarness(
               const inserted = activeTabGroup
               // The report comes after the preparation's focus return has left the new group, so a guard armed by then sees the keyboard move there.
               queueLateGroupActivation(
-                () => inserted,
-                () => activeTabGroup !== inserted,
+                () => currentGroupOf(inserted),
+                () => activeTabGroup !== currentGroupOf(inserted),
                 newGroupActivationDelayMs,
               )
             }
@@ -4550,7 +4591,10 @@ export async function workspaceHarness(
                     .map((group) =>
                       group === separateEditorPart?.group
                         ? group
-                        : { ...group, tabs: [...group.tabs] },
+                        : replacedBy(group, {
+                            ...group,
+                            tabs: [...group.tabs],
+                          }),
                     ),
                 )
                 if (cursorTwoEventContraction)
@@ -4604,7 +4648,10 @@ export async function workspaceHarness(
                     .map((group) =>
                       group === separateEditorPart?.group
                         ? group
-                        : { ...group, tabs: [...group.tabs] },
+                        : replacedBy(group, {
+                            ...group,
+                            tabs: [...group.tabs],
+                          }),
                     ),
                 )
               }
@@ -6035,6 +6082,12 @@ export async function workspaceHarness(
      * @example harness.activateNewGroupLateAfterInsertion()
      * @example harness.activateNewGroupLateAfterInsertion(600) // later than the preparation's wait
      */
+    /**
+     * Counts the late group activations the fake editor reported to a group of its live model; a report whose group is no longer in the model is dropped and not counted.
+     * @returns How many late activations reached a live group so far.
+     * @example harness.lateGroupActivationsReported() // => 1 after activateNewGroupLateAfterInsertion and one Application group insertion
+     */
+    lateGroupActivationsReported: () => reportedLateGroupActivations,
     activateNewGroupLateAfterInsertion(delayMs?: number): void {
       activatesNewGroupLateAfterInsertion = true
       newGroupActivationDelayMs = delayMs
@@ -7688,18 +7741,20 @@ export async function workspaceHarness(
       groups.splice(
         0,
         groups.length,
-        ...groups.map((group) => ({
-          ...group,
-          tabs: group.tabs.map((tab) => {
-            const refreshed = {
-              ...tab,
-              label: preserveLabels ? tab.label : 'Recorded application',
-              input: resyncedInput(tab.input),
-            }
-            refreshedTabs.set(tab, refreshed)
-            return refreshed
+        ...groups.map((group) =>
+          replacedBy(group, {
+            ...group,
+            tabs: group.tabs.map((tab) => {
+              const refreshed = {
+                ...tab,
+                label: preserveLabels ? tab.label : 'Recorded application',
+                input: resyncedInput(tab.input),
+              }
+              refreshedTabs.set(tab, refreshed)
+              return refreshed
+            }),
           }),
-        })),
+        ),
       )
       // A full tab-model resync changes API objects, never the native webview handle that later reveal and dispose operate on.
       for (const current of panels) {
