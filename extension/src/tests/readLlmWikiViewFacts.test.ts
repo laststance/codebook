@@ -361,3 +361,68 @@ test('a run that ends during the read is seen as ended by the run facts and the 
     { isRunShown: false, isMarkerSettling: true },
   )
 })
+
+// protects=task 13 (local CodeRabbit CLI on the final range): this window's live marker read while its run was running is seen as settling when the run has ended by the end of the read, even if the marker change finished meanwhile, so the view keeps its message until the read that the run's end asks for; fails_when=a marker read during the run is judged by the change's state at the end of the read, so a change that finished during the read leaves facts with no run, no reservation and no settling marker; why_new=the other settle tests change the run before the marker read or keep the change pending; seam=none; no_claim=the view's re-read after the run's end
+test('a marker read while the run ran is settling when the run and its marker change both ended during the read', async () => {
+  // Arrange
+  const markerRead = defer<void>()
+  const manifestRead = defer<void>()
+  let status: WikiUpdateStatus = {
+    state: 'running',
+    host: 'vscode',
+    startedAt: new Date(NOW_MS - 60_000).toISOString(),
+    timeoutMs: 1_800_000,
+    candidateStaged: false,
+    outputDirectory: '/repo/.codebook/wiki',
+    outputLabel: '.codebook/wiki',
+  }
+  const reading = readLlmWikiViewFacts(
+    dependencies({
+      readMarker: async () => {
+        markerRead.resolve()
+        return {
+          kind: 'live',
+          heldBy: {
+            pid: 1,
+            windowId: 'this-window',
+            host: 'vscode',
+            startedAtMs: NOW_MS - 60_000,
+            runKind: 'update',
+          },
+        }
+      },
+      readGeneration: async () => {
+        await manifestRead.promise
+        return { revision: undefined, publishedAtMs: 1 }
+      },
+      runStatus: () => status,
+      isMarkerChangePending: () => false,
+    }),
+  )
+  await markerRead.promise
+  await new Promise((resolve) => setImmediate(resolve))
+
+  // Act
+  // The run ended and its marker change finished before the manifest read did.
+  status = {
+    state: 'cancelled',
+    site: 'kept',
+    host: 'vscode',
+    finishedAt: new Date(NOW_MS).toISOString(),
+    outputDirectory: '/repo/.codebook/wiki',
+    outputLabel: '.codebook/wiki',
+  }
+  manifestRead.resolve()
+  const facts = await reading
+
+  // Assert
+  assert.deepEqual(
+    facts.kind === 'ready'
+      ? {
+          isRunShown: facts.run !== undefined,
+          isMarkerSettling: facts.isMarkerSettling,
+        }
+      : 'not ready',
+    { isRunShown: false, isMarkerSettling: true },
+  )
+})
