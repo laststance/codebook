@@ -1004,3 +1004,72 @@ test('a credential the dev server prints last on stderr, without a line end, rea
   )
   assert.equal(JSON.stringify(journal).includes(token.slice(4, 20)), false)
 })
+
+// Value: protects=the closed journal carries the dev server's last held output, masked, even when the process exits before its stream ends (pt1 Step 11 Codex finding: the held tail was published only on the stream's end, after the journal); fails_when=the journal lacks the held text or carries it raw; why_new=the earlier tests end the stream before close; seam=the launcher run in an isolated module context with a stub child; no_claim=a real next dev process
+test('the dev server output still held when it exits reaches the closed journal masked, before its stream ends', async (context) => {
+  // Arrange
+  const filename = join(__dirname, '../utils/launchDevelopmentServer.js'),
+    nativeRequire = createRequire(filename)
+  const exports: Partial<typeof ServerModule> = {},
+    journal: { type: string; detail: unknown }[] = []
+  const child = Object.assign(new EventEmitter(), {
+    pid: 42000,
+    exitCode: null,
+    signalCode: null,
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+  })
+  let groupAlive = true
+  context.mock.method(
+    process,
+    'kill',
+    (_pid: number, signal?: string | number): true => {
+      if (signal === 'SIGTERM') {
+        groupAlive = false
+        child.emit('exit')
+      }
+      if (signal === 0 && !groupAlive)
+        throw Object.assign(new Error('missing group'), { code: 'ESRCH' })
+      return true
+    },
+  )
+  runInNewContext(
+    await readFile(filename, 'utf8'),
+    {
+      exports,
+      AbortSignal,
+      Buffer,
+      process: { env: {} },
+      require(name: string) {
+        if (name === 'node:child_process') return { spawn: () => child }
+        if (name.endsWith('/utils/waitUntil'))
+          return {
+            waitUntil: async (read: () => unknown): Promise<unknown> => {
+              const value = await read()
+              if (!value) throw new Error('not ready')
+              return value
+            },
+          }
+        return nativeRequire(name)
+      },
+    },
+    { filename },
+  )
+  assert.ok(exports.launchDevelopmentServer)
+  const server = exports.launchDevelopmentServer(
+    '/isolated-target',
+    '/node',
+    (type, detail) => journal.push({ type, detail }),
+    false,
+    3000,
+  )
+  // Act
+  child.stderr.emit('data', Buffer.from(`fatal: ECONNRESET token ${'ghp'}_abc`))
+  await server.close()
+  // Assert
+  const closed = journal.find((entry) => entry.type === 'application.closed')
+  assert.equal(
+    JSON.stringify(closed?.detail).includes('fatal: ECONNRESET token [masked]'),
+    true,
+  )
+})

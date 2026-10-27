@@ -1912,8 +1912,11 @@ export const OUTPUT_REDACTION_HOLD_LIMIT_CHARS = 8_192
 /** The characters kept back when an over-long run shows no secret shape is released, so a secret marker cut by the release is still seen whole ({@link createOutputRedactor}). */
 export const OUTPUT_REDACTION_CARRY_CHARS = 16
 
-/** The characters of a dropped private-key body kept to find an END marker split across chunks ({@link createOutputRedactor}). */
-export const OUTPUT_REDACTION_END_MARKER_TAIL_CHARS = 80
+/** The characters of a dropped private-key body kept to find an END marker split across chunks ({@link createOutputRedactor}); longer than the longest END marker its bounded label allows (about 106 characters). */
+export const OUTPUT_REDACTION_END_MARKER_TAIL_CHARS = 128
+
+/** How far into a debugger preview value its type name or length prefix is looked for ({@link redactValuePreview}); a longer type name is read as a bare value. */
+export const PREVIEW_VALUE_PREFIX_LIMIT_CHARS = 128
 
 /** How much of an oversized private-key block an output redactor drops before it ends the block at the next line break, so a header without an END marker cannot silence the channel ({@link createOutputRedactor}); four times a 4096-bit RSA key's PEM. */
 export const OUTPUT_REDACTION_BLOCK_DROP_LIMIT_CHARS = 16_384

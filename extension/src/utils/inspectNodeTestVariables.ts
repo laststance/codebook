@@ -101,9 +101,17 @@ export async function inspectNodeTestVariables(
       ...(type !== undefined && { type }),
     })
     // The kept debugger variable carries the masked value too, so nothing downstream sees the real one.
-    selected.push(
-      inspection.mode === 'type' ? variable : { ...variable, value: display },
-    )
+    // A type inspection shows the type, yet its kept variable still carries a value: mask that value as a value inspection of the same path would.
+    selected.push({
+      ...variable,
+      value:
+        inspection.mode === 'type'
+          ? redactInspectedValue(
+              { mode: 'value', path: inspection.path },
+              variable.value,
+            )
+          : display,
+    })
   }
   // A lazy value whose expansion failed reads as unavailable (settledLazy); a run cancelled meanwhile still ends the pass.
   signal.throwIfAborted()

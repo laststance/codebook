@@ -85,16 +85,23 @@ export function launchDevelopmentServer(
   const publishedTail = (): string =>
     keepUtf8Tail(publishedLog, REPOSITORY_APPLICATION_LOG_LIMIT_BYTES)
   // Each channel is redacted statefully, so a credential the server prints across chunks is masked before it is kept for publication.
+  // A channel's held text is flushed once: at its stream's end, or when the closed journal is written first (the process can exit before its streams end).
+  const flushes: (() => void)[] = []
   for (const stream of [child.stdout, child.stderr]) {
     const decoder = new StringDecoder('utf8')
     const redactor = createOutputRedactor()
+    let flushed = false
+    const flush = (): void => {
+      if (flushed) return
+      flushed = true
+      publish(redactor.write(decoder.end()) + redactor.end())
+    }
     stream.on('data', (chunk: Buffer) => {
       receive(chunk)
       publish(redactor.write(decoder.write(chunk)))
     })
-    stream.on('end', () =>
-      publish(redactor.write(decoder.end()) + redactor.end()),
-    )
+    stream.on('end', flush)
+    flushes.push(flush)
   }
   child.stderr.on('data', (chunk: Buffer) => {
     if (!inspectServer || inspectorError) return
@@ -268,6 +275,7 @@ export function launchDevelopmentServer(
             REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS,
           )
         releaseOwnedDevelopmentPort(claim)
+        for (const flush of flushes) flush()
         record('application.closed', {
           pid: child.pid,
           origin,

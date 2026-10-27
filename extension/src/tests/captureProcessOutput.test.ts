@@ -131,3 +131,35 @@ test('a process that prints more than 32 KiB keeps its first 32 KiB for the anno
   assert.equal(capture.tail().endsWith('x\nTAIL\n'), true)
   assert.equal(capture.tail().includes('HEAD'), false)
 })
+
+// Value: protects=output keeps its arrival order across channels (pt1 Step 11 Codex structured finding: a partial line held by the redactor was delivered after later output, moving it past a debugger stop); fails_when=a plain partial line is delivered after the other channel's later line; why_new=no test interleaved channels around a partial line; seam=none; no_claim=a partial line ending in a possible secret prefix, which still waits
+test('a partial plain line on stdout is delivered before a later stderr line', async () => {
+  // Arrange
+  const child = fakeChild()
+  const events: ProcessOutputEvent[] = []
+  captureProcessOutput(child, {
+    startedAt: process.hrtime.bigint(),
+    onOutput: (event) => {
+      events.push(event)
+    },
+    pendingLimitBytes: 1_048_576,
+    overflowMessage: 'unused',
+    failurePrefix: 'test capture failed',
+  })
+  // Act
+  child.stdout.write('before')
+  await flushStreams()
+  child.stderr.write('later\n')
+  await flushStreams()
+  child.stdout.write('\n')
+  await flushStreams()
+  // Assert
+  assert.deepEqual(
+    events.map((event) => [event.channel, event.text]),
+    [
+      ['stdout', 'before'],
+      ['stderr', 'later\n'],
+      ['stdout', '\n'],
+    ],
+  )
+})

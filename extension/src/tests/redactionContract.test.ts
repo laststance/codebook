@@ -149,13 +149,15 @@ test('a long run that only mentions a URL and a task- word stays visible, and an
     benignRedactor.end()
   const keyOutput =
     keyRedactor.write(`${PEM_HEADER}\n${'QUJD'.repeat(6_000)}`) +
-    keyRedactor.write(`${' x'.repeat(10_000)}\nserver ready on 4000\n`) +
+    keyRedactor.write(
+      `${' x'.repeat(10_000)}\nlistening on http://127.0.0.1:4000\n`,
+    ) +
     keyRedactor.end()
   // Assert
   assert.equal(benignOutput, `${benign}\n`)
   assert.equal(keyOutput.startsWith('[masked]'), true)
   assert.equal(keyOutput.includes('QUJD'), false)
-  assert.equal(keyOutput.endsWith('server ready on 4000\n'), true)
+  assert.equal(keyOutput.endsWith('listening on http://127.0.0.1:4000\n'), true)
 })
 
 // protects=an oversized private-key block never takes the output after it (pt1 pass 2 QA finding: a real process wrote the block and its next line in one chunk); fails_when=the line that follows the block in the same chunk is dropped with it; no_claim=lines inside the dropped block
@@ -164,10 +166,11 @@ test('a line that follows an oversized private key in the same chunk is still re
   const redactor = createOutputRedactor()
   // Act
   const output =
-    redactor.write(`${PEM_HEADER}\n${'QUJD'.repeat(7_500)}\nserver ready\n`) +
-    redactor.end()
+    redactor.write(
+      `${PEM_HEADER}\n${'QUJD'.repeat(7_500)}\nlistening on http://127.0.0.1:4000\n`,
+    ) + redactor.end()
   // Assert
-  assert.equal(output, '[masked]server ready\n')
+  assert.equal(output, '[masked]listening on http://127.0.0.1:4000\n')
 })
 
 // protects=the drop limit counts only dropped key text (pt1 pass 2 security finding: the kept 80-character tail was counted again on every chunk); fails_when=a private key delivered in small chunks reaches the limit early and its body is released; no_claim=keys of unknown shape
@@ -252,6 +255,167 @@ test('an oversized token keeps being dropped across a chunk without whitespace a
   assert.equal(first, 'token [masked]')
   assert.equal(continuing, '')
   assert.equal(resumed, ' ok\n')
+})
+
+// protects=the private-key END search stays linear on crafted output (pt1 Step 11 native finding: unbounded label groups backtracked quadratically); fails_when=a long run of repeated labels after -----END makes the redactor take seconds; no_claim=other regexes
+test('a long run of repeated key labels after an END marker is redacted without stalling', () => {
+  // Arrange
+  const crafted = `-----END ${'PRIVATE KEY '.repeat(40_000)}`
+  const redactor = createOutputRedactor()
+  const started = performance.now()
+  // Act
+  const text = redactSecretText(crafted)
+  const streamed = redactor.write(`${PEM_HEADER}\n${crafted}`) + redactor.end()
+  const elapsedMs = performance.now() - started
+  // Assert
+  assert.equal(text, crafted)
+  assert.equal(streamed.includes('PRIVATE KEY PRIVATE KEY'), false)
+  // gstack-timing-ok: the bound separates linear (milliseconds) from the quadratic backtracking this guards (about 16 s on this input); a synchronous body cannot be stopped by a test timeout.
+  assert.ok(elapsedMs < 2_000, `took ${Math.round(elapsedMs)} ms`)
+})
+
+// protects=a private key padded past the drop limit never releases its body (pt1 Step 11 Codex finding: a key padded with spaces passed the limit at a line break and its body leaked); fails_when=key body lines after the limit are released before the END marker; no_claim=keys without an END whose body continues after a punctuated line
+test('a private key padded with spaces past the drop limit keeps its body dropped until its END marker', () => {
+  // Arrange
+  const redactor = createOutputRedactor()
+  const end = ['-----END', 'PRIVATE KEY-----'].join(' ')
+  // Act
+  const output =
+    redactor.write(`${PEM_HEADER}\nMC4CAQAw${' '.repeat(16_400)}\n`) +
+    redactor.write(`QUJDQUJDQUJDQUJDQUJDQUJDQUJD\n${end}\ndone: ok\n`) +
+    redactor.end()
+  // Assert
+  assert.equal(output.includes('QUJD'), false)
+  assert.equal(output.includes('MC4CAQAw'), false)
+  assert.equal(output, '[masked]\ndone: ok\n')
+})
+
+// protects=after the drop limit an unterminated key ends only at a line no key body can be (one with punctuation), so plain body-like lines stay dropped; fails_when=a base64- or word-only line after the limit is released; no_claim=key bodies containing punctuation
+test('after the drop limit an unterminated private key resumes at the first punctuated line only', () => {
+  // Arrange
+  const redactor = createOutputRedactor()
+  // Act
+  const output =
+    redactor.write(`${PEM_HEADER}\n${'QUJD'.repeat(7_500)}\n`) +
+    redactor.write('QUJDQUJD\nplain words line\nlistening on :4000\n') +
+    redactor.end()
+  // Assert
+  assert.equal(output, '[masked]listening on :4000\n')
+})
+
+// protects=block mode only for a private-key header (pt1 Step 11 native finding: any -----BEGIN text in a long token switched to block mode and dropped ordinary output); fails_when=a long token that merely contains -----BEGIN drops the lines after it; no_claim=none
+test('a long token that merely contains a BEGIN marker is dropped only to the next whitespace', () => {
+  // Arrange
+  const redactor = createOutputRedactor()
+  const token = ['ghp', `${'x'.repeat(9_000)}-----BEGIN-CERT`].join('_')
+  // Act
+  const output =
+    redactor.write(`using ${token}`) +
+    redactor.write(' next line\n') +
+    redactor.end()
+  // Assert
+  assert.equal(output, 'using [masked] next line\n')
+})
+
+// protects=a URL whose username outgrows the hold keeps its password masked (pt1 Step 11 Codex finding: the scheme was released before the password arrived); fails_when=the password after a long username is released; no_claim=none
+test('a URL whose username is longer than the hold never releases the password that follows', () => {
+  // Arrange
+  const redactor = createOutputRedactor()
+  // Act
+  const output =
+    redactor.write(`https://${'u'.repeat(9_000)}`) +
+    redactor.write(`:${'password123'}@host.example/path\n`) +
+    redactor.end()
+  // Assert
+  assert.equal(output.includes('password123'), false)
+  assert.equal(output.startsWith('[masked]'), true)
+})
+
+// protects=an AWS key right after lowercase text is held and masked like the whole-text rule masks it (pt1 Step 11 Codex finding: the two lookbehinds differed); fails_when=the key is released in pieces; no_claim=none
+test('an AWS access key right after lowercase text is never released in pieces', () => {
+  // Arrange
+  const redactor = createOutputRedactor()
+  const key = ['AKIA', 'IOSFODNN7EXAMPLE'].join('')
+  // Act
+  const output =
+    redactor.write(`${'a'.repeat(8_174)}${key}`) +
+    redactor.write('\n') +
+    redactor.end()
+  // Assert
+  assert.equal(output.includes('IOSFODNN7EXAMPLE'), false)
+  assert.equal(output.includes(key.slice(0, 8)), false)
+})
+
+// protects=the carry of a released long run never splits a surrogate pair (pt1 Step 11 Codex finding: an emoji at the carry boundary became two U+FFFD); fails_when=the released text differs from the input; no_claim=grapheme clusters
+test('a long run released with its carry keeps an emoji at the carry boundary whole', () => {
+  // Arrange
+  const redactor = createOutputRedactor()
+  const run = `${'a'.repeat(9_000)}😀${'b'.repeat(13)}gh`
+  // Act
+  const first = redactor.write(run)
+  const output = first + redactor.write('ost\n') + redactor.end()
+  // Assert
+  assert.equal(/[\uD800-\uDBFF]$/.test(first), false)
+  assert.equal(output, `${run}ost\n`)
+})
+
+// protects=a stream's held possible secret is masked, not released raw, when it ends or is flushed; fails_when=end() releases the start of a token; no_claim=none
+test('a token start still held when the stream ends reads [masked]', () => {
+  // Arrange
+  const redactor = createOutputRedactor()
+  // Act
+  const output = redactor.write(`fatal: token ${'ghp'}_abcdef`) + redactor.end()
+  // Assert
+  assert.equal(output, 'fatal: token [masked]')
+})
+
+// protects=a type inspection never returns the variable's real value (pt1 Step 11 Codex structured finding: variables[] kept it while facts showed the type); fails_when=the kept variable of a type inspection carries a secret value; no_claim=none
+test('a node test type inspection of a password keeps no real value in its returned variables', async () => {
+  // Arrange
+  const debugSession = {
+    customRequest: async () => ({
+      variables: [
+        {
+          name: 'password',
+          value: "'hunter2-value'",
+          type: 'string',
+          variablesReference: 0,
+        },
+      ],
+    }),
+  } as unknown as Pick<vscode.DebugSession, 'customRequest'>
+  // Act
+  const result = await inspectNodeTestVariables(
+    debugSession,
+    [{ name: 'Local', variablesReference: 1, expensive: false }],
+    [{ path: 'password', mode: 'type', required: true }],
+    sourceImportBindings(''),
+    AbortSignal.timeout(1_000),
+  )
+  // Assert
+  assert.deepEqual(
+    result.facts.map((fact) => fact.display),
+    ['string'],
+  )
+  assert.equal(JSON.stringify(result).includes('hunter2-value'), false)
+})
+
+// protects=a secret member whose preview carries a type or length prefix is masked whole (pt1 Step 11 Codex structured finding: only "(2)" was masked); fails_when=the array or object body after the prefix stays visible; no_claim=none
+test('a secret member previewed with a length or type prefix is masked together with its body', () => {
+  // Arrange
+  const previews = [
+    "Map(1) {'session' => (2) ['abc', 'def']}",
+    "{token: Array(2) ['a', 'b'], n: 1}",
+    "{credentials: Object {user: 'u'}, n: 1}",
+  ]
+  // Act
+  const redacted = previews.map((preview) => redactValuePreview(preview))
+  // Assert
+  assert.deepEqual(redacted, [
+    "Map(1) {'session' => [masked]}",
+    '{token: [masked], n: 1}',
+    '{credentials: [masked], n: 1}',
+  ])
 })
 
 // protects=each value pattern; fails_when=a URL password, JWT, Bearer token, sk-, ghp_, github_pat_, AKIA key or PEM block survives, or the URL user name / the word Bearer is lost; no_claim=other providers' keys
@@ -359,16 +523,18 @@ test('an unbroken run of 20000 plain characters is released whole after the end'
   assert.equal(released, `${run}END`)
 })
 
-// protects=live output is not stalled: complete lines are released at once
-test('complete output lines are released at once while a trailing partial word is held', () => {
+// protects=live output is not stalled or reordered: complete lines and a trailing plain word are released at once, and only a trailing run that may still become a secret (here a URL whose password may follow) waits for its next chunk; fails_when=a plain word is held or a URL split before its password leaks the password
+test('complete output lines and a trailing plain word are released at once while a URL waiting for its password is held', () => {
   // Arrange
   const redactor = createOutputRedactor()
   // Act
   const released = redactor.write('ready on port 3000\nlistening ht')
-  const rest = redactor.write('tp\n')
+  const plainRest = redactor.write('tp\nconnect postgres:')
+  const urlRest = redactor.write(`//app:${'hunter2'}@db/x\n`)
   // Assert
-  assert.equal(released, 'ready on port 3000\nlistening ')
-  assert.equal(rest, 'http\n')
+  assert.equal(released, 'ready on port 3000\nlistening ht')
+  assert.equal(plainRest, 'tp\nconnect ')
+  assert.equal(urlRest, 'postgres://app:[masked]@db/x\n')
 })
 
 // protects=causes and the Output channel; fails_when=a token in an error cause or a diagnostic entry is logged

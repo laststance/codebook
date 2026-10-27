@@ -1,8 +1,8 @@
 import { REDACTION_MASK } from '../constants'
 
-/** Private-key PEM blocks, whole; an unterminated block is masked to the end of the text. Public keys and certificates are not secrets and stay. */
+/** Private-key PEM blocks, whole; an unterminated block is masked to the end of the text. Public keys and certificates are not secrets and stay. The label words are bounded so a crafted run of labels cannot backtrack quadratically. */
 const PRIVATE_KEY_BLOCK =
-  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*-----|$)/g
+  /-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY[A-Z0-9 ]{0,40}-----[\s\S]*?(?:-----END [A-Z0-9 ]{0,40}PRIVATE KEY[A-Z0-9 ]{0,40}-----|$)/g
 
 /** A URL's userinfo password: `scheme://user:password@host`; the user name stays. */
 const URL_USERINFO_PASSWORD =

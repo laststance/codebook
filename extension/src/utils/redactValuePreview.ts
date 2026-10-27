@@ -1,10 +1,12 @@
-import { REDACTION_MASK } from '../constants'
+import { PREVIEW_VALUE_PREFIX_LIMIT_CHARS, REDACTION_MASK } from '../constants'
 
 import { isSecretName } from './isSecretName'
 
 /** A member key in a debugger's value preview, bare or quoted, followed by `:` (objects) or `=>` (maps). */
 const PREVIEW_KEY =
   /(?<![\w$])(?:([A-Za-z_$][\w$-]*)|'([^'\\]*)'|"([^"\\]*)")\s*(?::|=>)\s*/g
+/** A type name and/or a parenthesized length that a debugger writes before a value's body (`Map(1) `, `Array(2) `, `(2) `, `Object `). */
+const VALUE_PREFIX = /^(?:[A-Za-z_$][\w$]*)?(?:\(\d+\))?\s*(?=[{[(])/
 /** Closing characters for the opening ones a preview value can start with. */
 const CLOSING: Readonly<Record<string, string>> = {
   '{': '}',
@@ -53,7 +55,7 @@ function endOfBracketed(text: string, start: number): number {
 }
 
 /**
- * Finds where one member value of a preview ends: a quoted string, a bracketed object, array or map, or a bare token up to the next separator.
+ * Finds where one member value of a preview ends: a quoted string, a bracketed object, array or map (with any type name or length before it), or a bare token up to the next separator.
  * @param text - The preview.
  * @param start - Where the value starts, after its key's `:` or `=>`.
  * @returns The index where the value ends.
@@ -63,6 +65,12 @@ function endOfPreviewValue(text: string, start: number): number {
   const first = text.charAt(start)
   if (first === "'" || first === '"' || first === '`')
     return endOfQuoted(text, start)
+  // A type name or a length before a body (`Array(2) [...]`, `(2) [...]`, `Object {...}`) belongs to the value, which ends with that body.
+  const prefix = VALUE_PREFIX.exec(
+    text.slice(start, start + PREVIEW_VALUE_PREFIX_LIMIT_CHARS),
+  )
+  if (prefix && prefix[0].length > 0)
+    return endOfBracketed(text, start + prefix[0].length)
   if (CLOSING[first]) return endOfBracketed(text, start)
   const bareToken = /^[^,}\])]*/.exec(text.slice(start))?.[0] ?? ''
   return start + bareToken.trimEnd().length
