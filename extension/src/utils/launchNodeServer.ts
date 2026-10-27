@@ -102,20 +102,21 @@ function resolveCloseOptions(
 }
 
 /**
- * Ends an owned process group with SIGTERM, then SIGKILL when it has not ended by the kill bound, each signal only while the group may still be signalled.
- * Why: a server or a process it started may ignore SIGTERM, so the escalation covers the whole group and lands by the kill bound; a retried close confirms the group before each signal. Called by the close of {@link launchNodeServer}.
- * @param input - The group, the identity check before each signal, the signal, the wait for the group's end and the two bounds.
+ * Ends an owned process group with SIGTERM, then SIGKILL when it has not ended by the kill bound.
+ * Why: a server or a process it started may ignore SIGTERM, so the escalation covers the whole group and lands by the kill bound. A retried close confirms the group once, before SIGTERM; the group has existed since that checked SIGTERM and a group id is not given out while a member holds it, so the kill bound only probes the group and never repeats the identity check (which could push SIGKILL past the bound). Called by the close of {@link launchNodeServer}.
+ * @param input - The group, the identity check before SIGTERM, the signal, the group probe, the wait for the group's end and the two bounds.
  * @returns
- * - `false` when the group ended after SIGTERM, or nothing was signalled
- * - `true` when SIGTERM did not end it by the kill bound (SIGKILL followed unless the second check left the group alone)
- * @throws When an identity check cannot tell whose group it is, or the group outlives SIGKILL until the deadline.
+ * - `false` when the group ended after SIGTERM, was gone at the kill bound, or nothing was signalled
+ * - `true` only when SIGKILL was sent
+ * @throws When the identity check cannot tell whose group it is, when the probe at the kill bound cannot tell whether members remain (no SIGKILL is sent), or the group outlives SIGKILL until the deadline.
  * @example
- * await endGroupBySignals({ processGroup: 4242, mayStillSignal: async () => true, signalGroup, waitForRelease, killByMs: 5_000, deadlineMs: 10_000 }) // => false
+ * await endGroupBySignals({ processGroup: 4242, mayStillSignal: async () => true, signalGroup, isGroupGone, waitForRelease, killByMs: 5_000, deadlineMs: 10_000 }) // => false
  */
 async function endGroupBySignals(input: {
   processGroup: number
   mayStillSignal: () => Promise<boolean>
   signalGroup: typeof signalProcessGroup
+  isGroupGone: typeof isProcessGroupGone
   waitForRelease: (boundMs: number) => Promise<void>
   killByMs: number
   deadlineMs: number
@@ -126,11 +127,10 @@ async function endGroupBySignals(input: {
     await input.waitForRelease(input.killByMs)
     return false
   } catch {
-    // SIGTERM did not end the group by the kill bound: SIGKILL, unless the group is no longer the launched one.
-    if (await input.mayStillSignal()) {
-      input.signalGroup(input.processGroup, 'SIGKILL')
-      await input.waitForRelease(input.deadlineMs)
-    }
+    // SIGTERM did not end the group by the kill bound. A probe that throws cannot tell, so it propagates and nothing is killed.
+    if (input.isGroupGone(input.processGroup)) return false
+    input.signalGroup(input.processGroup, 'SIGKILL')
+    await input.waitForRelease(input.deadlineMs)
     return true
   }
 }
@@ -310,7 +310,6 @@ export async function launchNodeServer(
               confirmLaunchedGroup({
                 pid: processGroup,
                 startedAt: await launchedStart,
-                cwd: launch.packageRoot,
                 leaderExited: hasExited(),
                 readProcessStart,
                 readProcessCwd,
@@ -343,6 +342,7 @@ export async function launchNodeServer(
           processGroup,
           mayStillSignal,
           signalGroup,
+          isGroupGone,
           waitForRelease,
           killByMs,
           deadlineMs,

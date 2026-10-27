@@ -359,6 +359,22 @@ export async function editorHarness(
         body: { threadId, allThreadsContinued },
       })
     },
+    /** A child session of the run's attach (a debuggee it spawned) reports a stop; the run's debugger must not report it. */
+    async childStops(reason = 'breakpoint'): Promise<void> {
+      const child = {
+        ...session,
+        id: 'child-session',
+        parentSession: session,
+        configuration: { type: 'pwa-node', name: 'child', request: 'attach' },
+      }
+      const childTracker =
+        await trackerFactory?.createDebugAdapterTracker(child)
+      childTracker?.onDidSendMessage?.({
+        type: 'event',
+        event: 'stopped',
+        body: { threadId: 2, reason },
+      })
+    },
     /** The editor ends the session. */
     end(): void {
       terminate?.(session)

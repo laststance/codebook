@@ -14,7 +14,6 @@ function leader(
   return {
     pid: 4242,
     startedAt: 'start-1',
-    cwd: '/repo/apps/api',
     leaderExited: false,
     readProcessStart: async () => now.startedAt,
     readProcessCwd: async () => now.cwd,
@@ -136,8 +135,8 @@ test('a leader that cannot be read is unverifiable, and its start time alone ide
   assert.deepEqual(verdicts, ['unverifiable', 'unverifiable', 'launched'])
 })
 
-// protects=a launch whose start could not be read at launch still compares the folder, and another folder alone proves nothing (a server may change its folder), so the retry fails instead of leaving the group running; fails_when=a missing launch start refuses every retry, or a foreign folder passes or reads as replaced; no_claim=none
-test('without a recorded launch start the folder alone decides', async () => {
+// protects=a folder alone never authorizes a signal: a running leader whose launch start time was never recorded is unverifiable even in the launch folder, whatever start it has now, so the retry fails and names the pid instead of signalling a process that may be another; fails_when=a missing launch start plus a matching folder reads as launched; no_claim=how the run reads the start again before it attaches (its own test)
+test('without a recorded launch start a running leader in the launch folder is unverifiable', async () => {
   // Arrange
   const sameFolder = leader(
     { startedAt: 'start-9', cwd: '/repo/apps/api' },
@@ -153,5 +152,5 @@ test('without a recorded launch start the folder alone decides', async () => {
     await confirmLaunchedGroup(otherFolder),
   ]
   // Assert
-  assert.deepEqual(verdicts, ['launched', 'unverifiable'])
+  assert.deepEqual(verdicts, ['unverifiable', 'unverifiable'])
 })

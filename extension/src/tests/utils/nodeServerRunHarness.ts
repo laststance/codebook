@@ -71,6 +71,8 @@ export type HarnessOptions = {
   holdClose?: boolean
   occupant?: { pid: number; command?: string }
   groupGone?: boolean
+  /** The leader's start as each successive read answers it, before the reads fall back to the harness's `leader.start`; `undefined` is a read that failed. */
+  leaderStartReads?: Array<string | undefined>
   /** What the pid probe answers for the launched leader's id; a process still has it unless a test says otherwise. */
   processGone?: boolean
   /** Also receives every event the run journals, as the service's record does when the service owns the run. */
@@ -464,7 +466,10 @@ export function createHarness(options: HarnessOptions = {}) {
     },
     isGroupGone: () => options.groupGone ?? false,
     isProcessGone: () => options.processGone ?? false,
-    readProcessStart: async () => calls.leader.start,
+    readProcessStart: async () =>
+      options.leaderStartReads?.length
+        ? options.leaderStartReads.shift()
+        : calls.leader.start,
     readProcessCwd: async () => calls.leader.cwd,
     findPortOccupant: async () => {
       await options.occupantGate

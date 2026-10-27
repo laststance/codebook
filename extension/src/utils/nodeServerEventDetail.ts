@@ -135,6 +135,9 @@ const NODE_SERVER_EVENT_FIELDS: Record<
     ),
   }),
   'node-server.attached': (input) => ({ pid: integerField(input.pid) }),
+  'node-server.late-pause-killed': (input) => ({
+    pid: integerField(input.pid),
+  }),
   'node-server.stopped': (input) => ({ pid: integerField(input.pid) }),
   'node-server.closed': (input) => ({
     pid: integerField(input.pid),

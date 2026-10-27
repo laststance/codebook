@@ -289,7 +289,7 @@ test('a later failure with an already logged code but another message is still w
   )
 })
 
-// protects=the run's lifecycle events reach the events resource with their listed fields only (ready, a stop hit at start, a pause, the capture budget, a port held by another process, attach and stop); fails_when=one of them reads omitted or keeps an unlisted field; no_claim=the run emitting them (ownedNodeServerRun.test.ts)
+// protects=the run's lifecycle events reach the events resource with their listed fields only (ready, a stop hit at start, a pause, the capture budget, a port held by another process, attach, stop and a pause killed during the detach); fails_when=one of them reads omitted or keeps an unlisted field; no_claim=the run emitting them (ownedNodeServerRun.test.ts)
 test('node-server lifecycle events keep their listed fields and drop the rest', () => {
   // Arrange
   const emitted: Array<[string, Record<string, unknown>]> = [
@@ -306,6 +306,7 @@ test('node-server lifecycle events keep their listed fields and drop the rest', 
     ],
     ['node-server.attached', { pid: 4242, endpoint: 'ws://127.0.0.1:1/x' }],
     ['node-server.stopped', { pid: 4242, signal: 'SIGKILL' }],
+    ['node-server.late-pause-killed', { pid: 4242, signal: 'SIGKILL' }],
   ]
   // Act
   const details = emitted.map(([type, detail]) => [
@@ -327,6 +328,7 @@ test('node-server lifecycle events keep their listed fields and drop the rest', 
     ],
     ['node-server.attached', { pid: 4242 }],
     ['node-server.stopped', { pid: 4242 }],
+    ['node-server.late-pause-killed', { pid: 4242 }],
   ])
 })
 

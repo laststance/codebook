@@ -292,7 +292,7 @@ export function activate(
       }
     },
   }
-  // A node-server run's server outlives a window that closed or crashed before its stop: its recorded group is closed once here, only while its leader still has the recorded start and folder (TD-7); a host without workspace storage has none to read.
+  // A node-server run's server outlives a window that closed or crashed before its stop: its recorded group is closed once here, only while its leader still has the recorded start (TD-7); a host without workspace storage has none to read.
   if (context.workspaceState)
     void reapNodeServerOrphans({
       store: context.workspaceState,
