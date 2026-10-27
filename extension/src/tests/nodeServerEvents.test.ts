@@ -185,8 +185,8 @@ test('node-server events stop at the journal bounds with one truncation marker',
   )
 })
 
-// protects=one event whose escaped detail exceeds the per-event bound ends the journal at once; fails_when=an oversized event is kept whole; no_claim=none
-test('a node-server event over the per-event byte bound is replaced by the truncation marker', async (context) => {
+// protects=one oversized event is cut to fit and the journal goes on: the later response is kept; fails_when=an oversized event latches the truncation marker and drops every later event; no_claim=the total-bytes bound (its own test)
+test('a node-server event over the per-event byte bound is cut to fit and later events are kept', async (context) => {
   // Arrange
   const harness = await createHarness()
   context.after(() => harness.close())
@@ -196,12 +196,96 @@ test('a node-server event over the per-event byte bound is replaced by the trunc
     sequence: 1,
     elapsedMs: 1,
     channel: 'stdout',
-    text: '\u0001'.repeat(4_096),
+    text: '日'.repeat(4_000),
+  })
+  run.record('node-server.response', {
+    status: 200,
+    contentType: 'application/json',
+    body: '{"ok":true}',
+    bodyBytes: 11,
+    readCut: false,
+    elapsedMs: 4,
   })
   // Assert
+  const events = record.nodeEvents ?? []
   assert.deepEqual(
-    (record.nodeEvents ?? []).map((event) => event.type),
-    ['node-server.events-truncated'],
+    events.map((event) => event.type),
+    ['node-server.output', 'node-server.response'],
+  )
+  const output = events[0]?.detail as { text: string }
+  assert.ok(output.text.length > 0 && output.text.length < 4_096)
+  assert.ok(Buffer.byteLength(JSON.stringify(events[0]?.detail)) <= 8_192)
+})
+
+// protects=no private absolute path leaves through output text, a response body or location, or a learner-pause reason, in the events resource or the run resource, also when the path sits at the cut; fails_when=the workspace or storage path appears in any of them; no_claim=paths outside the service's roots
+test('node-server output, response and pause reason never carry a private path', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { service, record, run } = await startFakeNodeServerRun(harness)
+  const privateFile = `${harness.directory}/src/server.ts`
+  await run.enter('request-in-flight')
+  // Act
+  run.record('node-server.output', {
+    sequence: 1,
+    elapsedMs: 1,
+    channel: 'stderr',
+    text: `${'x'.repeat(4_070)} at handler (${privateFile}:12:3)`,
+  })
+  run.record('node-server.response', {
+    status: 500,
+    contentType: 'text/html',
+    body: `Error: boom\n    at ${privateFile}:9:1`,
+    bodyBytes: 40,
+    readCut: false,
+    location: privateFile,
+    elapsedMs: 4,
+  })
+  run.record('node-server.learner-paused', {
+    kind: 'learner',
+    reason: `exception in ${privateFile}`,
+    path: 'src/server.ts',
+    line: 1,
+  })
+  run.respond({
+    status: 500,
+    body: `Error: boom at ${privateFile}:9:1`,
+    location: privateFile,
+  })
+  // Assert
+  const events = JSON.stringify(await eventsOf(service, service.uri(record.id)))
+  const state = JSON.stringify(service.state(record).nodeServer)
+  for (const text of [events, state]) {
+    assert.equal(text.includes(harness.directory), false)
+    assert.equal(text.includes(harness.directory.slice(0, 20)), false)
+  }
+  assert.match(events, /<storage>\/src\/server\.ts/)
+  assert.match(state, /<storage>\/src\/server\.ts:9:1/)
+})
+
+// protects=the Output failure line is deduped by code and message, so a second failure with a code already logged still reaches Output; fails_when=a different failure of the same code is swallowed; no_claim=none
+test('a later failure with an already logged code but another message is still written to Output', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const lines: NodeServerOutputLine[] = []
+  harness.service.outputLog = (line) => lines.push(line)
+  const { record, run } = await startFakeNodeServerRun(harness)
+  await run.enter('request-in-flight')
+  // Act
+  run.record('node-server.failure', {
+    code: 'SERVER_EXITED',
+    cause: 'earlier cause',
+  })
+  run.failRun(new StudyError('SERVER_EXITED', 'The server exited with code 1.'))
+  await record.stopPromise
+  // Assert
+  assert.deepEqual(
+    lines.map((line) => line.text),
+    [
+      `Run ${record.id} failed: SERVER_EXITED: earlier cause`,
+      `Run ${record.id} failed: SERVER_EXITED: The server exited with code 1.`,
+    ],
   )
 })
 
@@ -307,7 +391,8 @@ test('a start failure writes only its failure entry, once', async (context) => {
   // Act
   run.record('node-server.failure', {
     code: 'SERVER_NOT_LISTENING',
-    cause: 'not listening',
+    cause:
+      'Port 4100 is not listening; the server listens on port 4300 (port: 4300).',
   })
   run.prepareGate.resolve()
   await record.preparation
@@ -316,7 +401,7 @@ test('a start failure writes only its failure entry, once', async (context) => {
   assert.deepEqual(lines, [
     {
       level: 'error',
-      text: `Run ${record.id} failed: SERVER_NOT_LISTENING: not listening`,
+      text: `Run ${record.id} failed: SERVER_NOT_LISTENING: Port 4100 is not listening; the server listens on port 4300 (port: 4300).`,
     },
   ])
 })

@@ -13,6 +13,8 @@ export type NodeServerProjectionInput = {
   stopped: boolean
   /** Whether a stop is in flight, or failed and awaits its retry (D9), or the run has an error and is being released. */
   ending: boolean
+  /** Replaces the private roots of a text; applied to the response and held-pause texts, which a server or the debugger wrote. */
+  sanitize: (text: string) => string
 }
 
 /**
@@ -104,9 +106,19 @@ export function projectNodeServerState(input: NodeServerProjectionInput) {
               capturedAtMs: capture.capturedAtMs,
             }
           : undefined,
-      heldPause: view.heldPause,
+      heldPause: view.heldPause && {
+        ...view.heldPause,
+        reason: input.sanitize(view.heldPause.reason),
+      },
       request: view.request,
-      response: view.response,
+      response: view.response && {
+        ...view.response,
+        body: input.sanitize(view.response.body),
+        location:
+          view.response.location === undefined
+            ? undefined
+            : input.sanitize(view.response.location),
+      },
       requestFailure: view.requestFailure,
       captureCount: view.captures.length,
       captureBudgetExhausted: view.captureBudgetExhausted,

@@ -1,5 +1,6 @@
 import {
   ACTIVE_TIMEOUT_MS,
+  CONFIGURED_OBSERVATION_LIMIT,
   NODE_SERVER_ACTION,
   NODE_SERVER_MINIMUM_EXTENSION_VERSION,
   NODE_SERVER_PROFILE,
@@ -49,7 +50,7 @@ export function describeNodeServerProfile(prerequisites: {
       pauseHoldTimeoutMs: REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
       activeBudget: 'per-action',
       configurationBytes: REPOSITORY_CONFIG_LIMIT_BYTES,
-      stops: 8,
+      stops: CONFIGURED_OBSERVATION_LIMIT,
       inspections: REPOSITORY_INSPECTION_LIMIT,
       sourceBytes: { typescript: REPOSITORY_SOURCE_LIMIT_BYTES },
     },

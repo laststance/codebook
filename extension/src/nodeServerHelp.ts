@@ -2,9 +2,13 @@ import { z } from 'zod'
 
 import {
   ACTIVE_TIMEOUT_MS,
+  CONFIGURED_OBSERVATION_LIMIT,
   MILLISECONDS_PER_SECOND,
   NODE_SERVER_ACTION,
   NODE_SERVER_PORT_MAX,
+  NODE_SERVER_READY_TIMEOUT_MS,
+  NODE_SERVER_REQUEST_CAPTURE_LIMIT,
+  NODE_SERVER_REQUEST_TIMEOUT_MS,
   NODE_SERVER_PORT_MIN,
   NODE_SERVER_PROFILE,
   NODE_SERVER_REQUEST_BODY_LIMIT_BYTES,
@@ -88,6 +92,10 @@ const NODE_SERVER_HELP_SAMPLES = {
   }),
 } as const
 
+/** The pause-hold bound in the whole seconds the help names. */
+const PAUSE_HOLD_SECONDS =
+  REPOSITORY_PAUSE_HOLD_TIMEOUT_MS / MILLISECONDS_PER_SECOND
+
 /** The codes a node-server run can answer with their own anchor in this help, and when each arises; the recovery of each is {@link ERROR_RECOVERY}'s, so the table cannot drift from `codebook://help/errors`. */
 const NODE_SERVER_CODES: readonly { code: ErrorCode; when: string }[] = [
   {
@@ -116,7 +124,7 @@ const NODE_SERVER_CODES: readonly { code: ErrorCode; when: string }[] = [
   },
   {
     code: 'REQUEST_NOT_CONFIRMED',
-    when: 'codebook_action: the learner cancelled, or did not answer within 300 s, the confirmation of a state-changing request',
+    when: `codebook_action: the learner cancelled, or did not answer within ${PAUSE_HOLD_SECONDS} s, the confirmation of a state-changing request`,
   },
   {
     code: 'NO_PAUSE',
@@ -132,7 +140,7 @@ const NODE_SERVER_CODES: readonly { code: ErrorCode; when: string }[] = [
   },
   {
     code: 'SERVER_NOT_LISTENING',
-    when: 'start: the server did not listen on the declared port within 30 s',
+    when: `start: the server did not listen on the declared port within ${NODE_SERVER_READY_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s`,
   },
   {
     code: 'REQUEST_FAILED',
@@ -140,11 +148,11 @@ const NODE_SERVER_CODES: readonly { code: ErrorCode; when: string }[] = [
   },
   {
     code: 'REQUEST_TIMEOUT',
-    when: 'run: no response within 30 s of running time; the run reads request-failed and the server keeps running',
+    when: `run: no response within ${NODE_SERVER_REQUEST_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s of running time; the run reads request-failed and the server keeps running`,
   },
   {
     code: 'PAUSE_HOLD_EXPIRED',
-    when: 'run: the server stayed paused longer than 300 s; the run is ended and nothing is resumed',
+    when: `run: the server stayed paused longer than ${PAUSE_HOLD_SECONDS} s; the run is ended and nothing is resumed`,
   },
 ]
 
@@ -195,7 +203,7 @@ export function nodeServerHelp() {
       'One client: the run sends exactly one request, from Codebook; the server must not be used by anything else during the run.',
       "The inspector listens on 127.0.0.1 for the run only; readiness probes (connections to the declared port before the first request) appear in the server's logs.",
       `The run deadline is ${REPOSITORY_RUN_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s (it caps the request); a pause longer than ${REPOSITORY_PAUSE_HOLD_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s ends the run (PAUSE_HOLD_EXPIRED); a continuation answer waits at most about ${(ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND).toFixed(0)} s and then reports the latest state without a next word, which you read again.`,
-      `At most 8 stops and 16 captured pauses per request; port ${NODE_SERVER_PORT_MIN} to ${NODE_SERVER_PORT_MAX}.`,
+      `At most ${CONFIGURED_OBSERVATION_LIMIT} stops and ${NODE_SERVER_REQUEST_CAPTURE_LIMIT} captured pauses per request; port ${NODE_SERVER_PORT_MIN} to ${NODE_SERVER_PORT_MAX}.`,
       "Use a local or test database: a state-changing request really changes what the repository's server is configured to use.",
       'Server runs are not saved yet: no replay, no saved study and no learning save exist for them.',
     ],

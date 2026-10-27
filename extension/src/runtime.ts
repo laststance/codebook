@@ -328,6 +328,10 @@ export interface StudyEnvironment {
    * The prerequisites a node-test start waits on: the editor's own, the bundled debugger and the external Node, never the repository-wide Vitest search, since the start checks the cited test's own Vitest before its history begins. Environments without it make the start wait on {@link StudyEnvironment.prerequisites}.
    */
   nodeTestStartPrerequisites?(): Promise<{ ready: boolean; missing: string[] }>
+  nodeServerStartPrerequisites?(): Promise<{
+    ready: boolean
+    missing: string[]
+  }>
   createRuntime(
     directory: string,
     definition: RuntimeDefinition,

@@ -10,7 +10,10 @@ import type { StudyService } from '../service'
 import { createHarness } from './helpers'
 import { createManualClock } from './utils/createManualClock'
 import { defer } from './utils/defer'
-import { startFakeNodeServerRun } from './utils/startFakeNodeServerRun'
+import {
+  nodeServerConfigurationOf,
+  startFakeNodeServerRun,
+} from './utils/startFakeNodeServerRun'
 
 const POST_REQUEST = {
   method: 'POST',
@@ -624,4 +627,41 @@ test('a continuation whose request is still in flight at the bound answers the l
   // Assert
   assert.equal('next' in answer, false)
   assert.equal(answer.state.state, 'request-in-flight')
+})
+
+// protects=a continuation before the environment created the run is NO_PAUSE, not a false STALE_PAUSE claiming the run ended; fails_when=the answer says the run is ending or historical; no_claim=none
+test('continue before the server run exists is NO_PAUSE', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const gate = defer<void>()
+  let asked = false
+  harness.service.environment.createNodeServerRun = async () => {
+    asked = true
+    await gate.promise
+    throw new Error('never created')
+  }
+  const { service } = harness
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'node-server',
+    key: 'early',
+    configuration: nodeServerConfigurationOf(harness),
+  })
+  await waitUntil(() => asked, 'the factory was asked')
+  // Act
+  const refusal = await refusalOf(() =>
+    service.continue({
+      ...receipt,
+      participant: 'server',
+      sessionId: 'server-session',
+      threadId: 7,
+      generation: 1,
+    }),
+  )
+  gate.resolve()
+  await service.record(receipt).preparation
+  // Assert
+  assert.ok(refusal instanceof StudyError)
+  assert.equal(refusal.code, 'NO_PAUSE')
 })
