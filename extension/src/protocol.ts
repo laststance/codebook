@@ -345,9 +345,13 @@ export function createProtocol(service: StudyService): McpServer {
     'codebook_start',
     {
       description:
-        "Prepare the declared profile asynchronously. repository-browser binds browser/server stops to an immutable article; node-test binds ordered native Node stops and a Vitest test to exact retained citations; node-server runs the repository's own Node HTTP server and binds ordered native Node stops to exact retained citations (one declared request, sent by codebook_action http-request). Read the selected profile help. Same key/arguments returns its original run. A node-test configuration is checked during preparation, before its history begins: a refusal there ends the run with its error (code, message with both hashes and the fix), so read the run until its first stop or its error before continuing, and start again with a new key after the fix. Poll readiness and copy only current continuation arguments; one active run maximum.",
+        "Prepare the declared profile asynchronously; this starts the declared application or server and sends no request and posts no data (a node-server request is sent only later by codebook_action). repository-browser binds browser/server stops to an immutable article; node-test binds ordered native Node stops and a Vitest test to exact retained citations; node-server runs the repository's own Node HTTP server and binds ordered native Node stops to exact retained citations (one declared request, sent by codebook_action http-request). Read the selected profile help. Same key/arguments returns its original run. A node-test configuration is checked during preparation, before its history begins: a refusal there ends the run with its error (code, message with both hashes and the fix), so read the run until its first stop or its error before continuing, and start again with a new key after the fix. Poll readiness and copy only current continuation arguments; one active run maximum.",
       inputSchema: startSchema,
-      annotations: { ...execution, idempotentHint: true },
+      annotations: {
+        ...execution,
+        idempotentHint: true,
+        title: 'Start the declared Codebook run (sends no request)',
+      },
     },
     (input) => toolResult(service, () => service.startOnStoredBook(input)),
   )
@@ -355,9 +359,13 @@ export function createProtocol(service: StudyService): McpServer {
     'codebook_action',
     {
       description:
-        'Accept the next declared action from nextActions and immediately return its receipt. Reuse the same key with identical action on response loss, including after later actions. Wrong-order or repeated actions with new keys are rejected. For node-server the action is http-request: it sends the one declared request of the run (a POST, PUT, PATCH or DELETE first waits for the learner to confirm it in the editor and answers REQUEST_NOT_CONFIRMED if they do not); a lost response is recovered by reading the run, never by sending again.',
+        'Accept the next declared action from nextActions and immediately return its receipt. The action does what the run declared: for node-server its HTTP method comes from the declaration of the run, never from this tool, and a GET changes nothing. Reuse the same key with identical action on response loss, including after later actions. Wrong-order or repeated actions with new keys are rejected. For node-server the action is http-request: it sends the one declared request of the run (a POST, PUT, PATCH or DELETE first waits for the learner to confirm it in the editor and answers REQUEST_NOT_CONFIRMED if they do not); a lost response is recovered by reading the run, never by sending again.',
       inputSchema: actionSchema,
-      annotations: { ...execution, idempotentHint: true },
+      annotations: {
+        ...execution,
+        idempotentHint: true,
+        title: "Send the run's declared action (method as declared)",
+      },
     },
     (input) => toolResult(service, () => service.performAction(input)),
   )
