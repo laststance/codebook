@@ -36,6 +36,7 @@ import {
   inspectNodeTestVariables,
   type NodeTestFact,
 } from './utils/inspectNodeTestVariables'
+import { isDebugSessionOfRun } from './utils/isDebugSessionOfRun'
 import { launchNodeTest } from './utils/launchNodeTest'
 import {
   listVitestTestFiles,
@@ -972,13 +973,7 @@ export class OwnedNodeTestRun {
   }
 
   private owner(session: vscode.DebugSession): boolean {
-    for (
-      let ancestor: vscode.DebugSession | undefined = session;
-      ancestor;
-      ancestor = ancestor.parentSession
-    )
-      if (ancestor.configuration.name === this.name) return true
-    return false
+    return isDebugSessionOfRun(session, this.name)
   }
 
   private assertActive(sessionId: string): void {

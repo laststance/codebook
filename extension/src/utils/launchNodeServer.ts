@@ -122,6 +122,8 @@ export async function launchNodeServer(
     /** How the process ended, or `undefined` while it runs. @example server.exited() // => { exitCode: 3, signal: null } */
     exited: (): NodeServerExit | undefined =>
       hasExited() ? exitOf() : undefined,
+    /** Settles with how the process ended once it exits, however long that takes; the run watches it to learn of an exit nobody asked for. @example (await server.whenExited()).exitCode // => 3 */
+    whenExited: (): Promise<NodeServerExit> => exit.then(exitOf),
     /** Waits for this process's complete inspector announcement within {@link NODE_TEST_ATTACH_TIMEOUT_MS}, never guessing an endpoint from a partial line. @example await server.inspectorEndpoint(signal) // => 'ws://127.0.0.1:58209/…' */
     async inspectorEndpoint(signal: AbortSignal): Promise<string> {
       return waitUntil(
