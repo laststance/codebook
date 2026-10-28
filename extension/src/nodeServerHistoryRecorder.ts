@@ -16,7 +16,9 @@ import {
   describeNodeServerSealFailure,
   describeNodeServerSealTimeout,
 } from './utils/describeNodeServerSealFailure'
+import { sleepUntilAborted } from './utils/sleepUntilAborted'
 import { systemErrorCode } from './utils/systemErrorCode'
+import { waitWithin } from './utils/waitWithin'
 
 /** Where a server run's history stands: its writer takes entries, it was sealed, or it was abandoned because it could not be written or sealed. */
 export type NodeServerHistoryStatus = 'recording' | 'sealed' | 'failed'
@@ -155,11 +157,19 @@ export class NodeServerHistoryRecorder {
         return
       }
       this.status = 'sealed'
-      // The summary read shares the seal's bound: past it the seal stands and the summary reads as unknown, so a stalled read never holds Stop, Save or the next run.
-      const summary = await Promise.race([
-        this.input.summarize(this.writer.header.studyId).catch(() => undefined),
-        deadline.then(() => undefined),
-      ])
+      // The summary read is bounded too: past the bound the seal stands and the summary reads as unknown, so a stalled read never holds Stop, Save or the next run.
+      const reading = this.input
+        .summarize(this.writer.header.studyId)
+        .catch(() => undefined)
+      // After an expiry the shared deadline already settled, so the read gets a bound of its own; otherwise it shares the seal's.
+      const summary =
+        raced === expired
+          ? await waitWithin(reading, {
+              timeoutMs: boundMs,
+              signal: new AbortController().signal,
+              sleep: sleepUntilAborted,
+            })
+          : await Promise.race([reading, deadline.then(() => undefined)])
       this.sealed = { summary, hash }
     } catch (error) {
       this.abandon(

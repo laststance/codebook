@@ -123,9 +123,14 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
               'Node history seal was abandoned before it was published.',
             )
         },
+        // The hash is recorded in the tick the rename resolved: the temporary file's cleanup still awaited after it must not hide a published seal from the recorder's deadline.
+        () => {
+          this.sealedHash = seal.journalHash
+        },
       )
       // An abandon that landed during the publish itself: the folder was reported interrupted, so the file just published goes again.
       if (this.abandoned) {
+        this.sealedHash = undefined
         await rm(join(this.directory, HISTORY_SEAL_FILE), { force: true })
         throw new Error(
           'Node history seal was abandoned before it was published.',

@@ -105,6 +105,30 @@ test('a seal past its bound is abandoned and the folder lists as interrupted whi
   )
 })
 
+// protects=a run that failed on its own (not a server exit) seals its history with an end of reason failed and the run's own failure code, read from the run's failure and not from the record's error; fails_when=the end says stopped, or the code is lost; no_claim=which failures the real run raises (the process tests pin its own failure)
+test('a run that failed on its own seals the server history failed with its failure code', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { service, record, run, repository } = await startHistoryServerRun(
+    harness,
+    context,
+  )
+  await run.sendRequest('k1')
+  run.failRun(new StudyError('RUNTIME_FAILED', 'The run failed.'))
+
+  // Act
+  await service.stop({ instanceId: service.instanceId, runId: record.id })
+  const history = await repository.serverHistories.read(
+    `${service.instanceId}_${record.id}`,
+  )
+
+  // Assert
+  const end = history.entries.at(-1)
+  assert.equal(end?.type === 'end' && end.reason, 'failed')
+  assert.equal(end?.type === 'end' && end.code, 'RUNTIME_FAILED')
+})
+
 // protects=a seal already published stays sealed on the live run when the writer-record removal stalls past the seal bound, and the store lists it sealed; fails_when=the live run reads failed with a timeout while the store lists sealed; no_claim=a stalled removal on a real disk
 test('a published seal stays sealed when the writer record removal stalls past the bound', async (context) => {
   // Arrange
@@ -137,6 +161,63 @@ test('a published seal stays sealed when the writer record removal stalls past t
     listed.map((summary) => summary.status),
     ['partial'],
   )
+})
+
+// protects=a deadline that fires after sealed.json was published but before the writer's finish returns (the temporary file's cleanup still stalls) leaves the live run sealed, not abandoned; fails_when=the live run reads failed with a timeout though sealed.json stands; no_claim=a stalled cleanup on a real disk, or how another window lists the folder
+test('a deadline firing right after the seal was published but before finish returns keeps the run sealed', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { service, record, run } = await startHistoryServerRun(harness, context)
+  service.nodeServerHistorySealBoundMs = 250
+  await run.sendRequest('k1')
+  const originalUnlink = fileSystem.unlink
+  context.mock.method(
+    fileSystem,
+    'unlink',
+    (...removal: Parameters<typeof fileSystem.unlink>) =>
+      String(removal[0]).includes('sealed.json')
+        ? new Promise<never>(() => undefined)
+        : originalUnlink(...removal),
+  )
+
+  // Act
+  await service.stop({ instanceId: service.instanceId, runId: record.id })
+
+  // Assert
+  assert.equal(record.nodeServer?.history?.status, 'sealed')
+  assert.equal(record.nodeServer?.history?.failure, undefined)
+  assert.ok(record.nodeServer?.history?.sealed?.hash)
+})
+
+// protects=a seal that was published after the deadline already fired still gets its summary read within a bound of its own, so the run resource shows the verdicts at once; fails_when=sealed.summary stays undefined because the read raced an already-settled deadline; no_claim=the verdict values
+test('a seal taken as published after the deadline fired still reads its summary', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { service, record, run, repository } = await startHistoryServerRun(
+    harness,
+    context,
+  )
+  service.nodeServerHistorySealBoundMs = 250
+  await run.sendRequest('k1')
+  const originalUnlink = fileSystem.unlink
+  context.mock.method(
+    fileSystem,
+    'unlink',
+    (...removal: Parameters<typeof fileSystem.unlink>) =>
+      String(removal[0]).includes('sealed.json')
+        ? new Promise<never>(() => undefined)
+        : originalUnlink(...removal),
+  )
+  const studyId = `${service.instanceId}_${record.id}`
+
+  // Act
+  await service.stop({ instanceId: service.instanceId, runId: record.id })
+
+  // Assert
+  assert.equal(record.nodeServer?.history?.sealed?.summary?.studyId, studyId)
+  assert.ok(await repository.serverHistories.summarize(studyId))
 })
 
 // protects=a failing seal write abandons the history and names its cause, without failing the stop; fails_when=the stop rejects, or the cause is missing or names a private path; no_claim=which file system error occurs
