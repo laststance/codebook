@@ -76,6 +76,12 @@ import { systemErrorCode } from './utils/systemErrorCode'
 import { withStorageLock } from './utils/withStorageLock'
 import { writeNodeTestWriterRecord } from './utils/writeNodeTestWriterRecord'
 
+/** The clock and the judge of another window's writer; a test names its own to count the queries. */
+export type NodeHistoryWriterJudge = {
+  now: () => number
+  judge: (historyDirectory: string) => Promise<NodeTestWriterVerdict>
+}
+
 const READER_POSITION_FILE = 'reader-position.json'
 const LEARNING_DECISION_FILE = 'learning-decision.json'
 const LEARNING_MATERIAL_FILE = 'learning-material.json'
@@ -265,10 +271,10 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
     private readonly capacity: () => number = () => 64,
     private readonly savedArtifactCount: () => Promise<number> = async () => 0,
     /** The clock and the judge of another window's writer; a test names its own to count the queries. */
-    private readonly writerJudge: {
-      now: () => number
-      judge: (historyDirectory: string) => Promise<NodeTestWriterVerdict>
-    } = { now: Date.now, judge: judgeNodeTestWriter },
+    private readonly writerJudge: NodeHistoryWriterJudge = {
+      now: Date.now,
+      judge: judgeNodeTestWriter,
+    },
     /** Counts the histories of the other profiles under the same learning directory, up to the given number, so one saved-study limit counts every kind. */
     private readonly otherHistoryCount: (
       places: number,
@@ -1364,10 +1370,10 @@ export class NodeTestHistoryStore extends NodeHistoryStore<NodeTestHistoryTypes>
     workspaceKey: string,
     capacity: () => number = () => 64,
     savedArtifactCount: () => Promise<number> = async () => 0,
-    writerJudge: {
-      now: () => number
-      judge: (historyDirectory: string) => Promise<NodeTestWriterVerdict>
-    } = { now: Date.now, judge: judgeNodeTestWriter },
+    writerJudge: NodeHistoryWriterJudge = {
+      now: Date.now,
+      judge: judgeNodeTestWriter,
+    },
     descriptor: HistoryStorageDescriptor<NodeTestHistoryTypes> = nodeTestStorageDescriptor,
     otherHistoryCount: (places: number) => Promise<number> = async () => 0,
   ) {

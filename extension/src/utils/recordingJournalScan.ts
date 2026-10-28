@@ -68,7 +68,7 @@ export const NODE_TEST_SCAN_RULES: HistoryScanRules<NodeTestHistoryTypes> = {
  * @returns A progress at the journal's beginning.
  * @example newJournalProgress() // => { entryCount: 0, lastElapsedMs: 0, stopCount: 0, hasResult: false, passingResult: false }
  */
-export function newJournalProgress(): JournalProgress {
+function newJournalProgress(): JournalProgress {
   return {
     entryCount: 0,
     lastElapsedMs: 0,
@@ -85,7 +85,7 @@ export function newJournalProgress(): JournalProgress {
  * @throws When the entry breaks an ordering rule; `progress` is left as it was.
  * @example acceptJournalEntry(progress, entry) // progress.entryCount grows by one
  */
-export function acceptJournalEntry(
+function acceptJournalEntry(
   progress: JournalProgress,
   entry: NodeTestHistoryEntry,
 ): void {
@@ -112,7 +112,7 @@ export function acceptJournalEntry(
  * @returns The citable form of the entry.
  * @example citableEventOf(outputEntry) // => { type: 'output', channel: 'stdout' }
  */
-export function citableEventOf(entry: NodeTestHistoryEntry): CitableEvent {
+function citableEventOf(entry: NodeTestHistoryEntry): CitableEvent {
   if (entry.type === 'stop')
     return {
       type: 'stop',

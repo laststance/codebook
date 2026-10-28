@@ -63,10 +63,8 @@ import {
 import { describeNodeServerProfile } from './nodeServerProfile'
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
 import type { NodeTestLearningMaterialContent } from './nodeTestHistorySchemas'
-import type {
-  NodeTestHistoryStore,
-  NodeTestHistoryWriter,
-} from './nodeTestHistoryStore'
+import type { NodeTestHistoryStore } from './nodeTestHistoryStore'
+import type { NodeTestHistoryWriter } from './nodeTestHistoryWriter'
 import type { NodeTestSourceStop } from './ownedNodeTestRun'
 import type { PlaybackController } from './playbackController'
 import type { PlaybackCommand } from './playbackSchemas'

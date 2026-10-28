@@ -73,8 +73,8 @@
     "unused-class-member:src/client.ts:StudyClient:tool",
     "unused-class-member:src/nodeTestHistoryStore.ts:NodeTestHistoryWriter:abandon",
     "unused-class-member:src/nodeTestHistoryStore.ts:NodeTestHistoryWriter:appendOutput",
-    "unused-class-member:src/nodeTestHistoryStore.ts:NodeTestHistoryWriter:appendResult",
-    "unused-class-member:src/nodeTestHistoryStore.ts:NodeTestHistoryWriter:appendStop",
+    "unused-class-member:src/nodeTestHistoryWriter.ts:NodeTestHistoryWriter:appendResult",
+    "unused-class-member:src/nodeTestHistoryWriter.ts:NodeTestHistoryWriter:appendStop",
     "unused-class-member:src/nodeTestHistoryStore.ts:NodeTestHistoryWriter:finish"
   ],
   "unused_store_members": [],

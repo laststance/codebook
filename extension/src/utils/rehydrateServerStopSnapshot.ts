@@ -18,7 +18,7 @@ import { nodeServerSourceKey } from './nodeServerJournalRules'
  * @returns The snapshot with the top frame's text restored; with the text removed and `sourceUnavailable: 'too large'` set when the source entry holds only a hash; unchanged when the top frame names no stored source.
  * @example rehydrateServerStopSnapshot(stop, sources).frames[0]?.source?.text // => 'export const handler = …'
  */
-export function rehydrateServerStopSnapshot(
+function rehydrateServerStopSnapshot(
   stop: NodeServerStopEntry,
   sources: ReadonlyMap<string, NodeServerSourceEntry>,
 ): ReplayDebugSnapshot {

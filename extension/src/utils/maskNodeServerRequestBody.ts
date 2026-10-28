@@ -1,6 +1,7 @@
 import { REDACTION_MASK } from '../constants'
 
 import { isSecretName } from './isSecretName'
+import { maskSecretFormPairs } from './maskSecretFormPairs'
 import { redactSecretText } from './redactSecretText'
 
 /** Masks every secret-named property of parsed JSON, at any depth, and secret-shaped strings. */
@@ -37,22 +38,6 @@ export function maskNodeServerRequestBody(
     }
   }
   if (contentType === 'application/x-www-form-urlencoded')
-    return redactSecretText(
-      body
-        .split('&')
-        .map((pair) => {
-          const separator = pair.indexOf('=')
-          if (separator < 0) return pair
-          const name = pair.slice(0, separator)
-          let decodedName = name
-          try {
-            decodedName = decodeURIComponent(name.replace(/\+/g, ' '))
-          } catch {
-            return `${name}=${REDACTION_MASK}`
-          }
-          return isSecretName(decodedName) ? `${name}=${REDACTION_MASK}` : pair
-        })
-        .join('&'),
-    )
+    return redactSecretText(maskSecretFormPairs(body))
   return redactSecretText(body)
 }

@@ -264,6 +264,8 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
   }
 
   /** Records that an attempt was refused before its bytes left, so the run may try again. @example await writer.appendRequestWithdrawn({ elapsedMs: 41, attempt: 1, code: 'RUN_BUSY' }) */
+  // Consumed by the run's history sink (Cycle 0059 pt3); pt1 has no producer yet.
+  // fallow-ignore-next-line unused-class-member
   appendRequestWithdrawn(input: {
     elapsedMs: number
     attempt: number
@@ -331,6 +333,8 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
   }
 
   /** Records the response the run shows: its status, content type, the shown body, its size, whether the read was cut, the redirect and the request's duration. @example await writer.appendResponse({ elapsedMs: 90, status: 200, contentType: 'application/json', body: '{}', bodyBytes: 2, readCut: false, location: null, requestDurationMs: 50 }) */
+  // Consumed by the run's history sink (Cycle 0059 pt3); pt1 has no producer yet.
+  // fallow-ignore-next-line unused-class-member
   appendResponse(
     input: EntryInputOf<'response'> extends infer Entry
       ? Omit<Entry, 'type'>
@@ -340,6 +344,8 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
   }
 
   /** Records that the request failed, with its code and a message that already passed the run's redaction. @example await writer.appendRequestFailed({ elapsedMs: 95, code: 'REQUEST_TIMEOUT', message: 'No answer.' }) */
+  // Consumed by the run's history sink (Cycle 0059 pt3); pt1 has no producer yet.
+  // fallow-ignore-next-line unused-class-member
   appendRequestFailed(input: {
     elapsedMs: number
     code: string
@@ -352,6 +358,8 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
    * Notes that the run refused a hit beyond its capture budget, so the seal says later hits were not recorded.
    * @example writer.markCaptureBudgetExhausted()
    */
+  // Consumed by the run's history sink (Cycle 0059 pt3); pt1 has no producer yet.
+  // fallow-ignore-next-line unused-class-member
   markCaptureBudgetExhausted(): void {
     this.serverRules.captureBudgetExhausted = true
   }
@@ -364,6 +372,8 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
    * @throws When the seal cannot be written or was abandoned before it was published.
    * @example await writer.seal({ elapsedMs: 900, reason: 'stopped' })
    */
+  // Consumed by the run's history sink (Cycle 0059 pt3); pt1 has no producer yet.
+  // fallow-ignore-next-line unused-class-member
   seal(end: NodeServerEndInput): Promise<string | undefined> {
     if (this.sealOperation) return this.sealOperation
     // The end is queued in this turn, behind every entry accepted before it.

@@ -24,20 +24,6 @@ const base = {
 const attempt = z.number().int().positive()
 const repositoryPath = z.string().min(1).max(REPOSITORY_PATH_LIMIT_CHARS)
 
-/** The kinds of entry a node-server journal holds, in the words the journal stores. */
-export const NODE_SERVER_ENTRY_TYPES = [
-  'output',
-  'request',
-  'request-withdrawn',
-  'request-sent',
-  'source',
-  'stop',
-  'response',
-  'request-failed',
-  'output-truncated',
-  'end',
-] as const
-
 /**
  * The header of a node-server history: the run's identity, its question, the declaration it ran (secret-named values masked; {@link maskNodeServerConfiguration}), the declared request and stops, the repository revision and the hashes of the declared sources.
  * `configurationHash` is the SHA-256 of the original declaration: identity only, never reversible.
@@ -184,7 +170,7 @@ export const nodeServerHistoryEntrySchema = z.discriminatedUnion('type', [
 ])
 
 /** One reason a server history is partial: a stable `code`, the `params` that make `text`, and the exact `text` the learner reads. */
-export const nodeServerSealReasonSchema = z.strictObject({
+const nodeServerSealReasonSchema = z.strictObject({
   code: z.string().min(1).max(128),
   params: z.record(z.string(), z.union([z.string().max(1_024), z.number()])),
   text: z.string().min(1).max(2_048),

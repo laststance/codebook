@@ -57,15 +57,6 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
   }
 
   /**
-   * Tells whether the writer stopped taking entries because one failed, so a caller can say the history ends there.
-   * @returns The first failure's message, or `undefined` while the timeline is whole.
-   * @example writer.failureMessage // => 'Node history reached its storage limit; existing evidence remains readable.'
-   */
-  get failureMessage(): string | undefined {
-    return this.failure?.message
-  }
-
-  /**
    * Fsyncs and seals the journal; after a failed entry only the verified prefix can be sealed, as partial; called by {@link StudyService.stopRecord}.
    * The profile's rules decide whether `complete` is honest; a repeated or concurrent call joins the first one, so Save, Stop and a self-exit at once give one seal.
    * @param status - `complete` for evidence the caller verified as whole, else `partial`.

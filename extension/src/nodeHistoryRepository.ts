@@ -1,8 +1,11 @@
 import type { NodeServerHistoryTypes } from './nodeServerHistoryTypes'
 import { nodeServerStorageDescriptor } from './nodeServerStorageDescriptor'
-import { NodeHistoryStore, NodeTestHistoryStore } from './nodeTestHistoryStore'
+import {
+  NodeHistoryStore,
+  NodeTestHistoryStore,
+  type NodeHistoryWriterJudge,
+} from './nodeTestHistoryStore'
 import { isNodeHistoryIdentity } from './utils/isNodeHistoryIdentity'
-import type { NodeTestWriterVerdict } from './utils/judgeNodeTestWriter'
 
 /** The store a study id resolved to, with the profile that tells which. */
 export type ResolvedNodeHistory =
@@ -30,10 +33,7 @@ export class NodeHistoryRepository {
     workspaceKey: string,
     capacity: () => number,
     savedArtifactCount: () => Promise<number>,
-    writerJudge?: {
-      now: () => number
-      judge: (historyDirectory: string) => Promise<NodeTestWriterVerdict>
-    },
+    writerJudge?: NodeHistoryWriterJudge,
   ) {
     this.testHistories = new NodeTestHistoryStore(
       learningDirectory,
@@ -95,6 +95,8 @@ export class NodeHistoryRepository {
    * @throws When the id names no history, the sequence is not a positive integer, no entry has it, or the journal does not verify.
    * @example const { entry } = await repository.entryAt(studyId, 3)
    */
+  // Consumed by the run's history sink (Cycle 0059 pt3); pt1 has no producer yet.
+  // fallow-ignore-next-line unused-class-member
   async entryAt(
     studyId: string,
     sequence: number,

@@ -1,6 +1,4 @@
-import { REDACTION_MASK } from '../constants'
-
-import { isSecretName } from './isSecretName'
+import { maskSecretFormPairs } from './maskSecretFormPairs'
 import { redactSecretText } from './redactSecretText'
 
 /**
@@ -13,22 +11,7 @@ import { redactSecretText } from './redactSecretText'
 export function maskSecretQueryValues(path: string): string {
   const queryStart = path.indexOf('?')
   if (queryStart < 0) return redactSecretText(path)
-  const query = path
-    .slice(queryStart + 1)
-    .split('&')
-    .map((pair) => {
-      const separator = pair.indexOf('=')
-      if (separator < 0) return pair
-      const name = pair.slice(0, separator)
-      // A name that cannot be decoded is masked whole: it is not told apart from a secret.
-      let decodedName = name
-      try {
-        decodedName = decodeURIComponent(name)
-      } catch {
-        return `${name}=${REDACTION_MASK}`
-      }
-      return isSecretName(decodedName) ? `${name}=${REDACTION_MASK}` : pair
-    })
-    .join('&')
-  return redactSecretText(`${path.slice(0, queryStart)}?${query}`)
+  return redactSecretText(
+    `${path.slice(0, queryStart)}?${maskSecretFormPairs(path.slice(queryStart + 1))}`,
+  )
 }
