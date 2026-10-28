@@ -113,7 +113,8 @@ export class NodeServerHistoryRecorder {
     return failure ? this.input.describeCause(failure) : undefined
   }
 
-  /** Whether the history still takes entries. */
+  /** Whether the history still takes entries. Read by {@link NodeServerLearningSave}. */
+  // fallow-ignore-next-line unused-class-member
   get isRecording(): boolean {
     return this.status === 'recording'
   }
@@ -125,6 +126,7 @@ export class NodeServerHistoryRecorder {
    * @returns Settles when the seal ended in a sealed or a failed state; never rejects.
    * @example await recorder.seal({ elapsedMs: 900, reason: 'stopped' }, 10_000)
    */
+  // fallow-ignore-next-line unused-class-member
   seal(end: NodeServerEndInput, boundMs: number): Promise<void> {
     this.sealOperation ??= this.runSeal(end, boundMs)
     return this.sealOperation

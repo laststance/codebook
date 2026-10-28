@@ -16,8 +16,10 @@ import {
   describeNodeServerStatus,
   type NodeServerLearningStatus,
 } from './utils/describeNodeServerStatus'
+import { offerOpenReplay } from './utils/offerOpenReplay'
 import { sanitizeCause } from './utils/sanitizeCause'
 import { sanitizedStack } from './utils/sanitizedStack'
+import { SaveSerializer } from './utils/SaveSerializer'
 
 /** What the Save of a server run needs from the editor and the extension, so it is tested without the Study workspace. */
 export type NodeServerLearningSaveHost = Omit<
@@ -57,7 +59,7 @@ type SaveState =
  */
 export class NodeServerLearningSave {
   private readonly states = new Map<string, SaveState>()
-  private operation?: { studyId: string; promise: Promise<void> }
+  private readonly saves = new SaveSerializer()
   /** The question being asked, so a second Save while it is open joins it: one modal, one save. */
   private question?: Promise<string | undefined>
 
@@ -107,28 +109,21 @@ export class NodeServerLearningSave {
   save(record: StudyRecord): Promise<void> {
     const service = this.host.service()
     if (!service) return Promise.resolve()
-    const studyId = `${service.instanceId}_${record.id}`
-    if (this.operation) {
-      if (this.operation.studyId !== studyId)
-        throw new Error(
-          'Another learning session is being saved. Wait for its result.',
-        )
-      return this.operation.promise
-    }
-    const promise = this.saveOnce(service, record, studyId).finally(() => {
-      if (this.operation?.promise === promise) this.operation = undefined
-      this.host.changed()
-    })
-    this.operation = { studyId, promise }
-    return promise
+    return this.saves.runFor(
+      service,
+      record,
+      (studyId) => this.saveOnce({ service, record, studyId }),
+      () => this.host.changed(),
+    )
   }
 
   /** Runs one Save: the refusals, the question, the stop with its seal, the reading of the verdicts. */
-  private async saveOnce(
-    service: NonNullable<ReturnType<NodeServerLearningSaveHost['service']>>,
-    record: StudyRecord,
-    studyId: string,
-  ): Promise<void> {
+  private async saveOnce(context: {
+    service: NonNullable<ReturnType<NodeServerLearningSaveHost['service']>>
+    record: StudyRecord
+    studyId: string
+  }): Promise<void> {
+    const { service, record, studyId } = context
     const history = record.nodeServer?.history
     if (!history) {
       this.tell({
@@ -230,19 +225,15 @@ export class NodeServerLearningSave {
           }
         : { kind: 'explanation-missing' }
     const notice = describeNodeServerLearningSave(message)
-    void this.host
-      .notify(
-        complete ? 'information' : 'warning',
-        notice.text,
-        notice.actions ?? [],
-      )
-      .then((action) => {
-        if (action === NODE_LEARNING_SAVE_ACTION.openReplay)
-          return this.host.open(studyId)
-      })
-      .catch((error: unknown) => {
+    offerOpenReplay(
+      this.host,
+      complete ? 'information' : 'warning',
+      notice,
+      studyId,
+      (error) => {
         this.logFailure(studyId, 'save:open-replay', error)
-      })
+      },
+    )
   }
 
   /** Shows one refusal or notice that offers nothing to do. */

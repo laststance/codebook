@@ -5,7 +5,7 @@ import {
 } from './constants'
 
 /** What each partial reason of a server history means for an agent, and what to do about it; keyed by the stable code `captureMissing` lists and the README's troubleshooting table repeats. */
-export const NODE_SERVER_SAVE_CODE_HELP: readonly {
+const NODE_SERVER_SAVE_CODE_HELP: readonly {
   code: string
   meaning: string
   action: string

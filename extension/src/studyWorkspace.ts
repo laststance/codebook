@@ -125,7 +125,7 @@ import {
   type StudyRemoval,
 } from './learningLibrary'
 import { NodeHistoryRepository } from './nodeHistoryRepository'
-import { NodeLearningSave } from './nodeLearningSave'
+import { NodeLearningSave, type NodeLearningSaveHost } from './nodeLearningSave'
 import type {
   NodeServerHistorySummary,
   NodeServerHistoryTypes,
@@ -813,33 +813,21 @@ export class StudyWorkspace {
   private readonly nodeLearningSave = new NodeLearningSave({
     service: () => this.service,
     store: () => this.nodeHistoryStore,
-    ask: async (text, actions) =>
-      vscode.window.showWarningMessage(text, { modal: true }, ...actions),
-    notify: async (severity, text, actions) =>
-      showPlainNotice(vscode.window, severity, text, ...actions),
+    ...this.saveHostEditorParts(),
     materialRevision: (studyId) =>
       this.nodeHistoryCatalog.find((history) => history.studyId === studyId)
         ?.materialRevision,
-    open: (studyId) => this.openLearningReplay(studyId),
-    log: (entry) => this.diagnostics?.log(entry),
-    changed: () => this.publish(),
   })
 
   /** Saves a server run's learning replay from the status item; this workspace only wires the item and its command to it. */
   private readonly nodeServerLearningSave = new NodeServerLearningSave({
     service: () => this.service,
     store: () => this.nodeHistoryRepository?.serverHistories,
-    ask: async (text, actions) =>
-      vscode.window.showWarningMessage(text, { modal: true }, ...actions),
-    notify: async (severity, text, actions) =>
-      showPlainNotice(vscode.window, severity, text, ...actions),
+    ...this.saveHostEditorParts(),
     materialRevision: (studyId) =>
       this.nodeServerHistoryCatalog.find(
         (history) => history.studyId === studyId,
       )?.materialRevision,
-    open: (studyId) => this.openLearningReplay(studyId),
-    log: (entry) => this.diagnostics?.log(entry),
-    changed: () => this.publish(),
   })
 
   private library?: LearningLibrary
@@ -11432,6 +11420,26 @@ export class StudyWorkspace {
    */
   describeFailure(error: unknown): string {
     return sanitizeCause(error, this.privateRoots())
+  }
+
+  /**
+   * Gives the parts of a node run's Save host that are the editor's: the modal question, the notices, Open replay, the Output channel and the redraw; shared by the test and the server Save, which differ only in their service, store and material revision.
+   * @returns The editor-bound members of a Save host.
+   * @example new NodeLearningSave({ ...this.saveHostEditorParts(), service, store, materialRevision })
+   */
+  private saveHostEditorParts(): Pick<
+    NodeLearningSaveHost,
+    'ask' | 'notify' | 'open' | 'log' | 'changed'
+  > {
+    return {
+      ask: async (text, actions) =>
+        vscode.window.showWarningMessage(text, { modal: true }, ...actions),
+      notify: async (severity, text, actions) =>
+        showPlainNotice(vscode.window, severity, text, ...actions),
+      open: (studyId): Promise<void> => this.openLearningReplay(studyId),
+      log: (entry) => this.diagnostics?.log(entry),
+      changed: (): void => this.publish(),
+    }
   }
 
   /**

@@ -148,6 +148,8 @@ export class NodeHistoryRepository {
    * @throws When the id names no history, the sequence is not a positive integer, no entry has it, or the journal does not verify.
    * @example const { entry } = await repository.entryAt(studyId, 3)
    */
+  // The history repository's validated read of one entry, kept for the resources and MCP routes that name an entry by id and sequence.
+  // fallow-ignore-next-line unused-class-member
   async entryAt(
     studyId: string,
     sequence: number,

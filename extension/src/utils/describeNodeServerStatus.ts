@@ -52,7 +52,7 @@ export type NodeServerLearningStatus =
  * @returns The state words.
  * @example describeNodeServerState({ state: 'responded', nodeServer: { stops: [{}], response: { status: 200 } } }) // => 'Responded 200'
  */
-export function describeNodeServerState(input: NodeServerStatusInput): string {
+function describeNodeServerState(input: NodeServerStatusInput): string {
   const block = input.nodeServer
   // A failure, of the run or of its request, outranks the state it left behind.
   if (input.error) return `Failed: ${input.error.code}`

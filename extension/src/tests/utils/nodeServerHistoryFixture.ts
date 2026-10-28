@@ -7,7 +7,7 @@ import type { TestContext } from 'node:test'
 import { NodeHistoryRepository } from '../../nodeHistoryRepository'
 import { nodeServerConfigSchema } from '../../nodeServerConfigSchemas'
 import type { NodeServerHistoryHeader } from '../../nodeServerHistorySchemas'
-import type { NodeServerStopCapture } from '../../nodeServerHistoryWriter'
+import type { NodeServerWriterStop } from '../../nodeServerHistoryWriter'
 import type { ReplayDebugSnapshot } from '../../replayDebugSchemas'
 import { sha256 } from '../../runtimeSupport/utils/sha256'
 import { maskNodeServerConfiguration } from '../../utils/maskNodeServerConfiguration'
@@ -134,10 +134,10 @@ export function serverStopCapture(options: {
   line: number
   elapsedMs: number
   text?: string
-  facts?: NodeServerStopCapture['facts']
-  unavailable?: NodeServerStopCapture['unavailable']
+  facts?: NodeServerWriterStop['facts']
+  unavailable?: NodeServerWriterStop['unavailable']
   snapshot?: ReplayDebugSnapshot
-}): NodeServerStopCapture {
+}): NodeServerWriterStop {
   const text = options.text ?? HANDLER_SOURCE_TEXT
   const hash = sha256(text)
   const snapshot: ReplayDebugSnapshot = options.snapshot ?? {

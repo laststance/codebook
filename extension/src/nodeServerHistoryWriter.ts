@@ -136,8 +136,8 @@ type EntryInputOf<Type extends NodeServerHistoryEntry['type']> = Omit<
 /** The entry `end` of a run, without its sequence; what {@link NodeServerHistoryWriter.seal} appends. */
 export type NodeServerEndInput = Omit<EntryInputOf<'end'>, 'type'>
 
-/** What the run's capture of one stop hit hands the writer. */
-export type NodeServerStopCapture = {
+/** What the history sink hands the writer for one stop hit: the run's capture, shaped for the journal ({@link NodeServerStopCapture} is what the debugger reads). */
+export type NodeServerWriterStop = {
   elapsedMs: number
   declaredStopIndex: number
   hit: number
@@ -309,7 +309,7 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
    * @returns Settles when the stop (and its source entry, if new) is durable.
    * @example await writer.appendStop({ elapsedMs: 60, declaredStopIndex: 0, hit: 1, generation: 1, source, frameName: 'handler', facts: {}, unavailable: [], snapshot })
    */
-  async appendStop(capture: NodeServerStopCapture): Promise<void> {
+  async appendStop(capture: NodeServerWriterStop): Promise<void> {
     const { source } = capture
     const key = `${source.path}\u0000${source.hash}`
     const queued: Array<Promise<void>> = []
@@ -337,7 +337,7 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
 
   /** Builds the `source` entry of a stop's executed file: its text when verified and small enough, else its hash with the reason. */
   private sourceEntryFor(
-    capture: NodeServerStopCapture,
+    capture: NodeServerWriterStop,
   ): NodeServerHistoryEntryInput {
     const text = capture.snapshot.frames[0]?.source?.text
     const base = {

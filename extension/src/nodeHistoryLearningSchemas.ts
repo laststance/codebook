@@ -1,31 +1,16 @@
 import { z } from 'zod'
 
 import { NODE_SERVER_HISTORY_MAX_ENTRIES } from './constants'
+import { nodeServerLearningReferenceSchema } from './nodeServerLearningSchemas'
 import { buildNodeLearningMaterialContentSchema } from './nodeTestHistorySchemas'
-import { repositoryHashSchema } from './sourceSchemas'
 
-const sequence = z
-  .number()
-  .int()
-  .positive()
-  .max(NODE_SERVER_HISTORY_MAX_ENTRIES)
-
-/** Every entry a step of either history profile may cite: a node-test history has stops, outputs and the result; a node-server history the request, stops, outputs, the response or the request failure. One schema for both, so a malformed step is refused at its own element, whichever profile its study id names. */
+/** Every entry a step of either history profile may cite: a node-server history has the request, stops, outputs, the response or the request failure (its own reference schema); a node-test history has stops, outputs and the result. One schema for both, so a malformed step is refused at its own element, whichever profile its study id names. */
 const nodeHistoryReferenceSchema = z.discriminatedUnion('type', [
-  z.strictObject({ type: z.literal('request'), sequence }),
+  ...nodeServerLearningReferenceSchema.options,
   z.strictObject({
-    type: z.literal('stop'),
-    sequence,
-    sourceHash: repositoryHashSchema,
+    type: z.literal('result'),
+    sequence: z.number().int().positive().max(NODE_SERVER_HISTORY_MAX_ENTRIES),
   }),
-  z.strictObject({
-    type: z.literal('output'),
-    sequence,
-    channel: z.enum(['stdout', 'stderr']),
-  }),
-  z.strictObject({ type: z.literal('result'), sequence }),
-  z.strictObject({ type: z.literal('response'), sequence }),
-  z.strictObject({ type: z.literal('request-failed'), sequence }),
 ])
 
 /**

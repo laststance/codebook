@@ -15,7 +15,7 @@ const sequence = z
   .max(NODE_SERVER_HISTORY_MAX_ENTRIES)
 
 /** The entries of a server history a learning step may cite: the request, a stop (with its source hash), an output (with its channel), the response or the request failure. */
-const nodeServerLearningReferenceSchema = z.discriminatedUnion('type', [
+export const nodeServerLearningReferenceSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('request'), sequence }),
   z.strictObject({
     type: z.literal('stop'),
