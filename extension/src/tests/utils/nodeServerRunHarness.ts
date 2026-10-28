@@ -10,6 +10,7 @@ import type {
   NodeServerStopCapture,
   NodeServerStopTarget,
 } from '../../nodeServerDebugger'
+import type { NodeServerHistorySink } from '../../nodeServerHistorySink'
 import {
   createOwnedNodeServerRun,
   type NodeServerRunDependencies,
@@ -79,6 +80,10 @@ export type HarnessOptions = {
   record?: (type: string, detail?: unknown) => unknown
   /** The run id the service gave the run; `run-1` by default. */
   runId?: string
+  /** Where the run reports what a saved server replay records. */
+  history?: NodeServerHistorySink
+  /** Reads a stop in place of the fake's empty snapshot, so a history test gets presentable captures. */
+  capture?: (pause: NodeServerDebuggerPause) => NodeServerStopCapture
 }
 
 /** A hand-moved stand-in for the editor's debugger: it records its calls in the shared order and lets the test emit pauses. */
@@ -135,6 +140,7 @@ export class FakeNodeServerDebugger implements NodeServerDebugger {
   ): Promise<NodeServerStopCapture> {
     this.order.push(`capture:${pause.declaredStopIndex}`)
     await this.captureGate
+    if (this.options.capture) return this.options.capture(pause)
     return {
       path: 'src/routes/users.ts',
       line: 14 + (pause.declaredStopIndex ?? 0),
@@ -528,6 +534,7 @@ export function createHarness(options: HarnessOptions = {}) {
     },
     citedSources,
     runId: options.runId ?? 'run-1',
+    history: options.history,
     dependencies,
   })
   return {

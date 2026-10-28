@@ -19,7 +19,7 @@ export type ResolvedNodeHistory =
 
 /**
  * Holds the stores of every history profile under one learning directory and resolves a study id to the store whose folder holds it, so the workspace, resources, MCP and deletion ask one place. It also wires the shared admission: each store counts the other profiles' histories and the saved studies together under the one storage lock, so a test, a server and a browser save race for the same last place and one wins.
- * Built where the workspace builds its history store; nothing writes a server history yet.
+ * Built where the workspace builds its history store; a live node-server run writes the server profile's histories.
  * @example const repository = new NodeHistoryRepository(directory, workspaceKey, () => 64, () => library.savedStudyCount())
  */
 export class NodeHistoryRepository {
@@ -148,8 +148,6 @@ export class NodeHistoryRepository {
    * @throws When the id names no history, the sequence is not a positive integer, no entry has it, or the journal does not verify.
    * @example const { entry } = await repository.entryAt(studyId, 3)
    */
-  // Consumed by the run's history sink (Cycle 0059 pt3); pt1 has no producer yet.
-  // fallow-ignore-next-line unused-class-member
   async entryAt(
     studyId: string,
     sequence: number,

@@ -45,6 +45,8 @@ import {
   PRESENTATION_MODE_IDS,
   STUDY_PRESENTATIONS,
   TRANSIENT_SEAL_ERROR_CODES,
+  NODE_SERVER_HISTORY_SEAL_BOUND_MS,
+  NODE_SERVER_HISTORY_START_BOUND_MS,
 } from './constants'
 import {
   NodeLearningRevisionChangedError,
@@ -61,6 +63,7 @@ import {
   nodeServerConfigSchema,
   type NodeServerConfiguration,
 } from './nodeServerConfigSchemas'
+import type { NodeServerHistoryRecorder } from './nodeServerHistoryRecorder'
 import { nodeServerLearningMaterialContentSchema } from './nodeServerLearningSchemas'
 import { describeNodeServerProfile } from './nodeServerProfile'
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
@@ -118,6 +121,7 @@ import { declaredStopOfSnapshot } from './utils/declaredStopOfSnapshot'
 import { describeBoundPlace, type BoundPlace } from './utils/describeBoundPlace'
 import { describeMissingBookNode } from './utils/describeMissingBookNode'
 import { describeNodeServerConfigurationIssues } from './utils/describeNodeServerConfigurationIssues'
+import { describeNodeServerEnd } from './utils/describeNodeServerEnd'
 import {
   describeNodeServerFailureLine,
   describeNodeServerOutputLine,
@@ -164,9 +168,14 @@ import {
 import { readerNotFollowingRunRefusal } from './utils/readerNotFollowingRunRefusal'
 import { releaseVitestListings } from './utils/releaseVitestListings'
 import { resolveCapturedFactPaths } from './utils/resolveCapturedFactPaths'
-import { sanitizeCause, type CauseRoots } from './utils/sanitizeCause'
+import {
+  hidePrivateRoots,
+  sanitizeCause,
+  type CauseRoots,
+} from './utils/sanitizeCause'
 import { sanitizedStack } from './utils/sanitizedStack'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
+import { startNodeServerHistory } from './utils/startNodeServerHistory'
 import { studyErrorNamingCause } from './utils/studyErrorNamingCause'
 import { systemErrorCode } from './utils/systemErrorCode'
 import { thrownMessage } from './utils/thrownMessage'
@@ -269,6 +278,10 @@ export interface NodeServerRecordState {
   subscription?: { dispose(): void }
   /** The failures already written to the Output channel (by code), so one failure is written once. */
   loggedFailures: Set<string>
+  /** The run's history, from before its launch to its seal; absent when none could start ({@link historyUnavailable}). */
+  history?: NodeServerHistoryRecorder
+  /** Why the run has no history (storage unavailable, a full store, a refused or slow start), shown beside the run's state and answered by Save; the live run goes on. */
+  historyUnavailable?: string
 }
 /** A node-server run's record with its server state, as the narrowing {@link isNodeServerRecord} gives. */
 type NodeServerStudyRecord = StudyRecord & {
@@ -293,7 +306,6 @@ export type StudyRecord = StudyRecordState &
  * - `refused-at-admission`: the library was full or its limit setting invalid, so the run never started.
  * - `refused-at-preparation`: a node-test run whose preparation refused it before its history began (a changed source or test file, a path that is not a file, a missing prerequisite), so nothing was recorded and its slot and start key are free.
  * - `stopped-before-history`: a learner's stop (or a stop of the window) ended a node-test run before its history began, so nothing was recorded; its slot is free, but its start key stays with it, so a repeat under the same key replays the receipt.
- * - `server-run-not-saved`: a node-server run holds no history from its start (Issue #139 D3): it is evictable, offers no `read-history` and never reads as saved.
  * - `removed-by-learner`: the learner moved the run's saved study to the system Trash with this window's delete.
  * - `archive-removed`: the run's saved study left the library without a removal of this window, so its archive is gone: its files were removed by hand (a window without a Trash offers nothing else), or another window removed it.
  */
@@ -302,7 +314,6 @@ export type HistoryExclusion =
   | 'refused-at-admission'
   | 'refused-at-preparation'
   | 'stopped-before-history'
-  | 'server-run-not-saved'
   | StudyRemovalExclusion
 /** The two exclusions that say a run's saved study was removed; each has its own sentence for the agent that reads the run, see {@link historyExclusionReason}. */
 export type StudyRemovalExclusion = 'removed-by-learner' | 'archive-removed'
@@ -411,17 +422,16 @@ const SUPPORTED_PROFILES: readonly string[] = [
 ]
 
 /**
- * Gives the fields a new run's record starts with because it is a node-server run: its events, its server state and its exclusion from history (D3: evictable, no read-history, never saved).
+ * Gives the fields a new run's record starts with because it is a node-server run: its events and its server state.
  * @param profile - The profile of the start.
  * @returns The fields for a node-server run; none for another profile.
- * @example nodeServerRecordFields('node-server').historyExcluded // => 'server-run-not-saved'
+ * @example nodeServerRecordFields('node-server').nodeEvents // => []
  */
 function nodeServerRecordFields(profile: string) {
   return profile === NODE_SERVER_PROFILE
     ? {
         nodeEvents: [],
         nodeServer: { loggedFailures: new Set<string>() },
-        historyExcluded: 'server-run-not-saved' as const,
       }
     : {}
 }
@@ -492,6 +502,10 @@ export class StudyService {
   diagnostics?: (entry: CodebookDiagnostic) => void
   /** Receives the plain Output › Codebook lines of a node-server run (its request, its response or failure, each naming the run); the extension sets it at activation. */
   outputLog?: (line: NodeServerOutputLine) => void
+  /** How long a node-server run waits for its history to start; a test sets a short one. */
+  nodeServerHistoryStartBoundMs = NODE_SERVER_HISTORY_START_BOUND_MS
+  /** How long the seal of a node-server history may take before it is abandoned; a test sets a short one. */
+  nodeServerHistorySealBoundMs = NODE_SERVER_HISTORY_SEAL_BOUND_MS
   /** How long the learner has to answer the confirmation of a state-changing node-server request before it reads as not confirmed (D6); a test sets a short one. */
   confirmationTimeoutMs = REPOSITORY_PAUSE_HOLD_TIMEOUT_MS
   /** The extension's own storage folders beside {@link storageRoot}, which the extension sets when it creates the service; no shown cause names them. */
@@ -1315,7 +1329,6 @@ export class StudyService {
       ...(intent.profile === NODE_TEST_PROFILE
         ? { nodeStops: [], nodeEvents: [], nodePhase: 'preparing' as const }
         : {}),
-      // A server run holds no history from its start (D3): evictable, no read-history, never saved.
       ...nodeServerRecordFields(intent.profile),
       // A reader refresh can arrive before the admission answers; until then the run is not a checkpoint candidate.
       ...(intent.profile === REPOSITORY_BROWSER_PROFILE && this.recordings
@@ -4092,6 +4105,8 @@ export class StudyService {
       const serverRun = record.nodeServer?.run
       if (serverRun && serverRun !== cancellingServerRun) await serverRun.stop()
       record.nodeServer?.subscription?.dispose()
+      // The history ends with the run: stopped, closed or failed, sealed once however many callers join this stop.
+      await this.sealNodeServerHistory(record)
       // A root listing that was not released is the run's to release: one still running fails this stop, so the run stays unstopped, the next start answers BUSY, and the next stop tries again.
       if (record.unreleasedListings)
         await releaseVitestListings(record.unreleasedListings)
@@ -4713,6 +4728,9 @@ export class StudyService {
         'The owned Node server adapter is unavailable.',
       )
     if (this.stopping || record.stopping) return
+    await this.beginNodeServerHistory(record)
+    // The history may have been started while a stop arrived: the stop path seals it, and no server launches.
+    if (this.stopping || record.stopping) return
     const run = await this.environment.createNodeServerRun(
       state.prepared.configuration,
       createNodeServerJournal(record.nodeEvents ?? [], {
@@ -4722,12 +4740,72 @@ export class StudyService {
       }),
       state.prepared.descriptor.sources,
       record.id,
+      state.history?.sink,
     )
     state.run = run
     state.subscription = run.onDidChange(() => this.onNodeServerChange(record))
     if (this.stopping || record.stopping) return
     await run.prepare()
     record.prepared = true
+  }
+
+  /**
+   * Starts the history of a node-server run, within its bound, before the server launches; a failure of any kind leaves the live run running and is kept as the cause the status shows and Save answers (D8).
+   * @param record - The node-server run, whose configuration was pinned.
+   * @example await this.beginNodeServerHistory(record)
+   */
+  private async beginNodeServerHistory(
+    record: NodeServerStudyRecord,
+  ): Promise<void> {
+    const state = record.nodeServer
+    if (!state.prepared) return
+    const begun = await startNodeServerHistory({
+      repository: this.nodeHistoryRepository,
+      workspace: this.environment.workspace,
+      instanceId: this.instanceId,
+      runId: record.id,
+      createdAtMs: record.createdAt,
+      prepared: state.prepared,
+      hideRoots: (text) => hidePrivateRoots(text, this.causeRoots),
+      describeCause: (error) =>
+        error instanceof SavedStudyStorageFullError
+          ? fullLibraryMessage('run', error.limit, this.removalAvailability)
+          : this.sanitizedCause(error),
+      startBoundMs: this.nodeServerHistoryStartBoundMs,
+    })
+    if ('recorder' in begun) state.history = begun.recorder
+    else state.historyUnavailable = begun.unavailable
+  }
+
+  /**
+   * Seals a node-server run's history once the run ended, through the one seal every ending joins: the server was stopped (learner, chat, Save or dispose), exited by itself, or failed. A history that cannot be sealed is abandoned with its cause and never fails the stop.
+   * @param record - The node-server run whose server was released.
+   * @example await this.sealNodeServerHistory(record)
+   */
+  private async sealNodeServerHistory(record: StudyRecord): Promise<void> {
+    const history = record.nodeServer?.history
+    if (!history) return
+    const closed = [...(record.nodeEvents ?? [])]
+      .reverse()
+      .find((event) => event.type === 'node-server.closed')
+    const detail =
+      closed?.detail && typeof closed.detail === 'object'
+        ? (closed.detail as { exitCode?: unknown; signal?: unknown })
+        : undefined
+    const view = record.nodeServer?.run?.view()
+    await history.seal(
+      describeNodeServerEnd({
+        failureCode: (view?.runFailure ?? record.error)?.code,
+        exit: {
+          exitCode:
+            typeof detail?.exitCode === 'number' ? detail.exitCode : undefined,
+          signal:
+            typeof detail?.signal === 'string' ? detail.signal : undefined,
+        },
+        elapsedMs: 0,
+      }),
+      this.nodeServerHistorySealBoundMs,
+    )
   }
 
   /**

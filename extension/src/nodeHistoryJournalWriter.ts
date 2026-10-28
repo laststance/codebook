@@ -149,6 +149,17 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
     return operation
   }
 
+  /**
+   * Marks the writer failed without an append having failed: a producer that met a fault of its own (a sink that threw, an entry it could not place) says so, so no later entry follows the gap and the seal reads partial with this cause. The mark takes its place in the queue: entries accepted before it are still written.
+   * @param error - What went wrong; the first failure stands.
+   * @example writer.markFailed(new Error('A stop was captured after the response.'))
+   */
+  markFailed(error: Error): void {
+    this.pending = this.pending.then(() => {
+      this.failure ??= error
+    })
+  }
+
   /** Marks a failed or timed-out finalization as an interrupted prefix so library readers do not show it as live; a seal still in flight publishes nothing afterwards. @example writer.abandon() */
   abandon(): void {
     this.abandoned = true

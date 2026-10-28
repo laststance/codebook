@@ -1,4 +1,5 @@
 import {
+  NODE_SERVER_HISTORY_FORMAT_VERSION,
   NODE_SERVER_HISTORY_LIMIT_BYTES,
   NODE_SERVER_HISTORY_MAX_ENTRIES,
   NODE_SERVER_HISTORY_SEAL_LIMIT_BYTES,
@@ -113,7 +114,7 @@ class NodeServerWriterRules implements HistoryWriterRules<NodeServerHistoryTypes
     })
     const complete = reasons.length === 0
     return nodeServerHistorySealSchema.parse({
-      version: 1,
+      version: NODE_SERVER_HISTORY_FORMAT_VERSION,
       studyId: input.studyId,
       entryCount: input.entryCount,
       journalBytes: input.journal.byteLength,
@@ -157,7 +158,7 @@ function estimateLineBytes(input: unknown): number {
 /**
  * Writes a node-server run's evidence as it happens: output, request attempts, executed sources, stops, the response and the end, in the one verified order every reader checks.
  * Source text is stored once per `(path, hash)` just before the first stop that needs it. Output has its own budget, so a chatty server never crowds out the request, the stops or the answer; past a bound output is dropped with one `output-truncated` entry while structural entries still wait for their turn.
- * Built by {@link nodeServerStorageDescriptor} when the store reserves a history; the run (pt3) feeds it through a history sink.
+ * Built by {@link nodeServerStorageDescriptor} when the store reserves a history; the run feeds it through {@link NodeServerHistorySink}.
  * @example const writer = await servers.start(header); await writer.appendRequest({ … }); await writer.seal({ reason: 'stopped', elapsedMs: 900 })
  */
 export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHistoryTypes> {
@@ -166,6 +167,8 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
   private readonly queuedSources = new Set<string>()
   private acceptedEntries = 0
   private acceptedBytes = 0
+  /** The largest time of any entry accepted so far, durable or still queued: `end` may never carry less. */
+  private latestAcceptedMs = 0
   private outputEntries = 0
   private outputBytes = 0
   private outputWasCut = false
@@ -198,6 +201,7 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
     // Closed to new appends from the moment the seal began: the entry is not written and is no failure, so a run that ended cleanly still seals complete.
     if (this.closedToAppends) return Promise.resolve()
     const bytes = estimateLineBytes(input)
+    this.latestAcceptedMs = Math.max(this.latestAcceptedMs, input.elapsedMs)
     this.acceptedEntries++
     this.acceptedBytes += bytes
     this.pendingEntries++
@@ -283,8 +287,6 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
   }
 
   /** Records that an attempt was refused before its bytes left, so the run may try again. @example await writer.appendRequestWithdrawn({ elapsedMs: 41, attempt: 1, code: 'RUN_BUSY' }) */
-  // Consumed by the run's history sink (Cycle 0059 pt3); pt1 has no producer yet.
-  // fallow-ignore-next-line unused-class-member
   appendRequestWithdrawn(input: {
     elapsedMs: number
     attempt: number
@@ -352,8 +354,6 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
   }
 
   /** Records the response the run shows: its status, content type, the shown body, its size, whether the read was cut, the redirect and the request's duration. @example await writer.appendResponse({ elapsedMs: 90, status: 200, contentType: 'application/json', body: '{}', bodyBytes: 2, readCut: false, location: null, requestDurationMs: 50 }) */
-  // Consumed by the run's history sink (Cycle 0059 pt3); pt1 has no producer yet.
-  // fallow-ignore-next-line unused-class-member
   appendResponse(
     input: EntryInputOf<'response'> extends infer Entry
       ? Omit<Entry, 'type'>
@@ -363,8 +363,6 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
   }
 
   /** Records that the request failed, with its code and a message that already passed the run's redaction. @example await writer.appendRequestFailed({ elapsedMs: 95, code: 'REQUEST_TIMEOUT', message: 'No answer.' }) */
-  // Consumed by the run's history sink (Cycle 0059 pt3); pt1 has no producer yet.
-  // fallow-ignore-next-line unused-class-member
   appendRequestFailed(input: {
     elapsedMs: number
     code: string
@@ -377,8 +375,6 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
    * Notes that the run refused a hit beyond its capture budget, so the seal says later hits were not recorded.
    * @example writer.markCaptureBudgetExhausted()
    */
-  // Consumed by the run's history sink (Cycle 0059 pt3); pt1 has no producer yet.
-  // fallow-ignore-next-line unused-class-member
   markCaptureBudgetExhausted(): void {
     this.serverRules.captureBudgetExhausted = true
   }
@@ -396,9 +392,12 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
     // Decided in this turn, before any later append is offered.
     this.closedToAppends = true
     // The end is queued in this turn, behind every entry accepted before it, through the base door that the closed flag does not shut.
-    this.endOperation ??= this.append({ type: 'end', ...end }).catch(
-      () => undefined,
-    )
+    // The end carries the largest accepted time, queued entries included, so a run that ended cleanly never seals partial for time moving backward.
+    this.endOperation ??= this.append({
+      type: 'end',
+      ...end,
+      elapsedMs: Math.max(end.elapsedMs, this.latestAcceptedMs),
+    }).catch(() => undefined)
     this.sealOperation = this.endOperation.then(() => super.finish('partial'))
     // A failed seal may be tried again.
     this.sealOperation.catch(() => {

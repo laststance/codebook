@@ -10,7 +10,6 @@ import { systemTrashName, type SystemTrashName } from './systemTrashName'
  * - Refused at the admission: the refusal sentence
  * - A test run refused during its preparation: the sentence that points to the run's error
  * - A test run stopped before its history began: the sentence that says nothing was recorded
- * - A node-server run: the sentence that says server runs are not saved yet
  * - Removed by the learner with this window's delete: the removal sentence with the host's Trash word
  * - The archive left the library without such a removal (files removed by hand, or by another window): the sentence that names the archive and both ways; it names no Trash, which a window that lists files for removal by hand does not have
  * - Awaiting its admission, or not excluded: `undefined`
@@ -37,8 +36,6 @@ export function historyExclusionReason(
     return "The test run was refused during its preparation, before its history began; nothing was recorded. Read the run's error for the fix."
   if (exclusion === 'stopped-before-history')
     return 'The test run ended before its history began; nothing was recorded.'
-  if (exclusion === 'server-run-not-saved')
-    return 'Server runs are not saved yet: this run keeps no history, and no replay or saved study exists for it.'
   if (exclusion === 'removed-by-learner')
     return `The learner moved this saved study to the ${trashName}.`
   if (exclusion === 'archive-removed')

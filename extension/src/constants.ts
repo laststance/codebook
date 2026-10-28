@@ -1403,6 +1403,12 @@ export const NODE_SERVER_OUTPUT_TEXT_LIMIT_CHARS = 4_096
 export const NODE_SERVER_RESPONSE_BODY_LIMIT_CHARS = 16_384
 /** How many entries a missing-evidence list names in an answer; the rest is a count. */
 export const NODE_SERVER_MISSING_LIST_LIMIT = 20
+/** How long a node-server run waits for its history to start before it launches without one: slow storage never delays the server (D8). */
+export const NODE_SERVER_HISTORY_START_BOUND_MS = 2_000
+/** Output chunks of one channel that arrive within this many milliseconds of each other become one `output` entry (up to {@link NODE_SERVER_OUTPUT_TEXT_LIMIT_CHARS}). */
+export const NODE_SERVER_OUTPUT_COALESCE_MS = 50
+/** How long a seal of a node-server history may take before it is abandoned and the folder lists as interrupted: the server's own stop deadline. */
+export const NODE_SERVER_HISTORY_SEAL_BOUND_MS = NODE_SERVER_STOP_DEADLINE_MS
 /** File system error codes that a retry can clear (a descriptor or lock shortage, a busy or antivirus-held file, a disk error): a read that fails with one is not remembered as the history's state ({@link isTransientFileError}). */
 export const TRANSIENT_FILE_ERROR_CODES: readonly string[] = [
   'EMFILE',
