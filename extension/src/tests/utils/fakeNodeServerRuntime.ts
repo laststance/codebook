@@ -37,6 +37,8 @@ export class FakeNodeServerRuntime implements NodeServerRuntime {
   /** When set, `prepare()` waits for it before it settles (a preparation a stop can cancel). */
   readonly prepareGate = defer<void>()
   holdsPrepare = false
+  /** The time since launch the fake reports; a test moves it to place a Stop on the run's clock. */
+  launchElapsedMs = 0
   /** Receives the events the service passes to the environment's `record` callback. */
   record: (type: string, detail?: unknown) => unknown = () => undefined
   private current: NodeServerView = {
@@ -67,9 +69,6 @@ export class FakeNodeServerRuntime implements NodeServerRuntime {
   view(): NodeServerView {
     return { ...this.current }
   }
-
-  /** The time since launch the fake reports; a test moves it to place a Stop on the run's clock. */
-  launchElapsedMs = 0
 
   elapsedSinceLaunchMs(): number {
     return this.launchElapsedMs

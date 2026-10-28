@@ -59,7 +59,7 @@ export type NodeServerHistorySinkInput = {
   schedule?: (callback: () => void, ms: number) => () => void
   /** Told once, with the first fault of the sink itself (not a refused append, which the writer already holds). */
   onFault?: (error: unknown) => void
-  /** Told once, when the first queued entry is refused or fails, so the status item says at once that recording stopped. */
+  /** Told once, when the first queued entry is refused or fails or the sink itself faults, so the status item says at once that recording stopped. */
   onAppendFailed?: () => void
 }
 
@@ -427,14 +427,19 @@ export class NodeServerHistorySinkImpl implements NodeServerHistorySink {
   private watch(queued: Promise<void> | void): void {
     if (queued)
       queued.catch(() => {
-        if (this.appendFailureReported) return
-        this.appendFailureReported = true
-        try {
-          this.input.onAppendFailed?.()
-        } catch {
-          // The listener failing is its own matter.
-        }
+        this.reportAppendFailed()
       })
+  }
+
+  /** Tells {@link NodeServerHistorySinkInput.onAppendFailed} once, whether the first failure was a refused queued append or a synchronous fault of the sink. */
+  private reportAppendFailed(): void {
+    if (this.appendFailureReported) return
+    this.appendFailureReported = true
+    try {
+      this.input.onAppendFailed?.()
+    } catch {
+      // The listener failing is its own matter.
+    }
   }
 
   /** Marks the writer failed with the sink's own fault, once. */
@@ -442,6 +447,8 @@ export class NodeServerHistorySinkImpl implements NodeServerHistorySink {
     this.input.writer.markFailed(
       error instanceof Error ? error : new Error(String(error)),
     )
+    // A synchronous refusal never reaches a queued append, so the status item is told here too.
+    this.reportAppendFailed()
     if (this.faulted) return
     this.faulted = true
     try {

@@ -227,6 +227,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   private killFirst = false
   /** The clock's time when the current stop was admitted, which its detach, grace and group wait are counted from. */
   private stopAdmittedAtMs = 0
+  /** The time since launch when the run's end was first known (a stop admitted, or a failure that ends it); `elapsedSinceLaunchMs` answers it from then on, so a seal delayed or retried after the end still carries the end's own time. */
+  private frozenElapsedMs?: number
   /** How many releases the run has begun; a later one is a retry that must confirm the group before it signals. */
   private releaseAttempts = 0
   /** The launched leader's start as read after the spawn (read again before the attach when that failed), kept for the identity check of a retried stop. */
@@ -708,6 +710,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   private failRun(error: StudyError): void {
     if (this.runFailure || this.lifecycle !== 'live') return
     this.runFailure = error
+    this.freezeElapsed()
     this.record('node-server.failure', {
       code: error.code,
       cause: error.causeDetail,
@@ -1103,9 +1106,14 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     this.notify()
   }
 
-  /** Milliseconds since the launch, the one clock every entry of the history carries; the seal reads it for the end entry's time. */
+  /** Milliseconds since the launch, the one clock every entry of the history carries; the seal reads it for the end entry's time. It stops moving once the run's end is known (a stop admitted, or the failure that ends the run). */
   elapsedSinceLaunchMs(): number {
-    return this.server?.elapsedMs() ?? 0
+    return this.frozenElapsedMs ?? this.server?.elapsedMs() ?? 0
+  }
+
+  /** Freezes the run's clock at the first moment its end is known; later calls keep the first time. */
+  private freezeElapsed(): void {
+    this.frozenElapsedMs ??= this.server?.elapsedMs() ?? 0
   }
 
   /** Journals the request once its bytes were handed to the socket, so a refused or stopped request never reads as sent. */
@@ -1252,6 +1260,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     // D14 is decided at admission, before the holds are cleared.
     this.killFirst ||= this.mustKillFirst()
     this.stopAdmittedAtMs = this.clock.now()
+    this.freezeElapsed()
     this.lifecycle = 'stopping'
     this.abort.abort()
     // A request still checking its connection writes nothing once the stop is admitted.

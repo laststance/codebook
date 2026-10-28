@@ -171,6 +171,8 @@ test('a real server that exits before it listens fails the start with SERVER_EXI
   assert.equal(error.code, 'SERVER_EXITED')
   assert.match(error.message, /exited with code 3/)
   assert.match(error.message, /fixture cannot start: exit-before-listen/)
+  // The seal reads the failure from the run's own view, so a failed start must carry it there.
+  assert.equal(run.view().runFailure?.code, 'SERVER_EXITED')
   assert.equal(isProcessGroupGone(pid()!), true)
   assert.equal(await accepts(port), false)
   assert.equal(run.view().state, 'stopped')
@@ -192,5 +194,26 @@ test('a real server that never listens fails the start with SERVER_NOT_LISTENING
   assert.ok(error instanceof StudyError)
   assert.equal(error.code, 'SERVER_NOT_LISTENING')
   assert.match(error.message, new RegExp(`declared port ${port}`))
+  // The seal reads the failure from the run's own view, so a failed start must carry it there.
+  assert.equal(run.view().runFailure?.code, 'SERVER_NOT_LISTENING')
   assert.equal(isProcessGroupGone(pid()!), true)
+})
+
+// protects=the run's clock stops at the Stop, so a seal delayed or retried after it still writes the Stop's own end time; fails_when=elapsedSinceLaunchMs keeps counting after the run stopped; no_claim=the end entry written by the service (its own test)
+test('a stopped real server reports the same time since launch however late it is asked', async (t) => {
+  // Arrange
+  const { run } = await fixtureRun(t, { mode: 'listen' })
+  await run.prepare()
+  const beforeStop = run.elapsedSinceLaunchMs()
+  await run.stop()
+  const atStop = run.elapsedSinceLaunchMs()
+
+  // Act
+  // gstack-timing-ok: real elapsed time must pass for a live clock to differ from the frozen one
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  const later = run.elapsedSinceLaunchMs()
+
+  // Assert
+  assert.ok(atStop >= beforeStop)
+  assert.equal(later, atStop)
 })

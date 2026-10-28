@@ -33,6 +33,7 @@ async function startSink(
   options: {
     sanitize?: (text: string) => string
     schedule?: NonNullable<NodeServerHistorySinkInput['schedule']>
+    onAppendFailed?: () => void
   } = {},
 ) {
   const { repository, learningDirectory } = await openServerRepository(context)
@@ -44,6 +45,7 @@ async function startSink(
   const sink = new NodeServerHistorySinkImpl({
     writer,
     sanitize: options.sanitize ?? ((text) => text),
+    onAppendFailed: options.onAppendFailed,
     schedule:
       options.schedule ??
       ((callback) => {
@@ -624,4 +626,22 @@ test('an astral character at the message bound is not split', async (context) =>
     failed?.type === 'request-failed' && failed.message,
     'a'.repeat(2_047),
   )
+})
+
+// protects=a synchronous refusal of the sink (a stop captured with no open request) tells the status item once that recording stopped, as a rejected queued append does; fails_when=the item keeps reading Recording explanation after a synchronous fault, or is told twice; no_claim=the status bar drawing
+test('a synchronous sink fault tells the status item once that recording stopped', async (context) => {
+  // Arrange
+  let told = 0
+  const { sink } = await startSink(context, {
+    onAppendFailed: () => {
+      told++
+    },
+  })
+
+  // Act
+  sink.stop(12, { declaredStopIndex: 0 }, 1, debuggerCapture({ line: 2 }))
+  sink.stop(13, { declaredStopIndex: 1 }, 2, debuggerCapture({ line: 3 }))
+
+  // Assert
+  assert.equal(told, 1)
 })

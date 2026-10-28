@@ -2296,6 +2296,7 @@ export class StudyService {
     // Only the latest read of a history writes its summary, so an older read that finishes last cannot overwrite a newer revision's coverage.
     const request = (sealed.summaryReads ?? 0) + 1
     sealed.summaryReads = request
+    // A `summarize` that outlives the bound keeps running; its late answer is applied below only if no newer read started meanwhile.
     const summary = await waitWithin(
       histories.summarize(studyId).catch(() => undefined),
       {
