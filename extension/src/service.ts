@@ -4869,6 +4869,14 @@ export class StudyService {
           ? fullLibraryMessage('run', error.limit, this.removalAvailability)
           : this.sanitizedCause(error),
       startBoundMs: this.nodeServerHistoryStartBoundMs,
+      // A fault of the history's own sink reaches Output › Codebook, as a failed test-history seal does.
+      onFault: (error) =>
+        this.diagnose(
+          'HISTORY_SINK_FAULT',
+          record,
+          error,
+          this.sanitizedCause(error),
+        ),
     })
     if ('recorder' in begun) state.history = begun.recorder
     else state.historyUnavailable = begun.unavailable

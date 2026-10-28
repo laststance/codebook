@@ -28,6 +28,8 @@ export type StartNodeServerHistoryInput = {
   describeCause: (error: unknown) => string
   /** The start's bound; the default 2 s unless a test names its own. */
   startBoundMs?: number
+  /** Told once with the first fault of the run's sink (the service writes it to Output › Codebook); the history is already marked failed. */
+  onFault?: (error: unknown) => void
 }
 
 /**
@@ -60,7 +62,7 @@ export async function startNodeServerHistory(
         }),
       ),
     describeCause: input.describeCause,
-    sink: { sanitize: input.hideRoots },
+    sink: { sanitize: input.hideRoots, onFault: input.onFault },
     summarize: (studyId) => repository.serverHistories.summarize(studyId),
     startBoundMs: input.startBoundMs,
   })

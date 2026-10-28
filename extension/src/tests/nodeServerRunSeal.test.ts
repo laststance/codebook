@@ -2,10 +2,12 @@ import assert from 'node:assert/strict'
 import { before, test } from 'node:test'
 
 import { StudyError } from '../errors'
+import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 
 import { createHarness } from './helpers'
 import { openServerRepository } from './utils/nodeServerHistoryFixture'
 import { realProcessStart } from './utils/realProcessStart'
+import { debuggerCapture } from './utils/serverRunCapture'
 import { startHistoryServerRun } from './utils/startHistoryServerRun'
 
 before(async () => {
@@ -182,5 +184,35 @@ test('a history that starts too slowly never delays the server', async (context)
   assert.match(
     record.nodeServer?.historyUnavailable ?? '',
     /did not start within 0\.02 s/,
+  )
+})
+
+// protects=a fault of the server history's own sink (a stop outside any request) reaches the diagnostics with its cause once, while the run goes on; fails_when=the fault is held only by the writer and nothing is logged; no_claim=the Output channel's rendering
+test('a server history sink fault is written to the diagnostics once', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { service, record } = await startHistoryServerRun(harness, context)
+  const diagnostics: CodebookDiagnostic[] = []
+  service.diagnostics = (entry) => diagnostics.push(entry)
+  const sink = record.nodeServer?.history?.sink
+  assert.ok(sink)
+
+  // Act
+  sink.stop(5, { declaredStopIndex: 0 }, 1, debuggerCapture())
+  sink.stop(6, { declaredStopIndex: 0 }, 1, debuggerCapture())
+
+  // Assert
+  assert.deepEqual(
+    diagnostics.map((entry) => ({
+      surface: entry.surface,
+      cause: entry.cause,
+    })),
+    [
+      {
+        surface: 'HISTORY_SINK_FAULT',
+        cause: 'A stop was captured outside an open request.',
+      },
+    ],
   )
 })
