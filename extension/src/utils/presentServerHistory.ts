@@ -25,6 +25,7 @@ function wordServerCaptureReason(reason: string): string {
     )
     .replace(/\s+/g, ' ')
     .trim()
+    .replace(/^./, (first) => first.toUpperCase())
 }
 
 /**

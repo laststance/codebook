@@ -36,7 +36,7 @@ export type ServerReplayPresentation = {
  * Removes terminal and bidirectional controls from every recorded text of a server replay that a surface prints, as the test replay does for its own: output is read as one stream per channel, and a request path, a response body, a failure code and a stop's path and frame name each lose them. Hashes, lines, columns, snapshots and counts are untouched.
  * @param model - The replay model as the store read it.
  * @returns A model whose events print safely; the input is not changed.
- * @example sanitizeServerReplayModel(model).events[1] // => { type: 'output', text: 'ok\n', … } for a recorded 'o‮k\n'
+ * @example sanitizeServerReplayModel(model).events[1] // => { type: 'output', text: 'ok\n', … } for a recorded 'o\u202Ek\n'
  */
 function sanitizeServerReplayModel(
   model: ServerReplayModel,

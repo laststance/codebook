@@ -5,7 +5,10 @@ import http from 'node:http'
 import { join } from 'node:path'
 import { before, test } from 'node:test'
 
-import { NODE_SERVER_HISTORY_DIRECTORY } from '../constants'
+import {
+  NODE_SERVER_HISTORY_DIRECTORY,
+  NODE_SERVER_SOURCE_TEXT_LIMIT_BYTES,
+} from '../constants'
 import { HISTORY_JOURNAL_FILE } from '../nodeHistoryJournalWriter'
 import type { NodeHistoryRepository } from '../nodeHistoryRepository'
 import type { ReplayDebugSnapshot } from '../replayDebugSchemas'
@@ -427,6 +430,54 @@ test('a stop with a lower frame presents it with its unavailable source reason',
         ['handler', undefined],
         ['dispatch', 'not captured'],
       ],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=a stop whose executed source was too large to store opens as a stop with no recorded source: the debugger shows nothing for the moment and the Study section names the reason; fails_when=the stop presents another source or the section hides why the source is unavailable; no_claim=the 512 KiB bound itself (the writer's own tests)
+test('a stop whose executed source was too large to store says its recorded source is unavailable and why', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const repository = repositoryOf(harness)
+    const header = nodeServerHistoryHeader(workspaceKeyOf(harness))
+    const capture = serverStopCapture({
+      declaredStopIndex: 0,
+      hit: 1,
+      line: 2,
+      elapsedMs: 10,
+      text: `// ${'x'.repeat(NODE_SERVER_SOURCE_TEXT_LIMIT_BYTES)}\n`,
+    })
+    const writer = await repository.serverHistories.start(header)
+    await writer.appendRequest({
+      elapsedMs: 1,
+      attempt: 1,
+      method: 'POST',
+      path: header.declaredRequest.path,
+      bodyBytes: 14,
+    })
+    await writer.appendRequestSent({ elapsedMs: 2, attempt: 1 })
+    await writer.appendStop(capture)
+    await writer.seal({ elapsedMs: 40, reason: 'stopped' })
+
+    // Act
+    await openServerReplay(harness, header.studyId)
+    const section = lastView(harness)?.nodeHistorySection
+
+    // Assert
+    assert.equal(
+      section?.unverified,
+      'Recorded source unavailable for this stop (too large).',
+    )
+    assert.equal(
+      section?.notRecorded,
+      'Source and debugger not recorded at this moment.',
+    )
+    assert.equal(
+      harness.historicalDebugPresentations.at(-1)?.snapshot,
+      undefined,
     )
   } finally {
     await harness.close()
