@@ -29,6 +29,12 @@ function normalizeForPrefix(text: string): string {
   return text.toLowerCase().replace(/[\\/]+/g, '/')
 }
 
+/** Matches any character that is no path separator. */
+const NON_SEPARATOR = /[^\\/]/
+
+/** Matches one run of path separators. */
+const SEPARATOR_RUN = /[\\/]+/g
+
 /** Says whether a character is a path separator of either kind. */
 function isSeparator(character: string | undefined): boolean {
   return character === '/' || character === '\\'
@@ -92,10 +98,35 @@ export function createRootHidingStage(
   // Compiled once: every chunk hides several slices of its text.
   const hidePrivateRoots = createRootHider(roots)
   let held = ''
-  /** How many leading characters of the held text a timed release already let out (as typed, or as a root placeholder when `emittedAsPlaceholder`): the next text is matched together with them, so a root finished by it hides the rest of its name. */
+  /** How many leading characters of the held text a release already let out (as typed, or as the words in `emittedPlaceholderText` when that is not empty): the next text is matched together with them, so a root finished by it hides the rest of its name. */
   let emittedCount = 0
-  let emittedAsPlaceholder = false
+  let emittedPlaceholderText = ''
   let cancelRelease: (() => void) | undefined
+
+  /** Says whether a run could still grow into a LONGER root spelling than it is now (a workspace or storage folder inside the home directory). */
+  const mayGrowIntoLongerRoot = (run: string): boolean => {
+    const normalized = normalizeForPrefix(run)
+    return spellings.some(
+      (spelling) =>
+        spelling.length > normalized.length && spelling.startsWith(normalized),
+    )
+  }
+
+  /** Strips from hidden text the placeholder words it starts with, keeping them (`'~/ap'` gives `'~'`); a text without leading placeholder words is returned whole. */
+  const leadingPlaceholder = (hidden: string): string =>
+    ['<storage>', '<workspace>', '~'].find((words) =>
+      hidden.startsWith(words),
+    ) ?? hidden
+
+  /**
+   * Words a quiet channel's held text for a timed release. A complete root the held text may still grow out of (home, while the text can become the workspace inside it) releases only the placeholder of the longest root the text is guaranteed to be inside, never the typed tail after it: that tail could be the start of the longer root's name, and the rest stays held so a later write completing the longer root hides it. Anything else is worded as {@link failClosed} words it.
+   */
+  const timedReleaseWords = (rest: string): string => {
+    const hidden = hidePrivateRoots(rest)
+    if (hidden !== rest && mayGrowIntoLongerRoot(rest))
+      return leadingPlaceholder(hidden)
+    return failClosed(rest)
+  }
 
   /** Says whether a run is a beginning of some root spelling (or one whole), so more text could still change what it means. */
   const mayBecomeRoot = (run: string): boolean => {
@@ -129,14 +160,14 @@ export function createRootHidingStage(
    * @param source - The typed text the output was made from; its first `emittedCount` characters were already released.
    * @param output - `source` with its roots hidden.
    * @param emittedCount - How many leading characters of `source` were already released.
-   * @param placeholderShown - Whether that release was a root placeholder instead of the typed characters.
+   * @param placeholderText - The root placeholder words that release showed instead of the typed characters, or an empty string when it was typed.
    * @returns What is still to deliver.
    */
   const withoutEmitted = (
     source: string,
     output: string,
     emittedCount: number,
-    placeholderShown: boolean,
+    placeholderText: string,
   ): string => {
     if (emittedCount === 0) return output
     // Where the output stops matching the typed text inside the released start: a root completed there is hidden from its own start.
@@ -149,8 +180,10 @@ export function createRootHidingStage(
       common++
     const straddles = common < emittedCount
     const remainder = output.slice(straddles ? common : emittedCount)
-    if (!straddles || !placeholderShown) return remainder
-    // The start was let out as a placeholder already: do not repeat it.
+    if (!straddles || !placeholderText) return remainder
+    // The start was let out as a placeholder already (maybe with typed text after it): do not repeat it.
+    if (remainder.startsWith(placeholderText))
+      return remainder.slice(placeholderText.length)
     const leading = ['<storage>', '<workspace>', '~'].find((words) =>
       remainder.startsWith(words),
     )
@@ -179,19 +212,22 @@ export function createRootHidingStage(
           cancelRelease = undefined
           const rest = held
           if (!rest) return
-          const shown = failClosed(rest)
-          const stillMayGrow = hidePrivateRoots(rest) === rest
+          const shown = timedReleaseWords(rest)
+          // Still a start of some root: no root is complete, or the complete one (home) can still grow into a longer one (workspace, storage).
+          const stillMayGrow =
+            hidePrivateRoots(rest) === rest || mayGrowIntoLongerRoot(rest)
           // What an earlier timed release let out is never delivered again, typed text or a placeholder, as write and end do.
           const delivered = withoutEmitted(
             rest,
             shown,
             emittedCount,
-            emittedAsPlaceholder,
+            emittedPlaceholderText,
           )
           if (stillMayGrow) {
-            // No root was completed: the start stays held (already released), so more text that finishes the root is hidden (fail closed).
+            // The start stays held (already released), so more text that finishes a root is hidden (fail closed).
             emittedCount = rest.length
-            emittedAsPlaceholder = emittedAsPlaceholder || shown !== rest
+            emittedPlaceholderText =
+              emittedPlaceholderText || (shown !== rest ? shown : '')
           } else {
             held = ''
             emittedCount = 0
@@ -210,8 +246,34 @@ export function createRootHidingStage(
   const write = (text: string): string => {
     // New output restarts the silence the timed release waits for.
     stopTimer()
-    const emitted = emittedCount
-    const combined = held + text
+    let emitted = emittedCount
+    let combined = held + text
+    let capOutput = ''
+    // The raw-length cap would force-release the head of a run that is still a start of a root: as typed it could never match once its anchor ('C:') is gone, leaking the name that follows.
+    const windowStart = earliestHoldStart(combined, longest)
+    if (
+      emitted === 0 &&
+      combined.length - windowStart > OUTPUT_REDACTION_HOLD_LIMIT_CHARS &&
+      NON_SEPARATOR.test(
+        combined.slice(
+          windowStart,
+          combined.length - OUTPUT_REDACTION_HOLD_LIMIT_CHARS,
+        ),
+      ) &&
+      mayBecomeRoot(combined.slice(windowStart))
+    ) {
+      // Fail closed: the head is let out as its root's placeholder; what stays held is the run with separator runs collapsed (same comparison form), counted as let out.
+      const run = combined.slice(windowStart)
+      const normalizedRun = normalizeForPrefix(run)
+      const words =
+        placeholderSpellings.find(({ normalized }) =>
+          normalized.startsWith(normalizedRun),
+        )?.placeholder ?? ''
+      capOutput = hidePrivateRoots(combined.slice(0, windowStart)) + words
+      combined = run.replace(SEPARATOR_RUN, (separators) => separators[0] ?? '')
+      emitted = words ? combined.length : 0
+      emittedPlaceholderText = words
+    }
     const output = holdAndRelease(combined)
     // The held start moved forward by what was released; what is still held was let out only up to the old count.
     emittedCount = Math.max(0, emitted - (combined.length - held.length))
@@ -220,20 +282,20 @@ export function createRootHidingStage(
       combined,
       output,
       emitted,
-      emittedAsPlaceholder,
+      emittedPlaceholderText,
     )
-    if (emittedCount === 0) emittedAsPlaceholder = false
-    return delivered
+    if (emittedCount === 0) emittedPlaceholderText = ''
+    return capOutput + delivered
   }
 
   const end = (): string => {
     stopTimer()
     const rest = held
     const emitted = emittedCount
-    const wasPlaceholder = emittedAsPlaceholder
+    const wasPlaceholder = emittedPlaceholderText
     held = ''
     emittedCount = 0
-    emittedAsPlaceholder = false
+    emittedPlaceholderText = ''
     // The end words a held start as a timed release would: a start that already shows part of a name ends as its root's placeholder.
     return withoutEmitted(rest, failClosed(rest), emitted, wasPlaceholder)
   }

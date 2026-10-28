@@ -375,3 +375,87 @@ test('a second timed release after a placeholder was shown never repeats the pla
   assert.deepEqual(clock.released, ['~'])
   assert.equal(ended, '')
 })
+
+// protects=a timed release that finds a shorter root complete (home) keeps the text held while it can still grow into a longer root (workspace), so the longer root's name is never released; fails_when=the name 'private-project' is let out after the timed release; no_claim=the placeholder kind of the part already released
+test('a home root released by time then continued into the workspace root releases no workspace name', () => {
+  // Arrange
+  const clock = fakeHoldTimer()
+  const stage = createRootHidingStage(
+    {
+      storage: [],
+      workspace: ['/Users/ada/private-project'],
+      home: ['/Users/ada'],
+    },
+    clock.timer,
+  )
+
+  // Act
+  const first = stage.write('cwd /Users/ada')
+  clock.fire()
+  const second = stage.write('/private-project/file.ts\n')
+
+  // Assert
+  assert.equal(first, 'cwd ')
+  assert.deepEqual(clock.released, ['~'])
+  assert.equal(second, '/file.ts\n')
+})
+
+// protects=a timed release that finds home complete keeps the text held while it can grow into a storage root under home, so the storage folder's id is never released; fails_when=the id 'abc123' is let out after the timed release; no_claim=the placeholder kind of the part already released
+test('a home root released by time then continued into a storage root releases no storage id', () => {
+  // Arrange
+  const clock = fakeHoldTimer()
+  const stage = createRootHidingStage(
+    {
+      storage: ['/Users/ada/Library/workspaceStorage/abc123'],
+      home: ['/Users/ada'],
+    },
+    clock.timer,
+  )
+
+  // Act
+  stage.write('at /Users/ada/Library/workspaceStorage/')
+  clock.fire()
+  const second = stage.write('abc123/events.jsonl\n')
+
+  // Assert
+  assert.equal(`${clock.released.join('')}${second}`.includes('abc123'), false)
+  assert.equal(second, '/events.jsonl\n')
+})
+
+// protects=a Windows root preceded by thousands of doubled separators never has its name released as typed when the raw-length cap cuts inside the held run; fails_when=any 'ada' is released; no_claim=the exact placeholder spelling of the cut head
+test('a doubled-separator Windows root cut by the raw-length cap releases no private name', () => {
+  // Arrange
+  const stage = createRootHidingStage({
+    storage: [],
+    home: ['C:\\Users\\ada'],
+  })
+  const chunks = ['C:\\', '\\'.repeat(9000), 'Users\\ada\\app\n']
+
+  // Act
+  const output =
+    chunks.map((chunk) => stage.write(chunk)).join('') + stage.end()
+
+  // Assert
+  assert.equal(output.includes('ada'), false)
+})
+
+// protects=a held prefix of a longer root (workspace) released by time under a shorter root (home) reads as the longer-guaranteed root's placeholder, so a path that then diverges is not corrupted into the workspace; fails_when=the output holds 'ada' or a '<workspace>' for a path that is not the workspace; no_claim=exact wording of the fail-closed form
+test('a held workspace-name prefix released by time that diverges into another path under home reads as home', () => {
+  // Arrange
+  const clock = fakeHoldTimer()
+  const stage = createRootHidingStage(
+    { storage: [], workspace: ['/Users/ada/app'], home: ['/Users/ada'] },
+    clock.timer,
+  )
+
+  // Act
+  const first = stage.write('/Users/ada/ap')
+  clock.fire()
+  const second = stage.write('ple/x\n')
+  const output = `${first}${clock.released.join('')}${second}${stage.end()}`
+
+  // Assert
+  assert.equal(output.includes('ada'), false)
+  assert.equal(output.includes('<workspace>'), false)
+  assert.equal(output, '~/apple/x\n')
+})
