@@ -779,6 +779,9 @@ export const MILLISECONDS_PER_SECOND = 1_000
 export const PLAYBACK_PAGE_STEP_MS = 10_000
 export const REPLAY_VIEWPORT_RECEIPT_LIMIT = 12
 export const REPOSITORY_GIT_TIMEOUT_MS = 5_000
+
+/** The bound of the repository revision read a server history's header carries: a slow Git costs the header its revision (read as unknown), never the history. */
+export const REPOSITORY_REVISION_BOUND_MS = 500
 export const REPOSITORY_GIT_LIMIT_BYTES = 2_097_152
 export const REPOSITORY_MAX_TRACKED_FILES = 5_000
 export const REPOSITORY_SOURCE_PAGE_SIZE = 100
