@@ -123,6 +123,7 @@ import {
   type NamedUnconfirmedWriters,
   type StudyRemoval,
 } from './learningLibrary'
+import { NodeHistoryRepository } from './nodeHistoryRepository'
 import { NodeLearningSave } from './nodeLearningSave'
 import {
   nodeLearningStepIdSchema,
@@ -131,7 +132,7 @@ import {
   type NodeTestHistoryLearningDecision,
   type NodeTestLearningMaterial,
 } from './nodeTestHistorySchemas'
-import { NodeTestHistoryStore } from './nodeTestHistoryStore'
+import type { NodeTestHistoryStore } from './nodeTestHistoryStore'
 import {
   PlaybackController,
   type PlaybackBundle,
@@ -789,6 +790,8 @@ export class StudyWorkspace {
   private library?: LearningLibrary
   private recordings?: RecordingStore
   private nodeHistoryStore?: NodeTestHistoryStore
+  /** Every history profile's store under the learning directory, with the shared admission wired. */
+  private nodeHistoryRepository?: NodeHistoryRepository
   /** The saved test replays Saved studies lists, with their test files and titles already free of controls ({@link stripNodeHistorySummaryTexts}), stripped once per listing (F131, F326). */
   private nodeHistoryCatalog: Awaited<
     ReturnType<NodeTestHistoryStore['list']>
@@ -10710,6 +10713,8 @@ export class StudyWorkspace {
         key,
         capacity,
         removalAvailability,
+        // Test and server histories take places of the same limit as saved studies.
+        (places) => this.nodeHistoryRepository!.countHistories(places),
       )
       this.recordings = new RecordingStore(
         this.library.directory,
@@ -10719,13 +10724,14 @@ export class StudyWorkspace {
         capacity,
         removalAvailability,
       )
-      this.nodeHistoryStore = new NodeTestHistoryStore(
+      this.nodeHistoryRepository = new NodeHistoryRepository(
         this.library.directory,
         key,
         () => this.library!.storageLimit(),
         // The saved studies as the library's own admission counts them: what is left of a study without its archive is listed and takes no place.
         () => this.library!.savedStudyCount(),
       )
+      this.nodeHistoryStore = this.nodeHistoryRepository.testHistories
       // What the reader before this one could not save waits for Retry storage / refresh here.
       this.queueHandedOverArchives()
       // An unreadable Node history store stays visible without blocking browser studies, progress or playback.

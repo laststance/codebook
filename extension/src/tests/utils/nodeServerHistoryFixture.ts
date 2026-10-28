@@ -30,13 +30,22 @@ export const HANDLER_SOURCE_TEXT =
  */
 export async function openServerRepository(
   context: TestContext,
-  options: { limit?: number; savedStudies?: () => Promise<number> } = {},
+  options: {
+    limit?: number
+    savedStudies?: () => Promise<number>
+    workspaceKey?: string
+    /** Another window over the same learning directory. */
+    learningDirectory?: string
+  } = {},
 ): Promise<{ repository: NodeHistoryRepository; learningDirectory: string }> {
-  const learningDirectory = await mkdtemp(join(tmpdir(), 'codebook-server-'))
-  context.after(() => rm(learningDirectory, { recursive: true, force: true }))
+  const learningDirectory =
+    options.learningDirectory ??
+    (await mkdtemp(join(tmpdir(), 'codebook-server-')))
+  if (!options.learningDirectory)
+    context.after(() => rm(learningDirectory, { recursive: true, force: true }))
   const repository = new NodeHistoryRepository(
     learningDirectory,
-    SERVER_WORKSPACE_KEY,
+    options.workspaceKey ?? SERVER_WORKSPACE_KEY,
     () => options.limit ?? 64,
     options.savedStudies ?? (async () => 0),
   )
