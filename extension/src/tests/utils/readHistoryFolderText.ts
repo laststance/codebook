@@ -10,7 +10,8 @@ import { join } from 'node:path'
 export async function readHistoryFolderText(folder: string): Promise<string> {
   const names = await readdir(folder)
   const texts = await Promise.all(
-    names.map((name) => readFile(join(folder, name), 'utf8')),
+    // A file removed between the listing and the read (the writer's own record, removed after the seal) holds nothing to leak.
+    names.map((name) => readFile(join(folder, name), 'utf8').catch(() => '')),
   )
   return texts.join('\n')
 }

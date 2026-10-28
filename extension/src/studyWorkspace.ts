@@ -11579,7 +11579,7 @@ export class StudyWorkspace {
   }
 
   /** Keeps capture/save reachable beside native chat: every {@link publish} calls it, and it updates the status bar item without changing editor focus and assigns the item's command only when the command or its study changed. @example this.publishLearningSave() */
-  private publishLearningSave(): void {
+  publishLearningSave(): void {
     if (this.disposed) return
     const record = this.currentRecord(),
       studyId =

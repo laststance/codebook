@@ -133,8 +133,8 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
       }
       this.sealedHash = seal.journalHash
       this.closed = true
-      // The seal is published first: another window never finds neither the seal nor the record.
-      await this.removeWriterRecord()
+      // The seal is published first: another window never finds neither the seal nor the record. The removal is awaited by nobody, so a stalled file system cannot hold back a seal that already stands; a record that stays is ignored once the seal exists.
+      void this.removeWriterRecord()
       this.onClosed()
       return seal.journalHash
     })().catch((error: unknown) => {
@@ -147,6 +147,12 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
     })
     this.finishOperation = operation
     return operation
+  }
+
+  /** The hash of the seal this writer published, `undefined` until `sealed.json` stands; read by the recorder's seal bound so a published seal is never abandoned. */
+  // fallow-ignore-next-line unused-class-member
+  get publishedSealHash(): string | undefined {
+    return this.abandoned ? undefined : this.sealedHash
   }
 
   /** The first failure that ended the timeline, if any; read by the run's resource to report a history that is failing while the run lives. @example writer.appendFailure?.message */

@@ -30,6 +30,8 @@ export type StartNodeServerHistoryInput = {
   startBoundMs?: number
   /** Told once with the first fault of the run's sink (the service writes it to Output › Codebook); the history is already marked failed. */
   onFault?: (error: unknown) => void
+  /** Told once when the history stopped taking entries while the run lives (the service redraws the status item). */
+  onAppendFailed?: () => void
 }
 
 /**
@@ -62,7 +64,11 @@ export async function startNodeServerHistory(
         }),
       ),
     describeCause: input.describeCause,
-    sink: { sanitize: input.hideRoots, onFault: input.onFault },
+    sink: {
+      sanitize: input.hideRoots,
+      onFault: input.onFault,
+      onAppendFailed: input.onAppendFailed,
+    },
     summarize: (studyId) => repository.serverHistories.summarize(studyId),
     startBoundMs: input.startBoundMs,
   })

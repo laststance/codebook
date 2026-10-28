@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import fileSystem from 'node:fs/promises'
 import { before, test } from 'node:test'
 
 import { StudyError } from '../errors'
@@ -101,6 +102,40 @@ test('a seal past its bound is abandoned and the folder lists as interrupted whi
   assert.deepEqual(
     listed.map((summary) => summary.status),
     ['interrupted'],
+  )
+})
+
+// protects=a seal already published stays sealed on the live run when the writer-record removal stalls past the seal bound, and the store lists it sealed; fails_when=the live run reads failed with a timeout while the store lists sealed; no_claim=a stalled removal on a real disk
+test('a published seal stays sealed when the writer record removal stalls past the bound', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { service, record, run, repository } = await startHistoryServerRun(
+    harness,
+    context,
+  )
+  service.nodeServerHistorySealBoundMs = 250
+  await run.sendRequest('k1')
+  const originalRemove = fileSystem.rm
+  context.mock.method(
+    fileSystem,
+    'rm',
+    (...removal: Parameters<typeof fileSystem.rm>) =>
+      String(removal[0]).endsWith('writer.json')
+        ? new Promise<never>(() => undefined)
+        : originalRemove(...removal),
+  )
+
+  // Act
+  await service.stop({ instanceId: service.instanceId, runId: record.id })
+  const listed = await repository.serverHistories.list()
+
+  // Assert
+  assert.equal(record.nodeServer?.history?.status, 'sealed')
+  assert.equal(record.nodeServer?.history?.failure, undefined)
+  assert.deepEqual(
+    listed.map((summary) => summary.status),
+    ['partial'],
   )
 })
 

@@ -59,6 +59,8 @@ export type NodeServerHistorySinkInput = {
   schedule?: (callback: () => void, ms: number) => () => void
   /** Told once, with the first fault of the sink itself (not a refused append, which the writer already holds). */
   onFault?: (error: unknown) => void
+  /** Told once, when the first queued entry is refused or fails, so the status item says at once that recording stopped. */
+  onAppendFailed?: () => void
 }
 
 /** One output chunk run waiting to become an entry. */
@@ -146,6 +148,8 @@ export class NodeServerHistorySinkImpl implements NodeServerHistorySink {
   private terminal = false
   private readonly hits = new Map<number, number>()
   private faulted = false
+  /** Whether {@link NodeServerHistorySinkInput.onAppendFailed} was told. */
+  private appendFailureReported = false
 
   constructor(private readonly input: NodeServerHistorySinkInput) {
     this.schedule = input.schedule ?? realSchedule
@@ -421,7 +425,16 @@ export class NodeServerHistorySinkImpl implements NodeServerHistorySink {
 
   /** Keeps a queued entry's refusal from reaching anyone: the writer already holds its first failure. */
   private watch(queued: Promise<void> | void): void {
-    if (queued) queued.catch(() => undefined)
+    if (queued)
+      queued.catch(() => {
+        if (this.appendFailureReported) return
+        this.appendFailureReported = true
+        try {
+          this.input.onAppendFailed?.()
+        } catch {
+          // The listener failing is its own matter.
+        }
+      })
   }
 
   /** Marks the writer failed with the sink's own fault, once. */

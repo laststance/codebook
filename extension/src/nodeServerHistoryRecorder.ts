@@ -147,8 +147,10 @@ export class NodeServerHistoryRecorder {
       timer.unref()
     })
     try {
-      const hash = await Promise.race([this.sealWithRetry(end), deadline])
-      if (hash === expired) {
+      const raced = await Promise.race([this.sealWithRetry(end), deadline])
+      // A writer whose seal is already published is never abandoned: the store lists it sealed, so the live run must read it sealed too.
+      const hash = raced === expired ? this.writer.publishedSealHash : raced
+      if (raced === expired && hash === undefined) {
         this.abandon(describeNodeServerSealTimeout(boundMs / 1_000))
         return
       }

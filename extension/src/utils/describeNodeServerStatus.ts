@@ -1,6 +1,7 @@
 import { ERROR_RECOVERY } from '../errors'
 
 import { cutCauseForDisplay } from './cutCauseForDisplay'
+import { stripTerminalControls } from './stripTerminalControls'
 
 /** What {@link describeNodeServerStatus} reads of a server run's state ({@link StudyService.state}). */
 export type NodeServerStatusInput = {
@@ -38,6 +39,8 @@ export type NodeServerLearningStatus =
       responseRecorded: boolean
     }
   | { kind: 'finished' }
+  /** A write failed while the run lives: nothing more is recorded, so the learning replay will be partial; `cause` is the raw reason. */
+  | { kind: 'append-failed'; cause: string }
   | { kind: 'saving' }
   | { kind: 'saved' }
   | { kind: 'partial' }
@@ -98,6 +101,11 @@ export function describeNodeServerStatus(
         tooltip: `${failureTip}Save learning replay stops this server run and saves its request, output, executed source, debugger stops and response (${learning.reached} of ${learning.declared} stops recorded; ${answer}).`,
       }
     }
+    case 'append-failed':
+      return {
+        text: `$(warning) ${state} · Learning replay will be partial: ${cutCauseForDisplay(stripTerminalControls(learning.cause))}`,
+        tooltip: `${failureTip}Recording stopped after a write failed. Save still stops the run and saves what was recorded before the failure.`,
+      }
     case 'finished':
       return {
         text: '$(save) Recording finished · Save learning replay',

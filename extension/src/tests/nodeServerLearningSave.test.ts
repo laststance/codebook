@@ -27,6 +27,8 @@ async function saveOverRun(
     repositoryOptions?: Parameters<typeof startHistoryServerRun>[2]
     /** The bound of Save's own summary read; the production bound by default. */
     summaryReadBoundMs?: number
+    /** The chat material revision the host reports; none by default. */
+    materialRevision?: number
   } = {},
 ) {
   const harness = await createHarness()
@@ -54,7 +56,7 @@ async function saveOverRun(
       notified.push({ severity, text, actions })
       return options.noticeAction
     },
-    materialRevision: () => undefined,
+    materialRevision: () => options.materialRevision,
     open: async (studyId) => {
       opened.push(studyId)
     },
@@ -435,7 +437,7 @@ test('Save whose sealed history summary cannot be read tells that the history is
   assert.deepEqual(notified, [
     {
       severity: 'warning',
-      text: 'Learning replay could not be saved: The sealed server history is not in the store.',
+      text: 'Learning replay could not be saved: EIO: read failed.',
       actions: [],
     },
   ])
@@ -538,4 +540,120 @@ test('two Saves over a stalled sealed summary share one summary read', async (co
 
   // Assert
   assert.equal(reads, 1)
+})
+
+// protects=material the chat saved after the seal counts: Save reads the store, not the seal-time summary, so the notice reads Server replay saved and the item stays saved at that revision; fails_when=Save answers from the seal-time summary and reports the replay without the explanation, or the item falls back to Save learning replay; no_claim=the replay screen
+test('Save reports Server replay saved for material the chat saved after the seal', async (context) => {
+  // Arrange
+  const { save, record, run, notified, service, repository } =
+    await saveOverRun(context, { materialRevision: 1 })
+  await run.sendRequest('k1')
+  run.pauseAt(0)
+  run.pauseAt(1)
+  run.respond()
+  await service.stop({ instanceId: service.instanceId, runId: record.id })
+  const studyId = `${service.instanceId}_${record.id}`
+  const sealed = record.nodeServer?.history?.sealed
+  assert.ok(sealed?.summary)
+  assert.equal(sealed.summary.learningCoverage, 'none')
+  const entries = (await repository.serverHistories.read(studyId)).entries
+  const sequenceOf = (type: string, nth = 0): number =>
+    entries.filter((entry) => entry.type === type)[nth]!.sequence
+  // Another window saves the chat's material straight into the store: the service's seal-time summary never sees it.
+  await repository.serverHistories.saveLearningMaterial(studyId, 0, {
+    question: 'How is the health route answered?',
+    title: 'Health route',
+    summary: 'One request, two stops, a response.',
+    participants: [{ id: 'server', label: 'Server' }],
+    steps: [
+      {
+        id: 'request',
+        from: 'server',
+        to: 'server',
+        label: 'Request',
+        explanation: 'Codebook sends it.',
+        evidence: 'observed',
+        reference: { type: 'request', sequence: sequenceOf('request') },
+      },
+      {
+        id: 'stop-1',
+        from: 'server',
+        to: 'server',
+        label: 'Stop 1',
+        explanation: 'First stop.',
+        evidence: 'observed',
+        reference: {
+          type: 'stop',
+          sequence: sequenceOf('stop', 0),
+          sourceHash: STOP_SOURCE_HASH,
+        },
+      },
+      {
+        id: 'stop-2',
+        from: 'server',
+        to: 'server',
+        label: 'Stop 2',
+        explanation: 'Second stop.',
+        evidence: 'observed',
+        reference: {
+          type: 'stop',
+          sequence: sequenceOf('stop', 1),
+          sourceHash: STOP_SOURCE_HASH,
+        },
+      },
+      {
+        id: 'response',
+        from: 'server',
+        to: 'server',
+        label: 'Response',
+        explanation: 'Answered.',
+        evidence: 'observed',
+        reference: { type: 'response', sequence: sequenceOf('response') },
+      },
+    ],
+  })
+
+  // Act
+  await save.save(record)
+
+  // Assert
+  assert.deepEqual(
+    notified.map((notice) => notice.text),
+    ['Server replay saved.'],
+  )
+  assert.equal(save.item(record)?.text, '$(check) Learning saved · Open replay')
+})
+
+// protects=the status item says at once, with the cause, that the learning replay will be partial once a write failed while the run lives, keeps the Save command, and the service redraws the item; fails_when=the item still reads Recording explanation, the cause is lost, the Save command is dropped, or no redraw is asked; no_claim=the status bar drawing
+test('the item says the learning replay will be partial once a write failed while the run lives', async (context) => {
+  // Arrange
+  const { save, record, run, service } = await saveOverRun(context)
+  let redraws = 0
+  service.presentationController = {
+    publishLearningSave: () => {
+      redraws++
+    },
+  } as unknown as NonNullable<typeof service.presentationController>
+  await run.sendRequest('k1')
+  const writer = record.nodeServer?.history?.writer
+  assert.ok(writer)
+  writer.markFailed(new Error('EIO: disk write failed'))
+
+  // Act
+  run.pauseAt(0)
+  await waitUntil(
+    () => redraws > 0,
+    'the service redraws the item',
+    READER_RESULT_BOUND_MS,
+  )
+  const item = save.item(record)
+
+  // Assert
+  assert.equal(
+    item?.text,
+    '$(warning) Paused at stop 1 of 2 · Learning replay will be partial: EIO: disk write failed',
+  )
+  assert.doesNotMatch(item?.text ?? '', /Recording explanation/)
+  assert.equal(item?.command?.command, 'codebook.saveLearningReplay')
+  assert.equal(redraws, 1)
 })

@@ -487,6 +487,7 @@ export class StudyService {
     | 'nodeHistoryLearningMaterialSaved'
     | 'replayControlAccepted'
     | 'markAgentRecordingOpen'
+    | 'publishLearningSave'
   >
   repository?: RepositoryBookStore
   nodeHistoryStore?: NodeTestHistoryStore
@@ -4898,6 +4899,8 @@ export class StudyService {
           error,
           this.sanitizedCause(error),
         ),
+      // The status item says at once that recording stopped, not at the next refresh.
+      onAppendFailed: () => this.presentationController?.publishLearningSave(),
     })
     if ('recorder' in begun) state.history = begun.recorder
     else state.historyUnavailable = begun.unavailable
