@@ -1,10 +1,14 @@
 import {
+  NODE_SERVER_HISTORY_SEAL_BOUND_MS,
   NODE_SERVER_PROFILE,
   OPEN_LEARNING_REPLAY_COMMAND,
   SAVE_LEARNING_REPLAY_COMMAND,
 } from './constants'
 import type { NodeLearningSaveHost } from './nodeLearningSave'
-import type { NodeServerHistoryTypes } from './nodeServerHistoryTypes'
+import type {
+  NodeServerHistorySummary,
+  NodeServerHistoryTypes,
+} from './nodeServerHistoryTypes'
 import type { NodeHistoryStore } from './nodeTestHistoryStore'
 import type { StudyRecord, StudyService } from './service'
 import { NODE_LEARNING_SAVE_ACTION } from './utils/describeNodeLearningSave'
@@ -20,6 +24,8 @@ import { offerOpenReplay } from './utils/offerOpenReplay'
 import { sanitizeCause } from './utils/sanitizeCause'
 import { sanitizedStack } from './utils/sanitizedStack'
 import { SaveSerializer } from './utils/SaveSerializer'
+import { sleepUntilAborted } from './utils/sleepUntilAborted'
+import { waitWithin } from './utils/waitWithin'
 
 /** What the Save of a server run needs from the editor and the extension, so it is tested without the Study workspace. */
 export type NodeServerLearningSaveHost = Omit<
@@ -33,6 +39,8 @@ export type NodeServerLearningSaveHost = Omit<
   /** The server history store whose summary Save reads when the seal's own was unreadable. */
   store: () =>
     Pick<NodeHistoryStore<NodeServerHistoryTypes>, 'summarize'> | undefined
+  /** How long Save waits for that summary read; {@link NODE_SERVER_HISTORY_SEAL_BOUND_MS} unless a test names its own. */
+  summaryReadBoundMs?: number
 }
 
 /** What the status item shows for a server run, and what a click does. */
@@ -201,29 +209,20 @@ export class NodeServerLearningSave {
       )
       return
     }
-    const summary =
-      history?.sealed?.summary ??
-      (await this.host
-        .store()
-        ?.summarize(studyId)
-        .catch(() => undefined))
+    const boundMs =
+      this.host.summaryReadBoundMs ?? NODE_SERVER_HISTORY_SEAL_BOUND_MS
+    const read = history?.sealed?.summary
+      ? { summary: history.sealed.summary }
+      : await this.readSummaryWithin(studyId, boundMs)
+    const summary = read?.summary
     if (!summary || summary.verification !== 'verified') {
       this.states.delete(studyId)
-      this.logFailure(
-        studyId,
-        'save:read-failed',
-        new Error(
-          summary?.reason ?? 'The sealed server history is not in the store.',
-        ),
-      )
-      this.tell(
-        {
-          kind: 'failed',
-          cause:
-            summary?.reason ?? 'The sealed server history is not in the store.',
-        },
-        'warning',
-      )
+      // A read that outlived its bound says so; Save never waits on it, so another run's Save stays free.
+      const cause = read
+        ? (summary?.reason ?? 'The sealed server history is not in the store.')
+        : `The sealed server history could not be read within ${boundMs / 1_000} s.`
+      this.logFailure(studyId, 'save:read-failed', new Error(cause))
+      this.tell({ kind: 'failed', cause }, 'warning')
       return
     }
     const complete =
@@ -315,6 +314,31 @@ export class NodeServerLearningSave {
   private setState(studyId: string, state: SaveState): void {
     this.states.set(studyId, state)
     this.host.changed()
+  }
+
+  /**
+   * Reads the sealed history's summary from the store for at most `boundMs`.
+   * @param studyId - The history's study id.
+   * @param boundMs - How long Save waits.
+   * @returns `{ summary }` (the summary, or `undefined` when it could not be read), or `undefined` when the read outlived its bound.
+   */
+  private async readSummaryWithin(
+    studyId: string,
+    boundMs: number,
+  ): Promise<{ summary: NodeServerHistorySummary | undefined } | undefined> {
+    const reading = this.host.store()?.summarize(studyId)
+    if (!reading) return { summary: undefined }
+    return waitWithin(
+      reading.then(
+        (summary) => ({ summary }),
+        () => ({ summary: undefined }),
+      ),
+      {
+        timeoutMs: boundMs,
+        signal: new AbortController().signal,
+        sleep: sleepUntilAborted,
+      },
+    )
   }
 
   /** Writes one Output entry for a failure with its sanitized cause and stack. */

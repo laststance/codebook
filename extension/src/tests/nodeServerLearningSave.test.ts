@@ -25,6 +25,8 @@ async function saveOverRun(
     /** The action the learner clicks on a notice; none by default. */
     noticeAction?: string
     repositoryOptions?: Parameters<typeof startHistoryServerRun>[2]
+    /** The bound of Save's own summary read; the production bound by default. */
+    summaryReadBoundMs?: number
   } = {},
 ) {
   const harness = await createHarness()
@@ -58,6 +60,9 @@ async function saveOverRun(
     },
     log: () => undefined,
     changed: () => undefined,
+    ...(options.summaryReadBoundMs === undefined
+      ? {}
+      : { summaryReadBoundMs: options.summaryReadBoundMs }),
   })
   return { ...started, save, asked, notified, opened }
 }
@@ -464,4 +469,47 @@ test('Save of another run while one is open rejects the promise and does not thr
 
   // Assert
   await secondRejection
+})
+
+// protects=Save over a sealed history whose summary read never settles answers within its bound and frees the Save for another run; fails_when=Save waits on the stalled read, so it never answers and every later Save of another run is refused as already saving; why_new=Codex and the red team (ship pass 2) found Save still held after the seal's summary bound; seam=summaryReadBoundMs (non-test callers: 1, the production bound by default); no_claim=which file system stalls
+test('Save whose sealed summary read never settles answers within its bound and frees Save for another run', async (context) => {
+  // Arrange
+  const { save, record, run, service, repository, notified } =
+    await saveOverRun(context, { summaryReadBoundMs: 50 })
+  await run.sendRequest('k1')
+  await service.stop({ instanceId: service.instanceId, runId: record.id })
+  const sealed = record.nodeServer?.history?.sealed
+  assert.ok(sealed)
+  sealed.summary = undefined
+  repository.serverHistories.summarize = () =>
+    new Promise<never>(() => undefined)
+
+  // Act
+  let guard: ReturnType<typeof setTimeout> | undefined
+  const outcome = await Promise.race([
+    save.save(record).then(() => 'answered'),
+    // gstack-timing-ok: the read's bound is the contract; a Save still pending 3 s after a 50 ms bound waits on the stalled read
+    new Promise<string>((resolve) => {
+      guard = setTimeout(() => resolve('still saving'), 3_000)
+    }),
+  ])
+  clearTimeout(guard)
+  const another = await save.save({ ...record, id: 'another-run' }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(outcome, 'answered')
+  assert.deepEqual(notified, [
+    {
+      severity: 'warning',
+      text: 'Learning replay could not be saved: The sealed server history could not be read within 0.05 s.',
+      actions: [],
+    },
+  ])
+  assert.doesNotMatch(
+    String(another),
+    /Another learning session is being saved/,
+  )
 })
