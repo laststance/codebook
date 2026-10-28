@@ -1201,7 +1201,7 @@
       "totalMs": 2385
     },
     "nodeServerRunVerdicts.test.js": {
-      "totalMs": 5703
+      "totalMs": 1376
     },
     "nodeServerSaveDocs.test.js": {
       "totalMs": 45

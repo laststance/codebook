@@ -886,3 +886,48 @@ test('Open replay of a just-saved server run before the catalog refreshes opens 
     await harness.close()
   }
 })
+
+// protects=a just-saved server replay that Saved studies does not list yet and that cannot open is announced as a server replay, as its Output entry already is; fails_when=the notification reads "test replay" because only the catalog decides its wording; no_claim=why the open failed (the composition step is made to throw)
+test('a just-saved server replay that cannot open before the catalog refreshes is announced as a server replay', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    const { service, record, run } = await startHistoryServerRun(
+      harness,
+      context,
+      { repository: repositoryOf(harness) },
+    )
+    await run.sendRequest('k1')
+    run.pauseAt(0)
+    run.respond()
+    await service.stop({ instanceId: service.instanceId, runId: record.id })
+    const studyId = `${service.instanceId}_${record.id}`
+    context.mock.method(
+      harness.reader as unknown as {
+        enterSummaryCompositionForReplay: () => Promise<boolean>
+      },
+      'enterSummaryCompositionForReplay',
+      async () => {
+        throw new Error('The arrangement was refused.')
+      },
+    )
+
+    // Act
+    await harness.reader.openLearningReplay(studyId)
+    await waitUntil(
+      () => harness.errorMessages.length > 0,
+      'the open failure is announced',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(
+      harness.errorMessages[0],
+      `Codebook could not open the server replay "${studyId}": The arrangement was refused. The saved history is unchanged; open it again from Saved studies.`,
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})

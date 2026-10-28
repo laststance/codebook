@@ -126,15 +126,16 @@ test('a run resource read answers within the bound with the sealed verdicts when
   service.nodeServerHistorySealBoundMs = 50
 
   // Act
+  let guard: ReturnType<typeof setTimeout> | undefined
   const answer = await Promise.race([
     readResource(service, service.uri(record.id)).then((resource) =>
       'text' in resource ? resource.text : '{}',
     ),
     // gstack-timing-ok: the bound is the contract; a read still pending 5 s after a 50 ms bound waits on the summary read
-    new Promise<string>((resolve) =>
-      setTimeout(() => resolve('pending'), 5_000),
-    ),
-  ])
+    new Promise<string>((resolve) => {
+      guard = setTimeout(() => resolve('pending'), 5_000)
+    }),
+  ]).finally(() => clearTimeout(guard))
 
   // Assert
   assert.notEqual(answer, 'pending')

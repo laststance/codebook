@@ -12304,8 +12304,9 @@ export class StudyWorkspace {
     cause: string,
   ): void {
     const stack = sanitizedStack(error, this.privateRoots())
+    const identity = this.replayOpenDiagnosticIdentity(studyId)
     this.diagnostics?.log({
-      ...this.replayOpenDiagnosticIdentity(studyId),
+      ...identity,
       studyId,
       cause,
       ...(stack ? { stack } : {}),
@@ -12318,8 +12319,10 @@ export class StudyWorkspace {
     )
     const failure = describeNodeLearningSave({
       kind: 'open-failed',
-      // A server replay that cannot open is worded as one, never as a test replay.
-      ...(!summary && serverSummary ? { profile: NODE_SERVER_PROFILE } : {}),
+      // A server replay that cannot open is worded as one, never as a test replay, also before Saved studies lists it.
+      ...(identity.profile === NODE_SERVER_PROFILE
+        ? { profile: NODE_SERVER_PROFILE }
+        : {}),
       title: summary
         ? [summary.testFile, ...(summary.testTitles ?? [])].join(' › ')
         : serverSummary
