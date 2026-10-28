@@ -2287,6 +2287,17 @@ export class StudyService {
   }
 
   /**
+   * Reads the stored history's verdicts again when a node-server run's resource is read, so the coverage and the missing lists follow the material another window saved after this window sealed the history, and not only the seal and this window's own saves; a run without a sealed history keeps nothing to refresh.
+   * Called by {@link readResource} before it states a run.
+   * @param record - The run whose resource is read.
+   * @example await service.refreshNodeServerVerdicts(record)
+   */
+  async refreshNodeServerVerdicts(record: StudyRecord): Promise<void> {
+    if (record.profile !== NODE_SERVER_PROFILE) return
+    await this.refreshNodeServerSummary(`${this.instanceId}_${record.id}`)
+  }
+
+  /**
    * Gives a failed learning-material save the answer an agent can act on: a revision conflict names the current revision and the material to re-read, a citation that matches no entry names the history and says to re-read its events, and another window holding the storage lock is a retry.
    * @param error - What the save threw.
    * @param identity - The history and the revision the agent expected.
