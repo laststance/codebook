@@ -150,7 +150,6 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
   }
 
   /** The first failure that ended the timeline, if any; read by the run's resource to report a history that is failing while the run lives. @example writer.appendFailure?.message */
-  // fallow-ignore-next-line unused-class-member
   get appendFailure(): Error | undefined {
     return this.failure
   }

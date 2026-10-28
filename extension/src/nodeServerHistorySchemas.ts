@@ -2,6 +2,12 @@ import { z } from 'zod'
 
 import {
   MAX_EXPLANATION_CHARS,
+  NODE_SERVER_HISTORY_CODE_LIMIT_CHARS,
+  NODE_SERVER_HISTORY_CONTENT_TYPE_LIMIT_CHARS,
+  NODE_SERVER_HISTORY_FRAME_NAME_LIMIT_CHARS,
+  NODE_SERVER_HISTORY_LOCATION_LIMIT_CHARS,
+  NODE_SERVER_HISTORY_MESSAGE_LIMIT_CHARS,
+  NODE_SERVER_HISTORY_UNAVAILABLE_PATH_LIMIT_CHARS,
   NODE_SERVER_HISTORY_FORMAT_VERSION,
   NODE_SERVER_HISTORY_MAX_ENTRIES,
   NODE_SERVER_HISTORY_MAX_STOPS,
@@ -90,14 +96,14 @@ export const nodeServerHistoryEntrySchema = z.discriminatedUnion('type', [
     ...base,
     attempt,
     method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
-    path: z.string().min(1).max(2_048),
+    path: z.string().min(1).max(NODE_SERVER_HISTORY_LOCATION_LIMIT_CHARS),
     bodyBytes: z.number().int().nonnegative(),
   }),
   z.strictObject({
     type: z.literal('request-withdrawn'),
     ...base,
     attempt,
-    code: z.string().min(1).max(128),
+    code: z.string().min(1).max(NODE_SERVER_HISTORY_CODE_LIMIT_CHARS),
   }),
   z.strictObject({ type: z.literal('request-sent'), ...base, attempt }),
   z
@@ -128,13 +134,17 @@ export const nodeServerHistoryEntrySchema = z.discriminatedUnion('type', [
     hit: z.number().int().positive(),
     generation: z.number().int().nonnegative(),
     source: stopSource,
-    frame: z.strictObject({ name: z.string().max(2_048) }),
+    frame: z.strictObject({
+      name: z.string().max(NODE_SERVER_HISTORY_FRAME_NAME_LIMIT_CHARS),
+    }),
     facts: z.record(z.string(), z.json()),
     // One entry per inspection the declaration allows; every one becomes an uncut seal reason.
     unavailable: z
       .array(
         z.strictObject({
-          path: z.string().max(512),
+          path: z
+            .string()
+            .max(NODE_SERVER_HISTORY_UNAVAILABLE_PATH_LIMIT_CHARS),
           reason: z.string().max(1_024),
         }),
       )
@@ -145,18 +155,24 @@ export const nodeServerHistoryEntrySchema = z.discriminatedUnion('type', [
     type: z.literal('response'),
     ...base,
     status: z.number().int().min(100).max(599),
-    contentType: z.string().max(256).nullable(),
+    contentType: z
+      .string()
+      .max(NODE_SERVER_HISTORY_CONTENT_TYPE_LIMIT_CHARS)
+      .nullable(),
     body: z.string().max(NODE_SERVER_RESPONSE_BODY_LIMIT_CHARS),
     bodyBytes: z.number().int().nonnegative(),
     readCut: z.boolean(),
-    location: z.string().max(2_048).nullable(),
+    location: z
+      .string()
+      .max(NODE_SERVER_HISTORY_LOCATION_LIMIT_CHARS)
+      .nullable(),
     requestDurationMs: z.number().finite().nonnegative(),
   }),
   z.strictObject({
     type: z.literal('request-failed'),
     ...base,
-    code: z.string().min(1).max(128),
-    message: z.string().max(2_048),
+    code: z.string().min(1).max(NODE_SERVER_HISTORY_CODE_LIMIT_CHARS),
+    message: z.string().max(NODE_SERVER_HISTORY_MESSAGE_LIMIT_CHARS),
   }),
   z.strictObject({
     type: z.literal('output-truncated'),

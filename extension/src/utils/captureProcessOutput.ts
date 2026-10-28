@@ -8,7 +8,9 @@ import {
 import { NANOSECONDS_PER_MILLISECOND } from '../runtimeSupport/constants'
 
 import { createOutputRedactor } from './createOutputRedactor'
+import { createRootHidingStage } from './createRootHidingStage'
 import { keepUtf8Tail } from './keepUtf8Tail'
+import type { CauseRoots } from './sanitizeCause'
 
 /** One stamped chunk of an owned process's output, already redacted: its order, its time since the launch, its channel and its text (at most {@link PROCESS_OUTPUT_EVENT_LIMIT_CHARS} characters). */
 export type ProcessOutputEvent = {
@@ -30,6 +32,8 @@ export type ProcessOutputOptions = {
   overflowMessage: string
   /** The failure message's start when a delivery rejects, before its cause. */
   failurePrefix: string
+  /** The window's private roots; when given, every channel hides them statefully before anything is redacted, cut, delivered or kept, so a root split over two chunks is still hidden. The raw announcement is unaffected. */
+  privateRoots?: CauseRoots
 }
 
 /** The captured output of one owned process. */
@@ -127,16 +131,25 @@ export function captureProcessOutput(
     if (!stream) continue
     const decoder = new StringDecoder('utf8')
     const redactor = createOutputRedactor()
+    const rootStage = options.privateRoots
+      ? createRootHidingStage(options.privateRoots)
+      : undefined
     const accept = (text: string): void => {
       if (text && Buffer.byteLength(announcement) < PROCESS_OUTPUT_LIMIT_BYTES)
         announcement = Buffer.from(announcement + text)
           .subarray(0, PROCESS_OUTPUT_LIMIT_BYTES)
           .toString('utf8')
-      acceptRedacted(channel, redactor.write(text))
+      // Roots are hidden over a held tail first, so the secret redactor and the event split only ever see hidden text.
+      acceptRedacted(
+        channel,
+        redactor.write(rootStage ? rootStage.write(text) : text),
+      )
     }
     stream.on('data', (chunk: Buffer) => accept(decoder.write(chunk)))
     stream.on('end', () => {
       accept(decoder.end())
+      // What the root stage held back for a possible root is released, hidden, before the redactor's own end.
+      if (rootStage) acceptRedacted(channel, redactor.write(rootStage.end()))
       // What the redactor held back for a possibly incomplete secret is released, redacted, at the channel's end.
       acceptRedacted(channel, redactor.end())
     })

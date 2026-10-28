@@ -1403,6 +1403,18 @@ export const NODE_SERVER_WRITER_QUEUE_LIMIT_BYTES = 4_194_304
 export const NODE_SERVER_SOURCE_TEXT_LIMIT_BYTES = 524_288
 /** The longest text of one `output` entry of a node-server history. */
 export const NODE_SERVER_OUTPUT_TEXT_LIMIT_CHARS = 4_096
+/** The longest code (a withdrawal's, a failure's) a node-server history entry stores. */
+export const NODE_SERVER_HISTORY_CODE_LIMIT_CHARS = 128
+/** The longest frame name a `stop` entry stores. */
+export const NODE_SERVER_HISTORY_FRAME_NAME_LIMIT_CHARS = 2_048
+/** The longest inspection path an `unavailable` item of a `stop` entry stores. */
+export const NODE_SERVER_HISTORY_UNAVAILABLE_PATH_LIMIT_CHARS = 512
+/** The longest content type a `response` entry stores. */
+export const NODE_SERVER_HISTORY_CONTENT_TYPE_LIMIT_CHARS = 256
+/** The longest request path or response location a node-server history entry stores. */
+export const NODE_SERVER_HISTORY_LOCATION_LIMIT_CHARS = 2_048
+/** The longest message a `request-failed` entry stores. */
+export const NODE_SERVER_HISTORY_MESSAGE_LIMIT_CHARS = 2_048
 /** The longest response body one `response` entry stores (the shown body: `shapeResponseBody` cuts at 8,192 bytes). */
 export const NODE_SERVER_RESPONSE_BODY_LIMIT_CHARS = 16_384
 /** The most JSON bytes (quotes included) of an inspection path a seal reason keeps: a 512-character ASCII path fits whole (its text and its params each hold the path): 160 reasons at most, so the worst-case seal stays inside {@link NODE_SERVER_HISTORY_SEAL_LIMIT_BYTES}. */

@@ -476,6 +476,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
         ...launched,
         workspace: this.input.workspace,
         node: this.dependencies.node,
+        // The workspace and the home directory are hidden in the server's output even where a chunk boundary cuts one.
+        privateRoots: causeRootsFor([], this.input.workspace),
       },
       (type, detail) => this.record(type, detail),
       (event) => this.onServerOutput(event),
