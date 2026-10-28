@@ -229,7 +229,8 @@ export function createRootHidingStage(
     held = ''
     emittedCount = 0
     emittedAsPlaceholder = false
-    return withoutEmitted(rest, hidePrivateRoots(rest), emitted, wasPlaceholder)
+    // The end words a held start as a timed release would: a start that already shows part of a name ends as its root's placeholder.
+    return withoutEmitted(rest, failClosed(rest), emitted, wasPlaceholder)
   }
 
   return { write, end }

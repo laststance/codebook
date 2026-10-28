@@ -76,18 +76,18 @@ test('text that cannot start a root is released immediately', () => {
   assert.equal(released, 'listening on 127.0.0.1:4100\n')
 })
 
-// protects=text held for a possible root is released, hidden or as is, when the stream ends; fails_when=the held tail is dropped at the end of output; no_claim=none
+// protects=text held for a possible root that shows no private name yet is released as typed when the stream ends; fails_when=the held tail is dropped at the end of output; no_claim=a held start that already shows part of a name (it ends as the placeholder, its own test)
 test('a held candidate that never becomes a root is released at the end of the stream', () => {
   // Arrange
   const stage = createRootHidingStage(ROOTS)
 
   // Act
-  const first = stage.write('see /Users/ad')
+  const first = stage.write('see /Users/')
   const rest = stage.end()
 
   // Assert
   assert.equal(first, 'see ')
-  assert.equal(rest, '/Users/ad')
+  assert.equal(rest, '/Users/')
 })
 
 // protects=a cut is never placed inside a root that is already complete, even when its tail repeats the root's beginning; fails_when=the stage holds from the inner repeat and releases half of a matched root; no_claim=none
@@ -302,4 +302,18 @@ test('a root finished over several writes after a timed release releases no name
   // Assert
   assert.equal(middle, '')
   assert.equal(last, '<workspace>/x.ts\n')
+})
+
+// protects=a stream that ends while it holds the start of a private root that already shows part of the name ends with that root's placeholder, as a timed release would, so the end never leaks the partial name; fails_when=the end releases the held start as typed ('/Users/ad'); no_claim=a start that shows no name yet (it is released as typed, like a timed release)
+test('a stream that ends on a held start showing part of a name ends with the placeholder', () => {
+  // Arrange
+  const stage = createRootHidingStage(ROOTS)
+
+  // Act
+  const written = stage.write('cwd is /Users/ad')
+  const ended = stage.end()
+
+  // Assert
+  assert.equal(written, 'cwd is ')
+  assert.equal(ended, '~')
 })
