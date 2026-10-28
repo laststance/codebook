@@ -92,6 +92,8 @@ export function createRootHidingStage(
   // Compiled once: every chunk hides several slices of its text.
   const hidePrivateRoots = createRootHider(roots)
   let held = ''
+  /** Whether the held text is nothing but path separators: a write of more separators then only extends it, with no root to find (see {@link write}). */
+  let heldIsSeparatorsOnly = false
   /** How many leading characters of the held text a release already let out (as typed, or as the words in `emittedPlaceholderText` when that is not empty): the next text is matched together with them, so a root finished by it hides the rest of its name. */
   let emittedCount = 0
   let emittedPlaceholderText = ''
@@ -180,6 +182,52 @@ export function createRootHidingStage(
     return leading ? remainder.slice(leading.length) : remainder
   }
 
+  /** Arms the timed release of the held run: a channel that then stays silent is released by time, so a quiet server's last line is not stuck. */
+  const scheduleTimedRelease = (): void => {
+    if (!timer) return
+    cancelRelease = timer.schedule(() => {
+      cancelRelease = undefined
+      const rest = held
+      if (!rest) return
+      const shown = timedReleaseWords(rest)
+      // Still a start of some root: no root is complete, or the complete one (home) can still grow into a longer one (workspace, storage).
+      const stillMayGrow =
+        hidePrivateRoots(rest) === rest || mayGrowIntoLongerRoot(rest)
+      // What an earlier timed release let out is never delivered again, typed text or a placeholder, as write and end do.
+      const delivered = withoutEmitted(
+        rest,
+        shown,
+        emittedCount,
+        emittedPlaceholderText,
+      )
+      if (stillMayGrow) {
+        // The start stays held (already released), so more text that finishes a root is hidden (fail closed).
+        emittedCount = rest.length
+        emittedPlaceholderText =
+          emittedPlaceholderText || (shown !== rest ? shown : '')
+      } else {
+        held = ''
+        heldIsSeparatorsOnly = false
+        emittedCount = 0
+      }
+      if (delivered) timer.release(delivered)
+    }, timer.holdMs)
+  }
+
+  /** Whether a lone separator is a beginning of some root spelling, so a held run of separators stays held; separator runs collapse to one character when compared. */
+  const separatorsStartRoots = longest > 1 && mayBecomeRoot('/')
+
+  /** The result {@link holdAndRelease} gives for a text made only of separators, without scanning it: the held run keeps the last {@link OUTPUT_REDACTION_HOLD_LIMIT_CHARS} characters and the rest, no root among it, is released as typed. */
+  const holdSeparators = (combined: string): string => {
+    const start = Math.max(
+      0,
+      combined.length - OUTPUT_REDACTION_HOLD_LIMIT_CHARS,
+    )
+    held = combined.slice(start)
+    scheduleTimedRelease()
+    return combined.slice(0, start)
+  }
+
   /** Holds and releases `combined` (the held text plus the new text) as one stream position. */
   const holdAndRelease = (combined: string): string => {
     const hiddenWhole = hidePrivateRoots(combined)
@@ -196,37 +244,12 @@ export function createRootHidingStage(
       // A cut inside a root that is already complete would split it: such a start is no hold point.
       if (releasedHidden + hidePrivateRoots(run) !== hiddenWhole) continue
       held = run
-      // A held run whose channel then stays silent is released by time, so a quiet server's last line is not stuck.
-      if (timer)
-        cancelRelease = timer.schedule(() => {
-          cancelRelease = undefined
-          const rest = held
-          if (!rest) return
-          const shown = timedReleaseWords(rest)
-          // Still a start of some root: no root is complete, or the complete one (home) can still grow into a longer one (workspace, storage).
-          const stillMayGrow =
-            hidePrivateRoots(rest) === rest || mayGrowIntoLongerRoot(rest)
-          // What an earlier timed release let out is never delivered again, typed text or a placeholder, as write and end do.
-          const delivered = withoutEmitted(
-            rest,
-            shown,
-            emittedCount,
-            emittedPlaceholderText,
-          )
-          if (stillMayGrow) {
-            // The start stays held (already released), so more text that finishes a root is hidden (fail closed).
-            emittedCount = rest.length
-            emittedPlaceholderText =
-              emittedPlaceholderText || (shown !== rest ? shown : '')
-          } else {
-            held = ''
-            emittedCount = 0
-          }
-          if (delivered) timer.release(delivered)
-        }, timer.holdMs)
+      heldIsSeparatorsOnly = !NON_SEPARATOR.test(run)
+      scheduleTimedRelease()
       return releasedHidden
     }
     held = ''
+    heldIsSeparatorsOnly = false
     return hiddenWhole
   }
 
@@ -239,9 +262,18 @@ export function createRootHidingStage(
     let emitted = emittedCount
     let combined = held + text
     let capOutput = ''
+    // Separators after a held run of separators: no root can be found or completed in them, so the full rescan below is skipped (a server writing only separators, one byte at a time, would otherwise rescan the whole held run per write).
+    const extendsSeparators =
+      separatorsStartRoots &&
+      heldIsSeparatorsOnly &&
+      text !== '' &&
+      !NON_SEPARATOR.test(text)
     // The raw-length cap would force-release the head of a run that is still a start of a root: as typed it could never match once its anchor ('C:') is gone, leaking the name that follows.
-    const windowStart = earliestHoldStart(combined, longest)
+    const windowStart = extendsSeparators
+      ? 0
+      : earliestHoldStart(combined, longest)
     if (
+      !extendsSeparators &&
       combined.length - windowStart > OUTPUT_REDACTION_HOLD_LIMIT_CHARS &&
       NON_SEPARATOR.test(
         combined.slice(
@@ -280,7 +312,9 @@ export function createRootHidingStage(
         emittedPlaceholderText = words
       }
     }
-    const output = holdAndRelease(combined)
+    const output = extendsSeparators
+      ? holdSeparators(combined)
+      : holdAndRelease(combined)
     // The held start moved forward by what was released; what is still held was let out only up to the old count.
     emittedCount = Math.max(0, emitted - (combined.length - held.length))
     if (held === '') emittedCount = 0
@@ -300,6 +334,7 @@ export function createRootHidingStage(
     const emitted = emittedCount
     const wasPlaceholder = emittedPlaceholderText
     held = ''
+    heldIsSeparatorsOnly = false
     emittedCount = 0
     emittedPlaceholderText = ''
     // The end words a held start as a timed release would: a start that already shows part of a name ends as its root's placeholder.

@@ -661,3 +661,35 @@ for (const shape of [
     }
   })
 }
+
+// protects=a server writing only separators one byte at a time costs no rescan per write, and the output is still exactly the separators, with a root after them hidden; fails_when=every write rescans the held separator run with the root hider (200,000 one-byte writes of '/' took 21 s); no_claim=wall-clock time, which the test deliberately does not measure
+test('separator-only output written one byte at a time is not rescanned per write', (context) => {
+  // Arrange
+  const stage = createRootHidingStage(ROOTS)
+  const originalReplace = RegExp.prototype[Symbol.replace]
+  let regexScans = 0
+  // A counting wrapper instead of a mock: it must be put back whatever the assertions find.
+  RegExp.prototype[Symbol.replace] = function (
+    this: RegExp,
+    text: string,
+    replacement: string | ((substring: string, ...args: never[]) => string),
+  ): string {
+    regexScans++
+    return String(Reflect.apply(originalReplace, this, [text, replacement]))
+  }
+  context.after(() => {
+    RegExp.prototype[Symbol.replace] = originalReplace
+  })
+  const released: string[] = []
+
+  // Act
+  for (let count = 0; count < 10_000; count++) released.push(stage.write('/'))
+  const scansForSeparators = regexScans
+  RegExp.prototype[Symbol.replace] = originalReplace
+  released.push(stage.write('Users/ada/app/x\n'))
+  released.push(stage.end())
+
+  // Assert
+  assert.equal(scansForSeparators < 100, true, `${scansForSeparators} scans`)
+  assert.equal(released.join(''), `${'/'.repeat(9_999)}<workspace>/x\n`)
+})
