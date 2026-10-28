@@ -6,7 +6,7 @@ import { describeNodeServerLearningSave } from '../utils/describeNodeServerLearn
 // protects=the partial notice prints no terminal control or bidi override from the store's reason; fails_when=a color escape or the right-to-left override reaches the notice; no_claim=the store's own stripping
 test('the partial notice strips controls from the reason', () => {
   // Arrange
-  const firstReason = 'No response‮ was\u001b[31m recorded.'
+  const firstReason = 'No response\u202E was\u001b[31m recorded.'
 
   // Act
   const notice = describeNodeServerLearningSave({
