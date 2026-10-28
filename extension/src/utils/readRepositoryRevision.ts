@@ -5,6 +5,7 @@ import {
   REPOSITORY_REVISION_BOUND_MS,
 } from '../constants'
 
+import { gitEnvironmentWithoutInherited } from './gitEnvironmentWithoutInherited'
 import { gitExecutablePath } from './gitExecutablePath'
 
 /** The revision a history records for a repository whose Git could not answer: nothing is claimed about its state. */
@@ -18,9 +19,7 @@ function git(
   timeout: number,
 ): Promise<string | undefined> {
   // Inherited GIT_* variables (GIT_DIR, GIT_CONFIG_*, …) could redirect Git away from the opened folder.
-  const inherited = Object.fromEntries(
-    Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')),
-  )
+  const inherited = gitEnvironmentWithoutInherited()
   return new Promise((resolve) => {
     execFile(
       command,

@@ -283,6 +283,8 @@ export interface NodeServerRecordState {
   subscription?: { dispose(): void }
   /** The failures already written to the Output channel (by code), so one failure is written once. */
   loggedFailures: Set<string>
+  /** The service's own terminal cause of the run's end (the whole-run deadline), which is not the run's `runFailure`; the history's seal reads it beside the run's failure, and never reads the stale `record.error`. */
+  terminalFailure?: StudyError
   /** The run's history, from before its launch to its seal; absent when none could start ({@link historyUnavailable}). */
   history?: NodeServerHistoryRecorder
   /** Why the run has no history (storage unavailable, a full store, a refused or slow start), shown beside the run's state and answered by Save; the live run goes on. */
@@ -3537,6 +3539,12 @@ export class StudyService {
       'RUNTIME_FAILED',
       'Study wall deadline expired; history only.',
     )
+    // The deadline is the service's own terminal cause: a node-server run keeps it apart from `record.error`, which may be a stale release failure, so the history seal names the deadline.
+    if (record.nodeServer)
+      record.nodeServer.terminalFailure = new StudyError(
+        'RUNTIME_FAILED',
+        'Study wall deadline expired; history only.',
+      )
     record.runtime?.fail(record.error.message)
     this.failUnfinishedNodePhase(record)
   }
@@ -4925,8 +4933,9 @@ export class StudyService {
     const view = record.nodeServer?.run?.view()
     await history.seal(
       describeNodeServerEnd({
-        // Only the run's own failure names a failure: a clean stop never borrows an earlier release failure.
-        failureCode: view?.runFailure?.code,
+        // The run's own failure, or the service's own terminal cause (the deadline), names a failure; a clean stop never borrows an earlier release failure from `record.error`.
+        failureCode:
+          view?.runFailure?.code ?? record.nodeServer?.terminalFailure?.code,
         exit: {
           exitCode:
             typeof detail?.exitCode === 'number' ? detail.exitCode : undefined,

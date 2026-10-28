@@ -5,6 +5,7 @@ import { StudyError } from '../errors'
 import { readResource } from '../resources'
 
 import { createHarness } from './helpers'
+import { createManualClock } from './utils/createManualClock'
 import { realProcessStart } from './utils/realProcessStart'
 import { startHistoryServerRun } from './utils/startHistoryServerRun'
 
@@ -105,6 +106,32 @@ test('a clean Stop after an earlier release failure seals with the end reason st
   // Assert
   const end = history.entries.at(-1)
   assert.equal(end?.type === 'end' && end.reason, 'stopped')
+})
+
+// protects=a run whose whole-run deadline expires while its request is in flight seals the history failed with RUNTIME_FAILED, so a replay tells a deadline expiry from a manual stop; fails_when=the seal reads only the run's own failure and writes stopped for the service's deadline; no_claim=an earlier release failure on the record (the test above)
+test('a deadline that expires while the request is in flight seals the server history failed with RUNTIME_FAILED', async (context) => {
+  // Arrange
+  const clock = createManualClock()
+  const harness = await createHarness({ now: clock.now })
+  context.after(() => harness.close())
+  const { service, record, run, repository } = await startHistoryServerRun(
+    harness,
+    context,
+  )
+  await run.sendRequest('k1')
+
+  // Act
+  clock.advance(600_001)
+  service.maintain()
+  await record.stopPromise
+  const history = await repository.serverHistories.read(
+    `${service.instanceId}_${record.id}`,
+  )
+
+  // Assert
+  const end = history.entries.at(-1)
+  assert.equal(end?.type === 'end' && end.reason, 'failed')
+  assert.equal(end?.type === 'end' && end.code, 'RUNTIME_FAILED')
 })
 
 // protects=a run resource read answers within the seal bound with the sealed verdicts while the stored summary read never settles; fails_when=the read waits on the summary forever or loses the sealed verdicts; no_claim=which file system stalls
