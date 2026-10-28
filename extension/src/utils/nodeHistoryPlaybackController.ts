@@ -3,6 +3,8 @@ import {
   PLAYBACK_TICK_INTERVAL_MS,
 } from '../constants'
 
+import { replayRefusal, type ReplayKind } from './replayRefusals'
+
 export interface NodeHistoryPlaybackEvent {
   sequence: number
   elapsedMs: number
@@ -15,8 +17,8 @@ export interface NodeHistoryPlaybackDependencies {
   /** Receives an autoplay presentation failure; manual seeks reject to their own caller instead. */
   failed?(error: unknown): void
   now?: () => number
-  /** Words a refusal for the replay shown (a server replay is never called a test replay); identity unless given. */
-  inReplayWords?(sentence: string): string
+  /** Which replay is shown, so a refusal names it in its own words; a test replay unless given. */
+  replayKind?(): ReplayKind
   manualTicks?: boolean
 }
 
@@ -156,9 +158,10 @@ export class NodeHistoryPlaybackController {
       positionMs > Math.max(last.elapsedMs, this.recordingEndMs ?? 0)
     ) {
       throw new Error(
-        this.dependencies.inReplayWords?.(
-          'Seek lies outside the verified range of this test replay.',
-        ) ?? 'Seek lies outside the verified range of this test replay.',
+        replayRefusal(
+          'seekOutsideRange',
+          this.dependencies.replayKind?.() ?? 'test',
+        ),
       )
     }
     this.mode = 'paused'

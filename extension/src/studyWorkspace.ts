@@ -374,6 +374,12 @@ import {
 } from './utils/recordedLeftoverGroups'
 import { recordingNotShownReason } from './utils/recordingNotShownReason'
 import { replacedTabAddresses } from './utils/replacedTabAddresses'
+import {
+  replayNoStep,
+  replayRefusal,
+  type ReplayKind,
+  type ReplayRefusalKey,
+} from './utils/replayRefusals'
 import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition'
 import { type CauseRoots, sanitizeCause } from './utils/sanitizeCause'
 import { sanitizedStack } from './utils/sanitizedStack'
@@ -12380,11 +12386,7 @@ export class StudyWorkspace {
         present: async (sequence, isCurrent) => {
           const selectedHistory = this.selectedNodeHistory
           if (!selectedHistory || selectedHistory.header.studyId !== studyId)
-            throw new Error(
-              this.inReplayWords(
-                'The selected test replay changed during playback.',
-              ),
-            )
+            throw new Error(this.replayRefusal('changedDuringPlayback'))
           await this.requestNodeHistoryEvent(selectedHistory, sequence, {
             publish: false,
             alignPlayback: false,
@@ -12393,7 +12395,7 @@ export class StudyWorkspace {
         },
         changed: () => this.publish(),
         failed: (error) => this.report('control', error),
-        inReplayWords: (sentence) => this.inReplayWords(sentence),
+        replayKind: () => this.replayKind(),
       })
       // The saved reader position, else the first stop whose source verifies, else the first event (DS1).
       const initialSequence = this.landingSequence(
@@ -13715,15 +13717,22 @@ export class StudyWorkspace {
   }
 
   /**
-   * Words a refusal sentence for the replay that is shown: a server replay is never called a test replay, in the sentences that reach the transport's status line.
-   * @param sentence - The sentence in the test replay's words.
-   * @returns The sentence, naming a server replay when one is selected.
-   * @example this.inReplayWords('Select the matching test replay before paging.') // => 'Select the matching server replay before paging.' for a server replay
+   * Tells which replay is shown, so refusals name it in its own words.
+   * @returns `server` while a server replay is selected, `test` otherwise.
+   * @example this.replayKind() // => 'server'
    */
-  private inReplayWords(sentence: string): string {
-    return this.selectedServerReplay
-      ? sentence.replaceAll('test replay', 'server replay')
-      : sentence
+  private replayKind(): ReplayKind {
+    return this.selectedServerReplay ? 'server' : 'test'
+  }
+
+  /**
+   * Words a catalogued refusal for the replay that is shown: a server replay is never called a test replay, in the sentences that reach the transport's status line.
+   * @param key - Which refusal.
+   * @returns The sentence in the shown replay's words.
+   * @example this.replayRefusal('selectBeforePaging') // => 'Select the matching server replay before paging.' for a server replay
+   */
+  private replayRefusal(key: ReplayRefusalKey): string {
+    return replayRefusal(key, this.replayKind())
   }
 
   /**
@@ -13768,18 +13777,10 @@ export class StudyWorkspace {
    */
   private replayForMove(studyId: string): NodeTestHistoryIndex {
     if (this.recordingActive)
-      throw new Error(
-        this.inReplayWords(
-          'Close browser replay before navigating a test replay.',
-        ),
-      )
+      throw new Error(this.replayRefusal('closeBrowserBeforeNavigating'))
     const history = this.selectedNodeHistory
     if (!history || history.header.studyId !== studyId)
-      throw new Error(
-        this.inReplayWords(
-          'Select the matching saved test replay before navigating its timeline.',
-        ),
-      )
+      throw new Error(this.replayRefusal('selectSavedBeforeNavigating'))
     return history
   }
 
@@ -24320,11 +24321,7 @@ export class StudyWorkspace {
         !this.selectedNodeHistory ||
         this.selectedNodeHistory.header.studyId !== message.studyId
       )
-        throw new Error(
-          this.inReplayWords(
-            'Select the matching test replay before saving an understanding choice.',
-          ),
-        )
+        throw new Error(this.replayRefusal('selectBeforeUnderstanding'))
       const decisionStore = this.nodeHistoryStoreOf(message.studyId)
       if (!decisionStore) throw new Error('No Node history has this study id.')
       const decision = await decisionStore.saveLearningDecision(
@@ -24348,11 +24345,7 @@ export class StudyWorkspace {
         !this.selectedNodeHistory ||
         this.selectedNodeHistory.header.studyId !== message.studyId
       )
-        throw new Error(
-          this.inReplayWords(
-            'Select the matching test replay before saving its learning material.',
-          ),
-        )
+        throw new Error(this.replayRefusal('selectBeforeLearningMaterial'))
       const material = await this.service?.explainNodeHistory({
         studyId: message.studyId,
         expectedRevision: message.expectedRevision,
@@ -24372,9 +24365,7 @@ export class StudyWorkspace {
     }
     if (message.type === 'node-history-page') {
       if (this.selectedNodeHistory?.header.studyId !== message.studyId)
-        throw new Error(
-          this.inReplayWords('Select the matching test replay before paging.'),
-        )
+        throw new Error(this.replayRefusal('selectBeforePaging'))
       const pageCount = Math.max(
         1,
         Math.ceil(
@@ -24383,11 +24374,7 @@ export class StudyWorkspace {
         ),
       )
       if (message.page >= pageCount)
-        throw new Error(
-          this.inReplayWords(
-            'The requested page of this test replay is unavailable.',
-          ),
-        )
+        throw new Error(this.replayRefusal('pageUnavailable'))
       this.selectedNodeHistoryPage = message.page
       this.publish()
     }
@@ -24401,9 +24388,7 @@ export class StudyWorkspace {
       )
       if (target === undefined)
         throw new Error(
-          this.inReplayWords(
-            `There is no ${message.direction} ${message.unit ?? 'event'} in this test replay.`,
-          ),
+          replayNoStep(this.replayKind(), message.direction, message.unit),
         )
       // Next and Previous show the event's first step (DS21), once the move commits.
       await this.requestNodeHistoryEvent(history, target, {
@@ -24419,63 +24404,35 @@ export class StudyWorkspace {
     }
     if (message.type === 'node-history-stop') {
       if (this.recordingActive)
-        throw new Error(
-          this.inReplayWords(
-            'Close browser replay before inspecting a stop of a test replay.',
-          ),
-        )
+        throw new Error(this.replayRefusal('closeBrowserBeforeInspecting'))
       const history = this.selectedNodeHistory
       if (!history || history.header.studyId !== message.studyId)
-        throw new Error(
-          this.inReplayWords(
-            'Select the matching saved test replay before inspecting its debugger state.',
-          ),
-        )
+        throw new Error(this.replayRefusal('selectSavedBeforeInspecting'))
       if (
         history.entries.find((entry) => entry.sequence === message.sequence)
           ?.type !== 'stop'
       )
-        throw new Error(
-          this.inReplayWords(
-            'The requested event of this test replay is not a debugger stop.',
-          ),
-        )
+        throw new Error(this.replayRefusal('eventNotAStop'))
       await this.requestNodeHistoryEvent(history, message.sequence, {
         requireDebugger: true,
       })
     }
     if (message.type === 'node-history-playback') {
       if (this.recordingActive)
-        throw new Error(
-          this.inReplayWords(
-            'Close browser replay before controlling a test replay.',
-          ),
-        )
+        throw new Error(this.replayRefusal('closeBrowserBeforeControlling'))
       if (
         this.selectedNodeHistory?.header.studyId !== message.studyId ||
         !this.nodeHistoryPlaybackController
       )
-        throw new Error(
-          this.inReplayWords(
-            'Select the matching saved test replay before controlling its timeline.',
-          ),
-        )
+        throw new Error(this.replayRefusal('selectSavedBeforeControlling'))
       if (message.action !== 'seek' && message.positionMs !== undefined)
-        throw new Error(
-          this.inReplayWords(
-            'Only a seek in a test replay accepts a position.',
-          ),
-        )
+        throw new Error(this.replayRefusal('positionOnlyForSeek'))
       if (message.action === 'play') this.nodeHistoryPlaybackController.play()
       else if (message.action === 'pause')
         this.nodeHistoryPlaybackController.pause()
       else if (message.action === 'seek') {
         if (message.positionMs === undefined)
-          throw new Error(
-            this.inReplayWords(
-              'A seek in a test replay needs a recorded time.',
-            ),
-          )
+          throw new Error(this.replayRefusal('seekNeedsTime'))
         await this.nodeHistoryPlaybackController.seek(message.positionMs)
       }
     }
