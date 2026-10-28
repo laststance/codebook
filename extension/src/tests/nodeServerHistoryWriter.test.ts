@@ -253,8 +253,7 @@ const REFUSALS: Array<{
     },
     offer: (writer): Promise<void> =>
       writer.appendRequestFailed({ elapsedMs: 4, code: 'X', message: 'late' }),
-    refusal:
-      /fails a request never opened|answers a request never sent|opens a request|fails/,
+    refusal: /fails a request never opened/,
   },
   {
     name: 'an entry after end',

@@ -390,8 +390,6 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
    * @throws When the seal cannot be written or the writer is abandoned while the seal is in flight.
    * @example await writer.seal({ elapsedMs: 900, reason: 'stopped' })
    */
-  // Consumed by the run's history sink (Cycle 0059 pt3); pt1 has no producer yet.
-  // fallow-ignore-next-line unused-class-member
   seal(end: NodeServerEndInput): Promise<string | undefined> {
     if (this.sealOperation) return this.sealOperation
     // Decided in this turn, before any later append is offered.
