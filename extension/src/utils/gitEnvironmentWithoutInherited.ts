@@ -7,6 +7,9 @@
  */
 export function gitEnvironmentWithoutInherited(): NodeJS.ProcessEnv {
   return Object.fromEntries(
-    Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')),
+    // Case-insensitive: Windows environment names are, so `git_dir` reaches Git as `GIT_DIR`.
+    Object.entries(process.env).filter(
+      ([name]) => !name.toUpperCase().startsWith('GIT_'),
+    ),
   )
 }
