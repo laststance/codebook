@@ -154,6 +154,7 @@ export class RecordingStore {
    * @param io - The disk operations, replaced by a test that injects a fault.
    * @param capacity - Reads the Saved Study Limit setting at each admission.
    * @param removalAvailability - Reads at each refused reservation whether this window can remove a saved study, so the refusal names a removal only while one can work here.
+   * @param savedHistoryCount - Counts the node histories that take places of the same limit, up to the given number; the default counts none.
    * @example new RecordingStore(learningDirectory, workspaceKey, {}, undefined, () => 64, () => service.studyRemovalAvailability)
    */
   constructor(
@@ -165,6 +166,10 @@ export class RecordingStore {
       limits.slots ?? DEFAULT_SAVED_STUDY_LIMIT,
     private readonly removalAvailability: () => StudyRemovalAvailability = () =>
       'available',
+    /** Counts the histories (test and server) that share the saved-study limit, up to the given number; the default counts none. */
+    private readonly savedHistoryCount: (
+      places: number,
+    ) => Promise<number> = async () => 0,
   ) {
     recordingHashSchema.parse(workspaceKey)
     this.directory = join(learningDirectory, CONFIGURED_RECORDING_DIRECTORY)
@@ -212,6 +217,8 @@ export class RecordingStore {
       this.learningDirectory,
       this.workspaceKey,
       this.capacity,
+      this.removalAvailability,
+      this.savedHistoryCount,
     ).admitsStudy(studyId)
   }
 
@@ -253,7 +260,12 @@ export class RecordingStore {
         const identities = await this.identities()
         await this.dropOwnerRecordsWithoutRecording(identities)
         const limit = savedStudyLimit(this.capacity())
-        if (identities.length >= limit)
+        const freePlaces = limit - identities.length
+        // The histories of every kind share the limit: a place is free only while saved studies and histories leave one.
+        if (
+          freePlaces <= 0 ||
+          (await this.savedHistoryCount(freePlaces)) >= freePlaces
+        )
           throw new Error(
             fullLibraryMessage('recording', limit, this.removalAvailability()),
           )

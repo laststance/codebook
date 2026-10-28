@@ -1,11 +1,18 @@
 import { lstat, open } from 'node:fs/promises'
 
 import { NODE_TEST_HISTORY_LIMIT_BYTES } from '../constants'
+import type {
+  HistoryEntryBase,
+  HistoryHeaderBase,
+  HistoryScanRules,
+  HistoryTypes,
+} from '../historyStorageDescriptor'
 import {
   nodeTestHistoryEntrySchema,
   type NodeTestHistoryEntry,
   type NodeTestHistoryHeader,
 } from '../nodeTestHistorySchemas'
+import type { NodeTestHistoryTypes } from '../nodeTestHistoryTypes'
 
 /** A journal event a learning step can cite, as the store keeps it to check a learning material without reading the journal again. */
 export type CitableEvent =
@@ -26,20 +33,34 @@ export type JournalProgress = {
  * What a test history this window still writes keeps between two refreshes, so that a refresh reads only the bytes appended since the last one instead of the whole journal (a journal of thousands of output entries was read, parsed and summarized in full at every refresh after it grew).
  * Only the stops and the result are kept whole, as they are all a summary counts; every entry is kept as a {@link CitableEvent}.
  */
-export type RecordingScan = {
+export type RecordingScan<
+  Header extends HistoryHeaderBase = NodeTestHistoryHeader,
+  Entry extends HistoryEntryBase = NodeTestHistoryEntry,
+  Progress = JournalProgress,
+> = {
   /** The header as read when the scan began, and the signal of the header file it was read from: a changed header file restarts the scan. */
-  header: NodeTestHistoryHeader
+  header: Header
   headerSignal: string
   /** The journal's inode: a replaced file restarts the scan. */
   journalInode: number
   /** The bytes of the journal consumed through its last complete line; the next refresh reads from here. */
   offset: number
-  progress: JournalProgress
-  /** The stop entries and the result entry, in journal order. */
-  kept: NodeTestHistoryEntry[]
+  progress: Progress
+  /** The entries a summary counts (for a test history the stops and the result), in journal order. */
+  kept: Entry[]
   citable: Map<number, CitableEvent>
   /** Why the verified prefix ended before the journal's end, for a bad entry; nothing after it is read. */
   brokenReason?: string
+}
+
+/** The node-test profile's journal-scan rules: the same rules the full read applies. */
+export const NODE_TEST_SCAN_RULES: HistoryScanRules<NodeTestHistoryTypes> = {
+  journalLimitBytes: NODE_TEST_HISTORY_LIMIT_BYTES,
+  parseEntry: (value) => nodeTestHistoryEntrySchema.parse(value),
+  start: () => newJournalProgress(),
+  accept: (progress, entry) => acceptJournalEntry(progress, entry),
+  citableOf: citableEventOf,
+  keeps: (entry) => entry.type !== 'output',
 }
 
 /**
@@ -47,7 +68,7 @@ export type RecordingScan = {
  * @returns A progress at the journal's beginning.
  * @example newJournalProgress() // => { entryCount: 0, lastElapsedMs: 0, stopCount: 0, hasResult: false, passingResult: false }
  */
-export function newJournalProgress(): JournalProgress {
+function newJournalProgress(): JournalProgress {
   return {
     entryCount: 0,
     lastElapsedMs: 0,
@@ -64,7 +85,7 @@ export function newJournalProgress(): JournalProgress {
  * @throws When the entry breaks an ordering rule; `progress` is left as it was.
  * @example acceptJournalEntry(progress, entry) // progress.entryCount grows by one
  */
-export function acceptJournalEntry(
+function acceptJournalEntry(
   progress: JournalProgress,
   entry: NodeTestHistoryEntry,
 ): void {
@@ -91,7 +112,7 @@ export function acceptJournalEntry(
  * @returns The citable form of the entry.
  * @example citableEventOf(outputEntry) // => { type: 'output', channel: 'stdout' }
  */
-export function citableEventOf(entry: NodeTestHistoryEntry): CitableEvent {
+function citableEventOf(entry: NodeTestHistoryEntry): CitableEvent {
   if (entry.type === 'stop')
     return {
       type: 'stop',
@@ -117,18 +138,26 @@ export function citableEventOf(entry: NodeTestHistoryEntry): CitableEvent {
  * @throws When the journal is no bounded regular file or cannot be read.
  * @example scan = await advanceRecordingScan(scan, header, headerSignal, join(directory, 'events.jsonl'), (error) => store.describeCause(error))
  */
-export async function advanceRecordingScan(
-  previous: RecordingScan | undefined,
-  header: NodeTestHistoryHeader,
+export async function advanceHistoryScan<Types extends HistoryTypes>(
+  previous:
+    | RecordingScan<Types['Header'], Types['Entry'], Types['Progress']>
+    | undefined,
+  header: Types['Header'],
   headerSignal: string,
   journalPath: string,
   describeCause: (error: unknown) => string,
-): Promise<RecordingScan> {
+  rules: HistoryScanRules<Types>,
+  interruptedPrefix: string,
+): Promise<RecordingScan<Types['Header'], Types['Entry'], Types['Progress']>> {
   const journal = await lstat(journalPath)
   // lstat follows no link, so a link is no file here.
-  if (!journal.isFile() || journal.size > NODE_TEST_HISTORY_LIMIT_BYTES)
+  if (!journal.isFile() || journal.size > rules.journalLimitBytes)
     throw new Error('Node history file is not a bounded regular file.')
-  const scan: RecordingScan =
+  const scan: RecordingScan<
+    Types['Header'],
+    Types['Entry'],
+    Types['Progress']
+  > =
     previous &&
     previous.headerSignal === headerSignal &&
     previous.journalInode === journal.ino &&
@@ -139,7 +168,7 @@ export async function advanceRecordingScan(
           headerSignal,
           journalInode: journal.ino,
           offset: 0,
-          progress: newJournalProgress(),
+          progress: rules.start(),
           kept: [],
           citable: new Map<number, CitableEvent>(),
         }
@@ -160,15 +189,45 @@ export async function advanceRecordingScan(
   const lines = appended.subarray(0, lastLineEnd).toString('utf8').split('\n')
   for (const line of lines) {
     try {
-      const entry = nodeTestHistoryEntrySchema.parse(JSON.parse(line))
-      acceptJournalEntry(scan.progress, entry)
-      scan.citable.set(entry.sequence, citableEventOf(entry))
-      if (entry.type !== 'output') scan.kept.push(entry)
+      const entry = rules.parseEntry(JSON.parse(line))
+      rules.accept(scan.progress, entry, scan.header)
+      const citable = rules.citableOf(entry)
+      if (citable) scan.citable.set(entry.sequence, citable)
+      if (rules.keeps(entry)) scan.kept.push(entry)
     } catch (error) {
-      scan.brokenReason = `Interrupted Node history after its verified prefix: ${describeCause(error)}`
+      scan.brokenReason = `${interruptedPrefix} ${describeCause(error)}`
       break
     }
   }
   scan.offset += lastLineEnd + 1
   return scan
+}
+
+/**
+ * Continues a test history's recording scan with the node-test rules; the signature the store and its tests used before the scan became generic ({@link advanceHistoryScan}).
+ * @param previous - The scan of the last refresh, if any.
+ * @param header - The history's header as read now.
+ * @param headerSignal - The header file's signal as read now.
+ * @param journalPath - The journal file.
+ * @param describeCause - Words a broken entry's failure without private paths.
+ * @returns The scan (the same object as `previous` when it could be continued).
+ * @throws When the journal is no bounded regular file or cannot be read.
+ * @example scan = await advanceRecordingScan(scan, header, headerSignal, join(directory, 'events.jsonl'), (error) => store.describeCause(error))
+ */
+export function advanceRecordingScan(
+  previous: RecordingScan | undefined,
+  header: NodeTestHistoryHeader,
+  headerSignal: string,
+  journalPath: string,
+  describeCause: (error: unknown) => string,
+): Promise<RecordingScan> {
+  return advanceHistoryScan<NodeTestHistoryTypes>(
+    previous,
+    header,
+    headerSignal,
+    journalPath,
+    describeCause,
+    NODE_TEST_SCAN_RULES,
+    'Interrupted Node history after its verified prefix:',
+  )
 }

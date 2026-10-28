@@ -374,6 +374,7 @@ export class LearningLibrary {
    * @param workspaceKey - The hash of the workspace the learning belongs to.
    * @param capacity - Reads the Saved Study Limit setting at each admission.
    * @param removalAvailability - Reads at each refused save whether this window can remove a saved study, so the refusal names a removal only while one can work here.
+   * @param savedHistoryCount - Counts the node histories that take places of the same limit, up to the given number; the default counts none.
    * @example new LearningLibrary(directory, workspaceKey, () => 64, () => service.studyRemovalAvailability)
    */
   constructor(
@@ -382,6 +383,10 @@ export class LearningLibrary {
     private readonly capacity: () => unknown = () => undefined,
     private readonly removalAvailability: () => StudyRemovalAvailability = () =>
       'available',
+    /** Counts the histories (test and server) that share the saved-study limit, up to the given number; read at each admission so a browser save counts every kind. */
+    private readonly savedHistoryCount: (
+      places: number,
+    ) => Promise<number> = async () => 0,
   ) {}
 
   /** Resolves the current admission limit when another workspace-bound learner artifact is reserved. @example library.storageLimit() */
@@ -1143,11 +1148,17 @@ export class LearningLibrary {
   }
 
   /** Holds the one admission rule for {@link admitsStudy} and {@link saveStudy}: a study already kept is always admitted, a new one only below the limit. @example this.admits(existing, study.id) */
-  private admits(existing: { id: string }[], studyId: string): boolean {
-    return (
-      existing.some((value) => value.id === studyId) ||
-      existing.length < savedStudyLimit(this.capacity())
-    )
+  private async admits(
+    existing: { id: string }[],
+    studyId: string,
+  ): Promise<boolean> {
+    // Updating a study already kept is never a new reservation.
+    if (existing.some((value) => value.id === studyId)) return true
+    const limit = savedStudyLimit(this.capacity())
+    const places = limit - existing.length
+    if (places <= 0) return false
+    // The histories of every kind share the limit: a place is free only while they leave one.
+    return (await this.savedHistoryCount(places)) < places
   }
 
   /**
@@ -1180,7 +1191,7 @@ export class LearningLibrary {
         (await this.optionalStat(checkpoint.recordingDirectory)) === undefined
       )
         throw new StudyRemovedWithItsRecordingError()
-      if (!this.admits(existing, study.id))
+      if (!(await this.admits(existing, study.id)))
         throw new Error(
           fullLibraryMessage(
             'save',

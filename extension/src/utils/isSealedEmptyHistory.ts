@@ -12,20 +12,26 @@ import { systemErrorCode } from './systemErrorCode'
  * The seal's own counts decide, not the journal's size alone: a history whose seal records entries but whose journal is gone or empty is damaged, not empty, and it stays to be read as unavailable with its learning material and header (F251).
  * A folder that holds learning material or understanding marks is never empty: what was saved for the learner stays ({@link holdsLearnerFiles}, F274).
  * @param historyDirectory - The history's folder.
+ * @param sealLimitBytes - The largest seal the profile writes.
+ * @param parseSeal - Parses the profile's seal; it throws for a seal that does not parse.
  * @returns `true` when `sealed.json` is a regular file of at most {@link NODE_TEST_HISTORY_SEAL_LIMIT_BYTES} bytes whose seal records `entryCount` 0 and `journalBytes` 0, `events.jsonl` is empty or absent, and no learner file is present; `false` otherwise, also when a file cannot be inspected or the seal cannot be read or parsed.
  * @example await isSealedEmptyHistory('/…/node-tests.v1/<study id>') // => true for a legacy history sealed with no entry, false for one whose seal records 4 entries but whose journal was lost
  */
-export async function isSealedEmptyHistory(
+export async function isSealedEmptyJournal(
   historyDirectory: string,
+  sealLimitBytes: number,
+  parseSeal: (value: unknown) => {
+    entryCount: number
+    journalBytes: number
+  },
 ): Promise<boolean> {
   const sealPath = join(historyDirectory, 'sealed.json')
   const seal = await lstat(sealPath).catch(() => undefined)
-  if (!seal?.isFile() || seal.size > NODE_TEST_HISTORY_SEAL_LIMIT_BYTES)
-    return false
+  if (!seal?.isFile() || seal.size > sealLimitBytes) return false
   const recorded = await readFile(sealPath, 'utf8').then(
     (text) => {
       try {
-        return nodeTestHistorySealSchema.safeParse(JSON.parse(text))
+        return { success: true as const, data: parseSeal(JSON.parse(text)) }
       } catch {
         return undefined
       }
@@ -46,4 +52,20 @@ export async function isSealedEmptyHistory(
   if (journal !== null && journal?.size !== 0) return false
   // Learning material or understanding marks saved before the first entry stay with their folder (F274).
   return !(await holdsLearnerFiles(historyDirectory))
+}
+
+/**
+ * Tells whether a test history's folder holds a seal that records no entry and no journal byte; the node-test form of {@link isSealedEmptyJournal}, the one the saved-study count and its tests use.
+ * @param historyDirectory - The history's folder.
+ * @returns What {@link isSealedEmptyJournal} answers for the node-test seal.
+ * @example await isSealedEmptyHistory('/…/node-tests.v1/<study id>') // => true for a legacy history sealed with no entry
+ */
+export function isSealedEmptyHistory(
+  historyDirectory: string,
+): Promise<boolean> {
+  return isSealedEmptyJournal(
+    historyDirectory,
+    NODE_TEST_HISTORY_SEAL_LIMIT_BYTES,
+    (value) => nodeTestHistorySealSchema.parse(value),
+  )
 }

@@ -208,6 +208,7 @@ export const nodeTestLearningMaterialSchema = z.strictObject({
   content: nodeTestLearningMaterialContentSchema,
 })
 
+export type NodeTestHistorySeal = z.infer<typeof nodeTestHistorySealSchema>
 export type NodeTestHistoryHeader = z.infer<typeof nodeTestHistoryHeaderSchema>
 export type NodeTestHistoryEntry = z.infer<typeof nodeTestHistoryEntrySchema>
 export type NodeTestHistoryIndex = z.infer<typeof nodeTestHistoryIndexSchema>
