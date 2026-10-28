@@ -138,3 +138,62 @@ test('an understanding choice for a server replay whose folder is gone answers t
     await harness.close()
   }
 })
+
+// protects=a reader-position write held while its server history folder is removed answers that no history has this study id, never the raw rename failure; fails_when=the pending write's ENOENT reaches the learner's errors; no_claim=the understanding choice's own refusal
+test('a held position write of a server replay whose folder is removed meanwhile answers that no history has this study id', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const { header, sequences } = await writeServerHistory(
+      repositoryOf(harness),
+      {
+        workspaceKey: workspaceKeyOf(harness),
+        output: ['listening\n'],
+      },
+    )
+    await openServerReplay(harness, header.studyId)
+    const store = repositoryOf(harness).resolve(header.studyId)!.store
+    const write = store.saveReaderPosition.bind(store)
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let held = false
+    store.saveReaderPosition = async (...args): Promise<void> => {
+      held = true
+      await gate
+      return write(...args)
+    }
+
+    // Act
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: lastView(harness)!.revision,
+      studyId: header.studyId,
+      sequence: sequences.output[0]!,
+    })
+    await waitUntil(() => held, 'the write is held', READER_RESULT_BOUND_MS)
+    await rm(
+      join(
+        harness.service.nodeHistoryStore!.learningDirectory,
+        NODE_SERVER_HISTORY_DIRECTORY,
+        header.studyId,
+      ),
+      { recursive: true, force: true },
+    )
+    release()
+    await waitUntil(
+      () => (lastView(harness)?.errors.length ?? 0) > 0,
+      'the write is refused',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(
+      [...(lastView(harness)?.errors ?? [])],
+      ['Error: No Node history has this study id.'],
+    )
+  } finally {
+    await harness.close()
+  }
+})

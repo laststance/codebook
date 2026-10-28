@@ -1235,11 +1235,18 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
             sequence,
             updatedAt: new Date().toISOString(),
           })
-        await atomicPrivateWrite(
-          join(this.path(studyId), READER_POSITION_FILE),
-          position,
-          NODE_TEST_READER_POSITION_LIMIT_BYTES,
-        )
+        try {
+          await atomicPrivateWrite(
+            join(this.path(studyId), READER_POSITION_FILE),
+            position,
+            NODE_TEST_READER_POSITION_LIMIT_BYTES,
+          )
+        } catch (error) {
+          // A write whose history folder was removed meanwhile (finished or still removing its files) answers the study-id refusal, never the raw rename failure.
+          if (systemErrorCode(error) === 'ENOENT')
+            throw new Error('No Node history has this study id.')
+          throw error
+        }
       })
     this.readerPositionWrites.set(studyId, operation)
     return operation.finally(() => {
