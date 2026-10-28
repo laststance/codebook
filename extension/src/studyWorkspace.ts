@@ -10723,6 +10723,8 @@ export class StudyWorkspace {
         undefined,
         capacity,
         removalAvailability,
+        // The repository is built right after: read at admission time, like the library's counter.
+        (places) => this.nodeHistoryRepository!.countHistories(places),
       )
       this.nodeHistoryRepository = new NodeHistoryRepository(
         this.library.directory,

@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import fsPromises from 'node:fs/promises'
 import { before, test, type TestContext } from 'node:test'
 
 import { SavedStudyStorageFullError } from '../errors'
 import { LearningLibrary } from '../learningLibrary'
+import { RecordingStore } from '../recordingStore'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import {
@@ -165,5 +167,103 @@ for (const code of ['EACCES', 'EMFILE', 'EBUSY']) {
     // Assert
     assert.equal(await window.library.admitsStudy(window.study.id), true)
     assert.equal(await window.library.savedStudyCount(), 1)
+  })
+}
+
+/** A recording store wired to the repository's history count over the window's directory, as the workspace wires it. */
+function recordingStoreOf(
+  window: Awaited<ReturnType<typeof openWindow>>,
+  limit: number,
+) {
+  return new RecordingStore(
+    window.learningDirectory,
+    window.study.workspaceKey,
+    {},
+    undefined,
+    () => limit,
+    () => 'available',
+    (places) => window.repository.countHistories(places),
+  )
+}
+
+/** A binding for a new run of the window's workspace, distinct from the saved study's id. */
+function newRunBinding(window: Awaited<ReturnType<typeof openWindow>>) {
+  const { study } = window
+  const runId = randomUUID()
+  return {
+    workspaceKey: study.workspaceKey,
+    studyId: `${study.instanceId}_${runId}`,
+    instanceId: study.instanceId,
+    runId,
+    runtimeId: randomUUID(),
+    profile: study.profile,
+    sourceBuild: {
+      revision: 'admission-test',
+      dirty: false,
+      sourceHash: '1'.repeat(64),
+    },
+  }
+}
+
+// protects=the run-start check and a recording's start count test and server histories as the save does; fails_when=saved studies plus histories fill the limit and a run is still admitted, to be refused at its save; no_claim=the wording of the refusal
+for (const kind of ['test', 'server'] as const) {
+  test(`with a saved study and a ${kind} history filling the limit, a run is not admitted and a recording does not start`, async (context) => {
+    // Arrange
+    const window = await openWindow(context, 2)
+    await window.library.saveStudy(window.study)
+    const workspaceKey = window.study.workspaceKey
+    if (kind === 'test')
+      await window.repository.testHistories.start(
+        nodeTestHistoryHeader(workspaceKey),
+      )
+    else
+      await window.repository.serverHistories.start(
+        nodeServerHistoryHeader(workspaceKey),
+      )
+    const recordings = recordingStoreOf(window, 2)
+    // The saved study's own recording takes the place the recording library counts.
+    await (
+      await recordings.start(
+        {
+          ...newRunBinding(window),
+          studyId: window.study.id,
+          runId: window.study.runId,
+        },
+        0,
+      )
+    ).finish(1)
+    const binding = newRunBinding(window)
+
+    // Act
+    const admitted = await recordings.admitsStudy(binding.studyId)
+    const start = recordings.start(binding, 0)
+
+    // Assert
+    assert.equal(admitted, false)
+    await assert.rejects(start, /full|limit/i)
+  })
+
+  test(`with one place free beside a ${kind} history, a run is admitted and a recording starts`, async (context) => {
+    // Arrange
+    const window = await openWindow(context, 2)
+    const workspaceKey = window.study.workspaceKey
+    if (kind === 'test')
+      await window.repository.testHistories.start(
+        nodeTestHistoryHeader(workspaceKey),
+      )
+    else
+      await window.repository.serverHistories.start(
+        nodeServerHistoryHeader(workspaceKey),
+      )
+    const recordings = recordingStoreOf(window, 2)
+    const binding = newRunBinding(window)
+
+    // Act
+    const admitted = await recordings.admitsStudy(binding.studyId)
+    const writer = await recordings.start(binding, 0)
+
+    // Assert
+    assert.equal(admitted, true)
+    assert.equal(writer.header.studyId, binding.studyId)
   })
 }
