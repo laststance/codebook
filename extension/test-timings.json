@@ -373,6 +373,9 @@
     "createLinkIfAllowed.test.js": {
       "totalMs": 3
     },
+    "createRootHidingStage.test.js": {
+      "totalMs": 81
+    },
     "crossRuntimeHistory.test.js": {
       "totalMs": 148
     },
@@ -399,6 +402,9 @@
     },
     "cutTextToFit.test.js": {
       "totalMs": 0
+    },
+    "cutTextToLength.test.js": {
+      "totalMs": 83
     },
     "cutTextToTail.test.js": {
       "totalMs": 1
@@ -528,6 +534,9 @@
     },
     "describeNodeRecordedSource.test.js": {
       "totalMs": 6
+    },
+    "describeNodeServerLearningSave.test.js": {
+      "totalMs": 81
     },
     "describeNodeServerReplay.test.js": {
       "totalMs": 36
@@ -1109,7 +1118,7 @@
       "totalMs": 362
     },
     "nodeHistoryPlaybackRecordingEnd.test.js": {
-      "totalMs": 38
+      "totalMs": 82
     },
     "nodeHistorySealCoordinator.test.js": {
       "totalMs": 192
@@ -1122,6 +1131,9 @@
     },
     "nodeLearningSave.test.js": {
       "totalMs": 3
+    },
+    "nodeServerAdmission.test.js": {
+      "totalMs": 2121
     },
     "nodeServerCaptureShapedStop.test.js": {
       "totalMs": 300
@@ -1156,10 +1168,10 @@
       "totalMs": 1909
     },
     "nodeServerHistorySink.test.js": {
-      "totalMs": 530
+      "totalMs": 3522
     },
     "nodeServerHistoryStore.test.js": {
-      "totalMs": 175
+      "totalMs": 298
     },
     "nodeServerHistoryUnreadableEntry.test.js": {
       "totalMs": 211
@@ -1171,10 +1183,10 @@
       "totalMs": 290
     },
     "nodeServerLearningSave.test.js": {
-      "totalMs": 2000
+      "totalMs": 2266
     },
     "nodeServerMcpPublication.test.js": {
-      "totalMs": 1149
+      "totalMs": 1079
     },
     "nodeServerRunHistory.test.js": {
       "totalMs": 203
@@ -1186,13 +1198,19 @@
       "totalMs": 526
     },
     "nodeServerRunSeal.test.js": {
-      "totalMs": 2200
+      "totalMs": 2385
+    },
+    "nodeServerRunVerdicts.test.js": {
+      "totalMs": 5703
     },
     "nodeServerSaveDocs.test.js": {
       "totalMs": 45
     },
     "nodeServerSealPathBound.test.js": {
       "totalMs": 227
+    },
+    "nodeServerSealRetry.test.js": {
+      "totalMs": 194
     },
     "nodeServerStopCitationIndex.test.js": {
       "totalMs": 223
@@ -1355,7 +1373,7 @@
       "totalMs": 18
     },
     "readRepositoryRevision.test.js": {
-      "totalMs": 204
+      "totalMs": 295
     },
     "readVitestPrerequisite.test.js": {
       "totalMs": 10
@@ -1867,6 +1885,9 @@
     },
     "sanitizeCause.test.js": {
       "totalMs": 2
+    },
+    "saveSerializer.test.js": {
+      "totalMs": 77
     },
     "savedLaterNote.test.js": {
       "totalMs": 1
@@ -3039,6 +3060,9 @@
     "studyWorkspaceNodeHistoryAdmission.test.js": {
       "totalMs": 203
     },
+    "studyWorkspaceNodeServer.test.js": {
+      "totalMs": 717
+    },
     "studyWorkspacePixelRetry.test.js": {
       "totalMs": 6036
     },
@@ -3644,10 +3668,10 @@
       "totalMs": 712
     },
     "studyWorkspaceServerOpenFailures.test.js": {
-      "totalMs": 1065
+      "totalMs": 2592
     },
     "studyWorkspaceServerReplay.test.js": {
-      "totalMs": 8875,
+      "totalMs": 8978,
       "tests": {
         "Next and Previous stop visit each hit of a repeated stop and Next event moves on to the output and the response": 1547,
         "Open replay of a sealed server history lands on its first stop with the stored source in the slot and the snapshot in the debugger": 335,
