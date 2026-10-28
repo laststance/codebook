@@ -657,3 +657,32 @@ test('the item says the learning replay will be partial once a write failed whil
   assert.equal(item?.command?.command, 'codebook.saveLearningReplay')
   assert.equal(redraws, 1)
 })
+
+// protects=a history the store no longer holds (deleted by another window after the seal) is never reported as saved from the seal-time summary, and the notice names the missing history; fails_when=Save falls back to the seal-time summary and says Server replay saved though Open replay then fails; no_claim=which window deleted it
+test('Save does not report Server replay saved when the store no longer holds the sealed history', async (context) => {
+  // Arrange
+  const { save, record, run, service, repository, notified } =
+    await saveOverRun(context)
+  await run.sendRequest('k1')
+  run.pauseAt(0)
+  run.pauseAt(1)
+  run.respond()
+  await service.stop({ instanceId: service.instanceId, runId: record.id })
+  assert.equal(
+    record.nodeServer?.history?.sealed?.summary?.verification,
+    'verified',
+  )
+  repository.serverHistories.summarize = () => Promise.resolve(undefined)
+
+  // Act
+  await save.save(record)
+
+  // Assert
+  assert.deepEqual(notified, [
+    {
+      severity: 'warning',
+      text: 'Learning replay could not be saved: The sealed server history is not in the store.',
+      actions: [],
+    },
+  ])
+})

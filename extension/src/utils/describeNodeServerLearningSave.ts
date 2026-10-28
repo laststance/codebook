@@ -80,7 +80,7 @@ export function describeNodeServerLearningSave(
         actions: [NODE_LEARNING_SAVE_ACTION.openReplay],
       }
     case 'failed': {
-      const cause = cutCauseForDisplay(message.cause)
+      const cause = cutCauseForDisplay(stripTerminalControls(message.cause))
       // A failure already worded by the seal ('Learning replay could not be saved: …') is shown as it is, not prefixed twice.
       return {
         text: cause.startsWith(NODE_SERVER_SEAL_FAILURE_PREFIX)

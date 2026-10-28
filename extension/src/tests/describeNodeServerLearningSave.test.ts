@@ -44,3 +44,18 @@ test('a seal failure already worded is not prefixed twice', () => {
     'Learning replay could not be saved: EROFS: read-only.',
   )
 })
+
+// protects=a failed notice prints no terminal or bidi control from the store's cause; fails_when=the raw cause with its controls reaches the notice; no_claim=how the notification renders
+test('the failed notice strips controls from the cause', () => {
+  // Arrange
+  const cause = 'disk\u202E full\u001b[31m now'
+
+  // Act
+  const notice = describeNodeServerLearningSave({ kind: 'failed', cause })
+
+  // Assert
+  assert.equal(
+    notice.text,
+    'Learning replay could not be saved: disk full now.',
+  )
+})

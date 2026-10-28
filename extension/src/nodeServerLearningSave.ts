@@ -50,9 +50,11 @@ export type NodeServerLearningSaveItem = {
   command?: { title: string; command: string; arguments: [string] }
 }
 
-/** What one read of the sealed summary answered: the summary (`undefined` when none exists) or what the read threw. */
+/** What one read of the sealed summary answered: the summary (`undefined` when the store holds no such history), what the read threw, or that no store is attached to read. */
 type SummaryRead =
-  { summary: NodeServerHistorySummary | undefined } | { rejected: unknown }
+  | { summary: NodeServerHistorySummary | undefined }
+  | { rejected: unknown }
+  | { noStore: true }
 
 /** Where one server run's Save stands, keyed by its study id. */
 type SaveState =
@@ -256,7 +258,7 @@ export class NodeServerLearningSave {
 
   /**
    * Reads the history's current summary and checks it is verified, the way {@link NodeLearningSave} does for a test run.
-   * The store is read first, so material another window saved during or after the seal counts; the seal-time summary answers only when that read timed out or found nothing.
+   * The store is read first, so material another window saved during or after the seal counts; the seal-time summary answers only when that read timed out or no store is attached.
    * @param studyId - The history's study id.
    * @param sealTimeSummary - The summary the seal read, if it could.
    * @returns The verified summary, or the cause Save shows: the read's own error, the summary's reason, the missing history, or the bound that passed (Save never waits past it, so another run's Save stays free).
@@ -270,7 +272,8 @@ export class NodeServerLearningSave {
     const read = await this.readSummaryWithin(studyId, boundMs)
     if (read && 'rejected' in read)
       return { cause: this.causeOf(read.rejected) }
-    const summary = read?.summary ?? sealTimeSummary
+    // The seal-time summary stands in only when the store could not answer (timed out, or none attached); an answer that the history is gone is not overridden by it.
+    const summary = read && 'summary' in read ? read.summary : sealTimeSummary
     if (summary?.verification === 'verified') return { summary }
     if (read || sealTimeSummary)
       return {
@@ -347,7 +350,7 @@ export class NodeServerLearningSave {
    * Reads the sealed history's summary from the store for at most `boundMs`.
    * @param studyId - The history's study id.
    * @param boundMs - How long Save waits.
-   * @returns `{ summary }` (the summary, or `undefined` when the store holds none or none is attached), `{ rejected }` with what a failed read threw, or `undefined` when the read outlived its bound.
+   * @returns `{ summary }` (the summary, or `undefined` when the store holds no such history), `{ rejected }` with what a failed read threw, `{ noStore }` when no store is attached, or `undefined` when the read outlived its bound.
    */
   private async readSummaryWithin(
     studyId: string,
@@ -357,7 +360,7 @@ export class NodeServerLearningSave {
     let reading = this.summaryReads.get(studyId)
     if (!reading) {
       const started = this.host.store()?.summarize(studyId)
-      if (!started) return { summary: undefined }
+      if (!started) return { noStore: true }
       reading = started.then(
         (summary): SummaryRead => ({ summary }),
         (rejected: unknown): SummaryRead => ({ rejected }),
