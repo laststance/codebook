@@ -140,22 +140,22 @@ export class NodeServerHistoryRecorder {
     this.sink.flush()
     let timer: ReturnType<typeof setTimeout> | undefined
     const expired = Symbol('expired')
+    const deadline = new Promise<typeof expired>((resolve) => {
+      timer = setTimeout(() => resolve(expired), boundMs)
+      timer.unref()
+    })
     try {
-      const hash = await Promise.race([
-        this.sealWithRetry(end),
-        new Promise<typeof expired>((resolve) => {
-          timer = setTimeout(() => resolve(expired), boundMs)
-          timer.unref()
-        }),
-      ])
+      const hash = await Promise.race([this.sealWithRetry(end), deadline])
       if (hash === expired) {
         this.abandon(describeNodeServerSealTimeout(boundMs / 1_000))
         return
       }
       this.status = 'sealed'
-      const summary = await this.input
-        .summarize(this.writer.header.studyId)
-        .catch(() => undefined)
+      // The summary read shares the seal's bound: past it the seal stands and the summary reads as unknown, so a stalled read never holds Stop, Save or the next run.
+      const summary = await Promise.race([
+        this.input.summarize(this.writer.header.studyId).catch(() => undefined),
+        deadline.then(() => undefined),
+      ])
       this.sealed = { summary, hash }
     } catch (error) {
       this.abandon(

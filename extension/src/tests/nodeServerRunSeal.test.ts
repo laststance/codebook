@@ -270,3 +270,39 @@ test('a verdict refresh without a history repository keeps the sealed summary', 
   // Assert
   assert.equal(sealed.summary, kept)
 })
+
+// protects=a stop whose seal published but whose summary read never settles still ends within the seal bound, sealed with an unknown summary, so Save, codebook_stop and the next run are not held; fails_when=the seal waits on the summary read past its bound; why_new=Codex structured and adversarial reviews (ship pass 1) reproduced the unbounded read; seam=none; no_claim=which file system stalls
+test('a seal whose summary read never settles still ends the stop within its bound and reads sealed', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { service, record, run, repository } = await startHistoryServerRun(
+    harness,
+    context,
+  )
+  service.nodeServerHistorySealBoundMs = 1_000
+  await run.sendRequest('k1')
+  run.respond()
+  repository.serverHistories.summarize = () =>
+    new Promise<never>(() => undefined)
+
+  // Act
+  const stopping = service.stop({
+    instanceId: service.instanceId,
+    runId: record.id,
+  })
+  let guard: ReturnType<typeof setTimeout> | undefined
+  const outcome = await Promise.race([
+    stopping.then(() => 'stopped'),
+    // gstack-timing-ok: the seal's bound is the contract; a stop still pending 5 s after a 1 s bound waits on the summary read (the real writer seal fits the bound under load)
+    new Promise<string>((resolve) => {
+      guard = setTimeout(() => resolve('still stopping'), 5_000)
+    }),
+  ])
+  clearTimeout(guard)
+
+  // Assert
+  assert.equal(outcome, 'stopped')
+  assert.equal(record.nodeServer?.history?.status, 'sealed')
+  assert.equal(record.nodeServer?.history?.sealed?.summary, undefined)
+})
