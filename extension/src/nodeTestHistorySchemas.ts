@@ -149,56 +149,75 @@ const nodeLearningReferenceSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({ type: z.literal('result'), sequence: base.sequence }),
 ])
-export const nodeTestLearningMaterialContentSchema = z
-  .strictObject({
-    question: z.string().min(1).max(MAX_EXPLANATION_CHARS),
-    title: z.string().min(1).max(LEARNING_SUMMARY_LIMITS.titleChars),
-    summary: z.string().min(1).max(MAX_EXPLANATION_CHARS),
-    participants: z
-      .array(
-        z.strictObject({
-          id: nodeLearningStepIdSchema,
-          label: z
-            .string()
-            .min(1)
-            .max(LEARNING_SUMMARY_LIMITS.participantLabelChars),
-        }),
-      )
-      .min(1)
-      .max(LEARNING_SUMMARY_LIMITS.participants),
-    steps: z
-      .array(
-        z.strictObject({
-          id: nodeLearningStepIdSchema,
-          from: nodeLearningStepIdSchema,
-          to: nodeLearningStepIdSchema,
-          label: z.string().min(1).max(LEARNING_SUMMARY_LIMITS.stepLabelChars),
-          explanation: z.string().min(1).max(MAX_EXPLANATION_CHARS),
-          evidence: z.enum(['observed', 'source-derived', 'unknown']),
-          reference: nodeLearningReferenceSchema
-            .optional()
-            .describe(
-              'Required for an observed or source-derived step: a stop, an output or the result of this history by its sequence number (a stop with its sourceHash, an output with its channel); omit it only for an unknown step.',
-            ),
-        }),
-      )
-      .min(1)
-      .max(LEARNING_SUMMARY_LIMITS.steps),
-  })
-  .superRefine((value, context) => {
-    // Each broken rule is its own issue at the offending element, as for a configured learning summary.
-    for (const issue of learningSummaryIssues(
-      value,
-      'content',
-      'Give it the reference of a stop, an output or the result of this history ({type, sequence}, with sourceHash for a stop and channel for an output), or label it unknown.',
-    ))
-      context.addIssue({ code: 'custom', ...issue })
-  })
-  .refine(
-    (value) =>
-      Buffer.byteLength(JSON.stringify(value), 'utf8') <=
-      LEARNING_SUMMARY_LIMITS.bytes,
-    'Node learning material exceeds its total byte limit.',
+/**
+ * Builds a learning material's content schema around the references one history profile lets a step cite: the question, title, summary, participants and evidence-classified steps are the same for every profile.
+ * Called for the node-test profile here and for the node-server profile by {@link nodeServerLearningMaterialContentSchema}.
+ * @param reference - The profile's step reference schema.
+ * @param referenceDescription - The sentence the published tool schema carries for a step's `reference`.
+ * @param referenceHint - What a step without a reference is told to give.
+ * @returns The content schema.
+ * @example const schema = buildNodeLearningMaterialContentSchema(nodeLearningReferenceSchema, 'Required for …', 'Give it the reference …')
+ */
+export function buildNodeLearningMaterialContentSchema<
+  Reference extends z.ZodType,
+>(reference: Reference, referenceDescription: string, referenceHint: string) {
+  return z
+    .strictObject({
+      question: z.string().min(1).max(MAX_EXPLANATION_CHARS),
+      title: z.string().min(1).max(LEARNING_SUMMARY_LIMITS.titleChars),
+      summary: z.string().min(1).max(MAX_EXPLANATION_CHARS),
+      participants: z
+        .array(
+          z.strictObject({
+            id: nodeLearningStepIdSchema,
+            label: z
+              .string()
+              .min(1)
+              .max(LEARNING_SUMMARY_LIMITS.participantLabelChars),
+          }),
+        )
+        .min(1)
+        .max(LEARNING_SUMMARY_LIMITS.participants),
+      steps: z
+        .array(
+          z.strictObject({
+            id: nodeLearningStepIdSchema,
+            from: nodeLearningStepIdSchema,
+            to: nodeLearningStepIdSchema,
+            label: z
+              .string()
+              .min(1)
+              .max(LEARNING_SUMMARY_LIMITS.stepLabelChars),
+            explanation: z.string().min(1).max(MAX_EXPLANATION_CHARS),
+            evidence: z.enum(['observed', 'source-derived', 'unknown']),
+            reference: reference.optional().describe(referenceDescription),
+          }),
+        )
+        .min(1)
+        .max(LEARNING_SUMMARY_LIMITS.steps),
+    })
+    .superRefine((value, context) => {
+      // Each broken rule is its own issue at the offending element, as for a configured learning summary.
+      for (const issue of learningSummaryIssues(
+        value,
+        'content',
+        referenceHint,
+      ))
+        context.addIssue({ code: 'custom', ...issue })
+    })
+    .refine(
+      (value) =>
+        Buffer.byteLength(JSON.stringify(value), 'utf8') <=
+        LEARNING_SUMMARY_LIMITS.bytes,
+      'Node learning material exceeds its total byte limit.',
+    )
+}
+
+export const nodeTestLearningMaterialContentSchema =
+  buildNodeLearningMaterialContentSchema(
+    nodeLearningReferenceSchema,
+    'Required for an observed or source-derived step: a stop, an output or the result of this history by its sequence number (a stop with its sourceHash, an output with its channel); omit it only for an unknown step.',
+    'Give it the reference of a stop, an output or the result of this history ({type, sequence}, with sourceHash for a stop and channel for an output), or label it unknown.',
   )
 export const nodeTestLearningMaterialSchema = z.strictObject({
   version: z.literal(NODE_TEST_LEARNING_MATERIAL_VERSION),

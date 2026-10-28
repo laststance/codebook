@@ -19,6 +19,9 @@ export type CitableEvent =
   | { type: 'stop'; sourceHash: string; path: string; line: number }
   | { type: 'output'; channel: 'stdout' | 'stderr' }
   | { type: 'result' }
+  | { type: 'request' }
+  | { type: 'response' }
+  | { type: 'request-failed' }
 
 /** What the journal's ordering rules have accepted so far; the same rules verify a whole journal ({@link NodeTestHistoryStore.read}) and each appended part of one still being written ({@link advanceRecordingScan}). */
 export type JournalProgress = {

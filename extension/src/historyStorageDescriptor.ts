@@ -1,3 +1,4 @@
+import type { CitationReference } from './utils/assertNodeLearningCitations'
 import type { NodeLearningNeeds } from './utils/listMissingNodeExplanations'
 import type { CitableEvent } from './utils/recordingJournalScan'
 
@@ -39,13 +40,25 @@ export type HistorySummaryBase = {
   verification: 'verified' | 'unavailable'
 }
 
-/** The five types one profile fixes: what a store with its descriptor reads and writes. */
+/** The fields every saved learning material has, whatever its profile. */
+export type HistoryMaterialBase = {
+  studyId: string
+  revision: number
+  updatedAt: string
+  content: { steps: readonly { id: string; reference?: CitationReference }[] }
+}
+
+/** The types one profile fixes: what a store with its descriptor reads and writes. */
 export type HistoryTypes = {
   Header: HistoryHeaderBase
   Entry: HistoryEntryBase
   Seal: HistorySealBase
   Progress: unknown
   Summary: HistorySummaryBase
+  /** The learning material the chat saves for a history of this profile. */
+  Material: HistoryMaterialBase
+  /** The content of that material, as the save route offers it. */
+  MaterialContent: HistoryMaterialBase['content']
   /** The writer class a store of this profile hands to its caller. */
   Writer: object
 }
@@ -105,6 +118,27 @@ export type HistoryScanRules<Types extends HistoryTypes> = {
   keeps(entry: Types['Entry']): boolean
 }
 
+/** What a store asks of a profile to keep the chat's learning material beside its journal. */
+export type HistoryLearningMaterialCodec<Types extends HistoryTypes> = {
+  /** Parses a saved material file. @throws When it does not parse. */
+  parseMaterial(value: unknown): Types['Material']
+  /** Parses the content an agent offers. @throws When it does not parse; the refusal names the offending element. */
+  parseContent(value: unknown): Types['MaterialContent']
+  /** Builds the saved material of a content at its revision. */
+  buildMaterial(input: {
+    studyId: string
+    revision: number
+    updatedAt: string
+    content: Types['MaterialContent']
+  }): Types['Material']
+  /** Refuses a content whose step cites what the journal does not hold. @throws An `INVALID_REFERENCE` error. */
+  assertCitations(
+    content: Types['MaterialContent'],
+    citable: ReadonlyMap<number, CitableEvent>,
+    lead?: (stepId: string) => string,
+  ): void
+}
+
 /**
  * One storage descriptor per history profile: its folder, codec and validation, order rules, journal-scan rules, seal evaluator and summary. The store is generic over it, so a later execution form adds a descriptor instead of branches. It never imports UI: the UI adapter of a profile (text catalog, learner events, accessible words) is separate.
  * Passed to {@link NodeTestHistoryStore}; the default is {@link nodeTestStorageDescriptor}.
@@ -140,8 +174,8 @@ export type HistoryStorageDescriptor<Types extends HistoryTypes> = {
     progress: Types['Progress']
     hasIncompleteLine: boolean
   }): void
-  /** Whether this profile keeps learning material in pt1's store (test histories do; server histories gain it with the MCP release). */
-  readonly supportsLearningMaterial: boolean
+  /** How this profile's learning material is parsed, built and checked against the journal. */
+  readonly learningMaterial: HistoryLearningMaterialCodec<Types>
   emptySummary(header: Types['Header']): Types['Summary']
   /** Counts a verified history into a summary. */
   summarize(input: {
@@ -149,14 +183,14 @@ export type HistoryStorageDescriptor<Types extends HistoryTypes> = {
       HistoryIndexOf<Types>,
       'header' | 'entries' | 'status' | 'reason' | 'seal'
     >
-    materialContent?: unknown
+    materialContent?: Types['MaterialContent']
     materialRevision?: number
   }): { summary: Types['Summary']; needs?: NodeLearningNeeds }
   /** Re-counts a summary against a changed learning material without reading the journal; only a profile that keeps learning material has it. */
   applyMaterial?(input: {
     summary: Types['Summary']
     needs: NodeLearningNeeds
-    materialContent?: unknown
+    materialContent?: Types['MaterialContent']
     materialRevision: number
   }): Types['Summary']
 }
