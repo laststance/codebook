@@ -51,6 +51,9 @@
     "canJudgeOwnerHere.test.js": {
       "totalMs": 1
     },
+    "captureProcessOutput.test.js": {
+      "totalMs": 43
+    },
     "capturedSourceNotShownReason.test.js": {
       "totalMs": 1
     },
@@ -377,7 +380,7 @@
       "totalMs": 3
     },
     "createRootHidingStage.test.js": {
-      "totalMs": 89
+      "totalMs": 62
     },
     "crossRuntimeHistory.test.js": {
       "totalMs": 148
@@ -663,6 +666,9 @@
     },
     "fullLibraryMessage.test.js": {
       "totalMs": 1
+    },
+    "gitEnvironmentWithoutInherited.test.js": {
+      "totalMs": 33
     },
     "gitExecutablePath.test.js": {
       "totalMs": 1
@@ -1171,13 +1177,13 @@
       "totalMs": 2706
     },
     "nodeServerHistoryRootWiring.test.js": {
-      "totalMs": 229
+      "totalMs": 424
     },
     "nodeServerHistorySeal.test.js": {
       "totalMs": 1909
     },
     "nodeServerHistorySink.test.js": {
-      "totalMs": 4902
+      "totalMs": 4441
     },
     "nodeServerHistoryStore.test.js": {
       "totalMs": 298
@@ -1189,10 +1195,10 @@
       "totalMs": 590
     },
     "nodeServerHistoryWriterStates.test.js": {
-      "totalMs": 290
+      "totalMs": 347
     },
     "nodeServerLearningSave.test.js": {
-      "totalMs": 2266
+      "totalMs": 2384
     },
     "nodeServerMcpPublication.test.js": {
       "totalMs": 1079
