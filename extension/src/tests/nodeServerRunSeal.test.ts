@@ -306,3 +306,40 @@ test('a seal whose summary read never settles still ends the stop within its bou
   assert.equal(record.nodeServer?.history?.status, 'sealed')
   assert.equal(record.nodeServer?.history?.sealed?.summary, undefined)
 })
+
+// protects=a seal whose summary read rejects keeps the history sealed with an unknown summary and leaves one trace in the diagnostics; fails_when=the rejection abandons the sealed history, fails the stop, or leaves no trace; why_new=untested cell of the seal machine and the silent summary loss (ship pass 2, state-machines and native adversarial); seam=none; no_claim=which read error occurs
+test('a seal whose summary read rejects stays sealed with an unknown summary and writes one diagnostic', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { service, record, run, repository } = await startHistoryServerRun(
+    harness,
+    context,
+  )
+  const diagnostics: CodebookDiagnostic[] = []
+  service.diagnostics = (entry) => diagnostics.push(entry)
+  await run.sendRequest('k1')
+  run.respond()
+  repository.serverHistories.summarize = () =>
+    Promise.reject(new Error('EIO: read failed'))
+
+  // Act
+  await service.stop({ instanceId: service.instanceId, runId: record.id })
+
+  // Assert
+  assert.equal(record.nodeServer?.history?.status, 'sealed')
+  assert.equal(record.nodeServer?.history?.sealed?.summary, undefined)
+  assert.deepEqual(
+    diagnostics.map((entry) => ({
+      surface: entry.surface,
+      cause: entry.cause,
+    })),
+    [
+      {
+        surface: 'HISTORY_SUMMARY_UNAVAILABLE',
+        cause:
+          'The sealed history was kept, but its summary could not be read within the seal bound; the run resource reads it again.',
+      },
+    ],
+  )
+})

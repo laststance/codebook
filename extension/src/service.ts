@@ -4920,6 +4920,17 @@ export class StudyService {
       }),
       this.nodeServerHistorySealBoundMs,
     )
+    // A sealed history whose summary could not be read (failed, or past the seal's bound) leaves a trace in Output › Codebook; the run resource reads it again later.
+    if (history.status === 'sealed' && !history.sealed?.summary) {
+      const cause =
+        'The sealed history was kept, but its summary could not be read within the seal bound; the run resource reads it again.'
+      this.diagnose(
+        'HISTORY_SUMMARY_UNAVAILABLE',
+        record,
+        new Error(cause),
+        cause,
+      )
+    }
   }
 
   /**
