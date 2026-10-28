@@ -357,8 +357,7 @@ import {
   type NodeTestSectionInput,
 } from './utils/projectNodeTestSection'
 import { projectPlaybackStudy } from './utils/projectPlaybackStudy'
-import { projectServerApplication } from './utils/projectServerApplication'
-import { projectServerSection } from './utils/projectServerSection'
+import { projectServerReplayViews } from './utils/projectServerReplayViews'
 import { pruneClosedTabRecord } from './utils/pruneClosedTabRecord'
 import { readNodeTestOutputReport } from './utils/readNodeTestOutputReport'
 import {
@@ -13620,8 +13619,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Projects a selected server replay's three views for the Study message with the server catalog, reading the replay model instead of the test journal; called by {@link nodeHistoryViews} for a history that is a server replay's test-shaped view.
-   * The Application view is projected once per shown moment, as a test replay's is, and a moment the selection is going to names the Study position and the Application header while it loads (D29).
+   * Projects a selected server replay's three views for the Study message; called by {@link nodeHistoryViews} for a history that is a server replay's test-shaped view, which hands the projection to {@link projectServerReplayViews} with this workspace's state.
    * @param replay - The selected server replay.
    * @param selected - The selected event in the replay's test-shaped history.
    * @returns The Application view, the Study section and the learning material for the one summary renderer.
@@ -13636,66 +13634,21 @@ export class StudyWorkspace {
     | 'nodeHistorySection'
     | 'nodeHistoryLearningSummary'
   > {
-    const { shownModel: model, history } = replay
-    const eventAt = (sequence: number | undefined) => {
-      const position =
-        sequence === undefined ? undefined : model.indexBySequence.get(sequence)
-      return position === undefined ? undefined : model.events[position]
-    }
-    const leavingPosition = this.leavingNodeHistoryPosition(history)
-    const pendingEvent =
-      leavingPosition === undefined ? undefined : model.events[leavingPosition]
-    const selectedEvent = eventAt(selected?.sequence)
-    const opening =
-      this.pendingNodeHistory !== undefined &&
-      this.pendingNodeHistoryStudyId === model.studyId
-    const key = JSON.stringify([
-      model.studyId,
-      model.events.length,
-      model.status,
-      selectedEvent?.sequence,
-      opening,
-      pendingEvent !== undefined,
-    ])
-    if (this.nodeHistoryApplicationMemo?.key !== key) {
-      const generation = ++this.nodeHistoryApplicationGeneration
-      this.nodeHistoryApplicationMemo = {
-        key,
-        generation,
-        view: projectServerApplication(
-          model,
-          replay.outputIndex,
-          selectedEvent,
-          {
-            generation,
-            loading: opening,
-            leaving: pendingEvent !== undefined,
-            ...(model.endedBeforeAnswer && replay.noResponseReason
-              ? { noResponseReason: replay.noResponseReason }
-              : {}),
-          },
-        ),
-      }
-    }
-    const learning = projectNodeLearningSummary(
-      this.selectedNodeHistoryLearningMaterial,
-      history,
-    )
-    return {
-      nodeHistoryApplication: this.nodeHistoryApplicationMemo.view,
-      nodeHistorySection: projectServerSection({
-        replay,
-        ...(pendingEvent
-          ? { selected: pendingEvent, pending: true }
-          : selectedEvent
-            ? { selected: selectedEvent }
-            : {}),
-        selectedStopVerified:
-          selected?.type === 'stop' && nodeStopSourceMatches(selected),
-        ...this.replaySectionContext(history, learning),
-      }),
-      ...(learning ? { nodeHistoryLearningSummary: learning } : {}),
-    }
+    const { views, memo } = projectServerReplayViews({
+      replay,
+      selected,
+      leavingPosition: this.leavingNodeHistoryPosition(replay.history),
+      opening:
+        this.pendingNodeHistory !== undefined &&
+        this.pendingNodeHistoryStudyId === replay.shownModel.studyId,
+      memo: this.nodeHistoryApplicationMemo,
+      nextGeneration: () => ++this.nodeHistoryApplicationGeneration,
+      learningMaterial: this.selectedNodeHistoryLearningMaterial,
+      sectionContext: (learning) =>
+        this.replaySectionContext(replay.history, learning),
+    })
+    this.nodeHistoryApplicationMemo = memo
+    return views
   }
 
   /**
