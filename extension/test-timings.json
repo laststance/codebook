@@ -838,6 +838,9 @@
     "managedProfileRoot.test.js": {
       "totalMs": 1
     },
+    "maskNodeServerRequest.test.js": {
+      "totalMs": 1
+    },
     "maximizedEditorAreaWidthPx.test.js": {
       "totalMs": 1
     },
@@ -1081,8 +1084,14 @@
     "nextNodeHistoryStepId.test.js": {
       "totalMs": 1
     },
+    "nodeHistoryAdmission.test.js": {
+      "totalMs": 159
+    },
     "nodeHistoryPlaybackController.test.js": {
       "totalMs": 362
+    },
+    "nodeHistorySealCoordinator.test.js": {
+      "totalMs": 192
     },
     "nodeHistoryStepTarget.test.js": {
       "totalMs": 1
@@ -1092,6 +1101,26 @@
     },
     "nodeLearningSave.test.js": {
       "totalMs": 3
+    },
+    "nodeServerHistoryBounds.test.js": {
+      "totalMs": 19644,
+      "tests": {
+        "output past 2,000 entries is dropped with one output-truncated entry while the stop and the response are still written": 11660,
+        "output past its 2 MiB byte budget is dropped with one output-truncated entry": 2760,
+        "output offered in one turn past the 1,000-entry queue is dropped under the same code and the structural entries still wait their turn": 5224
+      }
+    },
+    "nodeServerHistoryJournalIntegrity.test.js": {
+      "totalMs": 434
+    },
+    "nodeServerHistorySeal.test.js": {
+      "totalMs": 1909
+    },
+    "nodeServerHistoryStore.test.js": {
+      "totalMs": 175
+    },
+    "nodeServerHistoryWriter.test.js": {
+      "totalMs": 590
     },
     "nodeStopSourceMatches.test.js": {
       "totalMs": 189
@@ -1107,6 +1136,9 @@
     },
     "nodeTestHistorySummary.test.js": {
       "totalMs": 343
+    },
+    "nodeTestHistoryV0253Compatibility.test.js": {
+      "totalMs": 12
     },
     "nodeTestOutputTerminal.test.js": {
       "totalMs": 2
