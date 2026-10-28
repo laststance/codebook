@@ -281,3 +281,24 @@ test('a redaction canary planted in output and the response location appears in 
   assert.doesNotMatch(answers, /canarycanary123456/)
   assert.match(answers, /Bearer \[masked\]/)
 })
+
+// protects=the help for a truncated server output says the history reads partial with stops and response kept, not that no action is needed; fails_when=the help or its action drops the partial reading; no_claim=the help's other codes
+test('the node-server save help tells that truncated output makes the history read partial', () => {
+  // Arrange
+  const { save } = nodeServerHelp()
+
+  // Act
+  const entry = save.codes.find(
+    (code) => code.code === 'SERVER_HISTORY_OUTPUT_TRUNCATED',
+  )
+
+  // Assert
+  assert.equal(
+    entry?.meaning,
+    'The server printed more output than the history keeps; later output was dropped, so the history reads partial.',
+  )
+  assert.equal(
+    entry?.action,
+    'The stops and the response are kept. Tell the learner the replay reads partial because of the output; start a new run with a quieter server only if the dropped output matters.',
+  )
+})

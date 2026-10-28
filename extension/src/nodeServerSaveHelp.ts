@@ -75,9 +75,9 @@ const NODE_SERVER_SAVE_CODE_HELP: readonly {
   {
     code: CODES.outputTruncated,
     meaning:
-      'The server printed more output than the history keeps; later output was dropped.',
+      'The server printed more output than the history keeps; later output was dropped, so the history reads partial.',
     action:
-      'The stops and the response are unaffected; no action is needed unless the output matters.',
+      'The stops and the response are kept. Tell the learner the replay reads partial because of the output; start a new run with a quieter server only if the dropped output matters.',
   },
 ]
 
