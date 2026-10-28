@@ -33,6 +33,7 @@ import {
 import { maskSecretQueryValues } from './utils/maskSecretQueryValues'
 import {
   acceptNodeServerEntry,
+  cloneNodeServerJournalProgress,
   newNodeServerJournalProgress,
 } from './utils/nodeServerJournalRules'
 
@@ -55,12 +56,23 @@ class NodeServerWriterRules implements HistoryWriterRules<NodeServerHistoryTypes
   }
 
   check(entry: NodeServerHistoryEntry): void {
-    // The same function the incremental scan and the full read call.
-    acceptNodeServerEntry(this.progress, entry, this.header)
+    // The same function the incremental scan and the full read call, tried on a copy: an entry that is then refused or never becomes durable changes nothing.
+    acceptNodeServerEntry(
+      cloneNodeServerJournalProgress(this.progress),
+      entry,
+      this.header,
+    )
   }
 
   commit(entry: NodeServerHistoryEntry): void {
+    // The line is durable: the rules now count the entry.
+    acceptNodeServerEntry(this.progress, entry, this.header)
     this.lastEntry = entry
+  }
+
+  /** The time of the last durable entry, the earliest an `end` may carry. */
+  get lastElapsedMs(): number {
+    return this.progress.lastElapsedMs
   }
 
   /** A server history with no request holds nothing to replay. */
@@ -159,6 +171,10 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
   private pendingEntries = 0
   private pendingBytes = 0
   private sealOperation?: Promise<string | undefined>
+  /** The one write of `end`, kept so a retried seal never writes it twice. */
+  private endOperation?: Promise<void>
+  /** Set in the turn the seal began: from then on the writer is closed to new appends while the accepted ones drain. */
+  private closedToAppends = false
 
   constructor(
     directory: string,
@@ -178,6 +194,8 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
    * @example await writer.appendEntry({ type: 'request-sent', elapsedMs: 3, attempt: 1 })
    */
   appendEntry(input: NodeServerHistoryEntryInput): Promise<void> {
+    // Closed to new appends from the moment the seal began: the entry is not written and is no failure, so a run that ended cleanly still seals complete.
+    if (this.closedToAppends) return Promise.resolve()
     const bytes = estimateLineBytes(input)
     this.acceptedEntries++
     this.acceptedBytes += bytes
@@ -365,26 +383,44 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
   }
 
   /**
-   * Ends and seals the history: the entries accepted so far are written, then `end`, then `sealed.json`; Stop, Save, dispose, self-exit and failure all call it and share one seal.
-   * An `end` that cannot be written (the history already failed) does not stop the seal: a history without `end` seals as a partial one.
+   * Ends and seals the history: from this call the writer is closed to new appends (an entry offered later is not written and is no failure), the entries accepted before it are written, then `end`, then `sealed.json`; Stop, Save, dispose, self-exit and failure all call it and share one seal.
+   * `end` is written once: a retry after a failed `sealed.json` write only retries the finish. An `end` that cannot be written (the history already failed) does not stop the seal: a history without `end` seals as a partial one.
    * @param end - How the run ended.
-   * @returns The sealed journal's hash; `undefined` for a writer abandoned before.
-   * @throws When the seal cannot be written or was abandoned before it was published.
+   * @returns The sealed journal's hash; `undefined` for a writer abandoned before the call.
+   * @throws When the seal cannot be written or the writer is abandoned while the seal is in flight.
    * @example await writer.seal({ elapsedMs: 900, reason: 'stopped' })
    */
   // Consumed by the run's history sink (Cycle 0059 pt3); pt1 has no producer yet.
   // fallow-ignore-next-line unused-class-member
   seal(end: NodeServerEndInput): Promise<string | undefined> {
     if (this.sealOperation) return this.sealOperation
-    // The end is queued in this turn, behind every entry accepted before it.
-    const endWritten = this.appendEntry({ type: 'end', ...end }).catch(
+    // Decided in this turn, before any later append is offered.
+    this.closedToAppends = true
+    // The end is queued in this turn, behind every entry accepted before it, through the base door that the closed flag does not shut.
+    this.endOperation ??= this.append({ type: 'end', ...end }).catch(
       () => undefined,
     )
-    this.sealOperation = endWritten.then(() => this.finish('partial'))
+    this.sealOperation = this.endOperation.then(() => super.finish('partial'))
     // A failed seal may be tried again.
     this.sealOperation.catch(() => {
       this.sealOperation = undefined
     })
     return this.sealOperation
+  }
+
+  /**
+   * Seals through {@link seal}, so no server `sealed.json` is ever written without its `end`, which the read path would refuse. The status and reason are decided by the evidence, so the `status` and `reason` arguments are ignored; the `end` says the run was stopped, at the time of the last durable entry.
+   * @returns The sealed journal's hash; `undefined` for a writer abandoned before the call.
+   * @throws When the seal cannot be written or the writer is abandoned while it is in flight.
+   * @example await writer.finish('partial')
+   */
+  override finish(
+    _status?: 'complete' | 'partial',
+    _reason?: string,
+  ): Promise<string | undefined> {
+    return this.seal({
+      elapsedMs: this.serverRules.lastElapsedMs,
+      reason: 'stopped',
+    })
   }
 }

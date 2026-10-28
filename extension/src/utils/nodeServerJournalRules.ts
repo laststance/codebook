@@ -46,6 +46,22 @@ export function newNodeServerJournalProgress(): NodeServerJournalProgress {
 }
 
 /**
+ * Copies a progress so a rule can be tried on the copy; the writer's `check` validates on a copy and applies the entry to its own progress only once the line is durable.
+ * @param progress - The progress to copy.
+ * @returns An independent progress with the same state.
+ * @example const trial = cloneNodeServerJournalProgress(progress)
+ */
+export function cloneNodeServerJournalProgress(
+  progress: NodeServerJournalProgress,
+): NodeServerJournalProgress {
+  return {
+    ...progress,
+    hitsByStop: new Map(progress.hitsByStop),
+    sources: new Set(progress.sources),
+  }
+}
+
+/**
  * Names a source by its path and hash, the identity under which a `source` entry is written once.
  * @param path - The repository-relative path.
  * @param hash - The SHA-256 of the file's text.

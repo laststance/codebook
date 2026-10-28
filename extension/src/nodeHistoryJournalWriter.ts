@@ -61,8 +61,8 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
    * The profile's rules decide whether `complete` is honest; a repeated or concurrent call joins the first one, so Save, Stop and a self-exit at once give one seal.
    * @param status - `complete` for evidence the caller verified as whole, else `partial`.
    * @param reason - Why a partial history ended.
-   * @returns The SHA-256 of the sealed journal, the run's `recording.contextHash`; `undefined` for a writer that was abandoned before.
-   * @throws When the profile refuses `complete`, the journal holds bytes no entry confirmed, the seal cannot be written, or the writer was abandoned before the seal was published.
+   * @returns The SHA-256 of the sealed journal, the run's `recording.contextHash`; `undefined` when the writer was abandoned before the call (nothing is sealed, nothing throws).
+   * @throws When the profile refuses `complete`, the journal holds bytes no entry confirmed, the seal cannot be written, or the writer is abandoned while this seal is in flight (a `sealed.json` it already published is removed again).
    * @example await writer.finish('partial', 'Cancelled by the learner.') // => 'a3f…'
    */
   finish(
@@ -124,6 +124,13 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
             )
         },
       )
+      // An abandon that landed during the publish itself: the folder was reported interrupted, so the file just published goes again.
+      if (this.abandoned) {
+        await rm(join(this.directory, HISTORY_SEAL_FILE), { force: true })
+        throw new Error(
+          'Node history seal was abandoned before it was published.',
+        )
+      }
       this.sealedHash = seal.journalHash
       this.closed = true
       // The seal is published first: another window never finds neither the seal nor the record.

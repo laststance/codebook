@@ -11,6 +11,7 @@ import {
   nodeServerHistoryHeader,
   openServerRepository,
   SERVER_WORKSPACE_KEY,
+  serverStopCapture,
 } from './utils/nodeServerHistoryFixture'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 import { realProcessStart } from './utils/realProcessStart'
@@ -244,4 +245,193 @@ test('three seals requested in one turn publish one sealed.json and return one h
   assert.equal(publishedSeals.length, 1)
   const opened = await repository.serverHistories.read(header.studyId)
   assert.equal(opened.entries.filter((entry) => entry.type === 'end').length, 1)
+})
+
+/** Writes the request, its sent mark, one stop hit and the response of a one-stop server run: everything but its seal. */
+async function writeWholeServerRun(
+  writer: Awaited<ReturnType<typeof startServerRun>>['writer'],
+): Promise<void> {
+  await writer.appendRequest({
+    elapsedMs: 1,
+    attempt: 1,
+    method: 'POST',
+    path: '/x',
+    bodyBytes: 0,
+  })
+  await writer.appendRequestSent({ elapsedMs: 2, attempt: 1 })
+  await writer.appendStop(
+    serverStopCapture({ declaredStopIndex: 0, hit: 1, line: 2, elapsedMs: 3 }),
+  )
+  await writer.appendResponse({
+    elapsedMs: 4,
+    status: 200,
+    contentType: null,
+    body: '',
+    bodyBytes: 0,
+    readCut: false,
+    location: null,
+    requestDurationMs: 1,
+  })
+}
+
+/** Starts a server history declaring one stop and returns its writer and store. */
+async function startServerRun(context: TestContext) {
+  const { repository } = await openServerRepository(context)
+  const header = nodeServerHistoryHeader(SERVER_WORKSPACE_KEY)
+  const writer = await repository.serverHistories.start(header)
+  return { writer, store: repository.serverHistories, header }
+}
+
+// protects=a cleanly finished run seals complete although its output keeps arriving while the seal drains; fails_when=an output offered after the seal began is queued behind end, refused, and the run seals partial with SERVER_HISTORY_APPEND_FAILED; no_claim=entries accepted before the seal began (their own test)
+test('output offered after the seal began, in the same turn and in a later one, is not written and the run still seals complete', async (context) => {
+  // Arrange
+  const { writer, store, header } = await startServerRun(context)
+  await writeWholeServerRun(writer)
+  const hold = holdSyncOf(context, 'events.jsonl')
+
+  // Act
+  const sealed = writer.seal({ elapsedMs: 5, reason: 'stopped' })
+  const sameTurn = writer.appendOutput({
+    elapsedMs: 6,
+    channel: 'stdout',
+    text: 'same turn\n',
+  })
+  await hold.held
+  const laterTurn = writer.appendOutput({
+    elapsedMs: 7,
+    channel: 'stdout',
+    text: 'later turn\n',
+  })
+  hold.release()
+  await Promise.all([sealed, sameTurn, laterTurn])
+  context.mock.restoreAll()
+  const opened = await store.read(header.studyId)
+
+  // Assert
+  assert.deepEqual(
+    opened.entries.map((entry) => entry.type),
+    ['request', 'request-sent', 'source', 'stop', 'response', 'end'],
+  )
+  assert.equal(opened.status, 'complete')
+  assert.deepEqual(opened.seal?.reasons, [])
+})
+
+// protects=a retried seal after a failed sealed.json write writes end once and seals complete; fails_when=the retry appends a second end, which is refused and recorded as SERVER_HISTORY_APPEND_FAILED; no_claim=which write failed
+test('a seal retried after its sealed.json write failed keeps one end and seals complete', async (context) => {
+  // Arrange
+  const { writer, store, header } = await startServerRun(context)
+  await writeWholeServerRun(writer)
+  const renameBefore = fsPromises.rename
+  let failed = false
+  context.mock.method(
+    fsPromises,
+    'rename',
+    async (...input: Parameters<typeof renameBefore>) => {
+      if (!failed && String(input[1]).endsWith('sealed.json')) {
+        failed = true
+        throw new Error('rename refused once')
+      }
+      return renameBefore(...input)
+    },
+  )
+  await assert.rejects(
+    writer.seal({ elapsedMs: 5, reason: 'stopped' }),
+    /rename refused once/,
+  )
+
+  // Act
+  await writer.seal({ elapsedMs: 6, reason: 'stopped' })
+  context.mock.restoreAll()
+  const opened = await store.read(header.studyId)
+
+  // Assert
+  assert.equal(opened.entries.filter((entry) => entry.type === 'end').length, 1)
+  assert.equal(opened.status, 'complete')
+  assert.deepEqual(opened.seal?.reasons, [])
+})
+
+// protects=the inherited finish never publishes a server seal that the read path refuses; fails_when=finish seals complete without end and the history then reads corrupt; no_claim=the status finish is asked for
+test('finish on a server history writes end first, so the sealed history reads back', async (context) => {
+  // Arrange
+  const { writer, store, header } = await startServerRun(context)
+  await writeWholeServerRun(writer)
+
+  // Act
+  await writer.finish('complete')
+  const opened = await store.read(header.studyId)
+
+  // Assert
+  assert.deepEqual(
+    opened.entries.map((entry) => entry.type),
+    ['request', 'request-sent', 'source', 'stop', 'response', 'end'],
+  )
+  assert.equal(opened.status, 'complete')
+})
+
+// protects=an entry refused or failing after the rules checked it leaves the rules' progress unchanged; fails_when=a request whose write failed still counts as the history's request, so the history is kept instead of removed at its seal; no_claim=the disk error's wording
+test('a request whose write failed leaves nothing to replay, so the history is removed at its seal', async (context) => {
+  // Arrange
+  const { writer, store, header } = await startServerRun(context)
+  const openBefore = fsPromises.open
+  context.mock.method(
+    fsPromises,
+    'open',
+    async (...input: Parameters<typeof openBefore>) => {
+      if (String(input[0]).endsWith('events.jsonl'))
+        throw new Error('disk full')
+      return openBefore(...input)
+    },
+  )
+  await assert.rejects(
+    writer.appendRequest({
+      elapsedMs: 1,
+      attempt: 1,
+      method: 'POST',
+      path: '/x',
+      bodyBytes: 0,
+    }),
+    /disk full/,
+  )
+  context.mock.restoreAll()
+
+  // Act
+  await writer.seal({ elapsedMs: 2, reason: 'stopped' })
+
+  // Assert
+  await assert.rejects(store.read(header.studyId), /ENOENT/)
+})
+
+// protects=an abandon that lands while sealed.json is being published leaves no sealed.json, so the folder lists interrupted as reported; fails_when=the seal published after the abandon check and the file stays; no_claim=a rename that fails
+test('a seal abandoned while its sealed.json is being published removes it and the folder reads interrupted', async (context) => {
+  // Arrange
+  const { writer, store, header, folder } = await startTestHistory(context)
+  await writer.appendOutput({
+    sequence: 1,
+    elapsedMs: 1,
+    channel: 'stdout',
+    text: 'a\n',
+  })
+  const renameBefore = fsPromises.rename
+  context.mock.method(
+    fsPromises,
+    'rename',
+    async (...input: Parameters<typeof renameBefore>) => {
+      // The abandon lands while the publish is in flight.
+      if (String(input[1]).endsWith('sealed.json')) writer.abandon()
+      return renameBefore(...input)
+    },
+  )
+
+  // Act
+  const outcome = await writer.finish('partial', 'Stopped.').then(
+    () => 'published',
+    (error: Error) => error.message,
+  )
+  context.mock.restoreAll()
+  const opened = await store.read(header.studyId)
+
+  // Assert
+  assert.match(outcome, /abandoned/)
+  assert.equal((await readdir(folder)).includes('sealed.json'), false)
+  assert.equal(opened.status, 'interrupted')
 })
