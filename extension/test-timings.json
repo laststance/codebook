@@ -43,7 +43,7 @@
       "totalMs": 2
     },
     "bundledSkillTestRuns.test.js": {
-      "totalMs": 5
+      "totalMs": 76
     },
     "canJudgeOwnerHere.test.js": {
       "totalMs": 1
@@ -1204,7 +1204,7 @@
       "totalMs": 1376
     },
     "nodeServerSaveDocs.test.js": {
-      "totalMs": 45
+      "totalMs": 80
     },
     "nodeServerSealPathBound.test.js": {
       "totalMs": 227
@@ -3067,7 +3067,7 @@
       "totalMs": 6036
     },
     "studyWorkspacePresentation.test.js": {
-      "totalMs": 72181,
+      "totalMs": 77351,
       "tests": {
         "Close cancels pending focus recovery after a native layout failure without losing the draft or original failure": 288,
         "Close during MCP-first stale-pane retirement prevents a later Application allocation": 129,
@@ -3668,10 +3668,10 @@
       "totalMs": 712
     },
     "studyWorkspaceServerOpenFailures.test.js": {
-      "totalMs": 2592
+      "totalMs": 3340
     },
     "studyWorkspaceServerReplay.test.js": {
-      "totalMs": 8978,
+      "totalMs": 9244,
       "tests": {
         "Next and Previous stop visit each hit of a repeated stop and Next event moves on to the output and the response": 1547,
         "Open replay of a sealed server history lands on its first stop with the stored source in the slot and the snapshot in the debugger": 335,
@@ -3738,7 +3738,44 @@
       }
     },
     "studyWorkspaceTestReplay.test.js": {
-      "totalMs": 2321
+      "totalMs": 12895,
+      "tests": {
+        "Open replay of a test replay during a browser replay tells the learner one replay shows at a time": 532,
+        "Open replay opens a sealed test replay in a closed Study pane on its first verified stop": 310,
+        "Open replay opens a test replay at its saved reader position": 270,
+        "Open replay refused beside the Cursor Agent is told in Output and the retry after a click into a file shows the summary composition": 921,
+        "Open replay refused for an unreported keyboard focus waits for the report once and writes one focus-unreported entry in Output": 911,
+        "Open replay that arranges the panes after an agent's refused Study workspace request shows neither that refusal nor a captured-source reason": 930,
+        "Open replay while another test replay plays stops Play and lands the new replay on its first stop": 678,
+        "Open retained history opens the recorded part of a test history whose seal failed, read-only": 261,
+        "Previous event from the landing reaches the start of the replay, and a further Previous is refused": 375,
+        "Retry after a failed first start keeps the debugger row until the debugger starts again": 348,
+        "Retry during a browser replay presents no stop of the test replay selected before it": 603,
+        "Save learning replay of a live test run asks first, ends the run on Save now, and its partial notice opens the test replay": 310,
+        "a delayed Save click for an earlier test run is refused and leaves the current run running": 97,
+        "a failed first debugger start overtaken by a newer selection while the owner is disposed reports nothing": 325,
+        "a failed save is worded for its notice without the storage path": 52,
+        "a failed summary-composition entry of Open replay after a live node-test run is told in Output and the next Open replay shows the composition": 273,
+        "a failed test replay open shows its cause without the storage folder on the Study pane": 261,
+        "a first open whose replay debugger cannot start lands on its moment, tells the failure on the debugger row, and Retry presents the debugger again": 273,
+        "a pane open sent while a host open still reads its history wins, and a double click shows one replay": 298,
+        "a refresh draws the Save item of a live test run while a browser replay holds the open Study pane": 474,
+        "a refresh redraws the status item of a test run only when it changed": 92,
+        "a refresh while a saved test replay is open lists the history sealed meanwhile and leaves the replay on its stop": 302,
+        "a replay debugger the learner stopped stays stopped when the output is selected": 307,
+        "a saved test replay still opens when its learner decision, learning material and reader position cannot be read, and each failure is shown": 267,
+        "a test replay that cannot be read names a title with a U+202E in its failure notice without the control": 275,
+        "a test replay whose history cannot be read raises the load-failure notification and writes an Output entry": 262,
+        "a test replay whose stop does not verify opens on its first event": 275,
+        "a test run whose launch failed after its history began shows Preparing and then no Save item, and offers no replay": 169,
+        "a test run's status item that a refresh hid is shown again with its text": 82,
+        "an open of a saved test replay overtaken by the reader’s close selects nothing": 266,
+        "an output selected while a failed replay debugger is disposed is shown once the disposal ends, with no second registration": 848,
+        "choosing Close browser replay in the one-replay-at-a-time notice closes the browser replay and opens the test replay": 492,
+        "choosing Show details on the load-failure notification opens the Output channel": 256,
+        "the Save item of a live test run is drawn in the status bar while the Study pane is closed": 89,
+        "the lines of an unreadable decision, material and position show their causes without the storage folder": 271
+      }
     },
     "studyWorkspaceTestReplayOutput.test.js": {
       "totalMs": 4856
