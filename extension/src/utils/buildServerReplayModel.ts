@@ -17,6 +17,8 @@ export type ServerReplayEvent = Exclude<
 export type ServerReplayAttempt = {
   attempt: number
   sent: boolean
+  /** The journal sequence of the send mark, so a moment before it never reads as sent. */
+  sentSequence?: number
   withdrawnCode?: string
 }
 
@@ -105,7 +107,10 @@ function collectAttempts(
       entry.type === 'request-sent' || entry.type === 'request-withdrawn'
         ? attempts.get(entry.attempt)
         : undefined
-    if (attempt && entry.type === 'request-sent') attempt.sent = true
+    if (attempt && entry.type === 'request-sent') {
+      attempt.sent = true
+      attempt.sentSequence = entry.sequence
+    }
     if (attempt && entry.type === 'request-withdrawn')
       attempt.withdrawnCode = entry.code
   }

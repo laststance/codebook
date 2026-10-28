@@ -3583,6 +3583,21 @@ async function check(page, options, collected) {
         target.evaluate((scrollTop) => {
           document.getElementById('test-output').scrollTop = scrollTop
         }, top)
+      // Arrange: a workspace that saved only server replays and has none selected waits in the server catalog's words, never as a test (a Study pane change, Cycle 0059 pt3).
+      await publish({
+        ...options.message,
+        revision: revisionAt(5),
+        nodeServerHistoryCatalog: [{ studyId: 'server-study' }],
+      })
+      const onlyServerReplaysSaved = await sectionReading()
+      // Value: protects=the Study pane's waiting line for a workspace with only server replays saved reading the server catalog's choose-a-replay line; fails_when=it reads the test replay's line or says that no replay is saved; no_claim=the replay's own section once one is selected
+      cases.push({
+        name: 'a workspace with only server replays saved waits in the server catalog words',
+        actual: onlyServerReplaysSaved,
+        passed:
+          onlyServerReplaysSaved.status ===
+          'Choose a server replay from Saved studies to step through its request, output, debugger stops and response.',
+      })
       // Arrange: a server replay's Study message and Application document, worded with the server catalog.
       const serverReplayHash = 'b'.repeat(64)
       const serverTitle =

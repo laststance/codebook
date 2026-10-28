@@ -61,7 +61,7 @@ export function describeNodeServerProfile(prerequisites: {
     recording: {
       available: false,
       reason:
-        'Server runs are not saved yet: no replay, no saved study, no application video.',
+        'A server run is saved as a Server replay by Save learning replay or codebook_explain_node_history (see codebook://help/node-server, section save); it has no application video.',
     },
   }
 }

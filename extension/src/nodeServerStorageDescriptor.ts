@@ -47,6 +47,7 @@ function citableServerEvent(
         sourceHash: entry.source.hash,
         path: entry.source.path,
         line: entry.source.line,
+        declaredStopIndex: entry.declaredStopIndex,
       }
     case 'output':
       return { type: 'output', channel: entry.channel }

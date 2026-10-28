@@ -206,7 +206,7 @@ test('the node-server help states the supported shape, the index bases and the l
     body.request,
     /confirms it in a modal naming the method, the path, the run, the content type and the body size \(never the body\)/,
   )
-  assert.match(limits, /Server runs are not saved yet/)
+  assert.match(limits, /saved as a Server replay/)
   assert.equal(body.configurationSchema.properties.request.type, 'object')
   for (const word of [
     'switch-time',

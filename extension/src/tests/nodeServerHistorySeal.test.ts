@@ -9,7 +9,7 @@ import type {
 } from '../nodeServerHistorySchemas'
 import type {
   NodeServerEndInput,
-  NodeServerStopCapture,
+  NodeServerWriterStop,
 } from '../nodeServerHistoryWriter'
 import { capMissingList } from '../utils/capMissingList'
 import { evaluateNodeServerCapture } from '../utils/evaluateNodeServerCapture'
@@ -38,7 +38,7 @@ async function sealedServerRun(
   context: TestContext,
   options: {
     declaredStops?: number
-    stops?: NodeServerStopCapture[]
+    stops?: NodeServerWriterStop[]
     terminal?: Terminal
     end?: NodeServerEndInput
     budgetExhausted?: boolean
@@ -300,7 +300,7 @@ test('the evaluator words the size-limit and append-failure reasons the writer r
 // protects=a snapshot that cannot be presented makes the capture incomplete: empty frames, another position, another source, unread scopes; fails_when=such a stop reads as complete; no_claim=lower frames, which may lack source
 const SNAPSHOT_CASES: Array<{
   name: string
-  snapshot: NodeServerStopCapture['snapshot']
+  snapshot: NodeServerWriterStop['snapshot']
   /** Whether the writer also finds no executed source text in the snapshot's top frame, which adds the source reason after the debugger-state one. */
   sourceNotCaptured?: boolean
 }> = [

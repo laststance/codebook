@@ -12,6 +12,7 @@ import type {
 } from './constants'
 import type { ErrorCode, StudyError } from './errors'
 import type { NodeServerConfiguration } from './nodeServerConfigSchemas'
+import type { NodeServerHistorySink } from './nodeServerHistorySink'
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
 import type { NodeTestSourceStop } from './ownedNodeTestRun'
 import type { ReplayDebugSnapshot } from './replayDebugSchemas'
@@ -364,12 +365,14 @@ export interface StudyEnvironment {
    * @param record - Journals the run's whitelisted `node-server.*` events.
    * @param citedSources - The article's text of every source the selected node cites; an open editor document with other text refuses the start (D12).
    * @param runId - The service's run id, sent as `x-codebook-run` and named in the debug session.
+   * @param history - Where the run reports what it records for a saved server replay; absent when no history started (the run goes on without one).
    */
   createNodeServerRun?(
     configuration: NodeServerConfiguration,
     record: (type: string, detail?: unknown) => unknown,
     citedSources: ConfiguredDescriptor['sources'],
     runId: string,
+    history?: NodeServerHistorySink,
   ): Promise<NodeServerRuntime>
   /**
    * Asks the learner in a native modal whether to send a state-changing request (POST, PUT, PATCH, DELETE), naming its method and path and that the server uses the repository's own configured database (TD-6); the chat AI cannot answer it.

@@ -19,7 +19,7 @@ export type ResolvedNodeHistory =
 
 /**
  * Holds the stores of every history profile under one learning directory and resolves a study id to the store whose folder holds it, so the workspace, resources, MCP and deletion ask one place. It also wires the shared admission: each store counts the other profiles' histories and the saved studies together under the one storage lock, so a test, a server and a browser save race for the same last place and one wins.
- * Built where the workspace builds its history store; nothing writes a server history yet.
+ * Built where the workspace builds its history store; a live node-server run writes the server profile's histories.
  * @example const repository = new NodeHistoryRepository(directory, workspaceKey, () => 64, () => library.savedStudyCount())
  */
 export class NodeHistoryRepository {
@@ -122,6 +122,18 @@ export class NodeHistoryRepository {
   }
 
   /**
+   * Waits until the reader-position writes now in flight in every profile's store have ended, whether they succeeded or failed; called by the Study workspace's close so a closing window never has a position file created under it, whichever profile's replay was shown.
+   * @returns Once every write that was running when this was called has settled; a write that starts later is not awaited.
+   * @example await repository.settleReaderPositionWrites()
+   */
+  async settleReaderPositionWrites(): Promise<void> {
+    await Promise.all([
+      this.testHistories.settleReaderPositionWrites(),
+      this.serverHistories.settleReaderPositionWrites(),
+    ])
+  }
+
+  /**
    * Counts every kind of history, up to `places`, for the library's admission: a browser save counts test and server histories as the histories count saved studies.
    * A history directory that cannot be read counts no history, as only a history the list shows counts: an unreadable Node history store never blocks a browser save. The histories' own admission ({@link NodeHistoryStore.start}) keeps refusing on it.
    * @param places - The places the histories may take; the count is not carried beyond it.
@@ -129,6 +141,7 @@ export class NodeHistoryRepository {
    * @example await repository.countHistories(64) // => 5
    */
   async countHistories(places: number): Promise<number> {
+    // Fail-open on purpose: an unreadable history directory counts no history here, so it never blocks a browser save or a recording start (the histories' own start refuses on it).
     const tests = await this.testHistories
       .countListedHistories(places)
       .catch(() => 0)
@@ -148,7 +161,7 @@ export class NodeHistoryRepository {
    * @throws When the id names no history, the sequence is not a positive integer, no entry has it, or the journal does not verify.
    * @example const { entry } = await repository.entryAt(studyId, 3)
    */
-  // Consumed by the run's history sink (Cycle 0059 pt3); pt1 has no producer yet.
+  // The history repository's validated read of one entry, kept for the resources and MCP routes that name an entry by id and sequence.
   // fallow-ignore-next-line unused-class-member
   async entryAt(
     studyId: string,

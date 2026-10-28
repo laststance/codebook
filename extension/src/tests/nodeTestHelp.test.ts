@@ -284,7 +284,7 @@ test('the server instructions and tool descriptions carry the API 1.8 sentences 
     )
 
     // Assert
-    assert.match(instructions, /^API 1\.8\. /)
+    assert.match(instructions, /^API 1\.9\. /)
     assert.match(
       instructions,
       /Since API 1\.8 a node-test run reads demonstrated/,

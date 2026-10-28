@@ -1,9 +1,11 @@
+import { NODE_SERVER_PROFILE } from '../constants'
 import { StudyError } from '../errors'
 import type { NodeServerHistoryEntry } from '../nodeServerHistorySchemas'
 import type { NodeServerHistoryTypes } from '../nodeServerHistoryTypes'
 import type { NodeHistoryStore } from '../nodeTestHistoryStore'
 import type { ResourceContent } from '../resources'
 
+import { answerUnreadableHistoryEntry } from './answerUnreadableHistoryEntry'
 import { readJsonPage } from './readJsonPage'
 import { rehydrateNodeServerEntries } from './rehydrateServerStopSnapshot'
 import { withKnownNodeHistory } from './withKnownNodeHistory'
@@ -82,7 +84,9 @@ function readServerEventsPage(
   through: number | undefined,
   page: string | undefined,
 ): ResourceContent {
-  const last = through ?? entries.at(-1)?.sequence ?? 0
+  // A pin past the journal's end (or beyond the safe integers) is the journal's own end: the pin never names what does not exist.
+  const end = entries.at(-1)?.sequence ?? 0
+  const last = Math.min(through ?? end, end)
   const events = entries
     .filter((entry) => entry.sequence <= last)
     .flatMap((entry) => leanServerEvent(entry) ?? [])
@@ -97,7 +101,7 @@ function serverVerdicts(
   sealed: boolean,
 ) {
   return {
-    profile: 'node-server' as const,
+    profile: NODE_SERVER_PROFILE,
     // Saved: the history is sealed. Capture complete: no partial reason. Learning complete: the material cites the request, a hit of every reached stop and the terminal entry.
     saved: sealed,
     captureComplete: summary?.captureComplete ?? false,
@@ -108,6 +112,43 @@ function serverVerdicts(
     learningMissingCount: summary?.learningMissingCount ?? 0,
     materialRevision: summary?.materialRevision ?? 0,
   }
+}
+
+/**
+ * Answers one entry's detail page: the stop restored to its whole snapshot, or the entry as stored.
+ * Called by {@link readServerHistoryResource} for `events/<sequence>`; only the restoration of the entries is turned into the coded answer, so another failure keeps its own cause.
+ * @param baseUri - The history's resource address.
+ * @param studyId - The history's study id.
+ * @param entries - The verified journal entries.
+ * @param sequence - The entry asked for.
+ * @param page - The page cursor, when the content spans pages.
+ * @returns The entry's first or requested page.
+ * @throws `EVIDENCE_UNAVAILABLE` when a stop cannot be restored; `NOT_FOUND` when no entry has the sequence.
+ * @example readServerEntryDetail('codebook://node-history/a_b', 'a_b', entries, 4, undefined)
+ */
+function readServerEntryDetail(
+  baseUri: string,
+  studyId: string,
+  entries: readonly NodeServerHistoryEntry[],
+  sequence: number,
+  page: string | undefined,
+): ResourceContent {
+  let entry: ReturnType<typeof rehydrateNodeServerEntries>[number] | undefined
+  try {
+    // The stored stop keeps its top frame's source by hash; the detail restores the whole snapshot.
+    entry = rehydrateNodeServerEntries(entries).find(
+      (candidate) => candidate.sequence === sequence,
+    )
+  } catch (error) {
+    // Only a stop that cannot be restored answers a coded error, never a raw schema dump.
+    throw answerUnreadableHistoryEntry(error, studyId, baseUri)
+  }
+  if (!entry)
+    throw new StudyError(
+      'NOT_FOUND',
+      `The history ${studyId} has no entry with sequence ${sequence}. Read ${baseUri}/events for the sequences it holds.`,
+    )
+  return readJsonPage(`${baseUri}/events/${sequence}`, entry, page)
 }
 
 /**
@@ -144,19 +185,11 @@ export async function readServerHistoryResource(
     suffix ?? '',
   )
   if (detail) {
-    const sequence = Number(detail[1])
-    // The stored stop keeps its top frame's source by hash; the detail restores the whole snapshot.
-    const entry = rehydrateNodeServerEntries(history.entries).find(
-      (candidate) => candidate.sequence === sequence,
-    )
-    if (!entry)
-      throw new StudyError(
-        'NOT_FOUND',
-        `The history ${studyId} has no entry with sequence ${sequence}. Read ${baseUri}/events for the sequences it holds.`,
-      )
-    return readJsonPage(
-      `${baseUri}/events/${sequence}`,
-      entry,
+    return readServerEntryDetail(
+      baseUri,
+      studyId,
+      history.entries,
+      Number(detail[1]),
       detail[2]?.slice(1),
     )
   }

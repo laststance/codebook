@@ -660,6 +660,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     return {
       path: target.path,
       line: frame.line,
+      column: frame.column,
+      frameName: frame.name,
       sourceHash: target.hash,
       facts: inspected.facts,
       unavailable: inspected.unavailable,

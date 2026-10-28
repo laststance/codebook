@@ -21,6 +21,7 @@ import type {
   NodeServerStopCapture,
   NodeServerStopTarget,
 } from './nodeServerDebugger'
+import type { NodeServerHistorySink } from './nodeServerHistorySink'
 import type {
   NodeServerCapture,
   NodeServerHeldPause,
@@ -147,6 +148,8 @@ export type NodeServerRunInput = {
   citedSources: ConfiguredDescriptor['sources']
   /** The service's run id: sent as `x-codebook-run`, named in the debug session and the orphan record. */
   runId: string
+  /** Where the run reports what a saved server replay records; absent when no history started. It is told synchronously and never awaited, and nothing it does reaches the run. */
+  history?: NodeServerHistorySink
   dependencies: NodeServerRunDependencies
 }
 
@@ -523,6 +526,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
         )
     )
       await this.releaseFinishedServer()
+    this.input.history?.output(event.elapsedMs, event.channel, event.text)
     this.record('node-server.output', {
       sequence: event.sequence,
       elapsedMs: event.elapsedMs,
@@ -878,6 +882,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     this.captures.push(
       toCapture(read, { index, generation }, this.server?.elapsedMs() ?? 0),
     )
+    // Queued in this turn, ahead of the pause being published: the history never delays the live run.
+    this.input.history?.stop(this.launchedMs(), pause, generation, read)
     this.stopsReached.push(index)
     this.pause = {
       identity: {
@@ -903,6 +909,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     pause: NodeServerDebuggerPause,
   ): Promise<void> {
     this.captureBudgetExhausted = true
+    this.input.history?.markCaptureBudgetExhausted()
     this.record('node-server.capture-budget-exhausted', {
       limit: NODE_SERVER_REQUEST_CAPTURE_LIMIT,
     })
@@ -1025,7 +1032,10 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       })
     } catch (error) {
       // The sender never started: the window closes and the request may be tried again.
-      this.closeRequestWindow(token)
+      this.closeRequestWindow(
+        token,
+        error instanceof StudyError ? error.code : undefined,
+      )
       throw error instanceof StudyError
         ? error
         : new StudyError(
@@ -1049,7 +1059,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
           error.code === 'PORT_OWNER_UNKNOWN' ||
           error.code === 'RUN_NOT_READY')
       ) {
-        this.closeRequestWindow(token)
+        this.closeRequestWindow(token, error.code)
         throw error
       }
     }
@@ -1078,12 +1088,23 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       NODE_SERVER_REQUEST_WALL_LIMIT_MS,
     )
     this.debugger().setRequestWindow(true)
+    this.input.history?.openRequest(this.launchedMs(), {
+      method: declared.method,
+      path: declared.path,
+      bodyBytes: this.request.bodyBytes,
+    })
     this.notify()
+  }
+
+  /** Milliseconds since the launch, the one clock every entry of the history carries. */
+  private launchedMs(): number {
+    return this.server?.elapsedMs() ?? 0
   }
 
   /** Journals the request once its bytes were handed to the socket, so a refused or stopped request never reads as sent. */
   private recordSentRequest(token: number): void {
     if (token !== this.requestToken || !this.request) return
+    this.input.history?.markRequestSent(this.launchedMs())
     this.record('node-server.request', {
       method: this.request.method,
       path: this.request.path,
@@ -1093,8 +1114,9 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   }
 
   /** Takes the window back when the request was refused before its bytes were written. */
-  private closeRequestWindow(token: number): void {
+  private closeRequestWindow(token: number, code = 'REQUEST_NOT_SENT'): void {
     if (token !== this.requestToken) return
+    this.input.history?.withdrawRequest(this.launchedMs(), code)
     this.requestToken += 1
     this.request = undefined
     this.requestLimit.stop()
@@ -1132,6 +1154,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     if (token !== this.requestToken || !this.inRequestWindow()) return
     if (this.lifecycle !== 'live') return
     this.response = response
+    this.input.history?.response(this.launchedMs(), response)
     this.record('node-server.response', {
       status: response.status,
       contentType: response.contentType,
@@ -1180,6 +1203,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   ): void {
     if (!this.inRequestWindow() || this.lifecycle !== 'live') return
     this.requestFailure = { code, message }
+    this.input.history?.failRequest(this.launchedMs(), code, message)
     this.record('node-server.failure', { code, cause: message })
     this.requestAbort.abort(new Error(code))
     void this.endRequest()

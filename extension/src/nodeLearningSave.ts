@@ -13,8 +13,10 @@ import {
 import type { NodeTestVerdict } from './utils/describeNodeTestResult'
 import type { CodebookDiagnostic } from './utils/formatCodebookDiagnostic'
 import type { NodeLearningPart } from './utils/listMissingNodeLearning'
+import { offerOpenReplay } from './utils/offerOpenReplay'
 import { sanitizeCause } from './utils/sanitizeCause'
 import { sanitizedStack } from './utils/sanitizedStack'
+import { SaveSerializer } from './utils/SaveSerializer'
 
 /** What the Save of a test run needs from the editor and the extension, so it is tested without the Study workspace. */
 export type NodeLearningSaveHost = {
@@ -79,7 +81,7 @@ const NOTHING_RECORDED =
  */
 export class NodeLearningSave {
   private readonly states = new Map<string, SaveState>()
-  private operation?: { studyId: string; promise: Promise<void> }
+  private readonly saves = new SaveSerializer()
 
   constructor(private readonly host: NodeLearningSaveHost) {}
 
@@ -143,20 +145,12 @@ export class NodeLearningSave {
     }
     // The item is not shown for such a run; the command is refused as for a browser run without a recording.
     if (recordedNothing(record)) throw new Error(NOTHING_RECORDED)
-    const studyId = `${service.instanceId}_${record.id}`
-    if (this.operation) {
-      if (this.operation.studyId !== studyId)
-        throw new Error(
-          'Another learning session is being saved. Wait for its result.',
-        )
-      return this.operation.promise
-    }
-    const promise = this.saveOnce(service, record, studyId).finally(() => {
-      if (this.operation?.promise === promise) this.operation = undefined
-      this.host.changed()
-    })
-    this.operation = { studyId, promise }
-    return promise
+    return this.saves.runFor(
+      service,
+      record,
+      (studyId) => this.saveOnce(service, record, studyId),
+      () => this.host.changed(),
+    )
   }
 
   /**
@@ -249,16 +243,10 @@ export class NodeLearningSave {
       explanations: summary.learningMissing,
       capture: summary.captureMissing,
     })
-    void this.host
-      .notify('warning', notice.text, notice.actions ?? [])
-      .then((action) => {
-        if (action === NODE_LEARNING_SAVE_ACTION.openReplay)
-          return this.host.open(studyId)
-      })
+    offerOpenReplay(this.host, 'warning', notice, studyId, (error) => {
       // A rejected notification or open is reported to the Output channel, not dropped.
-      .catch((error: unknown) => {
-        this.logFailure(studyId, 'save:open-replay', error)
-      })
+      this.logFailure(studyId, 'save:open-replay', error)
+    })
   }
 
   /**

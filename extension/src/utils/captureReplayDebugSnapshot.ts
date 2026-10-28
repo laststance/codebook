@@ -9,6 +9,7 @@ import {
   REPLAY_DEBUG_MAX_SCOPES,
   REPLAY_DEBUG_MAX_VARIABLES,
   REPLAY_DEBUG_TEXT_LIMIT_CHARS,
+  REPLAY_SCOPE_NOT_CAPTURED_TEXT,
 } from '../constants'
 import {
   replayDebugSnapshotSchema,
@@ -218,8 +219,7 @@ export async function captureReplayDebugSnapshot(
           saved.scopes.push({
             name: shorten(scope.name),
             variables: [],
-            unavailable:
-              "This scope was not captured; replay keeps only the stopped frame's local values.",
+            unavailable: REPLAY_SCOPE_NOT_CAPTURED_TEXT,
           })
           continue
         }

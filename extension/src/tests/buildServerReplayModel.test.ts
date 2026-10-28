@@ -223,7 +223,7 @@ test('an attempt without its send mark is not sent and keeps the code of its wit
   // Assert
   assert.deepEqual(model.attempts, [
     { attempt: 1, sent: false, withdrawnCode: 'RUN_BUSY' },
-    { attempt: 2, sent: true },
+    { attempt: 2, sent: true, sentSequence: 4 },
   ])
   assert.deepEqual(
     model.events.map((event) => event.type),

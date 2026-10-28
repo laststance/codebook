@@ -813,7 +813,7 @@ test('the source-only help and the repository-browser help tell an agent to take
 })
 
 // Value: protects=a client written for API 1.6, which read text from a source answer, learning from the server it connects to that the lines are in numberedText now; fails_when=the server reports another API version than 1.8 while its source answer has no text, or its instructions no longer say what 1.7 changed (the instructions now open with API 1.8); why_new=Cycle 0046 row 54: row 6 took text out of both source answers while the server still reported API 1.6, the version that promised both members; seam=none; no_claim=the wording of later API versions
-test('the server reports API 1.8 and its instructions say that since API 1.7 codebook_source and a book’s cited source answer numberedText and no longer text', async () => {
+test('the server reports API 1.9 and its instructions say that since API 1.7 codebook_source and a book’s cited source answer numberedText and no longer text', async () => {
   // Arrange
   const harness = await repositoryProtocolHarness()
   try {
@@ -833,12 +833,12 @@ test('the server reports API 1.8 and its instructions say that since API 1.7 cod
       z
         .object({ data: z.object({ apiVersion: z.string() }) })
         .parse(status.structuredContent).data.apiVersion,
-      '1.8',
+      '1.9',
     )
-    assert.equal(harness.endpoint.descriptor.apiVersion, '1.8')
+    assert.equal(harness.endpoint.descriptor.apiVersion, '1.9')
     assert.equal(
       instructions.startsWith(
-        "API 1.8. Call codebook_status first. To learn repository source, discover sources, read exact files, publish structured cited articles and open the retained book; no runtime is required. Since API 1.7 codebook_source, and codebook_read_resource for a book's cited source, answer the source's lines as numberedText and no longer as text; an MCP resources/read of a cited source's URI still answers its exact text. Authored relations are source interpretation.",
+        "API 1.9. Call codebook_status first. To learn repository source, discover sources, read exact files, publish structured cited articles and open the retained book; no runtime is required. Since API 1.7 codebook_source, and codebook_read_resource for a book's cited source, answer the source's lines as numberedText and no longer as text; an MCP resources/read of a cited source's URI still answers its exact text. Authored relations are source interpretation.",
       ),
       true,
     )

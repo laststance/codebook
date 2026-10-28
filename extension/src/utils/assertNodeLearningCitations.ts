@@ -7,6 +7,8 @@ export type CitationReference = {
   type: CitableEvent['type']
   sequence: number
   sourceHash?: string
+  /** The declared stop a server stop citation names; when given, the cited stop must be a hit of it. */
+  declaredStopIndex?: number
   channel?: 'stdout' | 'stderr'
 }
 
@@ -72,7 +74,12 @@ function citesEvent(
   event: CitableEvent | undefined,
 ): boolean {
   if (reference.type === 'stop')
-    return event?.type === 'stop' && event.sourceHash === reference.sourceHash
+    return (
+      event?.type === 'stop' &&
+      event.sourceHash === reference.sourceHash &&
+      (reference.declaredStopIndex === undefined ||
+        event.declaredStopIndex === reference.declaredStopIndex)
+    )
   if (reference.type === 'output')
     return event?.type === 'output' && event.channel === reference.channel
   return event?.type === reference.type
@@ -86,7 +93,9 @@ function citesEvent(
  */
 function describeCitationClaim(reference: CitationReference): string {
   if (reference.type === 'stop')
-    return `a stop with sourceHash ${reference.sourceHash}`
+    return reference.declaredStopIndex === undefined
+      ? `a stop with sourceHash ${reference.sourceHash}`
+      : `a stop with sourceHash ${reference.sourceHash} of declaredStopIndex ${reference.declaredStopIndex}`
   return describeEventKind(reference.type, reference.channel)
 }
 
@@ -131,7 +140,7 @@ function refuseCitation(
   // A stop cited with another hash is told the hash the journal holds.
   const expectedHash =
     reference.type === 'stop' && event?.type === 'stop'
-      ? `; expected sourceHash ${event.sourceHash}`
+      ? `; expected sourceHash ${event.sourceHash}${event.declaredStopIndex === undefined ? '' : ` of declaredStopIndex ${event.declaredStopIndex}`}`
       : ''
   return `${lead}: sequence ${reference.sequence} is ${describeCitedEvent(event)} in the sealed history, but the step claims ${describeCitationClaim(reference)}${expectedHash}.${withNearest ? nearestWords(reference, citable) : ''} Read the history's events again and cite each event by its sequence, type and source hash.`
 }

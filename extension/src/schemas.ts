@@ -14,9 +14,9 @@ import {
 } from './constants'
 import { learningSummarySchema } from './learningSummarySchemas'
 import { studyIdSchema } from './legacyStudySchemas'
+import { nodeHistoryLearningMaterialContentSchema } from './nodeHistoryLearningSchemas'
 import { nodeServerConfigSchema } from './nodeServerConfigSchemas'
 import { nodeTestConfigSchema } from './nodeTestConfigSchemas'
-import { nodeTestLearningMaterialContentSchema } from './nodeTestHistorySchemas'
 import {
   inspectionPathSchema,
   retainedRepositoryConfigSchema,
@@ -134,7 +134,7 @@ export const explainSchema = z.strictObject({
 export const explainNodeHistorySchema = z.strictObject({
   studyId: studyIdSchema,
   expectedRevision: z.number().int().nonnegative(),
-  content: nodeTestLearningMaterialContentSchema,
+  content: nodeHistoryLearningMaterialContentSchema,
 })
 export type StartIntent = z.infer<typeof startIntentSchema>
 export type StartInput = z.infer<typeof startSchema>

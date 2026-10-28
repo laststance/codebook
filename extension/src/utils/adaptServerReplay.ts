@@ -144,7 +144,11 @@ function toTestShapedHistory(model: ServerReplayModel): NodeTestHistoryIndex {
       instanceId: header.instanceId,
       runId: header.runId,
       createdAt: header.createdAt,
-      configuration: { testFile: header.declaredStops[0]?.path ?? 'server' },
+      configuration: {
+        testFile: stripTerminalControls(
+          header.declaredStops[0]?.path ?? 'server',
+        ),
+      },
     },
     entries,
     status: model.status,

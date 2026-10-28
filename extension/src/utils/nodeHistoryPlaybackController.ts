@@ -3,6 +3,8 @@ import {
   PLAYBACK_TICK_INTERVAL_MS,
 } from '../constants'
 
+import { replayRefusal, type ReplayKind } from './replayRefusals'
+
 export interface NodeHistoryPlaybackEvent {
   sequence: number
   elapsedMs: number
@@ -15,8 +17,8 @@ export interface NodeHistoryPlaybackDependencies {
   /** Receives an autoplay presentation failure; manual seeks reject to their own caller instead. */
   failed?(error: unknown): void
   now?: () => number
-  /** Words a refusal for the replay shown (a server replay is never called a test replay); identity unless given. */
-  inReplayWords?(sentence: string): string
+  /** Which replay is shown, so a refusal names it in its own words; a test replay unless given. */
+  replayKind?(): ReplayKind
   manualTicks?: boolean
 }
 
@@ -39,6 +41,8 @@ export class NodeHistoryPlaybackController {
 
   /** The time the recording ended when it ended after its last event (a server replay's `end` entry); the slider's range reaches it. */
   private recordingEndMs?: number
+  /** Whether the playhead rests at {@link recordingEndMs}, past the last event: Play and a seek beyond the last event arrive here instead of snapping back to the last event. The selected event stays the last one. */
+  private atRecordingEnd = false
 
   /** Opens one verified event list at its restored sequence and stops any prior history. @param events - Ordered events from the sealed journal. @param sequence - Previously selected event, if still present. @param endedAtMs - When the recording ended, when after the last event. @example controller.open([{sequence:1,elapsedMs:10}], 1) */
   open(
@@ -47,6 +51,7 @@ export class NodeHistoryPlaybackController {
     endedAtMs?: number,
   ): void {
     this.recordingEndMs = endedAtMs
+    this.atRecordingEnd = false
     this.generation++
     this.stopTimer()
     this.mode = 'paused'
@@ -73,7 +78,10 @@ export class NodeHistoryPlaybackController {
       mode: this.mode,
       ...(selected && {
         sequence: selected.sequence,
-        positionMs: selected.elapsedMs,
+        positionMs:
+          this.atRecordingEnd && this.recordingEndMs !== undefined
+            ? this.recordingEndMs
+            : selected.elapsedMs,
       }),
       ...(this.events.length && {
         startMs: this.events[0]!.elapsedMs,
@@ -120,7 +128,7 @@ export class NodeHistoryPlaybackController {
       this.mode === 'playing' ||
       this.pending ||
       this.selectedIndex < 0 ||
-      this.selectedIndex >= this.events.length - 1
+      !this.hasTimeAhead()
     )
       return
     this.mode = 'playing'
@@ -150,9 +158,10 @@ export class NodeHistoryPlaybackController {
       positionMs > Math.max(last.elapsedMs, this.recordingEndMs ?? 0)
     ) {
       throw new Error(
-        this.dependencies.inReplayWords?.(
-          'Seek lies outside the verified range of this test replay.',
-        ) ?? 'Seek lies outside the verified range of this test replay.',
+        replayRefusal(
+          'seekOutsideRange',
+          this.dependencies.replayKind?.() ?? 'test',
+        ),
       )
     }
     this.mode = 'paused'
@@ -168,6 +177,9 @@ export class NodeHistoryPlaybackController {
       targetIndex = index
     }
     await this.present(targetIndex, generation)
+    // A seek past the last event rests at the recording's end: the last event stays selected, and the playhead is at the end.
+    if (generation === this.generation && positionMs > last.elapsedMs)
+      this.atRecordingEnd = true
   }
 
   /** Presents one next event per tick, never skipping a source/debugger boundary during slow host updates. @returns Resolves when the next eligible event is committed. @example await controller.tick() */
@@ -176,7 +188,7 @@ export class NodeHistoryPlaybackController {
       return
     const nextIndex = this.selectedIndex + 1
     if (nextIndex >= this.events.length) {
-      this.pause()
+      this.advanceToRecordingEnd()
       return
     }
     // Each event waits its recorded spacing, never more than the dwell bound: the test ran unrecorded between stops, and Play does not idle through that time.
@@ -196,9 +208,43 @@ export class NodeHistoryPlaybackController {
     this.anchorWallMs = this.clock()
     if (
       this.mode === 'playing' &&
-      this.selectedIndex === this.events.length - 1
+      this.selectedIndex === this.events.length - 1 &&
+      !this.hasTimeAhead()
     )
       this.pause()
+  }
+
+  /**
+   * Tells whether the playhead can still move forward: another event follows, or the recording ended after its last event and the playhead is not at that end yet; called by {@link play} and {@link tick}.
+   * @returns `false` at the last event of a recording with no time after it, and at the recording's end.
+   * @example this.hasTimeAhead() // => true on the last event of a server replay whose `end` came 800 ms later
+   */
+  private hasTimeAhead(): boolean {
+    if (this.selectedIndex < this.events.length - 1) return true
+    return (
+      !this.atRecordingEnd &&
+      this.recordingEndMs !== undefined &&
+      this.recordingEndMs > (this.events.at(-1)?.elapsedMs ?? 0)
+    )
+  }
+
+  /**
+   * Moves a playing playhead from the last event to the recording's end once the recorded spacing (never more than the dwell bound) has passed, then pauses; the end of {@link tick} when no event follows.
+   * @example this.advanceToRecordingEnd() // pauses at once for a recording with nothing after its last event
+   */
+  private advanceToRecordingEnd(): void {
+    const last = this.events.at(-1)
+    if (!this.hasTimeAhead() || !last || this.recordingEndMs === undefined) {
+      this.pause()
+      return
+    }
+    const dwellMs = Math.min(
+      this.recordingEndMs - last.elapsedMs,
+      NODE_HISTORY_PLAY_MAX_DWELL_MS,
+    )
+    if (Math.max(0, this.clock() - this.anchorWallMs) < dwellMs) return
+    this.atRecordingEnd = true
+    this.pause()
   }
 
   /** Aligns the controller with a learner-selected event and stops any active playback. @param sequence - Exact verified event sequence. @example controller.select(4) */
@@ -209,6 +255,7 @@ export class NodeHistoryPlaybackController {
     this.mode = 'paused'
     this.stopTimer()
     this.selectedIndex = index
+    this.atRecordingEnd = false
     this.dependencies.changed()
   }
 
@@ -243,6 +290,7 @@ export class NodeHistoryPlaybackController {
       await operation
       if (generation === this.generation) {
         this.selectedIndex = index
+        this.atRecordingEnd = false
       }
     } finally {
       this.endLoading(operation, generation)

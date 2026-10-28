@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 import {
   NODE_SERVER_HISTORY_MAX_ENTRIES,
+  NODE_SERVER_HISTORY_MAX_STOPS,
   NODE_TEST_LEARNING_MATERIAL_VERSION,
 } from './constants'
 import { studyIdSchema } from './legacyStudySchemas'
@@ -15,12 +16,19 @@ const sequence = z
   .max(NODE_SERVER_HISTORY_MAX_ENTRIES)
 
 /** The entries of a server history a learning step may cite: the request, a stop (with its source hash), an output (with its channel), the response or the request failure. */
-const nodeServerLearningReferenceSchema = z.discriminatedUnion('type', [
+export const nodeServerLearningReferenceSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('request'), sequence }),
   z.strictObject({
     type: z.literal('stop'),
     sequence,
     sourceHash: repositoryHashSchema,
+    // Optional and additive: when given, the cited stop must be a hit of this declared stop (0-based, as the events list shows it).
+    declaredStopIndex: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(NODE_SERVER_HISTORY_MAX_STOPS)
+      .optional(),
   }),
   z.strictObject({
     type: z.literal('output'),

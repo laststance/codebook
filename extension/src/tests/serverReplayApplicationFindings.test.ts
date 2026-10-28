@@ -1,15 +1,8 @@
 import assert from 'node:assert/strict'
 import { before, test } from 'node:test'
 
-import {
-  buildServerReplayModel,
-  type ServerReplayModel,
-} from '../utils/buildServerReplayModel'
+import { buildServerReplayModel } from '../utils/buildServerReplayModel'
 import { describeNodeLearningSave } from '../utils/describeNodeLearningSave'
-import {
-  indexServerOutput,
-  projectServerApplication,
-} from '../utils/projectServerApplication'
 
 import {
   nodeServerHistoryHeader,
@@ -17,39 +10,11 @@ import {
   SERVER_WORKSPACE_KEY,
 } from './utils/nodeServerHistoryFixture'
 import { realProcessStart } from './utils/realProcessStart'
-import { writeServerHistory } from './utils/sealedServerHistory'
+import { modelOf, VERDICTS, viewAt } from './utils/serverReplayModelOf'
 
 before(async () => {
   await realProcessStart(process.pid)
 })
-
-const VERDICTS = {
-  saved: true,
-  captureComplete: true,
-  learningCoverage: 'complete',
-} as const
-
-/** The Application view of a model at one sequence. */
-function viewAt(model: ServerReplayModel, sequence: number) {
-  const selected = model.events[model.indexBySequence.get(sequence)!]
-  return projectServerApplication(model, indexServerOutput(model), selected, {
-    generation: 1,
-  })
-}
-
-/** Writes a fixture history through the shared writer and returns its replay model with the sequences it holds. */
-async function modelOf(
-  context: Parameters<typeof openServerRepository>[0],
-  options: Parameters<typeof writeServerHistory>[1] = {},
-) {
-  const { repository } = await openServerRepository(context)
-  const { header, sequences } = await writeServerHistory(repository, options)
-  const model = buildServerReplayModel(
-    await repository.serverHistories.read(header.studyId),
-    VERDICTS,
-  )
-  return { model, sequences }
-}
 
 // protects=a server replay whose open failed is worded with server words in the notification and status line; fails_when=the text says test replay for a server history; no_claim=the Show details action
 test('a server replay that cannot open says server replay and never test replay', () => {
@@ -106,7 +71,7 @@ test('startup output recorded before the request shows no request yet and the re
   })
   assert.deepEqual(atRequest.request, {
     line: 'POST /api/items',
-    claim: 'Request sent by Codebook',
+    claim: 'Request opened by Codebook; not sent yet at this moment.',
   })
 })
 

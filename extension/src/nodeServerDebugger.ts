@@ -46,6 +46,10 @@ export type NodeServerStopCapture = {
   line: number
   /** SHA-256 of the file the stop executed. */
   sourceHash: string
+  /** The column of the paused top frame; a debugger that does not report it leaves the history to read the snapshot's. */
+  column?: number
+  /** The function name of the paused top frame. */
+  frameName?: string
   facts: NodeTestFact[]
   /** Required inspections the debugger could not read, as `<mode>:<path>`. */
   unavailable: string[]

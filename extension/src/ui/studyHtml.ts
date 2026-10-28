@@ -2518,8 +2518,13 @@ function studyClient(
    * @example useReplayWords(message) // heading reads 'Server replay' for a server replay
    */
   const useReplayWords = (message: StudyViewMessage): void => {
+    // With no replay selected, a workspace that saved only server replays is waited on in server words.
+    const onlyServerReplays =
+      message.nodeReplayProfile === undefined &&
+      !message.nodeHistoryCatalog?.length &&
+      Boolean(message.nodeServerHistoryCatalog?.length)
     replayWords =
-      message.nodeReplayProfile === 'node-server'
+      message.nodeReplayProfile === 'node-server' || onlyServerReplays
         ? options.serverReplay
         : options.testReplay
     text('node-history-heading', replayWords.heading)

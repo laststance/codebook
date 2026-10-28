@@ -16,6 +16,7 @@ import {
 } from './constants'
 import { StudyError } from './errors'
 import type { NodeServerConfiguration } from './nodeServerConfigSchemas'
+import type { NodeServerHistorySink } from './nodeServerHistorySink'
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
 import type {
   NodeTestPreparationControl,
@@ -518,6 +519,7 @@ export async function createEnvironment(
       record: (type: string, detail?: unknown) => unknown,
       citedSources: ConfiguredDescriptor['sources'],
       runId: string,
+      history?: NodeServerHistorySink,
     ) {
       const node = await resolveExternalNode(
         await requireNodeRunPrerequisites('the Node server run'),
@@ -536,6 +538,7 @@ export async function createEnvironment(
         record,
         citedSources,
         runId,
+        history,
         dependencies: createProductNodeServerRunDependencies({
           node,
           utilities: createNodeServerRunUtilities(orphanStore),

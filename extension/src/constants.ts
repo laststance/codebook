@@ -5,10 +5,11 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.8'
-export const EXTENSION_VERSION = '0.2.55'
+export const API_VERSION = '1.9'
+export const EXTENSION_VERSION = '0.2.56'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -778,6 +779,9 @@ export const MILLISECONDS_PER_SECOND = 1_000
 export const PLAYBACK_PAGE_STEP_MS = 10_000
 export const REPLAY_VIEWPORT_RECEIPT_LIMIT = 12
 export const REPOSITORY_GIT_TIMEOUT_MS = 5_000
+
+/** The bound of the repository revision read a server history's header carries: a slow Git costs the header its revision (read as unknown), never the history. */
+export const REPOSITORY_REVISION_BOUND_MS = 500
 export const REPOSITORY_GIT_LIMIT_BYTES = 2_097_152
 export const REPOSITORY_MAX_TRACKED_FILES = 5_000
 export const REPOSITORY_SOURCE_PAGE_SIZE = 100
@@ -1401,8 +1405,16 @@ export const NODE_SERVER_SOURCE_TEXT_LIMIT_BYTES = 524_288
 export const NODE_SERVER_OUTPUT_TEXT_LIMIT_CHARS = 4_096
 /** The longest response body one `response` entry stores (the shown body: `shapeResponseBody` cuts at 8,192 bytes). */
 export const NODE_SERVER_RESPONSE_BODY_LIMIT_CHARS = 16_384
+/** The most JSON bytes (quotes included) of an inspection path a seal reason keeps: a 512-character ASCII path fits whole (its text and its params each hold the path): 160 reasons at most, so the worst-case seal stays inside {@link NODE_SERVER_HISTORY_SEAL_LIMIT_BYTES}. */
+export const NODE_SERVER_SEAL_PATH_LIMIT_BYTES = 520
 /** How many entries a missing-evidence list names in an answer; the rest is a count. */
 export const NODE_SERVER_MISSING_LIST_LIMIT = 20
+/** How long a node-server run waits for its history to start before it launches without one: slow storage never delays the server (D8). */
+export const NODE_SERVER_HISTORY_START_BOUND_MS = 2_000
+/** Output chunks of one channel that arrive within this many milliseconds of each other become one `output` entry (up to {@link NODE_SERVER_OUTPUT_TEXT_LIMIT_CHARS}). */
+export const NODE_SERVER_OUTPUT_COALESCE_MS = 50
+/** How long a seal of a node-server history may take before it is abandoned and the folder lists as interrupted: the server's own stop deadline. */
+export const NODE_SERVER_HISTORY_SEAL_BOUND_MS = NODE_SERVER_STOP_DEADLINE_MS
 /** File system error codes that a retry can clear (a descriptor or lock shortage, a busy or antivirus-held file, a disk error): a read that fails with one is not remembered as the history's state ({@link isTransientFileError}). */
 export const TRANSIENT_FILE_ERROR_CODES: readonly string[] = [
   'EMFILE',
@@ -1819,6 +1831,9 @@ export const REPLAY_DEBUG_TYPE = 'codebook-replay'
 export const REPLAY_DEBUG_THREAD_ID = 1
 export const REPLAY_DEBUG_MAX_FRAMES = 32
 export const REPLAY_DEBUG_MAX_SCOPES = 16
+/** The reason a snapshot gives for a scope it deliberately did not copy: replay keeps only the stopped frame's local values. The capture writes it and the server stop's presentability check reads it, so a capture that follows the policy is never judged unread. */
+export const REPLAY_SCOPE_NOT_CAPTURED_TEXT =
+  "This scope was not captured; replay keeps only the stopped frame's local values."
 export const REPLAY_DEBUG_MAX_VARIABLES = 2_000
 export const REPLAY_DEBUG_MAX_DEPTH = 5
 export const REPLAY_DEBUG_TEXT_LIMIT_CHARS = 4_096

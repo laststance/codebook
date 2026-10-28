@@ -4,47 +4,23 @@ import { join } from 'node:path'
 import { before, test } from 'node:test'
 
 import { NODE_SERVER_HISTORY_DIRECTORY } from '../constants'
-import type { NodeHistoryRepository } from '../nodeHistoryRepository'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { workspaceHarness } from './studyWorkspaceHarness'
 import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 import { realProcessStart } from './utils/realProcessStart'
 import { writeServerHistory } from './utils/sealedServerHistory'
+import {
+  openServerReplay,
+  repositoryOf,
+  workspaceKeyOf,
+} from './utils/serverWorkspaceHarness'
 import { shownApplicationView } from './utils/shownTestOutput'
 import { lastView } from './utils/twoStopNodeHistory'
 
 before(async () => {
   await realProcessStart(process.pid)
 })
-
-type Harness = Awaited<ReturnType<typeof workspaceHarness>>
-
-/** The workspace's history repository, over the learning directory the fixture writer shares. */
-function repositoryOf(harness: Harness): NodeHistoryRepository {
-  return harness.reader['nodeHistoryRepository']!
-}
-
-/** The workspace key every history of the harness's workspace carries. */
-function workspaceKeyOf(harness: Harness): string {
-  return harness.service.nodeHistoryStore!.workspaceKey
-}
-
-/** Opens a saved server replay from the library and waits until the pane shows it settled. */
-async function openServerReplay(
-  harness: Harness,
-  studyId: string,
-): Promise<void> {
-  await harness.reader.action('retry')
-  await harness.reader.openLearningReplay(studyId)
-  await waitUntil(
-    () =>
-      lastView(harness)?.nodeHistory?.header.studyId === studyId &&
-      !lastView(harness)?.loading,
-    'the server replay is shown',
-    READER_RESULT_BOUND_MS,
-  )
-}
 
 // protects=the last moment of a replay whose recording was interrupted reads a no-response reason in the response region, not the interruption's own sentence; fails_when=the region prints the first capture reason whatever it is; no_claim=the end sentence under the output
 test('the response region of an interrupted server replay reads that no response was recorded at its last moment', async () => {
@@ -157,6 +133,65 @@ test('an understanding choice for a server replay whose folder is gone answers t
     assert.equal(
       lastView(harness)?.errors[0],
       'Error: No Node history has this study id.',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=a reader-position write held while its server history folder is removed answers that no history has this study id, never the raw rename failure; fails_when=the pending write's ENOENT reaches the learner's errors; no_claim=the understanding choice's own refusal
+test('a held position write of a server replay whose folder is removed meanwhile answers that no history has this study id', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const { header, sequences } = await writeServerHistory(
+      repositoryOf(harness),
+      {
+        workspaceKey: workspaceKeyOf(harness),
+        output: ['listening\n'],
+      },
+    )
+    await openServerReplay(harness, header.studyId)
+    const store = repositoryOf(harness).resolve(header.studyId)!.store
+    const write = store.saveReaderPosition.bind(store)
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let held = false
+    store.saveReaderPosition = async (...args): Promise<void> => {
+      held = true
+      await gate
+      return write(...args)
+    }
+
+    // Act
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: lastView(harness)!.revision,
+      studyId: header.studyId,
+      sequence: sequences.output[0]!,
+    })
+    await waitUntil(() => held, 'the write is held', READER_RESULT_BOUND_MS)
+    await rm(
+      join(
+        harness.service.nodeHistoryStore!.learningDirectory,
+        NODE_SERVER_HISTORY_DIRECTORY,
+        header.studyId,
+      ),
+      { recursive: true, force: true },
+    )
+    release()
+    await waitUntil(
+      () => (lastView(harness)?.errors.length ?? 0) > 0,
+      'the write is refused',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(
+      [...(lastView(harness)?.errors ?? [])],
+      ['Error: No Node history has this study id.'],
     )
   } finally {
     await harness.close()

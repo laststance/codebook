@@ -125,11 +125,12 @@ import {
   type StudyRemoval,
 } from './learningLibrary'
 import { NodeHistoryRepository } from './nodeHistoryRepository'
-import { NodeLearningSave } from './nodeLearningSave'
+import { NodeLearningSave, type NodeLearningSaveHost } from './nodeLearningSave'
 import type {
   NodeServerHistorySummary,
   NodeServerHistoryTypes,
 } from './nodeServerHistoryTypes'
+import { NodeServerLearningSave } from './nodeServerLearningSave'
 import {
   nodeLearningStepIdSchema,
   type NodeTestHistoryEntry,
@@ -257,9 +258,9 @@ import {
 import {
   describeServerEventRow,
   describeServerReplayRow,
+  describeServerSummaryFailure,
   NODE_SERVER_REPLAY_TEXT,
 } from './utils/describeNodeServerReplay'
-import { describeNodeServerStatus } from './utils/describeNodeServerStatus'
 import { describeNodeTestReplay } from './utils/describeNodeTestReplay'
 import { describePaneIdentity } from './utils/describePaneIdentity'
 import { describeStudy } from './utils/describeStudy'
@@ -356,8 +357,7 @@ import {
   type NodeTestSectionInput,
 } from './utils/projectNodeTestSection'
 import { projectPlaybackStudy } from './utils/projectPlaybackStudy'
-import { projectServerApplication } from './utils/projectServerApplication'
-import { projectServerSection } from './utils/projectServerSection'
+import { projectServerReplayViews } from './utils/projectServerReplayViews'
 import { pruneClosedTabRecord } from './utils/pruneClosedTabRecord'
 import { readNodeTestOutputReport } from './utils/readNodeTestOutputReport'
 import {
@@ -372,8 +372,13 @@ import {
   recordedLeftoverGroups,
 } from './utils/recordedLeftoverGroups'
 import { recordingNotShownReason } from './utils/recordingNotShownReason'
-import { refuseSavingServerRun } from './utils/refuseSavingServerRun'
 import { replacedTabAddresses } from './utils/replacedTabAddresses'
+import {
+  replayNoStep,
+  replayRefusal,
+  type ReplayKind,
+  type ReplayRefusalKey,
+} from './utils/replayRefusals'
 import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition'
 import { type CauseRoots, sanitizeCause } from './utils/sanitizeCause'
 import { sanitizedStack } from './utils/sanitizedStack'
@@ -814,16 +819,21 @@ export class StudyWorkspace {
   private readonly nodeLearningSave = new NodeLearningSave({
     service: () => this.service,
     store: () => this.nodeHistoryStore,
-    ask: async (text, actions) =>
-      vscode.window.showWarningMessage(text, { modal: true }, ...actions),
-    notify: async (severity, text, actions) =>
-      showPlainNotice(vscode.window, severity, text, ...actions),
+    ...this.saveHostEditorParts(),
     materialRevision: (studyId) =>
       this.nodeHistoryCatalog.find((history) => history.studyId === studyId)
         ?.materialRevision,
-    open: (studyId) => this.openLearningReplay(studyId),
-    log: (entry) => this.diagnostics?.log(entry),
-    changed: () => this.publish(),
+  })
+
+  /** Saves a server run's learning replay from the status item; this workspace only wires the item and its command to it. */
+  private readonly nodeServerLearningSave = new NodeServerLearningSave({
+    service: () => this.service,
+    store: () => this.nodeHistoryRepository?.serverHistories,
+    ...this.saveHostEditorParts(),
+    materialRevision: (studyId) =>
+      this.nodeServerHistoryCatalog.find(
+        (history) => history.studyId === studyId,
+      )?.materialRevision,
   })
 
   private library?: LearningLibrary
@@ -9723,7 +9733,7 @@ export class StudyWorkspace {
       )
       // The test replay's reader position is written after each commit; a close does not report closed with that file still being created (F234).
       await settledWithin(
-        this.nodeHistoryStore?.settleReaderPositionWrites(),
+        this.nodeHistoryRepository?.settleReaderPositionWrites(),
         storageTimeLeftMs(),
       )
       await settledWithin(this.library?.flush(), storageTimeLeftMs())
@@ -10750,13 +10760,27 @@ export class StudyWorkspace {
       // Read at each refusal: the library and the store are built before a service is attached, and a removal changes the answer.
       const removalAvailability = (): StudyRemovalAvailability =>
         this.studyRemovalAvailability()
+      const learningDirectory = join(
+        this.context.globalStorageUri.fsPath,
+        'learning',
+        key,
+      )
+      // The histories' admission counts the places the studies take (an archive or an open recording) through a library that counts only; the library and the recordings then take the repository's count directly, with no closure over a later assignment.
+      const placeCounter = new LearningLibrary(learningDirectory, key, capacity)
+      const repository = new NodeHistoryRepository(
+        learningDirectory,
+        key,
+        () => placeCounter.storageLimit(),
+        () => placeCounter.takenStudyCount(),
+      )
+      this.nodeHistoryRepository = repository
       this.library = new LearningLibrary(
-        join(this.context.globalStorageUri.fsPath, 'learning', key),
+        learningDirectory,
         key,
         capacity,
         removalAvailability,
         // Test and server histories take places of the same limit as saved studies.
-        (places) => this.nodeHistoryRepository!.countHistories(places),
+        (places) => repository.countHistories(places),
       )
       this.recordings = new RecordingStore(
         this.library.directory,
@@ -10765,15 +10789,7 @@ export class StudyWorkspace {
         undefined,
         capacity,
         removalAvailability,
-        // The repository is built right after: read at admission time, like the library's counter.
-        (places) => this.nodeHistoryRepository!.countHistories(places),
-      )
-      this.nodeHistoryRepository = new NodeHistoryRepository(
-        this.library.directory,
-        key,
-        () => this.library!.storageLimit(),
-        // The saved studies as the library's own admission counts them: what is left of a study without its archive is listed and takes no place.
-        () => this.library!.savedStudyCount(),
+        (places) => repository.countHistories(places),
       )
       this.nodeHistoryStore = this.nodeHistoryRepository.testHistories
       // What the reader before this one could not save waits for Retry storage / refresh here.
@@ -11418,22 +11434,64 @@ export class StudyWorkspace {
     return sanitizeCause(error, this.privateRoots())
   }
 
+  /**
+   * Gives the parts of a node run's Save host that are the editor's: the modal question, the notices, Open replay, the Output channel and the redraw; shared by the test and the server Save, which differ only in their service, store and material revision.
+   * @returns The editor-bound members of a Save host.
+   * @example new NodeLearningSave({ ...this.saveHostEditorParts(), service, store, materialRevision })
+   */
+  private saveHostEditorParts(): Pick<
+    NodeLearningSaveHost,
+    'ask' | 'notify' | 'open' | 'log' | 'changed'
+  > {
+    return {
+      ask: async (text, actions) =>
+        vscode.window.showWarningMessage(text, { modal: true }, ...actions),
+      notify: async (severity, text, actions) =>
+        showPlainNotice(vscode.window, severity, text, ...actions),
+      open: (studyId): Promise<void> => this.openLearningReplay(studyId),
+      log: (entry) => this.diagnostics?.log(entry),
+      changed: (): void => this.publish(),
+    }
+  }
+
+  /**
+   * Hands the Save of a node-server or node-test run to the class that owns it, refusing a delayed click that names another run.
+   * @param service - The attached service.
+   * @param record - The current run.
+   * @param expectedStudyId - The study the clicked control named.
+   * @returns The save in flight; `undefined` for a run of another profile.
+   * @throws When the control named another run.
+   * @example return this.nodeRunSave(service, record, expectedStudyId) ?? undefined
+   */
+  private nodeRunSave(
+    service: StudyService | undefined,
+    record: StudyRecord | undefined,
+    expectedStudyId: string | undefined,
+  ): Promise<void> | undefined {
+    const owner =
+      record?.profile === NODE_SERVER_PROFILE
+        ? this.nodeServerLearningSave
+        : record?.profile === NODE_TEST_PROFILE
+          ? this.nodeLearningSave
+          : undefined
+    if (!service || !record || !owner) return undefined
+    if (
+      expectedStudyId !== undefined &&
+      expectedStudyId !== `${service.instanceId}_${record.id}`
+    )
+      throw new Error(
+        'The recorded session changed. Use the current Save learning replay control.',
+      )
+    return owner.save(record)
+  }
+
   /** Finishes the explicitly selected capture and verifies matching durable learning; called by the status-bar command. @example await workspace.saveLearningReplay(studyId) */
   async saveLearningReplay(expectedStudyId?: string): Promise<void> {
     const service = this.service,
       record = this.currentRecord()
-    refuseSavingServerRun(record)
-    // A test run's Save belongs to NodeLearningSave; a delayed click for another run is refused as for a browser save.
-    if (service && record?.profile === NODE_TEST_PROFILE) {
-      if (
-        expectedStudyId !== undefined &&
-        expectedStudyId !== `${service.instanceId}_${record.id}`
-      )
-        throw new Error(
-          'The recorded session changed. Use the current Save learning replay control.',
-        )
-      return this.nodeLearningSave.save(record)
-    }
+    // A server or test run's Save belongs to its own class, with the same delayed-click guard as a browser save.
+    const nodeSave = this.nodeRunSave(service, record, expectedStudyId)
+    if (nodeSave) return nodeSave
     // A refused run recorded nothing, and the recording of a removed study went to the Trash with it.
     if (!service || !record || !record.recording || record.historyExcluded)
       throw new Error(
@@ -11538,10 +11596,14 @@ export class StudyWorkspace {
             this.learningSave.signature))
         ? this.learningSave
         : undefined
-    // A server run has nothing to save: its item says where the run stands and that no replay exists yet, with no command.
-    if (record?.profile === NODE_SERVER_PROFILE && this.service && studyId) {
-      const view = describeNodeServerStatus(this.service.state(record))
-      this.showLearningSaveItem(view.text, view.tooltip, undefined, studyId)
+    // A server run's item shows what NodeServerLearningSave says of it.
+    if (record?.profile === NODE_SERVER_PROFILE && studyId) {
+      const view = this.nodeServerLearningSave.item(record)
+      if (!view) {
+        this.hideLearningSaveItem()
+        return
+      }
+      this.showLearningSaveItem(view.text, view.tooltip, view.command, studyId)
       return
     }
     // A test run's item shows what NodeLearningSave says of it.
@@ -12229,7 +12291,7 @@ export class StudyWorkspace {
     const failure = describeNodeLearningSave({
       kind: 'open-failed',
       // A server replay that cannot open is worded as one, never as a test replay.
-      ...(!summary && serverSummary ? { profile: 'node-server' as const } : {}),
+      ...(!summary && serverSummary ? { profile: NODE_SERVER_PROFILE } : {}),
       title: summary
         ? [summary.testFile, ...(summary.testTitles ?? [])].join(' › ')
         : serverSummary
@@ -12323,11 +12385,7 @@ export class StudyWorkspace {
         present: async (sequence, isCurrent) => {
           const selectedHistory = this.selectedNodeHistory
           if (!selectedHistory || selectedHistory.header.studyId !== studyId)
-            throw new Error(
-              this.inReplayWords(
-                'The selected test replay changed during playback.',
-              ),
-            )
+            throw new Error(this.replayRefusal('changedDuringPlayback'))
           await this.requestNodeHistoryEvent(selectedHistory, sequence, {
             publish: false,
             alignPlayback: false,
@@ -12336,7 +12394,7 @@ export class StudyWorkspace {
         },
         changed: () => this.publish(),
         failed: (error) => this.report('control', error),
-        inReplayWords: (sentence) => this.inReplayWords(sentence),
+        replayKind: () => this.replayKind(),
       })
       // The saved reader position, else the first stop whose source verifies, else the first event (DS1).
       const initialSequence = this.landingSequence(
@@ -12480,7 +12538,17 @@ export class StudyWorkspace {
       revision,
     )
     if (!sidecars) return undefined
-    const summary = await store.summarize(studyId).catch(() => undefined)
+    // A summary that cannot be read leaves the learning verdict unknown: the open says so on the learning line instead of reading as "explanation not saved".
+    const summary = await store.summarize(studyId).catch((error: unknown) => {
+      // A read that another open superseded meanwhile has no replay left to say it about.
+      if (this.historyOpenSuperseded(request, revision)) return undefined
+      this.reportTestReplayFailure(
+        'history-learning',
+        error,
+        describeServerSummaryFailure,
+      )
+      return undefined
+    })
     if (this.historyOpenSuperseded(request, revision)) return undefined
     const serverReplay = presentServerHistory(journal, summary)
     const restored =
@@ -13553,8 +13621,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Projects a selected server replay's three views for the Study message with the server catalog, reading the replay model instead of the test journal; called by {@link nodeHistoryViews} for a history that is a server replay's test-shaped view.
-   * The Application view is projected once per shown moment, as a test replay's is, and a moment the selection is going to names the Study position and the Application header while it loads (D29).
+   * Projects a selected server replay's three views for the Study message; called by {@link nodeHistoryViews} for a history that is a server replay's test-shaped view, which hands the projection to {@link projectServerReplayViews} with this workspace's state.
    * @param replay - The selected server replay.
    * @param selected - The selected event in the replay's test-shaped history.
    * @returns The Application view, the Study section and the learning material for the one summary renderer.
@@ -13569,66 +13636,21 @@ export class StudyWorkspace {
     | 'nodeHistorySection'
     | 'nodeHistoryLearningSummary'
   > {
-    const { shownModel: model, history } = replay
-    const eventAt = (sequence: number | undefined) => {
-      const position =
-        sequence === undefined ? undefined : model.indexBySequence.get(sequence)
-      return position === undefined ? undefined : model.events[position]
-    }
-    const leavingPosition = this.leavingNodeHistoryPosition(history)
-    const pendingEvent =
-      leavingPosition === undefined ? undefined : model.events[leavingPosition]
-    const selectedEvent = eventAt(selected?.sequence)
-    const opening =
-      this.pendingNodeHistory !== undefined &&
-      this.pendingNodeHistoryStudyId === model.studyId
-    const key = JSON.stringify([
-      model.studyId,
-      model.events.length,
-      model.status,
-      selectedEvent?.sequence,
-      opening,
-      pendingEvent !== undefined,
-    ])
-    if (this.nodeHistoryApplicationMemo?.key !== key) {
-      const generation = ++this.nodeHistoryApplicationGeneration
-      this.nodeHistoryApplicationMemo = {
-        key,
-        generation,
-        view: projectServerApplication(
-          model,
-          replay.outputIndex,
-          selectedEvent,
-          {
-            generation,
-            loading: opening,
-            leaving: pendingEvent !== undefined,
-            ...(model.endedBeforeAnswer && replay.noResponseReason
-              ? { noResponseReason: replay.noResponseReason }
-              : {}),
-          },
-        ),
-      }
-    }
-    const learning = projectNodeLearningSummary(
-      this.selectedNodeHistoryLearningMaterial,
-      history,
-    )
-    return {
-      nodeHistoryApplication: this.nodeHistoryApplicationMemo.view,
-      nodeHistorySection: projectServerSection({
-        replay,
-        ...(pendingEvent
-          ? { selected: pendingEvent, pending: true }
-          : selectedEvent
-            ? { selected: selectedEvent }
-            : {}),
-        selectedStopVerified:
-          selected?.type === 'stop' && nodeStopSourceMatches(selected),
-        ...this.replaySectionContext(history, learning),
-      }),
-      ...(learning ? { nodeHistoryLearningSummary: learning } : {}),
-    }
+    const { views, memo } = projectServerReplayViews({
+      replay,
+      selected,
+      leavingPosition: this.leavingNodeHistoryPosition(replay.history),
+      opening:
+        this.pendingNodeHistory !== undefined &&
+        this.pendingNodeHistoryStudyId === replay.shownModel.studyId,
+      memo: this.nodeHistoryApplicationMemo,
+      nextGeneration: () => ++this.nodeHistoryApplicationGeneration,
+      learningMaterial: this.selectedNodeHistoryLearningMaterial,
+      sectionContext: (learning) =>
+        this.replaySectionContext(replay.history, learning),
+    })
+    this.nodeHistoryApplicationMemo = memo
+    return views
   }
 
   /**
@@ -13650,15 +13672,22 @@ export class StudyWorkspace {
   }
 
   /**
-   * Words a refusal sentence for the replay that is shown: a server replay is never called a test replay, in the sentences that reach the transport's status line.
-   * @param sentence - The sentence in the test replay's words.
-   * @returns The sentence, naming a server replay when one is selected.
-   * @example this.inReplayWords('Select the matching test replay before paging.') // => 'Select the matching server replay before paging.' for a server replay
+   * Tells which replay is shown, so refusals name it in its own words.
+   * @returns `server` while a server replay is selected, `test` otherwise.
+   * @example this.replayKind() // => 'server'
    */
-  private inReplayWords(sentence: string): string {
-    return this.selectedServerReplay
-      ? sentence.replaceAll('test replay', 'server replay')
-      : sentence
+  private replayKind(): ReplayKind {
+    return this.selectedServerReplay ? 'server' : 'test'
+  }
+
+  /**
+   * Words a catalogued refusal for the replay that is shown: a server replay is never called a test replay, in the sentences that reach the transport's status line.
+   * @param key - Which refusal.
+   * @returns The sentence in the shown replay's words.
+   * @example this.replayRefusal('selectBeforePaging') // => 'Select the matching server replay before paging.' for a server replay
+   */
+  private replayRefusal(key: ReplayRefusalKey): string {
+    return replayRefusal(key, this.replayKind())
   }
 
   /**
@@ -13703,18 +13732,10 @@ export class StudyWorkspace {
    */
   private replayForMove(studyId: string): NodeTestHistoryIndex {
     if (this.recordingActive)
-      throw new Error(
-        this.inReplayWords(
-          'Close browser replay before navigating a test replay.',
-        ),
-      )
+      throw new Error(this.replayRefusal('closeBrowserBeforeNavigating'))
     const history = this.selectedNodeHistory
     if (!history || history.header.studyId !== studyId)
-      throw new Error(
-        this.inReplayWords(
-          'Select the matching saved test replay before navigating its timeline.',
-        ),
-      )
+      throw new Error(this.replayRefusal('selectSavedBeforeNavigating'))
     return history
   }
 
@@ -24255,11 +24276,7 @@ export class StudyWorkspace {
         !this.selectedNodeHistory ||
         this.selectedNodeHistory.header.studyId !== message.studyId
       )
-        throw new Error(
-          this.inReplayWords(
-            'Select the matching test replay before saving an understanding choice.',
-          ),
-        )
+        throw new Error(this.replayRefusal('selectBeforeUnderstanding'))
       const decisionStore = this.nodeHistoryStoreOf(message.studyId)
       if (!decisionStore) throw new Error('No Node history has this study id.')
       const decision = await decisionStore.saveLearningDecision(
@@ -24283,11 +24300,7 @@ export class StudyWorkspace {
         !this.selectedNodeHistory ||
         this.selectedNodeHistory.header.studyId !== message.studyId
       )
-        throw new Error(
-          this.inReplayWords(
-            'Select the matching test replay before saving its learning material.',
-          ),
-        )
+        throw new Error(this.replayRefusal('selectBeforeLearningMaterial'))
       const material = await this.service?.explainNodeHistory({
         studyId: message.studyId,
         expectedRevision: message.expectedRevision,
@@ -24307,9 +24320,7 @@ export class StudyWorkspace {
     }
     if (message.type === 'node-history-page') {
       if (this.selectedNodeHistory?.header.studyId !== message.studyId)
-        throw new Error(
-          this.inReplayWords('Select the matching test replay before paging.'),
-        )
+        throw new Error(this.replayRefusal('selectBeforePaging'))
       const pageCount = Math.max(
         1,
         Math.ceil(
@@ -24318,11 +24329,7 @@ export class StudyWorkspace {
         ),
       )
       if (message.page >= pageCount)
-        throw new Error(
-          this.inReplayWords(
-            'The requested page of this test replay is unavailable.',
-          ),
-        )
+        throw new Error(this.replayRefusal('pageUnavailable'))
       this.selectedNodeHistoryPage = message.page
       this.publish()
     }
@@ -24336,9 +24343,7 @@ export class StudyWorkspace {
       )
       if (target === undefined)
         throw new Error(
-          this.inReplayWords(
-            `There is no ${message.direction} ${message.unit ?? 'event'} in this test replay.`,
-          ),
+          replayNoStep(this.replayKind(), message.direction, message.unit),
         )
       // Next and Previous show the event's first step (DS21), once the move commits.
       await this.requestNodeHistoryEvent(history, target, {
@@ -24354,63 +24359,35 @@ export class StudyWorkspace {
     }
     if (message.type === 'node-history-stop') {
       if (this.recordingActive)
-        throw new Error(
-          this.inReplayWords(
-            'Close browser replay before inspecting a stop of a test replay.',
-          ),
-        )
+        throw new Error(this.replayRefusal('closeBrowserBeforeInspecting'))
       const history = this.selectedNodeHistory
       if (!history || history.header.studyId !== message.studyId)
-        throw new Error(
-          this.inReplayWords(
-            'Select the matching saved test replay before inspecting its debugger state.',
-          ),
-        )
+        throw new Error(this.replayRefusal('selectSavedBeforeInspecting'))
       if (
         history.entries.find((entry) => entry.sequence === message.sequence)
           ?.type !== 'stop'
       )
-        throw new Error(
-          this.inReplayWords(
-            'The requested event of this test replay is not a debugger stop.',
-          ),
-        )
+        throw new Error(this.replayRefusal('eventNotAStop'))
       await this.requestNodeHistoryEvent(history, message.sequence, {
         requireDebugger: true,
       })
     }
     if (message.type === 'node-history-playback') {
       if (this.recordingActive)
-        throw new Error(
-          this.inReplayWords(
-            'Close browser replay before controlling a test replay.',
-          ),
-        )
+        throw new Error(this.replayRefusal('closeBrowserBeforeControlling'))
       if (
         this.selectedNodeHistory?.header.studyId !== message.studyId ||
         !this.nodeHistoryPlaybackController
       )
-        throw new Error(
-          this.inReplayWords(
-            'Select the matching saved test replay before controlling its timeline.',
-          ),
-        )
+        throw new Error(this.replayRefusal('selectSavedBeforeControlling'))
       if (message.action !== 'seek' && message.positionMs !== undefined)
-        throw new Error(
-          this.inReplayWords(
-            'Only a seek in a test replay accepts a position.',
-          ),
-        )
+        throw new Error(this.replayRefusal('positionOnlyForSeek'))
       if (message.action === 'play') this.nodeHistoryPlaybackController.play()
       else if (message.action === 'pause')
         this.nodeHistoryPlaybackController.pause()
       else if (message.action === 'seek') {
         if (message.positionMs === undefined)
-          throw new Error(
-            this.inReplayWords(
-              'A seek in a test replay needs a recorded time.',
-            ),
-          )
+          throw new Error(this.replayRefusal('seekNeedsTime'))
         await this.nodeHistoryPlaybackController.seek(message.positionMs)
       }
     }

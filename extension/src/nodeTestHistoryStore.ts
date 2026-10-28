@@ -1115,12 +1115,20 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
   ): Promise<Types['Material']> {
     const previous =
       this.learningMaterialWrites.get(studyId) ?? Promise.resolve(undefined)
-    // This window's saves queue in order; the read, the revision check and the write of each run under the storage lock, so a save of another window never interleaves between them.
+    // The journal is read and the citations checked before the storage lock is taken, so the lock is held only for the revision check and the write; a refusal waits for the revision check, which has always come first.
+    const prepared = this.prepareLearningMaterial(studyId, content)
+    prepared.catch(() => undefined)
+    // This window's saves queue in order; the revision check and the write of each run under the storage lock, so a save of another window never interleaves between them.
     const operation = previous
       .catch(() => undefined)
       .then(() =>
         withStorageLock(this.learningDirectory, () =>
-          this.writeLearningMaterial(studyId, expectedRevision, content),
+          this.writeLearningMaterial(
+            studyId,
+            expectedRevision,
+            content,
+            prepared,
+          ),
         ),
       )
     this.learningMaterialWrites.set(studyId, operation)
@@ -1130,31 +1138,61 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
     })
   }
 
+  /**
+   * Reads the history's journal, parses the offered content and checks its citations, all before the storage lock; the outcome is what {@link writeLearningMaterial} throws or writes after its revision check.
+   * @param studyId - The history the material explains.
+   * @param content - The content an agent offered.
+   * @returns The parsed content, the journal it was checked against and the refusal a citation earned, if any.
+   * @example const prepared = await this.prepareLearningMaterial(studyId, content)
+   */
+  private async prepareLearningMaterial(
+    studyId: string,
+    content: Types['MaterialContent'],
+  ) {
+    const codec = this.descriptor.learningMaterial
+    const history = await this.read(studyId)
+    let refusal: unknown, parsedContent: Types['MaterialContent'] | undefined
+    try {
+      parsedContent = codec.parseContent(content)
+      codec.assertCitations(
+        parsedContent,
+        this.citableEventsOf(history),
+        saveStepLead,
+      )
+    } catch (error) {
+      refusal = error
+    }
+    return { content: parsedContent, status: history.status, refusal }
+  }
+
   private async writeLearningMaterial(
     studyId: string,
     expectedRevision: number,
     content: Types['MaterialContent'],
+    preparing: ReturnType<typeof this.prepareLearningMaterial>,
   ): Promise<Types['Material']> {
     const codec = this.descriptor.learningMaterial
-    const history = await this.read(studyId)
-    const current = await this.readLearningMaterial(studyId)
+    let prepared = await preparing
+    // A history another window still records may have gained the entries a citation names since the first read: it is read again under the lock before the citation is refused.
+    if (prepared.refusal && prepared.status === 'recording')
+      prepared = await this.prepareLearningMaterial(studyId, content)
+    // Under the lock only the stored file is read for its revision: the journal was verified and the new citations checked before the lock, and the stored material's own citations are not this save's concern.
+    const current = await this.readLearningMaterialFile(studyId)
     const currentRevision = current?.revision ?? 0
     if (expectedRevision !== currentRevision)
       throw new NodeLearningRevisionChangedError(
         expectedRevision,
         currentRevision,
       )
-    const parsedContent = codec.parseContent(content)
-    codec.assertCitations(
-      parsedContent,
-      this.citableEventsOf(history),
-      saveStepLead,
-    )
+    if (prepared.refusal || !prepared.content)
+      throw (
+        prepared.refusal ?? new Error('The learning material was not parsed.')
+      )
     const material = codec.buildMaterial({
       studyId,
       revision: currentRevision + 1,
       updatedAt: new Date().toISOString(),
-      content: parsedContent,
+      content: prepared.content,
     })
     await atomicPrivateWrite(
       join(this.path(studyId), LEARNING_MATERIAL_FILE),
@@ -1198,11 +1236,18 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
             sequence,
             updatedAt: new Date().toISOString(),
           })
-        await atomicPrivateWrite(
-          join(this.path(studyId), READER_POSITION_FILE),
-          position,
-          NODE_TEST_READER_POSITION_LIMIT_BYTES,
-        )
+        try {
+          await atomicPrivateWrite(
+            join(this.path(studyId), READER_POSITION_FILE),
+            position,
+            NODE_TEST_READER_POSITION_LIMIT_BYTES,
+          )
+        } catch (error) {
+          // A write whose history folder was removed meanwhile (finished or still removing its files) answers the study-id refusal, never the raw rename failure.
+          if (systemErrorCode(error) === 'ENOENT')
+            throw new Error('No Node history has this study id.')
+          throw error
+        }
       })
     this.readerPositionWrites.set(studyId, operation)
     return operation.finally(() => {

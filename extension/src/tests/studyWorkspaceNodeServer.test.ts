@@ -6,7 +6,8 @@ import { ERROR_RECOVERY } from '../errors'
 import { readerSeams, workspaceHarness } from './studyWorkspaceHarness'
 import { startFakeNodeServerRun } from './utils/startFakeNodeServerRun'
 
-const NO_REPLAY = 'Learning replay is not available for server runs yet'
+const RECORDING = '$(record) Recording explanation'
+const SAVE = 'Save learning replay'
 
 /** The state a draw of the status item shows, as the harness's item received it. */
 function drawn(harness: Awaited<ReturnType<typeof workspaceHarness>>) {
@@ -18,8 +19,8 @@ function drawn(harness: Awaited<ReturnType<typeof workspaceHarness>>) {
   }
 }
 
-// protects=D11 and task 12: the one status item says where a server run stands with the no-replay sentence beside it, for every state a run reads, with no command and never as saved; fails_when=a state's text differs, the item offers Save or Open replay, or it says the run is saved; no_claim=the editor's drawing of the item
-test('the status item of a node-server run says where it stands, always beside "Learning replay is not available for server runs yet"', async () => {
+// protects=D11 and task 12: the one status item says where a server run stands beside its learning replay (Recording explanation with Save while it lives, Recording finished after the stop) and offers the Save command; fails_when=a state's text differs, the item offers no Save or says the run is saved; no_claim=the editor's drawing of the item
+test('the status item of a node-server run says where it stands beside Save learning replay', async () => {
   // Arrange
   const harness = await workspaceHarness()
   try {
@@ -49,19 +50,17 @@ test('the status item of a node-server run says where it stands, always beside "
     assert.deepEqual(
       shown.map(([label, item]) => [label, item.text]),
       [
-        ['starting', `Server starting · ${NO_REPLAY}`],
-        ['ready', `Listening on :4100 · ${NO_REPLAY}`],
-        ['paused', `Paused at stop 1 of 2 · ${NO_REPLAY}`],
-        ['learner', `Paused by you in the debugger · ${NO_REPLAY}`],
-        ['responded', `Responded 201 · ${NO_REPLAY}`],
-        ['stopped', `Stopped · ${NO_REPLAY}`],
+        ['starting', `${RECORDING} · Server starting · ${SAVE}`],
+        ['ready', `${RECORDING} · Listening on :4100 · ${SAVE}`],
+        ['paused', `${RECORDING} · Paused at stop 1 of 2 · ${SAVE}`],
+        ['learner', `${RECORDING} · Paused by you in the debugger · ${SAVE}`],
+        ['responded', `${RECORDING} · Responded 201 · ${SAVE}`],
+        ['stopped', `$(save) Recording finished · ${SAVE}`],
       ],
     )
     for (const [, item] of shown) {
       assert.equal(item.visible, true)
-      assert.equal(item.command, undefined)
-      assert.match(item.tooltip, /Server runs are not saved yet/)
-      assert.doesNotMatch(item.text, /saved|Save|replay is available/i)
+      assert.match(JSON.stringify(item.command), /codebook\.saveLearningReplay/)
     }
   } finally {
     await harness.close()
@@ -80,12 +79,12 @@ test('the status item of a failed node-server run names the code and points to O
     await readerSeams(harness).refresh()
     // Assert
     const item = drawn(harness)
-    assert.equal(item.text, `Failed: REQUEST_FAILED · ${NO_REPLAY}`)
+    assert.equal(item.text, `${RECORDING} · Failed: REQUEST_FAILED · ${SAVE}`)
     const firstSentence = ERROR_RECOVERY.REQUEST_FAILED.split('. ')[0] + '.'
     assert.ok(
       item.tooltip.startsWith(`${firstSentence} See Output › Codebook.`),
     )
-    assert.match(item.tooltip, /Server runs are not saved yet/)
+    assert.match(item.tooltip, /Save learning replay stops this server run/)
   } finally {
     await harness.close()
   }
@@ -108,24 +107,58 @@ test('a refresh redraws the status item of a node-server run only when it change
     await readerSeams(harness).refresh()
     // Assert
     assert.equal(afterUnchanged, afterFirst)
-    assert.equal(harness.saveStatus.text, `Responded 200 · ${NO_REPLAY}`)
+    assert.equal(
+      harness.saveStatus.text,
+      `${RECORDING} · Responded 200 · ${SAVE}`,
+    )
   } finally {
     await harness.close()
   }
 })
 
-// protects=task 12: the Save command refuses a server run, since nothing of it is saved; fails_when=Save starts a seal or a browser save for a server run; no_claim=none
-test('Save learning replay refuses a node-server run', async () => {
+// protects=the Save command of a server run whose history started but whose request was not sent answers that there is nothing to save yet and stops nothing; fails_when=Save stops the run, starts a browser save or answers another message; no_claim=the question and notices (nodeServerLearningSave tests)
+test('Save learning replay of a node-server run before its request says there is nothing to save', async () => {
   // Arrange
   const harness = await workspaceHarness()
   try {
     readerSeams(harness).stopOwnTimer()
-    await startFakeNodeServerRun(harness)
-    // Act / Assert
-    await assert.rejects(harness.reader.saveLearningReplay(), {
-      message:
-        'Server runs are not saved yet: there is no learning replay to save.',
-    })
+    const { record } = await startFakeNodeServerRun(harness)
+    assert.equal(record.nodeServer?.history?.status, 'recording')
+
+    // Act
+    await harness.reader.saveLearningReplay()
+
+    // Assert
+    assert.equal(record.stopped, false)
+    assert.deepEqual(
+      harness.informationMessages.map((shown) => shown.message),
+      ['Nothing to save yet: the server run has not sent its request.'],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=the Save command of a server run whose history did not start answers that the learning replay is unavailable and stops nothing; fails_when=Save stops the run or answers nothing to save; no_claim=the wording of the cause
+test('Save learning replay of a node-server run without a history says the learning replay is unavailable', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    harness.service.nodeHistoryRepository = undefined
+    const { record } = await startFakeNodeServerRun(harness)
+    assert.equal(record.nodeServer?.history, undefined)
+
+    // Act
+    await harness.reader.saveLearningReplay()
+
+    // Assert
+    assert.equal(record.stopped, false)
+    assert.equal(harness.informationMessages.length, 1)
+    assert.match(
+      harness.informationMessages[0]!.message,
+      /^Learning replay unavailable: /,
+    )
   } finally {
     await harness.close()
   }

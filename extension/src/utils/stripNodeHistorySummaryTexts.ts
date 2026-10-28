@@ -26,6 +26,13 @@ export function stripNodeHistorySummaryTexts(
       question: stripTerminalControls(summary.question),
       ...(summary.title ? { title: stripTerminalControls(summary.title) } : {}),
       requestLine: stripTerminalControls(summary.requestLine),
+      ...(summary.requestFailureCode
+        ? {
+            requestFailureCode: stripTerminalControls(
+              summary.requestFailureCode,
+            ),
+          }
+        : {}),
       ...(summary.reason
         ? { reason: stripTerminalControls(summary.reason) }
         : {}),

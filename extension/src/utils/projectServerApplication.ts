@@ -11,10 +11,7 @@ import {
   NODE_SERVER_REPLAY_TEXT,
 } from './describeNodeServerReplay'
 import { formatEventSeconds } from './formatEventSeconds'
-import {
-  indexNodeTestOutput,
-  type NodeTestOutputIndex,
-} from './indexNodeTestOutput'
+import { type NodeTestOutputIndex } from './indexNodeTestOutput'
 import {
   leftOutLines,
   type NodeTestApplicationView,
@@ -55,16 +52,38 @@ function requestRegion(
     return opened.length
       ? { line: NODE_SERVER_REPLAY_TEXT.noRequestYet, claim: '' }
       : undefined
-  const attempt = model.attempts.find(
+  // The marks count only once the selected moment has reached them: a moment before the send mark or the withdrawal never shows that later outcome.
+  const sentMark = model.attempts.find(
     (candidate) => candidate.attempt === request.attempt,
+  )?.sentSequence
+  const withdrawal = model.events.find(
+    (
+      event,
+    ): event is Extract<ServerReplayEvent, { type: 'request-withdrawn' }> =>
+      event.type === 'request-withdrawn' &&
+      event.attempt === request.attempt &&
+      event.sequence <= selected.sequence,
   )
+  // The attempt's later withdrawal, wherever it lies: it is a mark the moment may not have reached yet.
+  const laterWithdrawal = model.events.some(
+    (event) =>
+      event.type === 'request-withdrawn' && event.attempt === request.attempt,
+  )
+  // A moment before the attempt's own send mark and before its withdrawal: the request is opening, neither sent nor refused. Only an attempt with neither mark (an interrupted history) reads unknown.
+  if (
+    (sentMark !== undefined || laterWithdrawal) &&
+    !(sentMark !== undefined && sentMark <= selected.sequence) &&
+    !withdrawal
+  )
+    return {
+      line: `${request.method} ${request.path}`,
+      claim: NODE_SERVER_REPLAY_TEXT.requestOpening,
+    }
   return {
     line: `${request.method} ${request.path}`,
     claim: describeServerRequestClaim({
-      sent: attempt?.sent ?? false,
-      ...(attempt?.withdrawnCode
-        ? { withdrawnCode: attempt.withdrawnCode }
-        : {}),
+      sent: sentMark !== undefined && sentMark <= selected.sequence,
+      ...(withdrawal ? { withdrawnCode: withdrawal.code } : {}),
     }),
   }
 }
@@ -177,16 +196,4 @@ export function projectServerApplication(
       ? { end: NODE_SERVER_REPLAY_TEXT.endedEarly }
       : {}),
   }
-}
-
-/**
- * Reads a server replay's output once for {@link projectServerApplication}.
- * @param model - The replay model.
- * @returns The output index over the model's output events.
- * @example const index = indexServerOutput(model)
- */
-export function indexServerOutput(
-  model: ServerReplayModel,
-): NodeTestOutputIndex {
-  return indexNodeTestOutput(model.events)
 }

@@ -10,6 +10,7 @@ import type {
   NodeServerStopEntry,
 } from '../nodeServerHistorySchemas'
 
+import { cutSealReasonPath } from './cutSealReasonPath'
 import { isPresentableServerStop } from './isPresentableServerStop'
 
 /** What only the writer knows when it seals: the failed append, the bounds it reached and the run's capture budget. */
@@ -141,12 +142,14 @@ function stopReasons(
         text: `The source at stop ${number} was not recorded (${unstored.sourceUnavailable}).`,
       })
     }
-    for (const value of stop.unavailable)
+    for (const value of stop.unavailable) {
+      const path = cutSealReasonPath(value.path)
       reasons.push({
         code: CODES.valueUnavailable,
-        params: { path: value.path, stop: number, hit: stop.hit },
-        text: `${value.path} at stop ${number} could not be read.`,
+        params: { path, stop: number, hit: stop.hit },
+        text: `${path} at stop ${number} could not be read.`,
       })
+    }
   }
   return reasons
 }

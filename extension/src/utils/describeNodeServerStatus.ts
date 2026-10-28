@@ -1,11 +1,6 @@
 import { ERROR_RECOVERY } from '../errors'
 
-/** What the status item says beside every state: server runs have no replay yet. */
-const NO_REPLAY_TEXT = 'Learning replay is not available for server runs yet'
-
-/** What the status item's tooltip says beside every state: nothing of a server run is saved. */
-const NOT_SAVED_TOOLTIP =
-  'Server runs are not saved yet: there is no study to save and no replay to open for this run.'
+import { cutCauseForDisplay } from './cutCauseForDisplay'
 
 /** What {@link describeNodeServerStatus} reads of a server run's state ({@link StudyService.state}). */
 export type NodeServerStatusInput = {
@@ -33,26 +28,34 @@ function firstRecoverySentence(code: string): string {
   return /^.*?[.!?](?=\s|$)/s.exec(recovery)?.[0] ?? recovery
 }
 
+/** Where a server run's learning replay stands, beside the run's own state. */
+export type NodeServerLearningStatus =
+  | {
+      kind: 'recording'
+      /** The distinct declared stops with at least one recorded hit. */
+      reached: number
+      declared: number
+      responseRecorded: boolean
+    }
+  | { kind: 'finished' }
+  | { kind: 'saving' }
+  | { kind: 'saved' }
+  | { kind: 'partial' }
+  /** No history started: storage unavailable, full or refused. */
+  | { kind: 'unavailable'; cause: string }
+  /** The history could not be written or sealed: the cause is the whole sentence. */
+  | { kind: 'failed'; cause: string }
+
 /**
- * Words the status bar item of a node-server run: where the run stands, always beside the fact that server runs have no replay yet, and never as saved (D11).
- * Called by {@link StudyWorkspace} each time it draws the item for the current run.
+ * Words where a server run stands (`Server starting`, `Listening on :<port>`, `Paused at stop <n> of <m>`, `Paused by you in the debugger`, `Responded <status>`, `Failed: <code>`, `Stopping`, `Stopped`).
  * @param input - The run's state, error and `nodeServer` block.
- * @returns The item's `text` and `tooltip`: `Server starting`, `Listening on :<port>`, `Paused at stop <n> of <m>`, `Paused by you in the debugger`, `Responded <status>`, `Failed: <code>` (its tooltip: the first sentence of the code's recovery and a pointer to Output › Codebook), `Stopping` or `Stopped`, each followed by ` · Learning replay is not available for server runs yet`.
- * @example
- * describeNodeServerStatus({ state: 'responded', nodeServer: { stops: [{}, {}], response: { status: 200 } } }).text
- * // => 'Responded 200 · Learning replay is not available for server runs yet'
+ * @returns The state words.
+ * @example describeNodeServerState({ state: 'responded', nodeServer: { stops: [{}], response: { status: 200 } } }) // => 'Responded 200'
  */
-export function describeNodeServerStatus(input: NodeServerStatusInput): {
-  text: string
-  tooltip: string
-} {
+function describeNodeServerState(input: NodeServerStatusInput): string {
   const block = input.nodeServer
   // A failure, of the run or of its request, outranks the state it left behind.
-  if (input.error)
-    return {
-      text: `Failed: ${input.error.code} · ${NO_REPLAY_TEXT}`,
-      tooltip: `${firstRecoverySentence(input.error.code)} See Output › Codebook. ${NOT_SAVED_TOOLTIP}`,
-    }
+  if (input.error) return `Failed: ${input.error.code}`
   const words: Record<string, string> = {
     preparing: 'Server starting',
     ready: `Listening on :${block?.address?.port ?? ''}`,
@@ -64,8 +67,68 @@ export function describeNodeServerStatus(input: NodeServerStatusInput): {
     stopping: 'Stopping',
     stopped: 'Stopped',
   }
-  return {
-    text: `${words[input.state] ?? input.state} · ${NO_REPLAY_TEXT}`,
-    tooltip: `Codebook server run: ${input.state}. ${NOT_SAVED_TOOLTIP}`,
+  return words[input.state] ?? input.state
+}
+
+/**
+ * Words the status bar item of a node-server run: the learning replay's state beside where the run stands, so the learner sees what Save does and what is recorded (D11).
+ * Called by {@link NodeServerLearningSave.item} for the current server run.
+ * @param input - The run's state, error and `nodeServer` block.
+ * @param learning - Where the run's learning replay stands.
+ * @returns The item's `text` and `tooltip`. A failed run's tooltip starts with the first sentence of the code's recovery and points to Output › Codebook.
+ * @example
+ * describeNodeServerStatus({ state: 'ready', nodeServer: { address: { port: 4100 }, stops: [{}] } }, { kind: 'unavailable', cause: 'the store is full.' }).text
+ * // => 'Listening on :4100 · Learning replay unavailable: the store is full.'
+ */
+export function describeNodeServerStatus(
+  input: NodeServerStatusInput,
+  learning: NodeServerLearningStatus,
+): { text: string; tooltip: string } {
+  const state = describeNodeServerState(input)
+  const failureTip = input.error
+    ? `${firstRecoverySentence(input.error.code)} See Output › Codebook. `
+    : ''
+  switch (learning.kind) {
+    case 'recording': {
+      const answer = learning.responseRecorded
+        ? 'a response is recorded'
+        : 'no response is recorded yet'
+      return {
+        text: `$(record) Recording explanation · ${state} · Save learning replay`,
+        tooltip: `${failureTip}Save learning replay stops this server run and saves its request, output, executed source, debugger stops and response (${learning.reached} of ${learning.declared} stops recorded; ${answer}).`,
+      }
+    }
+    case 'finished':
+      return {
+        text: '$(save) Recording finished · Save learning replay',
+        tooltip: `${failureTip}Save learning replay saves the sealed server history with the chat's learning material.`,
+      }
+    case 'saving':
+      return {
+        text: '$(sync~spin) Saving learning…',
+        tooltip: 'Codebook is sealing the server history.',
+      }
+    case 'saved':
+      return {
+        text: '$(check) Learning saved · Open replay',
+        tooltip:
+          'Saved: the server history is complete and the chat explained it. Opens the server replay.',
+      }
+    case 'partial':
+      return {
+        text: '$(warning) Learning partially saved · Open replay',
+        tooltip:
+          'Saved what was recorded. Open replay to inspect it and what is missing.',
+      }
+    case 'unavailable':
+      return {
+        text: `${state} · Learning replay unavailable: ${cutCauseForDisplay(learning.cause)}`,
+        tooltip: `${failureTip}This server run is not recorded for a learning replay: ${cutCauseForDisplay(learning.cause)}`,
+      }
+    case 'failed':
+      return {
+        text: `${state} · ${cutCauseForDisplay(learning.cause)}`,
+        tooltip: `${failureTip}${cutCauseForDisplay(learning.cause)} The run is unaffected; what was recorded opens read-only if it can be read.`,
+      }
   }
 }

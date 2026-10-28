@@ -368,7 +368,11 @@ export async function readResource(
   if (!match?.[1]) throw new StudyError('NOT_FOUND', 'Unknown resource.')
   const record = service.record({ instanceId: url.hostname, runId: match[1] })
   const suffix = match[2]
-  if (!suffix) return json(service.state(record))
+  if (!suffix) {
+    // A server run's verdicts are read from the stored history now, not only as they were at the seal and at this window's saves.
+    await service.refreshNodeServerVerdicts(record)
+    return json(service.state(record))
+  }
   // Everything below a run reads its raw evidence, which went to the Trash with a removed study.
   service.assertEvidenceReadable(record)
   const manifestPage = /^manifest\/pages\/([a-f0-9]{64})\/(0|[1-9]\d*)$/.exec(

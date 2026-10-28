@@ -61,6 +61,8 @@ export const NODE_SERVER_REPLAY_TEXT = {
   understanding: 'I understand this server history',
   /** Labels the fixed request region of the Application pane when the request's bytes left. */
   requestSent: 'Request sent by Codebook',
+  /** The moment the request window opened, before its send mark: the bytes have not been handed to the socket yet. */
+  requestOpening: 'Request opened by Codebook; not sent yet at this moment.',
   /** The fixed request region before the request entry. */
   noRequestYet: 'No request recorded yet at this moment.',
   /** The fixed response region before the response entry. */
@@ -96,6 +98,17 @@ export function describeServerRequestClaim(input: {
   return input.sent
     ? NODE_SERVER_REPLAY_TEXT.requestSent
     : `Request not sent: ${input.withdrawnCode ?? 'unknown'}`
+}
+
+/**
+ * Words the line a server replay shows when the history's summary could not be read at open, so the learning verdict is unknown rather than "explanation not saved".
+ * Called by the Study workspace when it opens a server history whose summary failed.
+ * @param cause - The failure, already sanitized of private paths.
+ * @returns One line that names the cause.
+ * @example describeServerSummaryFailure('journal unreadable') // => 'Learning status of this server replay could not be read: journal unreadable'
+ */
+export function describeServerSummaryFailure(cause: string): string {
+  return `Learning status of this server replay could not be read: ${cause}`
 }
 
 /**
