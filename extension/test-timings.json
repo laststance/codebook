@@ -1820,8 +1820,14 @@
     "serverBundle.test.js": {
       "totalMs": 29
     },
+    "serverHistoryRoutingFindings.test.js": {
+      "totalMs": 377
+    },
     "serverInspectorOwnership.test.js": {
       "totalMs": 140
+    },
+    "serverReplayApplicationFindings.test.js": {
+      "totalMs": 417
     },
     "serverReplayPresentation.test.js": {
       "totalMs": 408
@@ -3583,6 +3589,9 @@
         "two hits at one time keep journal order and the slider ends at the end entry after the response": 320,
         "understanding is saved only by the checkbox, and the playhead and understanding return when the replay is opened again": 829
       }
+    },
+    "studyWorkspaceServerReplayFindings.test.js": {
+      "totalMs": 1461
     },
     "studyWorkspaceStorage.test.js": {
       "totalMs": 15018,

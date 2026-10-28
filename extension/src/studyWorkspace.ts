@@ -12228,6 +12228,8 @@ export class StudyWorkspace {
     )
     const failure = describeNodeLearningSave({
       kind: 'open-failed',
+      // A server replay that cannot open is worded as one, never as a test replay.
+      ...(!summary && serverSummary ? { profile: 'node-server' as const } : {}),
       title: summary
         ? [summary.testFile, ...(summary.testTitles ?? [])].join(' › ')
         : serverSummary
@@ -12321,7 +12323,11 @@ export class StudyWorkspace {
         present: async (sequence, isCurrent) => {
           const selectedHistory = this.selectedNodeHistory
           if (!selectedHistory || selectedHistory.header.studyId !== studyId)
-            throw new Error('The selected test replay changed during playback.')
+            throw new Error(
+              this.inReplayWords(
+                'The selected test replay changed during playback.',
+              ),
+            )
           await this.requestNodeHistoryEvent(selectedHistory, sequence, {
             publish: false,
             alignPlayback: false,
@@ -12330,6 +12336,7 @@ export class StudyWorkspace {
         },
         changed: () => this.publish(),
         failed: (error) => this.report('control', error),
+        inReplayWords: (sentence) => this.inReplayWords(sentence),
       })
       // The saved reader position, else the first stop whose source verifies, else the first event (DS1).
       const initialSequence = this.landingSequence(
@@ -13596,8 +13603,8 @@ export class StudyWorkspace {
             generation,
             loading: opening,
             leaving: pendingEvent !== undefined,
-            ...(model.endedBeforeAnswer && replay.captureReasons[0]
-              ? { noResponseReason: replay.captureReasons[0] }
+            ...(model.endedBeforeAnswer && replay.noResponseReason
+              ? { noResponseReason: replay.noResponseReason }
               : {}),
           },
         ),
@@ -13625,9 +13632,9 @@ export class StudyWorkspace {
   }
 
   /**
-   * Finds the store that holds a history by its profile, so a server replay's decision and reader position are written to the server store; falls back to the test store for an id no folder holds.
+   * Finds the store that holds a history by its profile, so a server replay's decision and reader position are written to the server store; an id no folder holds resolves to no store, never to the test store. A reader without a repository has only the test store.
    * @param studyId - The history's study id.
-   * @returns The store, or `undefined` once the reader has none.
+   * @returns The store, or `undefined` once the reader has none or no history has this id.
    * @example this.nodeHistoryStoreOf(studyId)?.saveReaderPosition(studyId, 3)
    */
   private nodeHistoryStoreOf(
@@ -13636,10 +13643,10 @@ export class StudyWorkspace {
     | NodeHistoryStore<NodeTestHistoryTypes>
     | NodeHistoryStore<NodeServerHistoryTypes>
     | undefined {
-    return (
-      this.nodeHistoryRepository?.resolve(studyId)?.store ??
-      this.nodeHistoryStore
-    )
+    // An unresolved id answers that no history has it; it is not read from the test store.
+    return this.nodeHistoryRepository
+      ? this.nodeHistoryRepository.resolve(studyId)?.store
+      : this.nodeHistoryStore
   }
 
   /**
@@ -13881,13 +13888,18 @@ export class StudyWorkspace {
     repository: NodeHistoryRepository,
   ): Promise<void> {
     await repository.listByProfile().then(
-      ({ tests, servers }) => {
-        this.nodeHistoryCatalog = tests.map((summary) =>
-          stripNodeHistorySummaryTexts(summary),
-        )
-        this.nodeServerHistoryCatalog = servers.map((summary) =>
-          stripNodeHistorySummaryTexts(summary),
-        )
+      ({ tests, servers, unavailable }) => {
+        const failed = new Set(unavailable.map(({ profile }) => profile))
+        // A profile that could not be listed keeps its earlier catalog; the other is replaced.
+        if (!failed.has('node-test'))
+          this.nodeHistoryCatalog = tests.map((summary) =>
+            stripNodeHistorySummaryTexts(summary),
+          )
+        if (!failed.has('node-server'))
+          this.nodeServerHistoryCatalog = servers.map((summary) =>
+            stripNodeHistorySummaryTexts(summary),
+          )
+        for (const { error } of unavailable) this.report('archive', error)
       },
       // A listing that fails keeps both earlier catalogs.
       (error: unknown) => this.report('archive', error),
@@ -24248,9 +24260,12 @@ export class StudyWorkspace {
             'Select the matching test replay before saving an understanding choice.',
           ),
         )
-      const decision = await this.nodeHistoryStoreOf(
+      const decisionStore = this.nodeHistoryStoreOf(message.studyId)
+      if (!decisionStore) throw new Error('No Node history has this study id.')
+      const decision = await decisionStore.saveLearningDecision(
         message.studyId,
-      )!.saveLearningDecision(message.studyId, message.understood)
+        message.understood,
+      )
       if (
         this.selectedNodeHistory?.header.studyId === message.studyId &&
         !this.closing
@@ -26094,7 +26109,15 @@ export class StudyWorkspace {
         writer.latest = undefined
         // A reader that closed meanwhile has no store to write to and nobody to tell.
         const store = this.nodeHistoryStore && this.nodeHistoryStoreOf(studyId)
-        if (!store) break
+        if (!store) {
+          // A history whose folder vanished while the reader is open has no store to write to; a closed reader has nobody to tell.
+          if (this.nodeHistoryStore && !this.closing)
+            this.report(
+              'history-position',
+              new Error('No Node history has this study id.'),
+            )
+          break
+        }
         try {
           await store.saveReaderPosition(studyId, next.sequence, next.history)
         } catch (error) {

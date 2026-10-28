@@ -1,3 +1,4 @@
+import { NODE_SERVER_HISTORY_REASON_CODES } from '../constants'
 import type { HistoryIndexOf } from '../historyStorageDescriptor'
 import type {
   NodeServerHistorySummary,
@@ -44,6 +45,29 @@ function serverCaptureReasons(
   return history.reason ? [wordServerCaptureReason(history.reason)] : []
 }
 
+/** The codes of the seal reasons that say the history was recorded with no response. */
+const NO_RESPONSE_REASON_CODES: ReadonlySet<string> = new Set([
+  NODE_SERVER_HISTORY_REASON_CODES.noResponseRequestFailed,
+  NODE_SERVER_HISTORY_REASON_CODES.noResponseStopped,
+  NODE_SERVER_HISTORY_REASON_CODES.noResponseExited,
+  NODE_SERVER_HISTORY_REASON_CODES.noResponseRunFailed,
+])
+
+/**
+ * Picks the no-response reason of a sealed history by its code, so a stop or write reason is never worded as why no response came.
+ * @param history - The verified history.
+ * @returns The reason in the replay's words; `undefined` for an unsealed history or one whose seal holds no no-response reason.
+ * @example noResponseReasonOf(history) // => 'No response was recorded: the run was stopped before the server answered.'
+ */
+function noResponseReasonOf(
+  history: Pick<HistoryIndexOf<NodeServerHistoryTypes>, 'seal'>,
+): string | undefined {
+  const reason = history.seal?.reasons.find((candidate) =>
+    NO_RESPONSE_REASON_CODES.has(candidate.code),
+  )
+  return reason ? wordServerCaptureReason(reason.text) : undefined
+}
+
 /**
  * Reads a verified server history once into what the Study workspace presents: the replay model with its three verdicts, its test-shaped view for the shared selection path, and its capture reasons.
  * Called by the Study workspace when it opens a server replay.
@@ -61,5 +85,9 @@ export function presentServerHistory(
     captureComplete: history.seal?.capture === 'complete',
     learningCoverage: summary?.learningCoverage ?? 'none',
   })
-  return adaptServerReplay(model, serverCaptureReasons(history))
+  return adaptServerReplay(
+    model,
+    serverCaptureReasons(history),
+    noResponseReasonOf(history),
+  )
 }

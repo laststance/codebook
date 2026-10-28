@@ -61,6 +61,8 @@ export const NODE_SERVER_REPLAY_TEXT = {
   understanding: 'I understand this server history',
   /** Labels the fixed request region of the Application pane when the request's bytes left. */
   requestSent: 'Request sent by Codebook',
+  /** The fixed request region before the request entry. */
+  noRequestYet: 'No request recorded yet at this moment.',
   /** The fixed response region before the response entry. */
   noResponseYet: 'No response recorded yet at this moment.',
   emptyBody: 'Response body is empty.',

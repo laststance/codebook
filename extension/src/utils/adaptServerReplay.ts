@@ -30,6 +30,8 @@ export type ServerReplayPresentation = {
   outputIndex: NodeTestOutputIndex
   /** Why the capture is partial or interrupted, every reason, for the replay's capture-reason line. */
   captureReasons: readonly string[]
+  /** The reason, in a replay's words, that the history was recorded with no response; absent when it holds none (a recorded answer, or only a partial reason about stops or writing). */
+  noResponseReason?: string
 }
 
 /**
@@ -154,12 +156,14 @@ function toTestShapedHistory(model: ServerReplayModel): NodeTestHistoryIndex {
  * Called once per opened server history by the Study workspace.
  * @param model - The replay model {@link buildServerReplayModel} made.
  * @param captureReasons - Every reason the capture is partial or interrupted, worded.
+ * @param noResponseReason - The worded no-response reason among them, when the history has one.
  * @returns The presentation.
  * @example const replay = adaptServerReplay(model, []); replay.history.entries[0]?.type // => 'result' for the request
  */
 export function adaptServerReplay(
   model: ServerReplayModel,
   captureReasons: readonly string[],
+  noResponseReason?: string,
 ): ServerReplayPresentation {
   const shownModel = sanitizeServerReplayModel(model)
   const shown = toTestShapedHistory(shownModel)
@@ -170,5 +174,6 @@ export function adaptServerReplay(
     shown,
     outputIndex: indexNodeTestOutput(shown.entries),
     captureReasons,
+    ...(noResponseReason ? { noResponseReason } : {}),
   }
 }

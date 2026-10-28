@@ -1,3 +1,5 @@
+import { NODE_SERVER_RESPONSE_SHOWN_BYTES } from '../constants'
+
 import { accumulateNodeTestOutput } from './accumulateNodeTestOutput'
 import type {
   ServerReplayEvent,
@@ -17,6 +19,7 @@ import {
   leftOutLines,
   type NodeTestApplicationView,
 } from './projectNodeTestApplication'
+import { stripTerminalControls } from './stripTerminalControls'
 
 /** What the Application pane shows of a server replay at one moment: the fixed request region, the fixed response region, then the output log. It is the test replay's Application view with its server fields, so one document draws both. Every field is text, rendered as text and never as markup. */
 export type NodeServerApplicationView = NodeTestApplicationView & {
@@ -31,7 +34,7 @@ function timeWords(elapsedMs: number | undefined): string {
 }
 
 /**
- * Finds the request attempt the selected moment belongs to: the latest attempt opened at or before it, else the first.
+ * Finds the request attempt the selected moment belongs to: the latest attempt opened at or before it, else the no-request-yet state while the history holds a request later.
  * @param model - The replay model.
  * @param selected - The selected event.
  * @returns The attempt's request line and its mark state.
@@ -44,9 +47,14 @@ function requestRegion(
     (event): event is Extract<ServerReplayEvent, { type: 'request' }> =>
       event.type === 'request',
   )
-  const request =
-    opened.findLast((event) => event.sequence <= selected.sequence) ?? opened[0]
-  if (!request) return undefined
+  const request = opened.findLast(
+    (event) => event.sequence <= selected.sequence,
+  )
+  // Before the first request entry the request does not exist yet.
+  if (!request)
+    return opened.length
+      ? { line: NODE_SERVER_REPLAY_TEXT.noRequestYet, claim: '' }
+      : undefined
   const attempt = model.attempts.find(
     (candidate) => candidate.attempt === request.attempt,
   )
@@ -65,7 +73,7 @@ function requestRegion(
  * Words the response region for the selected moment: before the terminal entry the pre-response line, at or after a response its status, content type and body, for a failed request its code, and for a history that ended with no answer its reason once the replay reaches the end.
  * @param model - The replay model.
  * @param selected - The selected event.
- * @param noResponseReason - The first partial reason of a history that ended with no answer, worded by the capture evaluator.
+ * @param noResponseReason - The no-response reason of a history that ended with no answer, worded by the capture evaluator.
  * @returns The region.
  */
 function responseRegion(
@@ -80,7 +88,9 @@ function responseRegion(
     : selected.sequence === model.events.at(-1)?.sequence
   if (terminal?.type === 'response' && reached) {
     const shownBytes = Buffer.byteLength(terminal.body)
-    const cut = terminal.readCut || shownBytes < terminal.bodyBytes
+    // Only a read cut or the shown-body bound cuts a body; redaction, control stripping and the binary note shorten it without a cut.
+    const cut =
+      terminal.readCut || shownBytes > NODE_SERVER_RESPONSE_SHOWN_BYTES
     return {
       state: describeServerResponseState({ reached, response: terminal }),
       ...(terminal.bodyBytes === 0
@@ -108,7 +118,7 @@ function responseRegion(
  * @param model - The replay model.
  * @param index - The replay's output read once ({@link indexNodeTestOutput} over the journal's output entries).
  * @param selected - The selected event, absent before one is selected.
- * @param options - `generation` supersedes older updates; `loading` shows the opening state; `leaving` names the surface alone while the selection goes elsewhere; `noResponseReason` is the first partial reason of a history that never answered.
+ * @param options - `generation` supersedes older updates; `loading` shows the opening state; `leaving` names the surface alone while the selection goes elsewhere; `noResponseReason` is the no-response reason of a history that never answered.
  * @returns The view.
  * @example projectServerApplication(model, index, model.events[0], { generation: 1 }).request?.claim // => 'Request sent by Codebook'
  */
@@ -145,7 +155,7 @@ export function projectServerApplication(
     test: '',
     generation,
     time: timeWords(leaving ? undefined : selected.elapsedMs),
-    name: `${NODE_SERVER_REPLAY_TEXT.heading} · ${model.header.declaredRequest.method} ${model.header.declaredRequest.path}`,
+    name: `${NODE_SERVER_REPLAY_TEXT.heading} · ${model.header.declaredRequest.method} ${stripTerminalControls(model.header.declaredRequest.path)}`,
     ...(requestRegion(model, selected)
       ? { request: requestRegion(model, selected) }
       : {}),
