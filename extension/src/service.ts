@@ -56,6 +56,7 @@ import {
   learningSummarySchema,
   type LearningSummary,
 } from './learningSummarySchemas'
+import type { NodeHistoryRepository } from './nodeHistoryRepository'
 import {
   nodeServerConfigSchema,
   type NodeServerConfiguration,
@@ -473,6 +474,8 @@ export class StudyService {
   >
   repository?: RepositoryBookStore
   nodeHistoryStore?: NodeTestHistoryStore
+  /** The workspace's history repository, which resolves a study id to the test or server store that holds it; set with {@link nodeHistoryStore}. */
+  nodeHistoryRepository?: NodeHistoryRepository
   repositoryPublished?: () => Promise<void>
   repositoryReader?: (
     input: OpenBookInput,
