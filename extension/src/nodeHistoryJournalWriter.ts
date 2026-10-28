@@ -180,8 +180,10 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
     })
   }
 
-  /** Marks a failed or timed-out finalization as an interrupted prefix so library readers do not show it as live; a seal still in flight publishes nothing afterwards. @example writer.abandon() */
+  /** Marks a failed or timed-out finalization as an interrupted prefix so library readers do not show it as live; a seal still in flight publishes nothing afterwards, and one already published stays (a no-op). @example writer.abandon() */
   abandon(): void {
+    // A seal whose rename resolved stays sealed: the store was told and another window may list it sealed, so a late abandon (the temporary file's cleanup still awaited) retracts nothing.
+    if (this.sealedHash !== undefined) return
     this.abandoned = true
     this.closed = true
     this.closing = false
