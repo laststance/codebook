@@ -12308,8 +12308,8 @@ export class StudyWorkspace {
    * @example this.replayOpenDiagnosticIdentity(studyId) // => { surface: 'open:server-replay', profile: 'node-server' }
    */
   private replayOpenDiagnosticIdentity(studyId: string): {
-    surface: string
-    profile: string
+    surface: 'open:server-replay' | 'open:test-replay'
+    profile: typeof NODE_SERVER_PROFILE | typeof NODE_TEST_PROFILE
   } {
     const isListedTest = this.nodeHistoryCatalog.some(
       (history) => history.studyId === studyId,
