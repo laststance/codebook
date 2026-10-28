@@ -192,14 +192,12 @@ export class NodeServerHistorySinkImpl implements NodeServerHistorySink {
     read: NodeServerDebuggerCapture,
   ): void {
     this.guard(() => {
+      // A capture that finishes after the answer (or the failure) was recorded is a late hit, not a fault: it is not written and the history stays whole; a declared stop with no recorded hit keeps its own reason at the seal.
+      if (this.terminal) return
       const at = this.structural(elapsedMs)
-      // A stop the journal's rules cannot place (no open request, or after the answer) is no entry: the writer is marked failed, so the seal says where the history ended.
-      if (this.openAttempt === undefined || this.terminal)
-        throw new Error(
-          this.terminal
-            ? 'A stop was captured after the request ended.'
-            : 'A stop was captured outside an open request.',
-        )
+      // A stop the journal's rules cannot place (no open request) is no entry: the writer is marked failed, so the seal says where the history ended.
+      if (this.openAttempt === undefined)
+        throw new Error('A stop was captured outside an open request.')
       const index = pause.declaredStopIndex ?? 0
       const hit = (this.hits.get(index) ?? 0) + 1
       this.hits.set(index, hit)

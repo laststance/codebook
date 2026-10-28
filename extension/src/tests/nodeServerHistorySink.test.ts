@@ -205,8 +205,8 @@ test('a response that arrives before the sent mark is preceded by the mark', asy
   )
 })
 
-// protects=a sink fault (a stop after the answer) never reaches the live run: nothing throws, the writer is marked failed and the seal names the cause; fails_when=the call throws into the run, or the history seals complete; no_claim=what the run does with a thrown error
-test('a stop captured after the response throws nothing and seals the history partial with the cause', async (context) => {
+// protects=a stop whose capture finishes after the response was recorded is dropped without failing the writer, so the history seals complete with request, response and end; fails_when=the late hit marks the writer failed and the seal reads partial with an append failure; no_claim=what the run does with a hit it dropped
+test('a stop captured after the response is not written and the history still seals complete', async (context) => {
   // Arrange
   const { sink, writer, store, studyId } = await startSink(context)
   sink.openRequest(10, { method: 'GET', path: '/api/x', bodyBytes: 0 })
@@ -221,12 +221,15 @@ test('a stop captured after the response throws nothing and seals the history pa
   const history = await store.read(studyId)
 
   // Assert
-  assert.equal(history.status, 'partial')
-  assert.match(
-    history.seal?.reasons.find(
+  assert.deepEqual(
+    history.entries.map((entry) => entry.type),
+    ['request', 'request-sent', 'response', 'end'],
+  )
+  assert.equal(
+    history.seal?.reasons.some(
       (reason) => reason.code === 'SERVER_HISTORY_APPEND_FAILED',
-    )?.text ?? '',
-    /A stop was captured after the request ended/,
+    ),
+    false,
   )
 })
 
