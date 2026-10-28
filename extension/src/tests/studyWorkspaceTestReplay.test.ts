@@ -1704,7 +1704,7 @@ test('Open replay refused beside the Cursor Agent is told in Output and the retr
   }
 })
 
-// protects=one learner Open replay refused because Cursor's main editor reports no keyboard focus: one five-second wait and one presentation:focus-unreported entry, and the reader left out of the empty summary composition; fails_when=leaving the empty summary composition reopens the reader, which meets the same guard and logs the entry again (N60, two entries about 5 s apart), or the refusal skips that leave and the reader stays in an empty summary composition; no_claim=that the Study pane is created again before the learner asks again (the next selection or Open arranges it)
+// protects=one learner Open replay refused because Cursor's main editor reports no keyboard focus: one five-second wait and one presentation:focus-unreported entry, and the reader left out of the empty summary composition with its Study pane back; fails_when=leaving the empty summary composition reopens the reader, which meets the same guard and logs the entry again (N60, two entries about 5 s apart), the refusal skips that leave and the reader stays in an empty summary composition, or the Study pane stays closed (CR2-1); no_claim=that the learner's next selection arranges the panes as a first open does
 test('Open replay refused for an unreported keyboard focus waits for the report once and writes one focus-unreported entry in Output', async (context) => {
   // Arrange
   const harness = await workspaceHarness()
@@ -1771,8 +1771,20 @@ test('Open replay refused for an unreported keyboard focus waits for the report 
     // The refusal leaves the window as the entry found it: no empty summary composition stands, without a second wait.
     assert.equal(readerSeams(harness).isSummaryArrangement(), false)
     assert.equal(harness.summary.visible, false)
-    // Documented state (O2-2): bringing the Study pane back would reopen the reader, which meets the same guard (a second wait and entry, shown by two entries when the reopen is made), so the pane stays closed until the next selection or Open.
-    assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
+    // The Study pane stands again, created without a second measurement of the main editor (CR2-1).
+    assert.notEqual(harness.panelColumn('codebook.studyContext'), undefined)
+    // The refusal stands on the returned Study pane's line, and the one entry is still the only one after the pane was created again.
+    assert.deepEqual(
+      [...(lastView(harness)?.errors ?? [])],
+      [
+        'The Codebook panes were not arranged: the main editor did not report the keyboard focus within 5 s after Codebook focused its first editor group. Click into a file in the main editor, then try again.',
+      ],
+    )
+    // The learner clicks into a file and asks again: the replay opens in the summary composition.
+    harness.focusMutableDraft('auth.ts', 2)
+    await harness.reader.openLearningReplay(studyId)
+    assert.equal(readerSeams(harness).isSummaryArrangement(), true)
+    assert.equal(lastView(harness)?.nodeHistory?.header.studyId, studyId)
   } finally {
     resetFakeClock(context)
     await harness.close()

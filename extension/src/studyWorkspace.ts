@@ -12114,7 +12114,7 @@ export class StudyWorkspace {
       // A refused entry is told like a failed replay open: one Output › Codebook entry and the notification, never a bare command failure (F382, F384).
       // A refusal for a main editor that reported no keyboard focus is not followed by a reopen: the reopen would meet the same guard, wait five seconds again and log the same entry a second time (Cycle 0060, N60). The composition is dropped without a measurement instead.
       if (error instanceof UnreportedEditorFocusError)
-        this.dropEmptySummaryCompositionUnmeasured()
+        this.dropEmptySummaryCompositionUnmeasured(error)
       else await this.leaveEmptySummaryComposition()
       this.tellTestReplayOpenFailure(
         studyId,
@@ -12277,15 +12277,22 @@ export class StudyWorkspace {
   }
 
   /**
-   * Returns the reader to the composition its selection asks for after a refused entry, without measuring the main editor: the summary composition and the Learning summary's replay document are withdrawn, so the next selection or Open arranges the panes; called by {@link enterCompositionForEntry} for a refusal whose cause (a main editor that reported no keyboard focus) a second measurement would meet again after another wait.
+   * Returns the reader to the composition its selection asks for after a refused entry, without measuring the main editor: the summary composition and the Learning summary's replay document are withdrawn and the Study pane is created again at its destination, so the refusal shows there and the next selection or Open arranges the panes; called by {@link enterCompositionForEntry} for a refusal whose cause (a main editor that reported no keyboard focus) a second measurement would meet again after another wait.
+   * @param refusal - The refusal the entry ended with; its sentence stands on the returned Study pane's control line until the next handled choice.
    * @returns Nothing; a reader that stands in no empty summary composition is left as it is.
-   * @example this.dropEmptySummaryCompositionUnmeasured()
+   * @example this.dropEmptySummaryCompositionUnmeasured(error)
    */
-  private dropEmptySummaryCompositionUnmeasured(): void {
+  private dropEmptySummaryCompositionUnmeasured(
+    refusal: UnreportedEditorFocusError,
+  ): void {
     if (!this.standsInEmptySummaryComposition()) return
     this.forgetUnopenedComposition()
+    // open() disposed the Study pane before its measurement failed: the pane is created again at its destination without a measurement, so the refusal is told there and the reader never stands with no pane (Cycle 0060 final range, CR2-1).
+    this.presentationMode = 'study-workspace'
     try {
-      this.publish()
+      this.ensureContext()
+      // The report publishes the pane with the refusal's line.
+      this.report('node-history-control', refusal.message)
     } catch (error) {
       this.report('control', error)
     }
