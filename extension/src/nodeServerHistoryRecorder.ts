@@ -12,7 +12,10 @@ import type {
   NodeServerEndInput,
   NodeServerHistoryWriter,
 } from './nodeServerHistoryWriter'
-import { describeNodeServerSealTimeout } from './utils/describeNodeServerSealTimeout'
+import {
+  describeNodeServerSealFailure,
+  describeNodeServerSealTimeout,
+} from './utils/describeNodeServerSealFailure'
 import { systemErrorCode } from './utils/systemErrorCode'
 
 /** Where a server run's history stands: its writer takes entries, it was sealed, or it was abandoned because it could not be written or sealed. */
@@ -147,7 +150,9 @@ export class NodeServerHistoryRecorder {
         .catch(() => undefined)
       this.sealed = { summary, hash }
     } catch (error) {
-      this.abandon(this.input.describeCause(error))
+      this.abandon(
+        describeNodeServerSealFailure(this.input.describeCause(error)),
+      )
     } finally {
       if (timer) clearTimeout(timer)
     }

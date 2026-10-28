@@ -67,6 +67,7 @@ import type { NodeServerHistoryRecorder } from './nodeServerHistoryRecorder'
 import { nodeServerLearningMaterialContentSchema } from './nodeServerLearningSchemas'
 import { describeNodeServerProfile } from './nodeServerProfile'
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
+import { nodeTestLearningMaterialContentSchema } from './nodeTestHistorySchemas'
 import type { NodeTestLearningMaterialContent } from './nodeTestHistorySchemas'
 import type { NodeTestHistoryStore } from './nodeTestHistoryStore'
 import type { NodeTestHistoryWriter } from './nodeTestHistoryWriter'
@@ -176,6 +177,7 @@ import {
 import { sanitizedStack } from './utils/sanitizedStack'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
 import { startNodeServerHistory } from './utils/startNodeServerHistory'
+import { StorageLockHeldError } from './utils/storageLockHeldError'
 import { studyErrorNamingCause } from './utils/studyErrorNamingCause'
 import { systemErrorCode } from './utils/systemErrorCode'
 import { thrownMessage } from './utils/thrownMessage'
@@ -2200,7 +2202,11 @@ export class StudyService {
    */
   async explainNodeHistory(input: ExplainNodeHistoryInput) {
     this.assertMutable(this.instanceId)
-    const parsed = explainNodeHistorySchema.parse(input)
+    // The content is parsed below with the schema of the profile the study id resolves to; the rest is strict as before.
+    const { content: _content, ...rest } = input
+    const identity = explainNodeHistorySchema
+      .pick({ studyId: true, expectedRevision: true })
+      .parse(rest)
     if (!this.nodeHistoryStore)
       throw new StudyError(
         'PREREQUISITE_MISSING',
@@ -2208,50 +2214,96 @@ export class StudyService {
       )
     const store = this.nodeHistoryStore
     // A server history keeps its material in the server store, resolved by the study id's folder.
-    const resolved = this.nodeHistoryRepository?.resolve(parsed.studyId)
+    const resolved = this.nodeHistoryRepository?.resolve(identity.studyId)
     try {
       // An unknown id, or a history removed while it is saved, is a reference to correct, as at the history's resources (Cycle 0052 tasks 60, 75).
       if (resolved?.profile === 'node-server') {
         const { store: serverStore } = resolved
         const serverMaterial = await withKnownNodeHistory(
           serverStore,
-          parsed.studyId,
+          identity.studyId,
           () =>
             serverStore.saveLearningMaterial(
-              parsed.studyId,
-              parsed.expectedRevision,
-              nodeServerLearningMaterialContentSchema.parse(parsed.content),
+              identity.studyId,
+              identity.expectedRevision,
+              nodeServerLearningMaterialContentSchema.parse(input.content),
             ),
         )
+        await this.refreshNodeServerSummary(identity.studyId)
         this.presentationController?.nodeHistoryLearningMaterialSaved(
-          parsed.studyId,
+          identity.studyId,
           serverMaterial,
         )
         return serverMaterial
       }
-      const material = await withKnownNodeHistory(store, parsed.studyId, () =>
+      const material = await withKnownNodeHistory(store, identity.studyId, () =>
         store.saveLearningMaterial(
-          parsed.studyId,
-          parsed.expectedRevision,
-          parsed.content,
+          identity.studyId,
+          identity.expectedRevision,
+          nodeTestLearningMaterialContentSchema.parse(input.content),
         ),
       )
-      await this.cacheNodeLearning(parsed.studyId, material)
+      await this.cacheNodeLearning(identity.studyId, material)
       this.presentationController?.nodeHistoryLearningMaterialSaved(
-        parsed.studyId,
+        identity.studyId,
         material,
       )
       return material
     } catch (error) {
-      if (error instanceof NodeLearningRevisionChangedError)
-        throw new StudyError(
-          'IDEMPOTENCY_CONFLICT',
-          'Node learning material changed; read the latest material and retry with its revision.',
-          String(error),
-        )
-      // A step that cites another event is the store's own INVALID_REFERENCE, which names the step and the event (X19).
-      throw error
+      throw this.describeMaterialFailure(error, identity)
     }
+  }
+
+  /**
+   * Reads a server history's verdicts again after its material was saved, so the run resource and Save read the coverage of the latest material; a run this window does not hold, or one not sealed yet, keeps nothing to refresh.
+   * @param studyId - The history the material explains.
+   * @example await this.refreshNodeServerSummary(studyId)
+   */
+  private async refreshNodeServerSummary(studyId: string): Promise<void> {
+    const sealed = [...this.records.values()].find(
+      (candidate) => `${this.instanceId}_${candidate.id}` === studyId,
+    )?.nodeServer?.history?.sealed
+    if (!sealed) return
+    sealed.summary = await this.nodeHistoryRepository?.serverHistories
+      .summarize(studyId)
+      .catch(() => sealed.summary)
+  }
+
+  /**
+   * Gives a failed learning-material save the answer an agent can act on: a revision conflict names the current revision and the material to re-read, a citation that matches no entry names the history and says to re-read its events, and another window holding the storage lock is a retry.
+   * @param error - What the save threw.
+   * @param identity - The history and the revision the agent expected.
+   * @returns The error to throw; the original when it needs no wording of its own.
+   * @example throw this.describeMaterialFailure(error, { studyId, expectedRevision: 0 })
+   */
+  private describeMaterialFailure(
+    error: unknown,
+    identity: { studyId: string; expectedRevision: number },
+  ): unknown {
+    const uri = `codebook://node-history/${identity.studyId}`
+    if (error instanceof NodeLearningRevisionChangedError)
+      return new StudyError(
+        'IDEMPOTENCY_CONFLICT',
+        `Node learning material of ${uri} is at revision ${error.currentRevision}; you sent expectedRevision ${error.expectedRevision}.`,
+        String(error),
+        `Re-read the learning material of ${uri} and retry with expectedRevision ${error.currentRevision}.`,
+      )
+    if (error instanceof StorageLockHeldError)
+      return new StudyError(
+        'BUSY',
+        `Another Codebook window is writing the learning storage of ${uri}.`,
+        String(error),
+        'Retry the same save once; nothing was written.',
+      )
+    // A step that cites another event is the store's own INVALID_REFERENCE, which names the step and the event; it also names the history and the recovery.
+    if (error instanceof StudyError && error.code === 'INVALID_REFERENCE')
+      return new StudyError(
+        'INVALID_REFERENCE',
+        `${error.message} (history ${uri})`,
+        error.causeDetail,
+        `Re-read the events of ${uri}, correct the citation to a sequence they list, and retry once.`,
+      )
+    return error
   }
 
   /**

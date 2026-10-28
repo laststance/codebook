@@ -130,6 +130,7 @@ import type {
   NodeServerHistorySummary,
   NodeServerHistoryTypes,
 } from './nodeServerHistoryTypes'
+import { NodeServerLearningSave } from './nodeServerLearningSave'
 import {
   nodeLearningStepIdSchema,
   type NodeTestHistoryEntry,
@@ -259,7 +260,6 @@ import {
   describeServerReplayRow,
   NODE_SERVER_REPLAY_TEXT,
 } from './utils/describeNodeServerReplay'
-import { describeNodeServerStatus } from './utils/describeNodeServerStatus'
 import { describeNodeTestReplay } from './utils/describeNodeTestReplay'
 import { describePaneIdentity } from './utils/describePaneIdentity'
 import { describeStudy } from './utils/describeStudy'
@@ -372,7 +372,6 @@ import {
   recordedLeftoverGroups,
 } from './utils/recordedLeftoverGroups'
 import { recordingNotShownReason } from './utils/recordingNotShownReason'
-import { refuseSavingServerRun } from './utils/refuseSavingServerRun'
 import { replacedTabAddresses } from './utils/replacedTabAddresses'
 import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition'
 import { type CauseRoots, sanitizeCause } from './utils/sanitizeCause'
@@ -821,6 +820,23 @@ export class StudyWorkspace {
     materialRevision: (studyId) =>
       this.nodeHistoryCatalog.find((history) => history.studyId === studyId)
         ?.materialRevision,
+    open: (studyId) => this.openLearningReplay(studyId),
+    log: (entry) => this.diagnostics?.log(entry),
+    changed: () => this.publish(),
+  })
+
+  /** Saves a server run's learning replay from the status item; this workspace only wires the item and its command to it. */
+  private readonly nodeServerLearningSave = new NodeServerLearningSave({
+    service: () => this.service,
+    store: () => this.nodeHistoryRepository?.serverHistories,
+    ask: async (text, actions) =>
+      vscode.window.showWarningMessage(text, { modal: true }, ...actions),
+    notify: async (severity, text, actions) =>
+      showPlainNotice(vscode.window, severity, text, ...actions),
+    materialRevision: (studyId) =>
+      this.nodeServerHistoryCatalog.find(
+        (history) => history.studyId === studyId,
+      )?.materialRevision,
     open: (studyId) => this.openLearningReplay(studyId),
     log: (entry) => this.diagnostics?.log(entry),
     changed: () => this.publish(),
@@ -11422,7 +11438,17 @@ export class StudyWorkspace {
   async saveLearningReplay(expectedStudyId?: string): Promise<void> {
     const service = this.service,
       record = this.currentRecord()
-    refuseSavingServerRun(record)
+    // A server run's Save belongs to NodeServerLearningSave, with the same delayed-click guard as a test run's.
+    if (service && record?.profile === NODE_SERVER_PROFILE) {
+      if (
+        expectedStudyId !== undefined &&
+        expectedStudyId !== `${service.instanceId}_${record.id}`
+      )
+        throw new Error(
+          'The recorded session changed. Use the current Save learning replay control.',
+        )
+      return this.nodeServerLearningSave.save(record)
+    }
     // A test run's Save belongs to NodeLearningSave; a delayed click for another run is refused as for a browser save.
     if (service && record?.profile === NODE_TEST_PROFILE) {
       if (
@@ -11538,10 +11564,14 @@ export class StudyWorkspace {
             this.learningSave.signature))
         ? this.learningSave
         : undefined
-    // A server run has nothing to save: its item says where the run stands and that no replay exists yet, with no command.
-    if (record?.profile === NODE_SERVER_PROFILE && this.service && studyId) {
-      const view = describeNodeServerStatus(this.service.state(record))
-      this.showLearningSaveItem(view.text, view.tooltip, undefined, studyId)
+    // A server run's item shows what NodeServerLearningSave says of it.
+    if (record?.profile === NODE_SERVER_PROFILE && studyId) {
+      const view = this.nodeServerLearningSave.item(record)
+      if (!view) {
+        this.hideLearningSaveItem()
+        return
+      }
+      this.showLearningSaveItem(view.text, view.tooltip, view.command, studyId)
       return
     }
     // A test run's item shows what NodeLearningSave says of it.

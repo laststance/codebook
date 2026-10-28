@@ -88,6 +88,8 @@ export class StudyError extends Error {
     readonly code: ErrorCode,
     message: string,
     readonly causeDetail = message,
+    /** The recovery for this failure when the code's general one would mislead (a learning material's revision conflict is no idempotency-key matter). */
+    readonly recoveryOverride?: string,
   ) {
     super(message)
   }
@@ -97,7 +99,7 @@ export class StudyError extends Error {
       code: this.code,
       message: this.message,
       cause: this.causeDetail,
-      recovery: ERROR_RECOVERY[this.code],
+      recovery: this.recoveryOverride ?? ERROR_RECOVERY[this.code],
       docs: 'codebook://help/errors',
     }
   }
@@ -182,7 +184,10 @@ export class SavedStudyStorageFullError extends Error {
  * @example throw new NodeLearningRevisionChangedError(0, 1)
  */
 export class NodeLearningRevisionChangedError extends Error {
-  constructor(expectedRevision: number, currentRevision: number) {
+  constructor(
+    readonly expectedRevision: number,
+    readonly currentRevision: number,
+  ) {
     super(
       `Node learning material revision changed; expected ${expectedRevision}, current ${currentRevision}.`,
     )

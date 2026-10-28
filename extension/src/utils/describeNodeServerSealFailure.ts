@@ -8,3 +8,14 @@
 export function describeNodeServerSealTimeout(seconds: number): string {
   return `Learning replay could not be saved: timed out after ${seconds} s.`
 }
+
+/**
+ * Words why a server history could not be sealed, for the status item and Save.
+ * Called by {@link NodeServerHistoryRecorder} when the seal failed.
+ * @param cause - The failure, already without private paths.
+ * @returns `Learning replay could not be saved: <cause>.`
+ * @example describeNodeServerSealFailure('EROFS: read-only') // => 'Learning replay could not be saved: EROFS: read-only.'
+ */
+export function describeNodeServerSealFailure(cause: string): string {
+  return `Learning replay could not be saved: ${cause.replace(/\.$/, '')}.`
+}

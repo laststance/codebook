@@ -53,6 +53,7 @@ export type NodeLearningSaveText = {
 /** The labels of the actions a Save question or notification offers; the one set the catalog, {@link NodeLearningSave} and the Study workspace read, so no consumer retypes a label. The question's Cancel is the modal dialog's own and is not an action here. */
 export const NODE_LEARNING_SAVE_ACTION = {
   saveNow: 'Save now',
+  saveAndStop: 'Save and stop',
   openReplay: 'Open replay',
   closeBrowserReplay: 'Close browser replay',
   showDetails: 'Show details',

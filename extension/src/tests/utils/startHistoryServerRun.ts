@@ -59,7 +59,10 @@ export class HistoryFakeNodeServerRuntime extends FakeNodeServerRuntime {
  */
 export async function startHistoryServerRun(
   harness: Parameters<typeof startFakeNodeServerRun>[0] & {
-    service: { nodeHistoryRepository?: NodeHistoryRepository }
+    service: {
+      nodeHistoryRepository?: NodeHistoryRepository
+      nodeHistoryStore?: NodeHistoryRepository['testHistories']
+    }
   },
   context: Parameters<typeof openServerRepository>[0],
   options: {
@@ -71,6 +74,7 @@ export async function startHistoryServerRun(
     options.repository ??
     (await openServerRepository(context, options.repositoryOptions)).repository
   harness.service.nodeHistoryRepository = repository
+  harness.service.nodeHistoryStore = repository.testHistories
   const run = new HistoryFakeNodeServerRuntime()
   const started = await startFakeNodeServerRunWith(harness, run)
   return { ...started, run, repository }
