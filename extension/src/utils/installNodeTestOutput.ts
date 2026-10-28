@@ -228,21 +228,34 @@ export function installNodeTestOutput(
     else if (anchor && drawn.has(anchor.line)) restoreAnchor(anchor)
     else settle()
   }
+  /** Brings a server replay's request region to the view's in place; a view without a request hides it and clears its texts. */
+  const applyRequestRegion = (
+    request: NodeTestApplicationView['request'],
+  ): void => {
+    element('test-output-request').hidden = !request
+    const shown = request ?? { line: '', claim: '' }
+    const requestLine = element('test-output-request-line')
+    requestLine.textContent = shown.line
+    requestLine.title = shown.line
+    element('test-output-request-claim').textContent = shown.claim
+  }
+  /** Brings a server replay's response region to the view's in place; a view without a response hides it and clears its texts. */
+  const applyResponseRegion = (
+    response: NodeTestApplicationView['response'],
+  ): void => {
+    element('test-output-response').hidden = !response
+    const shown = response ?? { state: '' }
+    element('test-output-response-state').textContent = shown.state
+    const body = element('test-output-response-body')
+    // A response without a recorded body hides the body block instead of showing it empty.
+    body.hidden = shown.body === undefined
+    body.textContent = shown.body ?? ''
+    line('test-output-response-note', shown.note)
+  }
   /** Brings a server replay's request and response regions to a view's in place; a region the view lacks is hidden. */
   const applyServerRegions = (view: NodeTestApplicationView): void => {
-    const request = view.request
-    element('test-output-request').hidden = !request
-    const requestLine = element('test-output-request-line')
-    requestLine.textContent = request?.line ?? ''
-    requestLine.title = request?.line ?? ''
-    element('test-output-request-claim').textContent = request?.claim ?? ''
-    const response = view.response
-    element('test-output-response').hidden = !response
-    element('test-output-response-state').textContent = response?.state ?? ''
-    const body = element('test-output-response-body')
-    body.textContent = response?.body ?? ''
-    body.hidden = response?.body === undefined
-    line('test-output-response-note', response?.note)
+    applyRequestRegion(view.request)
+    applyResponseRegion(view.response)
   }
   const apply = (view: NodeTestApplicationView): void => {
     // The line the learner reads, taken before the lines change: a view that drops earlier lines would otherwise move it up (F354).
