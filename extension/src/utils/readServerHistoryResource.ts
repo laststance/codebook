@@ -129,24 +129,6 @@ export async function readServerHistoryResource(
   studyId: string,
   suffix: string | undefined,
 ): Promise<ResourceContent> {
-  try {
-    return await answerServerHistoryResource(store, studyId, suffix)
-  } catch (error) {
-    // A stop that cannot be restored answers a coded error, never a raw schema dump.
-    throw answerUnreadableHistoryEntry(
-      error,
-      studyId,
-      `codebook://node-history/${studyId}`,
-    )
-  }
-}
-
-/** The body of {@link readServerHistoryResource}, which wraps its schema failures in a coded answer. */
-async function answerServerHistoryResource(
-  store: NodeHistoryStore<NodeServerHistoryTypes>,
-  studyId: string,
-  suffix: string | undefined,
-): Promise<ResourceContent> {
   const baseUri = `codebook://node-history/${studyId}`
   const history = await withKnownNodeHistory(store, studyId, () =>
     store.read(studyId),
@@ -168,9 +150,15 @@ async function answerServerHistoryResource(
   if (detail) {
     const sequence = Number(detail[1])
     // The stored stop keeps its top frame's source by hash; the detail restores the whole snapshot.
-    const entry = rehydrateNodeServerEntries(history.entries).find(
-      (candidate) => candidate.sequence === sequence,
-    )
+    let entry: ReturnType<typeof rehydrateNodeServerEntries>[number] | undefined
+    try {
+      entry = rehydrateNodeServerEntries(history.entries).find(
+        (candidate) => candidate.sequence === sequence,
+      )
+    } catch (error) {
+      // Only a stop that cannot be restored answers a coded error, never a raw schema dump; any other failure of this read keeps its own cause.
+      throw answerUnreadableHistoryEntry(error, studyId, baseUri)
+    }
     if (!entry)
       throw new StudyError(
         'NOT_FOUND',

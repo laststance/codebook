@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { before, test } from 'node:test'
 
+import { z } from 'zod'
+
 import { StudyError } from '../errors'
 import { readResource } from '../resources'
 
@@ -66,6 +68,34 @@ test('a stop that cannot be restored answers a coded EVIDENCE_UNAVAILABLE, not a
         `^The history ${header.studyId} holds a stop that cannot be restored \\(.+ is invalid\\)\\. Read codebook://node-history/${header.studyId}/events for the events that verify`,
       ),
     )
+    return true
+  })
+})
+
+// protects=a schema failure that is not a stop's restoration (the learning material read) keeps its own cause instead of claiming a stop cannot be restored; fails_when=the answer is EVIDENCE_UNAVAILABLE naming a stop; no_claim=how the material became unreadable
+test('a schema failure of the learning material is not answered as a stop that cannot be restored', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { repository } = await openServerRepository(context)
+  const { header } = await writeServerHistory(repository)
+  harness.service.nodeHistoryStore = repository.testHistories
+  harness.service.nodeHistoryRepository = repository
+  context.mock.method(
+    repository.serverHistories,
+    'readLearningMaterial',
+    async () => z.string().parse(1),
+  )
+
+  // Act
+  const reading = readResource(
+    harness.service,
+    `codebook://node-history/${header.studyId}/learning-material`,
+  )
+
+  // Assert
+  await assert.rejects(reading, (error: unknown) => {
+    assert.ok(error instanceof z.ZodError)
     return true
   })
 })
