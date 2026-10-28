@@ -565,6 +565,7 @@
     "format": "cd .. && prettier --write .",
     "format:check": "cd .. && prettier --check .",
     "health": "node scripts/checkHealth.mjs",
+    "gate": "node scripts/gate.mjs",
     "health:static": "fallow health --complexity --max-crap inf --baseline-mode identity --fail-on-issues --baseline fallow-health-baseline.json",
     "dupes": "fallow dupes --fail-on-issues --baseline fallow-dupes-baseline.json",
     "dead-code": "fallow dead-code --fail-on-issues --baseline fallow-dead-code-baseline.json",
