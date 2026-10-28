@@ -1387,8 +1387,11 @@ export class StudyService {
    */
   private evictOldestExcludedRecord(): boolean {
     // Map iteration follows insertion order, so the first excluded record is the oldest.
+    // A stopped server run is forgotten too: its history is on disk, where the library and the history resources read it.
     const evicted = [...this.records.values()].find(
-      (record) => historyExclusionState(record.historyExcluded) === 'ended',
+      (record) =>
+        historyExclusionState(record.historyExcluded) === 'ended' ||
+        (record.profile === NODE_SERVER_PROFILE && record.stopped),
     )
     if (!evicted) return false
     this.forgetRecord(evicted)

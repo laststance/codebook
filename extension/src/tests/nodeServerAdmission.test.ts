@@ -338,8 +338,8 @@ test('a stop during the node-server preparation stops the run and ends as stoppe
   assert.equal(run.calls.filter((call) => call === 'stop').length, 1)
 })
 
-// protects=D3: a server run holds no history from its start: no read-history, a history outcome that is unavailable with the reason, a study outcome that never claims a saved study, and no checkpoint; fails_when=read-history is offered, the run reads saved, or a checkpoint begins; no_claim=server runs becoming saveable later
-test('a node-server run is excluded from history: no read-history and no saved study is ever claimed', async (context) => {
+// protects=a server run is no browser checkpoint: no read-history, no checkpoint, and a study outcome that never claims a saved study from the live run; fails_when=read-history is offered, the run reads demonstrated, or a checkpoint begins; no_claim=the saved server history (Save and the library read that)
+test('a node-server run is no study checkpoint: no read-history and no saved study is claimed from the run', async (context) => {
   // Arrange
   const harness = await createHarness()
   context.after(() => harness.close())
@@ -351,14 +351,10 @@ test('a node-server run is excluded from history: no read-history and no saved s
   await service.stop({ instanceId: service.instanceId, runId: record.id })
   const stopped = service.state(record)
   // Assert
-  assert.equal(record.historyExcluded, 'server-run-not-saved')
+  assert.equal(record.historyExcluded, undefined)
   assert.equal(checkpoint, undefined)
   assert.equal(live.nextActions.includes('read-history'), false)
   assert.equal(stopped.historyOutcome.status, 'unavailable')
-  assert.equal(
-    stopped.historyOutcome.reason,
-    'Server runs are not saved yet: this run keeps no history, and no replay or saved study exists for it.',
-  )
   assert.notEqual(stopped.studyOutcome, 'demonstrated')
   assert.notEqual(stopped.recordedStudyOutcome, 'demonstrated')
 })
