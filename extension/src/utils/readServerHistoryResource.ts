@@ -5,6 +5,7 @@ import type { NodeServerHistoryTypes } from '../nodeServerHistoryTypes'
 import type { NodeHistoryStore } from '../nodeTestHistoryStore'
 import type { ResourceContent } from '../resources'
 
+import { answerUnreadableHistoryEntry } from './answerUnreadableHistoryEntry'
 import { readJsonPage } from './readJsonPage'
 import { rehydrateNodeServerEntries } from './rehydrateServerStopSnapshot'
 import { withKnownNodeHistory } from './withKnownNodeHistory'
@@ -124,6 +125,24 @@ function serverVerdicts(
  * @example await readServerHistoryResource(store, studyId, 'events/4')
  */
 export async function readServerHistoryResource(
+  store: NodeHistoryStore<NodeServerHistoryTypes>,
+  studyId: string,
+  suffix: string | undefined,
+): Promise<ResourceContent> {
+  try {
+    return await answerServerHistoryResource(store, studyId, suffix)
+  } catch (error) {
+    // A stop that cannot be restored answers a coded error, never a raw schema dump.
+    throw answerUnreadableHistoryEntry(
+      error,
+      studyId,
+      `codebook://node-history/${studyId}`,
+    )
+  }
+}
+
+/** The body of {@link readServerHistoryResource}, which wraps its schema failures in a coded answer. */
+async function answerServerHistoryResource(
   store: NodeHistoryStore<NodeServerHistoryTypes>,
   studyId: string,
   suffix: string | undefined,
