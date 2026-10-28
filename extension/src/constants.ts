@@ -1828,6 +1828,9 @@ export const REPLAY_DEBUG_TYPE = 'codebook-replay'
 export const REPLAY_DEBUG_THREAD_ID = 1
 export const REPLAY_DEBUG_MAX_FRAMES = 32
 export const REPLAY_DEBUG_MAX_SCOPES = 16
+/** The reason a snapshot gives for a scope it deliberately did not copy: replay keeps only the stopped frame's local values. The capture writes it and the server stop's presentability check reads it, so a capture that follows the policy is never judged unread. */
+export const REPLAY_SCOPE_NOT_CAPTURED_TEXT =
+  "This scope was not captured; replay keeps only the stopped frame's local values."
 export const REPLAY_DEBUG_MAX_VARIABLES = 2_000
 export const REPLAY_DEBUG_MAX_DEPTH = 5
 export const REPLAY_DEBUG_TEXT_LIMIT_CHARS = 4_096
