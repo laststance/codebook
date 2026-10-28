@@ -9,7 +9,7 @@ import { PRIVATE_FILE_MODE } from '../constants'
  * @param bytes - The complete new content.
  * @param beforePublish - Called synchronously after the bytes are flushed and just before the rename; throwing cancels the publication and leaves the existing file unchanged.
  * @param afterPublish - Called synchronously in the tick the rename resolved, before the temporary file's cleanup is awaited, so a caller learns of the publication without waiting on that cleanup.
- * @throws When the temporary file cannot be written or renamed, or `beforePublish` throws; the existing file is then unchanged. A failure of the temporary file's cleanup after a successful rename is ignored: the file is published.
+ * @throws When the temporary file cannot be written or renamed, or `beforePublish` throws; the existing file is then unchanged. A failure of the temporary file's cleanup after a successful rename is ignored: the file is published, and no copy can remain, because the rename moved the temporary name's bytes to `path`, so the name the failed cleanup concerns no longer exists.
  * @example
  * await atomicPrivateBytes(ledgerPath, bytesBeforeTheRemoval)
  */

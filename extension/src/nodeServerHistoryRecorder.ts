@@ -158,9 +158,7 @@ export class NodeServerHistoryRecorder {
       }
       this.status = 'sealed'
       // The summary read is bounded too: past the bound the seal stands and the summary reads as unknown, so a stalled read never holds Stop, Save or the next run.
-      const reading = this.input
-        .summarize(this.writer.header.studyId)
-        .catch(() => undefined)
+      const reading = this.startSummaryRead()
       // After an expiry the shared deadline already settled, so the read gets a bound of its own; otherwise it shares the seal's.
       const summary =
         raced === expired
@@ -176,16 +174,11 @@ export class NodeServerHistoryRecorder {
       const publishedHash = this.writer.publishedSealHash
       if (publishedHash !== undefined) {
         this.status = 'sealed'
-        const summary = await waitWithin(
-          this.input
-            .summarize(this.writer.header.studyId)
-            .catch(() => undefined),
-          {
-            timeoutMs: boundMs,
-            signal: new AbortController().signal,
-            sleep: sleepUntilAborted,
-          },
-        )
+        // The read shares the seal's own deadline, so the whole seal settles within one bound.
+        const summary = await Promise.race([
+          this.startSummaryRead(),
+          deadline.then(() => undefined),
+        ])
         this.sealed = { summary, hash: publishedHash }
         return
       }
@@ -195,6 +188,17 @@ export class NodeServerHistoryRecorder {
     } finally {
       if (timer) clearTimeout(timer)
     }
+  }
+
+  /**
+   * Starts the verdict read of the sealed history so that nothing it does can reject {@link NodeServerHistoryRecorder.seal}.
+   * Why: a synchronous throw of the reader would otherwise escape the seal; called by {@link NodeServerHistoryRecorder.runSeal} on every path that reads a summary.
+   * @returns The summary, or `undefined` when the read threw or rejected.
+   */
+  private startSummaryRead(): Promise<NodeServerHistorySummary | undefined> {
+    return Promise.resolve()
+      .then(() => this.input.summarize(this.writer.header.studyId))
+      .catch(() => undefined)
   }
 
   /** Abandons the writer, so a late seal publishes nothing and the folder lists as interrupted. */

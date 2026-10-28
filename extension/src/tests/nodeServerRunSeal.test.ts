@@ -531,3 +531,101 @@ test('a seal whose summary read rejects stays sealed with an unknown summary and
     ],
   )
 })
+
+// protects=a summary reader that throws synchronously never makes the seal reject: the history reads sealed with an unknown summary and the published hash; fails_when=the stop rejects or the history reads failed; why_new=Claude adversarial (ship pass 3): a synchronous throw escaped runSeal; seam=none; no_claim=which error the reader throws
+test('a summary reader that throws synchronously leaves the history sealed with an unknown summary', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { service, record, run, repository } = await startHistoryServerRun(
+    harness,
+    context,
+  )
+  await run.sendRequest('k1')
+  run.respond()
+  repository.serverHistories.summarize = () => {
+    throw new Error('EIO: synchronous read failure')
+  }
+
+  // Act
+  await service.stop({ instanceId: service.instanceId, runId: record.id })
+
+  // Assert
+  assert.equal(record.nodeServer?.history?.status, 'sealed')
+  assert.equal(record.nodeServer?.history?.sealed?.summary, undefined)
+  assert.equal(
+    record.nodeServer?.history?.sealed?.hash,
+    record.nodeServer?.history?.writer.publishedSealHash,
+  )
+  assert.ok(record.nodeServer?.history?.sealed?.hash)
+})
+
+// protects=a seal published before a cleanup fault whose summary read rejects stays sealed with an unknown summary and the published hash; fails_when=the history is abandoned or the hash is lost; why_new=testing specialist (ship pass 3): the published-catch path with a rejecting reader was untested; seam=none; no_claim=which fault the cleanup raises
+test('a seal published before a cleanup fault stays sealed when its summary read rejects', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { service, record, run, repository } = await startHistoryServerRun(
+    harness,
+    context,
+  )
+  await run.sendRequest('k1')
+  run.respond()
+  const writer = record.nodeServer?.history?.writer
+  assert.ok(writer)
+  const originalSeal = writer.seal.bind(writer)
+  writer.seal = async (...sealing) => {
+    await originalSeal(...sealing)
+    throw new Error('EPERM: cleanup fault after the rename')
+  }
+  repository.serverHistories.summarize = () =>
+    Promise.reject(new Error('EIO: read failed'))
+
+  // Act
+  await service.stop({ instanceId: service.instanceId, runId: record.id })
+
+  // Assert
+  assert.equal(record.nodeServer?.history?.status, 'sealed')
+  assert.equal(record.nodeServer?.history?.sealed?.summary, undefined)
+  assert.equal(
+    record.nodeServer?.history?.sealed?.hash,
+    writer.publishedSealHash,
+  )
+  assert.ok(writer.publishedSealHash)
+})
+
+// protects=a seal that publishes, then faults at about 60% of the bound, with a summary read that never settles still ends by the bound, not 1.6 times it; fails_when=the catch path gives the read a fresh bound; why_new=Claude adversarial (ship pass 3): doubled stop latency; seam=none; no_claim=real disk latency
+test('a published seal that faults late with a stalled summary read still ends within one seal bound', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { service, record, run, repository } = await startHistoryServerRun(
+    harness,
+    context,
+  )
+  const boundMs = 1_000
+  service.nodeServerHistorySealBoundMs = boundMs
+  await run.sendRequest('k1')
+  run.respond()
+  const writer = record.nodeServer?.history?.writer
+  assert.ok(writer)
+  const originalSeal = writer.seal.bind(writer)
+  writer.seal = async (...sealing) => {
+    await originalSeal(...sealing)
+    // gstack-timing-ok: the fault lands at 60% of the bound so the test can tell one bound from 1.6 bounds
+    await new Promise((resolve) => setTimeout(resolve, boundMs * 0.6))
+    throw new Error('EPERM: cleanup fault after the rename')
+  }
+  repository.serverHistories.summarize = () =>
+    new Promise<never>(() => undefined)
+
+  // Act
+  const startedAt = Date.now()
+  await service.stop({ instanceId: service.instanceId, runId: record.id })
+  const elapsedMs = Date.now() - startedAt
+
+  // Assert
+  assert.equal(record.nodeServer?.history?.status, 'sealed')
+  assert.equal(record.nodeServer?.history?.sealed?.summary, undefined)
+  assert.ok(elapsedMs < boundMs * 1.35, `stop took ${elapsedMs} ms`)
+})
