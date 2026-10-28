@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { gitEnvironmentWithoutInherited } from '../utils/gitEnvironmentWithoutInherited'
 import { readRepositoryRevision } from '../utils/readRepositoryRevision'
 
 /** Writes a stand-in `git` script that logs its arguments and the lock setting, then runs `body`. */
@@ -78,8 +79,13 @@ test('the revision read does not start the repository fsmonitor hook and still r
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-revision-'))
   try {
+    // The setup Git sees no inherited GIT_* variable, so a test run inside a Git hook (GIT_DIR, GIT_INDEX_FILE) still builds this temporary repository and never touches the caller's.
     const run = (...args: string[]) =>
-      execFileSync('git', args, { cwd: directory, encoding: 'utf8' }).trim()
+      execFileSync('git', args, {
+        cwd: directory,
+        encoding: 'utf8',
+        env: gitEnvironmentWithoutInherited(),
+      }).trim()
     run('init', '-q')
     await writeFile(join(directory, 'tracked.txt'), 'one\n')
     run('add', 'tracked.txt')
