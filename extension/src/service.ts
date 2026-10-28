@@ -171,7 +171,7 @@ import { readerNotFollowingRunRefusal } from './utils/readerNotFollowingRunRefus
 import { releaseVitestListings } from './utils/releaseVitestListings'
 import { resolveCapturedFactPaths } from './utils/resolveCapturedFactPaths'
 import {
-  hidePrivateRoots,
+  createRootHider,
   sanitizeCause,
   type CauseRoots,
 } from './utils/sanitizeCause'
@@ -4856,7 +4856,9 @@ export class StudyService {
         'The owned Node server adapter is unavailable.',
       )
     if (this.stopping || record.stopping) return
-    await this.beginNodeServerHistory(record)
+    // One snapshot of the private roots for this run, read once: every path of the run that hides roots (output stage, response sanitizer, history) uses it, so they agree and no text pays a realpath read. A folder added mid-run is hidden from the next run on.
+    const runRoots = this.causeRoots
+    await this.beginNodeServerHistory(record, runRoots)
     // The history may have been started while a stop arrived: the stop path seals it, and no server launches.
     if (this.stopping || record.stopping) return
     const run = await this.environment.createNodeServerRun(
@@ -4869,7 +4871,7 @@ export class StudyService {
       state.prepared.descriptor.sources,
       record.id,
       state.history?.sink,
-      this.causeRoots,
+      runRoots,
     )
     state.run = run
     state.subscription = run.onDidChange(() => this.onNodeServerChange(record))
@@ -4881,10 +4883,12 @@ export class StudyService {
   /**
    * Starts the history of a node-server run, within its bound, before the server launches; a failure of any kind leaves the live run running and is kept as the cause the status shows and Save answers (D8).
    * @param record - The node-server run, whose configuration was pinned.
-   * @example await this.beginNodeServerHistory(record)
+   * @param runRoots - The run's frozen private roots, shared with the run itself.
+   * @example await this.beginNodeServerHistory(record, this.causeRoots)
    */
   private async beginNodeServerHistory(
     record: NodeServerStudyRecord,
+    runRoots: CauseRoots,
   ): Promise<void> {
     const state = record.nodeServer
     if (!state.prepared) return
@@ -4895,8 +4899,8 @@ export class StudyService {
       runId: record.id,
       createdAtMs: record.createdAt,
       prepared: state.prepared,
-      hideRoots: (text) => hidePrivateRoots(text, this.causeRoots),
-      roots: () => this.causeRoots,
+      hideRoots: createRootHider(runRoots),
+      roots: runRoots,
       describeCause: (error) =>
         error instanceof SavedStudyStorageFullError
           ? fullLibraryMessage('run', error.limit, this.removalAvailability)

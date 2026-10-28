@@ -23,10 +23,10 @@ export type StartNodeServerHistoryInput = {
     configurationHash: string
     descriptor: ConfiguredDescriptor
   }
-  /** Hides the private roots of a recorded text. */
+  /** Hides the private roots of a recorded text; built from the same frozen snapshot as `roots`. */
   hideRoots: (text: string) => string
-  /** Reads the private roots behind `hideRoots` per text, so a text cut inside a root is hidden too, also a root that appeared mid-run. */
-  roots?: () => CauseRoots
+  /** The private roots behind `hideRoots`, frozen for the run (the snapshot the run's output stage and response sanitizer use too), so a text cut inside a root is hidden by the same set. */
+  roots?: CauseRoots
   /** Words a failure for the learner; names a full store with its own message. */
   describeCause: (error: unknown) => string
   /** The start's bound; the default 2 s unless a test names its own. */

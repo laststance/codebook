@@ -58,3 +58,61 @@ test('a debugger value cut inside the workspace root is stored as a private-root
   assert.equal(files.includes(cutWorkspace), false)
   assert.equal(files.includes('at <storage>… [truncated]'), true)
 })
+
+// protects=a stop with 60 variables makes the service read its private roots no more often than a stop with none (the run's roots are computed once and frozen, so no text pays a realpath read of every workspace folder and the home directory), and the cut value is still hidden; fails_when=the history sink asks the service for its roots per text (60 more reads at this stop); no_claim=the journal's own per-event reads and the cost of one read
+test('a stop with many variables reads the private roots once per run, not once per text', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const opened = await openServerRepository(context)
+  const { service, record, run } = await startHistoryServerRun(
+    harness,
+    context,
+    { repository: opened.repository },
+  )
+  let rootsReads = 0
+  const read = Object.getOwnPropertyDescriptor(
+    Object.getPrototypeOf(service),
+    'causeRoots',
+  )?.get
+  Object.defineProperty(service, 'causeRoots', {
+    get() {
+      rootsReads++
+      return read?.call(service)
+    },
+  })
+  const cutWorkspace = service.environment.workspace.slice(0, -3)
+  const base = debuggerCapture({ line: 2 })
+  const capture = {
+    ...base,
+    snapshot: {
+      ...base.snapshot,
+      variables: Array.from({ length: 60 }, (_, index) => ({
+        name: `v${index}`,
+        value: `at ${cutWorkspace}… [truncated]`,
+        children: [],
+      })),
+    },
+  }
+  await run.sendRequest('k1')
+  const readsBeforeStop = rootsReads
+
+  // Act
+  run.history?.stop(100, { declaredStopIndex: 0 }, 1, capture)
+  const readsAtStop = rootsReads - readsBeforeStop
+  run.pauseAt(1)
+  run.respond()
+  await service.stop({ instanceId: service.instanceId, runId: record.id })
+  const files = await readHistoryFolderText(
+    join(
+      opened.learningDirectory,
+      'node-servers.v1',
+      `${service.instanceId}_${record.id}`,
+    ),
+  )
+
+  // Assert
+  assert.equal(readsAtStop, 0)
+  assert.equal(files.includes(cutWorkspace), false)
+  assert.equal(files.includes('at <storage>… [truncated]'), true)
+})

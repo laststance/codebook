@@ -151,7 +151,7 @@ export type NodeServerRunInput = {
   runId: string
   /** Where the run reports what a saved server replay records; absent when no history started. It is told synchronously and never awaited, and nothing it does reaches the run. */
   history?: NodeServerHistorySink
-  /** The private roots the service hides everywhere (storage, learning directory, workspace, home): used for the server's output and the response body, so both read the same placeholders as the history and the journal; absent in tests, where the workspace and the home directory are used. */
+  /** The private roots the service hides everywhere (storage, learning directory, workspace, home), frozen for this run: used for the server's output and the response body, so both read the same placeholders as the history, which hides with the same snapshot; absent in tests, where the workspace and the home directory are used. */
   privateRoots?: CauseRoots
   dependencies: NodeServerRunDependencies
 }
@@ -472,10 +472,14 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     return stops
   }
 
-  /** The roots hidden in the server's output and response: the service's full set, else the workspace and the home directory. */
+  /** The roots hidden in the server's output and response: the service's full set, else the workspace and the home directory. Computed once and frozen for the run, so the output stage, the response sanitizer and the history all hide one set (a folder added mid-run is hidden from the next run on). */
   private privateRoots(): CauseRoots {
-    return this.input.privateRoots ?? causeRootsFor([], this.input.workspace)
+    this.frozenPrivateRoots ??=
+      this.input.privateRoots ?? causeRootsFor([], this.input.workspace)
+    return this.frozenPrivateRoots
   }
+
+  private frozenPrivateRoots?: CauseRoots
 
   /** Starts the server and the watch on its exit; its port is claimed from here on. */
   private async launchServer(
