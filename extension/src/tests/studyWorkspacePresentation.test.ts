@@ -8581,6 +8581,58 @@ test('the refusal of a selection on a reader whose recording failed to load name
   }
 })
 
+// protects=a replay the learner opens from the Save notice, the status item or Saved studies while Cursor's Agent chat group is the active editor group and takes the keyboard back right after the first group's focus command: the panes are arranged and confirmed with no manual click and the chat has the keyboard again; fails_when=the wait for the main editor's focus report ends after five seconds with "The Codebook panes were not arranged: the main editor did not report the keyboard focus within 5 s …" because the pane's focus was reported only for a moment (N60, Cursor 3.27.12); no_claim=the real Cursor's answer of the layout read after that moment (native check)
+test("a recording opened beside Cursor's Agent chat that takes the keyboard back right after the first group's focus is arranged without a manual click", async (context) => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  harness.takesKeyboardBackFromFirstGroupBesideChat()
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    // The learner's front tab of the source group is another file than the captured source, as in the N60 take.
+    harness.focusMutableDraft('auth.ts', 2)
+    chat.focusTab()
+    await harness.reader.readPresentationState()
+    const commandsBefore = harness.commands.length
+
+    // Act
+    harness.controller.command({
+      studyId: harness.studyId,
+      action: 'open',
+      expectedRevision: harness.controller.state().revision,
+    })
+    enableFakeClock(context)
+    await advanceClockUntil(
+      context,
+      () => harness.controller.state().readiness !== 'loading',
+      6_000,
+    )
+    resetFakeClock(context)
+    await harness.controller.settle()
+
+    // Assert
+    const opened = await harness.reader.readPresentationState()
+    assert.equal(harness.controller.state().reason, undefined)
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(opened.state, 'open')
+    assert.equal(opened.layoutConfirmed, true)
+    assert.equal(opened.panes.appColumn, 1)
+    assert.equal(chat.focused(), true)
+    assert.equal(
+      harness.commands.slice(commandsBefore).filter(isKeyboardCommand).at(-1),
+      'composer.focusComposer',
+    )
+  } finally {
+    resetFakeClock(context)
+    await harness.close()
+  }
+})
+
 // Value: protects=an agent's replay opened from Cursor's chat while the Study workspace is open: the recording is read, its two panes are arranged and confirmed, and the chat has the keyboard again; fails_when=the entry measures the main editor by focusing its first group, which shows the Application pane, Cursor reports no focus of a pane beside the chat, the wait ends after five seconds and the recording fails to load with "The Codebook panes were not arranged: the main editor did not report the keyboard focus within 5 s …"; why_new=Cycle 0045 cause 12 (e), second native result (obs15 R: `codebook_playback` open made with the caret in the chat on the three-pane layout; 3.7 s later the state read open, unconfirmed, "The native editor layout receipt no longer matches the Study panes. …", and the recording was never read); seam=the recorded reader harness with a separate editor part whose group the editor names, the fake Cursor's unreported pane focus and stale group name
 for (const named of ["the chat's group", 'the captured source'] as const)
   test(`a recording opened from Cursor's chat while the Study workspace is open is arranged and confirmed, and the chat gets the keyboard back, while the editor names ${named}`, async () => {

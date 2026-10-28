@@ -1376,6 +1376,9 @@ export async function workspaceHarness(
     pendingPrimaryFocusEcho: typeof activeTabGroup | undefined
   // Cursor 3.23.12: a pane of the main editor that is no text editor takes the keyboard without a report while the editor names the chat's group.
   let leavesPaneFocusUnreportedBesideChat = false
+  /** Set by `takesKeyboardBackFromFirstGroupBesideChat`: the pane the first group's focus command made active briefly, until the next layout read has been answered. */
+  let chatRetakesKeyboardAfterLayoutRead: (() => void) | undefined
+  let chatRetakesKeyboardFromFirstGroup = false
   // Cursor 3.23.12: "Navigate Down Call Stack" gives the frame's file the keyboard while the editor keeps naming the group it named before; see `keepNamingGroupAfterFrameNavigation`.
   let keepsNamingGroupAfterFrameNavigation = false
   // Cursor 3.23.12: the learner's click into a file of the main editor keeps the chat part's group named; see `keepChatPartNameAtLearnersFileClick`.
@@ -4388,8 +4391,28 @@ export async function workspaceHarness(
                 editor.document.uri.toString() ===
                   primaryGroup.activeTab.input.uri.toString(),
             )
-            // The first group has the keyboard and layout reads are answered for the main editor, yet no group event arrives and the group the editor named stays the named one: the chat's, or the main editor's group it named while the chat input had the keyboard. A text editor the first group shows is reported as the active text editor, a pane is not reported at all.
+            // Cursor's Agent chat group takes the keyboard back right after the focus command (Cycle 0060, N60): the first group's pane reports itself active for a moment while the editor goes on naming the chat's group, the next layout read is answered for the main editor, and the chat part is the active part again afterwards.
             if (
+              chatRetakesKeyboardFromFirstGroup &&
+              separateEditorPart &&
+              (activeTabGroup === separateEditorPart.group ||
+                separateEditorPart.lastActive)
+            ) {
+              const part = separateEditorPart
+              const firstPane = [...panels].find(
+                (candidate) => primaryGroup.activeTab === candidate.nativeTab,
+              )
+              part.lastActive = false
+              part.focused = false
+              heldActivePane = firstPane?.kind
+              for (const panel of panels) panel.notifyViewState()
+              chatRetakesKeyboardAfterLayoutRead = (): void => {
+                heldActivePane = undefined
+                // The chat input has the keyboard again; layout reads still answer for the main editor, as in the unreported-focus model.
+                part.focused = true
+                for (const panel of panels) panel.notifyViewState()
+              }
+            } else if (
               leavesPaneFocusUnreportedBesideChat &&
               separateEditorPart &&
               ((staleNamedGroup ?? activeTabGroup) ===
@@ -4499,6 +4522,12 @@ export async function workspaceHarness(
                   : value,
               ),
             )
+            // The chat part takes the keyboard back once this read has been answered for the main editor.
+            if (chatRetakesKeyboardAfterLayoutRead) {
+              const retake = chatRetakesKeyboardAfterLayoutRead
+              chatRetakesKeyboardAfterLayoutRead = undefined
+              setImmediate(retake)
+            }
             // With modelled side bars the main editor's columns are read in pixels of the area the bars leave, as the editor reports them.
             if (
               sideBars &&
@@ -6904,6 +6933,17 @@ export async function workspaceHarness(
     leavePaneFocusUnreportedBesideChat(): void {
       leavesPaneFocusUnreportedBesideChat = true
       // This is Cursor, which also replaces every tab group object with each tab change; that rebuild is what corrects the stale name.
+      replacesGroupObjectsOnTabChanges = true
+    },
+    /**
+     * Makes the fake editor answer `workbench.action.focusFirstEditorGroup` the way Cursor 3.27.12 was seen to while its Agent chat group is the active one (Cycle 0060, N60): the first group's pane reports itself active for a moment while the editor goes on naming the chat's group, the next layout read is answered for the main editor, and the chat input has the keyboard again right after that read, while later layout reads still answer for the main editor. No text editor is reported.
+     * @example
+     * const chat = harness.addSeparateEditorPart()
+     * harness.takesKeyboardBackFromFirstGroupBesideChat()
+     * chat.focusTab()
+     */
+    takesKeyboardBackFromFirstGroupBesideChat(): void {
+      chatRetakesKeyboardFromFirstGroup = true
       replacesGroupObjectsOnTabChanges = true
     },
     /**

@@ -21328,29 +21328,56 @@ export class StudyWorkspace {
               )
             },
           }
+      // Cursor's Agent chat group (another part, named active before the borrow) can take the keyboard back a few milliseconds after the first group's focus command: the first group's Codebook pane then reports itself active only for a moment and never while the poll below looks (Cycle 0060, N60). That report is the main editor's focus report, kept here as a latch; the post-wait layout read must still answer for the main editor.
+      let paneFocusReportedBesideChat = false
+      const paneFocusWatches =
+        !useCitation &&
+        !sourceBorrow &&
+        identifiableFirst &&
+        namedColumn > count
+          ? [this.app, this.contextPanel].flatMap((candidate) =>
+              candidate
+                ? [
+                    candidate.onDidChangeViewState(() => {
+                      if (
+                        candidate.active &&
+                        candidate.viewColumn === vscode.ViewColumn.One
+                      )
+                        paneFocusReportedBesideChat = true
+                    }),
+                  ]
+                : [],
+            )
+          : []
       // Empty/opaque primary panes need the actual requested citation, never a disposable placeholder or unobserved command result.
       beforeScopeFocus?.(useCitation ? undefined : borrowedFocus)
       this.mainEditorFocusBorrows++
       this.firstGroupFrontAtBorrow = undefined
-      if (useCitation) {
-        assertAcquiredFocus = await acquireSourceFocus!()
-        assertCurrent()
-        assertGroups()
-        assertAcquiredFocus()
-      } else if (sourceBorrow) {
-        await this.showTextDocumentNoted(sourceBorrow.document, {
-          viewColumn: sourceBorrow.viewColumn,
-          preserveFocus: false,
-          preview: false,
-        })
-        assertCurrent()
-        assertGroups()
-      } else {
-        await this.executeEditorCommand(
-          'workbench.action.focusFirstEditorGroup',
-        )
-        assertCurrent()
-        assertGroups()
+      try {
+        if (useCitation) {
+          assertAcquiredFocus = await acquireSourceFocus!()
+          assertCurrent()
+          assertGroups()
+          assertAcquiredFocus()
+        } else if (sourceBorrow) {
+          await this.showTextDocumentNoted(sourceBorrow.document, {
+            viewColumn: sourceBorrow.viewColumn,
+            preserveFocus: false,
+            preview: false,
+          })
+          assertCurrent()
+          assertGroups()
+        } else {
+          await this.executeEditorCommand(
+            'workbench.action.focusFirstEditorGroup',
+          )
+          assertCurrent()
+          assertGroups()
+        }
+      } catch (error) {
+        // A failed borrow ends its watch; the wait below ends the others.
+        for (const watch of paneFocusWatches) watch.dispose()
+        throw error
       }
       // What the borrow left in front of the first group, for a refused change's give-back (row 728).
       this.firstGroupFrontAtBorrow = this.frontTabOfFirstGroup()
@@ -21378,36 +21405,41 @@ export class StudyWorkspace {
             firstFocused() ||
             primaryEditorReported() ||
             sourceEditorReported() ||
+            paneFocusReportedBesideChat ||
             this.isSoleMainGroupBesideChat(count ?? 0)
           )
         },
         'identifiable primary editor focus',
         PRESENTATION_READY_TIMEOUT_MS,
         signal,
-      ).catch((error: unknown) => {
-        signal?.throwIfAborted()
-        // Cursor never reports primary focus beside a learner's preview tab; name that tab and its remedy instead of a bare timeout.
-        const foreignPreview = vscode.window.tabGroups.all
-          .filter((group) => group.viewColumn <= mainGroupCount)
-          .flatMap((group) => group.tabs.map((tab) => ({ group, tab })))
-          .find(
-            ({ tab }) =>
-              tab.isPreview &&
-              !this.isCodebookPaneInput(tab.input) &&
-              !this.isCapturedSourceInput(tab.input),
+      )
+        .finally(() => {
+          for (const watch of paneFocusWatches) watch.dispose()
+        })
+        .catch((error: unknown) => {
+          signal?.throwIfAborted()
+          // Cursor never reports primary focus beside a learner's preview tab; name that tab and its remedy instead of a bare timeout.
+          const foreignPreview = vscode.window.tabGroups.all
+            .filter((group) => group.viewColumn <= mainGroupCount)
+            .flatMap((group) => group.tabs.map((tab) => ({ group, tab })))
+            .find(
+              ({ tab }) =>
+                tab.isPreview &&
+                !this.isCodebookPaneInput(tab.input) &&
+                !this.isCapturedSourceInput(tab.input),
+            )
+          // Only the expired wait is renamed; a learner focus change keeps its own refusal.
+          if (didLearnerChangePrimaryTab) throw error
+          throw new StudyError(
+            'PRESENTATION_UNAVAILABLE',
+            foreignPreview
+              ? foreignPreviewObstacle(
+                  this.editorTabName(foreignPreview.tab),
+                  foreignPreview.group.viewColumn,
+                )
+              : this.tellUnreportedEditorFocus(focusArmed),
           )
-        // Only the expired wait is renamed; a learner focus change keeps its own refusal.
-        if (didLearnerChangePrimaryTab) throw error
-        throw new StudyError(
-          'PRESENTATION_UNAVAILABLE',
-          foreignPreview
-            ? foreignPreviewObstacle(
-                this.editorTabName(foreignPreview.tab),
-                foreignPreview.group.viewColumn,
-              )
-            : this.tellUnreportedEditorFocus(focusArmed),
-        )
-      })
+        })
       assertCurrent()
       assertGroups()
       // The editor's own late return to the Repository Wiki's group beside the borrowed text editor is no learner change (finding 606: right after Study Close).
@@ -21437,6 +21469,18 @@ export class StudyWorkspace {
       count = editorLayoutGroupCount(layout)
       if (count === undefined || count > vscode.window.tabGroups.all.length)
         throw new Error('The primary editor grid could not be measured safely.')
+      // Only a moment's pane report proved the focus: the read must have answered for the main editor, so every group beyond its count holds chats only; a read the chat part answered after taking the keyboard back is refused as before.
+      if (
+        paneFocusReportedBesideChat &&
+        !firstFocused() &&
+        !primaryEditorReported() &&
+        !sourceEditorReported() &&
+        !this.holdsOnlyChatsBeyond(count)
+      )
+        throw new StudyError(
+          'PRESENTATION_UNAVAILABLE',
+          this.tellUnreportedEditorFocus(focusArmed),
+        )
       // The column the borrowed editor is given back in: its own, or its diff's group's (row 709), within the measured columns or else beyond them, in VS Code's floating window (row 720).
       const editorColumn =
         this.textEditorColumnOf(editor, count) ??
