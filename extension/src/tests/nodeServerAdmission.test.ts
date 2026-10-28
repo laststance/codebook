@@ -393,14 +393,13 @@ test('at the retained-run limit a refused run is forgotten before an older stopp
   run.respond()
   await service.stop({ instanceId: service.instanceId, runId: oldest.id })
   const { record: refused } = await startFakeNodeServerRun(harness, {
-    key: 'refused-1',
+    key: 'r1',
   })
   await service.stop({ instanceId: service.instanceId, runId: refused.id })
   refused.historyExcluded = 'refused-at-preparation'
   for (let index = 0; index < 14; index++) {
-    const { record } = await startFakeNodeServerRun(harness, {
-      key: `filler-${index}`,
-    })
+    const label = `f${index}`
+    const { record } = await startFakeNodeServerRun(harness, { key: label })
     await service.stop({ instanceId: service.instanceId, runId: record.id })
   }
   assert.equal(service.records.size, 16)
