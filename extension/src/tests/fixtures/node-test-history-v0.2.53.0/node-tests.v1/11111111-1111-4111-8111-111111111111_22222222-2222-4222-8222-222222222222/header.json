@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "profile": "node-test",
+  "workspaceKey": "f20e5044e0d34b8a1238e6b48ac5b441502a69a4c751cfdbfa33d287b30786c6",
+  "studyId": "11111111-1111-4111-8111-111111111111_22222222-2222-4222-8222-222222222222",
+  "instanceId": "11111111-1111-4111-8111-111111111111",
+  "runId": "22222222-2222-4222-8222-222222222222",
+  "createdAt": "2026-09-28T00:00:00.000Z",
+  "configurationHash": "e0e727c7d5ccc8aa051e4a6f041942f1575b1bb2d840d46182a76ed2fe3c6dd8",
+  "configuration": {
+    "version": 1,
+    "adapter": "vitest-node",
+    "book": {
+      "bookId": "interface",
+      "revision": 1,
+      "nodeId": "theme",
+      "anchorIndex": 0
+    },
+    "testFile": "src/theme.test.ts",
+    "testHash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+    "source": {
+      "path": "src/theme.ts",
+      "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+      "line": 1,
+      "column": 1
+    },
+    "inspections": [{ "path": "nextTheme", "mode": "value", "required": true }],
+    "additionalStops": [
+      {
+        "path": "src/theme.ts",
+        "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+        "line": 1,
+        "column": 1,
+        "anchorIndex": 0,
+        "inspections": [
+          { "path": "nextTheme", "mode": "value", "required": true }
+        ]
+      }
+    ]
+  },
+  "descriptor": {
+    "itemId": "repository/interface/theme",
+    "bookTitle": "Interface",
+    "nodeTitle": "Theme",
+    "anchors": [
+      {
+        "path": "src/theme.ts",
+        "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+        "startLine": 1,
+        "endLine": 1
+      },
+      {
+        "path": "src/mode.ts",
+        "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+        "startLine": 1,
+        "endLine": 1
+      }
+    ],
+    "citationContext": {
+      "kind": "citations",
+      "hash": "610d563bfd8797cd1e9d513afaac0a3a4ab0f48274d009544bb24d2203c52c07",
+      "anchors": [
+        {
+          "path": "src/mode.ts",
+          "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+          "startLine": 1,
+          "endLine": 1
+        },
+        {
+          "path": "src/theme.ts",
+          "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+          "startLine": 1,
+          "endLine": 1
+        }
+      ]
+    },
+    "sources": [
+      {
+        "path": "src/theme.ts",
+        "hash": "f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771",
+        "text": "const nextTheme = \"dark\";\n",
+        "lineCount": 2
+      },
+      {
+        "path": "src/mode.ts",
+        "hash": "f6d4386593d51ec67ad6d6811031238456f33ee12b3fa92a9df833159a355501",
+        "text": "export const mode = \"display\";\n",
+        "lineCount": 2
+      }
+    ]
+  },
+  "sourceBuild": {
+    "revision": "test",
+    "dirty": true,
+    "sourceHash": "26f1de33979d065ba8d86789de634228e3540fee2f6e5a66eebf93f78d83077d"
+  }
+}
