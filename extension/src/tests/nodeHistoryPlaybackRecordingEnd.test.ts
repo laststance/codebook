@@ -94,6 +94,39 @@ test('selecting the last event after the end returns the playhead to that event'
   assert.equal(controller.state().positionMs, 200)
 })
 
+// protects=a seek strictly between the last event and the recording's end keeps the last event selected and rests the playhead at the end, which Play then treats as finished; fails_when=the seek selects an earlier event, is refused as outside the range, or leaves Play running past the end; no_claim=that the slider shows 500 ms: the controller has one resting place after the last event, the end (the playhead does not stay at the requested 500 ms)
+test('a seek strictly between the last event and the end keeps the last event selected and rests at the end', async () => {
+  // Arrange
+  const { controller, presented } = controllerWithTerminalSpan(900)
+
+  // Act
+  await controller.seek(500)
+  controller.play()
+
+  // Assert
+  assert.equal(controller.state().sequence, 3)
+  assert.equal(controller.state().positionMs, 900)
+  assert.equal(controller.state().mode, 'paused')
+  assert.deepEqual(presented, [3])
+})
+
+// protects=Play on the last event of a replay with no recorded end pauses at once instead of running; fails_when=Play starts a timer or reports playing with nothing ahead; no_claim=Play on a replay that has an end (the tests above)
+test('Play on the last event selected in a replay with no recorded end stays paused at once', async () => {
+  // Arrange
+  const { controller, clock } = controllerWithTerminalSpan(undefined)
+  controller.select(3)
+
+  // Act
+  controller.play()
+  clock.now = 5_000
+  await controller.tick()
+
+  // Assert
+  assert.equal(controller.state().mode, 'paused')
+  assert.equal(controller.state().sequence, 3)
+  assert.equal(controller.state().positionMs, 200)
+})
+
 // protects=a test replay (no recorded end) keeps its range at the last event and refuses a seek beyond it; fails_when=a recording without a terminal span gains a reachable end; no_claim=none
 test('a replay with no time after its last event still ends and refuses seeks at the last event', async () => {
   // Arrange

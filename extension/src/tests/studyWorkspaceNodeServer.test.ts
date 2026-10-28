@@ -99,14 +99,17 @@ test('a refresh redraws the status item of a node-server run only when it change
     const { run } = await startFakeNodeServerRun(harness)
     await readerSeams(harness).refresh()
     const afterFirst = harness.saveStatus.redraws
+    const assignmentsAfterFirst = harness.saveStatus.commandAssignments
     // Act
     await readerSeams(harness).refresh()
     await readerSeams(harness).refresh()
     const afterUnchanged = harness.saveStatus.redraws
+    const assignmentsAfterUnchanged = harness.saveStatus.commandAssignments
     await run.enter('responded')
     await readerSeams(harness).refresh()
     // Assert
     assert.equal(afterUnchanged, afterFirst)
+    assert.equal(assignmentsAfterUnchanged, assignmentsAfterFirst)
     assert.equal(
       harness.saveStatus.text,
       `${RECORDING} · Responded 200 · ${SAVE}`,
@@ -172,12 +175,20 @@ test('the reader treats a node-server run as no live Study and saves nothing of 
     readerSeams(harness).stopOwnTimer()
     const { service, record, run } = await startFakeNodeServerRun(harness)
     await run.enter('paused')
+    // Every archive write the reader starts is counted; a node-server run must cause none.
+    const reader = harness.reader
+    const realPersistArchive = reader['persistArchive'].bind(reader)
+    let archiveWriteCount = 0
+    reader['persistArchive'] = (...input): Promise<void> => {
+      archiveWriteCount++
+      return realPersistArchive(...input)
+    }
     // Act
     await readerSeams(harness).refresh()
     // Assert
     assert.equal(harness.reader.inspect().view?.liveProfile, undefined)
     assert.equal(service.state(record).historyOutcome.status, 'unavailable')
-    assert.equal(harness.reader.inspect().view?.study?.recordingSave, undefined)
+    assert.equal(archiveWriteCount, 0)
   } finally {
     await harness.close()
   }
