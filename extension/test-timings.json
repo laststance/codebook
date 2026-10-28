@@ -1102,8 +1102,14 @@
     "nodeHistoryMaterialLockWindow.test.js": {
       "totalMs": 147
     },
+    "nodeHistoryOpenRecordingAdmission.test.js": {
+      "totalMs": 227
+    },
     "nodeHistoryPlaybackController.test.js": {
       "totalMs": 362
+    },
+    "nodeHistoryPlaybackRecordingEnd.test.js": {
+      "totalMs": 38
     },
     "nodeHistorySealCoordinator.test.js": {
       "totalMs": 192
@@ -1117,6 +1123,9 @@
     "nodeLearningSave.test.js": {
       "totalMs": 3
     },
+    "nodeServerCaptureShapedStop.test.js": {
+      "totalMs": 254
+    },
     "nodeServerHistoryBounds.test.js": {
       "totalMs": 19644,
       "tests": {
@@ -1124,6 +1133,12 @@
         "output past its 2 MiB byte budget is dropped with one output-truncated entry": 2760,
         "output offered in one turn past the 1,000-entry queue is dropped under the same code and the structural entries still wait their turn": 5224
       }
+    },
+    "nodeServerHistoryCrashedWriter.test.js": {
+      "totalMs": 157
+    },
+    "nodeServerHistoryE7.test.js": {
+      "totalMs": 1361
     },
     "nodeServerHistoryInterrupted.test.js": {
       "totalMs": 202
@@ -1146,6 +1161,9 @@
     "nodeServerHistoryStore.test.js": {
       "totalMs": 175
     },
+    "nodeServerHistoryUnreadableEntry.test.js": {
+      "totalMs": 211
+    },
     "nodeServerHistoryWriter.test.js": {
       "totalMs": 590
     },
@@ -1164,6 +1182,9 @@
     "nodeServerRunRealHistory.test.js": {
       "totalMs": 427
     },
+    "nodeServerRunResourceVerdicts.test.js": {
+      "totalMs": 526
+    },
     "nodeServerRunSeal.test.js": {
       "totalMs": 739
     },
@@ -1172,6 +1193,9 @@
     },
     "nodeServerSealPathBound.test.js": {
       "totalMs": 227
+    },
+    "nodeServerStopCitationIndex.test.js": {
+      "totalMs": 223
     },
     "nodeStopSourceMatches.test.js": {
       "totalMs": 189
@@ -1292,6 +1316,9 @@
     },
     "projectServerApplication.test.js": {
       "totalMs": 506
+    },
+    "projectServerReplayViews.test.js": {
+      "totalMs": 274
     },
     "protocol.test.js": {
       "totalMs": 17467,
@@ -1496,6 +1523,9 @@
         "with Variables hidden a stop commits without values exactly one grace after Run and Debug is told about it, without polling": 1,
         "workspace closure during pending native inspection rejects the moment and stops only its owned session": 0
       }
+    },
+    "replayRefusals.test.js": {
+      "totalMs": 37
     },
     "repositoryBook.test.js": {
       "totalMs": 5287
@@ -3606,6 +3636,9 @@
     },
     "studyWorkspaceServerLibrary.test.js": {
       "totalMs": 712
+    },
+    "studyWorkspaceServerOpenFailures.test.js": {
+      "totalMs": 1065
     },
     "studyWorkspaceServerReplay.test.js": {
       "totalMs": 8875,
