@@ -11979,7 +11979,9 @@ export class StudyWorkspace {
       ) ||
       [...(this.service?.records.values() ?? [])].some(
         (record) =>
-          record.profile === NODE_TEST_PROFILE &&
+          // A node-server run just saved is a server replay before the catalog lists it, never an ordinary recording.
+          (record.profile === NODE_TEST_PROFILE ||
+            record.profile === NODE_SERVER_PROFILE) &&
           `${this.service?.instanceId}_${record.id}` === studyId,
       )
     )
@@ -12182,9 +12184,8 @@ export class StudyWorkspace {
     // The keep-open refusal has told the learner already, so no second notification follows; the refusal is still recorded once in Output › Codebook, where other open refusals are, so a later take can tell why the replay did not open (F407).
     if (answer === 'told')
       this.diagnostics?.log({
-        surface: 'open:test-replay',
+        ...this.replayOpenDiagnosticIdentity(studyId),
         studyId,
-        profile: NODE_TEST_PROFILE,
         cause,
       })
     else this.tellTestReplayOpenFailure(studyId, error, cause)
@@ -12262,6 +12263,34 @@ export class StudyWorkspace {
   }
 
   /**
+   * Names the Output › Codebook entry's surface and profile for a replay that did not open, from the catalogs, as the failure notification's wording does; called by {@link tellTestReplayOpenFailure} and {@link answerFailedTestReplayOpen}.
+   * @param studyId - The replay's study id.
+   * @returns `open:server-replay` with profile `node-server` for a server replay (listed, or a node-server run of this window not yet listed); `open:test-replay` with `node-test` otherwise.
+   * @example this.replayOpenDiagnosticIdentity(studyId) // => { surface: 'open:server-replay', profile: 'node-server' }
+   */
+  private replayOpenDiagnosticIdentity(studyId: string): {
+    surface: string
+    profile: string
+  } {
+    const isListedTest = this.nodeHistoryCatalog.some(
+      (history) => history.studyId === studyId,
+    )
+    const isServer =
+      !isListedTest &&
+      (this.nodeServerHistoryCatalog.some(
+        (history) => history.studyId === studyId,
+      ) ||
+        [...(this.service?.records.values() ?? [])].some(
+          (record) =>
+            record.profile === NODE_SERVER_PROFILE &&
+            `${this.service?.instanceId}_${record.id}` === studyId,
+        ))
+    return isServer
+      ? { surface: 'open:server-replay', profile: NODE_SERVER_PROFILE }
+      : { surface: 'open:test-replay', profile: NODE_TEST_PROFILE }
+  }
+
+  /**
    * Tells the learner that a test replay did not open: one Output › Codebook entry, written before this returns, and the load-failure notification, whose Show details button opens the channel; called by {@link openNodeHistoryFromHost} and {@link enterCompositionForEntry}.
    * The notification's answer is never awaited: an error notification stays on screen until the learner answers it, and the entry that raised it holds the next entry's turn, so waiting would leave every later choice with no notice and no Output entry (N55-F4, Cycle 0056 task 17). The answer opens the channel whenever it comes.
    * @param studyId - The test replay's study id.
@@ -12276,9 +12305,8 @@ export class StudyWorkspace {
   ): void {
     const stack = sanitizedStack(error, this.privateRoots())
     this.diagnostics?.log({
-      surface: 'open:test-replay',
+      ...this.replayOpenDiagnosticIdentity(studyId),
       studyId,
-      profile: NODE_TEST_PROFILE,
       cause,
       ...(stack ? { stack } : {}),
     })
