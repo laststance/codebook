@@ -317,3 +317,61 @@ test('a stream that ends on a held start showing part of a name ends with the pl
   assert.equal(written, 'cwd is ')
   assert.equal(ended, '~')
 })
+
+// protects=after a timed release let out a shared parent as typed, a second timed release of the same held start delivers only what was not let out yet, so the parent is never repeated; fails_when=the second release repeats '/Users/' or the name is let out; no_claim=none
+test('a second timed release after a typed parent delivers only the new part, never the parent again', () => {
+  // Arrange
+  const clock = fakeHoldTimer()
+  const stage = createRootHidingStage(ROOTS, clock.timer)
+
+  // Act
+  const first = stage.write('cwd /Users/')
+  clock.fire()
+  const second = stage.write('a')
+  clock.fire()
+  const ended = stage.end()
+
+  // Assert
+  assert.equal(first, 'cwd ')
+  assert.equal(second, '')
+  assert.deepEqual(clock.released, ['/Users/', '~'])
+  assert.equal(ended, '')
+})
+
+// protects=a stream that ends after a timed release let out a shared parent as typed delivers only the part not let out yet; fails_when=the end repeats the released parent; no_claim=none
+test('a stream that ends after a timed release of a typed parent does not repeat the parent', () => {
+  // Arrange
+  const clock = fakeHoldTimer()
+  const stage = createRootHidingStage(ROOTS, clock.timer)
+
+  // Act
+  stage.write('cwd /Users/')
+  clock.fire()
+  const written = stage.write('a')
+  const ended = stage.end()
+
+  // Assert
+  assert.deepEqual(clock.released, ['/Users/'])
+  assert.equal(written, '')
+  assert.equal(ended, '~')
+})
+
+// protects=once a timed release showed a root's placeholder, a later timed release of the same, longer held start delivers nothing more, so the placeholder is never shown twice; fails_when=the second release delivers the placeholder again ('~~'); no_claim=none
+test('a second timed release after a placeholder was shown never repeats the placeholder', () => {
+  // Arrange
+  const clock = fakeHoldTimer()
+  const stage = createRootHidingStage(ROOTS, clock.timer)
+
+  // Act
+  const first = stage.write('cwd /Users/a')
+  clock.fire()
+  const second = stage.write('d')
+  clock.fire()
+  const ended = stage.end()
+
+  // Assert
+  assert.equal(first, 'cwd ')
+  assert.equal(second, '')
+  assert.deepEqual(clock.released, ['~'])
+  assert.equal(ended, '')
+})

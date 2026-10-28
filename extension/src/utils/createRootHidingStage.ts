@@ -181,12 +181,17 @@ export function createRootHidingStage(
           if (!rest) return
           const shown = failClosed(rest)
           const stillMayGrow = hidePrivateRoots(rest) === rest
-          // Typed text is delivered past what was let out already; a placeholder is delivered whole.
-          const delivered = shown === rest ? rest.slice(emittedCount) : shown
+          // What an earlier timed release let out is never delivered again, typed text or a placeholder, as write and end do.
+          const delivered = withoutEmitted(
+            rest,
+            shown,
+            emittedCount,
+            emittedAsPlaceholder,
+          )
           if (stillMayGrow) {
             // No root was completed: the start stays held (already released), so more text that finishes the root is hidden (fail closed).
             emittedCount = rest.length
-            emittedAsPlaceholder = shown !== rest
+            emittedAsPlaceholder = emittedAsPlaceholder || shown !== rest
           } else {
             held = ''
             emittedCount = 0
