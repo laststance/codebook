@@ -172,6 +172,23 @@ export class NodeServerHistoryRecorder {
           : await Promise.race([reading, deadline.then(() => undefined)])
       this.sealed = { summary, hash }
     } catch (error) {
+      // A seal that was published before the fault (a cleanup after the rename) is never abandoned: the store lists it sealed, so the run reads it sealed too.
+      const publishedHash = this.writer.publishedSealHash
+      if (publishedHash !== undefined) {
+        this.status = 'sealed'
+        const summary = await waitWithin(
+          this.input
+            .summarize(this.writer.header.studyId)
+            .catch(() => undefined),
+          {
+            timeoutMs: boundMs,
+            signal: new AbortController().signal,
+            sleep: sleepUntilAborted,
+          },
+        )
+        this.sealed = { summary, hash: publishedHash }
+        return
+      }
       this.abandon(
         describeNodeServerSealFailure(this.input.describeCause(error)),
       )

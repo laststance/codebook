@@ -1851,6 +1851,8 @@ export const REPLAY_SCOPE_NOT_CAPTURED_TEXT =
 export const REPLAY_DEBUG_MAX_VARIABLES = 2_000
 export const REPLAY_DEBUG_MAX_DEPTH = 5
 export const REPLAY_DEBUG_TEXT_LIMIT_CHARS = 4_096
+/** What the debugger capture appends to a text it cut at {@link REPLAY_DEBUG_TEXT_LIMIT_CHARS}. */
+export const REPLAY_DEBUG_TRUNCATION_MARKER = '… [truncated]'
 export const REPLAY_DEBUG_CAPTURE_TIMEOUT_MS = 5_000
 /** Native Call Stack name of the owned historical session; the Study hint names it for learners. */
 export const REPLAY_DEBUG_SESSION_NAME = 'Codebook · Recorded learning'

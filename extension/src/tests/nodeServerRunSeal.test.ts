@@ -190,6 +190,44 @@ test('a deadline firing right after the seal was published but before finish ret
   assert.ok(record.nodeServer?.history?.sealed?.hash)
 })
 
+// protects=a sealed.json that was renamed into place stays sealed on the live run when the temporary file's cleanup then fails with a non-transient code; fails_when=the live run reads failed and abandons the writer beside a published seal, or the library row stops reading sealed; no_claim=which codes a real disk raises
+test('a published seal stays sealed when the temporary file cleanup fails with EACCES', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { service, record, run, repository } = await startHistoryServerRun(
+    harness,
+    context,
+  )
+  await run.sendRequest('k1')
+  const originalUnlink = fileSystem.unlink
+  context.mock.method(
+    fileSystem,
+    'unlink',
+    (...removal: Parameters<typeof fileSystem.unlink>) =>
+      String(removal[0]).includes('sealed.json')
+        ? Promise.reject(
+            Object.assign(new Error('EACCES: permission denied'), {
+              code: 'EACCES',
+            }),
+          )
+        : originalUnlink(...removal),
+  )
+
+  // Act
+  await service.stop({ instanceId: service.instanceId, runId: record.id })
+  const listed = await repository.serverHistories.list()
+
+  // Assert
+  assert.equal(record.nodeServer?.history?.status, 'sealed')
+  assert.equal(record.nodeServer?.history?.failure, undefined)
+  assert.ok(record.nodeServer?.history?.sealed?.hash)
+  assert.deepEqual(
+    listed.map((summary) => summary.status),
+    ['partial'],
+  )
+})
+
 // protects=once sealed.json is published, this window lists the history by its seal's status even while the temporary file's cleanup still stalls; fails_when=the store keeps the writer active until that cleanup returns, so the library row reads recording beside a published seal; no_claim=a stalled cleanup on a real disk, or how another window lists the folder
 test('a published seal lists by its seal status in this window while the temporary file cleanup still stalls', async (context) => {
   // Arrange

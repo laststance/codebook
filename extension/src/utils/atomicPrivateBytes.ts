@@ -9,7 +9,7 @@ import { PRIVATE_FILE_MODE } from '../constants'
  * @param bytes - The complete new content.
  * @param beforePublish - Called synchronously after the bytes are flushed and just before the rename; throwing cancels the publication and leaves the existing file unchanged.
  * @param afterPublish - Called synchronously in the tick the rename resolved, before the temporary file's cleanup is awaited, so a caller learns of the publication without waiting on that cleanup.
- * @throws When the temporary file cannot be written or renamed, or `beforePublish` throws; the existing file is then unchanged.
+ * @throws When the temporary file cannot be written or renamed, or `beforePublish` throws; the existing file is then unchanged. A failure of the temporary file's cleanup after a successful rename is ignored: the file is published.
  * @example
  * await atomicPrivateBytes(ledgerPath, bytesBeforeTheRemoval)
  */
@@ -21,6 +21,7 @@ export async function atomicPrivateBytes(
 ): Promise<void> {
   const temporary = `${path}.${randomUUID()}.tmp`
   const handle = await open(temporary, 'wx', PRIVATE_FILE_MODE)
+  let didPublish = false
   try {
     try {
       await handle.writeFile(bytes)
@@ -30,10 +31,12 @@ export async function atomicPrivateBytes(
     }
     beforePublish?.()
     await rename(temporary, path)
+    didPublish = true
     afterPublish?.()
   } finally {
     await unlink(temporary).catch((error) => {
-      if (error.code !== 'ENOENT') throw error
+      // After the rename the replacement is complete and the temporary name is gone: a cleanup fault must not turn a published file into a rejected publish.
+      if (error.code !== 'ENOENT' && !didPublish) throw error
     })
   }
 }

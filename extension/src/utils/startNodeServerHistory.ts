@@ -8,6 +8,7 @@ import {
 
 import { buildNodeServerHistoryHeader } from './buildNodeServerHistoryHeader'
 import { readRepositoryRevision } from './readRepositoryRevision'
+import type { CauseRoots } from './sanitizeCause'
 
 /** What {@link startNodeServerHistory} needs of the run and the service. */
 export type StartNodeServerHistoryInput = {
@@ -24,6 +25,8 @@ export type StartNodeServerHistoryInput = {
   }
   /** Hides the private roots of a recorded text. */
   hideRoots: (text: string) => string
+  /** The private roots behind `hideRoots`, so a text cut inside a root is hidden too. */
+  roots?: CauseRoots
   /** Words a failure for the learner; names a full store with its own message. */
   describeCause: (error: unknown) => string
   /** The start's bound; the default 2 s unless a test names its own. */
@@ -66,6 +69,7 @@ export async function startNodeServerHistory(
     describeCause: input.describeCause,
     sink: {
       sanitize: input.hideRoots,
+      roots: input.roots,
       onFault: input.onFault,
       onAppendFailed: input.onAppendFailed,
     },

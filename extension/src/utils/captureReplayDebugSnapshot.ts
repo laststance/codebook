@@ -9,6 +9,7 @@ import {
   REPLAY_DEBUG_MAX_SCOPES,
   REPLAY_DEBUG_MAX_VARIABLES,
   REPLAY_DEBUG_TEXT_LIMIT_CHARS,
+  REPLAY_DEBUG_TRUNCATION_MARKER,
   REPLAY_SCOPE_NOT_CAPTURED_TEXT,
 } from '../constants'
 import {
@@ -97,7 +98,7 @@ export async function captureReplayDebugSnapshot(
   const shorten = (value: string) =>
     value.length <= REPLAY_DEBUG_TEXT_LIMIT_CHARS
       ? value
-      : `${value.slice(0, REPLAY_DEBUG_TEXT_LIMIT_CHARS - '… [truncated]'.length)}… [truncated]`
+      : `${value.slice(0, REPLAY_DEBUG_TEXT_LIMIT_CHARS - REPLAY_DEBUG_TRUNCATION_MARKER.length)}${REPLAY_DEBUG_TRUNCATION_MARKER}`
   const read = async (
     command: 'scopes' | 'variables',
     arguments_: Record<string, number>,

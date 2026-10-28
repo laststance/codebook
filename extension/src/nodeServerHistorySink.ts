@@ -16,8 +16,10 @@ import type { NodeServerHistoryWriter } from './nodeServerHistoryWriter'
 import type { ReplayDebugSnapshot } from './replayDebugSchemas'
 import type { NodeServerResponse } from './runtime'
 import { cutTextToLength } from './utils/cutTextToLength'
+import { hideTrailingRootPrefix } from './utils/hideTrailingRootPrefix'
 import { redactSecretText } from './utils/redactSecretText'
 import { resolveServerStopFrame } from './utils/resolveServerStopFrame'
+import type { CauseRoots } from './utils/sanitizeCause'
 
 /**
  * What a live node-server run tells its history, in the run's own words and on the run's own clock (milliseconds since the launch). The run calls it synchronously at the moment each thing happens and never waits for it; a sink that fails marks its history failed and never reaches the run.
@@ -55,6 +57,8 @@ export type NodeServerHistorySinkInput = {
   writer: NodeServerHistoryWriter
   /** Hides the private roots of a text (the service's storage, the workspace, the home directory); applied to every recorded text before it is masked. */
   sanitize: (text: string) => string
+  /** The private roots behind `sanitize`; a debugger text the capture cut inside a root is hidden by them, since `sanitize` cannot match a fragment. */
+  roots?: CauseRoots
   /** Runs `callback` once after `ms` and returns what cancels it; a test replaces the timer. */
   schedule?: (callback: () => void, ms: number) => () => void
   /** Told once, with the first fault of the sink itself (not a refused append, which the writer already holds). */
@@ -289,7 +293,14 @@ export class NodeServerHistorySinkImpl implements NodeServerHistorySink {
           reason:
             'The debugger could not read this required value at the stop.',
         })),
-        snapshot: maskSnapshot(read.snapshot, (text) => this.hide(text)),
+        snapshot: maskSnapshot(read.snapshot, (text) =>
+          // A text the capture cut inside a private root loses that fragment first: the hider only matches whole roots.
+          this.hide(
+            this.input.roots
+              ? hideTrailingRootPrefix(text, this.input.roots)
+              : text,
+          ),
+        ),
       })
     })
   }

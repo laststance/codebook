@@ -32,6 +32,7 @@ async function startSink(
   context: Parameters<typeof openServerRepository>[0],
   options: {
     sanitize?: (text: string) => string
+    roots?: CauseRoots
     schedule?: NonNullable<NodeServerHistorySinkInput['schedule']>
     onAppendFailed?: () => void
   } = {},
@@ -45,6 +46,7 @@ async function startSink(
   const sink = new NodeServerHistorySinkImpl({
     writer,
     sanitize: options.sanitize ?? ((text) => text),
+    roots: options.roots,
     onAppendFailed: options.onAppendFailed,
     schedule:
       options.schedule ??
@@ -644,4 +646,42 @@ test('a synchronous sink fault tells the status item once that recording stopped
 
   // Assert
   assert.equal(told, 1)
+})
+
+// protects=a debugger value cut by the capture inside a private root (its marker closes the cut text) never stores the root's visible start, while an uncut value stays as captured; fails_when=the stored value keeps the start of the home path or the learner's name from a cut root, or an uncut value is changed; no_claim=cuts that are not at the end of a text
+test('a debugger value cut inside a private root stores no part of the root', async (context) => {
+  // Arrange
+  const { sink, writer, folder } = await startSink(context, {
+    sanitize: (text) => hidePrivateRoots(text, PRIVATE_ROOTS),
+    roots: PRIVATE_ROOTS,
+  })
+  const base = debuggerCapture({ line: 2 })
+  const capture = {
+    ...base,
+    snapshot: {
+      ...base.snapshot,
+      variables: [
+        {
+          name: 'cut',
+          value: `${'x'.repeat(4_073)} /Users/ad… [truncated]`,
+          children: [],
+        },
+        { name: 'plain', value: 'path /Users/x is only text', children: [] },
+      ],
+    },
+  }
+
+  // Act
+  sink.openRequest(10, { method: 'GET', path: '/api/x', bodyBytes: 0 })
+  sink.markRequestSent(11)
+  sink.stop(12, { declaredStopIndex: 0 }, 1, capture)
+  sink.response(20, RESPONSE)
+  await writer.seal({ elapsedMs: 30, reason: 'stopped' })
+  const files = await readHistoryFolderText(folder)
+
+  // Assert
+  assert.doesNotMatch(files, /\/Users\/ad/)
+  assert.doesNotMatch(files, /\bada\b/)
+  assert.ok(files.includes(`${'x'.repeat(4_073)} ~… [truncated]`))
+  assert.ok(files.includes('path /Users/x is only text'))
 })
