@@ -11978,12 +11978,9 @@ export class StudyWorkspace {
       this.nodeServerHistoryCatalog.some(
         (history) => history.studyId === studyId,
       ) ||
-      [...(this.service?.records.values() ?? [])].some(
-        (record) =>
-          // A node-server run just saved is a server replay before the catalog lists it, never an ordinary recording.
-          (record.profile === NODE_TEST_PROFILE ||
-            record.profile === NODE_SERVER_PROFILE) &&
-          `${this.service?.instanceId}_${record.id}` === studyId,
+      // A node-server run just saved is a server replay before the catalog lists it, never an ordinary recording.
+      [NODE_TEST_PROFILE, NODE_SERVER_PROFILE].some(
+        (profile) => this.recordOfStudy(studyId)?.profile === profile,
       )
     )
   }
@@ -12016,6 +12013,8 @@ export class StudyWorkspace {
     const entry = this.supersedeNodeHistoryEntries(),
       overtaken = this.nodeHistoryEntryCancellation.signal
     this.nodeHistoryEntriesInProgress++
+    // A control refused while this open is under way is newer than the open and keeps its line.
+    const refusalsBefore = this.controlRefusals
     try {
       // Entries take turns entering the composition; a newer entry made meanwhile is the learner's latest choice (EN19).
       const previousTurn = this.nodeHistoryEntryTurn
@@ -12054,7 +12053,11 @@ export class StudyWorkspace {
       }
       if (outcome.status !== 'failed') {
         // A replay that opened is a handled choice: the refusal an earlier open of a test or server replay left as a control line (the retry inside the failed entry is refused too) is stale beside it.
-        if (this.dropChoiceRetiredErrors()) this.publish()
+        if (
+          this.controlRefusals === refusalsBefore &&
+          this.dropChoiceRetiredErrors()
+        )
+          this.publish()
         // The learner's own replay open, after the replay is shown: the summary moves beside the chat once per profile (F209).
         await this.moveSummaryBesideChatOnce()
         return
@@ -12316,11 +12319,7 @@ export class StudyWorkspace {
       (this.nodeServerHistoryCatalog.some(
         (history) => history.studyId === studyId,
       ) ||
-        [...(this.service?.records.values() ?? [])].some(
-          (record) =>
-            record.profile === NODE_SERVER_PROFILE &&
-            `${this.service?.instanceId}_${record.id}` === studyId,
-        ))
+        this.recordOfStudy(studyId)?.profile === NODE_SERVER_PROFILE)
     return isServer
       ? { surface: 'open:server-replay', profile: NODE_SERVER_PROFILE }
       : { surface: 'open:test-replay', profile: NODE_TEST_PROFILE }
