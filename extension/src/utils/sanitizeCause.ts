@@ -134,6 +134,17 @@ function rootPatterns(root: string): RegExp[] {
  * // => '{"file":"<workspace>/a.ts",  "n": 1}\n'
  */
 export function hidePrivateRoots(text: string, roots: CauseRoots): string {
+  return createRootHider(roots)(text)
+}
+
+/**
+ * Compiles a window's private roots once into a function that hides them, so a caller that hides many texts (a stream, per chunk) sorts the roots and builds each pattern a single time.
+ * Why: {@link hidePrivateRoots} rebuilt every pattern per call; {@link createRootHidingStage} calls it several times per output chunk. Called by {@link hidePrivateRoots} and {@link createRootHidingStage}.
+ * @param roots - The private roots of this window.
+ * @returns A function with the behavior of {@link hidePrivateRoots} for these roots.
+ * @example createRootHider({ storage: [], home: '/Users/ada' })('at /Users/ada/a.ts') // => 'at ~/a.ts'
+ */
+export function createRootHider(roots: CauseRoots): (text: string) => string {
   const replacements: [string, string][] = roots.storage.map(
     (root): [string, string] => [root, '<storage>'],
   )
@@ -145,11 +156,15 @@ export function hidePrivateRoots(text: string, roots: CauseRoots): string {
     (left, right) =>
       shortSpellingLength(right[0]) - shortSpellingLength(left[0]),
   )
-  let hidden = text
-  for (const [root, words] of replacements)
-    for (const pattern of rootPatterns(root))
+  const compiled = replacements.flatMap(([root, words]) =>
+    rootPatterns(root).map((pattern): [RegExp, string] => [pattern, words]),
+  )
+  return (text) => {
+    let hidden = text
+    for (const [pattern, words] of compiled)
       hidden = hidden.replace(pattern, words)
-  return hidden
+    return hidden
+  }
 }
 
 /**

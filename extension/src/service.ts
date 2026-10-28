@@ -4869,6 +4869,7 @@ export class StudyService {
       state.prepared.descriptor.sources,
       record.id,
       state.history?.sink,
+      this.causeRoots,
     )
     state.run = run
     state.subscription = run.onDidChange(() => this.onNodeServerChange(record))

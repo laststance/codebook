@@ -28,6 +28,7 @@ import type {
   VitestListingReleaseFailure,
 } from './utils/listVitestTestFiles'
 import type { NodeTestExecutionPlan } from './utils/planNodeTestExecution'
+import type { CauseRoots } from './utils/sanitizeCause'
 import type { NodeTestVitestSearch } from './utils/searchRepositoryVitest'
 
 export interface NodeTestRuntime {
@@ -368,6 +369,7 @@ export interface StudyEnvironment {
    * @param citedSources - The article's text of every source the selected node cites; an open editor document with other text refuses the start (D12).
    * @param runId - The service's run id, sent as `x-codebook-run` and named in the debug session.
    * @param history - Where the run reports what it records for a saved server replay; absent when no history started (the run goes on without one).
+   * @param privateRoots - The service's private roots (storage, learning directory, workspace, home), hidden in the server's output and response; absent → the run hides the workspace and home only.
    */
   createNodeServerRun?(
     configuration: NodeServerConfiguration,
@@ -375,6 +377,7 @@ export interface StudyEnvironment {
     citedSources: ConfiguredDescriptor['sources'],
     runId: string,
     history?: NodeServerHistorySink,
+    privateRoots?: CauseRoots,
   ): Promise<NodeServerRuntime>
   /**
    * Asks the learner in a native modal whether to send a state-changing request (POST, PUT, PATCH, DELETE), naming its method and path and that the server uses the repository's own configured database (TD-6); the chat AI cannot answer it.

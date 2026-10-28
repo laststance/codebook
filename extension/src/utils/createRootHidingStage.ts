@@ -1,4 +1,6 @@
-import { hidePrivateRoots, privateRootSpellings } from './sanitizeCause'
+import { OUTPUT_REDACTION_HOLD_LIMIT_CHARS } from '../constants'
+
+import { createRootHider, privateRootSpellings } from './sanitizeCause'
 import type { CauseRoots } from './sanitizeCause'
 
 /** One channel's streaming root hider: feed text to `write`, call `end` once at the stream's end. */
@@ -87,7 +89,12 @@ export function createRootHidingStage(
         .map((normalized) => ({ normalized, placeholder })),
   )
   const longest = Math.max(0, ...spellings.map((spelling) => spelling.length))
+  // Compiled once: every chunk hides several slices of its text.
+  const hidePrivateRoots = createRootHider(roots)
   let held = ''
+  /** How many leading characters of the held text a timed release already let out (as typed, or as a root placeholder when `emittedAsPlaceholder`): the next text is matched together with them, so a root finished by it hides the rest of its name. */
+  let emittedCount = 0
+  let emittedAsPlaceholder = false
   let cancelRelease: (() => void) | undefined
 
   /** Says whether a run is a beginning of some root spelling (or one whole), so more text could still change what it means. */
@@ -101,7 +108,7 @@ export function createRootHidingStage(
 
   /** Words a quiet channel's held text: a root it completes is hidden; a start that shows part of a private name (past the root's parent folder) reads as that root's placeholder; a shared folder stays as typed. */
   const failClosed = (rest: string): string => {
-    const hidden = hidePrivateRoots(rest, roots)
+    const hidden = hidePrivateRoots(rest)
     if (hidden !== rest) return hidden
     const normalized = normalizeForPrefix(rest)
     const revealing = placeholderSpellings.find(
@@ -117,28 +124,74 @@ export function createRootHidingStage(
     cancelRelease = undefined
   }
 
-  const write = (text: string): string => {
-    // New output restarts the silence the timed release waits for.
-    stopTimer()
-    const combined = held + text
-    const hiddenWhole = hidePrivateRoots(combined, roots)
+  /**
+   * Drops from a hidden text the start that was already let out, so a timed release's text is never delivered twice and a root it finishes is hidden from its own start.
+   * @param source - The typed text the output was made from; its first `emittedCount` characters were already released.
+   * @param output - `source` with its roots hidden.
+   * @param emittedCount - How many leading characters of `source` were already released.
+   * @param placeholderShown - Whether that release was a root placeholder instead of the typed characters.
+   * @returns What is still to deliver.
+   */
+  const withoutEmitted = (
+    source: string,
+    output: string,
+    emittedCount: number,
+    placeholderShown: boolean,
+  ): string => {
+    if (emittedCount === 0) return output
+    // Where the output stops matching the typed text inside the released start: a root completed there is hidden from its own start.
+    let common = 0
+    while (
+      common < emittedCount &&
+      common < output.length &&
+      output[common] === source[common]
+    )
+      common++
+    const straddles = common < emittedCount
+    const remainder = output.slice(straddles ? common : emittedCount)
+    if (!straddles || !placeholderShown) return remainder
+    // The start was let out as a placeholder already: do not repeat it.
+    const leading = ['<storage>', '<workspace>', '~'].find((words) =>
+      remainder.startsWith(words),
+    )
+    return leading ? remainder.slice(leading.length) : remainder
+  }
+
+  /** Holds and releases `combined` (the held text plus the new text) as one stream position. */
+  const holdAndRelease = (combined: string): string => {
+    const hiddenWhole = hidePrivateRoots(combined)
     // The window is bounded in the characters the spellings are compared in, so doubled separators cannot push a root's start out of it.
-    const earliest = earliestHoldStart(combined, longest)
+    // The raw held length is capped too: endless separators collapse in the comparison space and would otherwise grow the held text without bound.
+    const earliest = Math.max(
+      earliestHoldStart(combined, longest),
+      combined.length - OUTPUT_REDACTION_HOLD_LIMIT_CHARS,
+    )
     for (let start = earliest; start < combined.length; start++) {
       const run = combined.slice(start)
       if (!mayBecomeRoot(run)) continue
-      const releasedHidden = hidePrivateRoots(combined.slice(0, start), roots)
+      const releasedHidden = hidePrivateRoots(combined.slice(0, start))
       // A cut inside a root that is already complete would split it: such a start is no hold point.
-      if (releasedHidden + hidePrivateRoots(run, roots) !== hiddenWhole)
-        continue
+      if (releasedHidden + hidePrivateRoots(run) !== hiddenWhole) continue
       held = run
       // A held run whose channel then stays silent is released by time, so a quiet server's last line is not stuck.
       if (timer)
         cancelRelease = timer.schedule(() => {
-          const rest = held
-          held = ''
           cancelRelease = undefined
-          if (rest) timer.release(failClosed(rest))
+          const rest = held
+          if (!rest) return
+          const shown = failClosed(rest)
+          const stillMayGrow = hidePrivateRoots(rest) === rest
+          // Typed text is delivered past what was let out already; a placeholder is delivered whole.
+          const delivered = shown === rest ? rest.slice(emittedCount) : shown
+          if (stillMayGrow) {
+            // No root was completed: the start stays held (already released), so more text that finishes the root is hidden (fail closed).
+            emittedCount = rest.length
+            emittedAsPlaceholder = shown !== rest
+          } else {
+            held = ''
+            emittedCount = 0
+          }
+          if (delivered) timer.release(delivered)
         }, timer.holdMs)
       return releasedHidden
     }
@@ -146,11 +199,37 @@ export function createRootHidingStage(
     return hiddenWhole
   }
 
+  /**
+   * Hides one write; when the text finishes a root whose beginning a timed release already let out, the root's placeholder follows what was released (`/Users/` then `ada/app/x` reads `/Users/<workspace>/x`), so no character of the name is released.
+   */
+  const write = (text: string): string => {
+    // New output restarts the silence the timed release waits for.
+    stopTimer()
+    const emitted = emittedCount
+    const combined = held + text
+    const output = holdAndRelease(combined)
+    // The held start moved forward by what was released; what is still held was let out only up to the old count.
+    emittedCount = Math.max(0, emitted - (combined.length - held.length))
+    if (held === '') emittedCount = 0
+    const delivered = withoutEmitted(
+      combined,
+      output,
+      emitted,
+      emittedAsPlaceholder,
+    )
+    if (emittedCount === 0) emittedAsPlaceholder = false
+    return delivered
+  }
+
   const end = (): string => {
     stopTimer()
     const rest = held
+    const emitted = emittedCount
+    const wasPlaceholder = emittedAsPlaceholder
     held = ''
-    return hidePrivateRoots(rest, roots)
+    emittedCount = 0
+    emittedAsPlaceholder = false
+    return withoutEmitted(rest, hidePrivateRoots(rest), emitted, wasPlaceholder)
   }
 
   return { write, end }

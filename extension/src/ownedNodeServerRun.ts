@@ -61,6 +61,7 @@ import type { resolveNodeServerLaunch } from './utils/resolveNodeServerLaunch'
 import type { resolveNodeServerStops } from './utils/resolveNodeServerStops'
 import { RunningTimeLimit, type RunClock } from './utils/runningTimeLimit'
 import { hidePrivateRoots } from './utils/sanitizeCause'
+import type { CauseRoots } from './utils/sanitizeCause'
 import type { signalProcessGroup } from './utils/signalProcessGroup'
 
 /** The server the launcher started ({@link launchNodeServer}). */
@@ -150,6 +151,8 @@ export type NodeServerRunInput = {
   runId: string
   /** Where the run reports what a saved server replay records; absent when no history started. It is told synchronously and never awaited, and nothing it does reaches the run. */
   history?: NodeServerHistorySink
+  /** The private roots the service hides everywhere (storage, learning directory, workspace, home): used for the server's output and the response body, so both read the same placeholders as the history and the journal; absent in tests, where the workspace and the home directory are used. */
+  privateRoots?: CauseRoots
   dependencies: NodeServerRunDependencies
 }
 
@@ -469,6 +472,11 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     return stops
   }
 
+  /** The roots hidden in the server's output and response: the service's full set, else the workspace and the home directory. */
+  private privateRoots(): CauseRoots {
+    return this.input.privateRoots ?? causeRootsFor([], this.input.workspace)
+  }
+
   /** Starts the server and the watch on its exit; its port is claimed from here on. */
   private async launchServer(
     launched: Awaited<ReturnType<typeof resolveNodeServerLaunch>>,
@@ -479,7 +487,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
         workspace: this.input.workspace,
         node: this.dependencies.node,
         // The workspace and the home directory are hidden in the server's output even where a chunk boundary cuts one.
-        privateRoots: causeRootsFor([], this.input.workspace),
+        privateRoots: this.privateRoots(),
       },
       (type, detail) => this.record(type, detail),
       (event) => this.onServerOutput(event),
@@ -1037,8 +1045,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
         verifyPeer: (connection) => this.verifyPeer(connection, server, port),
         signal: this.requestAbort.signal,
         // The body is the server's own text: only private roots are hidden, its spacing and lines stay.
-        sanitize: (text) =>
-          hidePrivateRoots(text, causeRootsFor([], this.input.workspace)),
+        sanitize: (text) => hidePrivateRoots(text, this.privateRoots()),
       })
     } catch (error) {
       // The sender never started: the window closes and the request may be tried again.

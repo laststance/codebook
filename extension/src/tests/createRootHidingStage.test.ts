@@ -232,3 +232,74 @@ test('two chunks a short time apart still hide a root split between them', () =>
   assert.equal(clock.pending(), false)
   assert.deepEqual(clock.released, [])
 })
+
+// protects=text written after a timed release of a held shared parent (/Users/) that finishes a root never releases the private name; fails_when=the rest of the root ('ada/app/x.ts') is released as typed after the hold; no_claim=real timers
+test('a root finished after the timed release of its held shared parent releases no name characters', () => {
+  // Arrange
+  const clock = fakeHoldTimer()
+  const stage = createRootHidingStage(ROOTS, clock.timer)
+
+  // Act
+  const first = stage.write('cwd is /Users/')
+  clock.fire()
+  const second = stage.write('ada/app/x.ts\n')
+
+  // Assert
+  assert.equal(first, 'cwd is ')
+  assert.deepEqual(clock.released, ['/Users/'])
+  assert.equal(second, '<workspace>/x.ts\n')
+})
+
+// protects=endless separators (collapsed by the comparison) keep the held text under the hold cap and every character is released; fails_when=the held run grows with every write; no_claim=timing of the rescans
+test('endless separators keep the held text bounded and release every character', () => {
+  // Arrange
+  const stage = createRootHidingStage(ROOTS)
+  const chunk = '/'.repeat(64 * 1024)
+  let releasedCharacters = 0
+
+  // Act
+  for (let index = 0; index < 32; index++)
+    releasedCharacters += stage.write(chunk).length
+  const heldCharacters = stage.end().length
+
+  // Assert
+  assert.equal(heldCharacters <= 8_192, true)
+  assert.equal(releasedCharacters + heldCharacters, 32 * 64 * 1024)
+})
+
+// protects=a Codebook storage path under the home directory reads <storage>, not ~/…, when the stage knows the storage roots; fails_when=the stage hides the home prefix first because the storage root is missing from its roots; no_claim=the run's wiring (its own test)
+test('a storage path under home in a write reads as the storage placeholder', () => {
+  // Arrange
+  const stage = createRootHidingStage({
+    storage: [
+      '/Users/ada/Library/Application Support/Code/User/workspaceStorage/x',
+    ],
+    home: ['/Users/ada'],
+  })
+
+  // Act
+  const output =
+    stage.write(
+      'wrote /Users/ada/Library/Application Support/Code/User/workspaceStorage/x/events.jsonl\n',
+    ) + stage.end()
+
+  // Assert
+  assert.equal(output, 'wrote <storage>/events.jsonl\n')
+})
+
+// protects=a name written in several pieces after the timed release of a held shared parent is still held and hidden when the root completes; fails_when=a middle piece ('ada') is released as typed or the released '/Users/' is delivered twice; no_claim=real timers
+test('a root finished over several writes after a timed release releases no name characters', () => {
+  // Arrange
+  const clock = fakeHoldTimer()
+  const stage = createRootHidingStage(ROOTS, clock.timer)
+
+  // Act
+  stage.write('cwd is /Users/')
+  clock.fire()
+  const middle = stage.write('ada')
+  const last = stage.write('/app/x.ts\n')
+
+  // Assert
+  assert.equal(middle, '')
+  assert.equal(last, '<workspace>/x.ts\n')
+})

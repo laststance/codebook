@@ -15,6 +15,7 @@ import { StudyError } from '../errors'
 import type { NodeServerConfiguration } from '../nodeServerConfigSchemas'
 import { createOwnedNodeServerRun } from '../ownedNodeServerRun'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { causeRootsFor } from '../utils/causeRootsFor'
 import { isProcessGroupGone } from '../utils/isProcessGroupGone'
 import { readNodeServerOrphanRecords } from '../utils/nodeServerOrphanRecords'
 
@@ -31,7 +32,13 @@ const FIXTURE_SERVER = join(__dirname, 'fixtures/node-server/server.js')
 /** Builds a run of the fixture server in a new repository folder; the folder and every process are cleaned up after the test. */
 async function fixtureRun(
   t: TestContext,
-  options: { mode: string; giveUpMs?: number; requestPath?: string },
+  options: {
+    mode: string
+    giveUpMs?: number
+    requestPath?: string
+    /** A folder under the workspace the service would name a storage root, to prove the run hides what the service gives it. */
+    storageSubfolder?: string
+  },
 ) {
   const workspace = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-node-server-run-')),
@@ -85,6 +92,14 @@ async function fixtureRun(
     },
     citedSources: [],
     runId: 'process-run',
+    ...(options.storageSubfolder
+      ? {
+          privateRoots: causeRootsFor(
+            [join(workspace, options.storageSubfolder)],
+            workspace,
+          ),
+        }
+      : {}),
     dependencies: realNodeServerDependencies(
       { executable: process.execPath, version: process.versions.node },
       options.giveUpMs ?? 20_000,
@@ -239,5 +254,32 @@ test('a real server printing its workspace split over two writes leaves the work
     .join('')
   // Assert
   assert.match(printed, /fixture cwd <workspace>\/src\/server\.ts/)
+  assert.equal(printed.includes(workspace), false)
+})
+
+// protects=the run hides the service's storage roots in a server's output, so a storage folder reads <storage> and not the workspace placeholder; fails_when=the run builds its own roots (workspace and home only) and the storage path reads <workspace>/src/server.ts; no_claim=the service's own list of roots (its causeRoots)
+test('a real server printing a storage folder under its workspace leaves it as the storage placeholder in the recorded output', async (t) => {
+  // Arrange
+  const { run, events, workspace } = await fixtureRun(t, {
+    mode: 'listen',
+    requestPath: '/log-root',
+    storageSubfolder: 'src',
+  })
+  await run.prepare()
+
+  // Act
+  await run.sendRequest('key-storage-root')
+  const paused = await untilView(run, (view) => view.state === 'paused')
+  assert.ok(paused.pause)
+  await run.continue(paused.pause)
+  await untilView(run, (view) => view.state === 'responded')
+  await run.stop()
+  const printed = events
+    .filter((event) => event.type === 'node-server.output')
+    .map((event) => String(Reflect.get(event.detail as object, 'text')))
+    .join('')
+
+  // Assert
+  assert.match(printed, /fixture cwd <storage>\/server\.ts/)
   assert.equal(printed.includes(workspace), false)
 })
