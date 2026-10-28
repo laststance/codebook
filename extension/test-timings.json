@@ -1257,6 +1257,9 @@
     "nodeTestService.test.js": {
       "totalMs": 1088
     },
+    "normalizedTailStart.test.js": {
+      "totalMs": 30
+    },
     "noticeWithSetupStep.test.js": {
       "totalMs": 2
     },

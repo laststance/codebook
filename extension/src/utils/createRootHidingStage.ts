@@ -1,5 +1,6 @@
 import { OUTPUT_REDACTION_HOLD_LIMIT_CHARS } from '../constants'
 
+import { normalizedTailStart } from './normalizedTailStart'
 import { normalizeForPrefix } from './normalizeForPrefix'
 import { rootPlaceholderKinds } from './rootPlaceholderKinds'
 import { createRootHider, privateRootSpellings } from './sanitizeCause'
@@ -32,33 +33,6 @@ const NON_SEPARATOR = /[^\\/]/
 
 /** Matches one run of path separators. */
 const SEPARATOR_RUN = /[\\/]+/g
-
-/** Says whether a character is a path separator of either kind. */
-function isSeparator(character: string | undefined): boolean {
-  return character === '/' || character === '\\'
-}
-
-/**
- * Finds where the longest tail of a text starts that still normalizes to fewer than `limit` characters, so the hold window counts in the space the spellings are compared in (doubled separators collapse).
- * Called by {@link createRootHidingStage} on every write.
- * @param text - The text whose tail is measured.
- * @param limit - The normalized length a held run must stay under.
- * @returns The index where that tail starts.
- * @example earliestHoldStart('C:\\\\Users\\\\a', 8) // => 3, where 'Users\\\\a' (7 characters once collapsed) begins
- */
-function earliestHoldStart(text: string, limit: number): number {
-  let normalizedLength = 0
-  let start = text.length
-  while (start > 0) {
-    // A separator directly before another one adds nothing: the run collapses to one.
-    const adds =
-      isSeparator(text[start - 1]) && isSeparator(text[start]) ? 0 : 1
-    if (normalizedLength + adds >= limit) break
-    normalizedLength += adds
-    start--
-  }
-  return start
-}
 
 /**
  * Makes the stateful root hider of one output channel, so a private root split over two chunks is hidden whole before the output is cut, joined or stored.
@@ -234,7 +208,8 @@ export function createRootHidingStage(
     // The window is bounded in the characters the spellings are compared in, so doubled separators cannot push a root's start out of it.
     // The raw held length is capped too: endless separators collapse in the comparison space and would otherwise grow the held text without bound.
     const earliest = Math.max(
-      earliestHoldStart(combined, longest),
+      // A held run stays under the longest spelling: its tail is at most one character shorter.
+      normalizedTailStart(combined, longest - 1),
       combined.length - OUTPUT_REDACTION_HOLD_LIMIT_CHARS,
     )
     for (let start = earliest; start < combined.length; start++) {
@@ -271,7 +246,7 @@ export function createRootHidingStage(
     // The raw-length cap would force-release the head of a run that is still a start of a root: as typed it could never match once its anchor ('C:') is gone, leaking the name that follows.
     const windowStart = extendsSeparators
       ? 0
-      : earliestHoldStart(combined, longest)
+      : normalizedTailStart(combined, longest - 1)
     if (
       !extendsSeparators &&
       combined.length - windowStart > OUTPUT_REDACTION_HOLD_LIMIT_CHARS &&

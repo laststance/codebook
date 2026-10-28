@@ -1,30 +1,11 @@
 import { REPLAY_DEBUG_TRUNCATION_MARKER } from '../constants'
 
+import { normalizedTailStart } from './normalizedTailStart'
 import { normalizeForPrefix } from './normalizeForPrefix'
 import { rootPlaceholderKinds } from './rootPlaceholderKinds'
 import { privateRootSpellings } from './sanitizeCause'
 import type { CauseRoots } from './sanitizeCause'
 import { showsPrivateName } from './showsPrivateName'
-
-/**
- * Finds the earliest raw index whose tail, once separator runs collapse to one character, is at most `limit` characters; the scan window must be measured after normalizing, since an escaped Windows path doubles its separators.
- * @param body - The captured text without its marker.
- * @param limit - The longest normalized root spelling.
- * @returns The raw index to start scanning from.
- * @example
- * normalizedWindowStart('a\\\\b', 3) // => 0
- */
-function normalizedWindowStart(body: string, limit: number): number {
-  let count = 0
-  for (let index = body.length - 1; index >= 0; index--) {
-    const isSeparator = /[\\/]/.test(body[index] ?? '')
-    // A separator run counts once: only its last character adds to the length.
-    const continuesRun = isSeparator && /[\\/]/.test(body[index + 1] ?? '')
-    if (!continuesRun) count++
-    if (count > limit) return index + 1
-  }
-  return 0
-}
 
 /**
  * Hides a private root's start that a cut left at the end of a text: the debugger capture cuts a long value at a fixed length and appends {@link REPLAY_DEBUG_TRUNCATION_MARKER}, which can fall inside a root (`… /Users/ad… [truncated]`), a fragment {@link createRootHider} cannot match.
@@ -56,7 +37,7 @@ export function hideTrailingRootPrefix(
   )
   // The earliest start first: the longest tail that is still a beginning of a root.
   for (
-    let start = normalizedWindowStart(body, longest);
+    let start = normalizedTailStart(body, longest);
     start < body.length;
     start++
   ) {
