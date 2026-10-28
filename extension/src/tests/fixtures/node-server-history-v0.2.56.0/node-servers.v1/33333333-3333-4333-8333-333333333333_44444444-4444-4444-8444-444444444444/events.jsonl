@@ -1,0 +1,7 @@
+{"type":"request","sequence":1,"elapsedMs":1,"attempt":1,"method":"POST","path":"/api/items","bodyBytes":14}
+{"type":"request-sent","sequence":2,"elapsedMs":2,"attempt":1}
+{"type":"source","sequence":3,"elapsedMs":12,"path":"src/handler.ts","hash":"fb4b1602baf1822baa7c4608ab12060056c4205263d0f1d34e10389c038a0f63","text":"export function handler(req) {\n  const id = req.params.id\n  const item = load(id)\n  return item\n}\n"}
+{"type":"stop","sequence":4,"elapsedMs":12,"declaredStopIndex":0,"hit":1,"generation":1,"source":{"path":"src/handler.ts","hash":"fb4b1602baf1822baa7c4608ab12060056c4205263d0f1d34e10389c038a0f63","line":2,"column":1},"frame":{"name":"handler"},"facts":{"value:id":"7"},"unavailable":[],"debuggerSnapshot":{"version":1,"frames":[{"name":"handler","line":2,"column":1,"source":{"text":"","hash":"fb4b1602baf1822baa7c4608ab12060056c4205263d0f1d34e10389c038a0f63","line":2,"name":"src/handler.ts"},"scopes":[{"name":"Local","variables":[0]}]}],"variables":[{"name":"id","value":"7","type":"string","children":[]}],"limitations":[]}}
+{"type":"output","sequence":5,"elapsedMs":17,"channel":"stdout","text":"created item 7\n"}
+{"type":"response","sequence":6,"elapsedMs":27,"status":200,"contentType":"application/json","body":"{\"id\":7}","bodyBytes":8,"readCut":false,"location":null,"requestDurationMs":30}
+{"type":"end","sequence":7,"elapsedMs":37,"reason":"stopped"}
