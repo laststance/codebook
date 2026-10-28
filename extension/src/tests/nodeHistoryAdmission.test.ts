@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import fsPromises from 'node:fs/promises'
 import { before, test, type TestContext } from 'node:test'
 
 import { SavedStudyStorageFullError } from '../errors'
@@ -141,3 +142,28 @@ test('a saved study keeps accepting its own checkpoint while server histories fi
   // Assert
   await assert.doesNotReject(resave)
 })
+
+// protects=an unreadable history directory never blocks a browser save, as an unreadable Node history store never did; fails_when=the library's admission throws the directory's read error and the save fails; no_claim=the histories' own start, which still refuses on an unreadable directory
+for (const code of ['EACCES', 'EMFILE', 'EBUSY']) {
+  test(`a browser save on the last free place succeeds while both history directories fail to read with ${code}`, async (context) => {
+    // Arrange
+    const window = await openWindow(context, 1)
+    const readdirBefore = fsPromises.readdir
+    context.mock.method(
+      fsPromises,
+      'readdir',
+      async (...input: Parameters<typeof readdirBefore>) => {
+        if (/node-(tests|servers)\.v1$/.test(String(input[0])))
+          throw Object.assign(new Error(`${code}: cannot read`), { code })
+        return readdirBefore(...input)
+      },
+    )
+
+    // Act
+    await window.library.saveStudy(window.study)
+
+    // Assert
+    assert.equal(await window.library.admitsStudy(window.study.id), true)
+    assert.equal(await window.library.savedStudyCount(), 1)
+  })
+}

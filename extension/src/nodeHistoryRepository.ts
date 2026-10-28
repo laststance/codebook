@@ -72,18 +72,20 @@ export class NodeHistoryRepository {
 
   /**
    * Counts every kind of history, up to `places`, for the library's admission: a browser save counts test and server histories as the histories count saved studies.
+   * A history directory that cannot be read counts no history, as only a history the list shows counts: an unreadable Node history store never blocks a browser save. The histories' own admission ({@link NodeHistoryStore.start}) keeps refusing on it.
    * @param places - The places the histories may take; the count is not carried beyond it.
    * @returns The histories of both profiles, or `places` once that many are found.
-   * @throws When a history directory exists and cannot be read.
    * @example await repository.countHistories(64) // => 5
    */
   async countHistories(places: number): Promise<number> {
-    const tests = await this.testHistories.countListedHistories(places)
+    const tests = await this.testHistories
+      .countListedHistories(places)
+      .catch(() => 0)
     return (
       tests +
-      (await this.serverHistories.countListedHistories(
-        Math.max(places - tests, 0),
-      ))
+      (await this.serverHistories
+        .countListedHistories(Math.max(places - tests, 0))
+        .catch(() => 0))
     )
   }
 
