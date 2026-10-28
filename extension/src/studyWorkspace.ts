@@ -11434,32 +11434,44 @@ export class StudyWorkspace {
     return sanitizeCause(error, this.privateRoots())
   }
 
+  /**
+   * Hands the Save of a node-server or node-test run to the class that owns it, refusing a delayed click that names another run.
+   * @param service - The attached service.
+   * @param record - The current run.
+   * @param expectedStudyId - The study the clicked control named.
+   * @returns The save in flight; `undefined` for a run of another profile.
+   * @throws When the control named another run.
+   * @example return this.nodeRunSave(service, record, expectedStudyId) ?? undefined
+   */
+  private nodeRunSave(
+    service: StudyService | undefined,
+    record: StudyRecord | undefined,
+    expectedStudyId: string | undefined,
+  ): Promise<void> | undefined {
+    const owner =
+      record?.profile === NODE_SERVER_PROFILE
+        ? this.nodeServerLearningSave
+        : record?.profile === NODE_TEST_PROFILE
+          ? this.nodeLearningSave
+          : undefined
+    if (!service || !record || !owner) return undefined
+    if (
+      expectedStudyId !== undefined &&
+      expectedStudyId !== `${service.instanceId}_${record.id}`
+    )
+      throw new Error(
+        'The recorded session changed. Use the current Save learning replay control.',
+      )
+    return owner.save(record)
+  }
+
   /** Finishes the explicitly selected capture and verifies matching durable learning; called by the status-bar command. @example await workspace.saveLearningReplay(studyId) */
   async saveLearningReplay(expectedStudyId?: string): Promise<void> {
     const service = this.service,
       record = this.currentRecord()
-    // A server run's Save belongs to NodeServerLearningSave, with the same delayed-click guard as a test run's.
-    if (service && record?.profile === NODE_SERVER_PROFILE) {
-      if (
-        expectedStudyId !== undefined &&
-        expectedStudyId !== `${service.instanceId}_${record.id}`
-      )
-        throw new Error(
-          'The recorded session changed. Use the current Save learning replay control.',
-        )
-      return this.nodeServerLearningSave.save(record)
-    }
-    // A test run's Save belongs to NodeLearningSave; a delayed click for another run is refused as for a browser save.
-    if (service && record?.profile === NODE_TEST_PROFILE) {
-      if (
-        expectedStudyId !== undefined &&
-        expectedStudyId !== `${service.instanceId}_${record.id}`
-      )
-        throw new Error(
-          'The recorded session changed. Use the current Save learning replay control.',
-        )
-      return this.nodeLearningSave.save(record)
-    }
+    // A server or test run's Save belongs to its own class, with the same delayed-click guard as a browser save.
+    const nodeSave = this.nodeRunSave(service, record, expectedStudyId)
+    if (nodeSave) return nodeSave
     // A refused run recorded nothing, and the recording of a removed study went to the Trash with it.
     if (!service || !record || !record.recording || record.historyExcluded)
       throw new Error(
