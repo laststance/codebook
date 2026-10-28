@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.2.57.0] - 2026-10-29 (development candidate)
+
+Cycle 0060 ([Issue #152](https://github.com/laststance/codebook/issues/152)), a bug-fix cycle. It fixes every defect Cycle 0059 carried for the Server replay, the five Major ones among them ([#151](https://github.com/laststance/codebook/issues/151)), and the defects found by its own reviews and its native trial in Cursor. It adds no feature. What the status bar, Save, the run resource and the stored history say about a server run now agrees with what happened, and private paths and secrets stay out of the stored history.
+
+**Saving a server run.**
+
+- **The status bar says at once when the history stopped recording.** After a failed write it reads `<where the run stands> · Learning replay will be partial: <cause>` while the server runs. Save still stops the run and saves what was recorded before the failure.
+- **Save reads the stored history every time.** When another window saved the explanation after the seal, the notice reads `Server replay saved.` with that material's revision. Save never reports a replay saved for a history the store no longer holds.
+- **A seal that was published stays sealed.** When the cleanup after the seal stalls or fails, the live run, the run resource and Saved studies all read the history as sealed. A run ended by its whole-run deadline seals as failed with `RUNTIME_FAILED`, and a clean Stop after an earlier failure seals as stopped.
+- **The history ends at the moment you stopped the run**, not at the last output before it.
+- **The partial notice prints no control characters.**
+
+**Privacy of the stored history.**
+
+- **Private paths stay hidden across output chunks.** The workspace, home and Codebook storage paths read `<workspace>`, `~` and `<storage>` in the server's output and in the stored history. That holds when two chunks, the 4,096-character output split or a pause of more than 1 s falls inside a path, and when its separators are doubled. A held start that shows part of a private name is let out as its placeholder.
+- **Every debugger text a history stores is hidden and masked**: frame, scope and variable names, values, types, unavailable reasons and source names. A value the capture cut inside a private path keeps no part of it, and secrets are masked before any captured text is cut.
+
+**Opening a Server replay.**
+
+- **Open replay right after a save opens the Server replay**, also before Saved studies refreshes and also while Cursor's Agent chat group is active, with no manual click.
+- **A replay that opens after a refused first open no longer shows the refusal** in the Study pane or the Learning summary.
+- **A server replay that cannot open is logged as `open:server-replay` with profile `node-server`** in **Output › Codebook**.
+
+**What the chat can do (skill 1.0.54; MCP API 1.9 unchanged).**
+
+- **`save-node-learning` is offered only for a sealed history** whose learning is not known to be complete. While the history records, `nextActions` offers only `stop`.
+- **The run resource keeps answering for a stopped server run.** At the 16-run limit a stopped server run gives up its place only when no refused or deleted run is left, and a stalled store never holds a read longer than 10 s.
+- **With skill 1.0.54 the chat keeps every value that decided the outcome in what it saves** and saves a claim it read from source as a source-derived step, so the replay alone can answer a learning check.
+
+**Compatibility.** MCP API 1.9 and the server history format are unchanged. Histories written by 0.2.56.0 open, replay and list as before. Hiding and masking apply to histories written from this version on; existing histories keep their bytes. The bundled skill moves to 1.0.54.
+
 ## [0.2.56.0] - 2026-10-28 (development candidate)
 
 Cycle 0059 pt3 ([Issue #147](https://github.com/laststance/codebook/issues/147)), the last of three parts of the feature cycle that saves a server run as a learning replay. With this part a run of a repository's own Node HTTP server is saved as a **Server replay**. While the server runs, Codebook keeps a private history of the request it opens, the server's output, the source that executed at each stop, the debugger's recorded values and the response. **Save learning replay** seals that history and Saved studies lists it. A development rehearsal in VS Code 1.142.0 (Copilot Chat, GPT-6.1 Terra) in the macOS Space, on the pt3 candidate `27b0101f` and the clean pinned clone of `laststance/switch-time` at `4f68953` (development evidence, no acceptance credit), saved a real server run as complete and read `Server replay saved.`. N59, the cycle's native trial in VS Code and Cursor, runs on this part's candidate, and its result is recorded in Issue #147.
