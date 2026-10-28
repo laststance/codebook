@@ -1,4 +1,5 @@
 import type { NodeServerHistoryRecorder } from '../nodeServerHistoryRecorder'
+import type { NodeServerHistorySummary } from '../nodeServerHistoryTypes'
 
 /** What {@link projectNodeServerHistory} reads of a server run's history. */
 export type NodeServerHistoryProjectionInput = {
@@ -18,6 +19,19 @@ export type NodeServerHistoryIssue = {
   next: string
 }
 
+/** The `nodeServer` fields a server run's history adds to the run resource. The verdicts exist only once the history was sealed and read. */
+export type NodeServerHistoryProjection = {
+  history: 'recording' | 'unavailable' | 'failed' | 'sealed'
+  historyUri?: string
+  historyIssue?: NodeServerHistoryIssue
+  learningCoverage?: NodeServerHistorySummary['learningCoverage']
+  learningMissing?: NodeServerHistorySummary['learningMissing']
+  learningMissingCount?: number
+  captureMissing?: NodeServerHistorySummary['captureMissing']
+  captureMissingCount?: number
+  materialRevision?: number
+}
+
 /**
  * Projects a server run's history for the run resource: its state, where its journal is read, the verdicts of the sealed history and the issue a history that is unavailable, failing or unsealable reports.
  * Called by {@link StudyService.state} for a node-server run. The verdicts (`learningCoverage`, `learningMissing`, `captureMissing`) exist only once the history was sealed and read: a live run supports no claim of saved learning.
@@ -27,14 +41,14 @@ export type NodeServerHistoryIssue = {
  */
 export function projectNodeServerHistory(
   input: NodeServerHistoryProjectionInput,
-) {
+): NodeServerHistoryProjection {
   const { recorder } = input
   if (!recorder)
     return {
-      history: 'unavailable' as const,
+      history: 'unavailable',
       historyIssue: input.unavailable
         ? {
-            code: 'HISTORY_UNAVAILABLE' as const,
+            code: 'HISTORY_UNAVAILABLE',
             message: input.unavailable,
             preserved:
               'The live run is unaffected; nothing of it is recorded for a replay, so its explanation stays in the chat.',
@@ -65,10 +79,10 @@ export function projectNodeServerHistory(
   return {
     history:
       recorder.status === 'sealed'
-        ? ('sealed' as const)
+        ? 'sealed'
         : recorder.status === 'failed'
-          ? ('failed' as const)
-          : ('recording' as const),
+          ? 'failed'
+          : 'recording',
     historyUri: input.historyUri,
     historyIssue,
     ...(summary
