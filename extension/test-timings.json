@@ -1354,6 +1354,9 @@
     "readRecordedOwner.test.js": {
       "totalMs": 18
     },
+    "readRepositoryRevision.test.js": {
+      "totalMs": 204
+    },
     "readVitestPrerequisite.test.js": {
       "totalMs": 10
     },
