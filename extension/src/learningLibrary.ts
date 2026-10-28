@@ -1147,6 +1147,20 @@ export class LearningLibrary {
     return (await this.entries()).length
   }
 
+  /**
+   * Counts the places the studies take for the admission of a history: the saved studies by their archive and every study that has only a recording (an open run whose archive is not written yet) once each.
+   * Why: a recording's start counts every recording folder, so a history start that counted only archives could take the place a recording had started with, and the recording could then no longer archive. Both starts now count that place, under the one storage lock.
+   * Called by {@link StudyWorkspace} for the history repository's admission.
+   * @returns The number of distinct study ids that have an archive or a recording folder.
+   * @throws When the library directory cannot be read; an unreadable recording root counts none, as {@link recordedStudyIds} reads it.
+   * @example await library.takenStudyCount() // => 2 with one archived study and one open recording
+   */
+  async takenStudyCount(): Promise<number> {
+    const ids = new Set((await this.entries()).map((entry) => entry.id))
+    for (const id of await this.recordedStudyIds()) ids.add(id)
+    return ids.size
+  }
+
   /** Holds the one admission rule for {@link admitsStudy} and {@link saveStudy}: a study already kept is always admitted, a new one only below the limit. @example this.admits(existing, study.id) */
   private async admits(
     existing: { id: string }[],

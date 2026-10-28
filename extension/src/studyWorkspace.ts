@@ -10754,13 +10754,27 @@ export class StudyWorkspace {
       // Read at each refusal: the library and the store are built before a service is attached, and a removal changes the answer.
       const removalAvailability = (): StudyRemovalAvailability =>
         this.studyRemovalAvailability()
+      const learningDirectory = join(
+        this.context.globalStorageUri.fsPath,
+        'learning',
+        key,
+      )
+      // The histories' admission counts the places the studies take (an archive or an open recording) through a library that counts only; the library and the recordings then take the repository's count directly, with no closure over a later assignment.
+      const placeCounter = new LearningLibrary(learningDirectory, key, capacity)
+      const repository = new NodeHistoryRepository(
+        learningDirectory,
+        key,
+        () => placeCounter.storageLimit(),
+        () => placeCounter.takenStudyCount(),
+      )
+      this.nodeHistoryRepository = repository
       this.library = new LearningLibrary(
-        join(this.context.globalStorageUri.fsPath, 'learning', key),
+        learningDirectory,
         key,
         capacity,
         removalAvailability,
         // Test and server histories take places of the same limit as saved studies.
-        (places) => this.nodeHistoryRepository!.countHistories(places),
+        (places) => repository.countHistories(places),
       )
       this.recordings = new RecordingStore(
         this.library.directory,
@@ -10769,15 +10783,7 @@ export class StudyWorkspace {
         undefined,
         capacity,
         removalAvailability,
-        // The repository is built right after: read at admission time, like the library's counter.
-        (places) => this.nodeHistoryRepository!.countHistories(places),
-      )
-      this.nodeHistoryRepository = new NodeHistoryRepository(
-        this.library.directory,
-        key,
-        () => this.library!.storageLimit(),
-        // The saved studies as the library's own admission counts them: what is left of a study without its archive is listed and takes no place.
-        () => this.library!.savedStudyCount(),
+        (places) => repository.countHistories(places),
       )
       this.nodeHistoryStore = this.nodeHistoryRepository.testHistories
       // What the reader before this one could not save waits for Retry storage / refresh here.

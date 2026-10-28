@@ -129,6 +129,7 @@ export class NodeHistoryRepository {
    * @example await repository.countHistories(64) // => 5
    */
   async countHistories(places: number): Promise<number> {
+    // Fail-open on purpose: an unreadable history directory counts no history here, so it never blocks a browser save or a recording start (the histories' own start refuses on it).
     const tests = await this.testHistories
       .countListedHistories(places)
       .catch(() => 0)
