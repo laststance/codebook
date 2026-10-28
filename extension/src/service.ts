@@ -490,6 +490,8 @@ export class StudyService {
   nodeHistoryStore?: NodeTestHistoryStore
   /** The workspace's history repository, which resolves a study id to the test or server store that holds it; set with {@link nodeHistoryStore}. */
   nodeHistoryRepository?: NodeHistoryRepository
+  /** The number of the latest verdict read of each server history, so only that read writes its summary ({@link StudyService.refreshNodeServerSummary}). */
+  private readonly nodeServerSummaryReads = new Map<string, number>()
   repositoryPublished?: () => Promise<void>
   repositoryReader?: (
     input: OpenBookInput,
@@ -2280,10 +2282,17 @@ export class StudyService {
     const sealed = [...this.records.values()].find(
       (candidate) => `${this.instanceId}_${candidate.id}` === studyId,
     )?.nodeServer?.history?.sealed
-    if (!sealed) return
-    sealed.summary = await this.nodeHistoryRepository?.serverHistories
+    const histories = this.nodeHistoryRepository?.serverHistories
+    // Without a repository there is nothing to read again; the summary the seal read stays.
+    if (!sealed || !histories) return
+    // Only the latest read of a history writes its summary, so an older read that finishes last cannot overwrite a newer revision's coverage.
+    const request = (this.nodeServerSummaryReads.get(studyId) ?? 0) + 1
+    this.nodeServerSummaryReads.set(studyId, request)
+    const summary = await histories
       .summarize(studyId)
       .catch(() => sealed.summary)
+    if (this.nodeServerSummaryReads.get(studyId) === request)
+      sealed.summary = summary
   }
 
   /**

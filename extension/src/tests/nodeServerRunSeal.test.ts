@@ -216,3 +216,57 @@ test('a server history sink fault is written to the diagnostics once', async (co
     ],
   )
 })
+
+// protects=a verdict read that finishes after a newer one does not overwrite the newer summary on the run; fails_when=the last read to finish wins whatever its order; no_claim=what the summary's fields mean
+test('an older server summary read that finishes last keeps the newer summary', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { service, record, run, repository } = await startHistoryServerRun(
+    harness,
+    context,
+  )
+  await run.sendRequest('k1')
+  run.respond()
+  await service.stop({ instanceId: service.instanceId, runId: record.id })
+  const sealed = record.nodeServer?.history?.sealed
+  assert.ok(sealed?.summary)
+  const sealedSummary = sealed.summary
+  const resolvers: Array<(summary: typeof sealedSummary) => void> = []
+  repository.serverHistories.summarize = () =>
+    new Promise((resolve) => resolvers.push(resolve))
+  const older = { ...sealedSummary, materialRevision: 111 }
+  const newer = { ...sealedSummary, materialRevision: 222 }
+
+  // Act
+  const firstRead = service.refreshNodeServerVerdicts(record)
+  const secondRead = service.refreshNodeServerVerdicts(record)
+  resolvers[1]!(newer)
+  await secondRead
+  resolvers[0]!(older)
+  await firstRead
+
+  // Assert
+  assert.equal(sealed.summary?.materialRevision, 222)
+})
+
+// protects=a run whose reader has no history repository keeps the summary its seal read; fails_when=the refresh assigns undefined over a good summary; no_claim=the learning coverage text
+test('a verdict refresh without a history repository keeps the sealed summary', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { service, record, run } = await startHistoryServerRun(harness, context)
+  await run.sendRequest('k1')
+  run.respond()
+  await service.stop({ instanceId: service.instanceId, runId: record.id })
+  const sealed = record.nodeServer?.history?.sealed
+  assert.ok(sealed?.summary)
+  const kept = sealed.summary
+  service.nodeHistoryRepository = undefined
+
+  // Act
+  await service.refreshNodeServerVerdicts(record)
+
+  // Assert
+  assert.equal(sealed.summary, kept)
+})
