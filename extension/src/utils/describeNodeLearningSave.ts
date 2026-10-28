@@ -35,7 +35,13 @@ export type NodeLearningSaveMessage =
     }
   | { kind: 'nothing-yet' }
   | { kind: 'open-refused' }
-  | { kind: 'open-failed'; title: string; cause: string }
+  | {
+      kind: 'open-failed'
+      title: string
+      cause: string
+      /** Which replay failed to open; a server replay is worded with server words. Defaults to a test replay. */
+      profile?: 'node-test' | 'node-server'
+    }
 
 /** The words of one message: the status item's text with its tooltip, or a question's or notification's text with its actions. */
 export type NodeLearningSaveText = {
@@ -184,7 +190,7 @@ export function describeNodeLearningSave(
     case 'open-failed':
       return {
         // A cause that ends its own sentence is not given a second full stop.
-        text: `Codebook could not open the test replay "${message.title}": ${cutCauseForDisplay(message.cause).replace(/\.$/, '')}. The saved history is unchanged; open it again from Saved studies.`,
+        text: `Codebook could not open the ${message.profile === 'node-server' ? 'server' : 'test'} replay "${message.title}": ${cutCauseForDisplay(message.cause).replace(/\.$/, '')}. The saved history is unchanged; open it again from Saved studies.`,
         actions: [NODE_LEARNING_SAVE_ACTION.showDetails],
       }
   }

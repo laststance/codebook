@@ -3,6 +3,8 @@ import type {
   NodeTestHistoryHeader,
   NodeTestHistoryIndex,
   NodeTestHistorySeal,
+  NodeTestLearningMaterial,
+  NodeTestLearningMaterialContent,
 } from './nodeTestHistorySchemas'
 import type { NodeTestHistoryWriter } from './nodeTestHistoryWriter'
 import type { NodeTestVerdict } from './utils/describeNodeTestResult'
@@ -46,5 +48,7 @@ export type NodeTestHistoryTypes = {
   Seal: NodeTestHistorySeal
   Progress: JournalProgress
   Summary: NodeTestHistorySummary
+  Material: NodeTestLearningMaterial
+  MaterialContent: NodeTestLearningMaterialContent
   Writer: NodeTestHistoryWriter
 }

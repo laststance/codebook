@@ -18,7 +18,6 @@ import {
   NODE_TEST_LEARNING_DECISION_LIMIT_BYTES,
   NODE_TEST_LEARNING_DECISION_VERSION,
   NODE_TEST_LEARNING_MATERIAL_LIMIT_BYTES,
-  NODE_TEST_LEARNING_MATERIAL_VERSION,
   NODE_TEST_READER_POSITION_LIMIT_BYTES,
   NODE_TEST_READER_POSITION_VERSION,
   PRIVATE_DIRECTORY_MODE,
@@ -27,7 +26,6 @@ import {
 import {
   NodeLearningRevisionChangedError,
   SavedStudyStorageFullError,
-  StudyError,
 } from './errors'
 import type {
   HistoryIndexOf,
@@ -42,18 +40,15 @@ import {
 import {
   nodeTestHistoryLearningDecisionSchema,
   nodeTestHistoryReaderPositionSchema,
-  nodeTestLearningMaterialContentSchema,
-  nodeTestLearningMaterialSchema,
   type NodeTestHistoryLearningDecision,
   type NodeTestHistoryReaderPosition,
-  type NodeTestLearningMaterial,
-  type NodeTestLearningMaterialContent,
 } from './nodeTestHistorySchemas'
 import type { NodeTestHistoryTypes } from './nodeTestHistoryTypes'
 import { nodeTestStorageDescriptor } from './nodeTestStorageDescriptor'
 export { NodeTestHistoryWriter } from './nodeTestHistoryWriter'
 export type { NodeTestHistorySummary } from './nodeTestHistoryTypes'
 import { sha256 } from './runtimeSupport/utils/sha256'
+import { saveStepLead } from './utils/assertNodeLearningCitations'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
 import { causeRootsFor } from './utils/causeRootsFor'
 import { cutHistoryReason } from './utils/cutHistoryReason'
@@ -113,107 +108,6 @@ type LoadedHistory<Types extends HistoryTypes> = {
   scan?: RecordingScan<Types['Header'], Types['Entry'], Types['Progress']>
 }
 
-/**
- * Words what a sequence is in the sealed history, for the step refusal of {@link assertLearningCitations}.
- * @param event - The cited event, or `undefined` for a sequence the history does not have.
- * @returns The event's words.
- * @example describeCitedEvent({ type: 'output', channel: 'stderr' }) // => 'an output on stderr'
- */
-function describeCitedEvent(event: CitableEvent | undefined): string {
-  if (!event) return 'no event'
-  if (event.type === 'stop') return `a stop at ${event.path}:${event.line}`
-  return event.type === 'output'
-    ? `an output on ${event.channel}`
-    : 'the result'
-}
-
-/**
- * Words the start of a step refusal on a read path (the history resource, a summary), where nobody called a tool.
- * @param stepId - The step's id.
- * @returns The start of the sentence.
- * @example neutralStepLead('s1') // => 'Saved learning step s1'
- */
-function neutralStepLead(stepId: string): string {
-  return `Saved learning step ${stepId}`
-}
-
-/**
- * Words the start of a step refusal on the save path, where the agent called `codebook_explain_node_history` and reads which tool refused.
- * @param stepId - The step's id.
- * @returns The start of the sentence.
- * @example saveStepLead('s1') // => 'codebook_explain_node_history refused step s1'
- */
-function saveStepLead(stepId: string): string {
-  return `codebook_explain_node_history refused step ${stepId}`
-}
-
-/**
- * Refuses a learning material whose step cites an event the sealed history does not hold as cited, naming the step, the sequence, what that sequence is and what the step claims (X19), so the agent can correct the one step; called by {@link NodeTestHistoryStore} for every material it saves or reads.
- * @param content - The material's content.
- * @param citable - The history's citable events ({@link NodeTestHistoryStore.citableEventsOf}).
- * @param lead - Words the start of the refusal for a step id: {@link saveStepLead} on the save path, where the agent called the tool, {@link neutralStepLead} on read paths.
- * @throws An `INVALID_REFERENCE` {@link StudyError} for the first step whose reference does not match.
- * @example assertLearningCitations(content, store.citableEventsOf(history), neutralStepLead) // returns for a material whose every reference matches
- */
-function assertLearningCitations(
-  content: NodeTestLearningMaterialContent,
-  citable: ReadonlyMap<number, CitableEvent>,
-  lead: (stepId: string) => string = neutralStepLead,
-): void {
-  for (const step of content.steps) {
-    const reference = step.reference
-    if (!reference) continue
-    const event = citable.get(reference.sequence)
-    if (citesEvent(reference, event)) continue
-    // A stop cited with another hash is told the hash the journal holds.
-    const expectedHash =
-      reference.type === 'stop' && event?.type === 'stop'
-        ? `; expected sourceHash ${event.sourceHash}`
-        : ''
-    throw new StudyError(
-      'INVALID_REFERENCE',
-      `${lead(step.id)}: sequence ${reference.sequence} is ${describeCitedEvent(event)} in the sealed history, but the step claims ${describeCitationClaim(reference)}${expectedHash}. Read the history's events again and cite each event by its sequence, type and source hash.`,
-    )
-  }
-}
-
-/** A learning step's reference to one journal event, as the learning material holds it. */
-type LearningReference = NonNullable<
-  NodeTestLearningMaterialContent['steps'][number]['reference']
->
-
-/**
- * Says whether a learning step's reference matches the event the sealed journal holds at its sequence: a stop with the same source hash, an output on the same channel, or the result; read by {@link assertLearningCitations}.
- * @param reference - The step's reference.
- * @param event - The journal's event at that sequence, or `undefined` when there is none.
- * @returns `true` when the reference cites the event as the journal holds it.
- * @example citesEvent({ type: 'result', sequence: 4 }, { type: 'result' }) // => true
- */
-function citesEvent(
-  reference: LearningReference,
-  event: CitableEvent | undefined,
-): boolean {
-  if (reference.type === 'stop')
-    return event?.type === 'stop' && event.sourceHash === reference.sourceHash
-  if (reference.type === 'output')
-    return event?.type === 'output' && event.channel === reference.channel
-  return event?.type === 'result'
-}
-
-/**
- * Words what a learning step's reference claims, for the step refusal of {@link assertLearningCitations}.
- * @param reference - The step's reference.
- * @returns The claim's words.
- * @example describeCitationClaim({ type: 'output', sequence: 1, channel: 'stderr' }) // => 'an output on stderr'
- */
-function describeCitationClaim(reference: LearningReference): string {
-  if (reference.type === 'stop')
-    return `a stop with sourceHash ${reference.sourceHash}`
-  return reference.type === 'output'
-    ? `an output on ${reference.channel}`
-    : 'the result'
-}
-
 /** Appends bounded, workspace-bound Node execution evidence before test input and seals it after owned cleanup. @example const writer = await store.start(header); await writer.appendStop(stop); await writer.finish('complete') */
 export class NodeHistoryStore<Types extends HistoryTypes> {
   private readonly directory: string
@@ -229,7 +123,7 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
   private readonly readerPositionWrites = new Map<string, Promise<void>>()
   private readonly learningMaterialWrites = new Map<
     string,
-    Promise<NodeTestLearningMaterial>
+    Promise<Types['Material']>
   >()
   /** The last summary of each listed history with the file signals it was made from ({@link summarize}). */
   private readonly summaries = new Map<string, SummaryMemo<Types>>()
@@ -973,15 +867,13 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
     studyId: string,
     citable: ReadonlyMap<number, CitableEvent>,
   ): Promise<{
-    material: NodeTestLearningMaterial | undefined
+    material: Types['Material'] | undefined
     transient: boolean
   }> {
-    // A profile without learning material (server histories until their material arrives) has none to read.
-    if (!this.descriptor.supportsLearningMaterial)
-      return { material: undefined, transient: false }
     try {
       const saved = await this.readLearningMaterialFile(studyId)
-      if (saved) assertLearningCitations(saved.content, citable)
+      if (saved)
+        this.descriptor.learningMaterial.assertCitations(saved.content, citable)
       return { material: saved, transient: false }
     } catch (error) {
       return { material: undefined, transient: isTransientFileError(error) }
@@ -1170,10 +1062,10 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
    */
   async readLearningMaterial(
     studyId: string,
-  ): Promise<NodeTestLearningMaterial | undefined> {
+  ): Promise<Types['Material'] | undefined> {
     const material = await this.readLearningMaterialFile(studyId)
     if (!material) return undefined
-    assertLearningCitations(
+    this.descriptor.learningMaterial.assertCitations(
       material.content,
       this.citableEventsOf(await this.read(studyId)),
     )
@@ -1189,7 +1081,7 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
    */
   private async readLearningMaterialFile(
     studyId: string,
-  ): Promise<NodeTestLearningMaterial | undefined> {
+  ): Promise<Types['Material'] | undefined> {
     const bytes = await this.readPrivateFile(
       join(this.path(studyId), LEARNING_MATERIAL_FILE),
       NODE_TEST_LEARNING_MATERIAL_LIMIT_BYTES,
@@ -1198,7 +1090,7 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
       throw error
     })
     if (!bytes) return undefined
-    const material = nodeTestLearningMaterialSchema.parse(
+    const material = this.descriptor.learningMaterial.parseMaterial(
       JSON.parse(bytes.toString('utf8')),
     )
     if (material.studyId !== studyId)
@@ -1219,18 +1111,17 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
   async saveLearningMaterial(
     studyId: string,
     expectedRevision: number,
-    content: NodeTestLearningMaterialContent,
-  ): Promise<NodeTestLearningMaterial> {
-    if (!this.descriptor.supportsLearningMaterial)
-      throw new Error(
-        'Learning material is not available for this kind of history yet.',
-      )
+    content: Types['MaterialContent'],
+  ): Promise<Types['Material']> {
     const previous =
       this.learningMaterialWrites.get(studyId) ?? Promise.resolve(undefined)
+    // This window's saves queue in order; the read, the revision check and the write of each run under the storage lock, so a save of another window never interleaves between them.
     const operation = previous
       .catch(() => undefined)
       .then(() =>
-        this.writeLearningMaterial(studyId, expectedRevision, content),
+        withStorageLock(this.learningDirectory, () =>
+          this.writeLearningMaterial(studyId, expectedRevision, content),
+        ),
       )
     this.learningMaterialWrites.set(studyId, operation)
     return operation.finally(() => {
@@ -1242,8 +1133,9 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
   private async writeLearningMaterial(
     studyId: string,
     expectedRevision: number,
-    content: NodeTestLearningMaterialContent,
-  ): Promise<NodeTestLearningMaterial> {
+    content: Types['MaterialContent'],
+  ): Promise<Types['Material']> {
+    const codec = this.descriptor.learningMaterial
     const history = await this.read(studyId)
     const current = await this.readLearningMaterial(studyId)
     const currentRevision = current?.revision ?? 0
@@ -1252,14 +1144,13 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
         expectedRevision,
         currentRevision,
       )
-    const parsedContent = nodeTestLearningMaterialContentSchema.parse(content)
-    assertLearningCitations(
+    const parsedContent = codec.parseContent(content)
+    codec.assertCitations(
       parsedContent,
       this.citableEventsOf(history),
       saveStepLead,
     )
-    const material = nodeTestLearningMaterialSchema.parse({
-      version: NODE_TEST_LEARNING_MATERIAL_VERSION,
+    const material = codec.buildMaterial({
       studyId,
       revision: currentRevision + 1,
       updatedAt: new Date().toISOString(),
@@ -1283,7 +1174,10 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
   saveReaderPosition(
     studyId: string,
     sequence: number,
-    verified?: Pick<HistoryIndexOf<Types>, 'header' | 'entries'>,
+    verified?: {
+      header: Pick<Types['Header'], 'studyId'>
+      entries: readonly Pick<Types['Entry'], 'sequence'>[]
+    },
   ): Promise<void> {
     const previous = this.readerPositionWrites.get(studyId) ?? Promise.resolve()
     const operation = previous

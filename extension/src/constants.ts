@@ -8,7 +8,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.8'
-export const EXTENSION_VERSION = '0.2.54'
+export const EXTENSION_VERSION = '0.2.55'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -248,6 +248,12 @@ export const STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH: Record<
   newerFormat:
     'This study was saved by a newer Codebook and is kept as it is. Update the extension to list its files for removal by hand.',
 }
+/** Why a server replay cannot be removed from Saved studies, as a window with a Trash and one without word it; a test replay's sentences are {@link STUDY_REMOVAL_REFUSALS}'s `nodeHistory`. */
+export const STUDY_REMOVAL_SERVER_HISTORY_REFUSAL = {
+  withTrash: 'Server replays cannot be deleted here yet.',
+  withoutTrash:
+    'Codebook cannot list the files of a server replay for removal by hand yet.',
+} as const
 /** What Saved studies answers a request for a study's files with in a window without a Trash; the "Remove by hand" disclosure shows it above the files the answer lists, and the reader deletes nothing itself. */
 export const STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE =
   'This window has no Trash, so Codebook cannot delete a saved study here. Remove these files by hand, then press Retry storage / refresh.'

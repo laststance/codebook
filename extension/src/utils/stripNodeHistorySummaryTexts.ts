@@ -1,3 +1,6 @@
+import type { NodeHistorySummary } from '../nodeHistorySummary'
+import type { NodeServerHistorySummary } from '../nodeServerHistoryTypes'
+
 import { stripTerminalControls } from './stripTerminalControls'
 
 /**
@@ -9,7 +12,29 @@ import { stripTerminalControls } from './stripTerminalControls'
  */
 export function stripNodeHistorySummaryTexts<
   Summary extends { testFile: string; testTitles?: string[] },
->(summary: Summary): Summary {
+>(summary: Summary): Summary
+export function stripNodeHistorySummaryTexts(
+  summary: NodeServerHistorySummary,
+): NodeServerHistorySummary
+export function stripNodeHistorySummaryTexts(
+  summary: NodeHistorySummary | { testFile: string; testTitles?: string[] },
+): unknown {
+  // A server history's recorded words are its question, saved title, request line and capture reasons.
+  if ('profile' in summary && summary.profile === 'node-server')
+    return {
+      ...summary,
+      question: stripTerminalControls(summary.question),
+      ...(summary.title ? { title: stripTerminalControls(summary.title) } : {}),
+      requestLine: stripTerminalControls(summary.requestLine),
+      ...(summary.reason
+        ? { reason: stripTerminalControls(summary.reason) }
+        : {}),
+      captureMissing: summary.captureMissing.map((reason) => ({
+        ...reason,
+        text: stripTerminalControls(reason.text),
+      })),
+    }
+  if (!('testFile' in summary)) return summary
   return {
     ...summary,
     testFile: stripTerminalControls(summary.testFile),

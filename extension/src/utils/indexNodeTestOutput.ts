@@ -1,3 +1,4 @@
+import type { NodeServerHistoryEntry } from '../nodeServerHistorySchemas'
 import type { NodeTestHistoryIndex } from '../nodeTestHistorySchemas'
 
 import { countCodePoints } from './countCodePoints'
@@ -64,7 +65,9 @@ const INSPECTOR_LINES = [
  * // => { lineCount: 1, pending: { channel: 'stdout', start: 4, end: 6, codePoints: 2 }, inspectorLines: 0 }
  */
 export function indexNodeTestOutput(
-  entries: readonly NodeTestHistoryIndex['entries'][number][],
+  entries: readonly (
+    NodeTestHistoryIndex['entries'][number] | NodeServerHistoryEntry
+  )[],
 ): NodeTestOutputIndex {
   const outputEntries = entries.filter((entry) => entry.type === 'output')
   // The output is shown text already: stripping it again would pass over the whole output for nothing (F315, F339).
@@ -161,7 +164,9 @@ export function indexNodeTestOutput(
  * @example stripOutputEntries([{ type: 'output', sequence: 1, elapsedMs: 5, channel: 'stdout', text: '\u001b[3' }, { type: 'output', sequence: 2, elapsedMs: 6, channel: 'stdout', text: '2mok' }]) // => Map { 1 => '', 2 => 'ok' }
  */
 export function stripOutputEntries(
-  entries: readonly NodeTestHistoryIndex['entries'][number][],
+  entries: readonly (
+    NodeTestHistoryIndex['entries'][number] | NodeServerHistoryEntry
+  )[],
 ): Map<number, string> {
   const shown = new Map<number, string>()
   for (const channel of ['stdout', 'stderr'] as const) {

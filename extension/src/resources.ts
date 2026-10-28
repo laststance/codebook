@@ -33,6 +33,7 @@ import {
   REPOSITORY_ANNOUNCED_PAUSE_RESUME_LIMIT_MS,
 } from './constants'
 import { ERROR_RECOVERY, EvidenceIntegrityError, StudyError } from './errors'
+import type { NodeHistorySummary } from './nodeHistorySummary'
 import { nodeServerHelp } from './nodeServerHelp'
 import { nodeTestConfigSchema } from './nodeTestConfigSchemas'
 import { retainedRepositoryConfigSchema } from './repositoryConfigSchemas'
@@ -45,6 +46,7 @@ import { readBoundedFile } from './utils/readBoundedFile'
 import { readJsonPage } from './utils/readJsonPage'
 import { readRecordingResource } from './utils/readRecordingResource'
 import { readRepositoryResource } from './utils/readRepositoryResource'
+import { readServerHistoryResource } from './utils/readServerHistoryResource'
 import { secondsText } from './utils/secondsText'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
 import { withKnownNodeHistory } from './utils/withKnownNodeHistory'
@@ -127,7 +129,10 @@ export async function readResource(
         'NOT_FOUND',
         'Node history storage is unavailable for this workspace.',
       )
-    const histories = await service.nodeHistoryStore.list()
+    // The repository lists test and server histories together; a service without one lists its test store.
+    const histories: NodeHistorySummary[] = service.nodeHistoryRepository
+      ? await service.nodeHistoryRepository.list()
+      : await service.nodeHistoryStore.list()
     return readJsonPage(
       'codebook://node-history',
       histories.map((history) => ({
@@ -140,7 +145,7 @@ export async function readResource(
     )
   }
   const nodeHistoryMatch =
-    /^codebook:\/\/node-history\/([0-9a-f-]{36}_[0-9a-f-]{36})(?:\/(events(?:\/pages\/[a-f0-9]{64}\/\d+)?|learning-material(?:\/pages\/[a-f0-9]{64}\/\d+)?|pages\/[a-f0-9]{64}\/\d+))?$/.exec(
+    /^codebook:\/\/node-history\/([0-9a-f-]{36}_[0-9a-f-]{36})(?:\/(events(?:\/through\/\d+)?(?:\/pages\/[a-f0-9]{64}\/\d+)?|events\/\d+(?:\/pages\/[a-f0-9]{64}\/\d+)?|learning-material(?:\/pages\/[a-f0-9]{64}\/\d+)?|pages\/[a-f0-9]{64}\/\d+))?$/.exec(
       uri,
     )
   if (nodeHistoryMatch?.[1]) {
@@ -151,6 +156,17 @@ export async function readResource(
       )
     const store = service.nodeHistoryStore,
       studyId = nodeHistoryMatch[1]
+    // A server history reads through its own resource module: lean events, per-entry detail and the three verdicts.
+    const resolved = service.nodeHistoryRepository?.resolve(studyId)
+    if (resolved?.profile === 'node-server')
+      return readServerHistoryResource(
+        resolved.store,
+        studyId,
+        nodeHistoryMatch[2],
+      )
+    // A test history has no per-event routes: they answer as any unknown resource.
+    if (/^events\/(?:through\/)?\d+/.test(nodeHistoryMatch[2] ?? ''))
+      throw new StudyError('NOT_FOUND', 'Unknown resource.')
     // An unknown id, or a history removed while or right after it is read, is a reference to correct, not a failed study operation (Cycle 0052 tasks 60, 75, 95); each read below is checked the same way.
     const history = await withKnownNodeHistory(store, studyId, () =>
       store.read(studyId),

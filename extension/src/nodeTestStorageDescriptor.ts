@@ -2,12 +2,15 @@ import {
   NODE_TEST_HISTORY_DIRECTORY,
   NODE_TEST_HISTORY_LIMIT_BYTES,
   NODE_TEST_HISTORY_SEAL_LIMIT_BYTES,
+  NODE_TEST_LEARNING_MATERIAL_VERSION,
 } from './constants'
 import type { HistoryStorageDescriptor } from './historyStorageDescriptor'
 import {
   nodeTestHistoryHeaderSchema,
   nodeTestHistoryIndexSchema,
   nodeTestHistorySealSchema,
+  nodeTestLearningMaterialContentSchema,
+  nodeTestLearningMaterialSchema,
   type NodeTestHistoryHeader,
   type NodeTestHistoryIndex,
   type NodeTestLearningMaterialContent,
@@ -17,6 +20,7 @@ import type {
   NodeTestHistoryTypes,
 } from './nodeTestHistoryTypes'
 import { NodeTestHistoryWriter } from './nodeTestHistoryWriter'
+import { assertNodeLearningCitations } from './utils/assertNodeLearningCitations'
 import { describeNodeTestResult } from './utils/describeNodeTestResult'
 import {
   listMissingNodeExplanations,
@@ -71,7 +75,18 @@ export const nodeTestStorageDescriptor: HistoryStorageDescriptor<NodeTestHistory
       noSeal: 'Node test history has no verified final seal.',
       subject: 'Node history',
     },
-    supportsLearningMaterial: true,
+    learningMaterial: {
+      parseMaterial: (value) => nodeTestLearningMaterialSchema.parse(value),
+      parseContent: (value) =>
+        nodeTestLearningMaterialContentSchema.parse(value),
+      buildMaterial: (input) =>
+        nodeTestLearningMaterialSchema.parse({
+          version: NODE_TEST_LEARNING_MATERIAL_VERSION,
+          ...input,
+        }),
+      assertCitations: (content, citable, lead) =>
+        assertNodeLearningCitations(content, citable, { lead }),
+    },
     stampHeader: (input) => ({ ...input, version: 1 }),
     parseHeader: (value) => nodeTestHistoryHeaderSchema.parse(value),
     parseSeal: (value) => nodeTestHistorySealSchema.parse(value),

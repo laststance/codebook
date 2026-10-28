@@ -30,10 +30,29 @@ function writtenView(document: string): NodeTestApplicationView | undefined {
  * @returns The shown output lines joined by line feeds; empty without a test replay document or output.
  * @example shownTestOutput(harness) // => 'output 21\noutput 22'
  */
-export function shownTestOutput(harness: {
+export function shownTestOutput(harness: ApplicationHarness): string {
+  return (
+    shownApplicationView(harness)
+      ?.lines.map((line) => line.text)
+      .join('\n') ?? ''
+  )
+}
+
+/** What the harness records of the Application pane: its in-place updates and its panels. */
+type ApplicationHarness = {
   applicationOutputs(): NodeTestOutputUpdate[]
   nativePanels(): { kind: string; webview: { html: string } }[]
-}): string {
+}
+
+/**
+ * Reads the view the Application pane shows: the latest in-place update when it is newer than the view the document was written with, else that written view; used by the Study workspace's test and server replay tests.
+ * @param harness - The Study workspace harness.
+ * @returns The shown view; `undefined` without a replay document.
+ * @example shownApplicationView(harness)?.response?.state // => 'Response 201 · application/json'
+ */
+export function shownApplicationView(
+  harness: ApplicationHarness,
+): NodeTestApplicationView | undefined {
   const document =
     harness
       .nativePanels()
@@ -42,9 +61,7 @@ export function shownTestOutput(harness: {
   const written = writtenView(document)
   const update = harness.applicationOutputs().at(-1)
   // A document draws an update only when it is newer than the view it was written with.
-  const shown =
-    update && (!written || update.generation > written.generation)
-      ? update.view
-      : written
-  return shown?.lines.map((line) => line.text).join('\n') ?? ''
+  return update && (!written || update.generation > written.generation)
+    ? update.view
+    : written
 }

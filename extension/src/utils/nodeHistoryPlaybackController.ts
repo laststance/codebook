@@ -15,6 +15,8 @@ export interface NodeHistoryPlaybackDependencies {
   /** Receives an autoplay presentation failure; manual seeks reject to their own caller instead. */
   failed?(error: unknown): void
   now?: () => number
+  /** Words a refusal for the replay shown (a server replay is never called a test replay); identity unless given. */
+  inReplayWords?(sentence: string): string
   manualTicks?: boolean
 }
 
@@ -35,8 +37,16 @@ export class NodeHistoryPlaybackController {
     this.clock = dependencies.now ?? (() => performance.now())
   }
 
-  /** Opens one verified event list at its restored sequence and stops any prior history. @param events - Ordered events from the sealed journal. @param sequence - Previously selected event, if still present. @example controller.open([{sequence:1,elapsedMs:10}], 1) */
-  open(events: NodeHistoryPlaybackEvent[], sequence?: number): void {
+  /** The time the recording ended when it ended after its last event (a server replay's `end` entry); the slider's range reaches it. */
+  private recordingEndMs?: number
+
+  /** Opens one verified event list at its restored sequence and stops any prior history. @param events - Ordered events from the sealed journal. @param sequence - Previously selected event, if still present. @param endedAtMs - When the recording ended, when after the last event. @example controller.open([{sequence:1,elapsedMs:10}], 1) */
+  open(
+    events: NodeHistoryPlaybackEvent[],
+    sequence?: number,
+    endedAtMs?: number,
+  ): void {
+    this.recordingEndMs = endedAtMs
     this.generation++
     this.stopTimer()
     this.mode = 'paused'
@@ -67,7 +77,10 @@ export class NodeHistoryPlaybackController {
       }),
       ...(this.events.length && {
         startMs: this.events[0]!.elapsedMs,
-        endMs: this.events.at(-1)!.elapsedMs,
+        endMs: Math.max(
+          this.events.at(-1)!.elapsedMs,
+          this.recordingEndMs ?? 0,
+        ),
       }),
       loading: Boolean(this.pending),
     }
@@ -134,10 +147,12 @@ export class NodeHistoryPlaybackController {
       !last ||
       !Number.isFinite(positionMs) ||
       positionMs < first.elapsedMs ||
-      positionMs > last.elapsedMs
+      positionMs > Math.max(last.elapsedMs, this.recordingEndMs ?? 0)
     ) {
       throw new Error(
-        'Seek lies outside the verified range of this test replay.',
+        this.dependencies.inReplayWords?.(
+          'Seek lies outside the verified range of this test replay.',
+        ) ?? 'Seek lies outside the verified range of this test replay.',
       )
     }
     this.mode = 'paused'

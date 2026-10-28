@@ -12,6 +12,9 @@ import { stripTerminalControls } from './stripTerminalControls'
 export const NODE_RECORDED_SOURCE_TEXT = {
   placeholder:
     '// Recorded source · Not recorded at this moment\n// The test journal holds no source state for this moment.\n',
+  /** The placeholder of a server replay's slot: the same as the test replay's, naming the server journal. */
+  serverPlaceholder:
+    '// Recorded source · Not recorded at this moment\n// The server journal holds no source state for this moment.\n',
   loading: '// Loading recorded source…\n',
   notRecordedThread: 'Not recorded at this moment',
 } as const
@@ -31,6 +34,8 @@ export type NodeRecordedSourceMessage =
       stop: number
       path: string
       line: number
+      /** For a server replay: the hit's number and whether the stop was hit more than once; the thread then names a server stop and its hit. */
+      server?: { hit: number; repeated: boolean }
     }
   | {
       /** The Study row of a slot that cannot open. */
@@ -67,7 +72,9 @@ export function describeNodeRecordedSource(
     case 'label':
       return `Recorded: ${stripTerminalControls(message.path)}:${message.line} · ${formatEventSeconds(message.elapsedMs)} s`
     case 'thread':
-      return `Recorded test stop ${message.stop} · ${stripTerminalControls(message.path)}:${message.line}`
+      return message.server
+        ? `Recorded server stop ${message.stop}${message.server.repeated ? ` · hit ${message.server.hit}` : ''} · ${stripTerminalControls(message.path)}:${message.line}`
+        : `Recorded test stop ${message.stop} · ${stripTerminalControls(message.path)}:${message.line}`
     case 'open-failed':
       return message.stop === undefined
         ? `Codebook could not open the recorded source: ${message.cause}. Details: Output › Codebook.`

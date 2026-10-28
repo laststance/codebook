@@ -6,6 +6,10 @@ import type {
 } from './nodeServerHistorySchemas'
 import type { NodeServerHistoryWriter } from './nodeServerHistoryWriter'
 import type {
+  NodeServerLearningMaterial,
+  NodeServerLearningMaterialContent,
+} from './nodeServerLearningSchemas'
+import type {
   NodeServerLearningCoverage,
   NodeServerLearningPart,
 } from './utils/evaluateNodeServerLearning'
@@ -23,6 +27,8 @@ export type NodeServerHistorySummary = {
   reason?: string
   verification: 'verified' | 'unavailable'
   question: string
+  /** The saved learning title, absent before the chat saved its explanation. */
+  title?: string
   /** The declared request as the header stores it, `POST /api/x`. */
   requestLine: string
   /** The recorded response status, absent before a response. */
@@ -51,5 +57,7 @@ export type NodeServerHistoryTypes = {
   Seal: NodeServerHistorySeal
   Progress: NodeServerJournalProgress
   Summary: NodeServerHistorySummary
+  Material: NodeServerLearningMaterial
+  MaterialContent: NodeServerLearningMaterialContent
   Writer: NodeServerHistoryWriter
 }

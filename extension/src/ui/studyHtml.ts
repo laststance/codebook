@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto'
 
+import type { NodeServerHistorySummary } from '../nodeServerHistoryTypes'
 import type {
   NodeTestHistoryIndex,
   NodeTestHistoryLearningDecision,
 } from '../nodeTestHistorySchemas'
-import type { NodeTestHistoryStore } from '../nodeTestHistoryStore'
+import type { NodeTestHistorySummary } from '../nodeTestHistoryStore'
 import type { PlaybackState, PlaybackBundle } from '../playbackController'
 import type {
   PresentationState,
@@ -113,8 +114,14 @@ export interface StudyViewMessage {
   runRefusal?: string
   /** The saved study of this window's run that has not stopped, which cannot be deleted. */
   unstoppedStudyId?: string
-  nodeHistoryCatalog?: Awaited<ReturnType<NodeTestHistoryStore['list']>>
+  nodeHistoryCatalog?: NodeTestHistorySummary[]
+  /** The saved server replays, beside {@link nodeHistoryCatalog}. */
+  nodeServerHistoryCatalog?: NodeServerHistorySummary[]
   nodeHistory?: NodeTestHistoryIndex
+  /** `node-server` while a server replay is shown, which switches the pane's fixed words to the server catalog; absent for a test replay. */
+  nodeReplayProfile?: 'node-server'
+  /** The words of each event of the page `nodeHistory` holds, for a server replay: its heading and body, by journal sequence. */
+  nodeServerEvents?: { sequence: number; heading: string; body: string }[]
   nodeHistoryPage?: number
   nodeHistoryPageCount?: number
   nodeHistoryEventCount?: number
@@ -223,7 +230,7 @@ export function studyHtml(kind: 'context' | 'moments'): string {
 <details id="study-controls"><summary>Study controls</summary><div id="next-scenario"><div class="row"><button class="primary" data-action="connect">Connect your editor agent</button><button data-action="click">Perform configured action once</button></div><p class="muted" id="profile-description">Ask your editor agent to explain a code path in the open repository.</p></div></details>
 <section><h2>Workspace panes</h2><div class="row"><button data-action="focus-app">Focus application</button><button data-action="source">Focus source</button><button data-action="focus-context">Focus explanation</button><button data-action="outline">Show learning outline</button><button data-action="arrange">Restore Study arrangement</button></div></section></div>
 <p id="recording-save-state" class="status" role="status" aria-live="polite"></p><details id="evidence-details" hidden><summary id="evidence-summary">Evidence status</summary><p id="study-state" class="status" hidden></p></details>
-<section id="node-history"><h2 id="node-history-heading">${STUDY_UI_OPTIONS.testReplay.heading}</h2><section id="node-history-learning" hidden><h3 id="node-learning-title"></h3></section><p id="node-history-status" class="status" role="status"></p><div class="clamped-text"><p id="node-history-capture-reason" class="muted clamp"></p><button type="button" class="link show-more" data-show-more="node-history-capture-reason" aria-controls="node-history-capture-reason" aria-expanded="false" hidden>${STUDY_UI_OPTIONS.testReplay.showMore}</button></div><div id="node-history-material" hidden><div class="clamped-text"><p id="node-learning-question" class="muted clamp"></p><button type="button" class="link show-more" data-show-more="node-learning-question" aria-controls="node-learning-question" aria-expanded="false" hidden>${STUDY_UI_OPTIONS.testReplay.showMore}</button></div><div class="clamped-text"><p id="node-learning-summary" class="clamp"></p><button type="button" class="link show-more" data-show-more="node-learning-summary" aria-controls="node-learning-summary" aria-expanded="false" hidden>${STUDY_UI_OPTIONS.testReplay.showMore}</button></div><div id="node-learning-sequence" aria-label="Test replay learning sequence"></div><details id="node-learning-steps-details"><summary>${STUDY_UI_OPTIONS.testReplay.stepDetails}</summary><div id="node-learning-steps"></div></details></div><p id="node-history-no-material" class="muted" hidden>${STUDY_UI_OPTIONS.testReplay.noMaterial}</p><div id="node-history-moment" role="status" aria-live="polite"><h3 id="node-history-step-heading" tabindex="-1" data-focus-fallback hidden></h3><p id="node-history-position" class="status"></p><p id="node-history-explanation"></p></div><p id="node-history-not-recorded" class="muted"></p><p id="node-history-unverified" class="muted"></p><p id="node-history-pointer" class="muted"></p><div id="node-history-closed" class="row" hidden><button type="button" data-action="focus-app">${STUDY_UI_OPTIONS.testReplay.showRecordedOutput}</button></div><p id="node-history-hint" class="muted" role="status" aria-live="polite"></p><button id="node-history-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button><button id="node-history-inspect" type="button" hidden>Inspect in native debugger</button><label><input id="node-history-understood" type="checkbox"><span>I understand this test history <span id="node-history-understanding-state" class="muted"></span></span></label><details id="node-history-events-details"><summary id="node-history-events-summary">Events</summary><div class="row"><span id="node-history-page" class="muted"></span><button id="node-history-previous" type="button">Previous page</button><button id="node-history-next" type="button">Next page</button></div><div id="node-history-events"></div></details></section>
+<section id="node-history"><h2 id="node-history-heading">${STUDY_UI_OPTIONS.testReplay.heading}</h2><section id="node-history-learning" hidden><h3 id="node-learning-title"></h3></section><p id="node-history-status" class="status" role="status"></p><div class="clamped-text"><p id="node-history-capture-reason" class="muted clamp"></p><button type="button" class="link show-more" data-show-more="node-history-capture-reason" aria-controls="node-history-capture-reason" aria-expanded="false" hidden>${STUDY_UI_OPTIONS.testReplay.showMore}</button></div><div id="node-history-material" hidden><div class="clamped-text"><p id="node-learning-question" class="muted clamp"></p><button type="button" class="link show-more" data-show-more="node-learning-question" aria-controls="node-learning-question" aria-expanded="false" hidden>${STUDY_UI_OPTIONS.testReplay.showMore}</button></div><div class="clamped-text"><p id="node-learning-summary" class="clamp"></p><button type="button" class="link show-more" data-show-more="node-learning-summary" aria-controls="node-learning-summary" aria-expanded="false" hidden>${STUDY_UI_OPTIONS.testReplay.showMore}</button></div><div id="node-learning-sequence" aria-label="Test replay learning sequence"></div><details id="node-learning-steps-details"><summary id="node-learning-steps-summary">${STUDY_UI_OPTIONS.testReplay.stepDetails}</summary><div id="node-learning-steps"></div></details></div><p id="node-history-no-material" class="muted" hidden>${STUDY_UI_OPTIONS.testReplay.noMaterial}</p><div id="node-history-moment" role="status" aria-live="polite"><h3 id="node-history-step-heading" tabindex="-1" data-focus-fallback hidden></h3><p id="node-history-position" class="status"></p><p id="node-history-explanation"></p></div><p id="node-history-not-recorded" class="muted"></p><p id="node-history-unverified" class="muted"></p><p id="node-history-pointer" class="muted"></p><div id="node-history-closed" class="row" hidden><button type="button" data-action="focus-app">${STUDY_UI_OPTIONS.testReplay.showRecordedOutput}</button></div><p id="node-history-hint" class="muted" role="status" aria-live="polite"></p><button id="node-history-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button><button id="node-history-inspect" type="button" hidden>Inspect in native debugger</button><label><input id="node-history-understood" type="checkbox"><span><span id="node-history-understanding-label">${STUDY_UI_OPTIONS.testReplay.understanding}</span> <span id="node-history-understanding-state" class="muted"></span></span></label><details id="node-history-events-details"><summary id="node-history-events-summary">Events</summary><div class="row"><span id="node-history-page" class="muted"></span><button id="node-history-previous" type="button">Previous page</button><button id="node-history-next" type="button">Next page</button></div><div id="node-history-events"></div></details></section>
 <section id="observed-moments"><h2>Observed moments</h2><p class="muted" id="moments-caption">Select a captured observation or open Recording to follow its time.</p><div id="moments" class="moments"></div></section>
 <section id="saved-studies"><h2>Saved studies</h2><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select><p id="study-unopenable" class="muted" hidden></p><p id="study-newer" class="muted" hidden></p><p id="study-repairable" class="muted" hidden></p><div id="delete-study-row" class="row" hidden><button id="repair-study" class="primary" type="button" data-action="retry" aria-describedby="study-repairable" hidden>Repair saved study</button><button id="delete-study" type="button" aria-describedby="delete-study-reason delete-study-status">Delete saved study…</button></div><p id="delete-study-reason" class="muted" hidden></p><p id="delete-study-status" role="status" aria-live="polite"></p><details id="study-files" hidden><summary>Remove by hand</summary><p id="study-files-note" role="status" aria-live="polite"></p><ul id="study-files-list" class="muted" aria-label="Files of the chosen saved study"></ul><div class="row"><button id="copy-study-files" type="button">Copy paths</button><button type="button" data-action="retry">Retry storage / refresh</button></div><p id="copy-study-files-status" role="status" aria-live="polite"></p></details></section>
 <section id="recording-transport">${markupOnlyIn(kind, 'context', valuesHint)}<div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="${STUDY_UI_OPTIONS.coverage.unknownName}" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span><span id="playback-events" class="playback-events" role="group" aria-label="${STUDY_UI_OPTIONS.testReplay.eventsGroup}" hidden><button id="previous-event" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousEvent}" disabled>${STUDY_UI_OPTIONS.testReplay.previousEvent}</button><button id="next-event" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextEvent}" disabled>${STUDY_UI_OPTIONS.testReplay.nextEvent}</button></span></div><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><span id="application-covered-remedy" class="${markupOnlyIn(kind, 'context', 'visually-hidden')}${markupOnlyIn(kind, 'moments', 'muted')}" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details>${markupOnlyIn(kind, 'moments', learningSummaryButton)}</div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p>${markupOnlyIn(kind, 'moments', valuesHint)}</section>
@@ -529,6 +536,9 @@ function studyClient(
   readerOptions.querySelector('summary')?.addEventListener('click', () => {
     readerOptionsOpenedByLearner = !readerOptions.hasAttribute('open')
   })
+  /** The fixed words the replay surfaces print now: the test catalog, or the server catalog while the message names a server replay; set at the start of each Study message ({@link useReplayWords}). */
+  let replayWords: Readonly<Record<keyof typeof options.testReplay, string>> =
+    options.testReplay
   const transport = element('recording-transport')
   // The shared slider of both replay families (DS-C), and the tooltip the shortcut help gave it for a recording, which it gets back when it leaves a test replay.
   const playheadInput = element('playhead') as HTMLInputElement
@@ -1367,7 +1377,18 @@ function studyClient(
   ): string => {
     const sentences = removalRefusals(message)
     const refusals: [applies: boolean, sentence: string][] = [
-      [chosen.format === 'node-test-history', sentences.nodeHistory],
+      [
+        chosen.format === 'node-test-history' &&
+          chosen.profile !== 'node-server',
+        sentences.nodeHistory,
+      ],
+      [
+        chosen.format === 'node-test-history' &&
+          chosen.profile === 'node-server',
+        message.removalWithoutTrash
+          ? options.serverHistoryRefusal.withoutTrash
+          : options.serverHistoryRefusal.withTrash,
+      ],
       // The host moves nothing of a study a newer Codebook saved: which files that format keeps is not known here.
       [chosen.format === 'newer', sentences.newerFormat],
       [message.unstoppedStudyId === chosen.id, sentences.runNotStopped],
@@ -2492,6 +2513,27 @@ function studyClient(
     else releaseTestReplayPlayhead()
   }
   /**
+   * Chooses the replay's fixed words for a Study message and writes the ones the page's markup holds: the section's heading, the sequence's group name, the no-summary line, the step details and Show recorded output labels, and the understanding label; a server replay reads every one in the server catalog and never as a test. Called first for each Study message.
+   * @param message - The current Study message; `nodeReplayProfile` names a server replay.
+   * @example useReplayWords(message) // heading reads 'Server replay' for a server replay
+   */
+  const useReplayWords = (message: StudyViewMessage): void => {
+    replayWords =
+      message.nodeReplayProfile === 'node-server'
+        ? options.serverReplay
+        : options.testReplay
+    text('node-history-heading', replayWords.heading)
+    element('node-learning-sequence').setAttribute(
+      'aria-label',
+      replayWords.sequenceLabel,
+    )
+    text('node-history-no-material', replayWords.noMaterial)
+    text('node-learning-steps-summary', replayWords.stepDetails)
+    const showOutput = element('node-history-closed').querySelector('button')
+    if (showOutput) showOutput.textContent = replayWords.showRecordedOutput
+    text('node-history-understanding-label', replayWords.understanding)
+  }
+  /**
    * Gives the reader's heading: a test replay's summary is headed by its test, as Saved studies names it (DS-B); any other reader by the selected article; read on every Study message.
    * @param message - The current Study message.
    * @param articleTitle - The selected article's title, when there is one.
@@ -2527,12 +2569,16 @@ function studyClient(
    */
   const testReplayTitle = (message: StudyViewMessage): string => {
     const studyId = message.nodeHistory?.header.studyId
+    const serverSummary = message.nodeServerHistoryCatalog?.find(
+      (entry) => entry.studyId === studyId,
+    )
+    if (serverSummary) return serverSummary.title ?? serverSummary.question
     const summary = message.nodeHistoryCatalog?.find(
       (entry) => entry.studyId === studyId,
     )
     return summary
       ? [summary.testFile, ...(summary.testTitles ?? [])].join(' › ')
-      : options.testReplay.heading
+      : replayWords.heading
   }
   /**
    * Renders the Study pane's test replay section for a Study message (Designs 5 and 6, DS16): status, the selected moment and its explanation, the transport, the summary with the selected step, the learner's decision and the collapsed event list; called by the message listener, which holds no branch of the section's own.
@@ -2578,9 +2624,10 @@ function studyClient(
   ): void => {
     const idle = suppressed
       ? ''
-      : message.nodeHistoryCatalog?.length
-        ? options.testReplay.chooseReplay
-        : options.testReplay.noReplay
+      : message.nodeHistoryCatalog?.length ||
+          message.nodeServerHistoryCatalog?.length
+        ? replayWords.chooseReplay
+        : replayWords.noReplay
     renderTestReplayLines(section, idle)
     // While a selection is pending the earlier stop's fields may still ride on the position: no stop control is offered then (D29, F370).
     const settled = isTestReplayStopSettled(message, suppressed)
@@ -2689,8 +2736,7 @@ function studyClient(
    */
   const testReplayPositionText = (
     section: StudyViewMessage['nodeHistorySection'],
-  ): string =>
-    section ? (section.position ?? options.testReplay.noSelection) : ''
+  ): string => (section ? (section.position ?? replayWords.noSelection) : '')
   /**
    * Writes a test replay into the shared transport (Cycle 0051, DS-C): the status line, Replay from start, Previous and Next recorded stop, Play or Pause, the slider with its coverage and the readout, and the event group; a browser recording's own parts (playback details, pending and reason lines, the covered-application remedy) stay out. Called by the message listener while the summary composition shows a test replay.
    * The status regions carry text only in the pane that shows the transport, as for a recording.
@@ -2716,7 +2762,7 @@ function studyClient(
       element('history-coverage'),
       element('history-coverage-label'),
       section?.timeline,
-      section?.timeline ? options.testReplay.timelineLegend : '',
+      section?.timeline ? replayWords.timelineLegend : '',
     )
   }
   /**
@@ -2804,8 +2850,8 @@ function studyClient(
     playing: boolean,
   ): string => {
     const status = playing
-      ? options.testReplay.playingStatus
-      : options.testReplay.pausedStatus
+      ? replayWords.playingStatus
+      : replayWords.pausedStatus
     return message.nodeHistoryRefusal
       ? `${status} · ${message.nodeHistoryRefusal}`
       : status
@@ -2837,10 +2883,8 @@ function studyClient(
     const toggle = element('playback-toggle')
     if (!(toggle instanceof HTMLButtonElement)) return
     toggle.dataset.playback = playing ? 'pause' : 'play'
-    toggle.textContent = playing
-      ? options.testReplay.pause
-      : options.testReplay.play
-    const label = playing ? 'Pause test replay' : 'Play test replay'
+    toggle.textContent = playing ? replayWords.pause : replayWords.play
+    const label = playing ? replayWords.pauseLabel : replayWords.playLabel
     toggle.setAttribute('aria-label', label)
     toggle.title = label
     toggle.disabled = !canToggleTestReplay(message, playing)
@@ -2876,7 +2920,14 @@ function studyClient(
   ): void => {
     const range = testReplayPlayheadRange(playbackState)
     playheadInput.dataset.replayFamily = 'test'
-    playheadInput.title = options.testReplayTimelineTitle
+    // The page names the slider's profile, so the shortcut list says server replay for a server replay.
+    if (current?.nodeReplayProfile === 'node-server')
+      playheadInput.dataset.replayProfile = 'node-server'
+    else delete playheadInput.dataset.replayProfile
+    playheadInput.title =
+      current?.nodeReplayProfile === 'node-server'
+        ? options.serverReplayTimelineTitle
+        : options.testReplayTimelineTitle
     playheadInput.setAttribute(
       'aria-keyshortcuts',
       options.testReplayTimelineKeys,
@@ -2902,6 +2953,7 @@ function studyClient(
   const releaseTestReplayPlayhead = (): void => {
     if (playheadInput.dataset.replayFamily !== 'test') return
     delete playheadInput.dataset.replayFamily
+    delete playheadInput.dataset.replayProfile
     playheadInput.title = browserPlayheadTitle
     playheadInput.removeAttribute('aria-keyshortcuts')
     element('playback-events').hidden = true
@@ -2944,7 +2996,7 @@ function studyClient(
    */
   const testReplayLoadingSuffix = (
     playbackState: StudyViewMessage['nodeHistoryPlayback'],
-  ): string => (playbackState?.pending ? options.testReplay.loadingSuffix : '')
+  ): string => (playbackState?.pending ? replayWords.loadingSuffix : '')
   /**
    * Says the selected test time to assistive technology and in the shared readout (`<t> s / <total> s`), never the raw millisecond value; called by {@link renderTestReplayPlayhead} and while the learner drags the slider.
    * @param positionMs - The selected time, if any.
@@ -2960,13 +3012,13 @@ function studyClient(
     playheadInput.setAttribute(
       'aria-valuetext',
       positionMs === undefined
-        ? 'No recorded test time selected'
-        : `${seconds(positionMs)} of recorded test time${suffix}`,
+        ? replayWords.noRecordedTime
+        : `${seconds(positionMs)} of ${replayWords.recordedTime}${suffix}`,
     )
     text(
       'playback-position',
       positionMs === undefined
-        ? 'Test journal playback'
+        ? replayWords.journalPlayback
         : `${seconds(positionMs)} / ${seconds(endMs ?? positionMs)}${suffix}`,
     )
   }
@@ -3061,7 +3113,7 @@ function studyClient(
     const heading = element('node-history-step-heading')
     heading.hidden = !step
     heading.textContent = step
-      ? `${options.testReplay.stepHeading} ${index + 1} · ${step.label}`
+      ? `${replayWords.stepHeading} ${index + 1} · ${step.label}`
       : ''
   }
   /**
@@ -3080,8 +3132,8 @@ function studyClient(
         !target.textContent ||
         (!expanded && target.scrollHeight <= target.clientHeight)
       control.textContent = expanded
-        ? options.testReplay.showLess
-        : options.testReplay.showMore
+        ? replayWords.showLess
+        : replayWords.showMore
     }
   }
   window.addEventListener('resize', offerShowMore)
@@ -3159,7 +3211,7 @@ function studyClient(
     if (!position || !label) {
       const missing = document.createElement('p')
       missing.className = 'muted'
-      missing.textContent = options.testReplay.noLinkedEvent
+      missing.textContent = replayWords.noLinkedEvent
       return missing
     }
     const action = document.createElement('div'),
@@ -3171,7 +3223,7 @@ function studyClient(
     control.dataset.nodeStep = stepId
     control.textContent = label
     note.className = 'same-moment'
-    note.textContent = options.testReplay.sameMoment
+    note.textContent = replayWords.sameMoment
     note.hidden = true
     action.append(control, ' ', note)
     return action
@@ -3198,7 +3250,7 @@ function studyClient(
         ? decision.understood
           ? `Learner marked understood · ${decision.at}`
           : `Learner marked for review · ${decision.at}`
-        : 'Only your explicit choice is saved; test success never marks understanding.',
+        : replayWords.understandingNote,
     )
   }
   /**
@@ -3293,6 +3345,7 @@ function studyClient(
     > = message.nodeHistoryPosition ?? {}
     return [
       message.nodeHistory?.entries ?? [],
+      message.nodeServerEvents ?? [],
       replaying,
       position.sequence,
       Boolean(position.pending),
@@ -3341,7 +3394,11 @@ function studyClient(
       heading = document.createElement('h3'),
       body = document.createElement('pre')
     row.className = 'node-history-event'
-    const words = testReplayEventWords(entry, section)
+    // A server replay's host words each of its events; a test replay's are worded here.
+    const words =
+      message.nodeServerEvents?.find(
+        (event) => event.sequence === entry.sequence,
+      ) ?? testReplayEventWords(entry, section)
     heading.textContent = words.heading
     body.textContent = words.body
     const { isSelected, loading } = testReplayEventRowState(entry, message)
@@ -3653,6 +3710,7 @@ function studyClient(
     )
       poseTransaction = undefined
     current = message
+    useReplayWords(message)
     // The summary composition lays out either replay family alike (Cycle 0051, DS-A); `recording` is read for a browser recording's own parts only.
     const { model, recording } = message,
       replayFamily = replayFamilyOf(message),

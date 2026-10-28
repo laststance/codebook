@@ -3583,6 +3583,435 @@ async function check(page, options, collected) {
         target.evaluate((scrollTop) => {
           document.getElementById('test-output').scrollTop = scrollTop
         }, top)
+      // Arrange: a server replay's Study message and Application document, worded with the server catalog.
+      const serverReplayHash = 'b'.repeat(64)
+      const serverTitle =
+        'How the server creates an item for POST /api/items when the name is long enough to wrap and clamp in the heading of the Learning summary'
+      const serverEntries = [
+        {
+          type: 'result',
+          sequence: 1,
+          elapsedMs: 10,
+          exitCode: null,
+          signal: null,
+          outputTail: '',
+        },
+        {
+          type: 'stop',
+          sequence: 3,
+          index: 0,
+          elapsedMs: 50,
+          source: {
+            path: 'src/handler.ts',
+            hash: serverReplayHash,
+            line: 2,
+            column: 1,
+          },
+          frame: { name: 'handler', line: 2, column: 1 },
+          facts: [],
+          debuggerSnapshot: {
+            frames: [
+              {
+                line: 2,
+                column: 1,
+                source: {
+                  name: 'src/handler.ts',
+                  hash: serverReplayHash,
+                  line: 2,
+                },
+              },
+            ],
+            variables: [],
+          },
+        },
+        {
+          type: 'result',
+          sequence: 4,
+          elapsedMs: 90,
+          exitCode: null,
+          signal: null,
+          outputTail: '',
+        },
+      ]
+      const serverEvents = [
+        { sequence: 1, heading: 'Request · 0.01 s', body: 'POST /api/items' },
+        {
+          sequence: 3,
+          heading: 'Stop 1 · src/handler.ts:2:1 · 0.05 s',
+          body: 'handler\nvalue:id: 7',
+        },
+        {
+          sequence: 4,
+          heading: 'Response 201 · application/json · 0.09 s',
+          body: '{"id":7}',
+        },
+      ]
+      const serverSection = {
+        status: 'Response 201 · capture complete · 0 of 1 stops explained',
+        pointer:
+          'Request, response and output up to this moment are in the Application pane.',
+        applicationClosed: false,
+        sameMomentStepIds: [],
+        stepActions: { stop: 'Inspect Stop 1 · 0.05 s' },
+        events: 'Events (3)',
+        verdict: 'Response 201',
+        position: 'Stop 1 · 0.05 s',
+        explanation: 'No saved explanation for this stop.',
+        previousStop: false,
+        nextStop: false,
+      }
+      const serverLearning = {
+        content: {
+          question: 'How does the server create an item?',
+          title: serverTitle,
+          summary: 'The handler creates the item and answers.',
+          participants: [{ id: 'server', label: 'Handler' }],
+          steps: [
+            {
+              id: 'stop',
+              from: 'server',
+              to: 'server',
+              label: 'Stop',
+              explanation: 'The handler stops at its first line.',
+              evidence: 'observed',
+              reference: {
+                type: 'stop',
+                sequence: 3,
+                sourceHash: serverReplayHash,
+              },
+            },
+          ],
+        },
+        positions: [{ stepId: 'stop', sequence: 3 }],
+      }
+      const serverReplayMessage = (withLearning, decision) => ({
+        ...nodeReader,
+        nodeReplayProfile: 'node-server',
+        nodeHistoryEventCount: 3,
+        nodeHistory: {
+          header: { studyId: 'server-study' },
+          status: 'complete',
+          entries: serverEntries,
+        },
+        nodeServerEvents: serverEvents,
+        nodeServerHistoryCatalog: [
+          {
+            studyId: 'server-study',
+            title: serverTitle,
+            question: 'How does the server create an item?',
+          },
+        ],
+        ...(withLearning ? { nodeHistoryLearningSummary: serverLearning } : {}),
+        ...(decision
+          ? {
+              nodeHistoryLearningDecision: {
+                understood: true,
+                at: '2026-10-28T00:00:00.000Z',
+              },
+            }
+          : {}),
+        nodeHistoryPosition: {
+          sequence: 3,
+          eventIndex: 1,
+          sourceAvailable: true,
+          debuggerAvailable: true,
+        },
+        nodeHistorySection: serverSection,
+        nodeHistoryPlayback: {
+          mode: 'paused',
+          sequence: 3,
+          positionMs: 50,
+          startMs: 10,
+          endMs: 90,
+          loading: false,
+          firstSequence: 1,
+          lastSequence: 4,
+        },
+      })
+      /** What the Study pane shows of a server replay: its fixed words, the replay's transport names, its event headings and every spoken word (accessible name, tooltip, value text, status region) that names a test. */
+      const readServerStudy = () =>
+        page.evaluate(() => {
+          const element = (id) => document.getElementById(id)
+          const spoken = Array.from(
+            document.querySelectorAll('#node-history, #recording-transport'),
+          ).flatMap((region) =>
+            [region, ...region.querySelectorAll('*')].flatMap((node) => [
+              node.getAttribute('aria-label'),
+              node.getAttribute('title'),
+              node.getAttribute('aria-valuetext'),
+              node.matches('[role=status],[aria-live]')
+                ? node.textContent
+                : null,
+            ]),
+          )
+          return {
+            heading: element('node-history-heading').textContent,
+            title: element('title').textContent,
+            understanding: element('node-history-understanding-label')
+              .textContent,
+            understandingNote: element('node-history-understanding-state')
+              .textContent,
+            understood: element('node-history-understood').checked,
+            sequenceLabel: element('node-learning-sequence').getAttribute(
+              'aria-label',
+            ),
+            noMaterial: element('node-history-no-material').hidden
+              ? 'hidden'
+              : element('node-history-no-material').textContent,
+            learning: element('node-history-learning').hidden
+              ? 'hidden'
+              : 'shown',
+            transportStatus: element('recording-status').textContent,
+            playLabel: element('playback-toggle').getAttribute('aria-label'),
+            valueText: element('playhead').getAttribute('aria-valuetext'),
+            readout: element('playback-position').textContent,
+            playhead: element('playhead').value,
+            shortcutContext: element('playhead').title.includes(
+              'Focused server replay timeline',
+            ),
+            events: Array.from(
+              document.querySelectorAll('#node-history-events h3'),
+              (heading) => heading.textContent,
+            ),
+            focused: document.activeElement?.id,
+            strayTestWords: spoken.filter(
+              (word) => typeof word === 'string' && /\btest\b/i.test(word),
+            ),
+          }
+        })
+      await publish(serverReplayMessage(false, true))
+      await page.locator('#playhead').focus()
+      const serverBeforeExplanation = await readServerStudy()
+      // Act: the chat's explanation arrives while the replay is open.
+      await publish(serverReplayMessage(true, true))
+      const serverAfterExplanation = await readServerStudy()
+      await page.setViewportSize({ width: 320, height: 720 })
+      const serverTitleLines = await renderedLines(page, '#node-learning-title')
+      await page.setViewportSize({ width: 600, height: 800 })
+      // Act: the Application document at each response state, in a page of its own.
+      const serverDocument = await openApplication(
+        options.html.serverApplication,
+      )
+      const readServerDocument = () =>
+        serverDocument.evaluate(() => {
+          const element = (id) => document.getElementById(id)
+          const stray = [...document.querySelectorAll('*')].flatMap((node) => [
+            node.getAttribute('aria-label'),
+            node.getAttribute('title'),
+            node.tagName === 'TITLE' ||
+            node.classList.contains('test-output-footer')
+              ? node.textContent
+              : null,
+            node.tagName === 'BUTTON' ? node.textContent : null,
+          ])
+          return {
+            requestLine: element('test-output-request-line').textContent,
+            claim: element('test-output-request-claim').textContent,
+            state: element('test-output-response-state').textContent,
+            body: element('test-output-response-body').hidden
+              ? 'hidden'
+              : element('test-output-response-body').textContent,
+            note: element('test-output-response-note').hidden
+              ? 'hidden'
+              : element('test-output-response-note').textContent,
+            end: element('test-output-end').hidden
+              ? 'hidden'
+              : element('test-output-end').textContent,
+            footer: document.querySelector('.test-output-footer').textContent,
+            jump: element('test-output-jump').textContent,
+            testHeaderLine: Boolean(
+              document.getElementById('test-output-test'),
+            ),
+            strayTestWords: stray.filter(
+              (word) => typeof word === 'string' && /\btest\b/i.test(word),
+            ),
+          }
+        })
+      const serverStates = {}
+      serverStates.beforeResponse = await readServerDocument()
+      for (const [name, key, generation] of [
+        ['withResponse', 'withResponse', 2],
+        ['emptyBody', 'emptyBody', 3],
+        ['cutBody', 'cutBody', 4],
+        ['failed', 'failed', 5],
+        ['notSent', 'notSent', 6],
+        ['neverAnswered', 'neverAnswered', 7],
+      ]) {
+        await postToDocument(serverDocument, {
+          type: 'node-history-output',
+          generation,
+          view: options.serverReplayViews[key],
+        })
+        await settleFrames(serverDocument)
+        serverStates[name] = await readServerDocument()
+      }
+      await serverDocument.setViewportSize({ width: 320, height: 360 })
+      await postToDocument(serverDocument, {
+        type: 'node-history-output',
+        generation: 8,
+        view: { ...options.serverReplayViews.withResponse, generation: 8 },
+      })
+      await settleFrames(serverDocument)
+      const serverRequestLines = await renderedLines(
+        serverDocument,
+        '#test-output-request-line',
+      )
+      const serverRequestTitle = await serverDocument.evaluate(() => ({
+        title: document.getElementById('test-output-request-line').title,
+        tabStop: document
+          .getElementById('test-output-request-line')
+          .getAttribute('tabindex'),
+        pageScrolls:
+          document.documentElement.scrollWidth >
+          document.documentElement.clientWidth,
+      }))
+      await serverDocument.close()
+      // Assert
+      // Value: protects=a server replay reads in the server catalog on every surface a learner or a screen reader meets: the heading, the understanding label and note, the sequence's group name, the transport's status, Play label, slider name and readout, the shortcut context and the event rows, with no spoken word that names a test; the response region's texts at each state (before the response, with a body, empty, cut, failed, never answered), the request claim (`Request sent by Codebook`, `Request not sent: <code>`), a long request path clamped to two lines with its whole text as tooltip and a tab stop, a long title clamped; and the explanation arriving while the replay is open keeps the playhead, the focus and the understanding; fails_when=any of those words reads as the test replay's, a response state is worded otherwise, the long path overflows the pane or loses its tooltip, or the arriving explanation resets the playhead, the focus or the understanding; why_new=Cycle 0059 task 8 (items 8 and 8a): the Study pane gained a server profile; seam=none; no_claim=the host's projection of these messages (studyWorkspaceServerReplay.test.ts) and VS Code's webview
+      cases.push({
+        name: 'a server replay reads in server words on the Study pane and the Application document: names, response states, clamped path and title, and an explanation that arrives while it is open keeps the playhead, the focus and the understanding (Cycle 0059 task 8)',
+        actual: {
+          serverBeforeExplanation,
+          serverAfterExplanation,
+          serverTitleLines,
+          serverStates,
+          serverRequestLines,
+          serverRequestTitle,
+        },
+        passed:
+          JSON.stringify({
+            heading: serverAfterExplanation.heading,
+            title: serverAfterExplanation.title,
+            understanding: serverAfterExplanation.understanding,
+            understandingNote: serverAfterExplanation.understandingNote,
+            sequenceLabel: serverAfterExplanation.sequenceLabel,
+            transportStatus: serverAfterExplanation.transportStatus,
+            playLabel: serverAfterExplanation.playLabel,
+            valueText: serverAfterExplanation.valueText,
+            readout: serverAfterExplanation.readout,
+            shortcutContext: serverAfterExplanation.shortcutContext,
+            events: serverAfterExplanation.events,
+            stray: [
+              ...serverBeforeExplanation.strayTestWords,
+              ...serverAfterExplanation.strayTestWords,
+            ],
+            noMaterialBefore: serverBeforeExplanation.noMaterial,
+            learningBefore: serverBeforeExplanation.learning,
+            noMaterialAfter: serverAfterExplanation.noMaterial,
+            learningAfter: serverAfterExplanation.learning,
+            keptPlayhead:
+              serverBeforeExplanation.playhead ===
+              serverAfterExplanation.playhead,
+            keptFocus:
+              serverBeforeExplanation.focused === 'playhead' &&
+              serverAfterExplanation.focused === 'playhead',
+            keptUnderstanding:
+              serverBeforeExplanation.understood === true &&
+              serverAfterExplanation.understood === true,
+            titleLines: serverTitleLines,
+          }) ===
+            JSON.stringify({
+              heading: 'Server replay',
+              title:
+                'How the server creates an item for POST /api/items when the name is long enough to wrap and clamp in the heading of the Learning summary',
+              understanding: 'I understand this server history',
+              understandingNote:
+                'Learner marked understood · 2026-10-28T00:00:00.000Z',
+              sequenceLabel: 'Server replay learning sequence',
+              transportStatus: 'Server replay paused',
+              playLabel: 'Play server replay',
+              valueText: '0.05 s of recorded server time',
+              readout: '0.05 s / 0.09 s',
+              shortcutContext: true,
+              events: [
+                'Request · 0.01 s',
+                'Stop 1 · src/handler.ts:2:1 · 0.05 s',
+                'Response 201 · application/json · 0.09 s',
+              ],
+              stray: [],
+              noMaterialBefore:
+                'No learning summary was saved for this server replay. The chat can save one with codebook_explain_node_history.',
+              learningBefore: 'hidden',
+              noMaterialAfter: 'hidden',
+              learningAfter: 'shown',
+              keptPlayhead: true,
+              keptFocus: true,
+              keptUnderstanding: true,
+              titleLines: 2,
+            }) &&
+          JSON.stringify(
+            Object.fromEntries(
+              Object.entries(serverStates).map(([name, state]) => [
+                name,
+                [state.claim, state.state, state.body, state.note, state.end],
+              ]),
+            ),
+          ) ===
+            JSON.stringify({
+              beforeResponse: [
+                'Request sent by Codebook',
+                'No response recorded yet at this moment.',
+                'hidden',
+                'hidden',
+                'hidden',
+              ],
+              withResponse: [
+                'Request sent by Codebook',
+                'Response 201 · application/json',
+                '{"id":7,"name":"pen"}',
+                'hidden',
+                'hidden',
+              ],
+              emptyBody: [
+                'Request sent by Codebook',
+                'Response 204 · no content type',
+                'hidden',
+                'Response body is empty.',
+                'hidden',
+              ],
+              cutBody: [
+                'Request sent by Codebook',
+                'Response 200 · text/plain',
+                'abc',
+                'Body shown cut at 3 bytes.',
+                'hidden',
+              ],
+              failed: [
+                'Request sent by Codebook',
+                'Request failed: ECONNREFUSED',
+                'hidden',
+                'hidden',
+                'hidden',
+              ],
+              notSent: [
+                'Request not sent: RUN_BUSY',
+                'No response recorded yet at this moment.',
+                'hidden',
+                'hidden',
+                'hidden',
+              ],
+              neverAnswered: [
+                'Request sent by Codebook',
+                'No response was recorded: the history ended before the server answered.',
+                'hidden',
+                'hidden',
+                'Recording ended before the server answered.',
+              ],
+            }) &&
+          Object.values(serverStates).every(
+            (state) =>
+              state.strayTestWords.length === 0 &&
+              state.testHeaderLine === false &&
+              state.footer ===
+                'Historical server request and output. Reading it does not resend the request or restart the server.' &&
+              state.jump === 'Jump to latest',
+          ) &&
+          serverRequestLines === 2 &&
+          serverRequestTitle.title ===
+            options.serverReplayViews.withResponse.request.line &&
+          serverRequestTitle.tabStop === '0' &&
+          serverRequestTitle.pageScrolls === false,
+      })
       const resultView = options.testReplayViews.result
       // Value: protects=a document written for a replay opens where the host says the learner was, and ignores state an earlier document left in the webview: a stored choice not to follow does not outlive the host's choice to follow (F151), a choice not to follow with a scroll anchor opens at that line with Jump to latest, and the learner's place is found again by the line's number and offset (F120, F138); fails_when=the document reads the webview state (it opens at the top of the output for a replay the learner left following), drops the anchor (it opens at the oldest kept line), or follows the output although the host kept the learner reading higher up; why_new=D22 moves the follow choice and the scroll anchor from the webview's state to the host, which passes them in the document's options; seam=none; no_claim=how the host files the reading (the workspace tests), VS Code's own webview state, which the stand-in plays
       // Act: three documents of the same replay at its result: the host's reading is following (with stale webview state saying otherwise), not following at line 20 and 7 px, and the reading a scroll in a first document reported.
@@ -11781,6 +12210,65 @@ const testReplayViews = {
   },
 }
 
+// A server replay in the Application pane: the request and response regions and the output log, worded as projectServerApplication words them; the path is long enough to wrap and clamp.
+const serverLongPath = `/api/items/${'segment-'.repeat(40)}details`
+const serverRequest = {
+  line: `GET ${serverLongPath}`,
+  claim: 'Request sent by Codebook',
+}
+const serverView = (generation, fields) => ({
+  profile: 'node-server',
+  generation,
+  time: 'Recorded server output · 0.05 s',
+  test: '',
+  name: `Server replay · GET ${serverLongPath}`,
+  region: 'Recorded server output up to 0.05 s',
+  lines: [{ channel: 'stdout', text: 'listening on :4100', number: 0 }],
+  request: serverRequest,
+  ...fields,
+})
+const serverReplayViews = {
+  beforeResponse: serverView(1, {
+    response: { state: 'No response recorded yet at this moment.' },
+  }),
+  withResponse: serverView(2, {
+    response: {
+      state: 'Response 201 · application/json',
+      body: '{"id":7,"name":"pen"}',
+    },
+  }),
+  emptyBody: serverView(3, {
+    response: {
+      state: 'Response 204 · no content type',
+      note: 'Response body is empty.',
+    },
+  }),
+  cutBody: serverView(4, {
+    response: {
+      state: 'Response 200 · text/plain',
+      body: 'abc',
+      note: 'Body shown cut at 3 bytes.',
+    },
+  }),
+  failed: serverView(5, {
+    response: { state: 'Request failed: ECONNREFUSED' },
+  }),
+  notSent: serverView(6, {
+    request: {
+      line: 'POST /api/items',
+      claim: 'Request not sent: RUN_BUSY',
+    },
+    response: { state: 'No response recorded yet at this moment.' },
+  }),
+  neverAnswered: serverView(7, {
+    response: {
+      state:
+        'No response was recorded: the history ended before the server answered.',
+    },
+    end: 'Recording ended before the server answered.',
+  }),
+}
+
 const report = {
   mode,
   qualification:
@@ -11814,8 +12302,13 @@ try {
           ...message,
           nodeHistoryApplication: testReplayViews.result,
         }),
+        serverApplication: capturedAppHtml({
+          ...message,
+          nodeHistoryApplication: serverReplayViews.beforeResponse,
+        }),
       },
       testReplayViews,
+      serverReplayViews,
       // With LF line endings, as the publisher writes a page and a browser hashes its script, also from a checkout that holds the shell with CRLF.
       wikiShell: wikiShellPage(
         (

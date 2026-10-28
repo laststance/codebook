@@ -33,6 +33,9 @@
     "browserRecordingSealFailure.test.js": {
       "totalMs": 356
     },
+    "buildServerReplayModel.test.js": {
+      "totalMs": 595
+    },
     "buildWikiUpdatePrompt.test.js": {
       "totalMs": 1
     },
@@ -526,6 +529,9 @@
     "describeNodeRecordedSource.test.js": {
       "totalMs": 6
     },
+    "describeNodeServerReplay.test.js": {
+      "totalMs": 36
+    },
     "describeNodeTestReplay.test.js": {
       "totalMs": 1
     },
@@ -838,6 +844,9 @@
     "managedProfileRoot.test.js": {
       "totalMs": 1
     },
+    "maskNodeServerConfiguration.test.js": {
+      "totalMs": 82
+    },
     "maskNodeServerRequest.test.js": {
       "totalMs": 1
     },
@@ -1087,6 +1096,9 @@
     "nodeHistoryAdmission.test.js": {
       "totalMs": 159
     },
+    "nodeHistoryMaterialLock.test.js": {
+      "totalMs": 378
+    },
     "nodeHistoryPlaybackController.test.js": {
       "totalMs": 362
     },
@@ -1110,8 +1122,14 @@
         "output offered in one turn past the 1,000-entry queue is dropped under the same code and the structural entries still wait their turn": 5224
       }
     },
+    "nodeServerHistoryInterrupted.test.js": {
+      "totalMs": 202
+    },
     "nodeServerHistoryJournalIntegrity.test.js": {
       "totalMs": 434
+    },
+    "nodeServerHistoryResources.test.js": {
+      "totalMs": 2706
     },
     "nodeServerHistorySeal.test.js": {
       "totalMs": 1909
@@ -1121,6 +1139,9 @@
     },
     "nodeServerHistoryWriter.test.js": {
       "totalMs": 590
+    },
+    "nodeServerHistoryWriterStates.test.js": {
+      "totalMs": 290
     },
     "nodeStopSourceMatches.test.js": {
       "totalMs": 189
@@ -1238,6 +1259,9 @@
     },
     "projectRecording.test.js": {
       "totalMs": 17
+    },
+    "projectServerApplication.test.js": {
+      "totalMs": 506
     },
     "protocol.test.js": {
       "totalMs": 17467,
@@ -1796,8 +1820,17 @@
     "serverBundle.test.js": {
       "totalMs": 29
     },
+    "serverHistoryRoutingFindings.test.js": {
+      "totalMs": 377
+    },
     "serverInspectorOwnership.test.js": {
       "totalMs": 140
+    },
+    "serverReplayApplicationFindings.test.js": {
+      "totalMs": 417
+    },
+    "serverReplayPresentation.test.js": {
+      "totalMs": 408
     },
     "service.test.js": {
       "totalMs": 3052
@@ -3531,6 +3564,34 @@
     },
     "studyWorkspaceRepositoryReader.test.js": {
       "totalMs": 6600
+    },
+    "studyWorkspaceServerLibrary.test.js": {
+      "totalMs": 712
+    },
+    "studyWorkspaceServerReplay.test.js": {
+      "totalMs": 8875,
+      "tests": {
+        "Next and Previous stop visit each hit of a repeated stop and Next event moves on to the output and the response": 1547,
+        "Open replay of a sealed server history lands on its first stop with the stored source in the slot and the snapshot in the debugger": 335,
+        "a non-stop moment clears the debugger and says source and debugger are not recorded at this moment": 594,
+        "a saved playhead on a source entry restores the request before it": 318,
+        "a server history that is still being recorded opens only once its recording is interrupted": 279,
+        "a server history whose journal is damaged opens its verified prefix as an interrupted replay with its reason": 282,
+        "a server history without a stop opens at its request and Next stop answers that there is no next stop in this server replay": 321,
+        "a step citing the response moves the playhead there, and the explanation arriving while the replay is open keeps the playhead": 678,
+        "a stop whose executed source was too large to store says its recorded source is unavailable and why": 267,
+        "a stop with a lower frame presents it with its unavailable source reason": 272,
+        "an explanation saved from another window shows in this window as Saved and in the replay it opens": 374,
+        "moving through a server replay sends no request and starts no server": 652,
+        "opening a server replay and then a browser recording while a test replay presentation is still loading leaves only the recording shown": 907,
+        "seeking to the response and back to the stop presents the same snapshot and source and clears the response": 629,
+        "the Application pane of a server replay shows the sent request and no response yet at the first stop": 271,
+        "two hits at one time keep journal order and the slider ends at the end entry after the response": 320,
+        "understanding is saved only by the checkbox, and the playhead and understanding return when the replay is opened again": 829
+      }
+    },
+    "studyWorkspaceServerReplayFindings.test.js": {
+      "totalMs": 1461
     },
     "studyWorkspaceStorage.test.js": {
       "totalMs": 15018,

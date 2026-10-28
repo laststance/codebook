@@ -1,3 +1,4 @@
+import type { NodeServerLearningMaterial } from '../nodeServerLearningSchemas'
 import type {
   NodeTestHistoryIndex,
   NodeTestLearningMaterial,
@@ -11,9 +12,19 @@ export type NodeLearningStepPosition = {
   sequence: number
 }
 
-/** A test replay's learning material as the Study pane's summary renderer takes it, the browser summary's shape, with each referenced step's event. */
+/** The learning material of either history profile: the same question, title, summary, participants and steps, citing the entries of its own journal. */
+export type NodeLearningMaterialOfHistory =
+  NodeTestLearningMaterial | NodeServerLearningMaterial
+
+/** A replay's learning material as the Study pane's summary renderer takes it, the browser summary's shape, with each referenced step's event. */
 export type NodeLearningSummaryProjection = {
-  content: NodeTestLearningMaterial['content']
+  // The summary renderer reads no step reference: each profile's own references stay in the object, and positions carry the event each one names.
+  content: Omit<NodeTestLearningMaterial['content'], 'steps'> & {
+    steps: Omit<
+      NodeTestLearningMaterial['content']['steps'][number],
+      'reference'
+    >[]
+  }
   positions: NodeLearningStepPosition[]
 }
 
@@ -27,7 +38,7 @@ export type NodeLearningSummaryProjection = {
  * projectNodeLearningSummary(material, history)?.positions // => [{ stepId: 'stop-1', sequence: 3 }]
  */
 export function projectNodeLearningSummary(
-  material: NodeTestLearningMaterial | undefined,
+  material: NodeLearningMaterialOfHistory | undefined,
   history: Pick<NodeTestHistoryIndex, 'entries'>,
 ): NodeLearningSummaryProjection | undefined {
   if (!material) return
@@ -53,9 +64,9 @@ export function projectNodeLearningSummary(
  * @returns The content with its question, title, summary, participant labels, step labels and explanations free of controls; ids, evidence and references unchanged.
  * @example shownLearningContent(content).title // => 'Theme switch' for a saved 'Theme\u202E switch'
  */
-function shownLearningContent(
-  content: NodeTestLearningMaterial['content'],
-): NodeTestLearningMaterial['content'] {
+function shownLearningContent<
+  Content extends NodeLearningMaterialOfHistory['content'],
+>(content: Content): Content {
   return {
     ...content,
     question: stripTerminalControls(content.question),

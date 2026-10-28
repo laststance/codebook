@@ -13,8 +13,10 @@ import {
   PRESENTATION_FOCUS_ACTIONS,
   STUDY_REMOVAL_REFUSALS,
   STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH,
+  STUDY_REMOVAL_SERVER_HISTORY_REFUSAL,
   STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE,
 } from '../constants'
+import { NODE_SERVER_REPLAY_TEXT } from '../utils/describeNodeServerReplay'
 import { NODE_TEST_REPLAY_TEXT } from '../utils/describeNodeTestReplay'
 import type { ShortcutHelpEntry } from '../utils/installShortcutHelp'
 const STUDY_FOCUS_MARGIN_PX = 4
@@ -45,7 +47,11 @@ const STUDY_SEQUENCE_LAYOUT = {
 /** The shared slider while it shows a browser recording: the page marks it `data-replay-family="test"` during a test replay (DS-C), so each family's shortcut entries name only its own slider. */
 const BROWSER_PLAYHEAD_SELECTOR = '#playhead:not([data-replay-family="test"])'
 /** The shared slider while it shows a test replay. */
-const TEST_PLAYHEAD_SELECTOR = '#playhead[data-replay-family="test"]'
+const TEST_PLAYHEAD_SELECTOR =
+  '#playhead[data-replay-family="test"]:not([data-replay-profile="node-server"])'
+/** The shared slider while it shows a server replay: the page marks it with its profile, so a server replay's shortcut entries name a server replay and never a test. */
+const SERVER_PLAYHEAD_SELECTOR =
+  '#playhead[data-replay-family="test"][data-replay-profile="node-server"]'
 /** The test replay timeline's keys (C2 and DS-C): arrows step by event, Page keys by stop (Page Up forward, as for a recording), Home and End select the first and last event. */
 const TEST_REPLAY_TIMELINE_SHORTCUTS: ShortcutHelpEntry[] = (
   [
@@ -62,6 +68,13 @@ const TEST_REPLAY_TIMELINE_SHORTCUTS: ShortcutHelpEntry[] = (
   context: 'Focused test replay timeline',
   selector: TEST_PLAYHEAD_SELECTOR,
 }))
+/** The server replay timeline's keys: the test replay's, under the server replay's own name and slider. */
+const SERVER_REPLAY_TIMELINE_SHORTCUTS: ShortcutHelpEntry[] =
+  TEST_REPLAY_TIMELINE_SHORTCUTS.map((entry) => ({
+    ...entry,
+    context: 'Focused server replay timeline',
+    selector: SERVER_PLAYHEAD_SELECTOR,
+  }))
 export const STUDY_SHORTCUTS: ShortcutHelpEntry[] = [
   {
     action: 'Keyboard shortcuts',
@@ -111,6 +124,7 @@ export const STUDY_SHORTCUTS: ShortcutHelpEntry[] = [
     selector: BROWSER_PLAYHEAD_SELECTOR,
   },
   ...TEST_REPLAY_TIMELINE_SHORTCUTS,
+  ...SERVER_REPLAY_TIMELINE_SHORTCUTS,
   {
     action: 'Previous / next content tab',
     keys: '← / →',
@@ -147,6 +161,8 @@ const TIMELINE_COVERAGE_TEXT = {
 export const STUDY_UI_OPTIONS = {
   /** A test replay's fixed words (the String catalog); the pane's client code imports nothing, so they arrive here. */
   testReplay: NODE_TEST_REPLAY_TEXT,
+  /** A server replay's fixed words, with the same keys; the pane switches to them while a server replay is shown. */
+  serverReplay: NODE_SERVER_REPLAY_TEXT,
   /** The words of both transports' coverage strips. */
   coverage: TIMELINE_COVERAGE_TEXT,
   sequence: STUDY_SEQUENCE_LAYOUT,
@@ -168,6 +184,8 @@ export const STUDY_UI_OPTIONS = {
   studyRemovalRefusals: STUDY_REMOVAL_REFUSALS,
   // Stand where the reasons above stand in a window with a Trash: a window without one deletes nothing and lists the chosen study's files under "Remove by hand".
   studyRemovalRefusalsWithoutTrash: STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH,
+  // Why a server replay cannot be deleted, in the words of a window with a Trash and of one without.
+  serverHistoryRefusal: STUDY_REMOVAL_SERVER_HISTORY_REFUSAL,
   // The note under the Saved studies list for a chosen entry that cannot be opened, and for one whose catalog checkpoint can be repaired: each says what is wrong and what the learner can still do in a window with a Trash and in one without.
   studyNotes: {
     unopenable: {
@@ -198,6 +216,10 @@ export const STUDY_UI_OPTIONS = {
   showLearningSummary: 'Show learning summary',
   // The shared slider's tooltip while it shows a test replay, in the format of the recording timeline's tooltip, so the tooltip, the shortcut list and the keys agree (D035).
   testReplayTimelineTitle: TEST_REPLAY_TIMELINE_SHORTCUTS.map(
+    (entry) => `${entry.action} — ${entry.keys} (${entry.context})`,
+  ).join('; '),
+  // The same tooltip while the slider shows a server replay: its own name for the context, never `test`.
+  serverReplayTimelineTitle: SERVER_REPLAY_TIMELINE_SHORTCUTS.map(
     (entry) => `${entry.action} — ${entry.keys} (${entry.context})`,
   ).join('; '),
   // The shared slider's keyboard shortcuts while it shows a test replay, for its `aria-keyshortcuts`.
@@ -267,7 +289,7 @@ body.moments-only #recording-transport{display:flex;flex-wrap:wrap;align-items:c
 /* A test replay's transport stays in view while its summary and steps scroll under it (DS16); Previous stop and Next stop lead it (DS12). */
 #node-history-moment p{margin:4px 0}#node-history-explanation:empty,#node-history-not-recorded:empty,#node-history-unverified:empty,#node-history-capture-reason:empty{display:none}.same-moment{color:var(--vscode-descriptionForeground,#aaa);font-size:12px}
 #node-history-moment>p:empty{margin:0;padding:0;border:0}
-#node-learning-title{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}#node-learning-title:focus{display:block;overflow:visible}#node-learning-title:focus-visible,#test-output-test:focus-visible{outline:2px solid var(--vscode-focusBorder,#007fd4);outline-offset:2px}
+#node-learning-title{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}#node-learning-title:focus{display:block;overflow:visible}#node-learning-title:focus-visible,#test-output-test:focus-visible,#test-output-request-line:focus-visible{outline:2px solid var(--vscode-focusBorder,#007fd4);outline-offset:2px}
 /* A test replay's Learning summary (Cycle 0051, DS-B, DS-E): long texts clamped to three lines with Show more, a capped diagram, the moment's step heading, the drawing's step mark (not color alone) and the summary's focusable headings. */
 .clamp{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}.clamped-text>p{margin:4px 0}.clamped-text>.show-more{min-height:24px;padding:0;margin:0 0 8px}#node-learning-sequence .sequence-diagram{max-height:${TEST_REPLAY_DIAGRAM_MAX_HEIGHT_PX}px}.sequence-diagram text.current-step{fill:var(--vscode-textLink-foreground,#4daafc);font-weight:600;text-decoration:underline}.sequence-arrow.current-step{stroke-width:3}#node-history-step-heading{font-size:14px;margin:8px 0 4px}#node-history-step-heading:focus-visible,#title:focus-visible{outline:2px solid var(--vscode-focusBorder,#007fd4);outline-offset:2px}body[data-replay=true] #node-history-heading{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 /* A test replay's summary leads with its own content (DS-B): the learning title has no section padding of its own, and the article's pane controls follow the summary instead of standing above it. */
@@ -275,7 +297,7 @@ body.moments-only #recording-transport{display:flex;flex-wrap:wrap;align-items:c
 /* The shared transport's event group wraps as one: it takes its own line before the slider shrinks below its minimum width (DS-C); the 5A button ends the status row, apart from the move controls. */
 .playback-events{display:inline-flex;gap:6px;flex:none}.playback-status-row #show-learning-summary{flex:none;margin-left:auto;min-height:32px;padding:4px 8px}
 /* A test replay's Application pane: the header and footer stay pinned and the output region is the only scroller (DS4); a standard-error line starts with a mark in the terminal's red, and the mark, never the color alone, says so. */
-body.test-output{height:100vh;padding:0;overflow:hidden}body.test-output main{display:flex;flex-direction:column;height:100%;min-height:0;padding:12px 16px}#test-output-test{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}#test-output-test:focus{display:block;overflow:visible}#test-output{flex:1;min-height:0;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0;padding:8px;border:1px solid var(--vscode-panel-border,#444)}#test-output:focus-visible{outline:2px solid var(--vscode-focusBorder,#007fd4)}.stderr-mark{color:var(--vscode-terminal-ansiRed,#f14c4c)}#test-output-jump{align-self:flex-start}body.test-output p{margin:4px 0}
+body.test-output{height:100vh;padding:0;overflow:hidden}body.test-output main{display:flex;flex-direction:column;height:100%;min-height:0;padding:12px 16px}#test-output-test,#test-output-request-line{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere}#test-output-test:focus,#test-output-request-line:focus{display:block;overflow:visible}.server-region{flex:none;margin:4px 0;padding:8px 0}#test-output-response-body{max-height:30vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;margin:4px 0;padding:8px;border:1px solid var(--vscode-panel-border,#444)}#test-output-response-body:focus-visible{outline:2px solid var(--vscode-focusBorder,#007fd4)}#test-output-response-state{overflow-wrap:anywhere}#test-output{flex:1;min-height:0;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0;padding:8px;border:1px solid var(--vscode-panel-border,#444)}#test-output:focus-visible{outline:2px solid var(--vscode-focusBorder,#007fd4)}.stderr-mark{color:var(--vscode-terminal-ansiRed,#f14c4c)}#test-output-jump{align-self:flex-start}body.test-output p{margin:4px 0}
 /* A Learning summary in a narrow side bar keeps a long title to two lines and its sequence in view; the full title stays in its tooltip, and a title the clamp cuts is a tab stop that is shown whole while it has the keyboard focus. A wider summary shows the title whole. */
 #title:focus-visible,#learning-title:focus-visible{outline:2px solid var(--vscode-focusBorder,#007fd4);outline-offset:2px}
 /* Compact replay keeps its empty header spacing; a disclosed layout notice uses the shared gap. */
