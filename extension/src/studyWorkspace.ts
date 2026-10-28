@@ -12540,6 +12540,8 @@ export class StudyWorkspace {
     if (!sidecars) return undefined
     // A summary that cannot be read leaves the learning verdict unknown: the open says so on the learning line instead of reading as "explanation not saved".
     const summary = await store.summarize(studyId).catch((error: unknown) => {
+      // A read that another open superseded meanwhile has no replay left to say it about.
+      if (this.historyOpenSuperseded(request, revision)) return undefined
       this.reportTestReplayFailure(
         'history-learning',
         error,

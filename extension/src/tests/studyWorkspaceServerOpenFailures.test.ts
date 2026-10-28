@@ -108,3 +108,52 @@ test('closing the reader waits for a server reader-position write that is still 
     await harness.close()
   }
 })
+
+// protects=a summary read that fails after a newer open took over reports nothing on the learning line; fails_when=the abandoned open's summary error appears; no_claim=the newer open's own result
+test('a summary failure of a server replay whose open was superseded is not reported', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const { header } = await writeServerHistory(repositoryOf(harness), {
+      workspaceKey: workspaceKeyOf(harness),
+    })
+    await harness.reader.action('retry')
+    const store = repositoryOf(harness).serverHistories
+    const summarize = store.summarize.bind(store)
+    let failSummary: () => void = () => undefined
+    let held = false
+    context.mock.method(store, 'summarize', async (studyId: string) => {
+      // Only the replay open's own read is held and fails; the library listing's reads pass through.
+      if (held || !new Error().stack?.includes('readServerHistoryOpening'))
+        return summarize(studyId)
+      held = true
+      await new Promise<void>((resolve) => {
+        failSummary = resolve
+      })
+      throw new Error('summary file unreadable')
+    })
+
+    // Act
+    const opening = harness.reader.openLearningReplay(header.studyId)
+    await waitUntil(
+      () => held,
+      'the summary read is held',
+      READER_RESULT_BOUND_MS,
+    )
+    // A newer open takes the request number while this read is pending.
+    harness.reader['historyRequest']++
+    failSummary()
+    await opening
+
+    // Assert
+    assert.deepEqual(
+      readerSeams(harness)
+        .errorLines()
+        .filter((line) => line.includes('summary file unreadable')),
+      [],
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
