@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto'
 
+import type { NodeServerHistorySummary } from '../nodeServerHistoryTypes'
 import type {
   NodeTestHistoryIndex,
   NodeTestHistoryLearningDecision,
 } from '../nodeTestHistorySchemas'
-import type { NodeTestHistoryStore } from '../nodeTestHistoryStore'
+import type { NodeTestHistorySummary } from '../nodeTestHistoryStore'
 import type { PlaybackState, PlaybackBundle } from '../playbackController'
 import type {
   PresentationState,
@@ -113,7 +114,9 @@ export interface StudyViewMessage {
   runRefusal?: string
   /** The saved study of this window's run that has not stopped, which cannot be deleted. */
   unstoppedStudyId?: string
-  nodeHistoryCatalog?: Awaited<ReturnType<NodeTestHistoryStore['list']>>
+  nodeHistoryCatalog?: NodeTestHistorySummary[]
+  /** The saved server replays, beside {@link nodeHistoryCatalog}. */
+  nodeServerHistoryCatalog?: NodeServerHistorySummary[]
   nodeHistory?: NodeTestHistoryIndex
   nodeHistoryPage?: number
   nodeHistoryPageCount?: number
@@ -1367,7 +1370,16 @@ function studyClient(
   ): string => {
     const sentences = removalRefusals(message)
     const refusals: [applies: boolean, sentence: string][] = [
-      [chosen.format === 'node-test-history', sentences.nodeHistory],
+      [
+        chosen.format === 'node-test-history' &&
+          chosen.profile !== 'node-server',
+        sentences.nodeHistory,
+      ],
+      [
+        chosen.format === 'node-test-history' &&
+          chosen.profile === 'node-server',
+        sentences.serverHistory,
+      ],
       // The host moves nothing of a study a newer Codebook saved: which files that format keeps is not known here.
       [chosen.format === 'newer', sentences.newerFormat],
       [message.unstoppedStudyId === chosen.id, sentences.runNotStopped],
@@ -2527,6 +2539,10 @@ function studyClient(
    */
   const testReplayTitle = (message: StudyViewMessage): string => {
     const studyId = message.nodeHistory?.header.studyId
+    const serverSummary = message.nodeServerHistoryCatalog?.find(
+      (entry) => entry.studyId === studyId,
+    )
+    if (serverSummary) return serverSummary.title ?? serverSummary.question
     const summary = message.nodeHistoryCatalog?.find(
       (entry) => entry.studyId === studyId,
     )
@@ -2578,7 +2594,8 @@ function studyClient(
   ): void => {
     const idle = suppressed
       ? ''
-      : message.nodeHistoryCatalog?.length
+      : message.nodeHistoryCatalog?.length ||
+          message.nodeServerHistoryCatalog?.length
         ? options.testReplay.chooseReplay
         : options.testReplay.noReplay
     renderTestReplayLines(section, idle)

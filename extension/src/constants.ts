@@ -223,6 +223,7 @@ export const UNSAVED_STUDY_HANDED_OVER_REASON =
 export const STUDY_REMOVAL_REFUSALS = {
   nothingChosen: 'Choose a saved study to delete.',
   nodeHistory: 'Test replays cannot be deleted here yet.',
+  serverHistory: 'Server replays cannot be deleted here yet.',
   runNotStopped: 'Stop the run before deleting its study.',
   recordingOpen:
     'Choose Overview or Live to leave Recording before deleting this study.',
@@ -240,6 +241,8 @@ export const STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH: Record<
     'This window has no Trash, so Codebook cannot delete a saved study here. Choose a saved study, then open Remove by hand to list its files.',
   nodeHistory:
     'Codebook cannot list the files of a test replay for removal by hand yet.',
+  serverHistory:
+    'Codebook cannot list the files of a server replay for removal by hand yet.',
   runNotStopped: "Stop the run before removing its study's files by hand.",
   recordingOpen:
     "Choose Overview or Live to leave Recording before removing this study's files by hand.",

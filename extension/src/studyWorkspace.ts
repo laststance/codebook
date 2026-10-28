@@ -125,6 +125,7 @@ import {
 } from './learningLibrary'
 import { NodeHistoryRepository } from './nodeHistoryRepository'
 import { NodeLearningSave } from './nodeLearningSave'
+import type { NodeServerHistorySummary } from './nodeServerHistoryTypes'
 import {
   nodeLearningStepIdSchema,
   type NodeTestHistoryEntry,
@@ -132,7 +133,10 @@ import {
   type NodeTestHistoryLearningDecision,
   type NodeTestLearningMaterial,
 } from './nodeTestHistorySchemas'
-import type { NodeTestHistoryStore } from './nodeTestHistoryStore'
+import type {
+  NodeTestHistorySummary,
+  NodeTestHistoryStore,
+} from './nodeTestHistoryStore'
 import {
   PlaybackController,
   type PlaybackBundle,
@@ -240,6 +244,7 @@ import {
   describeNodeRecordedSource,
   NODE_RECORDED_SOURCE_TEXT,
 } from './utils/describeNodeRecordedSource'
+import { describeServerReplayRow } from './utils/describeNodeServerReplay'
 import { describeNodeServerStatus } from './utils/describeNodeServerStatus'
 import { describeNodeTestReplay } from './utils/describeNodeTestReplay'
 import { describePaneIdentity } from './utils/describePaneIdentity'
@@ -793,9 +798,9 @@ export class StudyWorkspace {
   /** Every history profile's store under the learning directory, with the shared admission wired. */
   private nodeHistoryRepository?: NodeHistoryRepository
   /** The saved test replays Saved studies lists, with their test files and titles already free of controls ({@link stripNodeHistorySummaryTexts}), stripped once per listing (F131, F326). */
-  private nodeHistoryCatalog: Awaited<
-    ReturnType<NodeTestHistoryStore['list']>
-  > = []
+  private nodeHistoryCatalog: NodeTestHistorySummary[] = []
+  /** The saved server replays Saved studies lists, texts free of controls, listed with {@link nodeHistoryCatalog} ({@link listNodeHistoryCatalog}). */
+  private nodeServerHistoryCatalog: NodeServerHistorySummary[] = []
   private selectedNodeHistory?: NodeTestHistoryIndex
   private selectedNodeHistoryLearningDecision?: NodeTestHistoryLearningDecision
   private selectedNodeHistoryLearningMaterial?: NodeTestLearningMaterial
@@ -10737,10 +10742,7 @@ export class StudyWorkspace {
       // What the reader before this one could not save waits for Retry storage / refresh here.
       this.queueHandedOverArchives()
       // An unreadable Node history store stays visible without blocking browser studies, progress or playback.
-      this.nodeHistoryCatalog = await this.listNodeHistoryCatalog(
-        this.nodeHistoryStore,
-        [],
-      )
+      await this.listNodeHistoryCatalog(this.nodeHistoryRepository)
       this.playback = new PlaybackController({
         load: (studyId, signal) => this.loadPlayback(studyId, signal),
         frame: async (studyId, hash, signal) => {
@@ -10969,11 +10971,8 @@ export class StudyWorkspace {
       const record = this.currentRecord()
       // A run that started after a removal ended retires that removal's outcome line.
       this.retireRemovalOutcomeOfEarlierRun(record?.id)
-      if (this.nodeHistoryStore)
-        this.nodeHistoryCatalog = await this.listNodeHistoryCatalog(
-          this.nodeHistoryStore,
-          this.nodeHistoryCatalog,
-        )
+      if (this.nodeHistoryRepository)
+        await this.listNodeHistoryCatalog(this.nodeHistoryRepository)
       // Refresh every retained projection without letting an older run replace current runtime ownership.
       if (this.service)
         for (const retained of this.service.records.values()) {
@@ -12184,11 +12183,16 @@ export class StudyWorkspace {
     const summary = this.nodeHistoryCatalog.find(
       (history) => history.studyId === studyId,
     )
+    const serverSummary = this.nodeServerHistoryCatalog.find(
+      (history) => history.studyId === studyId,
+    )
     const failure = describeNodeLearningSave({
       kind: 'open-failed',
       title: summary
         ? [summary.testFile, ...(summary.testTitles ?? [])].join(' › ')
-        : studyId,
+        : serverSummary
+          ? (serverSummary.title ?? serverSummary.question)
+          : studyId,
       cause,
     })
     // The answer is handled whenever it arrives, outside every entry's turn.
@@ -13508,22 +13512,24 @@ export class StudyWorkspace {
   }
 
   /**
-   * Lists the saved test replays for Saved studies with their test files and titles already free of controls, so every Study message reuses one stripped catalog instead of stripping it again (F131, F326); called when the reader starts and at each refresh of its library.
-   * @param store - The workspace's history store.
-   * @param fallback - The catalog kept when the store cannot be listed; the failure goes to the `archive` row.
-   * @returns The stripped catalog, or the fallback.
-   * @example this.nodeHistoryCatalog = await this.listNodeHistoryCatalog(store, [])
+   * Lists the saved test and server replays for Saved studies with their recorded texts already free of controls, so every Study message reuses one stripped catalog instead of stripping it again (F131, F326); called when the reader starts and at each refresh of its library.
+   * @param repository - The workspace's history repository.
+   * @example await this.listNodeHistoryCatalog(this.nodeHistoryRepository)
    */
   private async listNodeHistoryCatalog(
-    store: NodeTestHistoryStore,
-    fallback: StudyWorkspace['nodeHistoryCatalog'],
-  ): Promise<StudyWorkspace['nodeHistoryCatalog']> {
-    return store.list().then(
-      (catalog) => catalog.map(stripNodeHistorySummaryTexts),
-      (error: unknown) => {
-        this.report('archive', error)
-        return fallback
+    repository: NodeHistoryRepository,
+  ): Promise<void> {
+    await repository.listByProfile().then(
+      ({ tests, servers }) => {
+        this.nodeHistoryCatalog = tests.map((summary) =>
+          stripNodeHistorySummaryTexts(summary),
+        )
+        this.nodeServerHistoryCatalog = servers.map((summary) =>
+          stripNodeHistorySummaryTexts(summary),
+        )
       },
+      // A listing that fails keeps both earlier catalogs.
+      (error: unknown) => this.report('archive', error),
     )
   }
 
@@ -13658,21 +13664,27 @@ export class StudyWorkspace {
         : undefined
     const studyCatalog: StudyCatalogEntry[] = [
       ...this.catalog,
-      ...this.nodeHistoryCatalog.map((history) => ({
-        id: history.studyId,
-        savedAt: history.createdAt,
-        profile: 'node-test' as const,
-        format: 'node-test-history' as const,
-        outcome: describeNodeTestReplay({
-          kind: 'saved-row',
-          summary: history,
+      ...[...this.nodeHistoryCatalog, ...this.nodeServerHistoryCatalog].map(
+        (history) => ({
+          id: history.studyId,
+          savedAt: history.createdAt,
+          profile: history.profile,
+          // A server replay shares the test replay's row format: both open through the Node history reader, told apart by `profile`.
+          format: 'node-test-history' as const,
+          outcome:
+            history.profile === 'node-server'
+              ? describeServerReplayRow(history)
+              : describeNodeTestReplay({
+                  kind: 'saved-row',
+                  summary: history,
+                }),
+          metadata:
+            history.verification === 'verified'
+              ? ('validated' as const)
+              : ('unavailable' as const),
+          ...(history.reason ? { reason: history.reason } : {}),
         }),
-        metadata:
-          history.verification === 'verified'
-            ? ('validated' as const)
-            : ('unavailable' as const),
-        ...(history.reason ? { reason: history.reason } : {}),
-      })),
+      ),
     ].sort((left, right) => right.savedAt.localeCompare(left.savedAt))
     return {
       type: 'study',
@@ -13706,6 +13718,7 @@ export class StudyWorkspace {
       },
       // The recorded test names come without terminal and bidirectional controls, stripped when the catalog was listed (F131, F326).
       nodeHistoryCatalog: this.nodeHistoryCatalog,
+      nodeServerHistoryCatalog: this.nodeServerHistoryCatalog,
       nodeHistory: selectedNodeHistory && {
         ...this.shownNodeHistory(selectedNodeHistory),
         entries: this.shownNodeHistory(selectedNodeHistory).entries.slice(
@@ -24294,6 +24307,12 @@ export class StudyWorkspace {
       [
         this.nodeHistoryCatalog.some((history) => history.studyId === studyId),
         sentences.nodeHistory,
+      ],
+      [
+        this.nodeServerHistoryCatalog.some(
+          (history) => history.studyId === studyId,
+        ),
+        sentences.serverHistory,
       ],
       [
         !this.catalog.some((entry) => entry.id === studyId),

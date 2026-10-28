@@ -1,9 +1,14 @@
-import type { NodeServerHistoryTypes } from './nodeServerHistoryTypes'
+import type { NodeHistorySummary } from './nodeHistorySummary'
+import type {
+  NodeServerHistorySummary,
+  NodeServerHistoryTypes,
+} from './nodeServerHistoryTypes'
 import { nodeServerStorageDescriptor } from './nodeServerStorageDescriptor'
 import {
   NodeHistoryStore,
   NodeTestHistoryStore,
   type NodeHistoryWriterJudge,
+  type NodeTestHistorySummary,
 } from './nodeTestHistoryStore'
 import { isNodeHistoryIdentity } from './utils/isNodeHistoryIdentity'
 
@@ -53,6 +58,38 @@ export class NodeHistoryRepository {
       writerJudge,
       (places) => this.testHistories.countListedHistories(places),
     )
+  }
+
+  /**
+   * Lists every saved history of the workspace, test and server, newest first, as one catalog for Saved studies.
+   * @returns The summaries of both profiles; a profile whose folder cannot be listed rejects the whole listing, so the library keeps its earlier catalog and reports the failure as it does for test histories.
+   * @throws What a store's listing throws for an unreadable history directory.
+   * @example (await repository.list()).map((summary) => summary.profile) // => ['node-server', 'node-test']
+   */
+  async list(): Promise<NodeHistorySummary[]> {
+    const { tests, servers } = await this.listByProfile()
+    return [...tests, ...servers].sort((left, right) =>
+      right.createdAt === left.createdAt
+        ? left.studyId.localeCompare(right.studyId)
+        : right.createdAt.localeCompare(left.createdAt),
+    )
+  }
+
+  /**
+   * Lists the saved histories of each profile apart, for the library, which keeps one catalog per profile.
+   * @returns The test summaries and the server summaries.
+   * @throws What a store's listing throws for an unreadable history directory.
+   * @example const { tests, servers } = await repository.listByProfile()
+   */
+  async listByProfile(): Promise<{
+    tests: NodeTestHistorySummary[]
+    servers: NodeServerHistorySummary[]
+  }> {
+    const [tests, servers] = await Promise.all([
+      this.testHistories.list(),
+      this.serverHistories.list(),
+    ])
+    return { tests, servers }
   }
 
   /**
