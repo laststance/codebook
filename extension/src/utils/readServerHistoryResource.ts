@@ -115,6 +115,43 @@ function serverVerdicts(
 }
 
 /**
+ * Answers one entry's detail page: the stop restored to its whole snapshot, or the entry as stored.
+ * Called by {@link readServerHistoryResource} for `events/<sequence>`; only the restoration of the entries is turned into the coded answer, so another failure keeps its own cause.
+ * @param baseUri - The history's resource address.
+ * @param studyId - The history's study id.
+ * @param entries - The verified journal entries.
+ * @param sequence - The entry asked for.
+ * @param page - The page cursor, when the content spans pages.
+ * @returns The entry's first or requested page.
+ * @throws `EVIDENCE_UNAVAILABLE` when a stop cannot be restored; `NOT_FOUND` when no entry has the sequence.
+ * @example readServerEntryDetail('codebook://node-history/a_b', 'a_b', entries, 4, undefined)
+ */
+function readServerEntryDetail(
+  baseUri: string,
+  studyId: string,
+  entries: readonly NodeServerHistoryEntry[],
+  sequence: number,
+  page: string | undefined,
+): ResourceContent {
+  let entry: ReturnType<typeof rehydrateNodeServerEntries>[number] | undefined
+  try {
+    // The stored stop keeps its top frame's source by hash; the detail restores the whole snapshot.
+    entry = rehydrateNodeServerEntries(entries).find(
+      (candidate) => candidate.sequence === sequence,
+    )
+  } catch (error) {
+    // Only a stop that cannot be restored answers a coded error, never a raw schema dump.
+    throw answerUnreadableHistoryEntry(error, studyId, baseUri)
+  }
+  if (!entry)
+    throw new StudyError(
+      'NOT_FOUND',
+      `The history ${studyId} has no entry with sequence ${sequence}. Read ${baseUri}/events for the sequences it holds.`,
+    )
+  return readJsonPage(`${baseUri}/events/${sequence}`, entry, page)
+}
+
+/**
  * Answers a `codebook://node-history/<id>` resource for a server history: the history with its three verdicts, the lean events list, one entry's detail, or the learning material.
  * Called by {@link readResource} for an id the history repository resolves to the node-server profile.
  * @param store - The workspace's server history store.
@@ -148,25 +185,11 @@ export async function readServerHistoryResource(
     suffix ?? '',
   )
   if (detail) {
-    const sequence = Number(detail[1])
-    // The stored stop keeps its top frame's source by hash; the detail restores the whole snapshot.
-    let entry: ReturnType<typeof rehydrateNodeServerEntries>[number] | undefined
-    try {
-      entry = rehydrateNodeServerEntries(history.entries).find(
-        (candidate) => candidate.sequence === sequence,
-      )
-    } catch (error) {
-      // Only a stop that cannot be restored answers a coded error, never a raw schema dump; any other failure of this read keeps its own cause.
-      throw answerUnreadableHistoryEntry(error, studyId, baseUri)
-    }
-    if (!entry)
-      throw new StudyError(
-        'NOT_FOUND',
-        `The history ${studyId} has no entry with sequence ${sequence}. Read ${baseUri}/events for the sequences it holds.`,
-      )
-    return readJsonPage(
-      `${baseUri}/events/${sequence}`,
-      entry,
+    return readServerEntryDetail(
+      baseUri,
+      studyId,
+      history.entries,
+      Number(detail[1]),
       detail[2]?.slice(1),
     )
   }
