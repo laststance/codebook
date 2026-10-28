@@ -8670,6 +8670,11 @@ test("a recording opened beside Cursor's Agent chat is refused as a learner chan
       harness.controller.state().reason ?? '',
       /did not report the keyboard focus/,
     )
+    // The learner's tab stays in front of the first group: the arrangement did not go on over it.
+    assert.equal(
+      harness.groups.find((group) => group.viewColumn === 1)?.activeTab,
+      learnerTab,
+    )
   } finally {
     await harness.close()
   }
