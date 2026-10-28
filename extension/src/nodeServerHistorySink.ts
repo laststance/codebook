@@ -10,6 +10,7 @@ import type { NodeServerHistoryWriter } from './nodeServerHistoryWriter'
 import type { ReplayDebugSnapshot } from './replayDebugSchemas'
 import type { NodeServerResponse } from './runtime'
 import { redactSecretText } from './utils/redactSecretText'
+import { resolveServerStopFrame } from './utils/resolveServerStopFrame'
 
 /**
  * What a live node-server run tells its history, in the run's own words and on the run's own clock (milliseconds since the launch). The run calls it synchronously at the moment each thing happens and never waits for it; a sink that fails marks its history failed and never reaches the run.
@@ -201,7 +202,7 @@ export class NodeServerHistorySinkImpl implements NodeServerHistorySink {
       const index = pause.declaredStopIndex ?? 0
       const hit = (this.hits.get(index) ?? 0) + 1
       this.hits.set(index, hit)
-      const top = read.snapshot.frames[0]
+      const { column, frameName } = resolveServerStopFrame(read)
       const facts = Object.fromEntries(
         read.facts.map((fact) => [
           this.hide(`${fact.mode}:${fact.path}`),
@@ -217,9 +218,9 @@ export class NodeServerHistorySinkImpl implements NodeServerHistorySink {
           path: read.path,
           hash: read.sourceHash,
           line: read.line,
-          column: read.column ?? top?.column ?? 1,
+          column,
         },
-        frameName: this.hide(read.frameName ?? top?.name ?? '').slice(0, 2_048),
+        frameName: this.hide(frameName).slice(0, 2_048),
         facts,
         unavailable: read.unavailable.map((path) => ({
           path: this.hide(path).slice(0, 512),

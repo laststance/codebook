@@ -1736,6 +1736,9 @@
     "resolveExternalNodeExecutable.test.js": {
       "totalMs": 28
     },
+    "resolveServerStopFrame.test.js": {
+      "totalMs": 34
+    },
     "retryWhileBusy.test.js": {
       "totalMs": 1
     },
