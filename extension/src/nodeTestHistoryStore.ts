@@ -1174,7 +1174,10 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
   saveReaderPosition(
     studyId: string,
     sequence: number,
-    verified?: Pick<HistoryIndexOf<Types>, 'header' | 'entries'>,
+    verified?: {
+      header: Pick<Types['Header'], 'studyId'>
+      entries: readonly Pick<Types['Entry'], 'sequence'>[]
+    },
   ): Promise<void> {
     const previous = this.readerPositionWrites.get(studyId) ?? Promise.resolve()
     const operation = previous

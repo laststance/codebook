@@ -5,6 +5,7 @@ import {
 import { installWebviewFocus } from '../runtimeSupport/utils/installWebviewFocus'
 import { STUDY_STYLES } from '../ui/constants'
 
+import { NODE_SERVER_REPLAY_TEXT } from './describeNodeServerReplay'
 import { NODE_TEST_REPLAY_TEXT } from './describeNodeTestReplay'
 import { escapeHtml } from './escapeHtml'
 import { installClampedTitleStop } from './installClampedTitleStop'
@@ -31,8 +32,13 @@ export function testOutputHtml(
   reading: NodeTestOutputReading = { follow: true },
 ): string {
   // The script's options are JSON inside a script element: `<` is written as an escape, so no value can end the element.
+  // A server replay words its footer and Jump to latest with the server catalog, and draws its two fixed regions between the header and the output.
+  const words =
+    view.profile === 'node-server'
+      ? NODE_SERVER_REPLAY_TEXT
+      : NODE_TEST_REPLAY_TEXT
   const scriptOptions = JSON.stringify({
-    stderrMark: NODE_TEST_REPLAY_TEXT.stderrMark,
+    stderrMark: words.stderrMark,
     history,
     endTolerancePx: TEST_OUTPUT_END_TOLERANCE_PX,
     stateReportIntervalMs: TEST_OUTPUT_STATE_REPORT_INTERVAL_MS,
@@ -41,5 +47,17 @@ export function testOutputHtml(
   }).replaceAll('<', '\\u003c')
   const muted = (id: string, value: string | undefined): string =>
     `<p id="${id}" class="muted"${value === undefined ? ' hidden' : ''}>${escapeHtml(value ?? '')}</p>`
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'"><style nonce="${nonce}">${STUDY_STYLES}</style><title>${escapeHtml(view.name)}</title></head><body class="test-output"><main id="test-output-main" aria-label="${escapeHtml(view.name)}"><header class="test-output-header"><p id="test-output-time" class="status">${escapeHtml(view.time)}</p><p id="test-output-test" class="muted" title="${escapeHtml(view.test)}">${escapeHtml(view.test)}</p></header>${muted('test-output-inspector', view.inspector)}${muted('test-output-cut', view.cut)}<pre id="test-output" tabindex="0" role="region" aria-label="${escapeHtml(view.region ?? view.name)}"></pre>${muted('test-output-placeholder', view.placeholder)}<p id="test-output-end" class="status"${view.end === undefined ? ' hidden' : ''}>${escapeHtml(view.end ?? '')}</p><button id="test-output-jump" type="button" hidden>${escapeHtml(NODE_TEST_REPLAY_TEXT.jumpToLatest)}</button><p class="muted test-output-footer">${escapeHtml(NODE_TEST_REPLAY_TEXT.applicationFooter)}</p></main><script nonce="${nonce}">const api = acquireVsCodeApi();(${installWebviewFocus.toString()})(api);(${installClampedTitleStop.toString()})('test-output-test');(${installNodeTestOutput.toString()})(api, ${scriptOptions})</script></body></html>`
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'"><style nonce="${nonce}">${STUDY_STYLES}</style><title>${escapeHtml(view.name)}</title></head><body class="test-output"><main id="test-output-main" aria-label="${escapeHtml(view.name)}"><header class="test-output-header"><p id="test-output-time" class="status">${escapeHtml(view.time)}</p>${view.profile === 'node-server' ? '' : `<p id="test-output-test" class="muted" title="${escapeHtml(view.test)}">${escapeHtml(view.test)}</p>`}</header>${view.profile === 'node-server' ? serverRegions(view) : ''}${muted('test-output-inspector', view.inspector)}${muted('test-output-cut', view.cut)}<pre id="test-output" tabindex="0" role="region" aria-label="${escapeHtml(view.region ?? view.name)}"></pre>${muted('test-output-placeholder', view.placeholder)}<p id="test-output-end" class="status"${view.end === undefined ? ' hidden' : ''}>${escapeHtml(view.end ?? '')}</p><button id="test-output-jump" type="button" hidden>${escapeHtml(words.jumpToLatest)}</button><p class="muted test-output-footer">${escapeHtml(words.applicationFooter)}</p></main><script nonce="${nonce}">const api = acquireVsCodeApi();(${installWebviewFocus.toString()})(api);(${installClampedTitleStop.toString()})('${view.profile === 'node-server' ? 'test-output-request-line' : 'test-output-test'}');(${installNodeTestOutput.toString()})(api, ${scriptOptions})</script></body></html>`
+}
+
+/**
+ * Writes a server replay's two fixed regions of the Application pane, outside the scrolling output: the request line with the claim the replay may make about it, and the response state with the recorded body in its own scrolling block. Called by {@link testOutputHtml}; {@link installNodeTestOutput} updates them in place.
+ * @param view - The server replay's Application view.
+ * @returns The markup of both regions, every text escaped.
+ * @example serverRegions(view) // => '<section id="test-output-request" class="server-region">…'
+ */
+function serverRegions(view: NodeTestApplicationView): string {
+  const request = view.request
+  const response = view.response
+  return `<section id="test-output-request" class="server-region"${request ? '' : ' hidden'}><p id="test-output-request-line" class="status" title="${escapeHtml(request?.line ?? '')}">${escapeHtml(request?.line ?? '')}</p><p id="test-output-request-claim" class="muted">${escapeHtml(request?.claim ?? '')}</p></section><section id="test-output-response" class="server-region"${response ? '' : ' hidden'}><p id="test-output-response-state" class="status">${escapeHtml(response?.state ?? '')}</p><pre id="test-output-response-body" tabindex="0" role="region" aria-label="${escapeHtml(NODE_SERVER_REPLAY_TEXT.responseBodyLabel)}"${response?.body === undefined ? ' hidden' : ''}>${escapeHtml(response?.body ?? '')}</pre><p id="test-output-response-note" class="muted"${response?.note === undefined ? ' hidden' : ''}>${escapeHtml(response?.note ?? '')}</p></section>`
 }

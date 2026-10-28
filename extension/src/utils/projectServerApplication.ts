@@ -1,7 +1,4 @@
-import {
-  accumulateNodeTestOutput,
-  type NodeTestOutputViewLine,
-} from './accumulateNodeTestOutput'
+import { accumulateNodeTestOutput } from './accumulateNodeTestOutput'
 import type {
   ServerReplayEvent,
   ServerReplayModel,
@@ -16,34 +13,14 @@ import {
   indexNodeTestOutput,
   type NodeTestOutputIndex,
 } from './indexNodeTestOutput'
-import { leftOutLines } from './projectNodeTestApplication'
+import {
+  leftOutLines,
+  type NodeTestApplicationView,
+} from './projectNodeTestApplication'
 
-/** What the Application pane shows of a server replay at one moment: the fixed request region, the fixed response region, then the output log. Every field is text, rendered as text and never as markup. */
-export type NodeServerApplicationView = {
-  generation: number
-  /** Header line 1: `Recorded server output · <t> s`, or `Recorded server output` alone without a selected event. */
-  time: string
-  /** The pane's accessible name. */
-  name: string
-  /** The request region: the request line and the claim the replay may make about it. */
-  request?: { line: string; claim: string }
-  /** The response region for the selected moment. */
-  response?: {
-    state: string
-    /** The recorded body, in its own scrolling block; absent before the response and for an empty body. */
-    body?: string
-    /** `Body shown cut at <n> bytes.` for a cut body, `Response body is empty.` for none. */
-    note?: string
-  }
-  /** The output log's accessible name, `Recorded server output up to <t> s`. */
-  region?: string
-  lines: NodeTestOutputViewLine[]
-  cut?: string
-  inspector?: string
-  /** The line that stands for the log when there is none to show: loading, nothing yet or no entries. */
-  placeholder?: string
-  /** The last line: that the recording ended before the server answered. */
-  end?: string
+/** What the Application pane shows of a server replay at one moment: the fixed request region, the fixed response region, then the output log. It is the test replay's Application view with its server fields, so one document draws both. Every field is text, rendered as text and never as markup. */
+export type NodeServerApplicationView = NodeTestApplicationView & {
+  profile: 'node-server'
 }
 
 /** Words the Application pane's first line and name. */
@@ -149,6 +126,8 @@ export function projectServerApplication(
   const { generation, loading = false, leaving = false } = options
   if (loading || !selected)
     return {
+      profile: 'node-server',
+      test: '',
       generation,
       time: timeWords(undefined),
       name: NODE_SERVER_REPLAY_TEXT.heading,
@@ -162,6 +141,8 @@ export function projectServerApplication(
   const tail = accumulateNodeTestOutput(index, selected.sequence)
   const last = model.events.at(-1)
   return {
+    profile: 'node-server',
+    test: '',
     generation,
     time: timeWords(leaving ? undefined : selected.elapsedMs),
     name: `${NODE_SERVER_REPLAY_TEXT.heading} · ${model.header.declaredRequest.method} ${model.header.declaredRequest.path}`,

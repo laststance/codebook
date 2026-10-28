@@ -20,8 +20,14 @@ export type NodeTestApplicationView = {
   generation: number
   /** Header line 1: `Recorded test output · <t> s`, or `Recorded test output` alone without a selected event (loading, no entries). */
   time: string
-  /** Header line 2: the cited test, shown in at most two lines with this whole text in its tooltip. */
+  /** Header line 2: the cited test, shown in at most two lines with this whole text in its tooltip; a server replay leaves it empty (its request has its own region). */
   test: string
+  /** `node-server` for a server replay, whose document words its footer and Jump to latest with the server catalog and draws the two fixed regions below. */
+  profile?: 'node-server'
+  /** A server replay's request region: the request line and the claim the replay may make about it. */
+  request?: { line: string; claim: string }
+  /** A server replay's response region for the selected moment: its state line, the recorded body in its own block and a note on a cut or empty body. */
+  response?: { state: string; body?: string; note?: string }
   /** The pane's accessible name. */
   name: string
   /** The output region's accessible name, `Recorded test output up to <t> s`. */

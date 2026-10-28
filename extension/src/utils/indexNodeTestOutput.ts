@@ -164,7 +164,9 @@ export function indexNodeTestOutput(
  * @example stripOutputEntries([{ type: 'output', sequence: 1, elapsedMs: 5, channel: 'stdout', text: '\u001b[3' }, { type: 'output', sequence: 2, elapsedMs: 6, channel: 'stdout', text: '2mok' }]) // => Map { 1 => '', 2 => 'ok' }
  */
 export function stripOutputEntries(
-  entries: readonly NodeTestHistoryIndex['entries'][number][],
+  entries: readonly (
+    NodeTestHistoryIndex['entries'][number] | NodeServerHistoryEntry
+  )[],
 ): Map<number, string> {
   const shown = new Map<number, string>()
   for (const channel of ['stdout', 'stderr'] as const) {

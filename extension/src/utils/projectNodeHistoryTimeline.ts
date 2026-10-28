@@ -20,18 +20,22 @@ export type NodeHistoryTimeline = {
  * Called by {@link StudyWorkspace} while it projects the Study pane's test replay section; the slider itself stays an event navigator.
  *
  * @param history - The test replay's events in journal order.
+ * @param endedAtMs - When the recording ended, if after its last event; the timeline ends there.
  * @returns The range, its one gap and the ticks; `undefined` for a history of fewer than two events or of events all at one time, which have nothing to mark.
  * @example
  * projectNodeHistoryTimeline({ entries: [output0s, verifiedStop1s, result2s] }) // => { startMs: 0, endMs: 2000, gaps: [{ startMs: 0, endMs: 2000 }], recordedPoints: [1000] }
  */
 export function projectNodeHistoryTimeline(
   history: Pick<NodeTestHistoryIndex, 'entries'>,
+  endedAtMs?: number,
 ): NodeHistoryTimeline | undefined {
   const first = history.entries[0],
     last = history.entries.at(-1)
+  // A recording that ended after its last event (a server replay's `end`) ends its timeline there.
+  const endMs = Math.max(last?.elapsedMs ?? 0, endedAtMs ?? 0)
   // One event, or events at one time, have no span to mark (the browser transport draws none either).
-  if (!first || !last || last.elapsedMs <= first.elapsedMs) return undefined
-  const range = { startMs: first.elapsedMs, endMs: last.elapsedMs }
+  if (!first || !last || endMs <= first.elapsedMs) return undefined
+  const range = { startMs: first.elapsedMs, endMs }
   const timeline = projectHistoricalTimeline(
     {
       pausedIntervals: [],

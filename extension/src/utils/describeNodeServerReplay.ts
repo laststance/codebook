@@ -1,5 +1,12 @@
 import type { NodeServerHistorySummary } from '../nodeServerHistoryTypes'
 
+import type {
+  ServerReplayEvent,
+  ServerReplayModel,
+} from './buildServerReplayModel'
+import { formatEventSeconds } from './formatEventSeconds'
+import { stripTerminalControls } from './stripTerminalControls'
+
 /**
  * The fixed words of a server replay's surfaces: the server counterpart of `NODE_TEST_REPLAY_TEXT`, with the same keys (so a surface swaps catalogs by profile) and the server's own words for the request, the response and the understanding. Part of the node-server UI adapter: the storage layer never imports it.
  * The Study pane receives them through its options, as its client code imports nothing.
@@ -57,8 +64,19 @@ export const NODE_SERVER_REPLAY_TEXT = {
   /** The fixed response region before the response entry. */
   noResponseYet: 'No response recorded yet at this moment.',
   emptyBody: 'Response body is empty.',
-  /** Names the slider for a screen reader. */
+  /** Why Open answers a server replay another window is still recording. */
+  stillRecording:
+    'This server replay is still being recorded in another window. It opens once the recording is sealed or interrupted.',
+  /** Names the scrolling block of the recorded response body for a screen reader. */
+  responseBodyLabel: 'Recorded response body',
+  /** Names the slider, the readout, Play and Pause for a screen reader, and words the note under the understanding checkbox. */
   recordedTime: 'recorded server time',
+  noRecordedTime: 'No recorded server time selected',
+  journalPlayback: 'Server journal playback',
+  playLabel: 'Play server replay',
+  pauseLabel: 'Pause server replay',
+  understandingNote:
+    'Only your explicit choice is saved; a response never marks understanding.',
   /** The label of the sequence diagram's group. */
   sequenceLabel: 'Server replay learning sequence',
 } as const
@@ -155,4 +173,165 @@ export function describeServerReplayRow(
           ? ' → no response'
           : ''
   return `${summary.title ?? summary.question} · Server replay · ${summary.requestLine}${answer} · ${describeServerRowStatus(summary)}`
+}
+
+/** The words of one event in the Study pane's event list: its heading and its body. */
+export type ServerReplayEventRow = { heading: string; body: string }
+
+/**
+ * Words a stop's place for the locator, the event list and the step actions: `Stop <n>` or `Stop <n> · hit <k>` for a stop hit more than once.
+ * @param event - The stop event.
+ * @param model - The replay model, which knows the declared stops hit more than once.
+ * @returns The stop's words.
+ * @example describeServerStopOf(stop, model) // => 'Stop 2 · hit 3'
+ */
+function describeServerStopOf(
+  event: Extract<ServerReplayEvent, { type: 'stop' }>,
+  model: Pick<ServerReplayModel, 'repeatedStops'>,
+): string {
+  return describeServerStop(
+    event.declaredStopIndex + 1,
+    event.hit,
+    model.repeatedStops.has(event.declaredStopIndex),
+  )
+}
+
+/**
+ * Words the Study section's locator of the selected event of a server replay.
+ * @param event - The selected event.
+ * @param model - The replay model.
+ * @returns `Request · <t> s`, `Request not sent: <code> · <t> s`, `Output · <t> s`, `Stop <n> · hit <k> · <t> s`, `Response <status> · <t> s` or `Request failed: <code> · <t> s`.
+ * @example describeServerPosition(response, model) // => 'Response 201 · 0.12 s'
+ */
+export function describeServerPosition(
+  event: ServerReplayEvent,
+  model: Pick<ServerReplayModel, 'repeatedStops'>,
+): string {
+  const time = `${formatEventSeconds(event.elapsedMs)} s`
+  switch (event.type) {
+    case 'request':
+      return `${NODE_SERVER_REPLAY_TEXT.eventRequest} · ${time}`
+    case 'request-withdrawn':
+      return `Request not sent: ${event.code} · ${time}`
+    case 'output':
+      return `${NODE_SERVER_REPLAY_TEXT.eventOutput} · ${time}`
+    case 'stop':
+      return `${describeServerStopOf(event, model)} · ${time}`
+    case 'response':
+      return `${NODE_SERVER_REPLAY_TEXT.eventResult} ${event.status} · ${time}`
+    case 'request-failed':
+      return `Request failed: ${event.code} · ${time}`
+  }
+}
+
+/**
+ * Words the action of a summary step that cites an event of a server replay.
+ * @param event - The cited event.
+ * @param model - The replay model.
+ * @returns `Inspect stop <n> · hit <k> · <t> s`, `Show request · <t> s`, `Show output · <t> s`, `Show response · <t> s` and so on.
+ * @example describeServerStepAction(stop, model) // => 'Inspect Stop 1 · 0.42 s'
+ */
+export function describeServerStepAction(
+  event: ServerReplayEvent,
+  model: Pick<ServerReplayModel, 'repeatedStops'>,
+): string {
+  const time = `${formatEventSeconds(event.elapsedMs)} s`
+  switch (event.type) {
+    case 'stop':
+      return `Inspect ${describeServerStopOf(event, model)} · ${time}`
+    case 'request':
+    case 'request-withdrawn':
+      return `Show request · ${time}`
+    case 'output':
+      return `Show output · ${time}`
+    case 'response':
+      return `Show response · ${time}`
+    case 'request-failed':
+      return `Show request failure · ${time}`
+  }
+}
+
+/**
+ * Words the Study section's status line of a server replay: the answer, the capture and how many stops the chat explained.
+ * @param input - The history's status, how it answered, and the stops counted and explained.
+ * @returns `Server replay · recording`, or `<answer> · capture <status> · <k> of <m> stops explained`.
+ * @example describeServerStudyStatus({ status: 'complete', answer: 'Response 201', stopCount: 2, explainedStopCount: 1 }) // => 'Response 201 · capture complete · 1 of 2 stops explained'
+ */
+export function describeServerStudyStatus(input: {
+  status: ServerReplayModel['status']
+  answer: string
+  stopCount: number
+  explainedStopCount: number
+}): string {
+  return input.status === 'recording'
+    ? `${NODE_SERVER_REPLAY_TEXT.heading} · recording`
+    : `${input.answer} · capture ${input.status} · ${input.explainedStopCount} of ${input.stopCount} stops explained`
+}
+
+/**
+ * Words how a server replay answered, for its status line and the response row of its event list.
+ * @param terminal - The recorded response or request failure, absent when the journal holds neither.
+ * @returns `Response <status>`, `Request failed: <code>` or `No response recorded`.
+ * @example describeServerAnswer(model.terminal) // => 'Response 201'
+ */
+export function describeServerAnswer(
+  terminal: ServerReplayModel['terminal'],
+): string {
+  if (terminal?.type === 'response')
+    return `${NODE_SERVER_REPLAY_TEXT.eventResult} ${terminal.status}`
+  return terminal ? `Request failed: ${terminal.code}` : 'No response recorded'
+}
+
+/**
+ * Words one event of the server replay's event list: its heading with the time, and its body (the request line, the output text, a stop's frame and inspected values, the response's content type and body, the failure's message).
+ * The event comes from the shown model, so every text is free of terminal controls already.
+ * @param event - The event.
+ * @param model - The replay model.
+ * @returns The heading and the body.
+ * @example describeServerEventRow(output, model) // => { heading: 'Output · stdout · 0.12 s', body: 'listening\n' }
+ */
+export function describeServerEventRow(
+  event: ServerReplayEvent,
+  model: Pick<ServerReplayModel, 'repeatedStops'>,
+): ServerReplayEventRow {
+  const time = `${formatEventSeconds(event.elapsedMs)} s`
+  switch (event.type) {
+    case 'request':
+      return {
+        heading: `${NODE_SERVER_REPLAY_TEXT.eventRequest} · ${time}`,
+        body: `${event.method} ${event.path}`,
+      }
+    case 'request-withdrawn':
+      return {
+        heading: `Request not sent: ${event.code} · ${time}`,
+        body: '',
+      }
+    case 'output':
+      return {
+        heading: `${NODE_SERVER_REPLAY_TEXT.eventOutput} · ${event.channel} · ${time}`,
+        body: event.text,
+      }
+    case 'stop':
+      return {
+        heading: `${describeServerStopOf(event, model)} · ${event.source.path}:${event.source.line}:${event.source.column} · ${time}`,
+        body: [
+          event.frame.name,
+          ...Object.entries(event.facts).map(([name, value]) =>
+            stripTerminalControls(
+              `${name}: ${typeof value === 'string' ? value : JSON.stringify(value)}`,
+            ),
+          ),
+        ].join('\n'),
+      }
+    case 'response':
+      return {
+        heading: `${NODE_SERVER_REPLAY_TEXT.eventResult} ${event.status} · ${event.contentType ?? 'no content type'} · ${time}`,
+        body: event.body,
+      }
+    case 'request-failed':
+      return {
+        heading: `Request failed: ${event.code} · ${time}`,
+        body: event.message,
+      }
+  }
 }

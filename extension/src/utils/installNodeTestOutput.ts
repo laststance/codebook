@@ -228,15 +228,35 @@ export function installNodeTestOutput(
     else if (anchor && drawn.has(anchor.line)) restoreAnchor(anchor)
     else settle()
   }
+  /** Brings a server replay's request and response regions to a view's in place; a region the view lacks is hidden. */
+  const applyServerRegions = (view: NodeTestApplicationView): void => {
+    const request = view.request
+    element('test-output-request').hidden = !request
+    const requestLine = element('test-output-request-line')
+    requestLine.textContent = request?.line ?? ''
+    requestLine.title = request?.line ?? ''
+    element('test-output-request-claim').textContent = request?.claim ?? ''
+    const response = view.response
+    element('test-output-response').hidden = !response
+    element('test-output-response-state').textContent = response?.state ?? ''
+    const body = element('test-output-response-body')
+    body.textContent = response?.body ?? ''
+    body.hidden = response?.body === undefined
+    line('test-output-response-note', response?.note)
+  }
   const apply = (view: NodeTestApplicationView): void => {
     // The line the learner reads, taken before the lines change: a view that drops earlier lines would otherwise move it up (F354).
     const readingAnchor = follow ? undefined : currentAnchor()
     document.title = view.name
     element('test-output-main').setAttribute('aria-label', view.name)
     element('test-output-time').textContent = view.time
-    const test = element('test-output-test')
-    test.textContent = view.test
-    test.title = view.test
+    // A server replay has no cited test; its request and response regions take that place.
+    if (view.profile === 'node-server') applyServerRegions(view)
+    else {
+      const test = element('test-output-test')
+      test.textContent = view.test
+      test.title = view.test
+    }
     output.setAttribute('aria-label', view.region ?? view.name)
     line('test-output-inspector', view.inspector)
     line('test-output-cut', view.cut)

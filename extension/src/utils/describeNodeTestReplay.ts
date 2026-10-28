@@ -56,6 +56,17 @@ export const NODE_TEST_REPLAY_TEXT = {
   eventOutput: 'Output',
   eventStop: 'Stop',
   eventResult: 'Result',
+  /** The understanding checkbox's label, the note under it, and the words the shared transport's slider, readout, Play and Pause give a screen reader; a server replay words each with its own catalog. */
+  understanding: 'I understand this test history',
+  understandingNote:
+    'Only your explicit choice is saved; test success never marks understanding.',
+  recordedTime: 'recorded test time',
+  noRecordedTime: 'No recorded test time selected',
+  journalPlayback: 'Test journal playback',
+  playLabel: 'Play test replay',
+  pauseLabel: 'Pause test replay',
+  /** The label of the sequence diagram's group. */
+  sequenceLabel: 'Test replay learning sequence',
 } as const
 
 /** What a test replay shows the learner outside its Save, keyed by surface and value (the String catalog of plan version 7). */

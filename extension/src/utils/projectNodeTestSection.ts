@@ -124,13 +124,29 @@ export function projectNodeTestSection(
       count: history.entries.length,
     }),
     verdict,
+    ...stopMoves(stops, selected),
+    ...marks,
+  }
+}
+
+/**
+ * Says whether a stop lies before and after the selected event, for Previous stop and Next stop; shared by the test replay's section and the server replay's ({@link projectServerSection}).
+ * @param stops - The replay's stop events.
+ * @param selected - The selected event; absent before one is selected, when every stop lies after it.
+ * @returns `previousStop` and `nextStop`.
+ * @example stopMoves([{ sequence: 2 }, { sequence: 4 }], { sequence: 3 }) // => { previousStop: true, nextStop: true }
+ */
+export function stopMoves(
+  stops: readonly Pick<HistoryEvent, 'sequence'>[],
+  selected: Pick<HistoryEvent, 'sequence'> | undefined,
+): Pick<NodeTestSectionView, 'previousStop' | 'nextStop'> {
+  return {
     previousStop: stops.some(
       (stop) => selected !== undefined && stop.sequence < selected.sequence,
     ),
     nextStop: stops.some(
       (stop) => selected === undefined || stop.sequence > selected.sequence,
     ),
-    ...marks,
   }
 }
 
@@ -238,8 +254,8 @@ function positionLine(
  * @returns The shown step's id and content, and the other steps' ids.
  * @example momentSteps(stop, learning, 'keep').selectedStepId // => 'keep'
  */
-function momentSteps(
-  selected: HistoryEvent | undefined,
+export function momentSteps(
+  selected: Pick<HistoryEvent, 'sequence'> | undefined,
   learning: NodeLearningSummaryProjection | undefined,
   chosenStepId: string | undefined,
 ): {
