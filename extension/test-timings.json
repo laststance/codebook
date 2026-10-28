@@ -1171,7 +1171,7 @@
       "totalMs": 290
     },
     "nodeServerLearningSave.test.js": {
-      "totalMs": 1700
+      "totalMs": 2000
     },
     "nodeServerMcpPublication.test.js": {
       "totalMs": 1149

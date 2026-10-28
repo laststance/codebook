@@ -338,7 +338,7 @@ test('a seal whose summary read rejects stays sealed with an unknown summary and
       {
         surface: 'HISTORY_SUMMARY_UNAVAILABLE',
         cause:
-          'The sealed history was kept, but its summary could not be read within the seal bound; the run resource reads it again.',
+          'The sealed history was kept, but its summary could not be read (the read failed or passed the seal bound); the run resource reads it again.',
       },
     ],
   )

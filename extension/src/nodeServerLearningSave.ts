@@ -68,6 +68,11 @@ type SaveState =
 export class NodeServerLearningSave {
   private readonly states = new Map<string, SaveState>()
   private readonly saves = new SaveSerializer()
+  /** The sealed-summary read in flight per study, shared by Saves that overlap it. */
+  private readonly summaryReads = new Map<
+    string,
+    Promise<{ summary: NodeServerHistorySummary | undefined }>
+  >()
   /** The question being asked, so a second Save while it is open joins it: one modal, one save. */
   private question?: Promise<string | undefined>
 
@@ -326,19 +331,26 @@ export class NodeServerLearningSave {
     studyId: string,
     boundMs: number,
   ): Promise<{ summary: NodeServerHistorySummary | undefined } | undefined> {
-    const reading = this.host.store()?.summarize(studyId)
-    if (!reading) return { summary: undefined }
-    return waitWithin(
-      reading.then(
+    // Saves of one study share the read in flight, so a stalled store holds one pending read, not one per click.
+    let reading = this.summaryReads.get(studyId)
+    if (!reading) {
+      const started = this.host.store()?.summarize(studyId)
+      if (!started) return { summary: undefined }
+      reading = started.then(
         (summary) => ({ summary }),
         () => ({ summary: undefined }),
-      ),
-      {
-        timeoutMs: boundMs,
-        signal: new AbortController().signal,
-        sleep: sleepUntilAborted,
-      },
-    )
+      )
+      this.summaryReads.set(studyId, reading)
+      void reading.finally(() => {
+        if (this.summaryReads.get(studyId) === reading)
+          this.summaryReads.delete(studyId)
+      })
+    }
+    return waitWithin(reading, {
+      timeoutMs: boundMs,
+      signal: new AbortController().signal,
+      sleep: sleepUntilAborted,
+    })
   }
 
   /** Writes one Output entry for a failure with its sanitized cause and stack. */

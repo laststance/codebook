@@ -513,3 +513,29 @@ test('Save whose sealed summary read never settles answers within its bound and 
     /Another learning session is being saved/,
   )
 })
+
+// protects=repeated Saves over a sealed history whose summary read stalls share one read instead of stacking one stalled read per click; fails_when=each Save starts its own summarize, so a hung store collects a pending read per click; why_new=last-round red team (ship pass 3); seam=summaryReadBoundMs (non-test callers: 1, the production bound by default); no_claim=which file system stalls
+test('two Saves over a stalled sealed summary share one summary read', async (context) => {
+  // Arrange
+  const { save, record, run, service, repository } = await saveOverRun(
+    context,
+    { summaryReadBoundMs: 30 },
+  )
+  await run.sendRequest('k1')
+  await service.stop({ instanceId: service.instanceId, runId: record.id })
+  const sealed = record.nodeServer?.history?.sealed
+  assert.ok(sealed)
+  sealed.summary = undefined
+  let reads = 0
+  repository.serverHistories.summarize = () => {
+    reads += 1
+    return new Promise<never>(() => undefined)
+  }
+
+  // Act
+  await save.save(record)
+  await save.save(record)
+
+  // Assert
+  assert.equal(reads, 1)
+})

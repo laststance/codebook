@@ -511,6 +511,8 @@ export class StudyService {
   nodeServerHistoryStartBoundMs = NODE_SERVER_HISTORY_START_BOUND_MS
   /** How long the seal of a node-server history may take before it is abandoned; a test sets a short one. */
   nodeServerHistorySealBoundMs = NODE_SERVER_HISTORY_SEAL_BOUND_MS
+  /** Sealed server histories whose unreadable summary already has its Output › Codebook entry. */
+  private readonly nodeServerSummaryDiagnosed = new WeakSet<object>()
   /** How long the learner has to answer the confirmation of a state-changing node-server request before it reads as not confirmed (D6); a test sets a short one. */
   confirmationTimeoutMs = REPOSITORY_PAUSE_HOLD_TIMEOUT_MS
   /** The extension's own storage folders beside {@link storageRoot}, which the extension sets when it creates the service; no shown cause names them. */
@@ -4921,9 +4923,15 @@ export class StudyService {
       this.nodeServerHistorySealBoundMs,
     )
     // A sealed history whose summary could not be read (failed, or past the seal's bound) leaves a trace in Output › Codebook; the run resource reads it again later.
-    if (history.status === 'sealed' && !history.sealed?.summary) {
+    if (
+      history.status === 'sealed' &&
+      !history.sealed?.summary &&
+      !this.nodeServerSummaryDiagnosed.has(history)
+    ) {
+      // Once per history: a retried stop joins the same seal and writes no second entry.
+      this.nodeServerSummaryDiagnosed.add(history)
       const cause =
-        'The sealed history was kept, but its summary could not be read within the seal bound; the run resource reads it again.'
+        'The sealed history was kept, but its summary could not be read (the read failed or passed the seal bound); the run resource reads it again.'
       this.diagnose(
         'HISTORY_SUMMARY_UNAVAILABLE',
         record,
