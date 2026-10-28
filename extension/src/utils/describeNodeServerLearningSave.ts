@@ -1,5 +1,10 @@
 import { cutCauseForDisplay } from './cutCauseForDisplay'
 import { NODE_LEARNING_SAVE_ACTION } from './describeNodeLearningSave'
+import {
+  describeNodeServerSealFailure,
+  NODE_SERVER_SEAL_FAILURE_PREFIX,
+} from './describeNodeServerSealFailure'
+import { stripTerminalControls } from './stripTerminalControls'
 
 /** What a server run's Save asks or tells the learner. */
 export type NodeServerSaveMessage =
@@ -66,7 +71,7 @@ export function describeNodeServerLearningSave(
       }
     case 'partial':
       return {
-        text: `Server replay saved as partial: ${message.firstReason.replace(/\.$/, '')}${message.moreCount ? ` (+${message.moreCount} more)` : ''}.`,
+        text: `Server replay saved as partial: ${stripTerminalControls(message.firstReason).replace(/\.$/, '')}${message.moreCount ? ` (+${message.moreCount} more)` : ''}.`,
         actions: [NODE_LEARNING_SAVE_ACTION.openReplay],
       }
     case 'explanation-missing':
@@ -75,12 +80,12 @@ export function describeNodeServerLearningSave(
         actions: [NODE_LEARNING_SAVE_ACTION.openReplay],
       }
     case 'failed': {
-      const cause = cutCauseForDisplay(message.cause)
+      const cause = cutCauseForDisplay(stripTerminalControls(message.cause))
       // A failure already worded by the seal ('Learning replay could not be saved: …') is shown as it is, not prefixed twice.
       return {
-        text: cause.startsWith('Learning replay could not be saved')
+        text: cause.startsWith(NODE_SERVER_SEAL_FAILURE_PREFIX)
           ? cause
-          : `Learning replay could not be saved: ${cause.replace(/\.$/, '')}.`,
+          : describeNodeServerSealFailure(cause),
       }
     }
   }

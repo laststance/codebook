@@ -112,6 +112,7 @@ import {
   ReplayDebuggerStartError,
   StudyError,
   StudyRemovedWithItsRecordingError,
+  UnreportedEditorFocusError,
 } from './errors'
 import { learningItemSchema } from './identitySchemas'
 import {
@@ -11579,7 +11580,7 @@ export class StudyWorkspace {
   }
 
   /** Keeps capture/save reachable beside native chat: every {@link publish} calls it, and it updates the status bar item without changing editor focus and assigns the item's command only when the command or its study changed. @example this.publishLearningSave() */
-  private publishLearningSave(): void {
+  publishLearningSave(): void {
     if (this.disposed) return
     const record = this.currentRecord(),
       studyId =
@@ -11977,10 +11978,9 @@ export class StudyWorkspace {
       this.nodeServerHistoryCatalog.some(
         (history) => history.studyId === studyId,
       ) ||
-      [...(this.service?.records.values() ?? [])].some(
-        (record) =>
-          record.profile === NODE_TEST_PROFILE &&
-          `${this.service?.instanceId}_${record.id}` === studyId,
+      // A node-server run just saved is a server replay before the catalog lists it, never an ordinary recording.
+      [NODE_TEST_PROFILE, NODE_SERVER_PROFILE].some(
+        (profile) => this.recordOfStudy(studyId)?.profile === profile,
       )
     )
   }
@@ -12013,6 +12013,8 @@ export class StudyWorkspace {
     const entry = this.supersedeNodeHistoryEntries(),
       overtaken = this.nodeHistoryEntryCancellation.signal
     this.nodeHistoryEntriesInProgress++
+    // A control refused while this open is under way is newer than the open and keeps its line.
+    const refusalsBefore = this.controlRefusals
     try {
       // Entries take turns entering the composition; a newer entry made meanwhile is the learner's latest choice (EN19).
       const previousTurn = this.nodeHistoryEntryTurn
@@ -12050,6 +12052,12 @@ export class StudyWorkspace {
         return
       }
       if (outcome.status !== 'failed') {
+        // A replay that opened is a handled choice: the refusal an earlier open of a test or server replay left as a control line (the retry inside the failed entry is refused too) is stale beside it.
+        if (
+          this.controlRefusals === refusalsBefore &&
+          this.dropChoiceRetiredErrors()
+        )
+          this.publish()
         // The learner's own replay open, after the replay is shown: the summary moves beside the chat once per profile (F209).
         await this.moveSummaryBesideChatOnce()
         return
@@ -12107,7 +12115,10 @@ export class StudyWorkspace {
       // A newer entry answers for the learner now; an entry whose focus wait its supersession aborted ends here quietly too.
       if (entry !== this.nodeHistoryEntryRequest) return false
       // A refused entry is told like a failed replay open: one Output › Codebook entry and the notification, never a bare command failure (F382, F384).
-      await this.leaveEmptySummaryComposition()
+      // A refusal for a main editor that reported no keyboard focus is not followed by a reopen: the reopen would meet the same guard, wait five seconds again and log the same entry a second time (Cycle 0060, N60). The composition is dropped without a measurement instead.
+      if (error instanceof UnreportedEditorFocusError)
+        this.dropEmptySummaryCompositionUnmeasured(error)
+      else await this.leaveEmptySummaryComposition()
       this.tellTestReplayOpenFailure(
         studyId,
         error,
@@ -12182,9 +12193,8 @@ export class StudyWorkspace {
     // The keep-open refusal has told the learner already, so no second notification follows; the refusal is still recorded once in Output › Codebook, where other open refusals are, so a later take can tell why the replay did not open (F407).
     if (answer === 'told')
       this.diagnostics?.log({
-        surface: 'open:test-replay',
+        ...this.replayOpenDiagnosticIdentity(studyId),
         studyId,
-        profile: NODE_TEST_PROFILE,
         cause,
       })
     else this.tellTestReplayOpenFailure(studyId, error, cause)
@@ -12243,22 +12253,76 @@ export class StudyWorkspace {
    * @example await this.leaveEmptySummaryComposition()
    */
   private async leaveEmptySummaryComposition(): Promise<void> {
-    if (
-      !this.opened ||
-      this.closing ||
-      !this.summaryComposition ||
-      this.recordingActive ||
-      this.testReplayHoldsComposition() ||
-      // A Return or a presentation change under way arranges the reader itself (Cycle 0052 task 12).
-      this.returningCurrent !== undefined ||
-      this.presentationTransition !== undefined
-    )
-      return
+    if (!this.standsInEmptySummaryComposition()) return
     try {
       await this.open()
     } catch (error) {
       this.report('control', error)
     }
+  }
+
+  /**
+   * Says whether the reader stands in a summary composition that shows no replay and nothing else arranges; the shared guard of {@link leaveEmptySummaryComposition} and {@link dropEmptySummaryCompositionUnmeasured}.
+   * @returns `true` for an open reader in the summary composition with no recording, no held test replay, no Return and no presentation change under way.
+   * @example if (!this.standsInEmptySummaryComposition()) return
+   */
+  private standsInEmptySummaryComposition(): boolean {
+    return (
+      this.opened &&
+      !this.closing &&
+      this.summaryComposition &&
+      !this.recordingActive &&
+      !this.testReplayHoldsComposition() &&
+      // A Return or a presentation change under way arranges the reader itself (Cycle 0052 task 12).
+      this.returningCurrent === undefined &&
+      this.presentationTransition === undefined
+    )
+  }
+
+  /**
+   * Returns the reader to the composition its selection asks for after a refused entry, without measuring the main editor: the summary composition and the Learning summary's replay document are withdrawn and the Study pane is created again at its destination, so the refusal shows there and the next selection or Open arranges the panes; called by {@link enterCompositionForEntry} for a refusal whose cause (a main editor that reported no keyboard focus) a second measurement would meet again after another wait.
+   * @param refusal - The refusal the entry ended with; its sentence stands on the returned Study pane's control line until the next handled choice.
+   * @returns Nothing; a reader that stands in no empty summary composition is left as it is.
+   * @example this.dropEmptySummaryCompositionUnmeasured(error)
+   */
+  private dropEmptySummaryCompositionUnmeasured(
+    refusal: UnreportedEditorFocusError,
+  ): void {
+    if (!this.standsInEmptySummaryComposition()) return
+    this.forgetUnopenedComposition()
+    // open() disposed the Study pane before its measurement failed: the pane is created again at its destination without a measurement, so the refusal is told there and the reader never stands with no pane (Cycle 0060 final range, CR2-1).
+    this.presentationMode = 'study-workspace'
+    try {
+      this.ensureContext()
+      // The report publishes the pane with the refusal's line.
+      this.report('node-history-control', refusal.message)
+    } catch (error) {
+      this.report('control', error)
+    }
+  }
+
+  /**
+   * Names the Output › Codebook entry's surface and profile for a replay that did not open, from the catalogs, as the failure notification's wording does; called by {@link tellTestReplayOpenFailure} and {@link answerFailedTestReplayOpen}.
+   * @param studyId - The replay's study id.
+   * @returns `open:server-replay` with profile `node-server` for a server replay (listed, or a node-server run of this window not yet listed); `open:test-replay` with `node-test` otherwise.
+   * @example this.replayOpenDiagnosticIdentity(studyId) // => { surface: 'open:server-replay', profile: 'node-server' }
+   */
+  private replayOpenDiagnosticIdentity(studyId: string): {
+    surface: 'open:server-replay' | 'open:test-replay'
+    profile: typeof NODE_SERVER_PROFILE | typeof NODE_TEST_PROFILE
+  } {
+    const isListedTest = this.nodeHistoryCatalog.some(
+      (history) => history.studyId === studyId,
+    )
+    const isServer =
+      !isListedTest &&
+      (this.nodeServerHistoryCatalog.some(
+        (history) => history.studyId === studyId,
+      ) ||
+        this.recordOfStudy(studyId)?.profile === NODE_SERVER_PROFILE)
+    return isServer
+      ? { surface: 'open:server-replay', profile: NODE_SERVER_PROFILE }
+      : { surface: 'open:test-replay', profile: NODE_TEST_PROFILE }
   }
 
   /**
@@ -12275,10 +12339,10 @@ export class StudyWorkspace {
     cause: string,
   ): void {
     const stack = sanitizedStack(error, this.privateRoots())
+    const identity = this.replayOpenDiagnosticIdentity(studyId)
     this.diagnostics?.log({
-      surface: 'open:test-replay',
+      ...identity,
       studyId,
-      profile: NODE_TEST_PROFILE,
       cause,
       ...(stack ? { stack } : {}),
     })
@@ -12290,8 +12354,10 @@ export class StudyWorkspace {
     )
     const failure = describeNodeLearningSave({
       kind: 'open-failed',
-      // A server replay that cannot open is worded as one, never as a test replay.
-      ...(!summary && serverSummary ? { profile: NODE_SERVER_PROFILE } : {}),
+      // A server replay that cannot open is worded as one, never as a test replay, also before Saved studies lists it.
+      ...(identity.profile === NODE_SERVER_PROFILE
+        ? { profile: NODE_SERVER_PROFILE }
+        : {}),
       title: summary
         ? [summary.testFile, ...(summary.testTitles ?? [])].join(' › ')
         : serverSummary
@@ -21295,29 +21361,57 @@ export class StudyWorkspace {
               )
             },
           }
+      // Cursor's Agent chat group (another part, named active before the borrow) can take the keyboard back a few milliseconds after the first group's focus command: the first group's Codebook pane then reports itself active only for a moment and never while the poll below looks (Cycle 0060, N60). That report is the main editor's focus report, kept here as a latch; the post-wait layout read must still answer for the main editor.
+      let paneFocusReportedBesideChat = false
       // Empty/opaque primary panes need the actual requested citation, never a disposable placeholder or unobserved command result.
       beforeScopeFocus?.(useCitation ? undefined : borrowedFocus)
+      // Created after the check above, which can refuse, so a refusal leaves no view-state listener behind.
+      const paneFocusWatches =
+        !useCitation &&
+        !sourceBorrow &&
+        identifiableFirst &&
+        namedColumn > count
+          ? [this.app, this.contextPanel].flatMap((candidate) =>
+              candidate
+                ? [
+                    candidate.onDidChangeViewState(() => {
+                      if (
+                        candidate.active &&
+                        candidate.viewColumn === vscode.ViewColumn.One
+                      )
+                        paneFocusReportedBesideChat = true
+                    }),
+                  ]
+                : [],
+            )
+          : []
       this.mainEditorFocusBorrows++
       this.firstGroupFrontAtBorrow = undefined
-      if (useCitation) {
-        assertAcquiredFocus = await acquireSourceFocus!()
-        assertCurrent()
-        assertGroups()
-        assertAcquiredFocus()
-      } else if (sourceBorrow) {
-        await this.showTextDocumentNoted(sourceBorrow.document, {
-          viewColumn: sourceBorrow.viewColumn,
-          preserveFocus: false,
-          preview: false,
-        })
-        assertCurrent()
-        assertGroups()
-      } else {
-        await this.executeEditorCommand(
-          'workbench.action.focusFirstEditorGroup',
-        )
-        assertCurrent()
-        assertGroups()
+      try {
+        if (useCitation) {
+          assertAcquiredFocus = await acquireSourceFocus!()
+          assertCurrent()
+          assertGroups()
+          assertAcquiredFocus()
+        } else if (sourceBorrow) {
+          await this.showTextDocumentNoted(sourceBorrow.document, {
+            viewColumn: sourceBorrow.viewColumn,
+            preserveFocus: false,
+            preview: false,
+          })
+          assertCurrent()
+          assertGroups()
+        } else {
+          await this.executeEditorCommand(
+            'workbench.action.focusFirstEditorGroup',
+          )
+          assertCurrent()
+          assertGroups()
+        }
+      } catch (error) {
+        // A failed borrow ends its watch; the wait below ends the others.
+        for (const watch of paneFocusWatches) watch.dispose()
+        throw error
       }
       // What the borrow left in front of the first group, for a refused change's give-back (row 728).
       this.firstGroupFrontAtBorrow = this.frontTabOfFirstGroup()
@@ -21345,36 +21439,43 @@ export class StudyWorkspace {
             firstFocused() ||
             primaryEditorReported() ||
             sourceEditorReported() ||
+            paneFocusReportedBesideChat ||
             this.isSoleMainGroupBesideChat(count ?? 0)
           )
         },
         'identifiable primary editor focus',
         PRESENTATION_READY_TIMEOUT_MS,
         signal,
-      ).catch((error: unknown) => {
-        signal?.throwIfAborted()
-        // Cursor never reports primary focus beside a learner's preview tab; name that tab and its remedy instead of a bare timeout.
-        const foreignPreview = vscode.window.tabGroups.all
-          .filter((group) => group.viewColumn <= mainGroupCount)
-          .flatMap((group) => group.tabs.map((tab) => ({ group, tab })))
-          .find(
-            ({ tab }) =>
-              tab.isPreview &&
-              !this.isCodebookPaneInput(tab.input) &&
-              !this.isCapturedSourceInput(tab.input),
+      )
+        .finally(() => {
+          for (const watch of paneFocusWatches) watch.dispose()
+        })
+        .catch((error: unknown) => {
+          signal?.throwIfAborted()
+          // Cursor never reports primary focus beside a learner's preview tab; name that tab and its remedy instead of a bare timeout.
+          const foreignPreview = vscode.window.tabGroups.all
+            .filter((group) => group.viewColumn <= mainGroupCount)
+            .flatMap((group) => group.tabs.map((tab) => ({ group, tab })))
+            .find(
+              ({ tab }) =>
+                tab.isPreview &&
+                !this.isCodebookPaneInput(tab.input) &&
+                !this.isCapturedSourceInput(tab.input),
+            )
+          // Only the expired wait is renamed; a learner focus change keeps its own refusal.
+          if (didLearnerChangePrimaryTab) throw error
+          if (!foreignPreview)
+            throw new UnreportedEditorFocusError(
+              this.tellUnreportedEditorFocus(focusArmed),
+            )
+          throw new StudyError(
+            'PRESENTATION_UNAVAILABLE',
+            foreignPreviewObstacle(
+              this.editorTabName(foreignPreview.tab),
+              foreignPreview.group.viewColumn,
+            ),
           )
-        // Only the expired wait is renamed; a learner focus change keeps its own refusal.
-        if (didLearnerChangePrimaryTab) throw error
-        throw new StudyError(
-          'PRESENTATION_UNAVAILABLE',
-          foreignPreview
-            ? foreignPreviewObstacle(
-                this.editorTabName(foreignPreview.tab),
-                foreignPreview.group.viewColumn,
-              )
-            : this.tellUnreportedEditorFocus(focusArmed),
-        )
-      })
+        })
       assertCurrent()
       assertGroups()
       // The editor's own late return to the Repository Wiki's group beside the borrowed text editor is no learner change (finding 606: right after Study Close).
@@ -21404,6 +21505,17 @@ export class StudyWorkspace {
       count = editorLayoutGroupCount(layout)
       if (count === undefined || count > vscode.window.tabGroups.all.length)
         throw new Error('The primary editor grid could not be measured safely.')
+      // Only a moment's pane report proved the focus: the read must have answered for the main editor, so every group beyond its count holds chats only; a read the chat part answered after taking the keyboard back is refused as before.
+      if (
+        paneFocusReportedBesideChat &&
+        !firstFocused() &&
+        !primaryEditorReported() &&
+        !sourceEditorReported() &&
+        !this.holdsOnlyChatsBeyond(count)
+      )
+        throw new UnreportedEditorFocusError(
+          this.tellUnreportedEditorFocus(focusArmed),
+        )
       // The column the borrowed editor is given back in: its own, or its diff's group's (row 709), within the measured columns or else beyond them, in VS Code's floating window (row 720).
       const editorColumn =
         this.textEditorColumnOf(editor, count) ??
@@ -23060,7 +23172,7 @@ export class StudyWorkspace {
    * The entry names the groups and tabs before the first group was focused and now, so the next native take tells what the first group held while the editor reported nothing.
    * @param armed - The time the wait began and the groups before the focus command.
    * @returns The sentence {@link unreportedEditorFocusObstacle} words.
-   * @example throw new StudyError('PRESENTATION_UNAVAILABLE', this.tellUnreportedEditorFocus(armed))
+   * @example throw new UnreportedEditorFocusError(this.tellUnreportedEditorFocus(armed))
    */
   private tellUnreportedEditorFocus(armed: {
     atMs: number

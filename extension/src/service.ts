@@ -171,11 +171,12 @@ import { readerNotFollowingRunRefusal } from './utils/readerNotFollowingRunRefus
 import { releaseVitestListings } from './utils/releaseVitestListings'
 import { resolveCapturedFactPaths } from './utils/resolveCapturedFactPaths'
 import {
-  hidePrivateRoots,
+  createRootHider,
   sanitizeCause,
   type CauseRoots,
 } from './utils/sanitizeCause'
 import { sanitizedStack } from './utils/sanitizedStack'
+import { sleepUntilAborted } from './utils/sleepUntilAborted'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
 import { startNodeServerHistory } from './utils/startNodeServerHistory'
 import { StorageLockHeldError } from './utils/storageLockHeldError'
@@ -184,6 +185,7 @@ import { systemErrorCode } from './utils/systemErrorCode'
 import { thrownMessage } from './utils/thrownMessage'
 import { vitestSearchField } from './utils/vitestSearchField'
 import { waitForNextRunState } from './utils/waitForNextRunState'
+import { waitWithin } from './utils/waitWithin'
 import { withKnownNodeHistory } from './utils/withKnownNodeHistory'
 
 /** What the run resource tells an agent after the result while no explanation of the run carries a learning summary; `codebook://help/studies` describes the step in the last entry of its sequence. */
@@ -281,6 +283,8 @@ export interface NodeServerRecordState {
   subscription?: { dispose(): void }
   /** The failures already written to the Output channel (by code), so one failure is written once. */
   loggedFailures: Set<string>
+  /** The service's own terminal cause of the run's end (the whole-run deadline), which is not the run's `runFailure`; the history's seal reads it beside the run's failure, and never reads the stale `record.error`. */
+  terminalFailure?: StudyError
   /** The run's history, from before its launch to its seal; absent when none could start ({@link historyUnavailable}). */
   history?: NodeServerHistoryRecorder
   /** Why the run has no history (storage unavailable, a full store, a refused or slow start), shown beside the run's state and answered by Save; the live run goes on. */
@@ -485,13 +489,12 @@ export class StudyService {
     | 'nodeHistoryLearningMaterialSaved'
     | 'replayControlAccepted'
     | 'markAgentRecordingOpen'
+    | 'publishLearningSave'
   >
   repository?: RepositoryBookStore
   nodeHistoryStore?: NodeTestHistoryStore
   /** The workspace's history repository, which resolves a study id to the test or server store that holds it; set with {@link nodeHistoryStore}. */
   nodeHistoryRepository?: NodeHistoryRepository
-  /** The number of the latest verdict read of each server history, so only that read writes its summary ({@link StudyService.refreshNodeServerSummary}). */
-  private readonly nodeServerSummaryReads = new Map<string, number>()
   repositoryPublished?: () => Promise<void>
   repositoryReader?: (
     input: OpenBookInput,
@@ -520,6 +523,16 @@ export class StudyService {
   private readonly repositoryRetirement = new AbortController()
   private readonly repositoryOpens = new Set<Promise<unknown>>()
   private readonly startKeys = new Map<string, StudyRecord>()
+  /** Each server history's summary read in flight, by study id; an entry is removed when its read settles. */
+  private readonly nodeServerSummaryReads = new Map<
+    string,
+    Promise<
+      | Awaited<
+          ReturnType<NodeHistoryRepository['serverHistories']['summarize']>
+        >
+      | undefined
+    >
+  >()
   private readonly maintenance: ReturnType<typeof setInterval>
   private stopping = false
   private shutdownPromise?: Promise<void>
@@ -547,12 +560,16 @@ export class StudyService {
    * Words a failure for the places a run keeps it, once, at the moment it is assigned: private roots replaced ({@link sanitizeCause}) and the whole bounded to {@link MAX_UI_TEXT_CHARS}; every surface then shows the same value, cut for display where it is shown ({@link cutCauseForDisplay}).
    * A cause past the bound is cut between characters, never inside a surrogate pair, and says it was cut ({@link cutTextToFit}, F258).
    * @param error - What was thrown, or a cause already in words.
+   * @param roots - The private roots to hide; a node-server run passes its frozen snapshot, so its journal pays no root read per event. The service's current roots otherwise.
    * @returns The sanitized, bounded cause.
    * @example this.sanitizedCause(new Error("ENOSPC, write '/Users/ada/.learning/x'")) // => "ENOSPC, write '<storage>/x'"
    */
-  private sanitizedCause(error: unknown): string {
+  private sanitizedCause(
+    error: unknown,
+    roots: CauseRoots = this.causeRoots,
+  ): string {
     return cutTextToFit(
-      sanitizeCause(error, this.causeRoots),
+      sanitizeCause(error, roots),
       (candidate) => candidate.length <= MAX_UI_TEXT_CHARS,
     )
   }
@@ -1395,11 +1412,15 @@ export class StudyService {
   private evictOldestExcludedRecord(): boolean {
     // Map iteration follows insertion order, so the first excluded record is the oldest.
     // A stopped server run is forgotten too: its history is on disk, where the library and the history resources read it.
-    const evicted = [...this.records.values()].find(
-      (record) =>
-        historyExclusionState(record.historyExcluded) === 'ended' ||
-        (record.profile === NODE_SERVER_PROFILE && record.stopped),
-    )
+    const retained = [...this.records.values()]
+    // A refused or removed run goes first; a stopped server run only when no such run exists.
+    const evicted =
+      retained.find(
+        (record) => historyExclusionState(record.historyExcluded) === 'ended',
+      ) ??
+      retained.find(
+        (record) => record.profile === NODE_SERVER_PROFILE && record.stopped,
+      )
     if (!evicted) return false
     this.forgetRecord(evicted)
     return true
@@ -2268,11 +2289,12 @@ export class StudyService {
   private nodeServerLearningIncomplete(record: StudyRecord): boolean {
     const history = record.nodeServer?.history
     if (!history || history.status === 'failed') return false
+    // A history still recording offers no Save: only a sealed one can be saved.
+    if (history.status !== 'sealed') return false
     // A run that never sent its request leaves no history to explain.
     if (!record.nodeServer?.run?.view().request) return false
-    return history.sealed
-      ? history.sealed.summary?.learningCoverage !== 'complete'
-      : true
+    // A sealed history whose summary is unreadable is not known complete.
+    return history.sealed?.summary?.learningCoverage !== 'complete'
   }
 
   /**
@@ -2280,7 +2302,10 @@ export class StudyService {
    * @param studyId - The history the material explains.
    * @example await this.refreshNodeServerSummary(studyId)
    */
-  private async refreshNodeServerSummary(studyId: string): Promise<void> {
+  private async refreshNodeServerSummary(
+    studyId: string,
+    joinReadInFlight = false,
+  ): Promise<void> {
     const sealed = [...this.records.values()].find(
       (candidate) => `${this.instanceId}_${candidate.id}` === studyId,
     )?.nodeServer?.history?.sealed
@@ -2288,13 +2313,30 @@ export class StudyService {
     // Without a repository there is nothing to read again; the summary the seal read stays.
     if (!sealed || !histories) return
     // Only the latest read of a history writes its summary, so an older read that finishes last cannot overwrite a newer revision's coverage.
-    const request = (this.nodeServerSummaryReads.get(studyId) ?? 0) + 1
-    this.nodeServerSummaryReads.set(studyId, request)
-    const summary = await histories
-      .summarize(studyId)
-      .catch(() => sealed.summary)
-    if (this.nodeServerSummaryReads.get(studyId) === request)
-      sealed.summary = summary
+    const request = (sealed.summaryReads ?? 0) + 1
+    sealed.summaryReads = request
+    // A `summarize` that outlives the bound keeps running; its late answer is applied below only if no newer read started meanwhile.
+    let reading = joinReadInFlight
+      ? this.nodeServerSummaryReads.get(studyId)
+      : undefined
+    // Run resource reads of one study share the read in flight, so a stalled store holds one pending read, not one per poll; a read after a material save always starts its own, since the one in flight may predate the save.
+    if (!reading) {
+      const started = histories.summarize(studyId).catch(() => undefined)
+      reading = started
+      this.nodeServerSummaryReads.set(studyId, started)
+      // The entry lives only as long as its read, so no entry outlives a settled read or a forgotten run.
+      void started.finally(() => {
+        if (this.nodeServerSummaryReads.get(studyId) === started)
+          this.nodeServerSummaryReads.delete(studyId)
+      })
+    }
+    const summary = await waitWithin(reading, {
+      timeoutMs: this.nodeServerHistorySealBoundMs,
+      signal: new AbortController().signal,
+      sleep: sleepUntilAborted,
+    })
+    // A failed, empty or too slow read keeps the sealed summary, and an older read never overwrites a newer one.
+    if (summary && sealed.summaryReads === request) sealed.summary = summary
   }
 
   /**
@@ -2305,7 +2347,7 @@ export class StudyService {
    */
   async refreshNodeServerVerdicts(record: StudyRecord): Promise<void> {
     if (record.profile !== NODE_SERVER_PROFILE) return
-    await this.refreshNodeServerSummary(`${this.instanceId}_${record.id}`)
+    await this.refreshNodeServerSummary(`${this.instanceId}_${record.id}`, true)
   }
 
   /**
@@ -3525,6 +3567,12 @@ export class StudyService {
       'RUNTIME_FAILED',
       'Study wall deadline expired; history only.',
     )
+    // The deadline is the service's own terminal cause: a node-server run keeps it apart from `record.error`, which may be a stale release failure, so the history seal names the deadline.
+    if (record.nodeServer)
+      record.nodeServer.terminalFailure = new StudyError(
+        'RUNTIME_FAILED',
+        'Study wall deadline expired; history only.',
+      )
     record.runtime?.fail(record.error.message)
     this.failUnfinishedNodePhase(record)
   }
@@ -4836,19 +4884,22 @@ export class StudyService {
         'The owned Node server adapter is unavailable.',
       )
     if (this.stopping || record.stopping) return
-    await this.beginNodeServerHistory(record)
+    // One snapshot of the private roots for this run, read once: every path of the run that hides roots (output stage, response sanitizer, live journal, history) uses it, so they agree and no text pays a realpath read. A folder added mid-run is hidden from the next run on.
+    const runRoots = this.causeRoots
+    await this.beginNodeServerHistory(record, runRoots)
     // The history may have been started while a stop arrived: the stop path seals it, and no server launches.
     if (this.stopping || record.stopping) return
     const run = await this.environment.createNodeServerRun(
       state.prepared.configuration,
       createNodeServerJournal(record.nodeEvents ?? [], {
-        sanitize: (text) => this.sanitizedCause(text),
+        sanitize: (text) => this.sanitizedCause(text, runRoots),
         onEvent: (type, detail) =>
           this.writeNodeServerEventLine(record, type, detail),
       }),
       state.prepared.descriptor.sources,
       record.id,
       state.history?.sink,
+      runRoots,
     )
     state.run = run
     state.subscription = run.onDidChange(() => this.onNodeServerChange(record))
@@ -4860,10 +4911,12 @@ export class StudyService {
   /**
    * Starts the history of a node-server run, within its bound, before the server launches; a failure of any kind leaves the live run running and is kept as the cause the status shows and Save answers (D8).
    * @param record - The node-server run, whose configuration was pinned.
-   * @example await this.beginNodeServerHistory(record)
+   * @param runRoots - The run's frozen private roots, shared with the run itself.
+   * @example await this.beginNodeServerHistory(record, this.causeRoots)
    */
   private async beginNodeServerHistory(
     record: NodeServerStudyRecord,
+    runRoots: CauseRoots,
   ): Promise<void> {
     const state = record.nodeServer
     if (!state.prepared) return
@@ -4874,7 +4927,8 @@ export class StudyService {
       runId: record.id,
       createdAtMs: record.createdAt,
       prepared: state.prepared,
-      hideRoots: (text) => hidePrivateRoots(text, this.causeRoots),
+      hideRoots: createRootHider(runRoots),
+      roots: runRoots,
       describeCause: (error) =>
         error instanceof SavedStudyStorageFullError
           ? fullLibraryMessage('run', error.limit, this.removalAvailability)
@@ -4888,6 +4942,8 @@ export class StudyService {
           error,
           this.sanitizedCause(error),
         ),
+      // The status item says at once that recording stopped, not at the next refresh.
+      onAppendFailed: () => this.presentationController?.publishLearningSave(),
     })
     if ('recorder' in begun) state.history = begun.recorder
     else state.historyUnavailable = begun.unavailable
@@ -4911,14 +4967,17 @@ export class StudyService {
     const view = record.nodeServer?.run?.view()
     await history.seal(
       describeNodeServerEnd({
-        failureCode: (view?.runFailure ?? record.error)?.code,
+        // The run's own failure, or the service's own terminal cause (the deadline), names a failure; a clean stop never borrows an earlier release failure from `record.error`.
+        failureCode:
+          view?.runFailure?.code ?? record.nodeServer?.terminalFailure?.code,
         exit: {
           exitCode:
             typeof detail?.exitCode === 'number' ? detail.exitCode : undefined,
           signal:
             typeof detail?.signal === 'string' ? detail.signal : undefined,
         },
-        elapsedMs: 0,
+        // The end carries the time of the stop on the run's clock, not the last entry's.
+        elapsedMs: record.nodeServer?.run?.elapsedSinceLaunchMs() ?? 0,
       }),
       this.nodeServerHistorySealBoundMs,
     )

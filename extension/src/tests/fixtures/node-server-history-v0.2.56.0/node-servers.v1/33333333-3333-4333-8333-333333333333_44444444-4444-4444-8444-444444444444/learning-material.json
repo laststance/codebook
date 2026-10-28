@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "studyId": "33333333-3333-4333-8333-333333333333_44444444-4444-4444-8444-444444444444",
+  "revision": 1,
+  "updatedAt": "2026-10-28T18:06:12.733Z",
+  "content": {
+    "question": "How does the server create an item?",
+    "title": "Creating an item",
+    "summary": "The handler reads the id, loads the item and returns it.",
+    "participants": [
+      { "id": "client", "label": "Codebook request" },
+      { "id": "server", "label": "Handler" }
+    ],
+    "steps": [
+      {
+        "id": "request",
+        "from": "client",
+        "to": "server",
+        "label": "POST /api/items",
+        "explanation": "Codebook sends the declared request.",
+        "evidence": "observed",
+        "reference": { "type": "request", "sequence": 1 }
+      },
+      {
+        "id": "stop",
+        "from": "server",
+        "to": "server",
+        "label": "load the item",
+        "explanation": "The handler stops after reading the id.",
+        "evidence": "observed",
+        "reference": {
+          "type": "stop",
+          "sequence": 4,
+          "sourceHash": "fb4b1602baf1822baa7c4608ab12060056c4205263d0f1d34e10389c038a0f63"
+        }
+      },
+      {
+        "id": "output",
+        "from": "server",
+        "to": "server",
+        "label": "log the item",
+        "explanation": "The server prints the created item.",
+        "evidence": "observed",
+        "reference": { "type": "output", "sequence": 5, "channel": "stdout" }
+      },
+      {
+        "id": "response",
+        "from": "server",
+        "to": "client",
+        "label": "200",
+        "explanation": "The server answers 200.",
+        "evidence": "observed",
+        "reference": { "type": "response", "sequence": 6 }
+      }
+    ]
+  }
+}

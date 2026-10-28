@@ -50,6 +50,12 @@ export type NodeServerLearningSaveItem = {
   command?: { title: string; command: string; arguments: [string] }
 }
 
+/** What one read of the sealed summary answered: the summary (`undefined` when the store holds no such history), what the read threw, or that no store is attached to read. */
+type SummaryRead =
+  | { summary: NodeServerHistorySummary | undefined }
+  | { rejected: unknown }
+  | { noStore: true }
+
 /** Where one server run's Save stands, keyed by its study id. */
 type SaveState =
   | { stage: 'saving' }
@@ -69,10 +75,7 @@ export class NodeServerLearningSave {
   private readonly states = new Map<string, SaveState>()
   private readonly saves = new SaveSerializer()
   /** The sealed-summary read in flight per study, shared by Saves that overlap it. */
-  private readonly summaryReads = new Map<
-    string,
-    Promise<{ summary: NodeServerHistorySummary | undefined }>
-  >()
+  private readonly summaryReads = new Map<string, Promise<SummaryRead>>()
   /** The question being asked, so a second Save while it is open joins it: one modal, one save. */
   private question?: Promise<string | undefined>
 
@@ -92,7 +95,7 @@ export class NodeServerLearningSave {
       service.state(record),
       this.statusOf(record, studyId),
     )
-    const state = this.currentState(studyId, record)
+    const state = this.currentState(studyId)
     const opens = state?.stage === 'saved' || state?.stage === 'partial'
     return {
       ...view,
@@ -214,22 +217,17 @@ export class NodeServerLearningSave {
       )
       return
     }
-    const boundMs =
-      this.host.summaryReadBoundMs ?? NODE_SERVER_HISTORY_SEAL_BOUND_MS
-    const read = history?.sealed?.summary
-      ? { summary: history.sealed.summary }
-      : await this.readSummaryWithin(studyId, boundMs)
-    const summary = read?.summary
-    if (!summary || summary.verification !== 'verified') {
+    const verified = await this.verifiedSummary(
+      studyId,
+      history?.sealed?.summary,
+    )
+    if ('cause' in verified) {
       this.states.delete(studyId)
-      // A read that outlived its bound says so; Save never waits on it, so another run's Save stays free.
-      const cause = read
-        ? (summary?.reason ?? 'The sealed server history is not in the store.')
-        : `The sealed server history could not be read within ${boundMs / 1_000} s.`
-      this.logFailure(studyId, 'save:read-failed', new Error(cause))
-      this.tell({ kind: 'failed', cause }, 'warning')
+      this.logFailure(studyId, 'save:read-failed', new Error(verified.cause))
+      this.tell({ kind: 'failed', cause: verified.cause }, 'warning')
       return
     }
+    const { summary } = verified
     const complete =
       summary.captureComplete && summary.learningCoverage === 'complete'
     this.setState(studyId, {
@@ -258,6 +256,41 @@ export class NodeServerLearningSave {
     )
   }
 
+  /**
+   * Reads the history's current summary and checks it is verified, the way {@link NodeLearningSave} does for a test run.
+   * The store is read first, so material another window saved during or after the seal counts; the seal-time summary answers only when that read timed out or no store is attached.
+   * @param studyId - The history's study id.
+   * @param sealTimeSummary - The summary the seal read, if it could.
+   * @returns The verified summary, or the cause Save shows: the read's own error, the summary's reason, the missing history, or the bound that passed (Save never waits past it, so another run's Save stays free).
+   */
+  private async verifiedSummary(
+    studyId: string,
+    sealTimeSummary: NodeServerHistorySummary | undefined,
+  ): Promise<{ summary: NodeServerHistorySummary } | { cause: string }> {
+    const boundMs =
+      this.host.summaryReadBoundMs ?? NODE_SERVER_HISTORY_SEAL_BOUND_MS
+    const read = await this.readSummaryWithin(studyId, boundMs)
+    if (read && 'rejected' in read)
+      return { cause: this.causeOf(read.rejected) }
+    // The seal-time summary stands in only when the store could not answer (timed out, or none attached); an answer that the history is gone is not overridden by it.
+    const summary = read && 'summary' in read ? read.summary : sealTimeSummary
+    if (summary?.verification === 'verified') return { summary }
+    // No store is attached and the seal read no summary: nothing says the history is missing, only that it cannot be checked.
+    if (read && 'noStore' in read && !sealTimeSummary)
+      return {
+        cause:
+          'No learning storage is attached, so the sealed server history cannot be checked.',
+      }
+    if (read || sealTimeSummary)
+      return {
+        cause:
+          summary?.reason ?? 'The sealed server history is not in the store.',
+      }
+    return {
+      cause: `The sealed server history could not be read within ${boundMs / 1_000} s.`,
+    }
+  }
+
   /** Shows one refusal or notice that offers nothing to do. */
   private tell(
     message: NodeServerSaveMessage,
@@ -284,8 +317,12 @@ export class NodeServerLearningSave {
     if (!history) return this.recordingOf(record)
     if (history.status === 'failed')
       return { kind: 'failed', cause: history.failure ?? 'The history failed.' }
-    const state = this.currentState(studyId, record)
+    const state = this.currentState(studyId)
     if (state) return { kind: state.stage }
+    // A write that failed while the run lives: no Save is under way (a state would have returned) and the run has not stopped.
+    const appendFailure = history.appendFailure
+    if (appendFailure && !record.stopped && !record.stopping)
+      return { kind: 'append-failed', cause: appendFailure }
     if (record.stopped || history.status === 'sealed')
       return { kind: 'finished' }
     return this.recordingOf(record)
@@ -303,16 +340,10 @@ export class NodeServerLearningSave {
   }
 
   /** A saved or partially saved state counts only for the material revision it read: a later revision returns the item to Save. */
-  private currentState(
-    studyId: string,
-    record: StudyRecord,
-  ): SaveState | undefined {
+  private currentState(studyId: string): SaveState | undefined {
     const state = this.states.get(studyId)
     if (state?.stage !== 'saved' && state?.stage !== 'partial') return state
-    const revision =
-      this.host.materialRevision(studyId) ??
-      record.nodeServer?.history?.sealed?.summary?.materialRevision ??
-      0
+    const revision = this.host.materialRevision(studyId) ?? 0
     return revision > state.materialRevision ? undefined : state
   }
 
@@ -325,20 +356,20 @@ export class NodeServerLearningSave {
    * Reads the sealed history's summary from the store for at most `boundMs`.
    * @param studyId - The history's study id.
    * @param boundMs - How long Save waits.
-   * @returns `{ summary }` (the summary, or `undefined` when it could not be read), or `undefined` when the read outlived its bound.
+   * @returns `{ summary }` (the summary, or `undefined` when the store holds no such history), `{ rejected }` with what a failed read threw, `{ noStore }` when no store is attached, or `undefined` when the read outlived its bound.
    */
   private async readSummaryWithin(
     studyId: string,
     boundMs: number,
-  ): Promise<{ summary: NodeServerHistorySummary | undefined } | undefined> {
+  ): Promise<SummaryRead | undefined> {
     // Saves of one study share the read in flight, so a stalled store holds one pending read, not one per click.
     let reading = this.summaryReads.get(studyId)
     if (!reading) {
       const started = this.host.store()?.summarize(studyId)
-      if (!started) return { summary: undefined }
+      if (!started) return { noStore: true }
       reading = started.then(
-        (summary) => ({ summary }),
-        () => ({ summary: undefined }),
+        (summary): SummaryRead => ({ summary }),
+        (rejected: unknown): SummaryRead => ({ rejected }),
       )
       this.summaryReads.set(studyId, reading)
       void reading.finally(() => {
@@ -351,6 +382,14 @@ export class NodeServerLearningSave {
       signal: new AbortController().signal,
       sleep: sleepUntilAborted,
     })
+  }
+
+  /** The sanitized words of a thrown failure, without private paths. */
+  private causeOf(error: unknown): string {
+    return sanitizeCause(
+      error,
+      this.host.service()?.causeRoots ?? { storage: [] },
+    )
   }
 
   /** Writes one Output entry for a failure with its sanitized cause and stack. */

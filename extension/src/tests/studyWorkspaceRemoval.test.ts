@@ -2746,6 +2746,50 @@ test('the browser-replay refusal of a Node test history disappears once that his
   }
 })
 
+// protects=a control refusal raised while a test replay's open is under way staying on screen after that open succeeds, beside the earlier refusal being cleared; fails_when=the successful open drops every control refusal line, including the newer one the learner's later control just raised; no_claim=how the native pane words the refusal
+test('a control refusal raised while a Node test history is opening stays after the open succeeds', async () => {
+  // Arrange: a refusal from before the open is on screen, and the open is held inside openNodeHistory.
+  const harness = await workspaceHarness()
+  try {
+    const nodeHistory = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    const staleRefusal =
+      'Error: Close browser replay before opening a test replay.'
+    const newerRefusal = 'Error: A later control was refused during the open.'
+    harness.reader['report']('node-history-control', staleRefusal)
+    const openNodeHistory = harness.reader['openNodeHistory'].bind(
+      harness.reader,
+    )
+    let openEntered!: () => void, releaseOpen!: () => void
+    const entered = new Promise<void>((resolve) => {
+        openEntered = resolve
+      }),
+      held = new Promise<void>((resolve) => {
+        releaseOpen = resolve
+      })
+    harness.reader['openNodeHistory'] = async (...openArguments) => {
+      openEntered()
+      await held
+      return openNodeHistory(...openArguments)
+    }
+
+    // Act: a control is refused while the open is under way, then the open finishes.
+    const opening = harness.reader.openNodeHistoryFromHost(nodeHistory.studyId)
+    await entered
+    harness.reader['report']('node-history-control', newerRefusal)
+    releaseOpen()
+    await opening
+
+    // Assert
+    const errors = harness.reader.inspect().view!.errors
+    assert.equal(errors.includes(newerRefusal), true)
+    assert.equal(errors.includes(staleRefusal), false)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the Node test history refusal behaves like every other refused pane control: no Retry storage for it, and it does not stay through the learner's later choices; fails_when=the refusal's own line (`node-history-control`) is counted as a storage failure, or only a later Node history open retires it (0039-N8-c, 0040-N9-1 with 0031-U5); why_new=the merge of the two Cycle 0044 fixes gave this refusal a line of its own; seam=the summary webview, stubbed at the vscode boundary
 test('the browser-replay refusal of a Node test history offers no Retry storage and is gone once the learner’s next pane choice is handled', async () => {
   // Arrange: a Node history was refused during Recording.

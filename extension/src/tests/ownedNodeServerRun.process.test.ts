@@ -15,6 +15,7 @@ import { StudyError } from '../errors'
 import type { NodeServerConfiguration } from '../nodeServerConfigSchemas'
 import { createOwnedNodeServerRun } from '../ownedNodeServerRun'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { causeRootsFor } from '../utils/causeRootsFor'
 import { isProcessGroupGone } from '../utils/isProcessGroupGone'
 import { readNodeServerOrphanRecords } from '../utils/nodeServerOrphanRecords'
 
@@ -31,7 +32,13 @@ const FIXTURE_SERVER = join(__dirname, 'fixtures/node-server/server.js')
 /** Builds a run of the fixture server in a new repository folder; the folder and every process are cleaned up after the test. */
 async function fixtureRun(
   t: TestContext,
-  options: { mode: string; giveUpMs?: number },
+  options: {
+    mode: string
+    giveUpMs?: number
+    requestPath?: string
+    /** A folder under the workspace the service would name a storage root, to prove the run hides what the service gives it. */
+    storageSubfolder?: string
+  },
 ) {
   const workspace = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-node-server-run-')),
@@ -63,7 +70,7 @@ async function fixtureRun(
     entry: 'server.cjs',
     loader: 'node',
     port,
-    request: { method: 'GET', path: '/health' },
+    request: { method: 'GET', path: options.requestPath ?? '/health' },
     source: { path: 'server.cjs', hash: sha256(text), line, column: 5 },
     inspections: [{ path: 'requestPath', mode: 'value', required: true }],
     additionalStops: undefined,
@@ -85,6 +92,14 @@ async function fixtureRun(
     },
     citedSources: [],
     runId: 'process-run',
+    ...(options.storageSubfolder
+      ? {
+          privateRoots: causeRootsFor(
+            [join(workspace, options.storageSubfolder)],
+            workspace,
+          ),
+        }
+      : {}),
     dependencies: realNodeServerDependencies(
       { executable: process.execPath, version: process.versions.node },
       options.giveUpMs ?? 20_000,
@@ -171,6 +186,8 @@ test('a real server that exits before it listens fails the start with SERVER_EXI
   assert.equal(error.code, 'SERVER_EXITED')
   assert.match(error.message, /exited with code 3/)
   assert.match(error.message, /fixture cannot start: exit-before-listen/)
+  // The seal reads the failure from the run's own view, so a failed start must carry it there.
+  assert.equal(run.view().runFailure?.code, 'SERVER_EXITED')
   assert.equal(isProcessGroupGone(pid()!), true)
   assert.equal(await accepts(port), false)
   assert.equal(run.view().state, 'stopped')
@@ -192,5 +209,77 @@ test('a real server that never listens fails the start with SERVER_NOT_LISTENING
   assert.ok(error instanceof StudyError)
   assert.equal(error.code, 'SERVER_NOT_LISTENING')
   assert.match(error.message, new RegExp(`declared port ${port}`))
+  // The seal reads the failure from the run's own view, so a failed start must carry it there.
+  assert.equal(run.view().runFailure?.code, 'SERVER_NOT_LISTENING')
   assert.equal(isProcessGroupGone(pid()!), true)
+})
+
+// protects=the run's clock stops at the Stop, so a seal delayed or retried after it still writes the Stop's own end time; fails_when=elapsedSinceLaunchMs keeps counting after the run stopped; no_claim=the end entry written by the service (its own test)
+test('a stopped real server reports the same time since launch however late it is asked', async (t) => {
+  // Arrange
+  const { run } = await fixtureRun(t, { mode: 'listen' })
+  await run.prepare()
+  const beforeStop = run.elapsedSinceLaunchMs()
+  await run.stop()
+  const atStop = run.elapsedSinceLaunchMs()
+
+  // Act
+  // gstack-timing-ok: real elapsed time must pass for a live clock to differ from the frozen one
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  const later = run.elapsedSinceLaunchMs()
+
+  // Assert
+  assert.ok(atStop >= beforeStop)
+  assert.equal(later, atStop)
+})
+
+// Value: protects=the run hands its workspace to the launcher as a private root, so a server that prints its own folder split over two writes leaves the folder in no output event the run records; fails_when=ownedNodeServerRun stops passing privateRoots to launchNodeServer (or the launcher drops it) and a split root reaches the events; why_new=captureProcessOutput is tested with roots only at the unit level, nothing proves the production wiring; seam=none; no_claim=the history files (their own tests) and roots of a shape hidePrivateRoots does not know
+test('a real server printing its workspace split over two writes leaves the workspace in no recorded output event', async (t) => {
+  // Arrange
+  const { run, events, workspace } = await fixtureRun(t, {
+    mode: 'listen',
+    requestPath: '/log-root',
+  })
+  await run.prepare()
+  // Act
+  await run.sendRequest('key-root')
+  const paused = await untilView(run, (view) => view.state === 'paused')
+  assert.ok(paused.pause)
+  await run.continue(paused.pause)
+  await untilView(run, (view) => view.state === 'responded')
+  await run.stop()
+  const printed = events
+    .filter((event) => event.type === 'node-server.output')
+    .map((event) => String(Reflect.get(event.detail as object, 'text')))
+    .join('')
+  // Assert
+  assert.match(printed, /fixture cwd <workspace>\/src\/server\.ts/)
+  assert.equal(printed.includes(workspace), false)
+})
+
+// protects=the run hides the service's storage roots in a server's output, so a storage folder reads <storage> and not the workspace placeholder; fails_when=the run builds its own roots (workspace and home only) and the storage path reads <workspace>/src/server.ts; no_claim=the service's own list of roots (its causeRoots)
+test('a real server printing a storage folder under its workspace leaves it as the storage placeholder in the recorded output', async (t) => {
+  // Arrange
+  const { run, events, workspace } = await fixtureRun(t, {
+    mode: 'listen',
+    requestPath: '/log-root',
+    storageSubfolder: 'src',
+  })
+  await run.prepare()
+
+  // Act
+  await run.sendRequest('key-storage-root')
+  const paused = await untilView(run, (view) => view.state === 'paused')
+  assert.ok(paused.pause)
+  await run.continue(paused.pause)
+  await untilView(run, (view) => view.state === 'responded')
+  await run.stop()
+  const printed = events
+    .filter((event) => event.type === 'node-server.output')
+    .map((event) => String(Reflect.get(event.detail as object, 'text')))
+    .join('')
+
+  // Assert
+  assert.match(printed, /fixture cwd <storage>\/server\.ts/)
+  assert.equal(printed.includes(workspace), false)
 })

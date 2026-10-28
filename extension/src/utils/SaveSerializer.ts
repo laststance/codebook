@@ -3,7 +3,7 @@
  * Held by the Save of a test run and the Save of a server run, which differ only in the work each does.
  * @example
  * const saves = new SaveSerializer()
- * await saves.run(studyId, () => saveOnce(record), () => host.changed())
+ * await saves.runFor(service, record, (studyId) => saveOnce(studyId), () => host.changed())
  */
 export class SaveSerializer {
   private current?: { studyId: string; promise: Promise<void> }

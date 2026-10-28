@@ -23,6 +23,7 @@ import {
   type RepositorySource,
 } from './repositorySchemas'
 import { sha256 } from './runtimeSupport/utils/sha256'
+import { gitEnvironmentWithoutInherited } from './utils/gitEnvironmentWithoutInherited'
 import { gitExecutablePath } from './utils/gitExecutablePath'
 import { sourceExclusion } from './utils/sourceExclusion'
 import { unchangedSource } from './utils/unchangedSource'
@@ -409,9 +410,7 @@ export class RepositorySourceService {
   /** Reads only Git index names with fixed arguments and isolated Git overrides; invoked once per explicit list/acquisition. @example await this.catalog() */
   private async catalog(control?: AcquisitionControl): Promise<SourceCatalog> {
     this.assertActive(control)
-    const environment = Object.fromEntries(
-      Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')),
-    )
+    const environment = gitEnvironmentWithoutInherited()
     try {
       const root = await realpath(this.workspace),
         rootIdentity = await lstat(root, { bigint: true })

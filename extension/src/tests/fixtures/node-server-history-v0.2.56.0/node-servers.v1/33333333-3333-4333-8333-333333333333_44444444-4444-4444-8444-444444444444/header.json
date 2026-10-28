@@ -1,0 +1,48 @@
+{
+  "formatVersion": 1,
+  "profile": "node-server",
+  "workspaceKey": "79c3b857f48339bf31f81d47e9d90042c4415edc0b3416659cc8f3b32cf91239",
+  "studyId": "33333333-3333-4333-8333-333333333333_44444444-4444-4444-8444-444444444444",
+  "instanceId": "33333333-3333-4333-8333-333333333333",
+  "runId": "44444444-4444-4444-8444-444444444444",
+  "createdAt": "2026-10-28T00:00:00.000Z",
+  "question": "How does the server create an item?",
+  "configurationHash": "e2f256dfc1e662c77d788406a7ce87bf21be5546a15b753970746b5cff39738e",
+  "configuration": {
+    "version": 1,
+    "adapter": "node-server",
+    "book": {
+      "bookId": "interface",
+      "revision": 1,
+      "nodeId": "theme",
+      "anchorIndex": 0
+    },
+    "packageRoot": ".",
+    "entry": "src/server.ts",
+    "loader": "tsx",
+    "port": 4100,
+    "request": {
+      "method": "POST",
+      "path": "/api/items",
+      "contentType": "application/json",
+      "body": "{\"name\":\"pen\"}"
+    },
+    "source": {
+      "path": "src/handler.ts",
+      "hash": "fb4b1602baf1822baa7c4608ab12060056c4205263d0f1d34e10389c038a0f63",
+      "line": 2,
+      "column": 1
+    },
+    "inspections": [{ "path": "id", "mode": "value", "required": true }],
+    "additionalStops": []
+  },
+  "declaredRequest": { "method": "POST", "path": "/api/items" },
+  "declaredStops": [{ "path": "src/handler.ts", "line": 2 }],
+  "repositoryRevision": { "revision": "abc1234", "dirty": false },
+  "sourceHashes": [
+    {
+      "path": "src/handler.ts",
+      "hash": "fb4b1602baf1822baa7c4608ab12060056c4205263d0f1d34e10389c038a0f63"
+    }
+  ]
+}

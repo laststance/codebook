@@ -9,7 +9,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.9'
-export const EXTENSION_VERSION = '0.2.56'
+export const EXTENSION_VERSION = '0.2.57'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -1403,6 +1403,18 @@ export const NODE_SERVER_WRITER_QUEUE_LIMIT_BYTES = 4_194_304
 export const NODE_SERVER_SOURCE_TEXT_LIMIT_BYTES = 524_288
 /** The longest text of one `output` entry of a node-server history. */
 export const NODE_SERVER_OUTPUT_TEXT_LIMIT_CHARS = 4_096
+/** The longest code (a withdrawal's, a failure's) a node-server history entry stores. */
+export const NODE_SERVER_HISTORY_CODE_LIMIT_CHARS = 128
+/** The longest frame name a `stop` entry stores. */
+export const NODE_SERVER_HISTORY_FRAME_NAME_LIMIT_CHARS = 2_048
+/** The longest inspection path an `unavailable` item of a `stop` entry stores. */
+export const NODE_SERVER_HISTORY_UNAVAILABLE_PATH_LIMIT_CHARS = 512
+/** The longest content type a `response` entry stores. */
+export const NODE_SERVER_HISTORY_CONTENT_TYPE_LIMIT_CHARS = 256
+/** The longest request path or response location a node-server history entry stores. */
+export const NODE_SERVER_HISTORY_LOCATION_LIMIT_CHARS = 2_048
+/** The longest message a `request-failed` entry stores. */
+export const NODE_SERVER_HISTORY_MESSAGE_LIMIT_CHARS = 2_048
 /** The longest response body one `response` entry stores (the shown body: `shapeResponseBody` cuts at 8,192 bytes). */
 export const NODE_SERVER_RESPONSE_BODY_LIMIT_CHARS = 16_384
 /** The most JSON bytes (quotes included) of an inspection path a seal reason keeps: a 512-character ASCII path fits whole (its text and its params each hold the path): 160 reasons at most, so the worst-case seal stays inside {@link NODE_SERVER_HISTORY_SEAL_LIMIT_BYTES}. */
@@ -1413,6 +1425,8 @@ export const NODE_SERVER_MISSING_LIST_LIMIT = 20
 export const NODE_SERVER_HISTORY_START_BOUND_MS = 2_000
 /** Output chunks of one channel that arrive within this many milliseconds of each other become one `output` entry (up to {@link NODE_SERVER_OUTPUT_TEXT_LIMIT_CHARS}). */
 export const NODE_SERVER_OUTPUT_COALESCE_MS = 50
+/** How long a node-server output channel may stay silent while its last characters wait as a possible private root before they are released (hidden when they already show part of a private name), so the last line of a quiet server reaches the journal; chunks closer together than this are still joined. */
+export const NODE_SERVER_OUTPUT_ROOT_HOLD_MS = 1_000
 /** How long a seal of a node-server history may take before it is abandoned and the folder lists as interrupted: the server's own stop deadline. */
 export const NODE_SERVER_HISTORY_SEAL_BOUND_MS = NODE_SERVER_STOP_DEADLINE_MS
 /** File system error codes that a retry can clear (a descriptor or lock shortage, a busy or antivirus-held file, a disk error): a read that fails with one is not remembered as the history's state ({@link isTransientFileError}). */
@@ -1837,6 +1851,8 @@ export const REPLAY_SCOPE_NOT_CAPTURED_TEXT =
 export const REPLAY_DEBUG_MAX_VARIABLES = 2_000
 export const REPLAY_DEBUG_MAX_DEPTH = 5
 export const REPLAY_DEBUG_TEXT_LIMIT_CHARS = 4_096
+/** What the debugger capture appends to a text it cut at {@link REPLAY_DEBUG_TEXT_LIMIT_CHARS}. */
+export const REPLAY_DEBUG_TRUNCATION_MARKER = '… [truncated]'
 export const REPLAY_DEBUG_CAPTURE_TIMEOUT_MS = 5_000
 /** Native Call Stack name of the owned historical session; the Study hint names it for learners. */
 export const REPLAY_DEBUG_SESSION_NAME = 'Codebook · Recorded learning'

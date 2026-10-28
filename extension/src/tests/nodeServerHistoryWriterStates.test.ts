@@ -54,6 +54,47 @@ test('abandoning a writer after its seal keeps the sealed history sealed', async
   assert.ok((await readdir(folder)).includes('sealed.json'))
 })
 
+// protects=an abandon that lands while the temporary file's cleanup is still awaited after the rename keeps the published seal, its hash and the finish result; fails_when=sealed.json is removed or publishedSealHash/finish report no hash after the seal was published; no_claim=an abandon during the rename itself
+test('abandoning during the temporary cleanup after the rename keeps the published seal', async (context) => {
+  // Arrange
+  const { writer, store, header, folder } = await startOpenRequest(context)
+  await writer.appendRequestSent({ elapsedMs: 2, attempt: 1 })
+  const unlinkBefore = fsPromises.unlink
+  let releaseCleanup: () => void = () => undefined
+  const cleanupStalled = new Promise<void>((resolve) => {
+    releaseCleanup = resolve
+  })
+  let cleanupStarted: () => void = () => undefined
+  const cleanupReached = new Promise<void>((resolve) => {
+    cleanupStarted = resolve
+  })
+  context.mock.method(
+    fsPromises,
+    'unlink',
+    async (...input: Parameters<typeof unlinkBefore>) => {
+      if (String(input[0]).includes('sealed.json')) {
+        cleanupStarted()
+        await cleanupStalled
+      }
+      return unlinkBefore(...input)
+    },
+  )
+  const sealing = writer.seal({ elapsedMs: 3, reason: 'stopped' })
+  await cleanupReached
+
+  // Act
+  writer.abandon()
+  releaseCleanup()
+  const sealedHash = await sealing
+  const opened = await store.read(header.studyId)
+
+  // Assert
+  assert.equal(typeof sealedHash, 'string')
+  assert.equal(writer.publishedSealHash, sealedHash)
+  assert.ok((await readdir(folder)).includes('sealed.json'))
+  assert.equal(opened.status, 'partial')
+})
+
 // protects=an abandoned writer accepts nothing more; fails_when=an entry offered after abandon is written after the history was reported interrupted; no_claim=the wording of the refusal beyond naming the closed history
 test('an abandoned writer refuses a later entry and leaves its journal as it was', async (context) => {
   // Arrange

@@ -26,6 +26,7 @@ import { readProcessCwd } from './readProcessCwd'
 import { readProcessStart } from './readProcessStart'
 import { repositoryPosixPath } from './repositoryPosixPath'
 import type { ResolvedNodeServerLaunch } from './resolveNodeServerLaunch'
+import type { CauseRoots } from './sanitizeCause'
 import { signalProcessGroup } from './signalProcessGroup'
 import { watchOwnedProcess } from './watchOwnedProcess'
 
@@ -38,6 +39,8 @@ export type NodeServerLaunchRequest = ResolvedNodeServerLaunch & {
   workspace: string
   /** The external Node executable and its version. */
   node: { executable: string; version: string }
+  /** The private roots the server's output must not carry; hidden statefully, across chunk boundaries, before the output is journaled or stored ({@link captureProcessOutput}). */
+  privateRoots?: CauseRoots
 }
 
 /** How an owned server process ended. */
@@ -251,6 +254,7 @@ export async function launchNodeServer(
     overflowMessage:
       'Node server output capture failed: output outpaced its delivery beyond its limit.',
     failurePrefix: 'Node server output capture failed',
+    ...(launch.privateRoots ? { privateRoots: launch.privateRoots } : {}),
   })
   const exitOf = (): NodeServerExit => ({
     exitCode: child.exitCode,

@@ -53,6 +53,45 @@ function literal(text: string): string {
 }
 
 /**
+ * Gives the spellings a POSIX root can appear in: as given and through each macOS realpath alias.
+ * @param trimmed - A root without a trailing separator.
+ * @returns The root's spellings, as given first.
+ * @example posixSpellings('/private/var/x') // => ['/private/var/x', '/var/x']
+ */
+function posixSpellings(trimmed: string): string[] {
+  const spellings = new Set([trimmed])
+  for (const [left, right] of REALPATH_ALIASES) {
+    if (`${trimmed}/`.startsWith(left))
+      spellings.add(right + `${trimmed}/`.slice(left.length).replace(/\/$/, ''))
+    if (`${trimmed}/`.startsWith(right))
+      spellings.add(left + `${trimmed}/`.slice(right.length).replace(/\/$/, ''))
+  }
+  return [...spellings]
+}
+
+/**
+ * Gives every literal text {@link hidePrivateRoots} can replace, so a stream can tell which trailing text may still grow into a root: each root as given and through its macOS realpath aliases, and a Windows root without its long-path prefix.
+ * Why: {@link createRootHidingStage} holds a trailing run only while it is a prefix of one of these.
+ * @param roots - The private roots of this window.
+ * @returns The spellings of every root, without trailing separators; empty roots are skipped.
+ * @example privateRootSpellings({ storage: [], home: '/Users/ada' }) // => ['/Users/ada']
+ */
+export function privateRootSpellings(roots: CauseRoots): string[] {
+  const all = [
+    ...roots.storage,
+    ...[roots.workspace ?? []].flat(),
+    ...[roots.home ?? []].flat(),
+  ]
+  return all.flatMap((root) => {
+    const trimmed = root.replace(/[\\/]+$/, '')
+    if (!trimmed) return []
+    if (WINDOWS_ROOT.test(`${trimmed}\\`))
+      return [trimmed.replace(/^\\\\\?\\/, '')]
+    return posixSpellings(trimmed)
+  })
+}
+
+/**
  * Gives every spelling a root can appear in: as given, through a macOS realpath alias, and for a Windows root with either separator and with or without the `\\?\` prefix.
  * @param root - A root as the extension knows it.
  * @returns The patterns that match the root, each ending before the root's own last separator.
@@ -76,15 +115,8 @@ function rootPatterns(root: string): RegExp[] {
       new RegExp(`${start}(?:\\\\\\\\\\?\\\\)?${pattern}${boundary}`, 'gi'),
     ]
   }
-  const spellings = new Set([trimmed])
-  for (const [left, right] of REALPATH_ALIASES) {
-    if (`${trimmed}/`.startsWith(left))
-      spellings.add(right + `${trimmed}/`.slice(left.length).replace(/\/$/, ''))
-    if (`${trimmed}/`.startsWith(right))
-      spellings.add(left + `${trimmed}/`.slice(right.length).replace(/\/$/, ''))
-  }
   // The longest spelling first, so /private/var/… is replaced whole before /var/… could match inside it.
-  return [...spellings]
+  return posixSpellings(trimmed)
     .sort((left, right) => right.length - left.length)
     .map(
       (spelling) => new RegExp(`${start}${literal(spelling)}${boundary}`, 'g'),
@@ -102,6 +134,17 @@ function rootPatterns(root: string): RegExp[] {
  * // => '{"file":"<workspace>/a.ts",  "n": 1}\n'
  */
 export function hidePrivateRoots(text: string, roots: CauseRoots): string {
+  return createRootHider(roots)(text)
+}
+
+/**
+ * Compiles a window's private roots once into a function that hides them, so a caller that hides many texts (a stream, per chunk) sorts the roots and builds each pattern a single time.
+ * Why: {@link hidePrivateRoots} rebuilt every pattern per call; {@link createRootHidingStage} calls it several times per output chunk. Called by {@link hidePrivateRoots} and {@link createRootHidingStage}.
+ * @param roots - The private roots of this window.
+ * @returns A function with the behavior of {@link hidePrivateRoots} for these roots.
+ * @example createRootHider({ storage: [], home: '/Users/ada' })('at /Users/ada/a.ts') // => 'at ~/a.ts'
+ */
+export function createRootHider(roots: CauseRoots): (text: string) => string {
   const replacements: [string, string][] = roots.storage.map(
     (root): [string, string] => [root, '<storage>'],
   )
@@ -113,11 +156,15 @@ export function hidePrivateRoots(text: string, roots: CauseRoots): string {
     (left, right) =>
       shortSpellingLength(right[0]) - shortSpellingLength(left[0]),
   )
-  let hidden = text
-  for (const [root, words] of replacements)
-    for (const pattern of rootPatterns(root))
+  const compiled = replacements.flatMap(([root, words]) =>
+    rootPatterns(root).map((pattern): [RegExp, string] => [pattern, words]),
+  )
+  return (text) => {
+    let hidden = text
+    for (const [pattern, words] of compiled)
       hidden = hidden.replace(pattern, words)
-  return hidden
+    return hidden
+  }
 }
 
 /**

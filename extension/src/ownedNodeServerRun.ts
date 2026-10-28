@@ -61,6 +61,7 @@ import type { resolveNodeServerLaunch } from './utils/resolveNodeServerLaunch'
 import type { resolveNodeServerStops } from './utils/resolveNodeServerStops'
 import { RunningTimeLimit, type RunClock } from './utils/runningTimeLimit'
 import { hidePrivateRoots } from './utils/sanitizeCause'
+import type { CauseRoots } from './utils/sanitizeCause'
 import type { signalProcessGroup } from './utils/signalProcessGroup'
 
 /** The server the launcher started ({@link launchNodeServer}). */
@@ -150,6 +151,8 @@ export type NodeServerRunInput = {
   runId: string
   /** Where the run reports what a saved server replay records; absent when no history started. It is told synchronously and never awaited, and nothing it does reaches the run. */
   history?: NodeServerHistorySink
+  /** The private roots the service hides everywhere (storage, learning directory, workspace, home), frozen for this run: used for the server's output and the response body, so both read the same placeholders as the history, which hides with the same snapshot; absent in tests, where the workspace and the home directory are used. */
+  privateRoots?: CauseRoots
   dependencies: NodeServerRunDependencies
 }
 
@@ -227,6 +230,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   private killFirst = false
   /** The clock's time when the current stop was admitted, which its detach, grace and group wait are counted from. */
   private stopAdmittedAtMs = 0
+  /** The time since launch when the run's end was first known (a stop admitted, or a failure that ends it); `elapsedSinceLaunchMs` answers it from then on, so a seal delayed or retried after the end still carries the end's own time. */
+  private frozenElapsedMs?: number
   /** How many releases the run has begun; a later one is a retry that must confirm the group before it signals. */
   private releaseAttempts = 0
   /** The launched leader's start as read after the spawn (read again before the attach when that failed), kept for the identity check of a retried stop. */
@@ -467,6 +472,15 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     return stops
   }
 
+  /** The roots hidden in the server's output and response: the service's full set, else the workspace and the home directory. Computed once and frozen for the run, so the output stage, the response sanitizer and the history all hide one set (a folder added mid-run is hidden from the next run on). */
+  private privateRoots(): CauseRoots {
+    this.frozenPrivateRoots ??=
+      this.input.privateRoots ?? causeRootsFor([], this.input.workspace)
+    return this.frozenPrivateRoots
+  }
+
+  private frozenPrivateRoots?: CauseRoots
+
   /** Starts the server and the watch on its exit; its port is claimed from here on. */
   private async launchServer(
     launched: Awaited<ReturnType<typeof resolveNodeServerLaunch>>,
@@ -476,6 +490,8 @@ class OwnedNodeServerRun implements NodeServerRuntime {
         ...launched,
         workspace: this.input.workspace,
         node: this.dependencies.node,
+        // The workspace and the home directory are hidden in the server's output even where a chunk boundary cuts one.
+        privateRoots: this.privateRoots(),
       },
       (type, detail) => this.record(type, detail),
       (event) => this.onServerOutput(event),
@@ -706,6 +722,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   private failRun(error: StudyError): void {
     if (this.runFailure || this.lifecycle !== 'live') return
     this.runFailure = error
+    this.freezeElapsed()
     this.record('node-server.failure', {
       code: error.code,
       cause: error.causeDetail,
@@ -883,7 +900,12 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       toCapture(read, { index, generation }, this.server?.elapsedMs() ?? 0),
     )
     // Queued in this turn, ahead of the pause being published: the history never delays the live run.
-    this.input.history?.stop(this.launchedMs(), pause, generation, read)
+    this.input.history?.stop(
+      this.elapsedSinceLaunchMs(),
+      pause,
+      generation,
+      read,
+    )
     this.stopsReached.push(index)
     this.pause = {
       identity: {
@@ -1027,8 +1049,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
         verifyPeer: (connection) => this.verifyPeer(connection, server, port),
         signal: this.requestAbort.signal,
         // The body is the server's own text: only private roots are hidden, its spacing and lines stay.
-        sanitize: (text) =>
-          hidePrivateRoots(text, causeRootsFor([], this.input.workspace)),
+        sanitize: (text) => hidePrivateRoots(text, this.privateRoots()),
       })
     } catch (error) {
       // The sender never started: the window closes and the request may be tried again.
@@ -1088,7 +1109,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       NODE_SERVER_REQUEST_WALL_LIMIT_MS,
     )
     this.debugger().setRequestWindow(true)
-    this.input.history?.openRequest(this.launchedMs(), {
+    this.input.history?.openRequest(this.elapsedSinceLaunchMs(), {
       method: declared.method,
       path: declared.path,
       bodyBytes: this.request.bodyBytes,
@@ -1096,15 +1117,20 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     this.notify()
   }
 
-  /** Milliseconds since the launch, the one clock every entry of the history carries. */
-  private launchedMs(): number {
-    return this.server?.elapsedMs() ?? 0
+  /** Milliseconds since the launch, the one clock every entry of the history carries; the seal reads it for the end entry's time. It stops moving once the run's end is known (a stop admitted, or the failure that ends the run). */
+  elapsedSinceLaunchMs(): number {
+    return this.frozenElapsedMs ?? this.server?.elapsedMs() ?? 0
+  }
+
+  /** Freezes the run's clock at the first moment its end is known; later calls keep the first time. */
+  private freezeElapsed(): void {
+    this.frozenElapsedMs ??= this.server?.elapsedMs() ?? 0
   }
 
   /** Journals the request once its bytes were handed to the socket, so a refused or stopped request never reads as sent. */
   private recordSentRequest(token: number): void {
     if (token !== this.requestToken || !this.request) return
-    this.input.history?.markRequestSent(this.launchedMs())
+    this.input.history?.markRequestSent(this.elapsedSinceLaunchMs())
     this.record('node-server.request', {
       method: this.request.method,
       path: this.request.path,
@@ -1116,7 +1142,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   /** Takes the window back when the request was refused before its bytes were written. */
   private closeRequestWindow(token: number, code = 'REQUEST_NOT_SENT'): void {
     if (token !== this.requestToken) return
-    this.input.history?.withdrawRequest(this.launchedMs(), code)
+    this.input.history?.withdrawRequest(this.elapsedSinceLaunchMs(), code)
     this.requestToken += 1
     this.request = undefined
     this.requestLimit.stop()
@@ -1154,7 +1180,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     if (token !== this.requestToken || !this.inRequestWindow()) return
     if (this.lifecycle !== 'live') return
     this.response = response
-    this.input.history?.response(this.launchedMs(), response)
+    this.input.history?.response(this.elapsedSinceLaunchMs(), response)
     this.record('node-server.response', {
       status: response.status,
       contentType: response.contentType,
@@ -1203,7 +1229,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   ): void {
     if (!this.inRequestWindow() || this.lifecycle !== 'live') return
     this.requestFailure = { code, message }
-    this.input.history?.failRequest(this.launchedMs(), code, message)
+    this.input.history?.failRequest(this.elapsedSinceLaunchMs(), code, message)
     this.record('node-server.failure', { code, cause: message })
     this.requestAbort.abort(new Error(code))
     void this.endRequest()
@@ -1245,6 +1271,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     // D14 is decided at admission, before the holds are cleared.
     this.killFirst ||= this.mustKillFirst()
     this.stopAdmittedAtMs = this.clock.now()
+    this.freezeElapsed()
     this.lifecycle = 'stopping'
     this.abort.abort()
     // A request still checking its connection writes nothing once the stop is admitted.

@@ -5,6 +5,7 @@ import { StudyError } from '../errors'
 import { nodeServerHelp } from '../nodeServerHelp'
 import { readResource } from '../resources'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import {
   explainNodeHistorySchema,
   type ExplainNodeHistoryInput,
@@ -136,14 +137,22 @@ test('history problems read as historyIssue with their code and never fail the l
   await unsealed.run.sendRequest('k1')
   const writer = unsealed.record.nodeServer?.history?.writer
   assert.ok(writer)
-  writer.seal = () => Promise.reject(new Error('EROFS: read-only'))
+  // A slow seal: a fixed short wait after Stop would read the state before the seal failed.
+  writer.seal = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    throw new Error('EROFS: read-only')
+  }
 
   // Act
   await unsealed.service.stop({
     instanceId: unsealed.service.instanceId,
     runId: unsealed.record.id,
   })
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  // The observable end of the seal, not a fixed sleep.
+  await waitUntil(
+    () => unsealed.record.nodeServer?.history?.status === 'failed',
+    'the seal failed',
+  )
   const issues = [unavailable, failing, unsealed].map(
     ({ service, record }) => service.state(record).nodeServer,
   )
@@ -301,4 +310,22 @@ test('the node-server save help tells that truncated output makes the history re
     entry?.action,
     'The stops and the response are kept. Tell the learner the replay reads partial because of the output; start a new run with a quieter server only if the dropped output matters.',
   )
+})
+
+// protects=a recording server run offers only stop, and Save (save-node-learning) appears once the history is sealed; fails_when=save-node-learning is offered while the history still records, or is missing after Stop; no_claim=the status item
+test('a recording server run offers only stop and save-node-learning appears after Stop', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { service, record, run } = await startHistoryServerRun(harness, context)
+  await run.sendRequest('k1')
+
+  // Act
+  const recording = service.state(record).nextActions
+  await service.stop({ instanceId: service.instanceId, runId: record.id })
+  const stopped = service.state(record).nextActions
+
+  // Assert
+  assert.deepEqual(recording, ['stop'])
+  assert.equal(stopped.includes('save-node-learning'), true)
 })

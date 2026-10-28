@@ -1,8 +1,22 @@
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
+import { PassThrough } from 'node:stream'
 import { before, test } from 'node:test'
 
-import { NodeServerHistorySinkImpl } from '../nodeServerHistorySink'
+import {
+  NodeServerHistorySinkImpl,
+  type NodeServerHistorySinkInput,
+} from '../nodeServerHistorySink'
+import { captureProcessOutput } from '../utils/captureProcessOutput'
+import {
+  createNodeServerJournal,
+  type JournaledEvent,
+} from '../utils/createNodeServerJournal'
+import {
+  createRootHider,
+  hidePrivateRoots,
+  type CauseRoots,
+} from '../utils/sanitizeCause'
 
 import {
   nodeServerHistoryHeader,
@@ -18,7 +32,15 @@ before(async () => {
 })
 
 /** Starts a server history with two declared stops and a sink over it whose coalescing timer a test fires by hand. */
-async function startSink(context: Parameters<typeof openServerRepository>[0]) {
+async function startSink(
+  context: Parameters<typeof openServerRepository>[0],
+  options: {
+    sanitize?: (text: string) => string
+    roots?: CauseRoots
+    schedule?: NonNullable<NodeServerHistorySinkInput['schedule']>
+    onAppendFailed?: () => void
+  } = {},
+) {
   const { repository, learningDirectory } = await openServerRepository(context)
   const header = nodeServerHistoryHeader(SERVER_WORKSPACE_KEY, {
     declaredStops: 2,
@@ -27,13 +49,17 @@ async function startSink(context: Parameters<typeof openServerRepository>[0]) {
   let fire: (() => void) | undefined
   const sink = new NodeServerHistorySinkImpl({
     writer,
-    sanitize: (text) => text,
-    schedule: (callback) => {
-      fire = callback
-      return (): void => {
-        fire = undefined
-      }
-    },
+    sanitize: options.sanitize ?? ((text) => text),
+    roots: options.roots,
+    onAppendFailed: options.onAppendFailed,
+    schedule:
+      options.schedule ??
+      ((callback) => {
+        fire = callback
+        return (): void => {
+          fire = undefined
+        }
+      }),
   })
   return {
     sink,
@@ -276,4 +302,428 @@ test('a seal asked with an earlier time than a queued entry still ends the histo
   // Assert
   assert.equal(history.entries.at(-1)?.elapsedMs, 900)
   assert.equal(history.status, 'complete')
+})
+
+const PRIVATE_ROOTS: CauseRoots = {
+  storage: [],
+  workspace: ['/Users/ada/app'],
+  home: ['/Users/ada'],
+}
+
+/** Lets the stream callbacks of a capture run after a write. */
+async function settleStreams(): Promise<void> {
+  for (let round = 0; round < 3; round++)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+}
+
+// protects=a private root split between two output chunks 80 ms apart, or across the 4,096-character event split, is stored in no history file and appears in no live journal entry; fails_when=roots are hidden per chunk or per event after the cut (a split root survives in the sink and the journal); no_claim=storage roots (the run knows the workspace and home only) and roots of a shape hidePrivateRoots does not know
+test('a private root split across two chunks 80 ms apart or across the event split reaches no history file and no journal entry', async (context) => {
+  // Arrange
+  const { sink, writer, folder } = await startSink(context, {
+    sanitize: (text) => hidePrivateRoots(text, PRIVATE_ROOTS),
+  })
+  const journalEvents: JournaledEvent[] = []
+  const record = createNodeServerJournal(journalEvents, {
+    sanitize: (text) => hidePrivateRoots(text, PRIVATE_ROOTS),
+  })
+  const stdout = new PassThrough()
+  captureProcessOutput(
+    { stdout, stderr: new PassThrough() },
+    {
+      startedAt: process.hrtime.bigint(),
+      onOutput: (event) => {
+        sink.output(event.elapsedMs, event.channel, event.text)
+        record('node-server.output', {
+          sequence: event.sequence,
+          elapsedMs: event.elapsedMs,
+          channel: event.channel,
+          text: event.text,
+        })
+      },
+      pendingLimitBytes: 1_048_576,
+      overflowMessage: 'unused',
+      failurePrefix: 'test capture failed',
+      privateRoots: PRIVATE_ROOTS,
+    },
+  )
+
+  // Act
+  stdout.write('cwd is /Users/ada/')
+  await settleStreams()
+  await new Promise<void>((resolve) => setTimeout(resolve, 80))
+  stdout.write('app/src/server.ts\n')
+  await settleStreams()
+  // The root starts 6 characters before the 4,096-character event split.
+  stdout.write(`${'x'.repeat(4_090)}/Users/ada/app/b.ts\n`)
+  await settleStreams()
+  stdout.end()
+  await settleStreams()
+  sink.openRequest(9_000, { method: 'GET', path: '/api/x', bodyBytes: 0 })
+  await writer.seal({ elapsedMs: 9_100, reason: 'stopped' })
+  const files = await readHistoryFolderText(folder)
+
+  // Assert
+  assert.doesNotMatch(files, /Users\/ada/)
+  assert.match(files, /<workspace>\/src\/server\.ts/)
+  assert.doesNotMatch(JSON.stringify(journalEvents), /Users\/ada/)
+  assert.match(JSON.stringify(journalEvents), /<workspace>\/src\/server\.ts/)
+})
+
+// protects=every free text of a captured snapshot (frame, scope and variable names, values, types, unavailable reasons, source name, limitations) loses the private root and the bearer token while the executed source text stays as it ran; fails_when=any one of those fields is stored as captured; no_claim=the source text's own content
+test('a private root and a bearer token in any snapshot text reach no history file', async (context) => {
+  // Arrange
+  const { sink, writer, folder } = await startSink(context, {
+    sanitize: (text) => hidePrivateRoots(text, PRIVATE_ROOTS),
+  })
+  const base = debuggerCapture({ line: 2 })
+  const frame = base.snapshot.frames[0]
+  assert.ok(frame?.source)
+  const leak = '/Users/ada/app'
+  const token = 'Bearer canarycanary123456'
+  const capture = {
+    ...base,
+    snapshot: {
+      ...base.snapshot,
+      frames: [
+        {
+          ...frame,
+          name: `handler ${leak}`,
+          source: { ...frame.source, name: `${leak}/src/handler.ts` },
+          sourceUnavailable: `no source in ${leak}`,
+          unavailable: `frame ${token} ${leak}`,
+          scopes: [
+            {
+              name: `Local ${leak}`,
+              variables: [0],
+              unavailable: `scope ${token} ${leak}`,
+            },
+          ],
+        },
+      ],
+      variables: [
+        {
+          name: `path ${leak}`,
+          value: leak,
+          type: `typeof ${leak}`,
+          children: [],
+          unavailable: `value ${token} ${leak}`,
+        },
+      ],
+      limitations: [`limited ${token} ${leak}`],
+    },
+  }
+
+  // Act
+  sink.openRequest(10, { method: 'GET', path: '/api/x', bodyBytes: 0 })
+  sink.markRequestSent(11)
+  sink.stop(12, { declaredStopIndex: 0 }, 1, capture)
+  sink.response(20, RESPONSE)
+  await writer.seal({ elapsedMs: 30, reason: 'stopped' })
+  const files = await readHistoryFolderText(folder)
+
+  // Assert
+  assert.doesNotMatch(files, /Users\/ada/)
+  assert.doesNotMatch(files, /canarycanary123456/)
+  assert.match(files, /Local <workspace>/)
+  assert.match(files, /value Bearer \[masked\] <workspace>/)
+})
+
+// protects=a failed request closes the open attempt and every later report of the sink (second failure, send mark, response, withdrawal) is dropped, so the writer holds no failure and the history keeps its four entries; fails_when=a late report reaches the writer, whose rules refuse it and mark the history failed; no_claim=the run's own order of reports
+test('reports after a request failure are dropped and leave the writer unfailed', async (context) => {
+  // Arrange
+  const { sink, writer, store, studyId } = await startSink(context)
+  sink.openRequest(10, { method: 'GET', path: '/api/x', bodyBytes: 0 })
+  sink.markRequestSent(11)
+  sink.failRequest(20, 'ECONNRESET', 'socket hang up')
+
+  // Act
+  sink.failRequest(21, 'ECONNREFUSED', 'second failure')
+  sink.markRequestSent(22)
+  sink.response(23, RESPONSE)
+  sink.withdrawRequest(24, 'LATE')
+  await writer.seal({ elapsedMs: 30, reason: 'stopped' })
+  const history = await store.read(studyId)
+
+  // Assert
+  assert.equal(writer.appendFailure, undefined)
+  assert.deepEqual(
+    history.entries.map((entry) => entry.type),
+    ['request', 'request-sent', 'request-failed', 'end'],
+  )
+})
+
+// protects=a withdrawal reported after the bytes were sent is dropped, the answer is still recorded and the history seals complete; fails_when=the late withdrawal reaches the writer and marks it failed; no_claim=the run's own retry rule
+test('a withdrawal reported after the send mark is dropped and the response still seals complete', async (context) => {
+  // Arrange
+  const { sink, writer, store, studyId } = await startSink(context)
+  sink.openRequest(10, { method: 'GET', path: '/api/x', bodyBytes: 0 })
+  sink.markRequestSent(11)
+
+  // Act
+  sink.withdrawRequest(12, 'LISTENER_NOT_OWNED')
+  sink.response(20, RESPONSE)
+  await writer.seal({ elapsedMs: 30, reason: 'stopped' })
+  const history = await store.read(studyId)
+
+  // Assert
+  assert.equal(writer.appendFailure, undefined)
+  assert.deepEqual(
+    history.entries.map((entry) => entry.type),
+    ['request', 'request-sent', 'response', 'end'],
+  )
+})
+
+// protects=a stop captured after a withdrawal is dropped without failing the writer, while a stop before any request still marks it failed; fails_when=the late stop is written or faults the history, or the stop with no request at all is silently accepted; no_claim=what the run does with the dropped hit
+test('a stop after a withdrawal is dropped and a stop before any request still fails the history', async (context) => {
+  // Arrange
+  const afterWithdrawal = await startSink(context)
+  afterWithdrawal.sink.openRequest(10, {
+    method: 'GET',
+    path: '/api/x',
+    bodyBytes: 0,
+  })
+  afterWithdrawal.sink.withdrawRequest(11, 'LISTENER_NOT_OWNED')
+  const beforeAnyRequest = await startSink(context)
+
+  // Act
+  afterWithdrawal.sink.stop(
+    12,
+    { declaredStopIndex: 0 },
+    1,
+    debuggerCapture({ line: 2 }),
+  )
+  beforeAnyRequest.sink.stop(
+    12,
+    { declaredStopIndex: 0 },
+    1,
+    debuggerCapture({ line: 2 }),
+  )
+
+  await afterWithdrawal.writer.seal({ elapsedMs: 30, reason: 'stopped' })
+  await beforeAnyRequest.writer.seal({ elapsedMs: 30, reason: 'stopped' })
+
+  // Assert
+  assert.equal(afterWithdrawal.writer.appendFailure, undefined)
+  assert.equal(
+    beforeAnyRequest.writer.appendFailure?.message,
+    'A stop was captured outside an open request.',
+  )
+})
+
+// protects=a request that failed after its bytes were sent, then Stop, ends with reason stopped, capture partial and one reason: no response because the request failed; fails_when=the failure code is lost, an extra reason appears or the end reason is not stopped; no_claim=the service's read of the same verdict (its own test)
+test('a request failure after the send mark followed by Stop seals stopped and partial with only the failed-request reason', async (context) => {
+  // Arrange
+  const { sink, writer, store, studyId } = await startSink(context)
+  sink.openRequest(10, { method: 'GET', path: '/api/x', bodyBytes: 0 })
+  sink.markRequestSent(11)
+  sink.stop(12, { declaredStopIndex: 0 }, 1, debuggerCapture({ line: 2 }))
+  sink.stop(13, { declaredStopIndex: 1 }, 2, debuggerCapture({ line: 3 }))
+  sink.failRequest(20, 'ECONNRESET', 'socket hang up')
+
+  // Act
+  await writer.seal({ elapsedMs: 900, reason: 'stopped' })
+  const history = await store.read(studyId)
+
+  // Assert
+  const end = history.entries.at(-1)
+  assert.equal(end?.type === 'end' && end.reason, 'stopped')
+  assert.equal(history.status, 'partial')
+  assert.deepEqual(
+    history.seal?.reasons.map((reason) => reason.code),
+    ['SERVER_HISTORY_NO_RESPONSE_REQUEST_FAILED'],
+  )
+})
+
+// protects=after the output budget cut, further chunks cost no sanitizer call and no timer; fails_when=each later chunk is still sanitized, queued and scheduled; no_claim=the budget's own thresholds
+test('after the output cut 100 more chunks neither sanitize nor schedule anything', async (context) => {
+  // Arrange
+  let sanitizeCalls = 0
+  let scheduleCalls = 0
+  const { sink, writer, folder } = await startSink(context, {
+    sanitize: (text) => {
+      sanitizeCalls++
+      return text
+    },
+    schedule: () => {
+      scheduleCalls++
+      return (): void => {}
+    },
+  })
+  const chunk = 'y'.repeat(4_000)
+  // A history with no request holds nothing to replay and is not kept.
+  sink.openRequest(0, { method: 'GET', path: '/api/x', bodyBytes: 0 })
+  // Chunks 100 ms apart each become their own entry until the byte budget cuts.
+  for (let index = 0; index < 700; index++)
+    sink.output(index * 100, 'stdout', chunk)
+  sink.flush()
+  assert.equal(writer.outputCut, true)
+  const sanitizeBefore = sanitizeCalls
+  const scheduleBefore = scheduleCalls
+
+  // Act
+  for (let index = 0; index < 100; index++)
+    sink.output(80_000 + index * 100, 'stdout', chunk)
+  await writer.seal({ elapsedMs: 90_000, reason: 'stopped' })
+  const files = await readHistoryFolderText(folder)
+
+  // Assert
+  assert.equal(sanitizeCalls - sanitizeBefore, 0)
+  assert.equal(scheduleCalls - scheduleBefore, 0)
+  assert.equal(files.split('"type":"output-truncated"').length - 1, 1)
+})
+
+// protects=a 5,000-character failure message and response location are stored at exactly 2,048 characters and the history seals complete; fails_when=the entry is refused for exceeding its schema bound, or cut at another length; no_claim=the shape of the cut text beyond its length
+test('a 5,000-character failure message and location are stored at 2,048 characters and seal complete', async (context) => {
+  // Arrange
+  const long = 'z'.repeat(5_000)
+  const failing = await startSink(context)
+  const answering = await startSink(context)
+
+  // Act
+  failing.sink.openRequest(10, { method: 'GET', path: '/api/x', bodyBytes: 0 })
+  failing.sink.markRequestSent(11)
+  failing.sink.failRequest(20, 'ECONNRESET', long)
+  await failing.writer.seal({ elapsedMs: 30, reason: 'stopped' })
+  answering.sink.openRequest(10, {
+    method: 'GET',
+    path: '/api/x',
+    bodyBytes: 0,
+  })
+  answering.sink.markRequestSent(11)
+  answering.sink.response(20, { ...RESPONSE, location: `/next/${long}` })
+  await answering.writer.seal({ elapsedMs: 30, reason: 'stopped' })
+  const failed = (await failing.store.read(failing.studyId)).entries.find(
+    (entry) => entry.type === 'request-failed',
+  )
+  const answered = (await answering.store.read(answering.studyId)).entries.find(
+    (entry) => entry.type === 'response',
+  )
+
+  // Assert
+  assert.equal(
+    failed?.type === 'request-failed' && failed.message.length,
+    2_048,
+  )
+  assert.equal(
+    answered?.type === 'response' && answered.location?.length,
+    2_048,
+  )
+  assert.equal(failing.writer.appendFailure, undefined)
+  assert.equal(answering.writer.appendFailure, undefined)
+})
+
+// protects=a surrogate pair that straddles the 2,048 bound is dropped whole, never split into a lone surrogate; fails_when=the message is cut between the two halves of an astral character; no_claim=other bounded fields (same helper)
+test('an astral character at the message bound is not split', async (context) => {
+  // Arrange
+  const { sink, writer, store, studyId } = await startSink(context)
+  const message = `${'a'.repeat(2_047)}\u{1F600}tail`
+
+  // Act
+  sink.openRequest(10, { method: 'GET', path: '/api/x', bodyBytes: 0 })
+  sink.markRequestSent(11)
+  sink.failRequest(20, 'ECONNRESET', message)
+  await writer.seal({ elapsedMs: 30, reason: 'stopped' })
+  const failed = (await store.read(studyId)).entries.find(
+    (entry) => entry.type === 'request-failed',
+  )
+
+  // Assert
+  assert.equal(
+    failed?.type === 'request-failed' && failed.message,
+    'a'.repeat(2_047),
+  )
+})
+
+// protects=a synchronous refusal of the sink (a stop captured with no open request) tells the status item once that recording stopped, as a rejected queued append does; fails_when=the item keeps reading Recording explanation after a synchronous fault, or is told twice; no_claim=the status bar drawing
+test('a synchronous sink fault tells the status item once that recording stopped', async (context) => {
+  // Arrange
+  let told = 0
+  const { sink } = await startSink(context, {
+    onAppendFailed: () => {
+      told++
+    },
+  })
+
+  // Act
+  sink.stop(12, { declaredStopIndex: 0 }, 1, debuggerCapture({ line: 2 }))
+  sink.stop(13, { declaredStopIndex: 1 }, 2, debuggerCapture({ line: 3 }))
+
+  // Assert
+  assert.equal(told, 1)
+})
+
+// protects=a debugger value cut by the capture inside a private root (its marker closes the cut text) never stores the root's visible start, while an uncut value stays as captured; fails_when=the stored value keeps the start of the home path or the learner's name from a cut root, or an uncut value is changed; no_claim=cuts that are not at the end of a text
+test('a debugger value cut inside a private root stores no part of the root', async (context) => {
+  // Arrange
+  const { sink, writer, folder } = await startSink(context, {
+    sanitize: (text) => hidePrivateRoots(text, PRIVATE_ROOTS),
+    roots: PRIVATE_ROOTS,
+  })
+  const base = debuggerCapture({ line: 2 })
+  const capture = {
+    ...base,
+    snapshot: {
+      ...base.snapshot,
+      variables: [
+        {
+          name: 'cut',
+          value: `${'x'.repeat(4_073)} /Users/ad… [truncated]`,
+          children: [],
+        },
+        { name: 'plain', value: 'path /Users/x is only text', children: [] },
+      ],
+    },
+  }
+
+  // Act
+  sink.openRequest(10, { method: 'GET', path: '/api/x', bodyBytes: 0 })
+  sink.markRequestSent(11)
+  sink.stop(12, { declaredStopIndex: 0 }, 1, capture)
+  sink.response(20, RESPONSE)
+  await writer.seal({ elapsedMs: 30, reason: 'stopped' })
+  const files = await readHistoryFolderText(folder)
+
+  // Assert
+  assert.doesNotMatch(files, /\/Users\/ad/)
+  assert.doesNotMatch(files, /\bada\b/)
+  assert.ok(files.includes(`${'x'.repeat(4_073)} ~… [truncated]`))
+  assert.ok(files.includes('path /Users/x is only text'))
+})
+
+// protects=one frozen root snapshot hides both a whole workspace path and a path the capture cut inside that workspace root in a stop's values, so the saved history never shows less than the live output hides; fails_when=the cut-fragment hiding reads another root set than the whole-root hiding (the whole path is hidden but its cut start stays, or the reverse); no_claim=the service's own root set and a folder added after the run began (hidden from the next run on)
+test('a stop hides a whole root and a cut root fragment with the same frozen snapshot', async (context) => {
+  // Arrange
+  const frozenRoots: CauseRoots = {
+    storage: [],
+    home: ['/Users/ada'],
+    workspace: ['/srv/project'],
+  }
+  const { sink, writer, folder } = await startSink(context, {
+    sanitize: createRootHider(frozenRoots),
+    roots: frozenRoots,
+  })
+  const base = debuggerCapture({ line: 2 })
+  const capture = {
+    ...base,
+    snapshot: {
+      ...base.snapshot,
+      variables: [
+        { name: 'whole', value: 'at /srv/project/a.ts', children: [] },
+        { name: 'cut', value: 'at /srv/proj… [truncated]', children: [] },
+      ],
+    },
+  }
+
+  // Act
+  sink.openRequest(10, { method: 'GET', path: '/api/x', bodyBytes: 0 })
+  sink.markRequestSent(11)
+  sink.stop(12, { declaredStopIndex: 0 }, 1, capture)
+  sink.response(20, RESPONSE)
+  await writer.seal({ elapsedMs: 30, reason: 'stopped' })
+  const files = await readHistoryFolderText(folder)
+
+  // Assert
+  assert.doesNotMatch(files, /\/srv\/proj/)
+  assert.ok(files.includes('at <workspace>/a.ts'))
+  assert.ok(files.includes('at <workspace>… [truncated]'))
 })

@@ -8,6 +8,7 @@ import {
 
 import { buildNodeServerHistoryHeader } from './buildNodeServerHistoryHeader'
 import { readRepositoryRevision } from './readRepositoryRevision'
+import type { CauseRoots } from './sanitizeCause'
 
 /** What {@link startNodeServerHistory} needs of the run and the service. */
 export type StartNodeServerHistoryInput = {
@@ -22,14 +23,18 @@ export type StartNodeServerHistoryInput = {
     configurationHash: string
     descriptor: ConfiguredDescriptor
   }
-  /** Hides the private roots of a recorded text. */
+  /** Hides the private roots of a recorded text; built from the same frozen snapshot as `roots`. */
   hideRoots: (text: string) => string
+  /** The private roots behind `hideRoots`, frozen for the run (the snapshot the run's output stage and response sanitizer use too), so a text cut inside a root is hidden by the same set. */
+  roots?: CauseRoots
   /** Words a failure for the learner; names a full store with its own message. */
   describeCause: (error: unknown) => string
   /** The start's bound; the default 2 s unless a test names its own. */
   startBoundMs?: number
   /** Told once with the first fault of the run's sink (the service writes it to Output › Codebook); the history is already marked failed. */
   onFault?: (error: unknown) => void
+  /** Told once when the history stopped taking entries while the run lives (the service redraws the status item). */
+  onAppendFailed?: () => void
 }
 
 /**
@@ -62,7 +67,12 @@ export async function startNodeServerHistory(
         }),
       ),
     describeCause: input.describeCause,
-    sink: { sanitize: input.hideRoots, onFault: input.onFault },
+    sink: {
+      sanitize: input.hideRoots,
+      roots: input.roots,
+      onFault: input.onFault,
+      onAppendFailed: input.onAppendFailed,
+    },
     summarize: (studyId) => repository.serverHistories.summarize(studyId),
     startBoundMs: input.startBoundMs,
   })

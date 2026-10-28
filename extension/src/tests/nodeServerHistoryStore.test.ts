@@ -13,6 +13,7 @@ import {
   serverStopCapture,
 } from './utils/nodeServerHistoryFixture'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
+import { readHistoryFolderText } from './utils/readHistoryFolderText'
 import { realProcessStart } from './utils/realProcessStart'
 
 before(async () => {
@@ -167,12 +168,9 @@ test('a secret-named body field and a query token of the declaration reach no fi
   })
   await writer.seal({ elapsedMs: 2, reason: 'stopped' })
   const folder = join(learningDirectory, 'node-servers.v1', header.studyId)
-  const contents = await Promise.all(
-    (await readdir(folder)).map((name) => readFile(join(folder, name), 'utf8')),
-  )
+  const everything = await readHistoryFolderText(folder)
 
   // Assert
-  const everything = contents.join('\n')
   assert.equal(everything.includes('CANARY-QUERY-9d1'), false)
   assert.equal(everything.includes('CANARY-BODY-7c4'), false)
   assert.equal(everything.includes('abcdefgh12345'), false)

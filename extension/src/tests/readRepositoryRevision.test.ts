@@ -1,9 +1,18 @@
 import assert from 'node:assert/strict'
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import {
+  access,
+  chmod,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { gitEnvironmentWithoutInherited } from '../utils/gitEnvironmentWithoutInherited'
 import { readRepositoryRevision } from '../utils/readRepositoryRevision'
 
 /** Writes a stand-in `git` script that logs its arguments and the lock setting, then runs `body`. */
@@ -57,9 +66,57 @@ test('the revision read runs Git without optional locks', async () => {
     // Assert
     assert.deepEqual(revision, { revision: 'abc123', dirty: true })
     assert.deepEqual(calls, [
-      '0 --no-optional-locks rev-parse HEAD',
-      '0 --no-optional-locks status --porcelain --untracked-files=no',
+      '0 -c core.fsmonitor=false --no-optional-locks rev-parse HEAD',
+      '0 -c core.fsmonitor=false --no-optional-locks status --porcelain --untracked-files=no',
     ])
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// protects=a repository's own core.fsmonitor hook never runs when the header's revision is read; fails_when=the status runs without core.fsmonitor=false; no_claim=other Git subcommands elsewhere in the product
+test('the revision read does not start the repository fsmonitor hook and still returns the commit', async () => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-revision-'))
+  try {
+    // The setup Git sees no inherited GIT_* variable, so a test run inside a Git hook (GIT_DIR, GIT_INDEX_FILE) still builds this temporary repository and never touches the caller's.
+    const run = (...args: string[]) =>
+      execFileSync('git', args, {
+        cwd: directory,
+        encoding: 'utf8',
+        env: gitEnvironmentWithoutInherited(),
+      }).trim()
+    run('init', '-q')
+    await writeFile(join(directory, 'tracked.txt'), 'one\n')
+    run('add', 'tracked.txt')
+    run(
+      '-c',
+      'user.name=Test',
+      '-c',
+      'user.email=test@example.com',
+      // The developer's global config (signing, a hooks directory) must not fail this setup commit; a hooks path that does not exist runs no hook on any OS.
+      '-c',
+      'commit.gpgsign=false',
+      '-c',
+      `core.hooksPath=${join(directory, 'no-hooks')}`,
+      'commit',
+      '-q',
+      '-m',
+      'first',
+    )
+    const commit = run('rev-parse', 'HEAD')
+    const marker = join(directory, 'fsmonitor-ran.marker')
+    const hook = join(directory, 'hook.sh')
+    await writeFile(hook, `#!/bin/sh\necho ran > "${marker}"\n`)
+    await chmod(hook, 0o755)
+    run('config', 'core.fsmonitor', hook)
+
+    // Act
+    const revision = await readRepositoryRevision(directory)
+
+    // Assert
+    assert.deepEqual(revision, { revision: commit, dirty: false })
+    await assert.rejects(access(marker))
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

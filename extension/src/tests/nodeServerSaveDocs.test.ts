@@ -10,7 +10,7 @@ const readPackageFile = (...path: string[]): Promise<string> =>
   readFile(join(__dirname, '..', '..', ...path), 'utf8')
 
 // protects=the skill saves a server explanation only on API 1.9 or later, through codebook_explain_node_history, citing request, stops, output and response, claims saved only on complete coverage and an empty captureMissing, and links the canonical help; fails_when=any of those rules leaves the skill; no_claim=how a chat follows it
-test('the bundled skill 1.0.53 saves a server explanation only on API 1.9, claims saved on complete coverage, and links the canonical help', async () => {
+test('the bundled skill 1.0.54 saves a server explanation only on API 1.9, claims saved on complete coverage, and links the canonical help', async () => {
   // Arrange / Act
   const skill = await readPackageFile('skills', 'codebook', 'SKILL.md')
   const paragraph = skill
@@ -30,7 +30,35 @@ test('the bundled skill 1.0.53 saves a server explanation only on API 1.9, claim
     /only when the run resource reads `nodeServer\.learningCoverage` `complete` and an empty `nodeServer\.captureMissing`/,
   )
   assert.match(paragraph, /codebook:\/\/help\/node-server/)
-  assert.ok(skill.includes('metadata:\n  version: "1.0.53"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.54"\n'))
+})
+
+// protects=the skill tells the chat to save every deciding value it named and to save source-read claims as their own source-derived step, with an observed step stating only its cited entry, and to check its chat answer's deciding values against what it saves before saving; fails_when=any of those rules leaves the skill; no_claim=how a chat follows it
+test('the bundled skill has saved steps keep every named deciding value and keep source-derived claims out of observed steps', async () => {
+  // Arrange / Act
+  const skill = await readPackageFile('skills', 'codebook', 'SKILL.md')
+  const paragraph = skill
+    .split('\n')
+    .find((line) => line.startsWith('**Saved steps stand alone.**'))
+
+  // Assert
+  assert.ok(paragraph, 'the skill has a Saved steps stand alone paragraph')
+  assert.match(
+    paragraph,
+    /Every value you named in chat as deciding the outcome \(a threshold, a code, an id, a limit\) appears in a saved step or the summary, with where it comes from/,
+  )
+  assert.match(
+    paragraph,
+    /rather than from a recorded entry is its own step with evidence `source-derived`/,
+  )
+  assert.match(
+    paragraph,
+    /never fold it into an `observed` step\. An `observed` step states only what its cited entry shows/,
+  )
+  assert.match(
+    paragraph,
+    /Before you call the save tool, reread your chat answer: each number, code or limit it used to explain why the outcome happened must already be in the summary or a step you are saving; add the missing ones first\./,
+  )
 })
 
 // protects=the packaged README states what a Server replay is, that it stores the executed source as it ran (private, secret-named values masked, source literals unchanged), the Save texts, and a troubleshooting row for every captureMissing code; fails_when=a sentence or a code is missing; no_claim=the table's wording

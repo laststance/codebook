@@ -106,6 +106,18 @@ export class StudyError extends Error {
 }
 
 /**
+ * Marks the refusal for a main editor that reported no keyboard focus, so a caller tells it apart by type and never by its wording.
+ *
+ * {@link StudyWorkspace} throws it when its main editor measurement ends without that report; its entry of a test replay reads the type to avoid a second wait.
+ * @example throw new UnreportedEditorFocusError(unreportedEditorFocusObstacle(5))
+ */
+export class UnreportedEditorFocusError extends StudyError {
+  constructor(message: string) {
+    super('PRESENTATION_UNAVAILABLE', message)
+  }
+}
+
+/**
  * Marks sealed evidence whose bytes are no longer the saved ones, as distinct from evidence a newer checkpoint withdrew.
  *
  * {@link readResource} raises it for tampered or edited images and sources, and {@link readBoundedFile} for a file that

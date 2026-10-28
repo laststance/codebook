@@ -52,6 +52,7 @@ import {
   resolveExternalNodeExecutable,
 } from './utils/resolveExternalNodeExecutable'
 import { sanitizeCause } from './utils/sanitizeCause'
+import type { CauseRoots } from './utils/sanitizeCause'
 import { searchRepositoryVitest } from './utils/searchRepositoryVitest'
 
 export interface StudyPresentation {
@@ -520,6 +521,7 @@ export async function createEnvironment(
       citedSources: ConfiguredDescriptor['sources'],
       runId: string,
       history?: NodeServerHistorySink,
+      privateRoots?: CauseRoots,
     ) {
       const node = await resolveExternalNode(
         await requireNodeRunPrerequisites('the Node server run'),
@@ -539,6 +541,7 @@ export async function createEnvironment(
         citedSources,
         runId,
         history,
+        ...(privateRoots ? { privateRoots } : {}),
         dependencies: createProductNodeServerRunDependencies({
           node,
           utilities: createNodeServerRunUtilities(orphanStore),

@@ -1703,3 +1703,90 @@ test('Open replay refused beside the Cursor Agent is told in Output and the retr
     await harness.close()
   }
 })
+
+// protects=one learner Open replay refused because Cursor's main editor reports no keyboard focus: one five-second wait and one presentation:focus-unreported entry, and the reader left out of the empty summary composition with its Study pane back; fails_when=leaving the empty summary composition reopens the reader, which meets the same guard and logs the entry again (N60, two entries about 5 s apart), the refusal skips that leave and the reader stays in an empty summary composition, or the Study pane stays closed (CR2-1); no_claim=that the learner's next selection arranges the panes as a first open does
+test('Open replay refused for an unreported keyboard focus waits for the report once and writes one focus-unreported entry in Output', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  try {
+    readerSeams(harness).stopOwnTimer()
+    harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+    harness.groups.at(-1)!.tabs = []
+    harness.groups.at(-1)!.activeTab = undefined
+    const chat = harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    harness.leavePaneFocusUnreportedBesideChat()
+    const { record, studyId } = await startLiveTestRun(
+      harness,
+      'cursor-refusal',
+    )
+    // The Study workspace is open in its live composition when the learner saves the run and opens its replay.
+    await harness.reader.open()
+    harness.focusMutableDraft('auth.ts', 2)
+    chat.focusTab()
+    await readerSeams(harness).refresh()
+    for (const generation of [1, 2])
+      await harness.service.continue({
+        instanceId: harness.service.instanceId,
+        runId: record.id,
+        participant: 'server',
+        sessionId: 'owned-session',
+        threadId: 7,
+        generation,
+      })
+    await harness.service.stop({
+      instanceId: harness.service.instanceId,
+      runId: record.id,
+    })
+    await readerSeams(harness).refresh()
+    await harness.reader.saveLearningReplay(studyId)
+
+    // Act: the five seconds of the wait for the focus report pass on a faked clock; the learner then clicks into a file and asks again.
+    enableFakeClock(context)
+    const firstOpen = harness.reader.openLearningReplay(studyId).then(
+      () => 'returned',
+      (error: unknown) => String(error),
+    )
+    await advanceClockUntilSettled(context, firstOpen, 12_000)
+    const firstResult = await firstOpen
+    resetFakeClock(context)
+
+    // Assert
+    assert.equal(firstResult, 'returned')
+    assert.equal(
+      logged.filter(
+        (entry) => entry.surface === 'presentation:focus-unreported',
+      ).length,
+      1,
+    )
+    assert.equal(
+      logged.filter((entry) => entry.surface === 'open:test-replay').length,
+      1,
+    )
+    // The refusal leaves the window as the entry found it: no empty summary composition stands, without a second wait.
+    assert.equal(readerSeams(harness).isSummaryArrangement(), false)
+    assert.equal(harness.summary.visible, false)
+    // The Study pane stands again, created without a second measurement of the main editor (CR2-1).
+    assert.notEqual(harness.panelColumn('codebook.studyContext'), undefined)
+    // The refusal stands on the returned Study pane's line, and the one entry is still the only one after the pane was created again.
+    assert.deepEqual(
+      [...(lastView(harness)?.errors ?? [])],
+      [
+        'The Codebook panes were not arranged: the main editor did not report the keyboard focus within 5 s after Codebook focused its first editor group. Click into a file in the main editor, then try again.',
+      ],
+    )
+    // The learner clicks into a file and asks again: the replay opens in the summary composition.
+    harness.focusMutableDraft('auth.ts', 2)
+    await harness.reader.openLearningReplay(studyId)
+    assert.equal(readerSeams(harness).isSummaryArrangement(), true)
+    assert.equal(lastView(harness)?.nodeHistory?.header.studyId, studyId)
+  } finally {
+    resetFakeClock(context)
+    await harness.close()
+  }
+})

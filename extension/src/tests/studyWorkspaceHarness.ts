@@ -1376,6 +1376,9 @@ export async function workspaceHarness(
     pendingPrimaryFocusEcho: typeof activeTabGroup | undefined
   // Cursor 3.23.12: a pane of the main editor that is no text editor takes the keyboard without a report while the editor names the chat's group.
   let leavesPaneFocusUnreportedBesideChat = false
+  /** Set by `takesKeyboardBackFromFirstGroupBesideChat`: the pane the first group's focus command made active briefly, until the next layout read has been answered. */
+  let chatRetakesKeyboardAfterLayoutRead: (() => void) | undefined
+  let chatRetakesKeyboardFromFirstGroup = false
   // Cursor 3.23.12: "Navigate Down Call Stack" gives the frame's file the keyboard while the editor keeps naming the group it named before; see `keepNamingGroupAfterFrameNavigation`.
   let keepsNamingGroupAfterFrameNavigation = false
   // Cursor 3.23.12: the learner's click into a file of the main editor keeps the chat part's group named; see `keepChatPartNameAtLearnersFileClick`.
@@ -4388,8 +4391,28 @@ export async function workspaceHarness(
                 editor.document.uri.toString() ===
                   primaryGroup.activeTab.input.uri.toString(),
             )
-            // The first group has the keyboard and layout reads are answered for the main editor, yet no group event arrives and the group the editor named stays the named one: the chat's, or the main editor's group it named while the chat input had the keyboard. A text editor the first group shows is reported as the active text editor, a pane is not reported at all.
+            // Cursor's Agent chat group takes the keyboard back right after the focus command (Cycle 0060, N60): the first group's pane reports itself active for a moment while the editor goes on naming the chat's group, the next layout read is answered for the main editor, and the chat part is the active part again afterwards.
             if (
+              chatRetakesKeyboardFromFirstGroup &&
+              separateEditorPart &&
+              (activeTabGroup === separateEditorPart.group ||
+                separateEditorPart.lastActive)
+            ) {
+              const part = separateEditorPart
+              const firstPane = [...panels].find(
+                (candidate) => primaryGroup.activeTab === candidate.nativeTab,
+              )
+              part.lastActive = false
+              part.focused = false
+              heldActivePane = firstPane?.kind
+              for (const panel of panels) panel.notifyViewState()
+              chatRetakesKeyboardAfterLayoutRead = (): void => {
+                heldActivePane = undefined
+                // The chat input has the keyboard again; layout reads still answer for the main editor, as in the unreported-focus model.
+                part.focused = true
+                for (const panel of panels) panel.notifyViewState()
+              }
+            } else if (
               leavesPaneFocusUnreportedBesideChat &&
               separateEditorPart &&
               ((staleNamedGroup ?? activeTabGroup) ===
@@ -4499,6 +4522,12 @@ export async function workspaceHarness(
                   : value,
               ),
             )
+            // The chat part takes the keyboard back once this read has been answered for the main editor.
+            if (chatRetakesKeyboardAfterLayoutRead) {
+              const retake = chatRetakesKeyboardAfterLayoutRead
+              chatRetakesKeyboardAfterLayoutRead = undefined
+              setImmediate(retake)
+            }
             // With modelled side bars the main editor's columns are read in pixels of the area the bars leave, as the editor reports them.
             if (
               sideBars &&
@@ -6907,6 +6936,17 @@ export async function workspaceHarness(
       replacesGroupObjectsOnTabChanges = true
     },
     /**
+     * Makes the fake editor answer `workbench.action.focusFirstEditorGroup` the way Cursor 3.27.12 was seen to while its Agent chat group is the active one (Cycle 0060, N60): the first group's pane reports itself active for a moment while the editor goes on naming the chat's group, the next layout read is answered for the main editor, and the chat input has the keyboard again right after that read, while later layout reads still answer for the main editor. No text editor is reported.
+     * @example
+     * const chat = harness.addSeparateEditorPart()
+     * harness.takesKeyboardBackFromFirstGroupBesideChat()
+     * chat.focusTab()
+     */
+    takesKeyboardBackFromFirstGroupBesideChat(): void {
+      chatRetakesKeyboardFromFirstGroup = true
+      replacesGroupObjectsOnTabChanges = true
+    },
+    /**
      * Makes the learner's click into a file of the main editor (`focusMutableDraft` and its `focus`) keep Cursor's name of its chat part's group, as Cursor 3.23.12 did on C61: after a genuine click into the text of auth.ts in front of group 2, auth.ts was the active text editor with the keyboard in its TEXTAREA while `activeTabGroup` still named the chat part's group 3 (private c61-cu-692; a click renames no group, as row 702's probe read for the chat input; Cycle 0046 row 712). The name stays until the next group event, as every stale name of this model does. Without it the click names the file's group.
      * @example
      * chat.focusTab()
@@ -8591,6 +8631,8 @@ export function readerSeams(harness: {
     isSourceShown: (): boolean => reader['sourceReady'](),
     isRecordingActive: (): boolean => reader['recordingActive'],
     isLiveArrangement: (): boolean => reader['liveComposition'],
+    /** Says whether the reader stands in the summary composition (the Learning summary in the chat's place, the Study pane closed), as an entry of a test replay leaves it. @example readerSeams(harness).isSummaryArrangement() // => false after a refused entry left it */
+    isSummaryArrangement: (): boolean => reader['summaryComposition'],
     /** Says whether an agent's next request would read the keyboard's place as the learner's own (no Codebook pane active): the reading of rows 613 and 654 that decides whether the request gives the keyboard back or keeps it and tells where it is. @example readerSeams(harness).knowsLearnersPlace() // => false right after the reader's render of a pause gave the captured source the keyboard */
     knowsLearnersPlace: (): boolean => reader['knowsLearnersPlace'](undefined),
     /** Reads the main editor's layout without borrowing focus, as the presentation state's confirmation does ({@link StudyWorkspace.readPassivePresentationLayout}): the layout, or `undefined` when the read cannot tell that the main editor answered. @example await readerSeams(harness).readPassiveLayout() // => undefined while VS Code's floating window of text editors is the focused one */
@@ -8602,6 +8644,16 @@ export function readerSeams(harness: {
       Array.from(
         (await reader['readMainEditorGrid'](undefined, () => {})).groups,
         (group) => group.viewColumn,
+      ),
+    /** Measures the main editor as {@link measureMainEditorGrid} does, with a caller that refuses the announced focus before the first group is focused, as the reader's own focus watch does when the learner left or a borrow is pending. @example await readerSeams(harness).measureMainEditorGridRefusedBeforeFocus() // rejects with the caller's refusal */
+    measureMainEditorGridRefusedBeforeFocus: (): Promise<unknown> =>
+      reader['readMainEditorGrid'](
+        undefined,
+        () => {},
+        undefined,
+        () => {
+          throw new Error('refused before the focus command')
+        },
       ),
     /** Makes one checkpoint of a run, forced as Retry storage and retirement force it. */
     checkpoint: (

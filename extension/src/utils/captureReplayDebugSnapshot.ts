@@ -9,6 +9,7 @@ import {
   REPLAY_DEBUG_MAX_SCOPES,
   REPLAY_DEBUG_MAX_VARIABLES,
   REPLAY_DEBUG_TEXT_LIMIT_CHARS,
+  REPLAY_DEBUG_TRUNCATION_MARKER,
   REPLAY_SCOPE_NOT_CAPTURED_TEXT,
 } from '../constants'
 import {
@@ -94,10 +95,13 @@ export async function captureReplayDebugSnapshot(
     shouldCaptureReplayScope(frameIndex, scopeName, presentationHint) &&
     (input.limits?.includeScope?.(frameIndex, scopeName) ?? true)
   const deadline = performance.now() + timeoutMs
-  const shorten = (value: string) =>
-    value.length <= REPLAY_DEBUG_TEXT_LIMIT_CHARS
-      ? value
-      : `${value.slice(0, REPLAY_DEBUG_TEXT_LIMIT_CHARS - '… [truncated]'.length)}… [truncated]`
+  // Masks secrets before the cut, for every field: a secret straddling the cut would otherwise leave a fragment shorter than any pattern's minimum.
+  const shorten = (value: string) => {
+    const masked = redactSecretText(value)
+    return masked.length <= REPLAY_DEBUG_TEXT_LIMIT_CHARS
+      ? masked
+      : `${masked.slice(0, REPLAY_DEBUG_TEXT_LIMIT_CHARS - REPLAY_DEBUG_TRUNCATION_MARKER.length)}${REPLAY_DEBUG_TRUNCATION_MARKER}`
+  }
   const read = async (
     command: 'scopes' | 'variables',
     arguments_: Record<string, number>,
@@ -164,10 +168,10 @@ export async function captureReplayDebugSnapshot(
         // Redaction contract: a secret-named variable keeps its name and type but reads [masked], and its subtree is neither read nor saved; any other value is masked where a secret-named member shows in its preview or where it looks like a credential. Masking comes before shortening.
         const isSecretVariable = isSecretName(variable.name)
         const saved: ReplayDebugSnapshot['variables'][number] = {
-          name: shorten(redactSecretText(variable.name)),
+          name: shorten(variable.name),
           value: isSecretVariable
             ? REDACTION_MASK
-            : shorten(redactSecretText(redactValuePreview(variable.value))),
+            : shorten(redactValuePreview(variable.value)),
           type: variable.type && shorten(variable.type),
           children: [],
         }

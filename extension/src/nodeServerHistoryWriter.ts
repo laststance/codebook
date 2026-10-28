@@ -243,6 +243,18 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
     return this.appendEntry(input)
   }
 
+  /**
+   * Says whether output is dropped for good: its budget was cut, an append failed, or the writer is closed to appends; the sink stops sanitizing and queueing output from then on.
+   * @example if (writer.outputCut) return
+   */
+  get outputCut(): boolean {
+    return (
+      this.outputWasCut ||
+      this.appendFailure !== undefined ||
+      this.closedToAppends
+    )
+  }
+
   /** Names the bound an output entry of `bytes` would cross, or `undefined` when it fits every one. */
   private outputBoundReached(
     bytes: number,
@@ -417,7 +429,11 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
     _reason?: string,
   ): Promise<string | undefined> {
     return this.seal({
-      elapsedMs: this.serverRules.lastElapsedMs,
+      // The largest accepted time, queued entries included, as {@link NodeServerHistoryWriter.seal} takes it.
+      elapsedMs: Math.max(
+        this.serverRules.lastElapsedMs,
+        this.latestAcceptedMs,
+      ),
       reason: 'stopped',
     })
   }

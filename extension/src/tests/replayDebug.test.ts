@@ -1480,3 +1480,51 @@ test('only a recorded stop with scopes has values for native Variables to load',
   assert.equal(scopeLess, false)
   assert.equal(withValues, true)
 })
+
+// protects=a Bearer token that straddles the 4,096-character cut of a debugger error message is masked before the cut, so no part of it is stored; fails_when=the text is cut first and the token's first characters stay in the captured text before the marker; no_claim=other secret shapes
+test('a Bearer token straddling the cut of an unavailable error message is captured masked', async () => {
+  // Arrange
+  const padding = `${'x'.repeat(4_055)} `
+  const message = `${padding}Bearer ${'T'.repeat(40)}`
+
+  // Act
+  const actual = await captureReplayDebugSnapshot({
+    stack,
+    verifiedSource: source,
+    assertCurrent() {},
+    request() {
+      return Promise.reject(new Error(message))
+    },
+  })
+
+  // Assert
+  assert.equal(actual.frames[0]!.unavailable, `${padding}Bearer [masked]`)
+})
+
+// protects=a Bearer token that straddles the cut of a variable type is masked before the cut; fails_when=the type is cut first and part of the token is stored; no_claim=variable names and values (masked before the cut already)
+test('a Bearer token straddling the cut of a variable type is captured masked', async () => {
+  // Arrange
+  const padding = `${'x'.repeat(4_055)} `
+  const type = `${padding}Bearer ${'T'.repeat(40)}`
+
+  // Act
+  const actual = await captureReplayDebugSnapshot({
+    stack,
+    verifiedSource: source,
+    assertCurrent() {},
+    request(command) {
+      if (command === 'scopes')
+        return Promise.resolve({
+          scopes: [{ name: 'Locals', variablesReference: 555 }],
+        })
+      return Promise.resolve({
+        variables: [
+          { name: 'amount', value: '120', type, variablesReference: 0 },
+        ],
+      })
+    },
+  })
+
+  // Assert
+  assert.equal(actual.variables[0]!.type, `${padding}Bearer [masked]`)
+})

@@ -56,6 +56,8 @@ export class NodeServerHistoryRecorder {
   sealed?: {
     summary: NodeServerHistorySummary | undefined
     hash: string | undefined
+    /** The number of the latest verdict read, so only that read writes the summary ({@link StudyService.refreshNodeServerSummary}). */
+    summaryReads?: number
   }
   private sealOperation?: Promise<void>
 
@@ -123,7 +125,7 @@ export class NodeServerHistoryRecorder {
    * Ends and seals the history; the first call decides, every later call joins it.
    * @param end - How the run ended.
    * @param boundMs - How long the seal may take; past it the writer is abandoned (the folder lists as interrupted) and the failure reads `Learning replay could not be saved: timed out after <s> s.`
-   * @returns Settles when the seal ended in a sealed or a failed state; never rejects.
+   * @returns Settles when the seal ended in a sealed or a failed state; never rejects. A seal published at the deadline settles at once sealed with an unknown summary, which the summary read fills when it answers.
    * @example await recorder.seal({ elapsedMs: 900, reason: 'stopped' }, 10_000)
    */
   // fallow-ignore-next-line unused-class-member
@@ -145,25 +147,71 @@ export class NodeServerHistoryRecorder {
       timer.unref()
     })
     try {
-      const hash = await Promise.race([this.sealWithRetry(end), deadline])
-      if (hash === expired) {
+      const raced = await Promise.race([this.sealWithRetry(end), deadline])
+      // A writer whose seal is already published is never abandoned: the store lists it sealed, so the live run must read it sealed too.
+      const hash = raced === expired ? this.writer.publishedSealHash : raced
+      if (raced === expired && hash === undefined) {
         this.abandon(describeNodeServerSealTimeout(boundMs / 1_000))
         return
       }
       this.status = 'sealed'
-      // The summary read shares the seal's bound: past it the seal stands and the summary reads as unknown, so a stalled read never holds Stop, Save or the next run.
-      const summary = await Promise.race([
-        this.input.summarize(this.writer.header.studyId).catch(() => undefined),
-        deadline.then(() => undefined),
-      ])
+      // The summary read is bounded too: past the bound the seal stands and the summary reads as unknown, so a stalled read never holds Stop, Save or the next run.
+      const reading = this.startSummaryRead()
+      // After an expiry the shared deadline already settled: the seal settles at once with an unknown summary and the read fills it when it answers; otherwise the read shares the seal's deadline.
+      const summary =
+        raced === expired
+          ? undefined
+          : await Promise.race([reading, deadline.then(() => undefined)])
       this.sealed = { summary, hash }
+      if (raced === expired) this.fillSummaryWhenRead(reading, this.sealed)
     } catch (error) {
+      // A seal that was published before the fault (a cleanup after the rename) is never abandoned: the store lists it sealed, so the run reads it sealed too.
+      const publishedHash = this.writer.publishedSealHash
+      if (publishedHash !== undefined) {
+        this.status = 'sealed'
+        // The read shares the seal's own deadline, so the whole seal settles within one bound.
+        const summary = await Promise.race([
+          this.startSummaryRead(),
+          deadline.then(() => undefined),
+        ])
+        this.sealed = { summary, hash: publishedHash }
+        return
+      }
       this.abandon(
         describeNodeServerSealFailure(this.input.describeCause(error)),
       )
     } finally {
       if (timer) clearTimeout(timer)
     }
+  }
+
+  /**
+   * Fills an unknown summary of a sealed state when its late read answers, without ever holding the seal.
+   * Why: a seal published at the deadline still deserves its verdicts; called by {@link NodeServerHistoryRecorder.runSeal} after an expiry.
+   * Nothing is notified: the run resource and Save read the store again, so the next read shows the summary.
+   * @param reading - The read from {@link NodeServerHistoryRecorder.startSummaryRead}; it never rejects.
+   * @param target - The sealed state the read was started for; a replaced state or a summary another read set is left alone.
+   */
+  private fillSummaryWhenRead(
+    reading: Promise<NodeServerHistorySummary | undefined>,
+    target: NonNullable<NodeServerHistoryRecorder['sealed']>,
+  ): void {
+    void reading.then((summary) => {
+      // Only the same sealed state with a still unknown summary takes the late answer.
+      if (summary && this.sealed === target && target.summary === undefined)
+        target.summary = summary
+    })
+  }
+
+  /**
+   * Starts the verdict read of the sealed history so that nothing it does can reject {@link NodeServerHistoryRecorder.seal}.
+   * Why: a synchronous throw of the reader would otherwise escape the seal; called by {@link NodeServerHistoryRecorder.runSeal} on every path that reads a summary.
+   * @returns The summary, or `undefined` when the read threw or rejected.
+   */
+  private startSummaryRead(): Promise<NodeServerHistorySummary | undefined> {
+    return Promise.resolve()
+      .then(() => this.input.summarize(this.writer.header.studyId))
+      .catch(() => undefined)
   }
 
   /** Abandons the writer, so a late seal publishes nothing and the folder lists as interrupted. */

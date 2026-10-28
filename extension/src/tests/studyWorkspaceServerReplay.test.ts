@@ -16,6 +16,7 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import {
+  readerSeams,
   recordedReaderHarness,
   workspaceHarness,
 } from './studyWorkspaceHarness'
@@ -37,6 +38,7 @@ import {
   workspaceKeyOf,
 } from './utils/serverWorkspaceHarness'
 import { shownApplicationView } from './utils/shownTestOutput'
+import { startHistoryServerRun } from './utils/startHistoryServerRun'
 import { lastView, saveTwoStopNodeHistory } from './utils/twoStopNodeHistory'
 
 before(async () => {
@@ -842,6 +844,90 @@ test('an explanation saved from another window shows in this window as Saved and
       ['request', 'stop', 'response'],
     )
   } finally {
+    await harness.close()
+  }
+})
+
+// protects=Open replay right after a server run was saved, before the library refreshed its catalog, opens the Server replay and never the ordinary recording; fails_when=the live-record fallback knows only node-test runs, so the id falls through to openRecording; no_claim=the status item's wording or the save itself
+test('Open replay of a just-saved server run before the catalog refreshes opens the Server replay and not a recording', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    const { service, record, run } = await startHistoryServerRun(
+      harness,
+      context,
+      { repository: repositoryOf(harness) },
+    )
+    await run.sendRequest('k1')
+    run.pauseAt(0)
+    run.respond()
+    await service.stop({ instanceId: service.instanceId, runId: record.id })
+    const studyId = `${service.instanceId}_${record.id}`
+    const openRecording = context.mock.method(
+      harness.reader,
+      'openRecording',
+      async () => undefined,
+    )
+
+    // Act
+    await harness.reader.openLearningReplay(studyId)
+    await waitUntil(
+      () => lastView(harness)?.nodeHistory?.header.studyId === studyId,
+      'the server replay is shown',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(lastView(harness)?.nodeReplayProfile, 'node-server')
+    assert.equal(openRecording.mock.callCount(), 0)
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// protects=a just-saved server replay that Saved studies does not list yet and that cannot open is announced as a server replay, as its Output entry already is; fails_when=the notification reads "test replay" because only the catalog decides its wording; no_claim=why the open failed (the composition step is made to throw)
+test('a just-saved server replay that cannot open before the catalog refreshes is announced as a server replay', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    const { service, record, run } = await startHistoryServerRun(
+      harness,
+      context,
+      { repository: repositoryOf(harness) },
+    )
+    await run.sendRequest('k1')
+    run.pauseAt(0)
+    run.respond()
+    await service.stop({ instanceId: service.instanceId, runId: record.id })
+    const studyId = `${service.instanceId}_${record.id}`
+    context.mock.method(
+      harness.reader as unknown as {
+        enterSummaryCompositionForReplay: () => Promise<boolean>
+      },
+      'enterSummaryCompositionForReplay',
+      async () => {
+        throw new Error('The arrangement was refused.')
+      },
+    )
+
+    // Act
+    await harness.reader.openLearningReplay(studyId)
+    await waitUntil(
+      () => harness.errorMessages.length > 0,
+      'the open failure is announced',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(
+      harness.errorMessages[0],
+      `Codebook could not open the server replay "${studyId}": The arrangement was refused. The saved history is unchanged; open it again from Saved studies.`,
+    )
+  } finally {
+    context.mock.restoreAll()
     await harness.close()
   }
 })

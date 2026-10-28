@@ -163,3 +163,120 @@ test('a partial plain line on stdout is delivered before a later stderr line', a
     ],
   )
 })
+
+/** The private roots the held-tail tests hide: the home directory only. */
+const ADA_ROOTS = { storage: [], home: ['/Users/ada'] }
+
+// Value: protects=a quiet channel's held start of a private root is released by the timer exactly once, hidden as the root's placeholder, and the stream's end then delivers nothing twice; fails_when=the timed release is never wired to the delivery, delivers raw '/Users/ad', or the end flushes the same text again; why_new=createRootHidingStage's timer is tested alone, nothing drives it through captureProcessOutput's delivery; seam=none; no_claim=the real timer's delay (injected by hand)
+test('a held start of a private root on a quiet channel is released once as its placeholder and the stream end repeats nothing', async () => {
+  // Arrange
+  const child = fakeChild()
+  const events: ProcessOutputEvent[] = []
+  const releases: Array<() => void> = []
+  captureProcessOutput(child, {
+    startedAt: process.hrtime.bigint(),
+    onOutput: (event) => {
+      events.push(event)
+    },
+    pendingLimitBytes: 1_048_576,
+    overflowMessage: 'unused',
+    failurePrefix: 'test capture failed',
+    privateRoots: ADA_ROOTS,
+    scheduleRootRelease: (callback) => {
+      releases.push(callback)
+      return () => undefined
+    },
+  })
+  child.stdout.write('listening at /Users/ad')
+  await flushStreams()
+  const beforeRelease = events.map((event) => event.text)
+  // Act
+  releases.at(-1)?.()
+  await flushStreams()
+  child.stdout.end()
+  await flushStreams()
+  // Assert
+  assert.deepEqual(beforeRelease, ['listening at '])
+  assert.deepEqual(
+    events.map((event) => [event.channel, event.text]),
+    [
+      ['stdout', 'listening at '],
+      ['stdout', '~'],
+    ],
+  )
+})
+
+// Value: protects=a complete private root held at the very end of the output is delivered hidden when the stream ends, on each channel; fails_when=the end drops the held tail or delivers it unhidden; why_new=no capture test ends a stream with a held tail; seam=none; no_claim=timed release (own test)
+test('a private root still held when a stream ends is delivered hidden on that channel', async () => {
+  // Arrange
+  const child = fakeChild()
+  const events: ProcessOutputEvent[] = []
+  const capture = captureProcessOutput(child, {
+    startedAt: process.hrtime.bigint(),
+    onOutput: (event) => {
+      events.push(event)
+    },
+    pendingLimitBytes: 1_048_576,
+    overflowMessage: 'unused',
+    failurePrefix: 'test capture failed',
+    privateRoots: ADA_ROOTS,
+    scheduleRootRelease: () => () => undefined,
+  })
+  // Act
+  child.stdout.write('out /Users/ada')
+  child.stderr.write('err /Users/ada')
+  await flushStreams()
+  child.stdout.end()
+  child.stderr.end()
+  await flushStreams()
+  await capture.settled()
+  // Assert
+  assert.deepEqual(events.map((event) => [event.channel, event.text]).sort(), [
+    ['stderr', 'err '],
+    ['stderr', '~'],
+    ['stdout', 'out '],
+    ['stdout', '~'],
+  ])
+  assert.equal(capture.tail().includes('/Users/ada'), false)
+})
+
+// protects=a channel destroyed without an end event still delivers its held start of a private root once, hidden, and a timer that fires afterwards delivers nothing more; fails_when=the held start is dropped (or stays unhidden) because only end flushes it, or a stale timer delivers after the capture settled; no_claim=the real timer's cancellation (injected by hand) and a stream that errors
+test('a channel that closes without ending releases its held private root start once, hidden', async () => {
+  // Arrange
+  const child = fakeChild()
+  const events: ProcessOutputEvent[] = []
+  const releases: Array<() => void> = []
+  const capture = captureProcessOutput(child, {
+    startedAt: process.hrtime.bigint(),
+    onOutput: (event) => {
+      events.push(event)
+    },
+    pendingLimitBytes: 1_048_576,
+    overflowMessage: 'unused',
+    failurePrefix: 'test capture failed',
+    privateRoots: ADA_ROOTS,
+    scheduleRootRelease: (callback) => {
+      releases.push(callback)
+      return () => undefined
+    },
+  })
+  child.stdout.write('listening at /Users/ad')
+  await flushStreams()
+
+  // Act
+  child.stdout.destroy()
+  await flushStreams()
+  await capture.settled()
+  const afterClose = events.map((event) => event.text)
+  releases.at(-1)?.()
+  await flushStreams()
+  await capture.settled()
+
+  // Assert
+  assert.deepEqual(afterClose, ['listening at ', '~'])
+  assert.deepEqual(
+    events.map((event) => event.text),
+    ['listening at ', '~'],
+  )
+  assert.equal(capture.tail(), 'listening at ~')
+})

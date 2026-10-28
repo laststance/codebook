@@ -40,6 +40,8 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
   private finishOperation?: Promise<string | undefined>
   /** The SHA-256 of the journal this writer sealed; `undefined` before the seal and after an abandoned one. */
   private sealedHash?: string
+  /** Set once the store was told that this writer closed ({@link NodeHistoryJournalWriter.reportClosed}). */
+  private closedReported = false
 
   constructor(
     private readonly directory: string,
@@ -99,7 +101,7 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
       ) {
         this.sealedHash = sha256(journal)
         this.closed = true
-        this.onClosed()
+        this.reportClosed()
         return this.sealedHash
       }
       const seal = this.rules.buildSeal({
@@ -123,9 +125,16 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
               'Node history seal was abandoned before it was published.',
             )
         },
+        // The hash is recorded, and the writer closed, in the tick the rename resolved: the temporary file's cleanup still awaited after it must hide a published seal neither from the recorder's deadline nor from this window's listing, which would read it as recording.
+        () => {
+          this.sealedHash = seal.journalHash
+          this.closed = true
+          this.reportClosed()
+        },
       )
       // An abandon that landed during the publish itself: the folder was reported interrupted, so the file just published goes again.
       if (this.abandoned) {
+        this.sealedHash = undefined
         await rm(join(this.directory, HISTORY_SEAL_FILE), { force: true })
         throw new Error(
           'Node history seal was abandoned before it was published.',
@@ -133,9 +142,9 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
       }
       this.sealedHash = seal.journalHash
       this.closed = true
-      // The seal is published first: another window never finds neither the seal nor the record.
-      await this.removeWriterRecord()
-      this.onClosed()
+      // The seal is published first: another window never finds neither the seal nor the record. The removal is awaited by nobody, so a stalled file system cannot hold back a seal that already stands; a record that stays is ignored once the seal exists.
+      void this.removeWriterRecord()
+      this.reportClosed()
       return seal.journalHash
     })().catch((error: unknown) => {
       // An abandoned writer stays closed; any other failed seal may be tried again.
@@ -149,8 +158,13 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
     return operation
   }
 
-  /** The first failure that ended the timeline, if any; read by the run's resource to report a history that is failing while the run lives. @example writer.appendFailure?.message */
+  /** The hash of the seal this writer published, `undefined` until `sealed.json` stands; read by the recorder's seal bound so a published seal is never abandoned. */
   // fallow-ignore-next-line unused-class-member
+  get publishedSealHash(): string | undefined {
+    return this.abandoned ? undefined : this.sealedHash
+  }
+
+  /** The first failure that ended the timeline, if any; read by the run's resource to report a history that is failing while the run lives. @example writer.appendFailure?.message */
   get appendFailure(): Error | undefined {
     return this.failure
   }
@@ -166,13 +180,22 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
     })
   }
 
-  /** Marks a failed or timed-out finalization as an interrupted prefix so library readers do not show it as live; a seal still in flight publishes nothing afterwards. @example writer.abandon() */
+  /** Marks a failed or timed-out finalization as an interrupted prefix so library readers do not show it as live; a seal still in flight publishes nothing afterwards, and one already published stays (a no-op). @example writer.abandon() */
   abandon(): void {
+    // A seal whose rename resolved stays sealed: the store was told and another window may list it sealed, so a late abandon (the temporary file's cleanup still awaited) retracts nothing.
+    if (this.sealedHash !== undefined) return
     this.abandoned = true
     this.closed = true
     this.closing = false
     // Other windows read the history as interrupted once the record is gone (F260); the removal is awaited by nobody.
     void this.removeWriterRecord()
+    this.reportClosed()
+  }
+
+  /** Tells the store once that this writer no longer writes, from the publish's own tick, the seal's end, a removal of an empty history or an abandon, whichever comes first. @example this.reportClosed() */
+  private reportClosed(): void {
+    if (this.closedReported) return
+    this.closedReported = true
     this.onClosed()
   }
 

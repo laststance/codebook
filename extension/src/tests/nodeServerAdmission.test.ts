@@ -1,16 +1,23 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { before, test } from 'node:test'
 
 import { NODE_SERVER_PROFILE } from '../constants'
 import { StudyError } from '../errors'
 import type { NodeServerConfiguration } from '../nodeServerConfigSchemas'
+import { readResource } from '../resources'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { createHarness } from './helpers'
+import { realProcessStart } from './utils/realProcessStart'
 import {
   nodeServerConfigurationOf,
   startFakeNodeServerRun,
 } from './utils/startFakeNodeServerRun'
+import { startHistoryServerRun } from './utils/startHistoryServerRun'
+
+before(async () => {
+  await realProcessStart(process.pid)
+})
 
 /**
  * Starts nothing: asks the service to start a node-server run and returns what it throws, for the admission refusals that happen before any run exists.
@@ -373,6 +380,48 @@ test('stopped node-server runs are evicted for the next start instead of filling
   }
   // Assert
   assert.equal(harness.service.records.size, 16)
+})
+
+// protects=at the retained-run limit a refused run is forgotten before the oldest stopped server run, whose resource still answers with its verdicts; fails_when=the oldest stopped server run is forgotten while a refused run is retained; no_claim=the limit for the other profiles
+test('at the retained-run limit a refused run is forgotten before an older stopped server run', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { service } = harness
+  const { record: oldest, run } = await startHistoryServerRun(harness, context)
+  await run.sendRequest('k1')
+  run.respond()
+  await service.stop({ instanceId: service.instanceId, runId: oldest.id })
+  const { record: refused } = await startFakeNodeServerRun(harness, {
+    key: 'r1',
+  })
+  await service.stop({ instanceId: service.instanceId, runId: refused.id })
+  refused.historyExcluded = 'refused-at-preparation'
+  for (let index = 0; index < 14; index++) {
+    const label = `f${index}`
+    const { record } = await startFakeNodeServerRun(harness, { key: label })
+    await service.stop({ instanceId: service.instanceId, runId: record.id })
+  }
+  assert.equal(service.records.size, 16)
+
+  // Act
+  const { record: newest } = await startFakeNodeServerRun(harness, {
+    key: 'newest',
+  })
+  const resource = await readResource(service, service.uri(oldest.id))
+
+  // Assert
+  assert.equal(service.records.has(refused.id), false)
+  assert.equal(service.records.has(oldest.id), true)
+  assert.equal(service.records.has(newest.id), true)
+  assert.equal(
+    (
+      JSON.parse('text' in resource ? resource.text : '{}') as {
+        nodeServer?: { history?: string }
+      }
+    ).nodeServer?.history,
+    'sealed',
+  )
 })
 
 // protects=D13: a server stop is explained in the chat, so codebook_explain and codebook_reveal refuse it as they refuse a test stop; fails_when=the refusal is another code or the service reads a snapshot of a run that has none; no_claim=the native debugger showing the stop
