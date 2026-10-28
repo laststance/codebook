@@ -10,6 +10,7 @@ import {
 import { NodeServerHistorySinkImpl } from '../nodeServerHistorySink'
 import { NodeServerLearningSave } from '../nodeServerLearningSave'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { describeServerReplayRow } from '../utils/describeNodeServerReplay'
 import { presentServerHistory } from '../utils/presentServerHistory'
 
@@ -337,4 +338,80 @@ test('Save before the response seals partial and, after a restart, the row and t
     replay.model.events.filter((event) => event.type === 'stop').length,
     1,
   )
+})
+
+// protects=a Stop while the run is held at its ownership check (the leader's endpoint is not read yet) writes no request, removes the history folder once sealed and leaves the run stopped; fails_when=a request-less history is kept or the run reads another state; why_new=E7 case; the readiness-phase test stops earlier; seam=none; no_claim=the real leader reads
+test('a Stop during the ownership check leaves no request entry, no history folder and a stopped run', async (context) => {
+  // Arrange
+  const { sink, writer, store, learningDirectory, studyId } =
+    await sinkOverHistory(context)
+  const harness = createRunHarness({
+    history: sink,
+    inspectorEndpoint: (signal) =>
+      new Promise((_, reject) =>
+        signal?.addEventListener('abort', () => reject(signal.reason), {
+          once: true,
+        }),
+      ),
+  })
+  const preparing = harness.run.prepare().catch(() => undefined)
+  await waitUntil(() => harness.calls.launch === 1, 'the launch', 1_000)
+
+  // Act
+  await harness.run.stop().catch(() => undefined)
+  await preparing
+  await writer.seal({ elapsedMs: 1, reason: 'stopped' })
+  const listed = await store.list()
+  const folderExists = await fsPromises
+    .stat(join(learningDirectory, 'node-servers.v1', studyId))
+    .then(
+      () => true,
+      () => false,
+    )
+
+  // Assert
+  assert.equal(harness.run.view().state, 'stopped')
+  assert.equal(
+    harness.events.some((event) => event.type === 'node-server.request'),
+    false,
+  )
+  assert.deepEqual(listed, [])
+  assert.equal(folderExists, false)
+})
+
+// protects=the request, an output, a stop capture and the response reported at one elapsed time keep their call order in the journal; fails_when=same-time entries are reordered by time or coalescing, so the response precedes the stop or the output; why_new=E7 case with no named test (ship plan audit); seam=none; no_claim=the real clock
+test('output, a stop and the response at the same elapsed time keep their call order in the journal', async (context) => {
+  // Arrange
+  const { sink, writer, store, studyId } = await sinkOverHistory(context)
+  const harness = await readyHarness({
+    history: sink,
+    capture: () => debuggerCapture({ line: 2 }),
+  })
+  harness.server.elapsedMs = () => 5
+
+  // Act
+  await harness.run.sendRequest('key-1')
+  await harness.emitOutput('same-time output\n')
+  harness.debug.hit(0)
+  const paused = await until(harness, (view) => view.state === 'paused')
+  await harness.run.continue(paused.pause!)
+  harness.sender.response.resolve(RESPONSE_200)
+  await until(harness, (view) => view.state === 'responded')
+  await writer.seal({ elapsedMs: 5, reason: 'stopped' })
+  const history = await store.read(studyId)
+
+  // Assert
+  const sequence = history.entries
+    .filter((entry) => entry.elapsedMs === 5)
+    .map((entry) => entry.type)
+    .filter((type) => type !== 'source')
+  assert.deepEqual(sequence, [
+    'output',
+    'request',
+    'request-sent',
+    'output',
+    'stop',
+    'response',
+    'end',
+  ])
 })
