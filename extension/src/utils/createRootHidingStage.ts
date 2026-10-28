@@ -1,7 +1,10 @@
 import { OUTPUT_REDACTION_HOLD_LIMIT_CHARS } from '../constants'
 
+import { normalizeForPrefix } from './normalizeForPrefix'
+import { rootPlaceholderKinds } from './rootPlaceholderKinds'
 import { createRootHider, privateRootSpellings } from './sanitizeCause'
 import type { CauseRoots } from './sanitizeCause'
+import { showsPrivateName } from './showsPrivateName'
 
 /** One channel's streaming root hider: feed text to `write`, call `end` once at the stream's end. */
 export type RootHidingStage = {
@@ -23,11 +26,6 @@ export type RootHoldTimer = {
 
 /** A root's spelling in the form {@link normalizeForPrefix} compares, with the words that replace it. */
 type PlaceholderSpelling = { normalized: string; placeholder: string }
-
-/** Compares paths the way Windows roots match: without case and with any run of separators as one. */
-function normalizeForPrefix(text: string): string {
-  return text.toLowerCase().replace(/[\\/]+/g, '/')
-}
 
 /** Matches any character that is no path separator. */
 const NON_SEPARATOR = /[^\\/]/
@@ -82,18 +80,14 @@ export function createRootHidingStage(
     return [normalized, `/?/${normalized}`]
   }
   const spellings = privateRootSpellings(roots).flatMap(withLongPath)
-  // Claimed in this order when several kinds share a spelling: storage, workspace, home.
-  const kinds: [string, readonly string[]][] = [
-    ['<storage>', roots.storage],
-    ['<workspace>', [roots.workspace ?? []].flat()],
-    ['~', [roots.home ?? []].flat()],
-  ]
-  const placeholderSpellings: PlaceholderSpelling[] = kinds.flatMap(
-    ([placeholder, kindRoots]) =>
-      privateRootSpellings({ storage: kindRoots })
-        .flatMap(withLongPath)
-        .map((normalized) => ({ normalized, placeholder })),
+  const placeholderSpellings: PlaceholderSpelling[] = rootPlaceholderKinds(
+    roots,
+  ).flatMap(([placeholder, kindRoots]) =>
+    privateRootSpellings({ storage: kindRoots })
+      .flatMap(withLongPath)
+      .map((normalized) => ({ normalized, placeholder })),
   )
+  const placeholderWords = rootPlaceholderKinds(roots).map(([words]) => words)
   const longest = Math.max(0, ...spellings.map((spelling) => spelling.length))
   // Compiled once: every chunk hides several slices of its text.
   const hidePrivateRoots = createRootHider(roots)
@@ -114,9 +108,7 @@ export function createRootHidingStage(
 
   /** Strips from hidden text the placeholder words it starts with, keeping them (`'~/ap'` gives `'~'`); a text without leading placeholder words is returned whole. */
   const leadingPlaceholder = (hidden: string): string =>
-    ['<storage>', '<workspace>', '~'].find((words) =>
-      hidden.startsWith(words),
-    ) ?? hidden
+    placeholderWords.find((words) => hidden.startsWith(words)) ?? hidden
 
   /**
    * Words a quiet channel's held text for a timed release. A complete root the held text may still grow out of (home, while the text can become the workspace inside it) releases only the placeholder of the longest root the text is guaranteed to be inside, never the typed tail after it: that tail could be the start of the longer root's name, and the rest stays held so a later write completing the longer root hides it. Anything else is worded as {@link failClosed} words it.
@@ -142,10 +134,8 @@ export function createRootHidingStage(
     const hidden = hidePrivateRoots(rest)
     if (hidden !== rest) return hidden
     const normalized = normalizeForPrefix(rest)
-    const revealing = placeholderSpellings.find(
-      ({ normalized: spelling }) =>
-        spelling.startsWith(normalized) &&
-        normalized.length > spelling.lastIndexOf('/') + 1,
+    const revealing = placeholderSpellings.find(({ normalized: spelling }) =>
+      showsPrivateName(normalized, spelling),
     )
     return revealing ? revealing.placeholder : rest
   }
@@ -184,7 +174,7 @@ export function createRootHidingStage(
     // The start was let out as a placeholder already (maybe with typed text after it): do not repeat it.
     if (remainder.startsWith(placeholderText))
       return remainder.slice(placeholderText.length)
-    const leading = ['<storage>', '<workspace>', '~'].find((words) =>
+    const leading = placeholderWords.find((words) =>
       remainder.startsWith(words),
     )
     return leading ? remainder.slice(leading.length) : remainder

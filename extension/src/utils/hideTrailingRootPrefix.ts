@@ -1,12 +1,10 @@
 import { REPLAY_DEBUG_TRUNCATION_MARKER } from '../constants'
 
+import { normalizeForPrefix } from './normalizeForPrefix'
+import { rootPlaceholderKinds } from './rootPlaceholderKinds'
 import { privateRootSpellings } from './sanitizeCause'
 import type { CauseRoots } from './sanitizeCause'
-
-/** Compares paths the way Windows roots match: without case and with any run of separators as one. */
-function normalizeForPrefix(text: string): string {
-  return text.toLowerCase().replace(/[\\/]+/g, '/')
-}
+import { showsPrivateName } from './showsPrivateName'
 
 /**
  * Finds the earliest raw index whose tail, once separator runs collapse to one character, is at most `limit` characters; the scan window must be measured after normalizing, since an escaped Windows path doubles its separators.
@@ -45,16 +43,12 @@ export function hideTrailingRootPrefix(
   // Only a text the capture cut can end inside a root.
   if (!text.endsWith(REPLAY_DEBUG_TRUNCATION_MARKER)) return text
   const body = text.slice(0, -REPLAY_DEBUG_TRUNCATION_MARKER.length)
-  const kinds: [string, readonly string[]][] = [
-    ['<storage>', roots.storage],
-    ['<workspace>', [roots.workspace ?? []].flat()],
-    ['~', [roots.home ?? []].flat()],
-  ]
-  const candidates = kinds.flatMap(([placeholder, kindRoots]) =>
-    privateRootSpellings({ storage: kindRoots }).map((spelling) => ({
-      normalized: normalizeForPrefix(spelling),
-      placeholder,
-    })),
+  const candidates = rootPlaceholderKinds(roots).flatMap(
+    ([placeholder, kindRoots]) =>
+      privateRootSpellings({ storage: kindRoots }).map((spelling) => ({
+        normalized: normalizeForPrefix(spelling),
+        placeholder,
+      })),
   )
   const longest = Math.max(
     0,
@@ -70,11 +64,7 @@ export function hideTrailingRootPrefix(
     if (start > 0 && /[A-Za-z0-9._-]/.test(body[start - 1] ?? '')) continue
     const tail = normalizeForPrefix(body.slice(start))
     const revealing = candidates
-      .filter(
-        ({ normalized }) =>
-          normalized.startsWith(tail) &&
-          tail.length > normalized.lastIndexOf('/') + 1,
-      )
+      .filter(({ normalized }) => showsPrivateName(tail, normalized))
       // The shortest root is the most general one: `~` before a workspace inside it.
       .sort(
         (left, right) => left.normalized.length - right.normalized.length,
