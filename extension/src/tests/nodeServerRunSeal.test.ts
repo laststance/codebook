@@ -190,6 +190,40 @@ test('a deadline firing right after the seal was published but before finish ret
   assert.ok(record.nodeServer?.history?.sealed?.hash)
 })
 
+// protects=once sealed.json is published, this window lists the history by its seal's status even while the temporary file's cleanup still stalls; fails_when=the store keeps the writer active until that cleanup returns, so the library row reads recording beside a published seal; no_claim=a stalled cleanup on a real disk, or how another window lists the folder
+test('a published seal lists by its seal status in this window while the temporary file cleanup still stalls', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { service, record, run, repository } = await startHistoryServerRun(
+    harness,
+    context,
+  )
+  service.nodeServerHistorySealBoundMs = 250
+  await run.sendRequest('k1')
+  const originalUnlink = fileSystem.unlink
+  context.mock.method(
+    fileSystem,
+    'unlink',
+    (...removal: Parameters<typeof fileSystem.unlink>) =>
+      String(removal[0]).includes('sealed.json')
+        ? new Promise<never>(() => undefined)
+        : originalUnlink(...removal),
+  )
+  const studyId = `${service.instanceId}_${record.id}`
+
+  // Act
+  await service.stop({ instanceId: service.instanceId, runId: record.id })
+  const listed = await repository.serverHistories.list()
+
+  // Assert
+  // The run sent its request and recorded no stop or response, so its seal reads partial; recording would mean the active writer hid the seal.
+  assert.equal(
+    listed.find((history) => history.studyId === studyId)?.status,
+    'partial',
+  )
+})
+
 // protects=a seal that was published after the deadline already fired still gets its summary read within a bound of its own, so the run resource shows the verdicts at once; fails_when=sealed.summary stays undefined because the read raced an already-settled deadline; no_claim=the verdict values
 test('a seal taken as published after the deadline fired still reads its summary', async (context) => {
   // Arrange
