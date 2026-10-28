@@ -32,7 +32,7 @@ async function startSink(
   context: Parameters<typeof openServerRepository>[0],
   options: {
     sanitize?: (text: string) => string
-    roots?: CauseRoots
+    roots?: () => CauseRoots
     schedule?: NonNullable<NodeServerHistorySinkInput['schedule']>
     onAppendFailed?: () => void
   } = {},
@@ -653,7 +653,7 @@ test('a debugger value cut inside a private root stores no part of the root', as
   // Arrange
   const { sink, writer, folder } = await startSink(context, {
     sanitize: (text) => hidePrivateRoots(text, PRIVATE_ROOTS),
-    roots: PRIVATE_ROOTS,
+    roots: () => PRIVATE_ROOTS,
   })
   const base = debuggerCapture({ line: 2 })
   const capture = {
@@ -684,4 +684,42 @@ test('a debugger value cut inside a private root stores no part of the root', as
   assert.doesNotMatch(files, /\bada\b/)
   assert.ok(files.includes(`${'x'.repeat(4_073)} ~… [truncated]`))
   assert.ok(files.includes('path /Users/x is only text'))
+})
+
+// protects=a root registered after the run began (a workspace folder added mid-run) hides a debugger value that a later capture cut inside it; fails_when=the sink reads the roots once at the start and the cut fragment of the late root is stored; no_claim=the service's own root set
+test('a debugger value cut inside a root that appeared mid-run stores no part of it', async (context) => {
+  // Arrange
+  let currentRoots: CauseRoots = { storage: [], home: ['/Users/ada'] }
+  const { sink, writer, folder } = await startSink(context, {
+    sanitize: (text) => hidePrivateRoots(text, currentRoots),
+    roots: () => currentRoots,
+  })
+  const base = debuggerCapture({ line: 2 })
+  const cutCapture = {
+    ...base,
+    snapshot: {
+      ...base.snapshot,
+      variables: [
+        { name: 'cut', value: 'at /srv/late/pro… [truncated]', children: [] },
+      ],
+    },
+  }
+
+  // Act
+  sink.openRequest(10, { method: 'GET', path: '/api/x', bodyBytes: 0 })
+  sink.markRequestSent(11)
+  sink.stop(12, { declaredStopIndex: 0 }, 1, debuggerCapture({ line: 2 }))
+  currentRoots = {
+    storage: [],
+    home: ['/Users/ada'],
+    workspace: ['/srv/late/project'],
+  }
+  sink.stop(13, { declaredStopIndex: 1 }, 2, cutCapture)
+  sink.response(20, RESPONSE)
+  await writer.seal({ elapsedMs: 30, reason: 'stopped' })
+  const files = await readHistoryFolderText(folder)
+
+  // Assert
+  assert.doesNotMatch(files, /\/srv\/late\/pro/)
+  assert.ok(files.includes('at <workspace>… [truncated]'))
 })

@@ -4896,7 +4896,7 @@ export class StudyService {
       createdAtMs: record.createdAt,
       prepared: state.prepared,
       hideRoots: (text) => hidePrivateRoots(text, this.causeRoots),
-      roots: this.causeRoots,
+      roots: () => this.causeRoots,
       describeCause: (error) =>
         error instanceof SavedStudyStorageFullError
           ? fullLibraryMessage('run', error.limit, this.removalAvailability)

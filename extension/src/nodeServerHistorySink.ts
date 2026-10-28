@@ -57,8 +57,8 @@ export type NodeServerHistorySinkInput = {
   writer: NodeServerHistoryWriter
   /** Hides the private roots of a text (the service's storage, the workspace, the home directory); applied to every recorded text before it is masked. */
   sanitize: (text: string) => string
-  /** The private roots behind `sanitize`; a debugger text the capture cut inside a root is hidden by them, since `sanitize` cannot match a fragment. */
-  roots?: CauseRoots
+  /** Reads the private roots behind `sanitize`, per text, so a root that appears mid-run is seen; a debugger text the capture cut inside a root is hidden by them, since `sanitize` cannot match a fragment. */
+  roots?: () => CauseRoots
   /** Runs `callback` once after `ms` and returns what cancels it; a test replaces the timer. */
   schedule?: (callback: () => void, ms: number) => () => void
   /** Told once, with the first fault of the sink itself (not a refused append, which the writer already holds). */
@@ -297,7 +297,7 @@ export class NodeServerHistorySinkImpl implements NodeServerHistorySink {
           // A text the capture cut inside a private root loses that fragment first: the hider only matches whole roots.
           this.hide(
             this.input.roots
-              ? hideTrailingRootPrefix(text, this.input.roots)
+              ? hideTrailingRootPrefix(text, this.input.roots())
               : text,
           ),
         ),

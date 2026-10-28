@@ -25,8 +25,8 @@ export type StartNodeServerHistoryInput = {
   }
   /** Hides the private roots of a recorded text. */
   hideRoots: (text: string) => string
-  /** The private roots behind `hideRoots`, so a text cut inside a root is hidden too. */
-  roots?: CauseRoots
+  /** Reads the private roots behind `hideRoots` per text, so a text cut inside a root is hidden too, also a root that appeared mid-run. */
+  roots?: () => CauseRoots
   /** Words a failure for the learner; names a full store with its own message. */
   describeCause: (error: unknown) => string
   /** The start's bound; the default 2 s unless a test names its own. */
