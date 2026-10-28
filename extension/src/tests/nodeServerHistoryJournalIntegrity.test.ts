@@ -132,6 +132,72 @@ const JOURNALS: Array<{
     entries: [request, sent, ...sourceAndStop(1, 10), sourceAndStop(1, 11)[0]!],
     accepted: 4,
   },
+  // Value: protects=a withdrawn unsent attempt lets the run try again and every reader accepts the retry; fails_when=a reader refuses attempt 2 after a withdrawal; why_new=no test offers request-withdrawn; seam=none; no_claim=none beyond protects
+  {
+    name: 'a withdrawn attempt followed by a second attempt',
+    entries: [
+      request,
+      { type: 'request-withdrawn', elapsedMs: 2, attempt: 1, code: 'RUN_BUSY' },
+      { ...request, elapsedMs: 3, attempt: 2 },
+      { ...sent, elapsedMs: 4, attempt: 2 },
+      response,
+      end,
+    ],
+    accepted: 6,
+  },
+  // Value: protects=an attempt whose bytes left cannot be withdrawn; fails_when=a reader accepts a withdrawal after request-sent; why_new=no test offers request-withdrawn; seam=none; no_claim=none beyond protects
+  {
+    name: 'a withdrawal of an attempt already sent',
+    entries: [
+      request,
+      sent,
+      { type: 'request-withdrawn', elapsedMs: 3, attempt: 1, code: 'RUN_BUSY' },
+    ],
+    accepted: 2,
+  },
+  // Value: protects=a request failure needs an opened request; fails_when=a reader accepts request-failed as the first entry; why_new=the failure is only written after a request in other tests; seam=none; no_claim=none beyond protects
+  {
+    name: 'a request failure before any request',
+    entries: [
+      { type: 'request-failed', elapsedMs: 1, code: 'X', message: 'no' },
+    ],
+    accepted: 0,
+  },
+  // Value: protects=a terminal entry closes the request for good; fails_when=a reader accepts a new attempt after the response; why_new=only two terminals are covered, not a new request; seam=none; no_claim=none beyond protects
+  {
+    name: 'a new request after the response',
+    entries: [
+      request,
+      sent,
+      response,
+      { ...request, elapsedMs: 31, attempt: 2 },
+    ],
+    accepted: 3,
+  },
+  // Value: protects=no stop is accepted once the response closed the request; fails_when=a reader accepts a stop after a terminal entry; why_new=stops are only refused before the request in other rows; seam=none; no_claim=none beyond protects
+  {
+    name: 'a stop after the response',
+    entries: [request, sent, response, ...sourceAndStop(1, 35)],
+    accepted: 4,
+  },
+  // Value: protects=output after output-truncated and a second truncation are refused; fails_when=a reader accepts either; why_new=bounds tests only drive the writer's drop, not the shared rule; seam=none; no_claim=none beyond protects
+  {
+    name: 'output after its truncation',
+    entries: [
+      request,
+      { type: 'output-truncated', elapsedMs: 2, limit: 'entries' },
+      { type: 'output', elapsedMs: 3, channel: 'stdout', text: 'late' },
+    ],
+    accepted: 2,
+  },
+  {
+    name: 'a second output truncation',
+    entries: [
+      { type: 'output-truncated', elapsedMs: 1, limit: 'bytes' },
+      { type: 'output-truncated', elapsedMs: 2, limit: 'bytes' },
+    ],
+    accepted: 1,
+  },
 ]
 
 /** Runs one journal through the writer, the incremental scan and the full read, each on its own folder. */
