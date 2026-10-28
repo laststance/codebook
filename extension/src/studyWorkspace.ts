@@ -9728,7 +9728,7 @@ export class StudyWorkspace {
       )
       // The test replay's reader position is written after each commit; a close does not report closed with that file still being created (F234).
       await settledWithin(
-        this.nodeHistoryStore?.settleReaderPositionWrites(),
+        this.nodeHistoryRepository?.settleReaderPositionWrites(),
         storageTimeLeftMs(),
       )
       await settledWithin(this.library?.flush(), storageTimeLeftMs())

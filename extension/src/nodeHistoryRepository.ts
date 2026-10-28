@@ -122,6 +122,18 @@ export class NodeHistoryRepository {
   }
 
   /**
+   * Waits until the reader-position writes now in flight in every profile's store have ended, whether they succeeded or failed; called by the Study workspace's close so a closing window never has a position file created under it, whichever profile's replay was shown.
+   * @returns Once every write that was running when this was called has settled; a write that starts later is not awaited.
+   * @example await repository.settleReaderPositionWrites()
+   */
+  async settleReaderPositionWrites(): Promise<void> {
+    await Promise.all([
+      this.testHistories.settleReaderPositionWrites(),
+      this.serverHistories.settleReaderPositionWrites(),
+    ])
+  }
+
+  /**
    * Counts every kind of history, up to `places`, for the library's admission: a browser save counts test and server histories as the histories count saved studies.
    * A history directory that cannot be read counts no history, as only a history the list shows counts: an unreadable Node history store never blocks a browser save. The histories' own admission ({@link NodeHistoryStore.start}) keeps refusing on it.
    * @param places - The places the histories may take; the count is not carried beyond it.

@@ -7,7 +7,11 @@ import { readerSeams, workspaceHarness } from './studyWorkspaceHarness'
 import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 import { realProcessStart } from './utils/realProcessStart'
 import { writeServerHistory } from './utils/sealedServerHistory'
-import { repositoryOf, workspaceKeyOf } from './utils/serverWorkspaceHarness'
+import {
+  openServerReplay,
+  repositoryOf,
+  workspaceKeyOf,
+} from './utils/serverWorkspaceHarness'
 import { lastView } from './utils/twoStopNodeHistory'
 
 before(async () => {
@@ -51,6 +55,56 @@ test('opening a server replay whose summary cannot be read names the cause on th
     )
   } finally {
     context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// protects=closing the reader waits for the reader-position write of a server replay that is still running, as it does for a test replay; fails_when=close reports closed while a server position write is pending, so the file lands in storage that is gone; no_claim=the bound on a write that never returns
+test('closing the reader waits for a server reader-position write that is still running', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const repository = repositoryOf(harness)
+    const { header, sequences } = await writeServerHistory(repository, {
+      workspaceKey: workspaceKeyOf(harness),
+    })
+    const store = repository.serverHistories
+    await openServerReplay(harness, header.studyId)
+    const read = store.read.bind(store)
+    let releaseRead = (): void => {}
+    const readHeld = new Promise<void>((resolve) => {
+      releaseRead = resolve
+    })
+    let readEntered = (): void => {}
+    const readStarted = new Promise<void>((resolve) => {
+      readEntered = resolve
+    })
+    store.read = async (studyId): ReturnType<typeof read> => {
+      readEntered()
+      await readHeld
+      return read(studyId)
+    }
+    const write = store.saveReaderPosition(header.studyId, sequences.request)
+    await readStarted
+
+    // Act
+    const closing = harness.reader.close()
+    const closedWhileWriting = await Promise.race([
+      closing.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 300)),
+    ])
+    releaseRead()
+    await closing
+    await write
+    store.read = read
+
+    // Assert
+    assert.equal(closedWhileWriting, false)
+    assert.equal(
+      await store.readReaderPosition(header.studyId),
+      sequences.request,
+    )
+  } finally {
     await harness.close()
   }
 })
