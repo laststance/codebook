@@ -5,6 +5,11 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 
 import { readerSeams, workspaceHarness } from './studyWorkspaceHarness'
+import {
+  advanceClockUntilSettled,
+  enableFakeClock,
+  resetFakeClock,
+} from './utils/fakeClock'
 import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 import { realProcessStart } from './utils/realProcessStart'
 import { writeServerHistory } from './utils/sealedServerHistory'
@@ -385,6 +390,53 @@ test('a server replay opened after a window reload retires the empty Application
     assert.deepEqual(logged, [])
     assert.equal(lastView(harness)?.nodeReplayProfile, 'node-server')
   } finally {
+    await harness.close()
+  }
+})
+
+// protects=a server replay refused once for the main editor's unreported keyboard focus and then opened with the learner's click shows no trace of the refusal in the Study pane or the Learning summary; fails_when=the first refusal's sentence stays as an error line beside the working replay; no_claim=the focus measurement itself (N60 is measured natively)
+test('a server replay that opens after a refused first open leaves no refusal sentence on the pane error lines', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  await harness.reader.open()
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.leavePaneFocusUnreportedBesideChat()
+  try {
+    const { header } = await writeServerHistory(repositoryOf(harness), {
+      workspaceKey: workspaceKeyOf(harness),
+    })
+    harness.focusOpaqueTab(harness.addOpaqueTab('Cursor Settings', 1))
+    chat.focusTab()
+    await harness.reader.action('retry')
+
+    // Act: the refused entry waits five faked seconds twice, once for the open and once for its way back to the Study composition.
+    const first = harness.reader.openLearningReplay(header.studyId)
+    enableFakeClock(context)
+    await advanceClockUntilSettled(context, first, 12_000)
+    await first
+    resetFakeClock(context)
+    harness.focusMutableDraft('learner-notes.ts', 1)
+    await harness.reader.openLearningReplay(header.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistory?.header.studyId === header.studyId &&
+        !lastView(harness)?.loading,
+      'the server replay is shown',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(readerSeams(harness).errorLines(), [])
+    assert.equal(
+      JSON.stringify(lastView(harness)).includes('did not report the keyboard'),
+      false,
+    )
+  } finally {
+    resetFakeClock(context)
     await harness.close()
   }
 })

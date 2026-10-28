@@ -12052,6 +12052,8 @@ export class StudyWorkspace {
         return
       }
       if (outcome.status !== 'failed') {
+        // A replay that opened is a handled choice: the refusal an earlier open of a test or server replay left as a control line (the retry inside the failed entry is refused too) is stale beside it.
+        if (this.dropChoiceRetiredErrors()) this.publish()
         // The learner's own replay open, after the replay is shown: the summary moves beside the chat once per profile (F209).
         await this.moveSummaryBesideChatOnce()
         return
