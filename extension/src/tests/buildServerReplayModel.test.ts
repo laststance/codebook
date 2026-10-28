@@ -135,6 +135,7 @@ test('a late end after the response ends the timeline there and the history stil
   // Assert
   assert.equal(model.terminal?.type, 'response')
   assert.equal(model.endedBeforeAnswer, false)
+  // gstack-timing-ok: compares two recorded journal times from the fixture, not elapsed wall time
   assert.ok(model.endedAtMs > (model.terminal?.elapsedMs ?? 0))
   assert.equal(
     model.events.some((event) => event.type === 'response'),
