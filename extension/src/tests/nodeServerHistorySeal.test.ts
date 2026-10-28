@@ -300,9 +300,12 @@ test('the evaluator words the size-limit and append-failure reasons the writer r
 const SNAPSHOT_CASES: Array<{
   name: string
   snapshot: NodeServerStopCapture['snapshot']
+  /** Whether the writer also finds no executed source text in the snapshot's top frame, which adds the source reason after the debugger-state one. */
+  sourceNotCaptured?: boolean
 }> = [
   {
     name: 'no frames',
+    sourceNotCaptured: true,
     snapshot: { version: 1, frames: [], variables: [], limitations: [] },
   },
   {
@@ -334,6 +337,7 @@ const SNAPSHOT_CASES: Array<{
   },
   {
     name: 'a top frame from another source',
+    sourceNotCaptured: true,
     snapshot: {
       version: 1,
       frames: [
@@ -409,6 +413,14 @@ for (const snapshotCase of SNAPSHOT_CASES) {
         'SERVER_HISTORY_SNAPSHOT_MISSING',
         'The debugger state at stop 1 was not recorded.',
       ],
+      ...(snapshotCase.sourceNotCaptured
+        ? [
+            [
+              'SERVER_HISTORY_SOURCE_UNAVAILABLE',
+              'The source at stop 1 was not recorded (not captured).',
+            ],
+          ]
+        : []),
     ])
   })
 }
@@ -434,22 +446,24 @@ test('two stops that share one source hash on different lines are both presentab
 
 // protects=thirty unreadable values keep every reason in the seal and answer with twenty and a count; fails_when=the seal cuts reasons or an answer lists more than twenty; no_claim=the library row text
 test('thirty unavailable values keep thirty reasons in the seal and twenty plus a count in the summary', async (context) => {
-  // Arrange
-  const unavailable = Array.from({ length: 30 }, (_, index) => ({
-    path: `value${index}`,
-    reason: 'not readable',
-  }))
-  const stop = serverStopCapture({
-    declaredStopIndex: 0,
-    hit: 1,
-    line: 2,
-    elapsedMs: 10,
-    unavailable,
-  })
+  // Arrange: three stops of ten unreadable values each, the most one stop can hold.
+  const stops = [0, 1, 2].map((declaredStopIndex) =>
+    serverStopCapture({
+      declaredStopIndex,
+      hit: 1,
+      line: 2,
+      elapsedMs: 10 + declaredStopIndex,
+      unavailable: Array.from({ length: 10 }, (_, index) => ({
+        path: `value${declaredStopIndex * 10 + index}`,
+        reason: 'not readable',
+      })),
+    }),
+  )
 
   // Act
   const { repository, opened, header } = await sealedServerRun(context, {
-    stops: [stop],
+    declaredStops: 3,
+    stops,
   })
   const summary = await repository.serverHistories.summarize(header.studyId)
 
@@ -462,6 +476,135 @@ test('thirty unavailable values keep thirty reasons in the seal and twenty plus 
     'value0 at stop 1 could not be read.',
   )
 })
+
+// protects=the largest legal capture (16 stop hits of 10 unreadable values with maximum-length paths) seals with every reason uncut and reads back; fails_when=the seal exceeds its size limit so it can never be written, or a reason is cut; no_claim=paths that JSON escapes
+test('sixteen stop hits with ten unreadable values of the longest path keep all 160 reasons in a seal that reads back', async (context) => {
+  // Arrange
+  const longPath = (index: number): string =>
+    `${'p'.repeat(500)}${String(index).padStart(12, '0')}`
+  // Eight declared stops, two hits each: sixteen hits, the run's capture limit.
+  const stops = Array.from({ length: 16 }, (_, hitNumber) =>
+    serverStopCapture({
+      declaredStopIndex: hitNumber % 8,
+      hit: Math.floor(hitNumber / 8) + 1,
+      line: 2,
+      elapsedMs: 10 + hitNumber,
+      unavailable: Array.from({ length: 10 }, (_, index) => ({
+        path: longPath(hitNumber * 10 + index),
+        reason: 'r'.repeat(1_024),
+      })),
+    }),
+  )
+
+  // Act
+  const { opened } = await sealedServerRun(context, {
+    declaredStops: 8,
+    stops,
+  })
+
+  // Assert
+  assert.equal(opened.seal?.reasons.length, 160)
+  assert.equal(opened.status, 'partial')
+  assert.equal(
+    opened.seal?.reasons[159]?.text,
+    `${longPath(159)} at stop 8 could not be read.`,
+  )
+})
+
+// protects=a stop lists at most as many unreadable values as the declaration may inspect (10); fails_when=the writer accepts an eleventh value, which would let the seal outgrow its size limit; no_claim=the run's own inspection bound
+test('the server writer refuses a stop with more unreadable values than a stop may inspect', async (context) => {
+  // Arrange
+  const { repository } = await openServerRepository(context)
+  const header = nodeServerHistoryHeader(SERVER_WORKSPACE_KEY)
+  const writer = await repository.serverHistories.start(header)
+  await writer.appendRequest({
+    elapsedMs: 1,
+    attempt: 1,
+    method: 'POST',
+    path: '/x',
+    bodyBytes: 0,
+  })
+  await writer.appendRequestSent({ elapsedMs: 2, attempt: 1 })
+
+  // Act
+  const refused = writer.appendStop(
+    serverStopCapture({
+      declaredStopIndex: 0,
+      hit: 1,
+      line: 2,
+      elapsedMs: 3,
+      unavailable: Array.from({ length: 11 }, (_, index) => ({
+        path: `value${index}`,
+        reason: 'not readable',
+      })),
+    }),
+  )
+
+  // Assert
+  await assert.rejects(refused, /<=10 items/)
+})
+
+// protects=a stop whose executed source was not stored cannot read as a complete capture, because the replay would not show the code that ran; fails_when=a stop with a too-large or uncaptured source seals complete or words another reason; no_claim=which stops of a run have the same source
+for (const sourceCase of [
+  {
+    name: 'is larger than 512 KiB (stored as its hash only)',
+    reason: 'too large',
+    capture: () =>
+      serverStopCapture({
+        declaredStopIndex: 0,
+        hit: 1,
+        line: 2,
+        elapsedMs: 10,
+        text: `${'// padding\n'.repeat(60_000)}export const a = 1\n`,
+      }),
+  },
+  {
+    name: 'text was not captured',
+    reason: 'not captured',
+    capture: () => {
+      const base = serverStopCapture({
+        declaredStopIndex: 0,
+        hit: 1,
+        line: 2,
+        elapsedMs: 10,
+      })
+      const [top] = base.snapshot.frames
+      return {
+        ...base,
+        snapshot: {
+          ...base.snapshot,
+          frames: [
+            {
+              ...top!,
+              source: { ...top!.source!, text: 'not the executed text' },
+            },
+          ],
+        },
+      }
+    },
+  },
+]) {
+  test(`a stop whose source ${sourceCase.name} seals partial with the source-unavailable reason`, async (context) => {
+    // Arrange
+    const stop = sourceCase.capture()
+
+    // Act
+    const { opened } = await sealedServerRun(context, { stops: [stop] })
+
+    // Assert
+    assert.equal(opened.status, 'partial')
+    assert.deepEqual(reasonsOf(opened), [
+      [
+        'SERVER_HISTORY_SOURCE_UNAVAILABLE',
+        `The source at stop 1 was not recorded (${sourceCase.reason}).`,
+      ],
+    ])
+    assert.deepEqual(opened.seal?.reasons[0]?.params, {
+      stop: 1,
+      reason: sourceCase.reason,
+    })
+  })
+}
 
 // protects=reasons, codes and params read the same before and after a restart; fails_when=a fresh store recomputes or reorders them; no_claim=other windows
 test('a sealed server history reads the same reasons, codes and params after a restart', async (context) => {

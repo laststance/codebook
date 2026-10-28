@@ -1521,6 +1521,8 @@ export const REPOSITORY_CONDITION_LIMIT = 8
 export const REPOSITORY_ATTRIBUTE_LIMIT_CHARS = 64
 export const REPOSITORY_LITERAL_LIMIT_CHARS = 1_024
 export const REPOSITORY_INSPECTION_LIMIT = 10
+/** The most unreadable values one node-server `stop` entry lists: one per inspection its declaration allows, so the seal's reasons (each kept uncut) stay inside {@link NODE_SERVER_HISTORY_SEAL_LIMIT_BYTES}. */
+export const NODE_SERVER_STOP_UNAVAILABLE_LIMIT = REPOSITORY_INSPECTION_LIMIT
 export const REPOSITORY_INSPECTION_TIMEOUT_MS = 1_000
 export const REPOSITORY_INSPECTION_PATH_LIMIT_CHARS = 128
 export const REPOSITORY_INSPECTION_SEGMENT_LIMIT = 4
@@ -2024,6 +2026,7 @@ export const NODE_SERVER_HISTORY_REASON_CODES = {
   noResponseRunFailed: 'SERVER_HISTORY_NO_RESPONSE_RUN_FAILED',
   stopNotReached: 'SERVER_HISTORY_STOP_NOT_REACHED',
   snapshotMissing: 'SERVER_HISTORY_SNAPSHOT_MISSING',
+  sourceUnavailable: 'SERVER_HISTORY_SOURCE_UNAVAILABLE',
   valueUnavailable: 'SERVER_HISTORY_VALUE_UNAVAILABLE',
   appendFailed: 'SERVER_HISTORY_APPEND_FAILED',
   sizeLimit: 'SERVER_HISTORY_SIZE_LIMIT',

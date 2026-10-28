@@ -6,6 +6,7 @@ import type {
   NodeServerHistoryEntry,
   NodeServerHistoryHeader,
   NodeServerSealReason,
+  NodeServerSourceEntry,
   NodeServerStopEntry,
 } from '../nodeServerHistorySchemas'
 
@@ -81,10 +82,11 @@ function noResponseReason(
   }
 }
 
-/** The reasons of the stops a history holds: unreached declared stops, unpresentable snapshots and unreadable values. */
+/** The reasons of the stops a history holds: unreached declared stops, unpresentable snapshots, executed sources that were not stored and unreadable values. */
 function stopReasons(
   header: Pick<NodeServerHistoryHeader, 'declaredStops'>,
   stops: readonly NodeServerStopEntry[],
+  sources: readonly NodeServerSourceEntry[],
 ): NodeServerSealReason[] {
   const reasons: NodeServerSealReason[] = []
   const reached = new Set(stops.map((stop) => stop.declaredStopIndex))
@@ -97,6 +99,7 @@ function stopReasons(
       })
   })
   const reportedSnapshots = new Set<number>()
+  const reportedSources = new Set<number>()
   for (const stop of stops) {
     const number = stop.declaredStopIndex + 1
     if (
@@ -108,6 +111,24 @@ function stopReasons(
         code: CODES.snapshotMissing,
         params: { stop: number, hit: stop.hit },
         text: `The debugger state at stop ${number} was not recorded.`,
+      })
+    }
+    // The replay must show the source that executed: a stop whose top-frame text was not stored is not a complete capture.
+    const unstored = sources.find(
+      (source) =>
+        source.path === stop.source.path &&
+        source.hash === stop.source.hash &&
+        source.sourceUnavailable !== undefined,
+    )
+    if (
+      unstored?.sourceUnavailable &&
+      !reportedSources.has(stop.declaredStopIndex)
+    ) {
+      reportedSources.add(stop.declaredStopIndex)
+      reasons.push({
+        code: CODES.sourceUnavailable,
+        params: { stop: number, reason: unstored.sourceUnavailable },
+        text: `The source at stop ${number} was not recorded (${unstored.sourceUnavailable}).`,
       })
     }
     for (const value of stop.unavailable)
@@ -141,6 +162,7 @@ export function evaluateNodeServerCapture(
     ...stopReasons(
       header,
       entries.filter((entry) => entry.type === 'stop'),
+      entries.filter((entry) => entry.type === 'source'),
     ),
   )
   if (facts.appendFailure)

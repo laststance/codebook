@@ -9,6 +9,7 @@ import {
   NODE_SERVER_PROFILE,
   NODE_SERVER_RESPONSE_BODY_LIMIT_CHARS,
   NODE_SERVER_SOURCE_TEXT_LIMIT_BYTES,
+  NODE_SERVER_STOP_UNAVAILABLE_LIMIT,
   REPOSITORY_PATH_LIMIT_CHARS,
 } from './constants'
 import { studyIdSchema } from './legacyStudySchemas'
@@ -129,12 +130,15 @@ export const nodeServerHistoryEntrySchema = z.discriminatedUnion('type', [
     source: stopSource,
     frame: z.strictObject({ name: z.string().max(2_048) }),
     facts: z.record(z.string(), z.json()),
-    unavailable: z.array(
-      z.strictObject({
-        path: z.string().max(512),
-        reason: z.string().max(1_024),
-      }),
-    ),
+    // One entry per inspection the declaration allows; every one becomes an uncut seal reason.
+    unavailable: z
+      .array(
+        z.strictObject({
+          path: z.string().max(512),
+          reason: z.string().max(1_024),
+        }),
+      )
+      .max(NODE_SERVER_STOP_UNAVAILABLE_LIMIT),
     debuggerSnapshot: replayDebugSnapshotSchema,
   }),
   z.strictObject({
