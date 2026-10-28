@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.54.0] - 2026-10-28 (development candidate)
+
+Cycle 0059 pt1 ([Issue #147](https://github.com/laststance/codebook/issues/147)), the first of three parts of a feature cycle whose outcome is a server run saved as a learning replay. This part lays the storage a server replay will be written to and read from. Nothing writes one yet. A server run is still refused at **Save learning replay**, and nothing about server runs changes for you in this version. N59, the cycle's native trial, runs on the last part.
+
+**The saved study limit is counted the same way everywhere.**
+
+- **A new study's save, the check at a run's start and a recording's start count your test replays too**, as a test's start already counted your saved studies. While saved studies and test replays fill **Codebook: Saved Study Limit**, a new run is refused before the application receives any input, with the study library's full-library sentence, instead of running and then being refused at its save. A test replay folder Codebook cannot read takes no place, as before.
+
 ## [0.2.53.0] - 2026-10-28 (development candidate)
 
 Cycle 0058 ([Issue #143](https://github.com/laststance/codebook/issues/143)), a bug-fix cycle: it fixes the 13 defects Cycle 0057 carried, so a stopped or retried server run does only what it reports, and what the chat and you read about a server run is true. In the native trial N58, on the pinned clone of `laststance/switch-time` with its database stopped (development evidence, no acceptance credit), on macOS 26 (a virtual machine) in VS Code 1.142.0 (Copilot Chat, GPT-6.1 Terra) and this cycle's candidate `6473c5c3`, a natural question about how sign-in finds a user started the server; after a `500` the chat read the run's output, named the refused database connection as observed output, and every stop freed the port within a second. The released source adds review fixes made after `6473c5c3` (the late pause during a stop, the retried stop's check before SIGKILL, the message of a body that cannot be shown, the LLM Wiki view's kept message); N58 did not run again on them. The trial's identities and the hashes of its stills (kept private) are in [Issue #143's comments](https://github.com/laststance/codebook/issues/143).
