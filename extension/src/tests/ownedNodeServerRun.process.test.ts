@@ -31,7 +31,7 @@ const FIXTURE_SERVER = join(__dirname, 'fixtures/node-server/server.js')
 /** Builds a run of the fixture server in a new repository folder; the folder and every process are cleaned up after the test. */
 async function fixtureRun(
   t: TestContext,
-  options: { mode: string; giveUpMs?: number },
+  options: { mode: string; giveUpMs?: number; requestPath?: string },
 ) {
   const workspace = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-node-server-run-')),
@@ -63,7 +63,7 @@ async function fixtureRun(
     entry: 'server.cjs',
     loader: 'node',
     port,
-    request: { method: 'GET', path: '/health' },
+    request: { method: 'GET', path: options.requestPath ?? '/health' },
     source: { path: 'server.cjs', hash: sha256(text), line, column: 5 },
     inspections: [{ path: 'requestPath', mode: 'value', required: true }],
     additionalStops: undefined,
@@ -216,4 +216,28 @@ test('a stopped real server reports the same time since launch however late it i
   // Assert
   assert.ok(atStop >= beforeStop)
   assert.equal(later, atStop)
+})
+
+// Value: protects=the run hands its workspace to the launcher as a private root, so a server that prints its own folder split over two writes leaves the folder in no output event the run records; fails_when=ownedNodeServerRun stops passing privateRoots to launchNodeServer (or the launcher drops it) and a split root reaches the events; why_new=captureProcessOutput is tested with roots only at the unit level, nothing proves the production wiring; seam=none; no_claim=the history files (their own tests) and roots of a shape hidePrivateRoots does not know
+test('a real server printing its workspace split over two writes leaves the workspace in no recorded output event', async (t) => {
+  // Arrange
+  const { run, events, workspace } = await fixtureRun(t, {
+    mode: 'listen',
+    requestPath: '/log-root',
+  })
+  await run.prepare()
+  // Act
+  await run.sendRequest('key-root')
+  const paused = await untilView(run, (view) => view.state === 'paused')
+  assert.ok(paused.pause)
+  await run.continue(paused.pause)
+  await untilView(run, (view) => view.state === 'responded')
+  await run.stop()
+  const printed = events
+    .filter((event) => event.type === 'node-server.output')
+    .map((event) => String(Reflect.get(event.detail as object, 'text')))
+    .join('')
+  // Assert
+  assert.match(printed, /fixture cwd <workspace>\/src\/server\.ts/)
+  assert.equal(printed.includes(workspace), false)
 })

@@ -102,6 +102,13 @@ async function answer(
     process.stdout.write('fixture using token ghp_0123456789')
     process.stdout.write('abcdefghijKLMNOP and more\n')
   }
+  // A server that logs its own folder, split over two writes mid-path as a stream may deliver it.
+  if (requestPath === '/log-root') {
+    const folder = process.cwd()
+    const middle = Math.floor(folder.length / 2)
+    process.stdout.write(`fixture cwd ${folder.slice(0, middle)}`)
+    process.stdout.write(`${folder.slice(middle)}/src/server.ts\n`)
+  }
   if (requestPath === '/reset') {
     request.socket.destroy()
     return
@@ -113,6 +120,7 @@ async function answer(
   const replies: Record<string, () => Reply> = {
     '/health': () => jsonReply(200, { status: 'ok' }),
     '/log-credential': () => jsonReply(200, { status: 'ok' }),
+    '/log-root': () => jsonReply(200, { status: 'ok' }),
     '/environment': () =>
       jsonReply(200, { names: Object.keys(process.env).sort() }),
     '/echo': () =>
