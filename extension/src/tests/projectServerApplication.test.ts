@@ -1,14 +1,7 @@
 import assert from 'node:assert/strict'
 import { before, test } from 'node:test'
 
-import {
-  buildServerReplayModel,
-  type ServerReplayModel,
-} from '../utils/buildServerReplayModel'
-import {
-  indexServerOutput,
-  projectServerApplication,
-} from '../utils/projectServerApplication'
+import { buildServerReplayModel } from '../utils/buildServerReplayModel'
 
 import {
   nodeServerHistoryHeader,
@@ -16,40 +9,11 @@ import {
   SERVER_WORKSPACE_KEY,
 } from './utils/nodeServerHistoryFixture'
 import { realProcessStart } from './utils/realProcessStart'
-import { writeServerHistory } from './utils/sealedServerHistory'
+import { modelOf, VERDICTS, viewAt } from './utils/serverReplayModelOf'
 
 before(async () => {
   await realProcessStart(process.pid)
 })
-
-const VERDICTS = {
-  saved: true,
-  captureComplete: true,
-  learningCoverage: 'complete',
-} as const
-
-/** Writes a fixture history and returns its replay model with the sequences of what it holds. */
-async function modelOf(
-  context: Parameters<typeof openServerRepository>[0],
-  options: Parameters<typeof writeServerHistory>[1] = {},
-) {
-  const { repository } = await openServerRepository(context)
-  const { header, sequences } = await writeServerHistory(repository, options)
-  const model = buildServerReplayModel(
-    await repository.serverHistories.read(header.studyId),
-    VERDICTS,
-  )
-  return { model, sequences }
-}
-
-/** The Application view at one sequence. */
-function viewAt(model: ServerReplayModel, sequence: number, reason?: string) {
-  const selected = model.events[model.indexBySequence.get(sequence)!]
-  return projectServerApplication(model, indexServerOutput(model), selected, {
-    generation: 1,
-    ...(reason ? { noResponseReason: reason } : {}),
-  })
-}
 
 // protects=the response region shows no response before the response entry, the response at it and clears it again when the playhead moves back; fails_when=a later response is visible at an earlier moment; no_claim=colors, which carry no status
 test('the response region reads no response yet at the stop, the response at the answer and no response again after moving back', async (context) => {
@@ -74,7 +38,7 @@ test('the response region reads no response yet at the stop, the response at the
 })
 
 // protects=the request region says Request sent by Codebook only with the send mark and shows the declared request line; fails_when=the claim or the line is missing from any moment; no_claim=that the server received the request
-test('the request region shows the request line with the sent claim at every moment', async (context) => {
+test('the request region shows the request line, opening before the send mark and sent from it', async (context) => {
   // Arrange
   const { model, sequences } = await modelOf(context, {})
 
@@ -85,9 +49,12 @@ test('the request region shows the request line with the sent claim at every mom
   // Assert
   assert.deepEqual(atRequest.request, {
     line: 'POST /api/items',
+    claim: 'Request opened by Codebook; not sent yet at this moment.',
+  })
+  assert.deepEqual(atResponse.request, {
+    line: 'POST /api/items',
     claim: 'Request sent by Codebook',
   })
-  assert.deepEqual(atResponse.request, atRequest.request)
 })
 
 // protects=an empty body, a cut body and a response that never came are worded apart; fails_when=an empty body shows a block, a cut body hides its size, or the missing answer is not given its reason at the last event; no_claim=the body bound itself
@@ -183,9 +150,11 @@ test('a request withdrawn before its bytes left reads Request not sent with its 
 
   // Act
   const view = viewAt(model, model.events[0]!.sequence)
+  const atWithdrawal = viewAt(model, model.events[1]!.sequence)
   const atFailure = viewAt(model, model.terminal!.sequence)
 
   // Assert
-  assert.equal(view.request?.claim, 'Request not sent: RUN_BUSY')
+  assert.equal(view.request?.claim, 'Request not sent: unknown')
+  assert.equal(atWithdrawal.request?.claim, 'Request not sent: RUN_BUSY')
   assert.equal(atFailure.response?.state, 'Request failed: RUN_BUSY')
 })

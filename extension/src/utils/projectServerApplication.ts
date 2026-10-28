@@ -55,16 +55,29 @@ function requestRegion(
     return opened.length
       ? { line: NODE_SERVER_REPLAY_TEXT.noRequestYet, claim: '' }
       : undefined
-  const attempt = model.attempts.find(
+  // The marks count only once the selected moment has reached them: a moment before the send mark or the withdrawal never shows that later outcome.
+  const sentMark = model.attempts.find(
     (candidate) => candidate.attempt === request.attempt,
+  )?.sentSequence
+  const withdrawal = model.events.find(
+    (
+      event,
+    ): event is Extract<ServerReplayEvent, { type: 'request-withdrawn' }> =>
+      event.type === 'request-withdrawn' &&
+      event.attempt === request.attempt &&
+      event.sequence <= selected.sequence,
   )
+  // A moment before the attempt's own send mark: the request is opening, neither sent nor refused.
+  if (sentMark !== undefined && sentMark > selected.sequence && !withdrawal)
+    return {
+      line: `${request.method} ${request.path}`,
+      claim: NODE_SERVER_REPLAY_TEXT.requestOpening,
+    }
   return {
     line: `${request.method} ${request.path}`,
     claim: describeServerRequestClaim({
-      sent: attempt?.sent ?? false,
-      ...(attempt?.withdrawnCode
-        ? { withdrawnCode: attempt.withdrawnCode }
-        : {}),
+      sent: sentMark !== undefined && sentMark <= selected.sequence,
+      ...(withdrawal ? { withdrawnCode: withdrawal.code } : {}),
     }),
   }
 }
