@@ -27,6 +27,8 @@ async function saveOverRun(
     repositoryOptions?: Parameters<typeof startHistoryServerRun>[2]
     /** The bound of Save's own summary read; the production bound by default. */
     summaryReadBoundMs?: number
+    /** Attaches no store to Save, as before the repository is open. */
+    noStore?: boolean
     /** The chat material revision the host reports; none by default. */
     materialRevision?: number
   } = {},
@@ -47,7 +49,8 @@ async function saveOverRun(
   const opened: string[] = []
   const save = new NodeServerLearningSave({
     service: () => started.service,
-    store: () => started.repository.serverHistories,
+    store: () =>
+      options.noStore ? undefined : started.repository.serverHistories,
     ask: async (text) => {
       asked.push(text)
       return options.answer ? options.answer() : 'Save and stop'
@@ -682,6 +685,31 @@ test('Save does not report Server replay saved when the store no longer holds th
     {
       severity: 'warning',
       text: 'Learning replay could not be saved: The sealed server history is not in the store.',
+      actions: [],
+    },
+  ])
+})
+
+// protects=Save with no store attached and no seal-time summary says the history cannot be checked, not that it is missing from a store; fails_when=the notice claims the sealed history is not in the store; no_claim=the wording when a store answers
+test('Save without an attached store says the sealed server history cannot be checked', async (context) => {
+  // Arrange
+  const { save, record, run, service, repository, notified } =
+    await saveOverRun(context, { noStore: true })
+  await run.sendRequest('k1')
+  run.respond()
+  repository.serverHistories.summarize = () =>
+    Promise.reject(new Error('EIO: read failed'))
+  await service.stop({ instanceId: service.instanceId, runId: record.id })
+  assert.equal(record.nodeServer?.history?.sealed?.summary, undefined)
+
+  // Act
+  await save.save(record)
+
+  // Assert
+  assert.deepEqual(notified, [
+    {
+      severity: 'warning',
+      text: 'Learning replay could not be saved: No learning storage is attached, so the sealed server history cannot be checked.',
       actions: [],
     },
   ])

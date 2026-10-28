@@ -275,6 +275,12 @@ export class NodeServerLearningSave {
     // The seal-time summary stands in only when the store could not answer (timed out, or none attached); an answer that the history is gone is not overridden by it.
     const summary = read && 'summary' in read ? read.summary : sealTimeSummary
     if (summary?.verification === 'verified') return { summary }
+    // No store is attached and the seal read no summary: nothing says the history is missing, only that it cannot be checked.
+    if (read && 'noStore' in read && !sealTimeSummary)
+      return {
+        cause:
+          'No learning storage is attached, so the sealed server history cannot be checked.',
+      }
     if (read || sealTimeSummary)
       return {
         cause:
