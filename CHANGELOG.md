@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.55.0] - 2026-10-28 (development candidate)
+
+Cycle 0059 pt2 ([Issue #147](https://github.com/laststance/codebook/issues/147)), the second of three parts of the feature cycle that saves a server run as a learning replay. This part reads a saved server history back: Saved studies lists it as a **Server replay** led by its learning title, request line and response status, the chat reads it through `codebook://node-history`, and it opens in the replay composition with the recorded request, output and response in the Application pane, the executed source and the recorded debugger state at each stop. Nothing writes a server history yet, so a server run is still refused at **Save learning replay** and you will not see one in this version. N59, the cycle's native trial, runs on the last part.
+
+**Saving the chat's learning material.**
+
+- **Two editor windows saving the learning material of the same test replay at once no longer overwrite each other.** The material is read, checked against its revision and written under the storage lock, so one save lands and the other answers with the revision conflict it would get against a newer revision. A save that meets the lock while another window holds it is refused with the storage lock's sentence.
+
 ## [0.2.54.0] - 2026-10-28 (development candidate)
 
 Cycle 0059 pt1 ([Issue #147](https://github.com/laststance/codebook/issues/147)), the first of three parts of a feature cycle whose outcome is a server run saved as a learning replay. This part lays the storage a server replay will be written to and read from. Nothing writes one yet. A server run is still refused at **Save learning replay**, and nothing about server runs changes for you in this version. N59, the cycle's native trial, runs on the last part.
