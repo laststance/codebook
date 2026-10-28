@@ -8666,6 +8666,12 @@ test("a recording opened beside Cursor's Agent chat is refused as a learner chan
     // Assert
     const refused = await harness.reader.readPresentationState()
     assert.equal(refused.layoutConfirmed, false)
+    assert.equal(harness.controller.state().readiness, 'failed')
+    // The refusal names the learner's newer focus, the learner-change reason.
+    assert.match(
+      harness.controller.state().reason ?? '',
+      /The primary editor selection changed during scope measurement; the newer learner focus was preserved\./,
+    )
     assert.doesNotMatch(
       harness.controller.state().reason ?? '',
       /did not report the keyboard focus/,
