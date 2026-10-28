@@ -10,23 +10,11 @@ import {
   type ServerReplayPresentation,
 } from './adaptServerReplay'
 import { buildServerReplayModel } from './buildServerReplayModel'
-import { stripTerminalControls } from './stripTerminalControls'
+import { wordNodeCaptureReason } from './wordNodeCaptureReason'
 
-/**
- * Words a stored capture reason for a server replay's surfaces: free of terminal controls and line breaks, with the storage layer's name for the history replaced by the learner's word for it.
- * @param reason - A reason as the store wrote it.
- * @returns The reason as the replay reads it.
- * @example wordServerCaptureReason('Interrupted Node server history after its verified prefix: EIO') // => 'Interrupted server replay after its verified prefix: EIO'
- */
+/** Words a stored capture reason for a server replay's surfaces, by the one rule a test replay's reasons follow (controls and line breaks gone, one bounded line). */
 function wordServerCaptureReason(reason: string): string {
-  return stripTerminalControls(reason)
-    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
-    .replace(/\bNode server histor(y|ies)\b/gi, (_match, ending: string) =>
-      ending === 'y' ? 'server replay' : 'server replays',
-    )
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/^./, (first) => first.toUpperCase())
+  return wordNodeCaptureReason(reason, 'node-server') ?? ''
 }
 
 /**
@@ -37,12 +25,19 @@ function wordServerCaptureReason(reason: string): string {
  */
 function serverCaptureReasons(
   history: Pick<HistoryIndexOf<NodeServerHistoryTypes>, 'seal' | 'reason'>,
+  summary: NodeServerHistorySummary | undefined,
 ): string[] {
   if (history.seal)
     return history.seal.reasons.map((reason) =>
       wordServerCaptureReason(reason.text),
     )
-  return history.reason ? [wordServerCaptureReason(history.reason)] : []
+  // An unsealed history carries the reason the store gave it and what the shared evaluator found in its verified prefix, such as a declared stop never reached.
+  return [
+    ...(history.reason ? [wordServerCaptureReason(history.reason)] : []),
+    ...(summary?.captureMissing ?? []).map((reason) =>
+      wordServerCaptureReason(reason.text),
+    ),
+  ]
 }
 
 /** The codes of the seal reasons that say the history was recorded with no response. */
@@ -87,7 +82,7 @@ export function presentServerHistory(
   })
   return adaptServerReplay(
     model,
-    serverCaptureReasons(history),
+    serverCaptureReasons(history, summary),
     noResponseReasonOf(history),
   )
 }
