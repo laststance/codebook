@@ -62,8 +62,8 @@ export class NodeHistoryRepository {
 
   /**
    * Lists every saved history of the workspace, test and server, newest first, as one catalog for Saved studies.
-   * @returns The summaries of both profiles; a profile whose folder cannot be listed rejects the whole listing, so the library keeps its earlier catalog and reports the failure as it does for test histories.
-   * @throws What a store's listing throws for an unreadable history directory.
+   * @returns The summaries of the profiles that could be listed; a profile whose folder cannot be listed adds nothing and never hides the other.
+   * @throws What the first store's listing throws when no profile could be listed.
    * @example (await repository.list()).map((summary) => summary.profile) // => ['node-server', 'node-test']
    */
   async list(): Promise<NodeHistorySummary[]> {
@@ -77,19 +77,33 @@ export class NodeHistoryRepository {
 
   /**
    * Lists the saved histories of each profile apart, for the library, which keeps one catalog per profile.
-   * @returns The test summaries and the server summaries.
-   * @throws What a store's listing throws for an unreadable history directory.
-   * @example const { tests, servers } = await repository.listByProfile()
+   * @returns The test summaries and the server summaries, and the profiles whose folder could not be listed with the failure; such a profile lists empty and only its own histories are unavailable, as an unreadable Node history store never blocks the rest.
+   * @throws What the first store's listing throws when neither profile could be listed, so the library keeps its earlier catalog.
+   * @example const { tests, servers, unavailable } = await repository.listByProfile()
    */
   async listByProfile(): Promise<{
     tests: NodeTestHistorySummary[]
     servers: NodeServerHistorySummary[]
+    unavailable: Array<{ profile: 'node-test' | 'node-server'; error: unknown }>
   }> {
-    const [tests, servers] = await Promise.all([
+    const [tests, servers] = await Promise.allSettled([
       this.testHistories.list(),
       this.serverHistories.list(),
     ])
-    return { tests, servers }
+    if (tests.status === 'rejected' && servers.status === 'rejected')
+      throw tests.reason
+    return {
+      tests: tests.status === 'fulfilled' ? tests.value : [],
+      servers: servers.status === 'fulfilled' ? servers.value : [],
+      unavailable: [
+        ...(tests.status === 'rejected'
+          ? [{ profile: 'node-test' as const, error: tests.reason }]
+          : []),
+        ...(servers.status === 'rejected'
+          ? [{ profile: 'node-server' as const, error: servers.reason }]
+          : []),
+      ],
+    }
   }
 
   /**

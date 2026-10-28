@@ -164,6 +164,9 @@ export async function readResource(
         studyId,
         nodeHistoryMatch[2],
       )
+    // A test history has no per-event routes: they answer as any unknown resource.
+    if (/^events\/(?:through\/)?\d+/.test(nodeHistoryMatch[2] ?? ''))
+      throw new StudyError('NOT_FOUND', 'Unknown resource.')
     // An unknown id, or a history removed while or right after it is read, is a reference to correct, not a failed study operation (Cycle 0052 tasks 60, 75, 95); each read below is checked the same way.
     const history = await withKnownNodeHistory(store, studyId, () =>
       store.read(studyId),

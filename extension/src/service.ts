@@ -61,6 +61,7 @@ import {
   nodeServerConfigSchema,
   type NodeServerConfiguration,
 } from './nodeServerConfigSchemas'
+import { nodeServerLearningMaterialContentSchema } from './nodeServerLearningSchemas'
 import { describeNodeServerProfile } from './nodeServerProfile'
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
 import type { NodeTestLearningMaterialContent } from './nodeTestHistorySchemas'
@@ -2190,8 +2191,28 @@ export class StudyService {
         'Workspace-bound Node history storage is unavailable.',
       )
     const store = this.nodeHistoryStore
+    // A server history keeps its material in the server store, resolved by the study id's folder.
+    const resolved = this.nodeHistoryRepository?.resolve(parsed.studyId)
     try {
       // An unknown id, or a history removed while it is saved, is a reference to correct, as at the history's resources (Cycle 0052 tasks 60, 75).
+      if (resolved?.profile === 'node-server') {
+        const { store: serverStore } = resolved
+        const serverMaterial = await withKnownNodeHistory(
+          serverStore,
+          parsed.studyId,
+          () =>
+            serverStore.saveLearningMaterial(
+              parsed.studyId,
+              parsed.expectedRevision,
+              nodeServerLearningMaterialContentSchema.parse(parsed.content),
+            ),
+        )
+        this.presentationController?.nodeHistoryLearningMaterialSaved(
+          parsed.studyId,
+          serverMaterial,
+        )
+        return serverMaterial
+      }
       const material = await withKnownNodeHistory(store, parsed.studyId, () =>
         store.saveLearningMaterial(
           parsed.studyId,
