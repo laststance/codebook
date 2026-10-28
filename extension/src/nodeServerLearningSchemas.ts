@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 import {
   NODE_SERVER_HISTORY_MAX_ENTRIES,
+  NODE_SERVER_HISTORY_MAX_STOPS,
   NODE_TEST_LEARNING_MATERIAL_VERSION,
 } from './constants'
 import { studyIdSchema } from './legacyStudySchemas'
@@ -21,6 +22,13 @@ export const nodeServerLearningReferenceSchema = z.discriminatedUnion('type', [
     type: z.literal('stop'),
     sequence,
     sourceHash: repositoryHashSchema,
+    // Optional and additive: when given, the cited stop must be a hit of this declared stop (0-based, as the events list shows it).
+    declaredStopIndex: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(NODE_SERVER_HISTORY_MAX_STOPS)
+      .optional(),
   }),
   z.strictObject({
     type: z.literal('output'),

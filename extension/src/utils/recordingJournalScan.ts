@@ -16,7 +16,14 @@ import type { NodeTestHistoryTypes } from '../nodeTestHistoryTypes'
 
 /** A journal event a learning step can cite, as the store keeps it to check a learning material without reading the journal again. */
 export type CitableEvent =
-  | { type: 'stop'; sourceHash: string; path: string; line: number }
+  | {
+      type: 'stop'
+      sourceHash: string
+      path: string
+      line: number
+      /** The declared stop a server stop belongs to; a test stop has none. */
+      declaredStopIndex?: number
+    }
   | { type: 'output'; channel: 'stdout' | 'stderr' }
   | { type: 'result' }
   | { type: 'request' }

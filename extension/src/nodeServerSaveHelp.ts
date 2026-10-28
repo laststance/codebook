@@ -106,7 +106,7 @@ export function nodeServerSaveHelp() {
       {
         type: 'stop',
         shape:
-          '{ type: "stop", sequence, sourceHash } (the hash of the executed source the stop entry lists)',
+          '{ type: "stop", sequence, sourceHash, declaredStopIndex? } (the hash of the executed source the stop entry lists; declaredStopIndex is the 0-based declared stop the events list shows, and when you give it the cited sequence must be a hit of that stop)',
       },
       {
         type: 'output',
