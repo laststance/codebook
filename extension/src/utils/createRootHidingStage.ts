@@ -252,7 +252,6 @@ export function createRootHidingStage(
     // The raw-length cap would force-release the head of a run that is still a start of a root: as typed it could never match once its anchor ('C:') is gone, leaking the name that follows.
     const windowStart = earliestHoldStart(combined, longest)
     if (
-      emitted === 0 &&
       combined.length - windowStart > OUTPUT_REDACTION_HOLD_LIMIT_CHARS &&
       NON_SEPARATOR.test(
         combined.slice(
@@ -262,17 +261,34 @@ export function createRootHidingStage(
       ) &&
       mayBecomeRoot(combined.slice(windowStart))
     ) {
-      // Fail closed: the head is let out as its root's placeholder; what stays held is the run with separator runs collapsed (same comparison form), counted as let out.
+      // Fail closed. What an earlier timed release already let out (typed or as words) is not delivered again; the head before the run is hidden and let out; the run is kept with separator runs collapsed (same comparison form), its let-out part counted in that form.
       const run = combined.slice(windowStart)
-      const normalizedRun = normalizeForPrefix(run)
-      const words =
-        placeholderSpellings.find(({ normalized }) =>
-          normalized.startsWith(normalizedRun),
-        )?.placeholder ?? ''
-      capOutput = hidePrivateRoots(combined.slice(0, windowStart)) + words
-      combined = run.replace(SEPARATOR_RUN, (separators) => separators[0] ?? '')
-      emitted = words ? combined.length : 0
-      emittedPlaceholderText = words
+      const head = combined.slice(0, windowStart)
+      const headEmitted = Math.min(emitted, windowStart)
+      const runEmitted = emitted - headEmitted
+      capOutput = withoutEmitted(
+        head,
+        hidePrivateRoots(head),
+        headEmitted,
+        emittedPlaceholderText,
+      )
+      const collapseSeparators = (text: string): string =>
+        text.replace(SEPARATOR_RUN, (separators) => separators[0] ?? '')
+      combined = collapseSeparators(run)
+      if (runEmitted > 0) {
+        // The run's start is already out: only its let-out length changes with the collapse, and no words repeat it.
+        emitted = collapseSeparators(run.slice(0, runEmitted)).length
+      } else {
+        // Nothing of the run is out yet: its root's placeholder stands for it.
+        const normalizedRun = normalizeForPrefix(run)
+        const words =
+          placeholderSpellings.find(({ normalized }) =>
+            normalized.startsWith(normalizedRun),
+          )?.placeholder ?? ''
+        capOutput += words
+        emitted = words ? combined.length : 0
+        emittedPlaceholderText = words
+      }
     }
     const output = holdAndRelease(combined)
     // The held start moved forward by what was released; what is still held was let out only up to the old count.

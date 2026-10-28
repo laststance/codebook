@@ -459,3 +459,205 @@ test('a held workspace-name prefix released by time that diverges into another p
   assert.equal(output.includes('<workspace>'), false)
   assert.equal(output, '~/apple/x\n')
 })
+
+/**
+ * Drives a stage over `chunks`, firing the hold timer after the chunk indexes in `fireAfter`, then ends it.
+ * @param stage - The stage under test, built with `clock.timer`.
+ * @param clock - The hand-driven timer of `stage`.
+ * @param chunks - The writes, in order.
+ * @param fireAfter - Indexes of the chunks after which the pending timer fires.
+ * @returns Everything the stage delivered, in delivery order.
+ * @example driveStage(stage, clock, ['C:\\'], new Set([0]))
+ */
+function driveStage(
+  stage: ReturnType<typeof createRootHidingStage>,
+  clock: ReturnType<typeof fakeHoldTimer>,
+  chunks: string[],
+  fireAfter: ReadonlySet<number>,
+): string {
+  let output = ''
+  let seenReleases = 0
+  const collectReleases = (): void => {
+    output += clock.released.slice(seenReleases).join('')
+    seenReleases = clock.released.length
+  }
+  chunks.forEach((chunk, index) => {
+    output += stage.write(chunk)
+    if (fireAfter.has(index)) {
+      clock.fire()
+      collectReleases()
+    }
+  })
+  output += stage.end()
+  collectReleases()
+  return output
+}
+
+// protects=a Windows root whose drive letter a timed release already let out is still hidden when thousands of separators then reach the raw-length cap; fails_when=the cap drops the drive letter and 'Users\ada\app' is released as typed; no_claim=the placeholder wording of the already released drive letter
+test('a doubled-separator Windows root cut by the raw-length cap after a timed release releases no private name', () => {
+  // Arrange
+  const clock = fakeHoldTimer()
+  const stage = createRootHidingStage(
+    { storage: [], home: ['C:\\Users\\ada'] },
+    clock.timer,
+  )
+
+  // Act
+  const output = driveStage(
+    stage,
+    clock,
+    ['C:\\', '\\'.repeat(9000), 'Users\\ada\\app\n'],
+    new Set([0]),
+  )
+
+  // Assert
+  assert.equal(output, 'C:\\~\\app\n')
+  assert.equal(output.includes('ada'), false)
+})
+
+// protects=a POSIX root whose leading separator a timed release already let out is still hidden when a separator run past the raw-length cap precedes the rest of the root; fails_when=the cap loses the root-matching state and 'Users/ada/app' is released as typed; no_claim=the placeholder wording of the already released separator
+test('a doubled-separator POSIX root cut by the raw-length cap after a timed release releases no private name', () => {
+  // Arrange
+  const clock = fakeHoldTimer()
+  const stage = createRootHidingStage(
+    { storage: [], home: ['/Users/ada'] },
+    clock.timer,
+  )
+
+  // Act
+  const output = driveStage(
+    stage,
+    clock,
+    ['/', '/'.repeat(9000), 'Users/ada/app\n'],
+    new Set([0]),
+  )
+
+  // Assert
+  assert.equal(output.includes('ada'), false)
+  assert.equal(output, `${'/'.repeat(9000)}~/app\n`)
+})
+
+// protects=the placeholder a raw-length cap let out is delivered once even when the timed release then fires; fails_when=the timed release repeats the placeholder or lets out part of the name; no_claim=text written after the release
+test('a placeholder let out by the raw-length cap is not repeated by the timed release', () => {
+  // Arrange
+  const clock = fakeHoldTimer()
+  const stage = createRootHidingStage(
+    { storage: [], home: ['C:\\Users\\ada'] },
+    clock.timer,
+  )
+
+  // Act
+  const output = driveStage(
+    stage,
+    clock,
+    ['C:\\', '\\'.repeat(9000)],
+    new Set([1]),
+  )
+
+  // Assert
+  assert.equal(output, '~')
+  assert.equal(output.includes('ada'), false)
+})
+
+// protects=the placeholder a raw-length cap let out is delivered once when the stream then ends; fails_when=the end repeats the placeholder or lets out part of the name; no_claim=text written after the cap
+test('a placeholder let out by the raw-length cap is not repeated when the stream ends', () => {
+  // Arrange
+  const stage = createRootHidingStage({
+    storage: [],
+    home: ['C:\\Users\\ada'],
+  })
+
+  // Act
+  const written = stage.write('C:\\') + stage.write('\\'.repeat(9000))
+  const ended = stage.end()
+
+  // Assert
+  assert.equal(written + ended, '~')
+  assert.equal((written + ended).includes('ada'), false)
+})
+
+/**
+ * Makes a small deterministic pseudo-random generator, so a property test replays the same interleavings on every run.
+ * @param seed - The generator's starting state.
+ * @returns A function giving the next number in [0, 1).
+ * @example const next = seededRandom(7)
+ */
+function seededRandom(seed: number): () => number {
+  let state = seed
+  return (): number => {
+    state = (state + 0x6d2b79f5) | 0
+    let mixed = Math.imul(state ^ (state >>> 15), 1 | state)
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+// protects=over random splits of roots, timed releases and an end, no character of a private name leaks, no ordinary character is dropped or repeated, and no placeholder is invented; fails_when=a timed release, the end or a split root releases 'a' or 'd' of a name, swallows or doubles text, or shows more placeholders than roots; no_claim=inputs outside the generated alphabet, real timers
+for (const shape of [
+  {
+    label: 'POSIX',
+    home: '/Users/ada',
+    workspace: '/Users/ada/proj',
+    separator: '/',
+  },
+  {
+    label: 'Windows',
+    home: 'C:\\Users\\ada',
+    workspace: 'C:\\Users\\ada\\proj',
+    separator: '\\',
+  },
+]) {
+  test(`${shape.label} roots split at random points with random timed releases never leak a name or lose ordinary text`, () => {
+    for (let seed = 1; seed <= 300; seed++) {
+      // Arrange
+      const next = seededRandom(seed)
+      const pick = <Item>(items: readonly Item[]): Item =>
+        items[Math.floor(next() * items.length)] as Item
+      let input = ''
+      let rootStarts = 0
+      const segmentCount = 3 + Math.floor(next() * 6)
+      for (let index = 0; index < segmentCount; index++) {
+        const kind = next()
+        if (kind < 0.45) {
+          input += pick(['x', 'y', ' ', '\n', 'xy '])
+        } else {
+          // A root always stands after a space and before a boundary, so it is a real root occurrence.
+          rootStarts++
+          const root = pick([shape.home, shape.workspace])
+          const terminator = pick([shape.separator, ' ', '\n'])
+          input += ` ${root}${terminator}`
+        }
+      }
+      const chunks: string[] = []
+      for (let at = 0; at < input.length;) {
+        const size = 1 + Math.floor(next() * 6)
+        chunks.push(input.slice(at, at + size))
+        at += size
+      }
+      const fireAfter = new Set(
+        chunks.flatMap((_, index) => (next() < 0.4 ? [index] : [])),
+      )
+      const clock = fakeHoldTimer()
+      const stage = createRootHidingStage(
+        {
+          storage: [],
+          workspace: [shape.workspace],
+          home: [shape.home],
+        },
+        clock.timer,
+      )
+
+      // Act
+      const output = driveStage(stage, clock, chunks, fireAfter)
+
+      // Assert
+      const withoutPlaceholders = output.replaceAll('<workspace>', '')
+      const ordinary = (text: string): string => text.replace(/[^xy \n]/g, '')
+      const placeholderCount = output.split(/<workspace>|~/).length - 1
+      const context = `seed ${seed}: ${JSON.stringify(chunks)} fired after ${JSON.stringify([...fireAfter])} gave ${JSON.stringify(output)}`
+      assert.equal(/[ad]/.test(withoutPlaceholders), false, context)
+      assert.equal(ordinary(output), ordinary(input), context)
+      assert.equal(placeholderCount <= rootStarts, true, context)
+    }
+  })
+}
