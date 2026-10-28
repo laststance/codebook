@@ -11,6 +11,7 @@ import {
 } from '../constants'
 import { HISTORY_JOURNAL_FILE } from '../nodeHistoryJournalWriter'
 import type { NodeHistoryRepository } from '../nodeHistoryRepository'
+import type { NodeServerLearningMaterialContent } from '../nodeServerLearningSchemas'
 import type { ReplayDebugSnapshot } from '../replayDebugSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
@@ -34,6 +35,10 @@ import { lastView, saveTwoStopNodeHistory } from './utils/twoStopNodeHistory'
 before(async () => {
   await realProcessStart(process.pid)
 })
+
+/** One step reference of a server history's learning material, as its schema defines it. */
+type NodeServerLearningStepReference =
+  NodeServerLearningMaterialContent['steps'][number]['reference'] & {}
 
 type Harness = Awaited<ReturnType<typeof workspaceHarness>>
 
@@ -150,11 +155,11 @@ function serverMaterial(sequences: {
   stops: number[]
   output: number[]
   response?: number
-}) {
+}): NodeServerLearningMaterialContent {
   const step = (
     id: string,
     explanation: string,
-    reference: Record<string, unknown>,
+    reference: NodeServerLearningStepReference,
   ) => ({
     id,
     from: 'server',
@@ -176,15 +181,15 @@ function serverMaterial(sequences: {
       }),
       step('stop', 'The handler stops at its first line.', {
         type: 'stop',
-        sequence: sequences.stops[0],
+        sequence: sequences.stops[0]!,
         sourceHash: sha256(HANDLER_SOURCE_TEXT),
       }),
       step('response', 'The server answers with the item.', {
         type: 'response',
-        sequence: sequences.response,
+        sequence: sequences.response!,
       }),
     ],
-  } as never
+  }
 }
 
 // protects=a sealed server history opens from the library on its first recorded stop with the executed source stored in the history and its snapshot in the debugger, worded with the server catalog; fails_when=the replay opens on the request, shows the test catalog, or the slot and debugger lack the stored source; no_claim=the native editor's drawing of the slot
