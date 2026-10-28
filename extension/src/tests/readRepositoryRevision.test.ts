@@ -88,6 +88,11 @@ test('the revision read does not start the repository fsmonitor hook and still r
       'user.name=Test',
       '-c',
       'user.email=test@example.com',
+      // The developer's global config (signing, a hooks directory) must not fail this setup commit; a hooks path that does not exist runs no hook on any OS.
+      '-c',
+      'commit.gpgsign=false',
+      '-c',
+      `core.hooksPath=${join(directory, 'no-hooks')}`,
       'commit',
       '-q',
       '-m',
