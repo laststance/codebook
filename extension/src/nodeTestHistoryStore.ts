@@ -1176,7 +1176,8 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
     // A history another window still records may have gained the entries a citation names since the first read: it is read again under the lock before the citation is refused.
     if (prepared.refusal && prepared.status === 'recording')
       prepared = await this.prepareLearningMaterial(studyId, content)
-    const current = await this.readLearningMaterial(studyId)
+    // Under the lock only the stored file is read for its revision: the journal was verified and the new citations checked before the lock, and the stored material's own citations are not this save's concern.
+    const current = await this.readLearningMaterialFile(studyId)
     const currentRevision = current?.revision ?? 0
     if (expectedRevision !== currentRevision)
       throw new NodeLearningRevisionChangedError(
