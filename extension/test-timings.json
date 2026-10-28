@@ -18,6 +18,9 @@
     "answerDeepWikiQuestion.test.js": {
       "totalMs": 240
     },
+    "atomicPrivateBytes.test.js": {
+      "totalMs": 67
+    },
     "awaitDocumentSettled.test.js": {
       "totalMs": 104
     },
@@ -374,7 +377,7 @@
       "totalMs": 3
     },
     "createRootHidingStage.test.js": {
-      "totalMs": 81
+      "totalMs": 89
     },
     "crossRuntimeHistory.test.js": {
       "totalMs": 148
@@ -681,6 +684,9 @@
     },
     "heldStopSessionOf.test.js": {
       "totalMs": 1
+    },
+    "hideTrailingRootPrefix.test.js": {
+      "totalMs": 37
     },
     "historyExclusionState.test.js": {
       "totalMs": 0
@@ -1164,11 +1170,14 @@
     "nodeServerHistoryResources.test.js": {
       "totalMs": 2706
     },
+    "nodeServerHistoryRootWiring.test.js": {
+      "totalMs": 229
+    },
     "nodeServerHistorySeal.test.js": {
       "totalMs": 1909
     },
     "nodeServerHistorySink.test.js": {
-      "totalMs": 3522
+      "totalMs": 4902
     },
     "nodeServerHistoryStore.test.js": {
       "totalMs": 298
@@ -1198,7 +1207,7 @@
       "totalMs": 526
     },
     "nodeServerRunSeal.test.js": {
-      "totalMs": 2385
+      "totalMs": 4795
     },
     "nodeServerRunVerdicts.test.js": {
       "totalMs": 1376
@@ -1442,7 +1451,7 @@
       "totalMs": 75
     },
     "replayDebug.test.js": {
-      "totalMs": 18
+      "totalMs": 82
     },
     "replayDebugger.test.js": {
       "totalMs": 23096,
