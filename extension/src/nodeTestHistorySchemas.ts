@@ -14,6 +14,10 @@ import {
   REPOSITORY_LITERAL_LIMIT_CHARS,
   NODE_TEST_PROFILE,
 } from './constants'
+import {
+  learningParticipantsSchema,
+  learningStepsSchema,
+} from './learningSummarySchemas'
 import { studyIdSchema } from './legacyStudySchemas'
 import { nodeTestConfigSchema } from './nodeTestConfigSchemas'
 import { replayDebugSnapshotSchema } from './replayDebugSchemas'
@@ -166,35 +170,11 @@ export function buildNodeLearningMaterialContentSchema<
       question: z.string().min(1).max(MAX_EXPLANATION_CHARS),
       title: z.string().min(1).max(LEARNING_SUMMARY_LIMITS.titleChars),
       summary: z.string().min(1).max(MAX_EXPLANATION_CHARS),
-      participants: z
-        .array(
-          z.strictObject({
-            id: nodeLearningStepIdSchema,
-            label: z
-              .string()
-              .min(1)
-              .max(LEARNING_SUMMARY_LIMITS.participantLabelChars),
-          }),
-        )
-        .min(1)
-        .max(LEARNING_SUMMARY_LIMITS.participants),
-      steps: z
-        .array(
-          z.strictObject({
-            id: nodeLearningStepIdSchema,
-            from: nodeLearningStepIdSchema,
-            to: nodeLearningStepIdSchema,
-            label: z
-              .string()
-              .min(1)
-              .max(LEARNING_SUMMARY_LIMITS.stepLabelChars),
-            explanation: z.string().min(1).max(MAX_EXPLANATION_CHARS),
-            evidence: z.enum(['observed', 'source-derived', 'unknown']),
-            reference: reference.optional().describe(referenceDescription),
-          }),
-        )
-        .min(1)
-        .max(LEARNING_SUMMARY_LIMITS.steps),
+      participants: learningParticipantsSchema(nodeLearningStepIdSchema),
+      steps: learningStepsSchema(
+        nodeLearningStepIdSchema,
+        reference.optional().describe(referenceDescription),
+      ),
     })
     .superRefine((value, context) => {
       // Each broken rule is its own issue at the offending element, as for a configured learning summary.

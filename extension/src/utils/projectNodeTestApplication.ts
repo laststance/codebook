@@ -114,7 +114,7 @@ export function projectNodeTestApplication(
  * @returns `cut` and `inspector`, each only when something was left out.
  * @example leftOutLines({ omittedCharacters: 120, startsMidLine: false, inspectorLines: 0, … }) // => { cut: '… 120 earlier characters not shown' }
  */
-function leftOutLines(
+export function leftOutLines(
   tail: NodeTestOutputTail,
 ): Pick<NodeTestApplicationView, 'cut' | 'inspector'> {
   return {

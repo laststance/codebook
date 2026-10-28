@@ -11,12 +11,12 @@ import {
   describeServerResponseState,
   NODE_SERVER_REPLAY_TEXT,
 } from './describeNodeServerReplay'
-import { describeNodeTestReplay } from './describeNodeTestReplay'
 import { formatEventSeconds } from './formatEventSeconds'
 import {
   indexNodeTestOutput,
   type NodeTestOutputIndex,
 } from './indexNodeTestOutput'
+import { leftOutLines } from './projectNodeTestApplication'
 
 /** What the Application pane shows of a server replay at one moment: the fixed request region, the fixed response region, then the output log. Every field is text, rendered as text and never as markup. */
 export type NodeServerApplicationView = {
@@ -175,23 +175,7 @@ export function projectServerApplication(
           region: `Recorded server output up to ${formatEventSeconds(selected.elapsedMs)} s`,
         }),
     lines: tail.lines,
-    ...(tail.omittedCharacters > 0
-      ? {
-          cut: describeNodeTestReplay({
-            kind: 'application-cut',
-            characters: tail.omittedCharacters,
-            startsMidLine: tail.startsMidLine,
-          }),
-        }
-      : {}),
-    ...(tail.inspectorLines > 0
-      ? {
-          inspector: describeNodeTestReplay({
-            kind: 'application-inspector',
-            lines: tail.inspectorLines,
-          }),
-        }
-      : {}),
+    ...leftOutLines(tail),
     ...(tail.hasOutput
       ? {}
       : { placeholder: NODE_SERVER_REPLAY_TEXT.nothingYet }),
