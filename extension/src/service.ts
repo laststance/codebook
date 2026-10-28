@@ -523,6 +523,16 @@ export class StudyService {
   private readonly repositoryRetirement = new AbortController()
   private readonly repositoryOpens = new Set<Promise<unknown>>()
   private readonly startKeys = new Map<string, StudyRecord>()
+  /** Each server history's summary read in flight, by study id; an entry is removed when its read settles. */
+  private readonly nodeServerSummaryReads = new Map<
+    string,
+    Promise<
+      | Awaited<
+          ReturnType<NodeHistoryRepository['serverHistories']['summarize']>
+        >
+      | undefined
+    >
+  >()
   private readonly maintenance: ReturnType<typeof setInterval>
   private stopping = false
   private shutdownPromise?: Promise<void>
@@ -2292,7 +2302,10 @@ export class StudyService {
    * @param studyId - The history the material explains.
    * @example await this.refreshNodeServerSummary(studyId)
    */
-  private async refreshNodeServerSummary(studyId: string): Promise<void> {
+  private async refreshNodeServerSummary(
+    studyId: string,
+    joinReadInFlight = false,
+  ): Promise<void> {
     const sealed = [...this.records.values()].find(
       (candidate) => `${this.instanceId}_${candidate.id}` === studyId,
     )?.nodeServer?.history?.sealed
@@ -2303,14 +2316,25 @@ export class StudyService {
     const request = (sealed.summaryReads ?? 0) + 1
     sealed.summaryReads = request
     // A `summarize` that outlives the bound keeps running; its late answer is applied below only if no newer read started meanwhile.
-    const summary = await waitWithin(
-      histories.summarize(studyId).catch(() => undefined),
-      {
-        timeoutMs: this.nodeServerHistorySealBoundMs,
-        signal: new AbortController().signal,
-        sleep: sleepUntilAborted,
-      },
-    )
+    let reading = joinReadInFlight
+      ? this.nodeServerSummaryReads.get(studyId)
+      : undefined
+    // Run resource reads of one study share the read in flight, so a stalled store holds one pending read, not one per poll; a read after a material save always starts its own, since the one in flight may predate the save.
+    if (!reading) {
+      const started = histories.summarize(studyId).catch(() => undefined)
+      reading = started
+      this.nodeServerSummaryReads.set(studyId, started)
+      // The entry lives only as long as its read, so no entry outlives a settled read or a forgotten run.
+      void started.finally(() => {
+        if (this.nodeServerSummaryReads.get(studyId) === started)
+          this.nodeServerSummaryReads.delete(studyId)
+      })
+    }
+    const summary = await waitWithin(reading, {
+      timeoutMs: this.nodeServerHistorySealBoundMs,
+      signal: new AbortController().signal,
+      sleep: sleepUntilAborted,
+    })
     // A failed, empty or too slow read keeps the sealed summary, and an older read never overwrites a newer one.
     if (summary && sealed.summaryReads === request) sealed.summary = summary
   }
@@ -2323,7 +2347,7 @@ export class StudyService {
    */
   async refreshNodeServerVerdicts(record: StudyRecord): Promise<void> {
     if (record.profile !== NODE_SERVER_PROFILE) return
-    await this.refreshNodeServerSummary(`${this.instanceId}_${record.id}`)
+    await this.refreshNodeServerSummary(`${this.instanceId}_${record.id}`, true)
   }
 
   /**

@@ -428,7 +428,10 @@ test('an older server summary read that finishes last keeps the newer summary', 
 
   // Act
   const firstRead = service.refreshNodeServerVerdicts(record)
-  const secondRead = service.refreshNodeServerVerdicts(record)
+  // A refresh after a material save starts its own read (a read in flight may predate the save), so it is the newer one.
+  const secondRead = service['refreshNodeServerSummary'](
+    `${service.instanceId}_${record.id}`,
+  )
   resolvers[1]!(newer)
   await secondRead
   resolvers[0]!(older)

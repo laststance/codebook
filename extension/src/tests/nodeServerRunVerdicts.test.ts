@@ -220,3 +220,50 @@ test('a stop after a request failure reads partial with the request failure as t
     [expectedText],
   )
 })
+
+// protects=run resource reads of one study share the stored summary read in flight, a settled read is not kept, and a forgotten run leaves no entry; fails_when=every read starts its own summarize while an earlier one is unfinished, a later read reuses a settled read, or a map keeps the study id after the read settled; no_claim=which store stalls
+test('three run resource reads while the summary read is stalled start one read, and a read after it settles starts another', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { service, record, run, repository } = await startHistoryServerRun(
+    harness,
+    context,
+  )
+  await run.sendRequest('k1')
+  run.respond()
+  await service.stop({ instanceId: service.instanceId, runId: record.id })
+  const studyId = `${service.instanceId}_${record.id}`
+  const sealedSummary = record.nodeServer?.history?.sealed?.summary
+  assert.ok(sealedSummary)
+  let startedReads = 0
+  let settleRead: (summary: typeof sealedSummary) => void = () => undefined
+  repository.serverHistories.summarize = () => {
+    startedReads += 1
+    return new Promise((resolve) => {
+      settleRead = resolve
+    })
+  }
+  service.nodeServerHistorySealBoundMs = 20
+
+  // Act
+  await service.refreshNodeServerVerdicts(record)
+  await service.refreshNodeServerVerdicts(record)
+  await service.refreshNodeServerVerdicts(record)
+  const readsWhileStalled = startedReads
+  settleRead(sealedSummary)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  await service.refreshNodeServerVerdicts(record)
+  const readsAfterSettled = startedReads
+  settleRead(sealedSummary)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  service['forgetRecord'](record)
+
+  // Assert
+  assert.equal(readsWhileStalled, 1)
+  assert.equal(readsAfterSettled, 2)
+  const keptEntries = Object.values(service)
+    .filter((value): value is Map<unknown, unknown> => value instanceof Map)
+    .filter((map) => map.has(studyId))
+  assert.equal(keptEntries.length, 0)
+})
