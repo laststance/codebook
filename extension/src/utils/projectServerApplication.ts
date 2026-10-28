@@ -64,8 +64,17 @@ function requestRegion(
       event.attempt === request.attempt &&
       event.sequence <= selected.sequence,
   )
-  // A moment before the attempt's own send mark: the request is opening, neither sent nor refused.
-  if (sentMark !== undefined && sentMark > selected.sequence && !withdrawal)
+  // The attempt's later withdrawal, wherever it lies: it is a mark the moment may not have reached yet.
+  const laterWithdrawal = model.events.some(
+    (event) =>
+      event.type === 'request-withdrawn' && event.attempt === request.attempt,
+  )
+  // A moment before the attempt's own send mark and before its withdrawal: the request is opening, neither sent nor refused. Only an attempt with neither mark (an interrupted history) reads unknown.
+  if (
+    (sentMark !== undefined || laterWithdrawal) &&
+    !(sentMark !== undefined && sentMark <= selected.sequence) &&
+    !withdrawal
+  )
     return {
       line: `${request.method} ${request.path}`,
       claim: NODE_SERVER_REPLAY_TEXT.requestOpening,

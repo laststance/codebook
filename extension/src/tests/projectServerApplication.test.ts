@@ -154,7 +154,71 @@ test('a request withdrawn before its bytes left reads Request not sent with its 
   const atFailure = viewAt(model, model.terminal!.sequence)
 
   // Assert
-  assert.equal(view.request?.claim, 'Request not sent: unknown')
+  assert.equal(
+    view.request?.claim,
+    'Request opened by Codebook; not sent yet at this moment.',
+  )
   assert.equal(atWithdrawal.request?.claim, 'Request not sent: RUN_BUSY')
   assert.equal(atFailure.response?.state, 'Request failed: RUN_BUSY')
+})
+
+// protects=a moment between a later-withdrawn attempt's request entry and its withdrawal reads the opening claim, not Request not sent: unknown; fails_when=the region says unknown for an attempt whose withdrawal comes later; no_claim=the moment after the withdrawal
+test('a moment before the withdrawal of an attempt reads the opening claim, not unknown', async (context) => {
+  // Arrange
+  const { repository } = await openServerRepository(context)
+  const header = nodeServerHistoryHeader(SERVER_WORKSPACE_KEY)
+  const writer = await repository.serverHistories.start(header)
+  await writer.appendRequest({
+    elapsedMs: 1,
+    attempt: 1,
+    method: 'GET',
+    path: '/api/x',
+    bodyBytes: 0,
+  })
+  await writer.appendOutput({ elapsedMs: 2, channel: 'stdout', text: 'busy\n' })
+  await writer.appendRequestWithdrawn({
+    elapsedMs: 3,
+    attempt: 1,
+    code: 'RUN_BUSY',
+  })
+  await writer.seal({ elapsedMs: 4, reason: 'stopped' })
+  const model = buildServerReplayModel(
+    await repository.serverHistories.read(header.studyId),
+    VERDICTS,
+  )
+
+  // Act
+  const atOutput = viewAt(model, model.events[1]!.sequence)
+
+  // Assert
+  assert.equal(
+    atOutput.request?.claim,
+    'Request opened by Codebook; not sent yet at this moment.',
+  )
+})
+
+// protects=an attempt of an interrupted history with neither a send mark nor a withdrawal still reads Request not sent: unknown; fails_when=the region claims opening or sent for an attempt no mark follows; no_claim=the response region
+test('an attempt that no mark follows in an interrupted history reads Request not sent unknown', async (context) => {
+  // Arrange
+  const { repository } = await openServerRepository(context)
+  const header = nodeServerHistoryHeader(SERVER_WORKSPACE_KEY)
+  const writer = await repository.serverHistories.start(header)
+  await writer.appendRequest({
+    elapsedMs: 1,
+    attempt: 1,
+    method: 'GET',
+    path: '/api/x',
+    bodyBytes: 0,
+  })
+  await writer.seal({ elapsedMs: 2, reason: 'stopped' })
+  const model = buildServerReplayModel(
+    await repository.serverHistories.read(header.studyId),
+    VERDICTS,
+  )
+
+  // Act
+  const view = viewAt(model, model.events[0]!.sequence)
+
+  // Assert
+  assert.equal(view.request?.claim, 'Request not sent: unknown')
 })
