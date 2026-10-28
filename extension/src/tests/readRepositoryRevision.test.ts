@@ -33,6 +33,7 @@ test('a revision read that Git answers too slowly returns an unknown dirty revis
 
     // Assert
     assert.deepEqual(revision, { revision: 'unknown', dirty: true })
+    // gstack-timing-ok: the bound is the contract (the fake Git sleeps 5 s; the read must give up at its own 150 ms bound, not wait for Git)
     assert.ok(Date.now() - startedAt < 3_000)
   } finally {
     await rm(directory, { recursive: true, force: true })

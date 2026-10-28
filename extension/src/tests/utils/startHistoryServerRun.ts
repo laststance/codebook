@@ -94,7 +94,7 @@ async function startFakeNodeServerRunWith(
   const receipt = service.start({
     instanceId: service.instanceId,
     profile: NODE_SERVER_PROFILE,
-    key: 'history-run',
+    key: 'k1',
     configuration: nodeServerConfigurationOf(harness),
   })
   const record = service.record(receipt)
