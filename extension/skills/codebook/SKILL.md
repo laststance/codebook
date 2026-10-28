@@ -2,7 +2,7 @@
 name: codebook
 description: Explain live code paths, save or replay learning, or generate and update a DeepWiki for the current editor workspace.
 metadata:
-  version: "1.0.53"
+  version: "1.0.54"
 ---
 
 # Codebook
@@ -29,6 +29,8 @@ Publishing an immutable source article supplies the citations needed by a manage
 If Study asks for focus or layout recovery, use its existing pane, the `codebook_presentation` focus/restore actions with fresh identity, or the visible **Restore Study workspace layout** control. Do not call `codebook_open_book` to create a focusable pane or repair Study; that opens the independent Wiki reader and can introduce a foreign editor tab. If the current editor groups contain unrelated tabs, preserve them and report the resulting manual-layout prerequisite.
 
 **Saving a server run.** After the run reads `responded` or `request-failed` and you explained its stops in the chat, stop it with `codebook_stop`, then save its explanation as a Server replay through `codebook_explain_node_history`. First check that `codebook_status` reports API 1.9 or later; on an older API tell the learner to update Codebook and do not try to save. Read `nodeServer.history` and `nodeServer.historyIssue` on the run resource: `unavailable` or `failed` means nothing was saved, so say why and keep the explanation in the chat. Otherwise read the history's events at `nodeServer.historyUri` (the list is lean; one entry's full detail is its own resource) and save the question, summary and sequence with steps that cite the request, every stop you explained (with its `sourceHash`), output you rely on, and the response or request failure. `codebook://help/node-server` (section `save`) is the canonical text: the 16-hit stop budget, the three verdicts, the codes and one worked example. Say a server replay is saved only when the run resource reads `nodeServer.learningCoverage` `complete` and an empty `nodeServer.captureMissing`; otherwise name each missing part (`learningMissing`, `captureMissing`) and what would add it. A 4xx or 5xx response is a complete capture; never call it a success. Never repeat a secret a stop, output or response shows.
+
+**Saved steps stand alone.** A saved explanation of a test or server run must be readable after the chat closes. Every value you named in chat as deciding the outcome (a threshold, a code, an id, a limit) appears in a saved step or the summary, with where it comes from (the cited entry, or the source file and line). A claim you took from reading source, in the repository or a library, rather than from a recorded entry is its own step with evidence `source-derived`, citing the nearest recorded entry; never fold it into an `observed` step. An `observed` step states only what its cited entry shows.
 
 For a browser or test request requiring runtime observation (a server run needs no presentation), open the learner presentation before the first application input. Read current presentation state and use `codebook_presentation` to open its reported Study view when closed. Follow the public tool contract for current identity/revision arguments. Confirm an open presentation and `layoutConfirmed: true` before proceeding. If the view or layout cannot be confirmed, follow the returned recovery guidance and report the unresolved condition.
 
