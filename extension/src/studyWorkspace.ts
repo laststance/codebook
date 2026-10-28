@@ -258,6 +258,7 @@ import {
 import {
   describeServerEventRow,
   describeServerReplayRow,
+  describeServerSummaryFailure,
   NODE_SERVER_REPLAY_TEXT,
 } from './utils/describeNodeServerReplay'
 import { describeNodeTestReplay } from './utils/describeNodeTestReplay'
@@ -12536,7 +12537,15 @@ export class StudyWorkspace {
       revision,
     )
     if (!sidecars) return undefined
-    const summary = await store.summarize(studyId).catch(() => undefined)
+    // A summary that cannot be read leaves the learning verdict unknown: the open says so on the learning line instead of reading as "explanation not saved".
+    const summary = await store.summarize(studyId).catch((error: unknown) => {
+      this.reportTestReplayFailure(
+        'history-learning',
+        error,
+        describeServerSummaryFailure,
+      )
+      return undefined
+    })
     if (this.historyOpenSuperseded(request, revision)) return undefined
     const serverReplay = presentServerHistory(journal, summary)
     const restored =

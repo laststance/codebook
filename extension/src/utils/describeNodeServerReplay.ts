@@ -101,6 +101,17 @@ export function describeServerRequestClaim(input: {
 }
 
 /**
+ * Words the line a server replay shows when the history's summary could not be read at open, so the learning verdict is unknown rather than "explanation not saved".
+ * Called by the Study workspace when it opens a server history whose summary failed.
+ * @param cause - The failure, already sanitized of private paths.
+ * @returns One line that names the cause.
+ * @example describeServerSummaryFailure('journal unreadable') // => 'Learning status of this server replay could not be read: journal unreadable'
+ */
+export function describeServerSummaryFailure(cause: string): string {
+  return `Learning status of this server replay could not be read: ${cause}`
+}
+
+/**
  * Words the response region of the Application pane for the selected moment.
  * @param input - What the history recorded and whether the selected moment reached it: `response` the recorded answer, `failure` the request's failure code, `reason` the first partial reason of a history that ended with neither.
  * @returns One line: the pre-response line, `Response <status> · <content type>`, `Request failed: <code>` or `No response was recorded: <reason>` (the reason already starts with that phrase when the evaluator worded it, so it is not repeated).
