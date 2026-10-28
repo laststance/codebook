@@ -4,10 +4,13 @@
 //   pnpm --dir extension gate                 every check; logs under artifacts/gate/<short HEAD>/
 //   pnpm --dir extension gate --out <folder>  logs in <folder>
 //   pnpm --dir extension gate --allow-dirty   also on uncommitted changes (a trial run, not a gate)
+//   pnpm --dir extension gate --silence-seconds <n>  end a check silent this long (default 300)
 //
 // Exit 0: every check passed and HEAD did not move. Exit 1: a check failed, or HEAD or the tree changed during the run.
 // Exit 2: refused before any check, because Node or pnpm differ from the pins, the checkout has changes, or an option is
-// unknown. Each check's output goes to its own log; stdout gets one line per check and the verdict.
+// unknown. Each check's output goes to its own log; stdout gets one line per check and the verdict. A check that prints
+// nothing for the silence bound has its whole process tree ended and counts as exit 124; SIGINT, SIGTERM or SIGHUP to
+// the gate ends the running check's tree and exits 130, 143 or 129.
 import { spawn, spawnSync } from 'node:child_process'
 import { createWriteStream } from 'node:fs'
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
@@ -15,6 +18,9 @@ import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 
+import { createResettingTimer } from './utils/createResettingTimer.mjs'
+import { endChildrenOnSignal } from './utils/endChildrenOnSignal.mjs'
+import { endProcessTree } from './utils/endProcessTree.mjs'
 import { isRunAsScript } from './utils/isRunAsScript.mjs'
 import { listCheckoutChanges } from './utils/listCheckoutChanges.mjs'
 import { plainOutputEnvironment } from './utils/plainOutputEnvironment.mjs'
@@ -57,6 +63,10 @@ export const GATE_CHECKS = [
 
 /** Exit code of a refusal before any check. */
 const REFUSED_EXIT_CODE = 2
+/** How long a check may print nothing before its process tree is ended (seconds): the longest quiet step of a passing check (the package build's progress lines come every 30 s) stays far below it. */
+const DEFAULT_SILENCE_SECONDS = 300
+/** The exit code a check gets when the silence bound ended it, as `timeout(1)` reports a command it ended. */
+const SILENT_EXIT_CODE = 124
 
 /**
  * Reads the versions the repository pins: Node from the root `.node-version`, pnpm from `extension/package.json`'s
@@ -141,52 +151,100 @@ function checkEnvironment() {
 }
 
 /**
- * Runs one check to its end with its output in `logPath`, never rejecting.
- * Called by {@link runGate} for each check in turn.
- * @param check - One of {@link GATE_CHECKS}.
- * @param logPath - The log file of the check.
- * @param out - The gate's output folder; a Reader DOM check makes its own folder in it.
- * @returns The check's exit code (`127` when it could not start, `1` when a signal ended it).
- * @example await runCheck(GATE_CHECKS[0], '/tmp/gate/01-format-check.log', '/tmp/gate') // => 0
+ * Runs one command to its end with its output in `logPath`, never rejecting; ends its whole process tree when it prints
+ * nothing for `silenceMs`, and when the gate gets SIGINT, SIGTERM or SIGHUP ({@link endChildrenOnSignal}).
+ * Why: a check that hangs would hold the gate forever, and a check left running after the gate was ended keeps
+ * rebuilding `extension/dist` under the next run. Called by {@link runCheck} for each check, and by tests.
+ * @param command - `{ file, args, cwd }` of the process to start.
+ * @param logPath - The log file that receives its stdout and stderr.
+ * @param silenceMs - How long it may print nothing.
+ * @returns Its exit code: {@link SILENT_EXIT_CODE} when the silence bound ended it, `127` when it could not start, `1` when a signal ended it.
+ * @example await runCommand({ file: 'pnpm', args: ['lint'], cwd: extension }, '/tmp/gate/03-lint.log', 300_000) // => 0
  */
-async function runCheck(check, logPath, out) {
+export async function runCommand(command, logPath, silenceMs) {
   const log = createWriteStream(logPath)
-  let command
-  // A package script runs in the package, the other checks from the repository root.
-  if (check.script !== undefined)
-    command = { file: 'pnpm', args: [check.script], cwd: extension }
-  else if (check.readerDom !== undefined)
-    command = {
-      file: process.execPath,
-      args: [
-        `extension/scripts/${check.readerDom}-qa.mjs`,
-        'verify',
-        await mkdtemp(join(out, `${check.readerDom}-`)),
-      ],
-      cwd: repository,
-    }
-  else
-    command = {
-      file: process.execPath,
-      args: ['--test', check.nodeTest],
-      cwd: repository,
-    }
   const code = await new Promise((settle) => {
     const child = spawn(command.file, command.args, {
       cwd: command.cwd,
       env: checkEnvironment(),
       stdio: ['ignore', 'pipe', 'pipe'],
     })
-    child.stdout.pipe(log, { end: false })
-    child.stderr.pipe(log, { end: false })
+    const endTree = () =>
+      endProcessTree(child, {
+        platform: process.platform,
+        environment: process.env,
+      })
+    const releaseSignalEnd = endChildrenOnSignal(endTree)
+    let wasSilent = false
+    const silence = createResettingTimer(silenceMs, () => {
+      wasSilent = true
+      log.write(
+        `\nGate: no output for ${silenceMs / 1000} s; the check's process tree was ended.\n`,
+      )
+      void endTree()
+    })
+    for (const stream of [child.stdout, child.stderr]) {
+      stream.on('data', () => silence.reset())
+      stream.pipe(log, { end: false })
+    }
     child.once('error', (error) => {
       log.write(`${error.message}\n`)
+      silence.stop()
+      releaseSignalEnd()
       settle(127)
     })
-    child.once('close', (exitCode) => settle(exitCode ?? 1))
+    child.once('close', (exitCode) => {
+      silence.stop()
+      releaseSignalEnd()
+      settle(wasSilent ? SILENT_EXIT_CODE : (exitCode ?? 1))
+    })
   })
   await new Promise((done) => log.end(done))
   return code
+}
+
+/**
+ * Runs one of {@link GATE_CHECKS} through {@link runCommand}: a package script in `extension/`, a Reader DOM check in a
+ * fresh folder of its own, or a Node test file from the repository root.
+ * Called by {@link runGate} for each check in turn.
+ * @param check - One of {@link GATE_CHECKS}.
+ * @param logPath - The log file of the check.
+ * @param out - The gate's output folder; a Reader DOM check makes its own folder in it.
+ * @param silenceMs - How long the check may print nothing.
+ * @returns The check's exit code ({@link runCommand}).
+ * @example await runCheck(GATE_CHECKS[0], '/tmp/gate/01-format-check.log', '/tmp/gate', 300_000) // => 0
+ */
+async function runCheck(check, logPath, out, silenceMs) {
+  // A package script runs in the package, the other checks from the repository root.
+  if (check.script !== undefined)
+    return runCommand(
+      { file: 'pnpm', args: [check.script], cwd: extension },
+      logPath,
+      silenceMs,
+    )
+  if (check.readerDom !== undefined)
+    return runCommand(
+      {
+        file: process.execPath,
+        args: [
+          `extension/scripts/${check.readerDom}-qa.mjs`,
+          'verify',
+          await mkdtemp(join(out, `${check.readerDom}-`)),
+        ],
+        cwd: repository,
+      },
+      logPath,
+      silenceMs,
+    )
+  return runCommand(
+    {
+      file: process.execPath,
+      args: ['--test', check.nodeTest],
+      cwd: repository,
+    },
+    logPath,
+    silenceMs,
+  )
 }
 
 /**
@@ -259,10 +317,21 @@ async function main() {
       options: {
         out: { type: 'string' },
         'allow-dirty': { type: 'boolean', default: false },
+        'silence-seconds': {
+          type: 'string',
+          default: String(DEFAULT_SILENCE_SECONDS),
+        },
       },
     }).values
   } catch (error) {
     console.error(`Gate refused: ${error.message}`)
+    return REFUSED_EXIT_CODE
+  }
+  const silenceSeconds = Number(options['silence-seconds'])
+  if (!Number.isInteger(silenceSeconds) || silenceSeconds < 1) {
+    console.error(
+      `Gate refused: --silence-seconds takes a whole number of seconds, 1 or more (got ${options['silence-seconds']}).`,
+    )
     return REFUSED_EXIT_CODE
   }
   const mismatches = pinMismatches(await readPins(repository), {
@@ -297,7 +366,8 @@ async function main() {
     out,
     readHead,
     listChanges: () => listCheckoutChanges(repository),
-    runCheck,
+    runCheck: (check, logPath, folder) =>
+      runCheck(check, logPath, folder, silenceSeconds * 1000),
     print,
   })
   await writeFile(join(out, 'summary.txt'), `${lines.join('\n')}\n`)

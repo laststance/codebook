@@ -6,7 +6,13 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { GATE_CHECKS, pinMismatches, readPins, runGate } from '../gate.mjs'
+import {
+  GATE_CHECKS,
+  pinMismatches,
+  readPins,
+  runCommand,
+  runGate,
+} from '../gate.mjs'
 import { plainOutputEnvironment } from '../utils/plainOutputEnvironment.mjs'
 
 const GATE_SCRIPT = fileURLToPath(new URL('../gate.mjs', import.meta.url))
@@ -186,4 +192,50 @@ test('extension/.node-version pins the same Node as the root .node-version', asy
 
   // Assert
   assert.equal(extension, root)
+})
+
+// Value: protects=a gate that cannot hang: a check that prints nothing for the silence bound has its process tree ended and fails as exit 124, with a sentence in its log (local CodeRabbit CLI on the retro PR); fails_when=the gate waits for a silent check without end, or reports it as passed; why_new=the committed gate had no bound; seam=a real Node process that stays silent; no_claim=the 300 s default, and the end on a signal (endChildrenOnSignal's own tests)
+test('a check silent past the bound is ended and fails with exit 124', async (context) => {
+  // Arrange
+  const folder = await mkdtemp(join(tmpdir(), 'codebook-gate-silence-'))
+  context.after(() => rm(folder, { recursive: true, force: true }))
+  const logPath = join(folder, 'silent.log')
+  const startedAt = Date.now()
+
+  // Act
+  const code = await runCommand(
+    {
+      file: process.execPath,
+      args: ['-e', 'setTimeout(() => {}, 60_000)'],
+      cwd: folder,
+    },
+    logPath,
+    300,
+  )
+
+  // Assert
+  assert.equal(code, 124)
+  assert.match(
+    await readFile(logPath, 'utf8'),
+    /Gate: no output for 0\.3 s; the check's process tree was ended\./,
+  )
+  // gstack-timing-ok: the bound is 0.3 s and the process would run 60 s; 20 s only says the gate did not wait for it.
+  assert.ok(Date.now() - startedAt < 20_000)
+})
+
+// Value: protects=the silence option's refusal before any check; fails_when=a bound of 0, a negative or a non-number starts the checks; why_new=local CodeRabbit CLI on the retro PR (the option was added with the bound); seam=the script started as a process; no_claim=other options
+test('a silence bound that is no whole number of seconds is refused with exit 2', () => {
+  // Arrange
+  const environment = plainOutputEnvironment(process.env)
+
+  // Act
+  const result = spawnSync(
+    process.execPath,
+    [GATE_SCRIPT, '--silence-seconds', '0'],
+    { encoding: 'utf8', env: environment, timeout: 30_000 },
+  )
+
+  // Assert
+  assert.equal(result.status, 2)
+  assert.match(result.stderr, /--silence-seconds takes a whole number/)
 })
