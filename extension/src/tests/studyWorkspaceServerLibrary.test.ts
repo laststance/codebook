@@ -7,17 +7,14 @@ import { readerSeams, workspaceHarness } from './studyWorkspaceHarness'
 import { nodeServerHistoryHeader } from './utils/nodeServerHistoryFixture'
 import { realProcessStart } from './utils/realProcessStart'
 import { writeServerHistory } from './utils/sealedServerHistory'
+import {
+  repositoryOf,
+  type ServerWorkspaceHarness as Harness,
+} from './utils/serverWorkspaceHarness'
 
 before(async () => {
   await realProcessStart(process.pid)
 })
-
-type Harness = Awaited<ReturnType<typeof workspaceHarness>>
-
-/** The workspace's history repository, over the learning directory the fixture writer shares. */
-function repositoryOf(harness: Harness) {
-  return harness.reader['nodeHistoryRepository']!
-}
 
 /** The Saved studies rows of the reader's current view, by study id. */
 function rowOf(harness: Harness, studyId: string) {

@@ -10,7 +10,6 @@ import {
   NODE_SERVER_SOURCE_TEXT_LIMIT_BYTES,
 } from '../constants'
 import { HISTORY_JOURNAL_FILE } from '../nodeHistoryJournalWriter'
-import type { NodeHistoryRepository } from '../nodeHistoryRepository'
 import type { NodeServerLearningMaterialContent } from '../nodeServerLearningSchemas'
 import type { ReplayDebugSnapshot } from '../replayDebugSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
@@ -29,6 +28,14 @@ import {
 import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 import { realProcessStart } from './utils/realProcessStart'
 import { writeServerHistory } from './utils/sealedServerHistory'
+import {
+  moveTo,
+  openServerReplay,
+  repositoryOf,
+  selectEvent,
+  slotUri,
+  workspaceKeyOf,
+} from './utils/serverWorkspaceHarness'
 import { shownApplicationView } from './utils/shownTestOutput'
 import { lastView, saveTwoStopNodeHistory } from './utils/twoStopNodeHistory'
 
@@ -39,110 +46,6 @@ before(async () => {
 /** One step reference of a server history's learning material, as its schema defines it. */
 type NodeServerLearningStepReference =
   NodeServerLearningMaterialContent['steps'][number]['reference'] & {}
-
-type Harness = Awaited<ReturnType<typeof workspaceHarness>>
-
-/** The workspace's history repository, over the learning directory the fixture writer shares. */
-function repositoryOf(harness: Harness): NodeHistoryRepository {
-  return harness.reader['nodeHistoryRepository']!
-}
-
-/** The workspace key every history of the harness's workspace carries. */
-function workspaceKeyOf(harness: Harness): string {
-  return harness.service.nodeHistoryStore!.workspaceKey
-}
-
-/**
- * Finds the address of the replay's recorded-source slot document.
- * @param harness - The workspace harness.
- * @returns The slot's address.
- * @example harness.documentTextOf(slotUri(harness))
- */
-function slotUri(harness: Harness): string {
-  return harness.historicalDebugPresentations.find(
-    (presentation) => presentation.sourceDocument,
-  )!.sourceDocument!.uri
-}
-
-/**
- * Opens a saved server replay from the library and waits until the pane shows it settled.
- * @param harness - The workspace harness.
- * @param studyId - The server history's study id.
- * @example await openServerReplay(harness, header.studyId)
- */
-async function openServerReplay(
-  harness: Harness,
-  studyId: string,
-): Promise<void> {
-  await harness.reader.action('retry')
-  await harness.reader.openLearningReplay(studyId)
-  await waitUntil(
-    () =>
-      lastView(harness)?.nodeHistory?.header.studyId === studyId &&
-      !lastView(harness)?.loading,
-    'the server replay is shown',
-    READER_RESULT_BOUND_MS,
-  )
-}
-
-/**
- * Presses a transport move as the Study pane's button does and waits until the playhead has committed at `sequence`.
- * @param harness - The workspace harness.
- * @param studyId - The shown history.
- * @param move - Which way and by what unit.
- * @param sequence - The sequence the move must commit.
- * @example await moveTo(harness, studyId, { direction: 'next', unit: 'stop' }, 5)
- */
-async function moveTo(
-  harness: Harness,
-  studyId: string,
-  move: { direction: 'previous' | 'next'; unit: 'event' | 'stop' },
-  sequence: number,
-): Promise<void> {
-  harness.receiveContext({
-    type: 'node-history-step',
-    revision: lastView(harness)!.revision,
-    studyId,
-    ...move,
-  })
-  await waitUntil(
-    () =>
-      lastView(harness)?.nodeHistoryPosition?.sequence === sequence &&
-      !lastView(harness)?.nodeHistoryPosition?.pending,
-    `the playhead commits at ${sequence}`,
-    READER_RESULT_BOUND_MS,
-  )
-}
-
-/**
- * Selects one event as a summary step's link or the event list's control does.
- * @param harness - The workspace harness.
- * @param studyId - The shown history.
- * @param sequence - The event to select.
- * @param stepId - The step the link names, when it is a step's.
- * @example await selectEvent(harness, studyId, 6, 'response')
- */
-async function selectEvent(
-  harness: Harness,
-  studyId: string,
-  sequence: number,
-  stepId?: string,
-): Promise<void> {
-  harness.receiveContext({
-    type: 'node-history-event',
-    revision: lastView(harness)!.revision,
-    studyId,
-    sequence,
-    ...(stepId ? { stepId } : {}),
-  })
-  await waitUntil(
-    () =>
-      lastView(harness)?.nodeHistoryPosition?.sequence === sequence &&
-      !lastView(harness)?.nodeHistoryPosition?.pending,
-    `the playhead commits at ${sequence}`,
-    READER_RESULT_BOUND_MS,
-  )
-}
 
 /**
  * Builds a learning material that cites a request, a stop, an output and a response of a fixture history, each by its journal sequence.
