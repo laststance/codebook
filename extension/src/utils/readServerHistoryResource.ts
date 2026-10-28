@@ -22,7 +22,7 @@ type LeanServerEvent = Record<string, unknown> & {
  * @returns The lean event, or `undefined` for a storage-only entry.
  * @example leanServerEvent(stopEntry) // => { sequence: 4, type: 'stop', elapsedMs: 60, declaredStopIndex: 0, hit: 1, path: 'src/handler.ts', line: 2, sourceHash: '…', facts: { 'value:id': '7' } }
  */
-export function leanServerEvent(
+function leanServerEvent(
   entry: NodeServerHistoryEntry,
 ): LeanServerEvent | undefined {
   const head = {

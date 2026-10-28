@@ -1,0 +1,217 @@
+import {
+  accumulateNodeTestOutput,
+  type NodeTestOutputViewLine,
+} from './accumulateNodeTestOutput'
+import type {
+  ServerReplayEvent,
+  ServerReplayModel,
+} from './buildServerReplayModel'
+import {
+  describeServerRequestClaim,
+  describeServerResponseState,
+  NODE_SERVER_REPLAY_TEXT,
+} from './describeNodeServerReplay'
+import { describeNodeTestReplay } from './describeNodeTestReplay'
+import { formatEventSeconds } from './formatEventSeconds'
+import {
+  indexNodeTestOutput,
+  type NodeTestOutputIndex,
+} from './indexNodeTestOutput'
+
+/** What the Application pane shows of a server replay at one moment: the fixed request region, the fixed response region, then the output log. Every field is text, rendered as text and never as markup. */
+export type NodeServerApplicationView = {
+  generation: number
+  /** Header line 1: `Recorded server output · <t> s`, or `Recorded server output` alone without a selected event. */
+  time: string
+  /** The pane's accessible name. */
+  name: string
+  /** The request region: the request line and the claim the replay may make about it. */
+  request?: { line: string; claim: string }
+  /** The response region for the selected moment. */
+  response?: {
+    state: string
+    /** The recorded body, in its own scrolling block; absent before the response and for an empty body. */
+    body?: string
+    /** `Body shown cut at <n> bytes.` for a cut body, `Response body is empty.` for none. */
+    note?: string
+  }
+  /** The output log's accessible name, `Recorded server output up to <t> s`. */
+  region?: string
+  lines: NodeTestOutputViewLine[]
+  cut?: string
+  inspector?: string
+  /** The line that stands for the log when there is none to show: loading, nothing yet or no entries. */
+  placeholder?: string
+  /** The last line: that the recording ended before the server answered. */
+  end?: string
+}
+
+/** Words the Application pane's first line and name. */
+function timeWords(elapsedMs: number | undefined): string {
+  return elapsedMs === undefined
+    ? 'Recorded server output'
+    : `Recorded server output · ${formatEventSeconds(elapsedMs)} s`
+}
+
+/**
+ * Finds the request attempt the selected moment belongs to: the latest attempt opened at or before it, else the first.
+ * @param model - The replay model.
+ * @param selected - The selected event.
+ * @returns The attempt's request line and its mark state.
+ */
+function requestRegion(
+  model: ServerReplayModel,
+  selected: ServerReplayEvent,
+): NodeServerApplicationView['request'] {
+  const opened = model.events.filter(
+    (event): event is Extract<ServerReplayEvent, { type: 'request' }> =>
+      event.type === 'request',
+  )
+  const request =
+    opened.findLast((event) => event.sequence <= selected.sequence) ?? opened[0]
+  if (!request) return undefined
+  const attempt = model.attempts.find(
+    (candidate) => candidate.attempt === request.attempt,
+  )
+  return {
+    line: `${request.method} ${request.path}`,
+    claim: describeServerRequestClaim({
+      sent: attempt?.sent ?? false,
+      ...(attempt?.withdrawnCode
+        ? { withdrawnCode: attempt.withdrawnCode }
+        : {}),
+    }),
+  }
+}
+
+/**
+ * Words the response region for the selected moment: before the terminal entry the pre-response line, at or after a response its status, content type and body, for a failed request its code, and for a history that ended with no answer its reason once the replay reaches the end.
+ * @param model - The replay model.
+ * @param selected - The selected event.
+ * @param noResponseReason - The first partial reason of a history that ended with no answer, worded by the capture evaluator.
+ * @returns The region.
+ */
+function responseRegion(
+  model: ServerReplayModel,
+  selected: ServerReplayEvent,
+  noResponseReason: string | undefined,
+): NonNullable<NodeServerApplicationView['response']> {
+  const { terminal } = model
+  // A history with no terminal entry reaches its end at its last event.
+  const reached = terminal
+    ? selected.sequence >= terminal.sequence
+    : selected.sequence === model.events.at(-1)?.sequence
+  if (terminal?.type === 'response' && reached) {
+    const shownBytes = Buffer.byteLength(terminal.body)
+    const cut = terminal.readCut || shownBytes < terminal.bodyBytes
+    return {
+      state: describeServerResponseState({ reached, response: terminal }),
+      ...(terminal.bodyBytes === 0
+        ? { note: NODE_SERVER_REPLAY_TEXT.emptyBody }
+        : { body: terminal.body }),
+      ...(cut && terminal.bodyBytes > 0
+        ? { note: `Body shown cut at ${shownBytes} bytes.` }
+        : {}),
+    }
+  }
+  return {
+    state: describeServerResponseState({
+      reached,
+      ...(terminal?.type === 'request-failed'
+        ? { failureCode: terminal.code }
+        : {}),
+      ...(noResponseReason ? { noResponseReason } : {}),
+    }),
+  }
+}
+
+/**
+ * Projects what the Application pane shows of a server replay at the selected moment: the request region, the response region and the output log up to the moment, reading the output with the test replay's window, follow and cut rules.
+ * Called by the Study workspace for each Study message while a server replay is selected.
+ * @param model - The replay model.
+ * @param index - The replay's output read once ({@link indexNodeTestOutput} over the journal's output entries).
+ * @param selected - The selected event, absent before one is selected.
+ * @param options - `generation` supersedes older updates; `loading` shows the opening state; `leaving` names the surface alone while the selection goes elsewhere; `noResponseReason` is the first partial reason of a history that never answered.
+ * @returns The view.
+ * @example projectServerApplication(model, index, model.events[0], { generation: 1 }).request?.claim // => 'Request sent by Codebook'
+ */
+export function projectServerApplication(
+  model: ServerReplayModel,
+  index: NodeTestOutputIndex,
+  selected: ServerReplayEvent | undefined,
+  options: {
+    generation: number
+    loading?: boolean
+    leaving?: boolean
+    noResponseReason?: string
+  },
+): NodeServerApplicationView {
+  const { generation, loading = false, leaving = false } = options
+  if (loading || !selected)
+    return {
+      generation,
+      time: timeWords(undefined),
+      name: NODE_SERVER_REPLAY_TEXT.heading,
+      lines: [],
+      placeholder: loading
+        ? NODE_SERVER_REPLAY_TEXT.loading
+        : model.events.length
+          ? NODE_SERVER_REPLAY_TEXT.nothingYet
+          : NODE_SERVER_REPLAY_TEXT.noEntries,
+    }
+  const tail = accumulateNodeTestOutput(index, selected.sequence)
+  const last = model.events.at(-1)
+  return {
+    generation,
+    time: timeWords(leaving ? undefined : selected.elapsedMs),
+    name: `${NODE_SERVER_REPLAY_TEXT.heading} · ${model.header.declaredRequest.method} ${model.header.declaredRequest.path}`,
+    ...(requestRegion(model, selected)
+      ? { request: requestRegion(model, selected) }
+      : {}),
+    response: responseRegion(model, selected, options.noResponseReason),
+    ...(leaving
+      ? {}
+      : {
+          region: `Recorded server output up to ${formatEventSeconds(selected.elapsedMs)} s`,
+        }),
+    lines: tail.lines,
+    ...(tail.omittedCharacters > 0
+      ? {
+          cut: describeNodeTestReplay({
+            kind: 'application-cut',
+            characters: tail.omittedCharacters,
+            startsMidLine: tail.startsMidLine,
+          }),
+        }
+      : {}),
+    ...(tail.inspectorLines > 0
+      ? {
+          inspector: describeNodeTestReplay({
+            kind: 'application-inspector',
+            lines: tail.inspectorLines,
+          }),
+        }
+      : {}),
+    ...(tail.hasOutput
+      ? {}
+      : { placeholder: NODE_SERVER_REPLAY_TEXT.nothingYet }),
+    // A history that ended with no answer says so at its last event, while the recording is no longer being written.
+    ...(model.status !== 'recording' &&
+    model.endedBeforeAnswer &&
+    last?.sequence === selected.sequence
+      ? { end: NODE_SERVER_REPLAY_TEXT.endedEarly }
+      : {}),
+  }
+}
+
+/**
+ * Reads a server replay's output once for {@link projectServerApplication}.
+ * @param model - The replay model.
+ * @returns The output index over the model's output events.
+ * @example const index = indexServerOutput(model)
+ */
+export function indexServerOutput(
+  model: ServerReplayModel,
+): NodeTestOutputIndex {
+  return indexNodeTestOutput(model.events)
+}

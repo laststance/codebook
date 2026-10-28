@@ -16,7 +16,14 @@ export type SealedServerHistoryOptions = {
   /** The output lines recorded before the response. */
   output?: string[]
   /** The recorded response; `null` ends the run with no answer. */
-  response?: { status: number; body: string; contentType?: string } | null
+  response?: {
+    status: number
+    body: string
+    contentType?: string
+    /** The bytes the server sent, when more than the shown body holds. */
+    bodyBytes?: number
+    readCut?: boolean
+  } | null
   question?: string
   path?: string
   /** Seals the history; `false` leaves its writer abandoned, so it reads interrupted. */
@@ -97,8 +104,8 @@ export async function writeServerHistory(
       status: response.status,
       contentType: response.contentType ?? 'application/json',
       body: response.body,
-      bodyBytes: Buffer.byteLength(response.body),
-      readCut: false,
+      bodyBytes: response.bodyBytes ?? Buffer.byteLength(response.body),
+      readCut: response.readCut ?? false,
       location: null,
       requestDurationMs: 30,
     })

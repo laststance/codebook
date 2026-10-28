@@ -46,7 +46,7 @@ function describeEventKind(
  * @returns The start of the sentence.
  * @example neutralStepLead('s1') // => 'Saved learning step s1'
  */
-export function neutralStepLead(stepId: string): string {
+function neutralStepLead(stepId: string): string {
   return `Saved learning step ${stepId}`
 }
 
