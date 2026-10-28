@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.2.56.0] - 2026-10-28 (development candidate)
+
+Cycle 0059 pt3 ([Issue #147](https://github.com/laststance/codebook/issues/147)), the last of three parts of the feature cycle that saves a server run as a learning replay. With this part a run of a repository's own Node HTTP server is saved as a **Server replay**. While the server runs, Codebook keeps a private history of the request it opens, the server's output, the source that executed at each stop, the debugger's recorded values and the response. **Save learning replay** seals that history and Saved studies lists it. A development rehearsal in VS Code 1.142.0 (Copilot Chat, GPT-6.1 Terra) on the pinned clone of `laststance/switch-time` (development evidence, no acceptance credit) saved a real server run as complete and read `Server replay saved.`. N59, the cycle's native trial in VS Code and Cursor, runs on this part's candidate, and its result is recorded in Issue #147.
+
+**Saving a server run.**
+
+- **A server run keeps its history as it happens**, privately in the workspace's learning storage. The executed source is stored as it ran, and secret-named values and secret-shaped text are masked. A history problem never stops or slows the run. When the history cannot start (storage unavailable, a full **Codebook: Saved Study Limit**, or a start slower than 2 s), the status bar reads `<where the run stands> · Learning replay unavailable: <cause>` and Save answers that cause while the server keeps running.
+- **Save learning replay works for a server run.** Before the request was sent it answers `Nothing to save yet: the server run has not sent its request.` While the server runs it asks `Saving stops the server run (<n> of <m> stops recorded; no response recorded yet, so the response will not be saved). Save now?` (or `… response recorded). Save now?`) with **Save and stop** and **Cancel**, and a second Save while the question is open uses the same question. After the seal one notice says `Server replay saved.`, `Server replay saved as partial: <first reason> (+<n> more).` or `Server replay saved; the chat's explanation is not saved yet.`, each with **Open replay**. The row reads **Saved** only when the capture is complete and the chat's explanation covers it.
+- **Every way a run ends seals its history once.** Your Stop, the chat's `codebook_stop`, Save, closing the window, the server exiting by itself and a failed run all join the same seal, bounded by 10 s. A seal past that bound reads `Learning replay could not be saved: timed out after <s> s.`, and the folder lists as interrupted. A seal or summary read that stalls never holds Stop, Save or the next run. When Save cannot read the sealed summary within the bound it answers `Learning replay could not be saved: The sealed server history could not be read within 10 s.` and is free again for another run.
+- **A history start counts recordings that are still open**, so a recording that started while the Saved Study Limit had room can always be archived.
+
+**What the chat can do (MCP API 1.9, skill 1.0.53).**
+
+- **The chat saves its explanation of a server run** with `codebook_explain_node_history`, citing the request, the stops (by their source hash, and optionally their declared stop), the output, the response or the request failure. A citation of another event than it claims is refused with `INVALID_REFERENCE`, naming the nearest valid entries.
+- **The server run resource reports the history.** It lists `nodeServer.history`, `nodeServer.historyUri`, `nodeServer.historyIssue` (`HISTORY_UNAVAILABLE`, `HISTORY_APPEND_FAILED` or `HISTORY_SEAL_FAILED`, with what is kept and what to do), `nodeServer.learningCoverage`, `nodeServer.learningMissing` and `nodeServer.captureMissing`, read again from the stored history at every read. `nextActions` offers `save-node-learning` until the coverage is complete, and `codebook_stop` seals the history.
+- **`codebook://help/node-server` has a `save` section**, the canonical text with the 16-hit stop budget, the three verdicts, every capture code and a worked example. With skill 1.0.53 the chat saves a server explanation only on API 1.9 or later and claims a saved replay only when the coverage is complete and nothing is missing from the capture.
+
+**Reading a Server replay.**
+
+- **The request region claims only what was recorded by the selected moment.** Before the send mark it reads `Request opened by Codebook; not sent yet at this moment.`, and a withdrawn attempt reads `Request not sent: <code>` only from its withdrawal on.
+- **An interrupted server replay lists what its recorded part lacks**, such as a declared stop that was not reached, instead of only saying it was not sealed.
+- **Play and a seek past the last event rest at the recording's end**, with the last event still selected.
+- **A server replay whose learning status cannot be read says so** on its learning line, instead of reading as an explanation that was not saved.
+- **Recorded failure codes and stop paths lose control characters** before they are shown.
+
+**Compatibility.** The MCP API moves to 1.9 (additive) and the bundled skill to 1.0.53. Server histories are written to their own folder of the learning storage. Test histories, saved studies, learning materials and reader positions written by an earlier 0.2 version open unchanged.
+
 ## [0.2.55.0] - 2026-10-28 (development candidate)
 
 Cycle 0059 pt2 ([Issue #147](https://github.com/laststance/codebook/issues/147)), the second of three parts of the feature cycle that saves a server run as a learning replay. This part reads a saved server history back: Saved studies lists it as a **Server replay** led by its learning title, request line and response status, the chat reads it through `codebook://node-history`, and it opens in the replay composition with the recorded request, output and response in the Application pane, the executed source and the recorded debugger state at each stop. Nothing writes a server history yet, so a server run is still refused at **Save learning replay** and you will not see one in this version. N59, the cycle's native trial, runs on the last part.
