@@ -417,7 +417,11 @@ export class NodeServerHistoryWriter extends HistoryJournalWriter<NodeServerHist
     _reason?: string,
   ): Promise<string | undefined> {
     return this.seal({
-      elapsedMs: this.serverRules.lastElapsedMs,
+      // The largest accepted time, queued entries included, as {@link NodeServerHistoryWriter.seal} takes it.
+      elapsedMs: Math.max(
+        this.serverRules.lastElapsedMs,
+        this.latestAcceptedMs,
+      ),
       reason: 'stopped',
     })
   }

@@ -178,6 +178,8 @@ export interface NodeServerRuntime {
   /** Launches, attaches, arms every declared stop, releases, waits for readiness and verifies the listener; resolves when the run is `ready`, rejects with the run's typed {@link StudyError}. */
   prepare(): Promise<void>
   view(): NodeServerView
+  /** Milliseconds since the server launched, the clock every history entry carries; `0` before a launch. Read by the seal for the end entry's time. */
+  elapsedSinceLaunchMs(): number
   /** Calls the listener after every change of {@link NodeServerRuntime.view}. */
   onDidChange(listener: () => void): { dispose(): void }
   /** Sends the declared request once; resolves once its bytes went to the owned listener (the response arrives in the view). Throws `RUN_NOT_READY`, `REQUEST_ALREADY_SENT`, `LEARNER_PAUSED`, or `LISTENER_NOT_OWNED` with zero bytes sent. */

@@ -56,6 +56,8 @@ export class NodeServerHistoryRecorder {
   sealed?: {
     summary: NodeServerHistorySummary | undefined
     hash: string | undefined
+    /** The number of the latest verdict read, so only that read writes the summary ({@link StudyService.refreshNodeServerSummary}). */
+    summaryReads?: number
   }
   private sealOperation?: Promise<void>
 

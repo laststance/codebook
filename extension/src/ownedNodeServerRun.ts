@@ -883,7 +883,12 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       toCapture(read, { index, generation }, this.server?.elapsedMs() ?? 0),
     )
     // Queued in this turn, ahead of the pause being published: the history never delays the live run.
-    this.input.history?.stop(this.launchedMs(), pause, generation, read)
+    this.input.history?.stop(
+      this.elapsedSinceLaunchMs(),
+      pause,
+      generation,
+      read,
+    )
     this.stopsReached.push(index)
     this.pause = {
       identity: {
@@ -1088,7 +1093,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
       NODE_SERVER_REQUEST_WALL_LIMIT_MS,
     )
     this.debugger().setRequestWindow(true)
-    this.input.history?.openRequest(this.launchedMs(), {
+    this.input.history?.openRequest(this.elapsedSinceLaunchMs(), {
       method: declared.method,
       path: declared.path,
       bodyBytes: this.request.bodyBytes,
@@ -1096,15 +1101,15 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     this.notify()
   }
 
-  /** Milliseconds since the launch, the one clock every entry of the history carries. */
-  private launchedMs(): number {
+  /** Milliseconds since the launch, the one clock every entry of the history carries; the seal reads it for the end entry's time. */
+  elapsedSinceLaunchMs(): number {
     return this.server?.elapsedMs() ?? 0
   }
 
   /** Journals the request once its bytes were handed to the socket, so a refused or stopped request never reads as sent. */
   private recordSentRequest(token: number): void {
     if (token !== this.requestToken || !this.request) return
-    this.input.history?.markRequestSent(this.launchedMs())
+    this.input.history?.markRequestSent(this.elapsedSinceLaunchMs())
     this.record('node-server.request', {
       method: this.request.method,
       path: this.request.path,
@@ -1116,7 +1121,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   /** Takes the window back when the request was refused before its bytes were written. */
   private closeRequestWindow(token: number, code = 'REQUEST_NOT_SENT'): void {
     if (token !== this.requestToken) return
-    this.input.history?.withdrawRequest(this.launchedMs(), code)
+    this.input.history?.withdrawRequest(this.elapsedSinceLaunchMs(), code)
     this.requestToken += 1
     this.request = undefined
     this.requestLimit.stop()
@@ -1154,7 +1159,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
     if (token !== this.requestToken || !this.inRequestWindow()) return
     if (this.lifecycle !== 'live') return
     this.response = response
-    this.input.history?.response(this.launchedMs(), response)
+    this.input.history?.response(this.elapsedSinceLaunchMs(), response)
     this.record('node-server.response', {
       status: response.status,
       contentType: response.contentType,
@@ -1203,7 +1208,7 @@ class OwnedNodeServerRun implements NodeServerRuntime {
   ): void {
     if (!this.inRequestWindow() || this.lifecycle !== 'live') return
     this.requestFailure = { code, message }
-    this.input.history?.failRequest(this.launchedMs(), code, message)
+    this.input.history?.failRequest(this.elapsedSinceLaunchMs(), code, message)
     this.record('node-server.failure', { code, cause: message })
     this.requestAbort.abort(new Error(code))
     void this.endRequest()

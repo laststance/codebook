@@ -176,6 +176,7 @@ import {
   type CauseRoots,
 } from './utils/sanitizeCause'
 import { sanitizedStack } from './utils/sanitizedStack'
+import { sleepUntilAborted } from './utils/sleepUntilAborted'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
 import { startNodeServerHistory } from './utils/startNodeServerHistory'
 import { StorageLockHeldError } from './utils/storageLockHeldError'
@@ -184,6 +185,7 @@ import { systemErrorCode } from './utils/systemErrorCode'
 import { thrownMessage } from './utils/thrownMessage'
 import { vitestSearchField } from './utils/vitestSearchField'
 import { waitForNextRunState } from './utils/waitForNextRunState'
+import { waitWithin } from './utils/waitWithin'
 import { withKnownNodeHistory } from './utils/withKnownNodeHistory'
 
 /** What the run resource tells an agent after the result while no explanation of the run carries a learning summary; `codebook://help/studies` describes the step in the last entry of its sequence. */
@@ -490,8 +492,6 @@ export class StudyService {
   nodeHistoryStore?: NodeTestHistoryStore
   /** The workspace's history repository, which resolves a study id to the test or server store that holds it; set with {@link nodeHistoryStore}. */
   nodeHistoryRepository?: NodeHistoryRepository
-  /** The number of the latest verdict read of each server history, so only that read writes its summary ({@link StudyService.refreshNodeServerSummary}). */
-  private readonly nodeServerSummaryReads = new Map<string, number>()
   repositoryPublished?: () => Promise<void>
   repositoryReader?: (
     input: OpenBookInput,
@@ -1395,11 +1395,15 @@ export class StudyService {
   private evictOldestExcludedRecord(): boolean {
     // Map iteration follows insertion order, so the first excluded record is the oldest.
     // A stopped server run is forgotten too: its history is on disk, where the library and the history resources read it.
-    const evicted = [...this.records.values()].find(
-      (record) =>
-        historyExclusionState(record.historyExcluded) === 'ended' ||
-        (record.profile === NODE_SERVER_PROFILE && record.stopped),
-    )
+    const retained = [...this.records.values()]
+    // A refused or removed run goes first; a stopped server run only when no such run exists.
+    const evicted =
+      retained.find(
+        (record) => historyExclusionState(record.historyExcluded) === 'ended',
+      ) ??
+      retained.find(
+        (record) => record.profile === NODE_SERVER_PROFILE && record.stopped,
+      )
     if (!evicted) return false
     this.forgetRecord(evicted)
     return true
@@ -2268,11 +2272,12 @@ export class StudyService {
   private nodeServerLearningIncomplete(record: StudyRecord): boolean {
     const history = record.nodeServer?.history
     if (!history || history.status === 'failed') return false
+    // A history still recording offers no Save: only a sealed one can be saved.
+    if (history.status !== 'sealed') return false
     // A run that never sent its request leaves no history to explain.
     if (!record.nodeServer?.run?.view().request) return false
-    return history.sealed
-      ? history.sealed.summary?.learningCoverage !== 'complete'
-      : true
+    // A sealed history whose summary is unreadable is not known complete.
+    return history.sealed?.summary?.learningCoverage !== 'complete'
   }
 
   /**
@@ -2288,13 +2293,18 @@ export class StudyService {
     // Without a repository there is nothing to read again; the summary the seal read stays.
     if (!sealed || !histories) return
     // Only the latest read of a history writes its summary, so an older read that finishes last cannot overwrite a newer revision's coverage.
-    const request = (this.nodeServerSummaryReads.get(studyId) ?? 0) + 1
-    this.nodeServerSummaryReads.set(studyId, request)
-    const summary = await histories
-      .summarize(studyId)
-      .catch(() => sealed.summary)
-    if (this.nodeServerSummaryReads.get(studyId) === request)
-      sealed.summary = summary
+    const request = (sealed.summaryReads ?? 0) + 1
+    sealed.summaryReads = request
+    const summary = await waitWithin(
+      histories.summarize(studyId).catch(() => undefined),
+      {
+        timeoutMs: this.nodeServerHistorySealBoundMs,
+        signal: new AbortController().signal,
+        sleep: sleepUntilAborted,
+      },
+    )
+    // A failed, empty or too slow read keeps the sealed summary, and an older read never overwrites a newer one.
+    if (summary && sealed.summaryReads === request) sealed.summary = summary
   }
 
   /**
@@ -4911,14 +4921,16 @@ export class StudyService {
     const view = record.nodeServer?.run?.view()
     await history.seal(
       describeNodeServerEnd({
-        failureCode: (view?.runFailure ?? record.error)?.code,
+        // Only the run's own failure names a failure: a clean stop never borrows an earlier release failure.
+        failureCode: view?.runFailure?.code,
         exit: {
           exitCode:
             typeof detail?.exitCode === 'number' ? detail.exitCode : undefined,
           signal:
             typeof detail?.signal === 'string' ? detail.signal : undefined,
         },
-        elapsedMs: 0,
+        // The end carries the time of the stop on the run's clock, not the last entry's.
+        elapsedMs: record.nodeServer?.run?.elapsedSinceLaunchMs() ?? 0,
       }),
       this.nodeServerHistorySealBoundMs,
     )

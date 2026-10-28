@@ -68,6 +68,13 @@ export class FakeNodeServerRuntime implements NodeServerRuntime {
     return { ...this.current }
   }
 
+  /** The time since launch the fake reports; a test moves it to place a Stop on the run's clock. */
+  launchElapsedMs = 0
+
+  elapsedSinceLaunchMs(): number {
+    return this.launchElapsedMs
+  }
+
   onDidChange(listener: () => void): { dispose(): void } {
     this.listeners.add(listener)
     return { dispose: () => this.listeners.delete(listener) }
