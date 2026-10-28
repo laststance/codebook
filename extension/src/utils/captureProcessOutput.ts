@@ -145,12 +145,16 @@ export function captureProcessOutput(
     if (!stream) continue
     const decoder = new StringDecoder('utf8')
     const redactor = createOutputRedactor()
+    // Set once the channel's output is finished (end or close), so a late timed release delivers nothing after the capture settled.
+    let channelEnded = false
     const rootStage = options.privateRoots
       ? createRootHidingStage(options.privateRoots, {
           holdMs: NODE_SERVER_OUTPUT_ROOT_HOLD_MS,
           schedule: options.scheduleRootRelease ?? scheduleWithRealTimer,
           // A held start released by time follows the same path as any root-hidden text.
-          release: (text) => acceptRedacted(channel, redactor.write(text)),
+          release: (text) => {
+            if (!channelEnded) acceptRedacted(channel, redactor.write(text))
+          },
         })
       : undefined
     const accept = (text: string): void => {
@@ -164,14 +168,21 @@ export function captureProcessOutput(
         redactor.write(rootStage ? rootStage.write(text) : text),
       )
     }
-    stream.on('data', (chunk: Buffer) => accept(decoder.write(chunk)))
-    stream.on('end', () => {
+    stream.on('data', (chunk: Buffer) => {
+      if (!channelEnded) accept(decoder.write(chunk))
+    })
+    // The channel's output is over at `end`; a stream destroyed or closed without `end` is over at `close`. Either way what is held is released once, hidden, so a held root start never stays behind and its timer never fires later.
+    const finishChannel = (): void => {
+      if (channelEnded) return
+      channelEnded = true
       accept(decoder.end())
       // What the root stage held back for a possible root is released, hidden, before the redactor's own end.
       if (rootStage) acceptRedacted(channel, redactor.write(rootStage.end()))
       // What the redactor held back for a possibly incomplete secret is released, redacted, at the channel's end.
       acceptRedacted(channel, redactor.end())
-    })
+    }
+    stream.on('end', finishChannel)
+    stream.on('close', finishChannel)
   }
   return {
     announcement: () => announcement,

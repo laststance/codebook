@@ -239,3 +239,44 @@ test('a private root still held when a stream ends is delivered hidden on that c
   ])
   assert.equal(capture.tail().includes('/Users/ada'), false)
 })
+
+// protects=a channel destroyed without an end event still delivers its held start of a private root once, hidden, and a timer that fires afterwards delivers nothing more; fails_when=the held start is dropped (or stays unhidden) because only end flushes it, or a stale timer delivers after the capture settled; no_claim=the real timer's cancellation (injected by hand) and a stream that errors
+test('a channel that closes without ending releases its held private root start once, hidden', async () => {
+  // Arrange
+  const child = fakeChild()
+  const events: ProcessOutputEvent[] = []
+  const releases: Array<() => void> = []
+  const capture = captureProcessOutput(child, {
+    startedAt: process.hrtime.bigint(),
+    onOutput: (event) => {
+      events.push(event)
+    },
+    pendingLimitBytes: 1_048_576,
+    overflowMessage: 'unused',
+    failurePrefix: 'test capture failed',
+    privateRoots: ADA_ROOTS,
+    scheduleRootRelease: (callback) => {
+      releases.push(callback)
+      return () => undefined
+    },
+  })
+  child.stdout.write('listening at /Users/ad')
+  await flushStreams()
+
+  // Act
+  child.stdout.destroy()
+  await flushStreams()
+  await capture.settled()
+  const afterClose = events.map((event) => event.text)
+  releases.at(-1)?.()
+  await flushStreams()
+  await capture.settled()
+
+  // Assert
+  assert.deepEqual(afterClose, ['listening at ', '~'])
+  assert.deepEqual(
+    events.map((event) => event.text),
+    ['listening at ', '~'],
+  )
+  assert.equal(capture.tail(), 'listening at ~')
+})
