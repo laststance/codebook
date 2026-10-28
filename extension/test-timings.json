@@ -1124,7 +1124,7 @@
       "totalMs": 3
     },
     "nodeServerCaptureShapedStop.test.js": {
-      "totalMs": 254
+      "totalMs": 300
     },
     "nodeServerHistoryBounds.test.js": {
       "totalMs": 19644,

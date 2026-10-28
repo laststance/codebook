@@ -151,3 +151,53 @@ for (const failure of [
     )
   })
 }
+
+// protects=a stop whose Local scope held more variables than the capture keeps (read, then truncated at the count limit and so marked) is presentable and seals complete; fails_when=the truncation text makes a real capture of a handler with many locals read as a missing snapshot; why_new=final-range CodeRabbit (major); seam=none; no_claim=how many variables a native session offers
+test('a stop whose Local scope was truncated at the variable count limit seals a complete history', async (context) => {
+  // Arrange
+  const snapshot = await captureReplayDebugSnapshot({
+    stack: {
+      stackFrames: [{ id: 5, name: 'handler', line: 2, column: 1 }],
+      totalFrames: 1,
+    },
+    verifiedSource: {
+      name: 'src/handler.ts',
+      text: HANDLER_SOURCE_TEXT,
+      hash: sha256(HANDLER_SOURCE_TEXT),
+      line: 2,
+    },
+    assertCurrent() {},
+    limits: { timeoutMs: 5_000, maxFrames: 8, maxVariables: 2, maxDepth: 2 },
+    request(command) {
+      if (command === 'scopes')
+        return Promise.resolve({
+          scopes: [
+            {
+              name: 'Local',
+              presentationHint: 'locals',
+              variablesReference: 1,
+            },
+          ],
+        })
+      return Promise.resolve({
+        variables: ['a', 'b', 'c'].map((name) => ({
+          name,
+          value: '1',
+          type: 'number',
+          variablesReference: 0,
+        })),
+      })
+    },
+  })
+
+  // Act
+  const opened = await sealedWith(context, snapshot)
+
+  // Assert
+  assert.equal(
+    snapshot.frames[0]?.scopes[0]?.unavailable,
+    'Historical variable count limit reached.',
+  )
+  assert.equal(opened.status, 'complete')
+  assert.deepEqual(opened.seal?.reasons, [])
+})
