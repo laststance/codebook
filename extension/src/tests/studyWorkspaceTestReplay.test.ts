@@ -1771,6 +1771,8 @@ test('Open replay refused for an unreported keyboard focus waits for the report 
     // The refusal leaves the window as the entry found it: no empty summary composition stands, without a second wait.
     assert.equal(readerSeams(harness).isSummaryArrangement(), false)
     assert.equal(harness.summary.visible, false)
+    // Documented state (O2-2): bringing the Study pane back would reopen the reader, which meets the same guard (a second wait and entry, shown by two entries when the reopen is made), so the pane stays closed until the next selection or Open.
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
   } finally {
     resetFakeClock(context)
     await harness.close()
