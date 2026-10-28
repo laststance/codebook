@@ -1365,6 +1365,38 @@ export const NODE_TEST_HISTORY_WRITER_LIMIT_BYTES = 4_096
 /** The largest seal file of a test history Codebook writes or reads ({@link NodeTestHistoryWriter.finish}, {@link isSealedEmptyHistory}). */
 export const NODE_TEST_HISTORY_SEAL_LIMIT_BYTES = 16_384
 export const NODE_TEST_HISTORY_MAX_ENTRIES = 10_000
+/** The folder of node-server histories beside `node-tests.v1`, so test histories need no migration and a revert leaves them untouched. */
+export const NODE_SERVER_HISTORY_DIRECTORY = 'node-servers.v1'
+/** The `formatVersion` of a node-server history header; a later cycle relates several histories of one explanation without a format break. */
+export const NODE_SERVER_HISTORY_FORMAT_VERSION = 1
+/** The most entries one node-server history holds, `source` and `end` included. */
+export const NODE_SERVER_HISTORY_MAX_ENTRIES = 10_000
+/** The largest journal of a node-server history. */
+export const NODE_SERVER_HISTORY_LIMIT_BYTES = 8_388_608
+/** The largest seal of a node-server history; it holds every partial reason uncut. */
+export const NODE_SERVER_HISTORY_SEAL_LIMIT_BYTES = 262_144
+/** The most `stop` entries one node-server history holds: the run's capture limit. */
+export const NODE_SERVER_HISTORY_MAX_STOPS = NODE_SERVER_REQUEST_CAPTURE_LIMIT
+/** Output entries one node-server history keeps before one `output-truncated` entry replaces the rest. */
+export const NODE_SERVER_OUTPUT_BUDGET_ENTRIES = 2_000
+/** Output bytes one node-server history keeps before one `output-truncated` entry replaces the rest. */
+export const NODE_SERVER_OUTPUT_BUDGET_BYTES = 2_097_152
+/** Journal bytes kept free of output for the request, sources, stops, terminal entry and `end`. */
+export const NODE_SERVER_STRUCTURAL_HEADROOM_BYTES = 1_048_576
+/** Journal entries kept free of output for the request, sources, stops, terminal entry and `end`. */
+export const NODE_SERVER_STRUCTURAL_HEADROOM_ENTRIES = 100
+/** Entries a node-server writer holds pending before it drops output; structural entries wait instead. */
+export const NODE_SERVER_WRITER_QUEUE_LIMIT_ENTRIES = 1_000
+/** Bytes a node-server writer holds pending before it drops output; structural entries wait instead. */
+export const NODE_SERVER_WRITER_QUEUE_LIMIT_BYTES = 4_194_304
+/** The largest source text a `source` entry stores; a larger file is stored as its hash with `sourceUnavailable: 'too large'`. */
+export const NODE_SERVER_SOURCE_TEXT_LIMIT_BYTES = 524_288
+/** The longest text of one `output` entry of a node-server history. */
+export const NODE_SERVER_OUTPUT_TEXT_LIMIT_CHARS = 4_096
+/** The longest response body one `response` entry stores (the shown body: `shapeResponseBody` cuts at 8,192 bytes). */
+export const NODE_SERVER_RESPONSE_BODY_LIMIT_CHARS = 16_384
+/** How many entries a missing-evidence list names in an answer; the rest is a count. */
+export const NODE_SERVER_MISSING_LIST_LIMIT = 20
 /** File system error codes that a retry can clear (a descriptor or lock shortage, a busy or antivirus-held file, a disk error): a read that fails with one is not remembered as the history's state ({@link isTransientFileError}). */
 export const TRANSIENT_FILE_ERROR_CODES: readonly string[] = [
   'EMFILE',
@@ -1984,3 +2016,17 @@ export const PREVIEW_VALUE_PREFIX_LIMIT_CHARS = 128
 
 /** How much of an oversized private-key block an output redactor drops before it ends the block at the next line break, so a header without an END marker cannot silence the channel ({@link createOutputRedactor}); four times a 4096-bit RSA key's PEM. */
 export const OUTPUT_REDACTION_BLOCK_DROP_LIMIT_CHARS = 16_384
+/** The stable codes of the reasons a node-server history is partial; each is keyed in the README's troubleshooting table and listed in `captureMissing`. */
+export const NODE_SERVER_HISTORY_REASON_CODES = {
+  noResponseRequestFailed: 'SERVER_HISTORY_NO_RESPONSE_REQUEST_FAILED',
+  noResponseStopped: 'SERVER_HISTORY_NO_RESPONSE_STOPPED',
+  noResponseExited: 'SERVER_HISTORY_NO_RESPONSE_EXITED',
+  noResponseRunFailed: 'SERVER_HISTORY_NO_RESPONSE_RUN_FAILED',
+  stopNotReached: 'SERVER_HISTORY_STOP_NOT_REACHED',
+  snapshotMissing: 'SERVER_HISTORY_SNAPSHOT_MISSING',
+  valueUnavailable: 'SERVER_HISTORY_VALUE_UNAVAILABLE',
+  appendFailed: 'SERVER_HISTORY_APPEND_FAILED',
+  sizeLimit: 'SERVER_HISTORY_SIZE_LIMIT',
+  captureBudgetExhausted: 'SERVER_HISTORY_CAPTURE_BUDGET_EXHAUSTED',
+  outputTruncated: 'SERVER_HISTORY_OUTPUT_TRUNCATED',
+} as const

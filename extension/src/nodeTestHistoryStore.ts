@@ -13,12 +13,8 @@ import { join } from 'node:path'
 import {
   NODE_HISTORY_CITABLE_MEMO_LIMIT,
   NODE_HISTORY_SUMMARY_READ_CONCURRENCY,
-  NODE_TEST_HISTORY_DIRECTORY,
   NODE_TEST_HISTORY_WRITER_FILE,
   NODE_TEST_WRITER_RECHECK_MS,
-  NODE_TEST_HISTORY_LIMIT_BYTES,
-  NODE_TEST_HISTORY_SEAL_LIMIT_BYTES,
-  NODE_TEST_HISTORY_MAX_ENTRIES,
   NODE_TEST_LEARNING_DECISION_LIMIT_BYTES,
   NODE_TEST_LEARNING_DECISION_VERSION,
   NODE_TEST_LEARNING_MATERIAL_LIMIT_BYTES,
@@ -33,60 +29,45 @@ import {
   SavedStudyStorageFullError,
   StudyError,
 } from './errors'
+import type {
+  HistoryIndexOf,
+  HistoryStorageDescriptor,
+  HistoryTypes,
+} from './historyStorageDescriptor'
 import {
-  nodeTestHistoryEntrySchema,
-  nodeTestHistoryHeaderSchema,
-  nodeTestHistoryIndexSchema,
+  HISTORY_HEADER_FILE,
+  HISTORY_JOURNAL_FILE,
+  HISTORY_SEAL_FILE,
+} from './nodeHistoryJournalWriter'
+import {
   nodeTestHistoryLearningDecisionSchema,
   nodeTestHistoryReaderPositionSchema,
-  nodeTestHistorySealSchema,
   nodeTestLearningMaterialContentSchema,
   nodeTestLearningMaterialSchema,
-  type NodeTestHistoryEntry,
-  type NodeTestHistoryHeader,
-  type NodeTestHistoryIndex,
   type NodeTestHistoryLearningDecision,
   type NodeTestHistoryReaderPosition,
   type NodeTestLearningMaterial,
   type NodeTestLearningMaterialContent,
 } from './nodeTestHistorySchemas'
-import type { NodeTestSourceStop } from './ownedNodeTestRun'
+import type { NodeTestHistoryTypes } from './nodeTestHistoryTypes'
+import { nodeTestStorageDescriptor } from './nodeTestStorageDescriptor'
+export { NodeTestHistoryWriter } from './nodeTestHistoryWriter'
+export type { NodeTestHistorySummary } from './nodeTestHistoryTypes'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
 import { causeRootsFor } from './utils/causeRootsFor'
-import { cutTextToFit } from './utils/cutTextToFit'
-import {
-  describeNodeTestResult,
-  type NodeTestVerdict,
-} from './utils/describeNodeTestResult'
-import { holdsLearnerFiles } from './utils/holdsLearnerFiles'
-import { isSealedEmptyHistory } from './utils/isSealedEmptyHistory'
+import { cutHistoryReason } from './utils/cutHistoryReason'
+import { isNodeHistoryIdentity } from './utils/isNodeHistoryIdentity'
+import { isSealedEmptyJournal } from './utils/isSealedEmptyHistory'
 import { isTransientFileError } from './utils/isTransientFileError'
 import {
   judgeNodeTestWriter,
   type NodeTestWriterVerdict,
 } from './utils/judgeNodeTestWriter'
-import type { NodeTestOutputEvent } from './utils/launchNodeTest'
-import {
-  listMissingNodeExplanations,
-  type NodeLearningCoverage,
-  type NodeLearningExplanationPart,
-  type NodeLearningNeeds,
-} from './utils/listMissingNodeExplanations'
-import {
-  listMissingNodeLearning,
-  type NodeLearningCapturePart,
-} from './utils/listMissingNodeLearning'
+import { type NodeLearningNeeds } from './utils/listMissingNodeExplanations'
 import { mapWithConcurrencyLimit } from './utils/mapWithConcurrencyLimit'
 import {
-  nodeTestResultKind,
-  type NodeTestResultKind,
-} from './utils/nodeTestResultKind'
-import {
-  acceptJournalEntry,
-  advanceRecordingScan,
-  citableEventOf,
-  newJournalProgress,
+  advanceHistoryScan,
   type CitableEvent,
   type RecordingScan,
 } from './utils/recordingJournalScan'
@@ -94,100 +75,36 @@ import { sanitizeCause } from './utils/sanitizeCause'
 import { systemErrorCode } from './utils/systemErrorCode'
 import { withStorageLock } from './utils/withStorageLock'
 import { writeNodeTestWriterRecord } from './utils/writeNodeTestWriterRecord'
-type NodeTestHistoryEntryInput = NodeTestHistoryEntry extends infer Entry
-  ? Entry extends NodeTestHistoryEntry
-    ? Omit<Entry, 'sequence'>
-    : never
-  : never
 
-const HEADER_FILE = 'header.json'
-const JOURNAL_FILE = 'events.jsonl'
-const SEAL_FILE = 'sealed.json'
 const READER_POSITION_FILE = 'reader-position.json'
 const LEARNING_DECISION_FILE = 'learning-decision.json'
 const LEARNING_MATERIAL_FILE = 'learning-material.json'
 const HEADER_LIMIT_BYTES = 8_388_608
-const REASON_LIMIT_CHARS = 1_024
-
-/**
- * Cuts a history's reason to {@link REASON_LIMIT_CHARS} between characters, never inside a surrogate pair, saying it was cut, so every reason fits the seal's and the index's bound (F265); called wherever the store words a reason.
- * @param reason - The whole reason.
- * @returns The reason itself when it fits, else its beginning with the cut marker.
- * @example cutReason('x'.repeat(2_000)).length // => 1_024
- */
-function cutReason(reason: string): string {
-  return cutTextToFit(
-    reason,
-    (candidate) => candidate.length <= REASON_LIMIT_CHARS,
-  )
-}
-/** The name of a history's folder: its study id. Any other entry of the history directory (a `.DS_Store`, a stray folder) is nobody's history. */
-const HISTORY_IDENTITY = /^[0-9a-f-]{36}_[0-9a-f-]{36}$/
-
-/**
- * One test history as Saved studies, the `codebook://node-history` resources and Save read it: one projection per history, so the three agree (plan version 7, Design 13).
- * A history whose journal does not verify reads `unavailable` with its header's identity and the reason; its learning fields then say nothing was checked.
- */
-export type NodeTestHistorySummary = {
-  studyId: string
-  createdAt: string
-  profile: 'node-test'
-  status: NodeTestHistoryIndex['status']
-  reason?: string
-  verification: 'verified' | 'unavailable'
-  /** The cited test file and its title path, as the header names them, for labels such as a failed open's notification. */
-  testFile: string
-  testTitles?: string[]
-  verdict: NodeTestVerdict
-  testResult: NodeTestResultKind
-  stopCount: number
-  explainedStopCount: number
-  learningCoverage: NodeLearningCoverage
-  learningMissing: NodeLearningExplanationPart[]
-  captureMissing: NodeLearningCapturePart[]
-  /** The revision of the learning material the summary counted; 0 before the first save. */
-  materialRevision: number
-}
 
 /** What {@link NodeTestHistoryStore.summarize} remembers of one history, so a refresh that finds its files unchanged reads none of them. */
-type SummaryMemo = {
+type SummaryMemo<Types extends HistoryTypes> = {
   /** The size, time and identity of the header, journal and seal files, and whether this window writes the history: when any changes, the history is read again. */
   historySignal: string
   /** The same of the learning material file: when only it changes, only the material is read again. */
   materialSignal: string
-  summary: NodeTestHistorySummary
+  summary: Types['Summary']
   /** Present for a verified history: what a material may cite, and what it is asked to explain. */
   citable?: Map<number, CitableEvent>
   needs?: NodeLearningNeeds
   /** Present for a history this window still writes: what the next refresh continues from. */
-  scan?: RecordingScan
+  scan?: RecordingScan<Types['Header'], Types['Entry'], Types['Progress']>
   /** Set when a transient file error (a busy file, too many open files) shaped the summary: the summary is shown but not remembered, so the next refresh reads again. */
   transient?: boolean
 }
 
 /** A history as a summary counts it: its header, entries (a recording keeps only its stops and result), status and reason, with its citable events and, for a recording, the scan to continue from. */
-type LoadedHistory = {
+type LoadedHistory<Types extends HistoryTypes> = {
   history: Pick<
-    NodeTestHistoryIndex,
-    'header' | 'entries' | 'status' | 'reason'
+    HistoryIndexOf<Types>,
+    'header' | 'entries' | 'status' | 'reason' | 'seal'
   >
   citable: Map<number, CitableEvent>
-  scan?: RecordingScan
-}
-
-/**
- * Lists the events of a verified history a learning step may cite, by sequence.
- * @param history - The verified history.
- * @returns The stops, outputs and result by sequence.
- * @example citableEvents(history).get(2) // => { type: 'stop', sourceHash: '…', path: 'src/scheduler.ts', line: 3 }
- */
-function citableEvents(
-  history: Pick<NodeTestHistoryIndex, 'entries'>,
-): Map<number, CitableEvent> {
-  const events = new Map<number, CitableEvent>()
-  for (const entry of history.entries)
-    events.set(entry.sequence, citableEventOf(entry))
-  return events
+  scan?: RecordingScan<Types['Header'], Types['Entry'], Types['Progress']>
 }
 
 /**
@@ -227,10 +144,10 @@ function saveStepLead(stepId: string): string {
 /**
  * Refuses a learning material whose step cites an event the sealed history does not hold as cited, naming the step, the sequence, what that sequence is and what the step claims (X19), so the agent can correct the one step; called by {@link NodeTestHistoryStore} for every material it saves or reads.
  * @param content - The material's content.
- * @param citable - The history's citable events ({@link citableEvents}).
+ * @param citable - The history's citable events ({@link NodeTestHistoryStore.citableEventsOf}).
  * @param lead - Words the start of the refusal for a step id: {@link saveStepLead} on the save path, where the agent called the tool, {@link neutralStepLead} on read paths.
  * @throws An `INVALID_REFERENCE` {@link StudyError} for the first step whose reference does not match.
- * @example assertLearningCitations(content, citableEvents(history), neutralStepLead) // returns for a material whose every reference matches
+ * @example assertLearningCitations(content, store.citableEventsOf(history), neutralStepLead) // returns for a material whose every reference matches
  */
 function assertLearningCitations(
   content: NodeTestLearningMaterialContent,
@@ -291,37 +208,10 @@ function describeCitationClaim(reference: LearningReference): string {
     : 'the result'
 }
 
-/**
- * Starts a history's summary from its header, with nothing counted yet; {@link NodeTestHistoryStore} fills in what the verified journal says, and an unavailable history keeps these values.
- * @param header - The history's header.
- * @returns A summary with the header's identity, the cited test, no result and no learning.
- * @example emptySummary(header).verdict // => 'No result recorded'
- */
-function emptySummary(header: NodeTestHistoryHeader): NodeTestHistorySummary {
-  return {
-    studyId: header.studyId,
-    createdAt: header.createdAt,
-    profile: header.profile,
-    status: 'partial',
-    verification: 'unavailable',
-    testFile: header.configuration.testFile,
-    ...(header.configuration.testTitles
-      ? { testTitles: header.configuration.testTitles }
-      : {}),
-    verdict: 'No result recorded',
-    testResult: 'none',
-    stopCount: 0,
-    explainedStopCount: 0,
-    learningCoverage: 'none',
-    learningMissing: [],
-    captureMissing: [],
-    materialRevision: 0,
-  }
-}
-
 /** Appends bounded, workspace-bound Node execution evidence before test input and seals it after owned cleanup. @example const writer = await store.start(header); await writer.appendStop(stop); await writer.finish('complete') */
-export class NodeTestHistoryStore {
+export class NodeHistoryStore<Types extends HistoryTypes> {
   private readonly directory: string
+  private readonly descriptor: HistoryStorageDescriptor<Types>
   private readonly active = new Set<string>()
   /** The last verdict on the writer of each history another window records, with the writer record's file signal and the time it was judged: "gone" is final for that record, "live" and "unread" are kept until the record changes or {@link NODE_TEST_WRITER_RECHECK_MS} passes (F260, F347). */
   private readonly writerVerdicts = new Map<
@@ -336,11 +226,11 @@ export class NodeTestHistoryStore {
     Promise<NodeTestLearningMaterial>
   >()
   /** The last summary of each listed history with the file signals it was made from ({@link summarize}). */
-  private readonly summaries = new Map<string, SummaryMemo>()
+  private readonly summaries = new Map<string, SummaryMemo<Types>>()
   /** The summary read in flight for each history: a recording's scan is continued by one read at a time (F216). */
   private readonly summaryReads = new Map<
     string,
-    Promise<NodeTestHistorySummary | undefined>
+    Promise<Types['Summary'] | undefined>
   >()
   /** How a failure's cause is worded for a reason ({@link describeCause}). */
   private causeDescriber: (error: unknown) => string = (error) =>
@@ -367,6 +257,8 @@ export class NodeTestHistoryStore {
   }
 
   constructor(
+    /** The profile this store keeps: its folder, codec, rules and summary ({@link nodeTestStorageDescriptor} for test histories). */
+    descriptor: HistoryStorageDescriptor<Types>,
     /** The learning directory the histories live in; a private storage root that no cause shown to the learner or the agent names ({@link sanitizeCause}). */
     readonly learningDirectory: string,
     readonly workspaceKey: string,
@@ -377,8 +269,13 @@ export class NodeTestHistoryStore {
       now: () => number
       judge: (historyDirectory: string) => Promise<NodeTestWriterVerdict>
     } = { now: Date.now, judge: judgeNodeTestWriter },
+    /** Counts the histories of the other profiles under the same learning directory, up to the given number, so one saved-study limit counts every kind. */
+    private readonly otherHistoryCount: (
+      places: number,
+    ) => Promise<number> = async () => 0,
   ) {
-    this.directory = join(learningDirectory, NODE_TEST_HISTORY_DIRECTORY)
+    this.descriptor = descriptor
+    this.directory = join(learningDirectory, this.descriptor.directoryName)
   }
 
   /**
@@ -391,9 +288,11 @@ export class NodeTestHistoryStore {
    * @example const writer = await store.start(header)
    */
   async start(
-    input: Omit<NodeTestHistoryHeader, 'version'>,
-  ): Promise<NodeTestHistoryWriter> {
-    const header = nodeTestHistoryHeaderSchema.parse({ ...input, version: 1 })
+    input: Omit<Types['Header'], 'version' | 'formatVersion'>,
+  ): Promise<Types['Writer']> {
+    const header = this.descriptor.parseHeader(
+      this.descriptor.stampHeader(input),
+    )
     if (header.workspaceKey !== this.workspaceKey)
       throw new Error('Node history belongs to another workspace.')
     return withStorageLock(this.learningDirectory, () => this.reserve(header))
@@ -414,12 +313,12 @@ export class NodeTestHistoryStore {
     const savedStudies = await this.savedArtifactCount()
     // The histories may take the places the saved studies leave of the limit.
     const places = limit - savedStudies
-    const histories = await this.listedHistoryCount(places).catch(
-      (error: unknown) => {
-        if (systemErrorCode(error) === 'ENOENT') return 0
-        throw error
-      },
+    const ownHistories = await this.countListedHistories(places)
+    // One limit counts every kind of saved study: the histories of the other profiles take places too.
+    const otherHistories = await this.otherHistoryCount(
+      Math.max(places - ownHistories, 0),
     )
+    const histories = ownHistories + otherHistories
     return {
       admits: histories < places,
       taken: savedStudies + histories,
@@ -434,9 +333,7 @@ export class NodeTestHistoryStore {
    * @throws What {@link start} names for a full store, a header above its limit and files that cannot be written.
    * @example const writer = await this.reserve(header)
    */
-  private async reserve(
-    header: NodeTestHistoryHeader,
-  ): Promise<NodeTestHistoryWriter> {
+  private async reserve(header: Types['Header']): Promise<Types['Writer']> {
     await mkdir(this.directory, {
       recursive: true,
       mode: PRIVATE_DIRECTORY_MODE,
@@ -456,8 +353,11 @@ export class NodeTestHistoryStore {
     this.startedHere.add(header.studyId)
     // Other windows tell this history from a crashed one by this record (F260).
     await writeNodeTestWriterRecord(runDirectory)
-    return new NodeTestHistoryWriter(runDirectory, header, () =>
-      this.active.delete(header.studyId),
+    return this.descriptor.createWriter(
+      runDirectory,
+      header,
+      () => this.active.delete(header.studyId),
+      (error) => this.describeCause(error),
     )
   }
 
@@ -509,7 +409,7 @@ export class NodeTestHistoryStore {
     headerBytes: Buffer,
   ): Promise<void> {
     const headerHandle = await open(
-      join(runDirectory, HEADER_FILE),
+      join(runDirectory, HISTORY_HEADER_FILE),
       'wx',
       PRIVATE_FILE_MODE,
     )
@@ -520,7 +420,7 @@ export class NodeTestHistoryStore {
       await headerHandle.close()
     }
     const journalHandle = await open(
-      join(runDirectory, JOURNAL_FILE),
+      join(runDirectory, HISTORY_JOURNAL_FILE),
       'wx',
       PRIVATE_FILE_MODE,
     )
@@ -539,9 +439,30 @@ export class NodeTestHistoryStore {
    */
   private async dropSealedEmpty(studyId: string): Promise<boolean> {
     const folder = this.path(studyId)
-    if (!(await isSealedEmptyHistory(folder))) return false
+    if (
+      !(await isSealedEmptyJournal(
+        folder,
+        this.descriptor.sealLimitBytes,
+        this.descriptor.parseSeal,
+      ))
+    )
+      return false
     await rm(folder, { recursive: true, force: true }).catch(() => undefined)
     return true
+  }
+
+  /**
+   * Counts this profile's listed histories up to `places`, a folder that does not exist yet counting none; called by {@link admission} and by the history repository for the other profiles' stores, both under the storage lock or for a read-only answer.
+   * @param places - The places the histories may take; the count is not carried beyond it.
+   * @returns The number of listed histories, or `places` once that many are found.
+   * @throws When the history directory exists and cannot be read.
+   * @example await store.countListedHistories(64) // => 3
+   */
+  async countListedHistories(places: number): Promise<number> {
+    return this.listedHistoryCount(places).catch((error: unknown) => {
+      if (systemErrorCode(error) === 'ENOENT') return 0
+      throw error
+    })
   }
 
   /**
@@ -558,7 +479,7 @@ export class NodeTestHistoryStore {
     for (const name of await readdir(this.directory)) {
       if (listed >= places) break
       // A history sealed with no entry (written before D6) is removed when met and counts nothing, as the list shows nothing of it (D28, F213); so is one whose header a removal at its seal took before it failed (F266).
-      if (HISTORY_IDENTITY.test(name) && (await this.dropSealedEmpty(name)))
+      if (isNodeHistoryIdentity(name) && (await this.dropSealedEmpty(name)))
         continue
       if (await this.listedHeader(name)) listed += 1
     }
@@ -573,13 +494,13 @@ export class NodeTestHistoryStore {
    */
   private async listedHeader(
     name: string,
-  ): Promise<NodeTestHistoryHeader | undefined> {
+  ): Promise<Types['Header'] | undefined> {
     try {
-      const header = nodeTestHistoryHeaderSchema.parse(
+      const header = this.descriptor.parseHeader(
         JSON.parse(
           (
             await this.readPrivateFile(
-              join(this.path(name), HEADER_FILE),
+              join(this.path(name), HISTORY_HEADER_FILE),
               HEADER_LIMIT_BYTES,
             )
           ).toString('utf8'),
@@ -597,12 +518,12 @@ export class NodeTestHistoryStore {
    * @returns The summaries of the listed histories.
    * @example await store.list() // => [{ studyId, status: 'complete', verdict: 'Test passed · exit code 0', learningCoverage: 'partial', … }]
    */
-  async list(): Promise<NodeTestHistorySummary[]> {
+  async list(): Promise<Types['Summary'][]> {
     const names = await readdir(this.directory).catch((error) => {
       if (error.code === 'ENOENT') return []
       throw error
     })
-    const studyIds = names.filter((name) => HISTORY_IDENTITY.test(name))
+    const studyIds = names.filter((name) => isNodeHistoryIdentity(name))
     // A memo of a history whose folder is gone would keep a summary nobody lists; a set lookup keeps the prune linear (F77).
     const present = new Set(studyIds)
     for (const studyId of [...this.summaries.keys()])
@@ -613,9 +534,7 @@ export class NodeTestHistoryStore {
       (studyId) => this.summarize(studyId),
     )
     return summaries
-      .filter(
-        (summary): summary is NodeTestHistorySummary => summary !== undefined,
-      )
+      .filter((summary): summary is Types['Summary'] => summary !== undefined)
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
   }
 
@@ -637,7 +556,7 @@ export class NodeTestHistoryStore {
    * @example store.holdsHistoryFolder(earlierSessionStudyId) // => true before any list of this window
    */
   holdsHistoryFolder(studyId: string): boolean {
-    return HISTORY_IDENTITY.test(studyId) && existsSync(this.path(studyId))
+    return isNodeHistoryIdentity(studyId) && existsSync(this.path(studyId))
   }
 
   /**
@@ -647,7 +566,7 @@ export class NodeTestHistoryStore {
    * @returns The history's summary, or `undefined` for a folder that holds no history of this workspace.
    * @example await store.summarize(studyId) // => { status: 'complete', learningCoverage: 'complete', learningMissing: [], … }
    */
-  summarize(studyId: string): Promise<NodeTestHistorySummary | undefined> {
+  summarize(studyId: string): Promise<Types['Summary'] | undefined> {
     // One read per history at a time, as the material writes are: two reads of a recording would continue its shared scan from one offset and apply the same entries twice (F216). A later call finds the memo the earlier one made.
     const previous = this.summaryReads.get(studyId) ?? Promise.resolve()
     const operation = previous
@@ -668,14 +587,14 @@ export class NodeTestHistoryStore {
    */
   private async summarizeOnce(
     studyId: string,
-  ): Promise<NodeTestHistorySummary | undefined> {
+  ): Promise<Types['Summary'] | undefined> {
     const signals = await this.fileSignals(studyId)
     const { history: historySignal, material: materialSignal } = signals
     const memo = this.summaries.get(studyId)
     if (memo?.historySignal === historySignal) {
       if (memo.materialSignal === materialSignal) return memo.summary
       // Only the material changed: its citations are checked against the kept events.
-      if (memo.citable && memo.needs) {
+      if (memo.citable && memo.needs && this.descriptor.applyMaterial) {
         const counted = await this.summaryWithMaterial(
           studyId,
           memo.summary,
@@ -714,7 +633,7 @@ export class NodeTestHistoryStore {
    * @param memo - Its new memo.
    * @example this.rememberSummary(studyId, memo)
    */
-  private rememberSummary(studyId: string, memo: SummaryMemo): void {
+  private rememberSummary(studyId: string, memo: SummaryMemo<Types>): void {
     this.summaries.set(studyId, memo)
     if (memo.citable) this.citableOrder.add(studyId)
     else this.citableOrder.delete(studyId)
@@ -769,9 +688,9 @@ export class NodeTestHistoryStore {
         (error: unknown) => `missing:${systemErrorCode(error) || 'unknown'}`,
       )
     const [header, journal, seal, material] = await Promise.all([
-      signal(HEADER_FILE),
-      signal(JOURNAL_FILE),
-      signal(SEAL_FILE),
+      signal(HISTORY_HEADER_FILE),
+      signal(HISTORY_JOURNAL_FILE),
+      signal(HISTORY_SEAL_FILE),
       signal(LEARNING_MATERIAL_FILE),
     ])
     // A history another live window writes is told by its writer record; only an unsealed one is asked (F260).
@@ -840,11 +759,13 @@ export class NodeTestHistoryStore {
       header: string
       recording: boolean
     },
-    previousScan: RecordingScan | undefined,
-    previousSummary: NodeTestHistorySummary | undefined,
-  ): Promise<SummaryMemo | undefined> {
+    previousScan:
+      | RecordingScan<Types['Header'], Types['Entry'], Types['Progress']>
+      | undefined,
+    previousSummary: Types['Summary'] | undefined,
+  ): Promise<SummaryMemo<Types> | undefined> {
     const { history: historySignal, material: materialSignal } = signals
-    let loaded: LoadedHistory | undefined
+    let loaded: LoadedHistory<Types> | undefined
     try {
       loaded = await this.loadHistory(
         studyId,
@@ -862,35 +783,17 @@ export class NodeTestHistoryStore {
       studyId,
       citable,
     )
-    const missing = listMissingNodeLearning(history, material?.content)
-    const result = history.entries.find((entry) => entry.type === 'result')
-    const stops = history.entries.filter((entry) => entry.type === 'stop')
-    const needs: NodeLearningNeeds = {
-      stopSequences: stops.map((stop) => stop.sequence),
-      ...(result ? { resultSequence: result.sequence } : {}),
-    }
-    const summary: NodeTestHistorySummary = {
-      ...emptySummary(history.header),
-      status: history.status,
-      ...(history.reason ? { reason: history.reason } : {}),
-      verification: 'verified',
-      verdict: describeNodeTestResult(result),
-      testResult: nodeTestResultKind(result),
-      stopCount: stops.length,
-      explainedStopCount:
-        stops.length -
-        missing.explanations.filter((part) => part.kind === 'stop').length,
-      learningCoverage: missing.coverage,
-      learningMissing: missing.explanations,
-      captureMissing: missing.capture,
+    const { summary, needs } = this.descriptor.summarize({
+      history,
+      materialContent: material?.content,
       materialRevision: material?.revision ?? 0,
-    }
+    })
     return {
       historySignal,
       materialSignal,
       summary,
       citable,
-      needs,
+      ...(needs ? { needs } : {}),
       ...(scan ? { scan } : {}),
       ...(transient ? { transient: true } : {}),
     }
@@ -910,8 +813,10 @@ export class NodeTestHistoryStore {
     studyId: string,
     headerSignal: string,
     recording: boolean,
-    previousScan: RecordingScan | undefined,
-  ): Promise<LoadedHistory | undefined> {
+    previousScan:
+      | RecordingScan<Types['Header'], Types['Entry'], Types['Progress']>
+      | undefined,
+  ): Promise<LoadedHistory<Types> | undefined> {
     if (recording) {
       // The bytes appended since the last refresh are all it reads (F64).
       const scan = await this.scanRecording(studyId, headerSignal, previousScan)
@@ -921,7 +826,7 @@ export class NodeTestHistoryStore {
           entries: scan.kept,
           status: 'recording',
           ...(scan.brokenReason
-            ? { reason: cutReason(scan.brokenReason) }
+            ? { reason: cutHistoryReason(scan.brokenReason) }
             : {}),
         },
         citable: scan.citable,
@@ -933,7 +838,7 @@ export class NodeTestHistoryStore {
       await this.dropSealedEmpty(studyId)
       return undefined
     }
-    return { history: verified, citable: citableEvents(verified) }
+    return { history: verified, citable: this.citableEventsOf(verified) }
   }
 
   /**
@@ -949,8 +854,8 @@ export class NodeTestHistoryStore {
     studyId: string,
     signals: { history: string; material: string },
     error: unknown,
-    previousSummary: NodeTestHistorySummary | undefined,
-  ): Promise<SummaryMemo | undefined> {
+    previousSummary: Types['Summary'] | undefined,
+  ): Promise<SummaryMemo<Types> | undefined> {
     const header = await this.listedHeader(studyId)
     if (!header) {
       // A header that cannot be read for a transient reason does not make the history vanish: its earlier summary stays, not remembered, and the next refresh reads again (F217).
@@ -963,10 +868,10 @@ export class NodeTestHistoryStore {
           }
         : undefined
     }
-    const summary: NodeTestHistorySummary = {
-      ...emptySummary(header),
+    const summary: Types['Summary'] = {
+      ...this.descriptor.emptySummary(header),
       status: 'partial',
-      reason: cutReason(
+      reason: cutHistoryReason(
         `History integrity check failed: ${this.describeCause(error)}`,
       ),
       verification: 'unavailable',
@@ -992,8 +897,12 @@ export class NodeTestHistoryStore {
   private async scanRecording(
     studyId: string,
     headerSignal: string,
-    previous: RecordingScan | undefined,
-  ): Promise<RecordingScan> {
+    previous:
+      | RecordingScan<Types['Header'], Types['Entry'], Types['Progress']>
+      | undefined,
+  ): Promise<
+    RecordingScan<Types['Header'], Types['Entry'], Types['Progress']>
+  > {
     const directory = this.path(studyId)
     const directoryStat = await lstat(directory)
     if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink())
@@ -1004,12 +913,14 @@ export class NodeTestHistoryStore {
       previous?.headerSignal === headerSignal
         ? previous.header
         : await this.readHeader(studyId)
-    return advanceRecordingScan(
+    return advanceHistoryScan<Types>(
       previous,
       header,
       headerSignal,
-      join(directory, JOURNAL_FILE),
+      join(directory, HISTORY_JOURNAL_FILE),
       (error) => this.describeCause(error),
+      this.descriptor.scanRules,
+      this.descriptor.words.interruptedPrefix,
     )
   }
 
@@ -1024,28 +935,23 @@ export class NodeTestHistoryStore {
    */
   private async summaryWithMaterial(
     studyId: string,
-    summary: NodeTestHistorySummary,
+    summary: Types['Summary'],
     citable: ReadonlyMap<number, CitableEvent>,
     needs: NodeLearningNeeds,
-  ): Promise<{ summary: NodeTestHistorySummary; transient: boolean }> {
+  ): Promise<{ summary: Types['Summary']; transient: boolean }> {
     const { material, transient } = await this.readCitedLearningMaterial(
       studyId,
       citable,
     )
-    const { missing, coverage } = listMissingNodeExplanations(
-      needs,
-      material?.content,
-    )
     return {
-      summary: {
-        ...summary,
-        explainedStopCount:
-          summary.stopCount -
-          missing.filter((part) => part.kind === 'stop').length,
-        learningCoverage: coverage,
-        learningMissing: missing,
-        materialRevision: material?.revision ?? 0,
-      },
+      summary: this.descriptor.applyMaterial
+        ? this.descriptor.applyMaterial({
+            summary,
+            needs,
+            materialContent: material?.content,
+            materialRevision: material?.revision ?? 0,
+          })
+        : summary,
       transient,
     }
   }
@@ -1055,7 +961,7 @@ export class NodeTestHistoryStore {
    * @param studyId - The history's study id.
    * @param citable - The journal's citable events.
    * @returns The material, or none for no file, one that does not parse, or one that cites what the journal does not hold, which explains nothing; `transient` is set when a transient file error (EBUSY, EMFILE, EIO …) stopped the read, so the caller does not remember "no material".
-   * @example await this.readCitedLearningMaterial(studyId, citableEvents(history)) // => { material: the saved material, transient: false }
+   * @example await this.readCitedLearningMaterial(studyId, this.citableEventsOf(history)) // => { material: the saved material, transient: false }
    */
   private async readCitedLearningMaterial(
     studyId: string,
@@ -1064,6 +970,9 @@ export class NodeTestHistoryStore {
     material: NodeTestLearningMaterial | undefined
     transient: boolean
   }> {
+    // A profile without learning material (server histories until their material arrives) has none to read.
+    if (!this.descriptor.supportsLearningMaterial)
+      return { material: undefined, transient: false }
     try {
       const saved = await this.readLearningMaterialFile(studyId)
       if (saved) assertLearningCitations(saved.content, citable)
@@ -1080,12 +989,12 @@ export class NodeTestHistoryStore {
    * @throws When the header is no bounded regular file, does not parse, or names another workspace or run.
    * @example const header = await this.readHeader(studyId)
    */
-  private async readHeader(studyId: string): Promise<NodeTestHistoryHeader> {
-    const header = nodeTestHistoryHeaderSchema.parse(
+  private async readHeader(studyId: string): Promise<Types['Header']> {
+    const header = this.descriptor.parseHeader(
       JSON.parse(
         (
           await this.readPrivateFile(
-            join(this.path(studyId), HEADER_FILE),
+            join(this.path(studyId), HISTORY_HEADER_FILE),
             HEADER_LIMIT_BYTES,
           )
         ).toString('utf8'),
@@ -1097,7 +1006,7 @@ export class NodeTestHistoryStore {
   }
 
   /** Verifies a sealed journal or returns only its valid crash-recovery prefix. @example await store.read(studyId) */
-  async read(studyId: string): Promise<NodeTestHistoryIndex> {
+  async read(studyId: string): Promise<HistoryIndexOf<Types>> {
     const directory = this.path(studyId)
     const directoryStat = await lstat(directory)
     if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink())
@@ -1106,19 +1015,19 @@ export class NodeTestHistoryStore {
       )
     const header = await this.readHeader(studyId)
     const journal = await this.readPrivateFile(
-      join(directory, JOURNAL_FILE),
-      NODE_TEST_HISTORY_LIMIT_BYTES,
+      join(directory, HISTORY_JOURNAL_FILE),
+      this.descriptor.journalLimitBytes,
     )
     const sealBytes = await this.readPrivateFile(
-      join(directory, SEAL_FILE),
-      NODE_TEST_HISTORY_SEAL_LIMIT_BYTES,
+      join(directory, HISTORY_SEAL_FILE),
+      this.descriptor.sealLimitBytes,
     ).catch((error) => {
       if (error.code === 'ENOENT') return undefined
       throw error
     })
     const seal =
       sealBytes &&
-      nodeTestHistorySealSchema.parse(JSON.parse(sealBytes.toString('utf8')))
+      this.descriptor.parseSeal(JSON.parse(sealBytes.toString('utf8')))
     if (
       seal &&
       (seal.studyId !== studyId ||
@@ -1128,41 +1037,36 @@ export class NodeTestHistoryStore {
       throw new Error('Sealed Node history journal is corrupt.')
     const lines = journal.toString('utf8').split('\n'),
       incomplete = lines.pop()
-    const entries: NodeTestHistoryEntry[] = []
-    const progress = newJournalProgress()
+    const entries: Types['Entry'][] = []
+    const progress = this.descriptor.scanRules.start()
     let reason: string | undefined
     for (const line of lines) {
       try {
-        const entry = nodeTestHistoryEntrySchema.parse(JSON.parse(line))
-        acceptJournalEntry(progress, entry)
+        const entry = this.descriptor.scanRules.parseEntry(JSON.parse(line))
+        this.descriptor.scanRules.accept(progress, entry, header)
         entries.push(entry)
       } catch (error) {
         if (seal) throw error
         // The failure can quote the line, which holds test output: its words lose private paths, and the whole reason keeps the index's bound (F243).
-        reason = cutReason(
-          `Interrupted Node history after its verified prefix: ${this.describeCause(error)}`,
+        reason = cutHistoryReason(
+          `${this.descriptor.words.interruptedPrefix} ${this.describeCause(error)}`,
         )
         break
       }
     }
-    if (
-      seal &&
-      (incomplete ||
-        seal.entryCount !== entries.length ||
-        (seal.status === 'complete' &&
-          (!progress.hasResult ||
-            !progress.passingResult ||
-            progress.stopCount !==
-              1 + (header.configuration.additionalStops?.length ?? 0))))
-    )
-      throw new Error(
-        'Sealed Node history does not contain its required passing result and ordered stops.',
-      )
+    if (seal)
+      this.descriptor.verifySeal({
+        seal,
+        header,
+        entries,
+        progress,
+        hasIncompleteLine: Boolean(incomplete),
+      })
     const isRecording =
       !seal &&
       (this.active.has(studyId) || (await this.writtenElsewhere(studyId)))
     const status = seal?.status ?? (isRecording ? 'recording' : 'interrupted')
-    return nodeTestHistoryIndexSchema.parse({
+    return this.descriptor.parseIndex({
       header,
       entries,
       seal,
@@ -1170,9 +1074,7 @@ export class NodeTestHistoryStore {
       reason:
         reason ??
         seal?.reason ??
-        (!seal && !isRecording
-          ? 'Node test history has no verified final seal.'
-          : undefined),
+        (!seal && !isRecording ? this.descriptor.words.noSeal : undefined),
     })
   }
 
@@ -1267,7 +1169,7 @@ export class NodeTestHistoryStore {
     if (!material) return undefined
     assertLearningCitations(
       material.content,
-      citableEvents(await this.read(studyId)),
+      this.citableEventsOf(await this.read(studyId)),
     )
     return material
   }
@@ -1313,6 +1215,10 @@ export class NodeTestHistoryStore {
     expectedRevision: number,
     content: NodeTestLearningMaterialContent,
   ): Promise<NodeTestLearningMaterial> {
+    if (!this.descriptor.supportsLearningMaterial)
+      throw new Error(
+        'Learning material is not available for this kind of history yet.',
+      )
     const previous =
       this.learningMaterialWrites.get(studyId) ?? Promise.resolve(undefined)
     const operation = previous
@@ -1341,7 +1247,11 @@ export class NodeTestHistoryStore {
         currentRevision,
       )
     const parsedContent = nodeTestLearningMaterialContentSchema.parse(content)
-    assertLearningCitations(parsedContent, citableEvents(history), saveStepLead)
+    assertLearningCitations(
+      parsedContent,
+      this.citableEventsOf(history),
+      saveStepLead,
+    )
     const material = nodeTestLearningMaterialSchema.parse({
       version: NODE_TEST_LEARNING_MATERIAL_VERSION,
       studyId,
@@ -1367,7 +1277,7 @@ export class NodeTestHistoryStore {
   saveReaderPosition(
     studyId: string,
     sequence: number,
-    verified?: NodeTestHistoryIndex,
+    verified?: Pick<HistoryIndexOf<Types>, 'header' | 'entries'>,
   ): Promise<void> {
     const previous = this.readerPositionWrites.get(studyId) ?? Promise.resolve()
     const operation = previous
@@ -1410,8 +1320,25 @@ export class NodeTestHistoryStore {
     await Promise.allSettled([...this.readerPositionWrites.values()])
   }
 
+  /**
+   * Lists the events of a verified history a learning step may cite, by sequence; a profile that offers none for an entry (server histories, until their material arrives) leaves it out.
+   * @param history - The verified history.
+   * @returns The citable events by sequence.
+   * @example store.citableEventsOf(history).get(2) // => { type: 'stop', sourceHash: '…', path: 'src/scheduler.ts', line: 3 }
+   */
+  citableEventsOf(
+    history: Pick<HistoryIndexOf<Types>, 'entries'>,
+  ): Map<number, CitableEvent> {
+    const events = new Map<number, CitableEvent>()
+    for (const entry of history.entries) {
+      const citable = this.descriptor.scanRules.citableOf(entry)
+      if (citable) events.set(entry.sequence, citable)
+    }
+    return events
+  }
+
   private path(studyId: string): string {
-    if (!HISTORY_IDENTITY.test(studyId))
+    if (!isNodeHistoryIdentity(studyId))
       throw new Error('Invalid Node history identity.')
     return join(this.directory, studyId)
   }
@@ -1427,270 +1354,31 @@ export class NodeTestHistoryStore {
   }
 }
 
-/** Serializes fsynced journal appends so output and debugger stops keep one verified timeline. The first failed entry ends that timeline; the verified prefix can still be sealed as partial. @example await writer.appendOutput(output) */
-export class NodeTestHistoryWriter {
-  private sequence = 0
-  private lastElapsedMs = 0
-  private entries = 0
-  /** Journal bytes written by confirmed entries; anything beyond them is a torn write. */
-  private confirmedBytes = 0
-  /** The first refused or failed entry; later evidence would follow a gap. */
-  private failure?: Error
-  private pending: Promise<void> = Promise.resolve()
-  private closed = false
-  private closing = false
-  private stopCount = 0
-  private resultWritten = false
-  private resultPassed = false
-  /** The journal sequence of each stop entry this writer confirmed, in stop order, and of its result entry. */
-  private readonly stopSequences: number[] = []
-  private resultSequence?: number
-  private finishOperation?: Promise<string>
-  /** The SHA-256 of the journal this writer sealed; `undefined` before the seal and after an abandoned one. */
-  private sealedHash?: string
-
+/**
+ * The store of test histories: the generic {@link NodeHistoryStore} with the node-test descriptor, whose constructor takes the descriptor as an optional last-but-one parameter so existing callers and tests need no edit, and the count of the other profiles' histories as the last, so one saved-study limit counts every kind.
+ * @example const store = new NodeTestHistoryStore(learningDirectory, workspaceKey)
+ */
+export class NodeTestHistoryStore extends NodeHistoryStore<NodeTestHistoryTypes> {
   constructor(
-    private readonly directory: string,
-    readonly header: NodeTestHistoryHeader,
-    private readonly onClosed: () => void,
-  ) {}
-
-  /** Queues one stdout/stderr receipt in stamp order; the promise settles when it is durable. @example await writer.appendOutput(event) */
-  appendOutput(event: NodeTestOutputEvent): Promise<void> {
-    return this.append({
-      type: 'output',
-      elapsedMs: event.elapsedMs,
-      outputSequence: event.sequence,
-      channel: event.channel,
-      text: event.text,
-    })
-  }
-
-  /** Persists only the declared source, required facts and bounded historical debugger snapshot. @example await writer.appendStop(stop) */
-  appendStop(stop: NodeTestSourceStop): Promise<void> {
-    return this.append({
-      type: 'stop',
-      elapsedMs: stop.elapsedMs,
-      index: stop.index,
-      source: {
-        path: stop.source.path,
-        hash: stop.source.hash,
-        line: stop.frame.line,
-        column: stop.frame.column,
-      },
-      frame: {
-        name: stop.frame.name,
-        line: stop.frame.line,
-        column: stop.frame.column,
-      },
-      facts: stop.facts,
-      debuggerSnapshot: stop.debuggerSnapshot,
-    })
-  }
-
-  /** Records the actual process exit and bounded final output tail. @example await writer.appendResult(result, elapsedMs) */
-  appendResult(
-    result: {
-      exitCode: number | null
-      signal: NodeJS.Signals | null
-      output: string
-    },
-    elapsedMs: number,
-  ): Promise<void> {
-    return this.append({
-      type: 'result',
-      elapsedMs,
-      exitCode: result.exitCode,
-      signal: result.signal,
-      outputTail: result.output,
-    })
-  }
-
-  /**
-   * Counts the entries this writer confirmed, the journal's entry count once sealed; read by {@link StudyService.sealNodeHistory}, which keeps it for the run's outcome: a replay needs at least one entry.
-   * @example writer.entryCount // => 4
-   */
-  get entryCount(): number {
-    return this.entries
-  }
-
-  /**
-   * Gives what the sealed journal asks a learning material to explain, from the sequences this writer assigned, so {@link StudyService} caches the run's learning coverage at the seal without reading the journal again (EN2).
-   * @returns The sequence of each stop entry in stop order, and of the result entry when one was written.
-   * @example writer.learningNeeds() // => { stopSequences: [2, 5], resultSequence: 7 }
-   */
-  learningNeeds(): NodeLearningNeeds {
-    return {
-      stopSequences: [...this.stopSequences],
-      ...(this.resultSequence === undefined
-        ? {}
-        : { resultSequence: this.resultSequence }),
-    }
-  }
-
-  /**
-   * Fsyncs and seals complete evidence only when the caller verified all ordered stops and a passing result; after a failed entry only the verified prefix can be sealed, as partial; called by {@link StudyService.stopRecord}.
-   * @param status - `complete` for a run with every declared stop and a passing result, else `partial`.
-   * @param reason - Why a partial history ended.
-   * @returns The SHA-256 of the sealed journal, the run's `recording.contextHash`; `undefined` for a writer that was abandoned before.
-   * @throws When `complete` is asked without every stop and a passing result, the journal holds bytes no entry confirmed, or the seal cannot be written.
-   * @example await writer.finish('partial', 'Cancelled by the learner.') // => 'a3f…'
-   */
-  finish(
-    status: 'complete' | 'partial',
-    reason?: string,
-  ): Promise<string | undefined> {
-    if (this.closed) return Promise.resolve(this.sealedHash)
-    if (this.finishOperation) return this.finishOperation
-    const operation = (async () => {
-      this.closing = true
-      await this.pending
-      if (
-        status === 'complete' &&
-        (this.failure ||
-          !this.resultPassed ||
-          this.stopCount !==
-            1 + (this.header.configuration.additionalStops?.length ?? 0))
-      )
-        throw new Error(
-          'Node history cannot be marked complete without every ordered stop and an observed passing result.',
-        )
-      const path = join(this.directory, JOURNAL_FILE),
-        journal = await readFile(path)
-      // A write torn by an I/O failure leaves bytes no entry confirmed; sealing them would certify a journal readers must refuse.
-      if (journal.byteLength !== this.confirmedBytes) {
-        this.failure ??= new Error(
-          'Node history journal has bytes its writer never confirmed.',
-        )
-        throw new Error(
-          'Node history journal has bytes its writer never confirmed; it remains an interrupted prefix.',
-        )
-      }
-      // A history that ends with no entry holds nothing to replay: its folder is removed when it seals, so it is listed nowhere, takes no place of the saved study limit and agrees with a run that reads `replayAvailable: false` (D6, F85). A folder that cannot be removed is sealed as any other.
-      if (
-        this.entries === 0 &&
-        // Learning material or understanding marks saved before the first entry keep the folder, sealed as any other (F274).
-        !(await holdsLearnerFiles(this.directory)) &&
-        (await rm(this.directory, { recursive: true, force: true }).then(
-          () => true,
-          () => false,
-        ))
-      ) {
-        this.sealedHash = sha256(journal)
-        this.closed = true
-        this.onClosed()
-        return this.sealedHash
-      }
-      const seal = nodeTestHistorySealSchema.parse({
-        version: 1,
-        studyId: this.header.studyId,
-        entryCount: this.entries,
-        journalBytes: journal.byteLength,
-        journalHash: sha256(journal),
-        status,
-        endedAt: new Date().toISOString(),
-        reason: reason === undefined ? undefined : cutReason(reason),
-      })
-      await atomicPrivateWrite(
-        join(this.directory, SEAL_FILE),
-        seal,
-        NODE_TEST_HISTORY_SEAL_LIMIT_BYTES,
-      )
-      this.sealedHash = seal.journalHash
-      this.closed = true
-      // The seal is published first: another window never finds neither the seal nor the record.
-      await this.removeWriterRecord()
-      this.onClosed()
-      return seal.journalHash
-    })().catch((error: unknown) => {
-      this.closing = false
-      this.finishOperation = undefined
-      throw error
-    })
-    this.finishOperation = operation
-    return operation
-  }
-
-  /** Marks a failed finalization as an interrupted prefix so library readers do not show it as live. @example writer.abandon() */
-  abandon(): void {
-    this.closed = true
-    this.closing = false
-    // Other windows read the history as interrupted once the record is gone (F260); the removal is awaited by nobody.
-    void this.removeWriterRecord()
-    this.onClosed()
-  }
-
-  /** Removes the record of the editor process that writes this history ({@link writeNodeTestWriterRecord}); a record that stays is ignored once its process is gone, and by the seal. @example await this.removeWriterRecord() */
-  private removeWriterRecord(): Promise<void> {
-    return rm(join(this.directory, NODE_TEST_HISTORY_WRITER_FILE), {
-      force: true,
-    }).catch(() => undefined)
-  }
-
-  private append(input: NodeTestHistoryEntryInput): Promise<void> {
-    const operation = this.pending.then(async () => {
-      // Evidence after a failed entry would follow a gap, so the verified prefix ends at the first failure.
-      if (this.failure)
-        throw new Error(
-          `Node history stopped accepting evidence after an earlier entry failed: ${this.failure.message}`,
-        )
-      if (this.closed || this.closing)
-        throw new Error('Node history is already sealing or sealed.')
-      if (this.entries >= NODE_TEST_HISTORY_MAX_ENTRIES)
-        throw new Error('Node history reached its event limit.')
-      const entry = nodeTestHistoryEntrySchema.parse({
-        ...input,
-        sequence: this.sequence + 1,
-      })
-      if (entry.elapsedMs < this.lastElapsedMs)
-        throw new Error('Node history time moved backward.')
-      if (
-        this.resultWritten ||
-        (entry.type === 'stop' && entry.index !== this.stopCount)
-      )
-        throw new Error(
-          'Node history source stops or terminal result are missing or reordered.',
-        )
-      if (
-        entry.type === 'result' &&
-        this.stopCount !==
-          1 + (this.header.configuration.additionalStops?.length ?? 0)
-      )
-        throw new Error(
-          'Node history result arrived before every declared stop.',
-        )
-      const line = Buffer.from(`${JSON.stringify(entry)}\n`)
-      const path = join(this.directory, JOURNAL_FILE),
-        handle = await open(path, 'a', PRIVATE_FILE_MODE)
-      try {
-        const stat = await handle.stat()
-        if (stat.size + line.byteLength > NODE_TEST_HISTORY_LIMIT_BYTES)
-          throw new Error(
-            'Node history reached its storage limit; existing evidence remains readable.',
-          )
-        await handle.writeFile(line)
-        await handle.sync()
-      } finally {
-        await handle.close()
-      }
-      this.sequence = entry.sequence
-      this.lastElapsedMs = entry.elapsedMs
-      this.entries++
-      this.confirmedBytes += line.byteLength
-      if (entry.type === 'stop') {
-        this.stopCount++
-        this.stopSequences.push(entry.sequence)
-      }
-      if (entry.type === 'result') {
-        this.resultWritten = true
-        this.resultPassed = entry.exitCode === 0 && entry.signal === null
-        this.resultSequence = entry.sequence
-      }
-    })
-    // Later entries and the seal wait for this one without inheriting its rejection.
-    this.pending = operation.catch((error: unknown) => {
-      this.failure ??= error instanceof Error ? error : new Error(String(error))
-    })
-    return operation
+    learningDirectory: string,
+    workspaceKey: string,
+    capacity: () => number = () => 64,
+    savedArtifactCount: () => Promise<number> = async () => 0,
+    writerJudge: {
+      now: () => number
+      judge: (historyDirectory: string) => Promise<NodeTestWriterVerdict>
+    } = { now: Date.now, judge: judgeNodeTestWriter },
+    descriptor: HistoryStorageDescriptor<NodeTestHistoryTypes> = nodeTestStorageDescriptor,
+    otherHistoryCount: (places: number) => Promise<number> = async () => 0,
+  ) {
+    super(
+      descriptor,
+      learningDirectory,
+      workspaceKey,
+      capacity,
+      savedArtifactCount,
+      writerJudge,
+      otherHistoryCount,
+    )
   }
 }
