@@ -92,6 +92,17 @@ reviews:
         Preserve unrelated editor tabs, dirty buffers, breakpoints, and processes.
         Review cross-host assumptions against the cycle's declared support matrix.
 
+    - path: 'extension/src/**/{ownedNodeServerRun,vscodeNodeServerDebugger,launchNodeServer,confirmLaunchedGroup,reapNodeServerOrphans,signalProcessGroup,isProcessGroupGone,isGroupCertainlyGone}.ts'
+      instructions: |
+        Process signalling: every signal to a pid or a process group follows an
+        identity verdict (the launched leader's start time) taken within the same
+        bound as the signal. A signal-0 probe of a group proves only that some group
+        holds the id now, never that it is the launched one: a group id can be reused
+        between two probes. A signal sent after the operation that owns it has
+        returned (a close, a release, a sweep) is a defect, and so is a probe or
+        identity read that pushes a signal past its stated bound. Name the event
+        sequence that reaches each finding.
+
     - path: 'extension/src/ui/**'
       instructions: |
         Follow PRODUCT_GOAL.md's design target and the approved design, as amended by the required reads and

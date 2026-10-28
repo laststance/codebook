@@ -55,7 +55,7 @@ const TAP_SUMMARY_LINE = /^# (tests|pass|fail|cancelled|skipped|todo) (\d+)$/gm
 /** How many names a refusal lists before "and N more". */
 const SHOWN_NAME_LIMIT = 5
 
-/** Hashes a text file with CRLF read as LF, so a Windows checkout names the same bytes as the reference. @example await hashText('/repo/.node-version') // => '73fb1b61…' */
+/** Hashes a text file with CRLF read as LF, so a Windows checkout names the same bytes as the reference. @example await hashText('/repo/.node-version') // => 'd9f31874…' */
 async function hashText(path) {
   const text = (await readFile(path, 'utf8')).replaceAll('\r\n', '\n')
   return createHash('sha256').update(text).digest('hex')
@@ -116,7 +116,7 @@ async function readReference() {
   return reference
 }
 
-/** Reads the version of every producer of the measured run as installed here. @example await readProducers() // => { node: '24.21.0', c8: '12.0.0', v8ToIstanbul: '9.3.0', fallow: '3.34.1' } */
+/** Reads the version of every producer of the measured run as installed here. @example await readProducers() // => { node: '24.22.1', c8: '12.0.0', v8ToIstanbul: '9.3.0', fallow: '3.34.1' } */
 async function readProducers() {
   const c8Manifest = requireFromExtension.resolve('c8/package.json')
   const converterManifest = createRequire(c8Manifest).resolve(
@@ -196,7 +196,7 @@ function childEnvironment() {
  * @param options - More `spawn` options; a `stdio` here replaces the default.
  * @returns `{ code, signal, stdout }` once the child has exited; `stdout` holds its output only when `options.stdio` pipes it.
  * @example
- * await runChild(process.execPath, ['--version'], { stdio: ['ignore', 'pipe', 2] }) // => { code: 0, signal: null, stdout: 'v24.21.0\n' }
+ * await runChild(process.execPath, ['--version'], { stdio: ['ignore', 'pipe', 2] }) // => { code: 0, signal: null, stdout: 'v24.22.1\n' }
  */
 function runChild(command, arguments_, options = {}) {
   return new Promise((resolve, reject) => {

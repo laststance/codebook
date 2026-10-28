@@ -80,6 +80,7 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 - A large cycle may use up to three PRs (`cycle100-pt1`, `cycle100-pt2`, …), each passing reviews, CI and gate alone, merged in order; the Issue closes after the last.
 - Codex automatic review off (no Codex cloud step). No `@coderabbitai ignore` in PR bodies (owner, 2026-10-05).
 - Hosted CodeRabbit off from Cycle 0057 (owner, 2026-10-27: 「次のサイクルからGitHubのコード、Rabbitのレビューはトリガーさせないでください。」): `.coderabbit.yaml` keeps `reviews.auto_review.enabled: false` (CodeRabbit reads the PR branch's file); never post `@coderabbitai review`.
+- Outside review early (owner, 2026-10-28): `/ship` Step 9 pass 1 also runs Step 11's Codex structured review (`codex review --base main`) on the whole diff, its findings part of pass 1; a plan that changes process signalling, process identity or a stop/kill path also gets a Codex review before implementation. A fix-range pass (pass 2 on) under 300 changed lines dispatches the red team and the specialists whose area the range changes.
 
 **Delivery parameters.**
 
@@ -143,6 +144,7 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 **CodeRabbit and OCR.**
 
 - [.coderabbit.yaml](.coderabbit.yaml) = policy + exclusions: keep its guidelines current; validate with `coderabbit config validate .coderabbit.yaml`; pass it via `--config` beside extra context.
+  - CLI 0.9.1 (latest on 2026-10-28) exits 1 on every file with `unknown keyword: "x-undocumented"`, a defect of its own schema: record that line as the validation result; a review with `-c` still applies the file.
 - Required: local CodeRabbit CLI, findings triage, CI, `open-code-review-delegate` (OCR picks files and rules, the host reviews; each eligible file reviewed or skipped with a reason; default exclusions reported apart; no independent external review).
 - Review against the implementation base; record completion, source cut, covered files, findings.
 - Hosted CodeRabbit is not triggered (owner, 2026-10-27; [Delivery](#delivery)): merge waits for no hosted review or approval. A hosted review that still appears is reported in the PR; its findings follow the cycle rule like the local review's. Run the local CodeRabbit CLI on the PR's final range before merge.
@@ -220,11 +222,13 @@ Standing rules, stated as rules (no decision log); delivery chain and ship limit
 
 ## Commands and checks
 
-Node and pnpm as pinned in the extension manifest and CI; run from the repo root.
+Node as `.node-version` pins it (mirrored in `extension/.node-version`, since a version manager's shim reads the nearest package's `engines` there) and pnpm as the extension's `packageManager` pins it; put that Node's own `bin` first in `PATH`; run from the repo root.
 
 **Gate and focused runs.**
 
-- `pnpm --dir extension test` = build + Node's isolated runner (files parallel, tests in a file serial; never same-process concurrency globally: workspace cases mock shared prototypes and timers). Full gate before delivery. `pnpm --dir extension test:package` = package tests.
+- Exact-HEAD gate: `pnpm --dir extension gate`: the fifteen delivery checks in order (static checks, the suite, the five Reader DOM checks, package tests, measured health, the compaction-hook test), one log each under `artifacts/gate/<HEAD>`; it refuses a Node or pnpm off the pins and a checkout with changes, and exits 0 only when every check passed on an unmoved HEAD.
+- `pnpm --dir extension test` = build + Node's isolated runner (files parallel, tests in a file serial; never same-process concurrency globally: workspace cases mock shared prototypes and timers). `pnpm --dir extension test:package` = package tests.
+- CI failures: `node extension/scripts/ci-failures.mjs <PR>` (or `--run <id>`) prints each failed job's failing tests with their first error line, also while the run goes on.
 - Focused replay/workspace work: `pnpm --dir extension build` once, then `node --test extension/dist/tests/studyWorkspace*.test.js extension/dist/tests/playbackController.test.js` (every partition; `studyWorkspace.test.js` alone is one); reuse a current build.
 - `studyWorkspaceHarness.ts` = fixtures only; each harness makes its own temp repo. Related race steps in one test; await each observable result before the next action. Keep real timeouts, production deadlines and assertions.
 
@@ -287,6 +291,7 @@ Node and pnpm as pinned in the extension manifest and CI; run from the repo root
 
 ## Native QA
 
+- Observing a native trial (state checks, screenshots, evidence stills): [docs/agents/native-trial-observation.md](docs/agents/native-trial-observation.md).
 - UI changes: view the PNG again; compare real screenshots with its region at the normal desktop baseline; record differences and interaction.
 - Motion needs recorded interaction + inspected frames; generated pixels or renderer assertions prove no native behavior.
 

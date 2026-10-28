@@ -32,7 +32,7 @@ const INSTALL_NAMED_ON_THE_COMMAND_LINE =
  * @param root - The folder the path starts at; the repository unless a test of these helpers hands a folder of its own.
  * @returns The file's text.
  * @example
- * await repositoryText('.node-version') // => '24.21.0\n'
+ * await repositoryText('.node-version') // => '24.22.1\n'
  */
 function repositoryText(path, root = repositoryRoot) {
   return readFile(join(root, path), 'utf8')

@@ -67,7 +67,7 @@ test('reads a missing drive', { skip: 'no such drive on this host' }, () => {})
 `,
 }
 
-/** Hashes text as the reference records its files. @example sha256('24.21.0\n') // => '73fb1b61…' */
+/** Hashes text as the reference records its files. @example sha256('24.22.1\n') // => 'd9f31874…' */
 function sha256(text) {
   return createHash('sha256').update(text).digest('hex')
 }

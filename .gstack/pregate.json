@@ -36,6 +36,11 @@
     ".github/reader-dom/package-lock.json": [
       "extension/scripts/tests/workflowPins.test.mjs"
     ],
+    "extension/scripts/gate.mjs": ["extension/scripts/tests/gate.test.mjs"],
+    "extension/scripts/ci-failures.mjs": [
+      "extension/scripts/tests/ciFailures.test.mjs"
+    ],
+    "extension/.node-version": ["extension/scripts/tests/gate.test.mjs"],
     "extension/scripts/checkHealth.mjs": [
       "extension/scripts/tests/health.test.mjs"
     ],
