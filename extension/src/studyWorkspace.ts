@@ -12111,7 +12111,15 @@ export class StudyWorkspace {
       // A newer entry answers for the learner now; an entry whose focus wait its supersession aborted ends here quietly too.
       if (entry !== this.nodeHistoryEntryRequest) return false
       // A refused entry is told like a failed replay open: one Output › Codebook entry and the notification, never a bare command failure (F382, F384).
-      await this.leaveEmptySummaryComposition()
+      // A refusal for a main editor that reported no keyboard focus is not followed by a reopen: the reopen would meet the same guard, wait five seconds again and log the same entry a second time (Cycle 0060, N60).
+      if (!(
+        error instanceof StudyError &&
+        error.message ===
+          unreportedEditorFocusObstacle(
+            PRESENTATION_READY_TIMEOUT_MS / MILLISECONDS_PER_SECOND,
+          )
+      ))
+        await this.leaveEmptySummaryComposition()
       this.tellTestReplayOpenFailure(
         studyId,
         error,

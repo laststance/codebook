@@ -1703,3 +1703,73 @@ test('Open replay refused beside the Cursor Agent is told in Output and the retr
     await harness.close()
   }
 })
+
+// protects=one learner Open replay refused because Cursor's main editor reports no keyboard focus: one five-second wait and one presentation:focus-unreported entry, not a second wait and entry from the reopen of the Study composition; fails_when=leaving the empty summary composition reopens the reader, which meets the same guard and logs the entry again (N60, two entries about 5 s apart); no_claim=that the Study pane is shown again after the refusal
+test('Open replay refused for an unreported keyboard focus waits for the report once and writes one focus-unreported entry in Output', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  try {
+    readerSeams(harness).stopOwnTimer()
+    harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+    harness.groups.at(-1)!.tabs = []
+    harness.groups.at(-1)!.activeTab = undefined
+    const chat = harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    harness.leavePaneFocusUnreportedBesideChat()
+    const { record, studyId } = await startLiveTestRun(
+      harness,
+      'cursor-refusal',
+    )
+    // The Study workspace is open in its live composition when the learner saves the run and opens its replay.
+    await harness.reader.open()
+    harness.focusMutableDraft('auth.ts', 2)
+    chat.focusTab()
+    await readerSeams(harness).refresh()
+    for (const generation of [1, 2])
+      await harness.service.continue({
+        instanceId: harness.service.instanceId,
+        runId: record.id,
+        participant: 'server',
+        sessionId: 'owned-session',
+        threadId: 7,
+        generation,
+      })
+    await harness.service.stop({
+      instanceId: harness.service.instanceId,
+      runId: record.id,
+    })
+    await readerSeams(harness).refresh()
+    await harness.reader.saveLearningReplay(studyId)
+
+    // Act: the five seconds of the wait for the focus report pass on a faked clock; the learner then clicks into a file and asks again.
+    enableFakeClock(context)
+    const firstOpen = harness.reader.openLearningReplay(studyId).then(
+      () => 'returned',
+      (error: unknown) => String(error),
+    )
+    await advanceClockUntilSettled(context, firstOpen, 12_000)
+    const firstResult = await firstOpen
+    resetFakeClock(context)
+
+    // Assert
+    assert.equal(firstResult, 'returned')
+    assert.equal(
+      logged.filter(
+        (entry) => entry.surface === 'presentation:focus-unreported',
+      ).length,
+      1,
+    )
+    assert.equal(
+      logged.filter((entry) => entry.surface === 'open:test-replay').length,
+      1,
+    )
+  } finally {
+    resetFakeClock(context)
+    await harness.close()
+  }
+})
