@@ -109,12 +109,17 @@ export class NodeServerLearningSave {
   save(record: StudyRecord): Promise<void> {
     const service = this.host.service()
     if (!service) return Promise.resolve()
-    return this.saves.runFor(
-      service,
-      record,
-      (studyId) => this.saveOnce({ service, record, studyId }),
-      () => this.host.changed(),
-    )
+    // The serializer refuses another study's Save by throwing synchronously; a caller that awaits or chains `.catch` gets it as a rejection.
+    try {
+      return this.saves.runFor(
+        service,
+        record,
+        (studyId) => this.saveOnce({ service, record, studyId }),
+        () => this.host.changed(),
+      )
+    } catch (error) {
+      return Promise.reject(error)
+    }
   }
 
   /** Runs one Save: the refusals, the question, the stop with its seal, the reading of the verdicts. */
@@ -189,6 +194,11 @@ export class NodeServerLearningSave {
     if (history?.status === 'failed') {
       this.states.delete(studyId)
       this.host.changed()
+      // Save answers with the cause, as the item shows it; a second click answers it again.
+      this.tell(
+        { kind: 'failed', cause: history.failure ?? 'The history failed.' },
+        'warning',
+      )
       return
     }
     const summary =
@@ -205,6 +215,14 @@ export class NodeServerLearningSave {
         new Error(
           summary?.reason ?? 'The sealed server history is not in the store.',
         ),
+      )
+      this.tell(
+        {
+          kind: 'failed',
+          cause:
+            summary?.reason ?? 'The sealed server history is not in the store.',
+        },
+        'warning',
       )
       return
     }
@@ -237,13 +255,14 @@ export class NodeServerLearningSave {
   }
 
   /** Shows one refusal or notice that offers nothing to do. */
-  private tell(message: NodeServerSaveMessage): void {
+  private tell(
+    message: NodeServerSaveMessage,
+    severity: 'information' | 'warning' = 'information',
+  ): void {
     const words = describeNodeServerLearningSave(message)
-    void this.host
-      .notify('information', words.text, [])
-      .catch((error: unknown) => {
-        this.logFailure('server-run', 'save:notice', error)
-      })
+    void this.host.notify(severity, words.text, []).catch((error: unknown) => {
+      this.logFailure('server-run', 'save:notice', error)
+    })
   }
 
   /** Where the run's learning replay stands, for the item's words. */

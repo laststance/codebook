@@ -4,10 +4,12 @@ import { before, test } from 'node:test'
 import { StudyError } from '../errors'
 import { NodeServerLearningSave } from '../nodeServerLearningSave'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { createHarness } from './helpers'
 import { defer } from './utils/defer'
 import { HANDLER_SOURCE_TEXT } from './utils/nodeServerHistoryFixture'
+import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 import { realProcessStart } from './utils/realProcessStart'
 import { startHistoryServerRun } from './utils/startHistoryServerRun'
 
@@ -20,6 +22,8 @@ async function saveOverRun(
   context: Parameters<typeof startHistoryServerRun>[1],
   options: {
     answer?: () => Promise<string | undefined>
+    /** The action the learner clicks on a notice; none by default. */
+    noticeAction?: string
     repositoryOptions?: Parameters<typeof startHistoryServerRun>[2]
   } = {},
 ) {
@@ -46,7 +50,7 @@ async function saveOverRun(
     },
     notify: async (severity, text, actions) => {
       notified.push({ severity, text, actions })
-      return undefined
+      return options.noticeAction
     },
     materialRevision: () => undefined,
     open: async (studyId) => {
@@ -252,7 +256,7 @@ test('Save after the run ended asks nothing and says the chat explanation is not
 test('a complete capture with the explanation saved reads Server replay saved and opens the replay', async (context) => {
   // Arrange
   const { save, record, run, notified, opened, service, repository } =
-    await saveOverRun(context)
+    await saveOverRun(context, { noticeAction: 'Open replay' })
   await run.sendRequest('k1')
   run.pauseAt(0)
   run.pauseAt(1)
@@ -328,7 +332,12 @@ test('a complete capture with the explanation saved reads Server replay saved an
     ['Server replay saved.'],
   )
   assert.equal(save.item(record)?.text, '$(check) Learning saved · Open replay')
-  assert.deepEqual(opened, [])
+  await waitUntil(
+    () => opened.length > 0,
+    'the replay is opened',
+    READER_RESULT_BOUND_MS,
+  )
+  assert.deepEqual(opened, [studyId])
 })
 
 // protects=storage that could not start the history leaves the run running, the item names the cause and Save answers it; fails_when=Save stops the run or the cause is lost; no_claim=the wording of a full store
@@ -369,5 +378,88 @@ test('a seal that timed out reads Learning replay could not be saved in the item
   assert.equal(
     save.item(record)?.text,
     'Stopped · Learning replay could not be saved: timed out after 0.02 s.',
+  )
+})
+
+// protects=Save after a seal that timed out answers with a notice naming the cause, and a second click answers it again; fails_when=Save stays silent after the history failed; no_claim=the status item text
+test('Save after a seal that timed out tells the cause in a notice each time', async (context) => {
+  // Arrange
+  const { save, record, run, service, notified } = await saveOverRun(context)
+  service.nodeServerHistorySealBoundMs = 20
+  await run.sendRequest('k1')
+  const writer = record.nodeServer?.history?.writer
+  assert.ok(writer)
+  writer.seal = () => new Promise<never>(() => undefined)
+
+  // Act
+  await save.save(record)
+  await save.save(record)
+
+  // Assert
+  assert.deepEqual(notified, [
+    {
+      severity: 'warning',
+      text: 'Learning replay could not be saved: timed out after 0.02 s.',
+      actions: [],
+    },
+    {
+      severity: 'warning',
+      text: 'Learning replay could not be saved: timed out after 0.02 s.',
+      actions: [],
+    },
+  ])
+})
+
+// protects=Save whose sealed summary cannot be read answers with a notice naming why, not silence; fails_when=the unreadable summary only changes the status text; no_claim=which read error occurs
+test('Save whose sealed history summary cannot be read tells that the history is not in the store', async (context) => {
+  // Arrange
+  const { save, record, run, service, repository, notified } =
+    await saveOverRun(context)
+  await run.sendRequest('k1')
+  await service.stop({ instanceId: service.instanceId, runId: record.id })
+  const sealed = record.nodeServer?.history?.sealed
+  assert.ok(sealed)
+  sealed.summary = undefined
+  repository.serverHistories.summarize = () =>
+    Promise.reject(new Error('EIO: read failed'))
+
+  // Act
+  await save.save(record)
+
+  // Assert
+  assert.deepEqual(notified, [
+    {
+      severity: 'warning',
+      text: 'Learning replay could not be saved: The sealed server history is not in the store.',
+      actions: [],
+    },
+  ])
+})
+
+// protects=Save of another study while one is saved rejects the returned promise instead of throwing synchronously; fails_when=the call throws out of save(); no_claim=which study is saved first
+test('Save of another run while one is open rejects the promise and does not throw', async (context) => {
+  // Arrange
+  let release: (action: string | undefined) => void = () => undefined
+  const { save, record, run } = await saveOverRun(context, {
+    answer: () =>
+      new Promise<string | undefined>((resolve) => {
+        release = resolve
+      }),
+  })
+  await run.sendRequest('k1')
+  const first = save.save(record)
+  let second: Promise<void> | undefined
+
+  // Act
+  assert.doesNotThrow(() => {
+    second = save.save({ ...record, id: 'another-run' })
+  })
+  release(undefined)
+  await first
+
+  // Assert
+  await assert.rejects(
+    second!,
+    /Another learning session is being saved. Wait for its result./,
   )
 })

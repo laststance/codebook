@@ -20,6 +20,11 @@ export type NodeServerSaveMessage =
       moreCount: number
     }
   | { kind: 'explanation-missing' }
+  | {
+      /** The history failed or its sealed summary could not be read or verified; `cause` is the reason, without private paths. */
+      kind: 'failed'
+      cause: string
+    }
 
 /** The words of one message and the actions it offers; the question's Cancel is the modal dialog's own. */
 export type NodeServerSaveText = { text: string; actions?: readonly string[] }
@@ -69,5 +74,14 @@ export function describeNodeServerLearningSave(
         text: "Server replay saved; the chat's explanation is not saved yet.",
         actions: [NODE_LEARNING_SAVE_ACTION.openReplay],
       }
+    case 'failed': {
+      const cause = cutCauseForDisplay(message.cause)
+      // A failure already worded by the seal ('Learning replay could not be saved: …') is shown as it is, not prefixed twice.
+      return {
+        text: cause.startsWith('Learning replay could not be saved')
+          ? cause
+          : `Learning replay could not be saved: ${cause.replace(/\.$/, '')}.`,
+      }
+    }
   }
 }
