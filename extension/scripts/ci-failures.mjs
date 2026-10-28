@@ -70,7 +70,7 @@ function gh(args) {
   })
 }
 
-/** Lists the workflow runs of a pull request's head commit. @example runsOfPullRequest(144) // => [40604090330, …] */
+/** Lists the workflow runs of a pull request's head commit. @example runsOfPullRequest(144) // => [7101, 7102] */
 function runsOfPullRequest(number) {
   const head = gh([
     'pr',
