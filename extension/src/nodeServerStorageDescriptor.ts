@@ -82,9 +82,11 @@ export const nodeServerStorageDescriptor: HistoryStorageDescriptor<NodeServerHis
       accept: acceptNodeServerEntry,
       // Server entries are not citable until their learning material arrives.
       citableOf: () => undefined,
-      // A recording keeps what a summary counts: everything but output and the storage-only source texts.
+      // A recording keeps what a summary counts: everything but output and the storage-only source texts; a source entry stays only when its text was not stored, so the summary words it like the seal.
       keeps: (entry: NodeServerHistoryEntry) =>
-        entry.type !== 'output' && entry.type !== 'source',
+        entry.type === 'source'
+          ? entry.sourceUnavailable !== undefined
+          : entry.type !== 'output',
     },
     createWriter: (directory, header, onClosed, describeCause) =>
       new NodeServerHistoryWriter(directory, header, onClosed, describeCause),
@@ -108,7 +110,10 @@ export const nodeServerStorageDescriptor: HistoryStorageDescriptor<NodeServerHis
       const failure = entries.find((entry) => entry.type === 'request-failed')
       // A sealed history keeps its reasons as sealed (identical after a restart); any other is judged from its journal now.
       const reasons =
-        seal?.reasons ?? evaluateNodeServerCapture(header, entries)
+        seal?.reasons ??
+        evaluateNodeServerCapture(header, entries, {
+          interrupted: history.status === 'interrupted',
+        })
       const capture = capMissingList(reasons)
       const learning = evaluateNodeServerLearning(entries, undefined)
       const learningMissing = capMissingList(learning.missing)

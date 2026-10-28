@@ -18,6 +18,8 @@ export type NodeServerCaptureFacts = {
   appendFailure?: { lastEntry: string; cause: string }
   sizeLimitReached?: boolean
   captureBudgetExhausted?: boolean
+  /** Whether the journal is read as an interrupted history: no seal and no writer, so the missing `end` means the recording stopped without one. */
+  interrupted?: boolean
 }
 
 /**
@@ -50,6 +52,7 @@ function describeExit(
 /** The "No response was recorded" reason of a history with no terminal entry, or the request-failure one. */
 function noResponseReason(
   entries: readonly NodeServerHistoryEntry[],
+  interrupted: boolean,
 ): NodeServerSealReason | undefined {
   if (entries.some((entry) => entry.type === 'response')) return undefined
   const failed = entries.find((entry) => entry.type === 'request-failed')
@@ -60,8 +63,15 @@ function noResponseReason(
       text: `No response was recorded: the request failed with ${failed.code}.`,
     }
   const end = entries.find((entry) => entry.type === 'end')
-  // A history with no `end` (an append failed) says why in the append reason instead.
-  if (!end) return undefined
+  if (!end)
+    // An interrupted history ended with no answer and no `end`; a history whose append failed says why in the append reason instead.
+    return interrupted
+      ? {
+          code: CODES.noResponseStopped,
+          params: { interrupted: 'true' },
+          text: 'No response was recorded: the recording ended before the server answered.',
+        }
+      : undefined
   if (end.reason === 'stopped')
     return {
       code: CODES.noResponseStopped,
@@ -156,7 +166,10 @@ export function evaluateNodeServerCapture(
   facts: NodeServerCaptureFacts = {},
 ): NodeServerSealReason[] {
   const reasons: NodeServerSealReason[] = []
-  const noResponse = noResponseReason(entries)
+  const noResponse = noResponseReason(
+    entries,
+    facts.interrupted === true && !facts.appendFailure,
+  )
   if (noResponse) reasons.push(noResponse)
   reasons.push(
     ...stopReasons(
