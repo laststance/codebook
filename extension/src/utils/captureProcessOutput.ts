@@ -2,6 +2,7 @@ import type { ChildProcess } from 'node:child_process'
 import { StringDecoder } from 'node:string_decoder'
 
 import {
+  NODE_SERVER_OUTPUT_ROOT_HOLD_MS,
   PROCESS_OUTPUT_EVENT_LIMIT_CHARS,
   PROCESS_OUTPUT_LIMIT_BYTES,
 } from '../constants'
@@ -9,6 +10,7 @@ import { NANOSECONDS_PER_MILLISECOND } from '../runtimeSupport/constants'
 
 import { createOutputRedactor } from './createOutputRedactor'
 import { createRootHidingStage } from './createRootHidingStage'
+import type { RootHoldTimer } from './createRootHidingStage'
 import { keepUtf8Tail } from './keepUtf8Tail'
 import type { CauseRoots } from './sanitizeCause'
 
@@ -34,6 +36,18 @@ export type ProcessOutputOptions = {
   failurePrefix: string
   /** The window's private roots; when given, every channel hides them statefully before anything is redacted, cut, delivered or kept, so a root split over two chunks is still hidden. The raw announcement is unaffected. */
   privateRoots?: CauseRoots
+  /** Runs a callback once after a delay and returns its canceller; the timed release of text held for a possible root uses it. Defaults to an unref'd real timer; tests inject a hand-driven one. */
+  scheduleRootRelease?: RootHoldTimer['schedule']
+}
+
+/** Real-timer {@link RootHoldTimer}`.schedule`: unref'd so a pending release never keeps the process alive. */
+const scheduleWithRealTimer: RootHoldTimer['schedule'] = (
+  callback,
+  delayMs,
+) => {
+  const timeout = setTimeout(callback, delayMs)
+  timeout.unref()
+  return (): void => clearTimeout(timeout)
 }
 
 /** The captured output of one owned process. */
@@ -132,7 +146,12 @@ export function captureProcessOutput(
     const decoder = new StringDecoder('utf8')
     const redactor = createOutputRedactor()
     const rootStage = options.privateRoots
-      ? createRootHidingStage(options.privateRoots)
+      ? createRootHidingStage(options.privateRoots, {
+          holdMs: NODE_SERVER_OUTPUT_ROOT_HOLD_MS,
+          schedule: options.scheduleRootRelease ?? scheduleWithRealTimer,
+          // A held start released by time follows the same path as any root-hidden text.
+          release: (text) => acceptRedacted(channel, redactor.write(text)),
+        })
       : undefined
     const accept = (text: string): void => {
       if (text && Buffer.byteLength(announcement) < PROCESS_OUTPUT_LIMIT_BYTES)
