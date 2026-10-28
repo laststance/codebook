@@ -1704,7 +1704,7 @@ test('Open replay refused beside the Cursor Agent is told in Output and the retr
   }
 })
 
-// protects=one learner Open replay refused because Cursor's main editor reports no keyboard focus: one five-second wait and one presentation:focus-unreported entry, not a second wait and entry from the reopen of the Study composition; fails_when=leaving the empty summary composition reopens the reader, which meets the same guard and logs the entry again (N60, two entries about 5 s apart); no_claim=that the Study pane is shown again after the refusal
+// protects=one learner Open replay refused because Cursor's main editor reports no keyboard focus: one five-second wait and one presentation:focus-unreported entry, and the reader left out of the empty summary composition; fails_when=leaving the empty summary composition reopens the reader, which meets the same guard and logs the entry again (N60, two entries about 5 s apart), or the refusal skips that leave and the reader stays in an empty summary composition; no_claim=that the Study pane is created again before the learner asks again (the next selection or Open arranges it)
 test('Open replay refused for an unreported keyboard focus waits for the report once and writes one focus-unreported entry in Output', async (context) => {
   // Arrange
   const harness = await workspaceHarness()
@@ -1768,6 +1768,9 @@ test('Open replay refused for an unreported keyboard focus waits for the report 
       logged.filter((entry) => entry.surface === 'open:test-replay').length,
       1,
     )
+    // The refusal leaves the window as the entry found it: no empty summary composition stands, without a second wait.
+    assert.equal(readerSeams(harness).isSummaryArrangement(), false)
+    assert.equal(harness.summary.visible, false)
   } finally {
     resetFakeClock(context)
     await harness.close()

@@ -8631,6 +8631,8 @@ export function readerSeams(harness: {
     isSourceShown: (): boolean => reader['sourceReady'](),
     isRecordingActive: (): boolean => reader['recordingActive'],
     isLiveArrangement: (): boolean => reader['liveComposition'],
+    /** Says whether the reader stands in the summary composition (the Learning summary in the chat's place, the Study pane closed), as an entry of a test replay leaves it. @example readerSeams(harness).isSummaryArrangement() // => false after a refused entry left it */
+    isSummaryArrangement: (): boolean => reader['summaryComposition'],
     /** Says whether an agent's next request would read the keyboard's place as the learner's own (no Codebook pane active): the reading of rows 613 and 654 that decides whether the request gives the keyboard back or keeps it and tells where it is. @example readerSeams(harness).knowsLearnersPlace() // => false right after the reader's render of a pause gave the captured source the keyboard */
     knowsLearnersPlace: (): boolean => reader['knowsLearnersPlace'](undefined),
     /** Reads the main editor's layout without borrowing focus, as the presentation state's confirmation does ({@link StudyWorkspace.readPassivePresentationLayout}): the layout, or `undefined` when the read cannot tell that the main editor answered. @example await readerSeams(harness).readPassiveLayout() // => undefined while VS Code's floating window of text editors is the focused one */
@@ -8642,6 +8644,16 @@ export function readerSeams(harness: {
       Array.from(
         (await reader['readMainEditorGrid'](undefined, () => {})).groups,
         (group) => group.viewColumn,
+      ),
+    /** Measures the main editor as {@link measureMainEditorGrid} does, with a caller that refuses the announced focus before the first group is focused, as the reader's own focus watch does when the learner left or a borrow is pending. @example await readerSeams(harness).measureMainEditorGridRefusedBeforeFocus() // rejects with the caller's refusal */
+    measureMainEditorGridRefusedBeforeFocus: (): Promise<unknown> =>
+      reader['readMainEditorGrid'](
+        undefined,
+        () => {},
+        undefined,
+        () => {
+          throw new Error('refused before the focus command')
+        },
       ),
     /** Makes one checkpoint of a run, forced as Retry storage and retirement force it. */
     checkpoint: (

@@ -8633,6 +8633,79 @@ test("a recording opened beside Cursor's Agent chat that takes the keyboard back
   }
 })
 
+// protects=a replay opened beside Cursor's Agent chat whose focus is taken back right after the first group's focus command while the learner moves to their own tab in the first group before the command answers: the learner's tab keeps the keyboard and the open is refused as a learner change; fails_when=the pane's moment of reported focus (the latch) is taken for the main editor's focus report and the arrangement goes on over the learner's tab, or the refusal reads "did not report the keyboard focus within 5 s"; no_claim=the real Cursor's event order for that click
+test("a recording opened beside Cursor's Agent chat is refused as a learner change when the learner moves to their own tab while the pane's focus was reported for a moment", async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  harness.takesKeyboardBackFromFirstGroupBesideChat()
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    harness.focusMutableDraft('auth.ts', 2)
+    chat.focusTab()
+    await harness.reader.readPresentationState()
+    const focus = harness.holdNextPrimaryFocusResponse()
+
+    // Act: the first group's focus command has been applied (the pane reported itself active) and its answer is held while the learner opens their own tab in the first group.
+    harness.controller.command({
+      studyId: harness.studyId,
+      action: 'open',
+      expectedRevision: harness.controller.state().revision,
+    })
+    await focus.started
+    const learnerTab = harness.addOpaqueTab('Cursor Settings', 1)
+    harness.focusOpaqueTab(learnerTab)
+    focus.release()
+    await harness.controller.settle()
+
+    // Assert
+    const refused = await harness.reader.readPresentationState()
+    assert.equal(refused.layoutConfirmed, false)
+    assert.doesNotMatch(
+      harness.controller.state().reason ?? '',
+      /did not report the keyboard focus/,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=a main editor measurement refused before the first group is focused (the learner left, or a borrow is pending) beside Cursor's Agent chat: the pane view-state watches of the unreported-focus latch are not registered, so no listener stays on the Application or Study pane; fails_when=the watches are created before that refusal and never disposed (the listener count stays above its start); no_claim=the disposal of the watches after a wait that ran
+test("a main editor measurement refused before the first group is focused leaves no view-state listener on the Codebook panes beside Cursor's chat", async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    // The learner's front tab of the source group is another file than the captured source, so no captured source is borrowed.
+    harness.focusMutableDraft('auth.ts', 2)
+    chat.focusTab()
+    await harness.reader.readPresentationState()
+    const listenersBefore = harness.focusListenerCount()
+
+    // Act
+    await assert.rejects(
+      readerSeams(harness).measureMainEditorGridRefusedBeforeFocus(),
+      { message: 'refused before the focus command' },
+    )
+
+    // Assert
+    assert.equal(harness.focusListenerCount(), listenersBefore)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=an agent's replay opened from Cursor's chat while the Study workspace is open: the recording is read, its two panes are arranged and confirmed, and the chat has the keyboard again; fails_when=the entry measures the main editor by focusing its first group, which shows the Application pane, Cursor reports no focus of a pane beside the chat, the wait ends after five seconds and the recording fails to load with "The Codebook panes were not arranged: the main editor did not report the keyboard focus within 5 s …"; why_new=Cycle 0045 cause 12 (e), second native result (obs15 R: `codebook_playback` open made with the caret in the chat on the three-pane layout; 3.7 s later the state read open, unconfirmed, "The native editor layout receipt no longer matches the Study panes. …", and the recording was never read); seam=the recorded reader harness with a separate editor part whose group the editor names, the fake Cursor's unreported pane focus and stale group name
 for (const named of ["the chat's group", 'the captured source'] as const)
   test(`a recording opened from Cursor's chat while the Study workspace is open is arranged and confirmed, and the chat gets the keyboard back, while the editor names ${named}`, async () => {
