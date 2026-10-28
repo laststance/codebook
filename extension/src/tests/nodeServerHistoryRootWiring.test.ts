@@ -116,3 +116,44 @@ test('a stop with many variables reads the private roots once per run, not once 
   assert.equal(files.includes(cutWorkspace), false)
   assert.equal(files.includes('at <storage>… [truncated]'), true)
 })
+
+// protects=the live journal of a node-server run hides private roots with the run's frozen snapshot, so its output events make the service read its roots no more often than none would, and a workspace path in output still reads as a placeholder; fails_when=the journal's sanitizer asks the service for its roots per event (30 more reads for 30 chunks); no_claim=the cost of one read and the history sink's own reads
+test('the live journal reads the private roots once per run, not once per output event', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const opened = await openServerRepository(context)
+  const { service, record, run } = await startHistoryServerRun(
+    harness,
+    context,
+    { repository: opened.repository },
+  )
+  let rootsReads = 0
+  const read = Object.getOwnPropertyDescriptor(
+    Object.getPrototypeOf(service),
+    'causeRoots',
+  )?.get
+  Object.defineProperty(service, 'causeRoots', {
+    get() {
+      rootsReads++
+      return read?.call(service)
+    },
+  })
+  const workspace = service.environment.workspace
+
+  // Act
+  for (let sequence = 1; sequence <= 30; sequence++)
+    run.record('node-server.output', {
+      sequence,
+      elapsedMs: sequence,
+      channel: 'stdout',
+      text: `serving ${workspace}/src/server.ts\n`,
+    })
+  const readsForOutput = rootsReads
+  const journalText = JSON.stringify(record.nodeEvents)
+
+  // Assert
+  assert.equal(readsForOutput, 0)
+  assert.equal(journalText.includes(workspace), false)
+  assert.equal(journalText.includes('serving <storage>/src/server.ts'), true)
+})

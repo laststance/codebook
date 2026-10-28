@@ -550,12 +550,16 @@ export class StudyService {
    * Words a failure for the places a run keeps it, once, at the moment it is assigned: private roots replaced ({@link sanitizeCause}) and the whole bounded to {@link MAX_UI_TEXT_CHARS}; every surface then shows the same value, cut for display where it is shown ({@link cutCauseForDisplay}).
    * A cause past the bound is cut between characters, never inside a surrogate pair, and says it was cut ({@link cutTextToFit}, F258).
    * @param error - What was thrown, or a cause already in words.
+   * @param roots - The private roots to hide; a node-server run passes its frozen snapshot, so its journal pays no root read per event. The service's current roots otherwise.
    * @returns The sanitized, bounded cause.
    * @example this.sanitizedCause(new Error("ENOSPC, write '/Users/ada/.learning/x'")) // => "ENOSPC, write '<storage>/x'"
    */
-  private sanitizedCause(error: unknown): string {
+  private sanitizedCause(
+    error: unknown,
+    roots: CauseRoots = this.causeRoots,
+  ): string {
     return cutTextToFit(
-      sanitizeCause(error, this.causeRoots),
+      sanitizeCause(error, roots),
       (candidate) => candidate.length <= MAX_UI_TEXT_CHARS,
     )
   }
@@ -4856,7 +4860,7 @@ export class StudyService {
         'The owned Node server adapter is unavailable.',
       )
     if (this.stopping || record.stopping) return
-    // One snapshot of the private roots for this run, read once: every path of the run that hides roots (output stage, response sanitizer, history) uses it, so they agree and no text pays a realpath read. A folder added mid-run is hidden from the next run on.
+    // One snapshot of the private roots for this run, read once: every path of the run that hides roots (output stage, response sanitizer, live journal, history) uses it, so they agree and no text pays a realpath read. A folder added mid-run is hidden from the next run on.
     const runRoots = this.causeRoots
     await this.beginNodeServerHistory(record, runRoots)
     // The history may have been started while a stop arrived: the stop path seals it, and no server launches.
@@ -4864,7 +4868,7 @@ export class StudyService {
     const run = await this.environment.createNodeServerRun(
       state.prepared.configuration,
       createNodeServerJournal(record.nodeEvents ?? [], {
-        sanitize: (text) => this.sanitizedCause(text),
+        sanitize: (text) => this.sanitizedCause(text, runRoots),
         onEvent: (type, detail) =>
           this.writeNodeServerEventLine(record, type, detail),
       }),
