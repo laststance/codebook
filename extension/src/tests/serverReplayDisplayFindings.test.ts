@@ -63,7 +63,7 @@ test('a request failure code with a bidirectional control reaches the library ro
   // Act
   const shown = stripNodeHistorySummaryTexts({
     ...summary,
-    requestFailureCode: 'REQUEST‮FAILED',
+    requestFailureCode: 'REQUEST\u202EFAILED',
   })
 
   // Assert
