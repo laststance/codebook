@@ -11,10 +11,7 @@ import {
   NODE_SERVER_REPLAY_TEXT,
 } from './describeNodeServerReplay'
 import { formatEventSeconds } from './formatEventSeconds'
-import {
-  indexNodeTestOutput,
-  type NodeTestOutputIndex,
-} from './indexNodeTestOutput'
+import { type NodeTestOutputIndex } from './indexNodeTestOutput'
 import {
   leftOutLines,
   type NodeTestApplicationView,
@@ -190,16 +187,4 @@ export function projectServerApplication(
       ? { end: NODE_SERVER_REPLAY_TEXT.endedEarly }
       : {}),
   }
-}
-
-/**
- * Reads a server replay's output once for {@link projectServerApplication}.
- * @param model - The replay model.
- * @returns The output index over the model's output events.
- * @example const index = indexServerOutput(model)
- */
-export function indexServerOutput(
-  model: ServerReplayModel,
-): NodeTestOutputIndex {
-  return indexNodeTestOutput(model.events)
 }

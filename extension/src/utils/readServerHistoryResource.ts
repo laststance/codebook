@@ -1,3 +1,4 @@
+import { NODE_SERVER_PROFILE } from '../constants'
 import { StudyError } from '../errors'
 import type { NodeServerHistoryEntry } from '../nodeServerHistorySchemas'
 import type { NodeServerHistoryTypes } from '../nodeServerHistoryTypes'
@@ -82,7 +83,9 @@ function readServerEventsPage(
   through: number | undefined,
   page: string | undefined,
 ): ResourceContent {
-  const last = through ?? entries.at(-1)?.sequence ?? 0
+  // A pin past the journal's end (or beyond the safe integers) is the journal's own end: the pin never names what does not exist.
+  const end = entries.at(-1)?.sequence ?? 0
+  const last = Math.min(through ?? end, end)
   const events = entries
     .filter((entry) => entry.sequence <= last)
     .flatMap((entry) => leanServerEvent(entry) ?? [])
@@ -97,7 +100,7 @@ function serverVerdicts(
   sealed: boolean,
 ) {
   return {
-    profile: 'node-server' as const,
+    profile: NODE_SERVER_PROFILE,
     // Saved: the history is sealed. Capture complete: no partial reason. Learning complete: the material cites the request, a hit of every reached stop and the terminal entry.
     saved: sealed,
     captureComplete: summary?.captureComplete ?? false,

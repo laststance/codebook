@@ -12271,7 +12271,7 @@ export class StudyWorkspace {
     const failure = describeNodeLearningSave({
       kind: 'open-failed',
       // A server replay that cannot open is worded as one, never as a test replay.
-      ...(!summary && serverSummary ? { profile: 'node-server' as const } : {}),
+      ...(!summary && serverSummary ? { profile: NODE_SERVER_PROFILE } : {}),
       title: summary
         ? [summary.testFile, ...(summary.testTitles ?? [])].join(' › ')
         : serverSummary

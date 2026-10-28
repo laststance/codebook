@@ -2,10 +2,8 @@ import {
   buildServerReplayModel,
   type ServerReplayModel,
 } from '../../utils/buildServerReplayModel'
-import {
-  indexServerOutput,
-  projectServerApplication,
-} from '../../utils/projectServerApplication'
+import { indexNodeTestOutput } from '../../utils/indexNodeTestOutput'
+import { projectServerApplication } from '../../utils/projectServerApplication'
 
 import { openServerRepository } from './nodeServerHistoryFixture'
 import { writeServerHistory } from './sealedServerHistory'
@@ -51,8 +49,13 @@ export function viewAt(
   reason?: string,
 ) {
   const selected = model.events[model.indexBySequence.get(sequence)!]
-  return projectServerApplication(model, indexServerOutput(model), selected, {
-    generation: 1,
-    ...(reason ? { noResponseReason: reason } : {}),
-  })
+  return projectServerApplication(
+    model,
+    indexNodeTestOutput(model.events),
+    selected,
+    {
+      generation: 1,
+      ...(reason ? { noResponseReason: reason } : {}),
+    },
+  )
 }
