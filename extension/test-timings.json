@@ -1099,6 +1099,9 @@
     "nodeHistoryMaterialLock.test.js": {
       "totalMs": 378
     },
+    "nodeHistoryMaterialLockWindow.test.js": {
+      "totalMs": 147
+    },
     "nodeHistoryPlaybackController.test.js": {
       "totalMs": 362
     },
@@ -1128,11 +1131,17 @@
     "nodeServerHistoryJournalIntegrity.test.js": {
       "totalMs": 434
     },
+    "nodeServerHistoryQueueBytes.test.js": {
+      "totalMs": 230
+    },
     "nodeServerHistoryResources.test.js": {
       "totalMs": 2706
     },
     "nodeServerHistorySeal.test.js": {
       "totalMs": 1909
+    },
+    "nodeServerHistorySink.test.js": {
+      "totalMs": 530
     },
     "nodeServerHistoryStore.test.js": {
       "totalMs": 175
@@ -1142,6 +1151,27 @@
     },
     "nodeServerHistoryWriterStates.test.js": {
       "totalMs": 290
+    },
+    "nodeServerLearningSave.test.js": {
+      "totalMs": 1292
+    },
+    "nodeServerMcpPublication.test.js": {
+      "totalMs": 1149
+    },
+    "nodeServerRunHistory.test.js": {
+      "totalMs": 203
+    },
+    "nodeServerRunRealHistory.test.js": {
+      "totalMs": 427
+    },
+    "nodeServerRunSeal.test.js": {
+      "totalMs": 739
+    },
+    "nodeServerSaveDocs.test.js": {
+      "totalMs": 45
+    },
+    "nodeServerSealPathBound.test.js": {
+      "totalMs": 227
     },
     "nodeStopSourceMatches.test.js": {
       "totalMs": 189
@@ -1820,6 +1850,9 @@
     "serverBundle.test.js": {
       "totalMs": 29
     },
+    "serverHistoryResourceFindings.test.js": {
+      "totalMs": 209
+    },
     "serverHistoryRoutingFindings.test.js": {
       "totalMs": 377
     },
@@ -1829,8 +1862,14 @@
     "serverReplayApplicationFindings.test.js": {
       "totalMs": 417
     },
+    "serverReplayDisplayFindings.test.js": {
+      "totalMs": 182
+    },
     "serverReplayPresentation.test.js": {
       "totalMs": 408
+    },
+    "serverReplayTruthFindings.test.js": {
+      "totalMs": 142
     },
     "service.test.js": {
       "totalMs": 3052
