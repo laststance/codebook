@@ -223,7 +223,6 @@ export const UNSAVED_STUDY_HANDED_OVER_REASON =
 export const STUDY_REMOVAL_REFUSALS = {
   nothingChosen: 'Choose a saved study to delete.',
   nodeHistory: 'Test replays cannot be deleted here yet.',
-  serverHistory: 'Server replays cannot be deleted here yet.',
   runNotStopped: 'Stop the run before deleting its study.',
   recordingOpen:
     'Choose Overview or Live to leave Recording before deleting this study.',
@@ -241,8 +240,6 @@ export const STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH: Record<
     'This window has no Trash, so Codebook cannot delete a saved study here. Choose a saved study, then open Remove by hand to list its files.',
   nodeHistory:
     'Codebook cannot list the files of a test replay for removal by hand yet.',
-  serverHistory:
-    'Codebook cannot list the files of a server replay for removal by hand yet.',
   runNotStopped: "Stop the run before removing its study's files by hand.",
   recordingOpen:
     "Choose Overview or Live to leave Recording before removing this study's files by hand.",
@@ -251,6 +248,12 @@ export const STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH: Record<
   newerFormat:
     'This study was saved by a newer Codebook and is kept as it is. Update the extension to list its files for removal by hand.',
 }
+/** Why a server replay cannot be removed from Saved studies, as a window with a Trash and one without word it; a test replay's sentences are {@link STUDY_REMOVAL_REFUSALS}'s `nodeHistory`. */
+export const STUDY_REMOVAL_SERVER_HISTORY_REFUSAL = {
+  withTrash: 'Server replays cannot be deleted here yet.',
+  withoutTrash:
+    'Codebook cannot list the files of a server replay for removal by hand yet.',
+} as const
 /** What Saved studies answers a request for a study's files with in a window without a Trash; the "Remove by hand" disclosure shows it above the files the answer lists, and the reader deletes nothing itself. */
 export const STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE =
   'This window has no Trash, so Codebook cannot delete a saved study here. Remove these files by hand, then press Retry storage / refresh.'

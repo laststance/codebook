@@ -80,6 +80,7 @@ import {
   STUDY_REFRESH_INTERVAL_MS,
   STUDY_REMOVAL_REFUSALS,
   STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH,
+  STUDY_REMOVAL_SERVER_HISTORY_REFUSAL,
   STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE,
   STUDY_SOURCE_SCHEME,
   SUMMARY_CHOICE_DROPPED_NOTICE_PREFIX,
@@ -24313,7 +24314,9 @@ export class StudyWorkspace {
         this.nodeServerHistoryCatalog.some(
           (history) => history.studyId === studyId,
         ),
-        sentences.serverHistory,
+        this.studyRemovalAvailability() === 'no-trash'
+          ? STUDY_REMOVAL_SERVER_HISTORY_REFUSAL.withoutTrash
+          : STUDY_REMOVAL_SERVER_HISTORY_REFUSAL.withTrash,
       ],
       [
         !this.catalog.some((entry) => entry.id === studyId),

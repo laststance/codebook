@@ -1378,7 +1378,9 @@ function studyClient(
       [
         chosen.format === 'node-test-history' &&
           chosen.profile === 'node-server',
-        sentences.serverHistory,
+        message.removalWithoutTrash
+          ? options.serverHistoryRefusal.withoutTrash
+          : options.serverHistoryRefusal.withTrash,
       ],
       // The host moves nothing of a study a newer Codebook saved: which files that format keeps is not known here.
       [chosen.format === 'newer', sentences.newerFormat],

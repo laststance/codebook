@@ -13,6 +13,7 @@ import {
   PRESENTATION_FOCUS_ACTIONS,
   STUDY_REMOVAL_REFUSALS,
   STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH,
+  STUDY_REMOVAL_SERVER_HISTORY_REFUSAL,
   STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE,
 } from '../constants'
 import { NODE_TEST_REPLAY_TEXT } from '../utils/describeNodeTestReplay'
@@ -168,6 +169,8 @@ export const STUDY_UI_OPTIONS = {
   studyRemovalRefusals: STUDY_REMOVAL_REFUSALS,
   // Stand where the reasons above stand in a window with a Trash: a window without one deletes nothing and lists the chosen study's files under "Remove by hand".
   studyRemovalRefusalsWithoutTrash: STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH,
+  // Why a server replay cannot be deleted, in the words of a window with a Trash and of one without.
+  serverHistoryRefusal: STUDY_REMOVAL_SERVER_HISTORY_REFUSAL,
   // The note under the Saved studies list for a chosen entry that cannot be opened, and for one whose catalog checkpoint can be repaired: each says what is wrong and what the learner can still do in a window with a Trash and in one without.
   studyNotes: {
     unopenable: {
