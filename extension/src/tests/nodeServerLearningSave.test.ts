@@ -454,12 +454,14 @@ test('Save of another run while one is open rejects the promise and does not thr
   assert.doesNotThrow(() => {
     second = save.save({ ...record, id: 'another-run' })
   })
+  // The rejection is observed before the first save is released, so it is never unhandled while that save's I/O runs.
+  const secondRejection = assert.rejects(
+    second!,
+    /Another learning session is being saved. Wait for its result./,
+  )
   release(undefined)
   await first
 
   // Assert
-  await assert.rejects(
-    second!,
-    /Another learning session is being saved. Wait for its result./,
-  )
+  await secondRejection
 })
