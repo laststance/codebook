@@ -161,6 +161,7 @@ import type { NodeTestExecutionPlan } from './utils/planNodeTestExecution'
 import { prepareNodeServerStudy } from './utils/prepareNodeServerStudy'
 import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
 import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy'
+import { projectNodeServerHistory } from './utils/projectNodeServerHistory'
 import { projectNodeServerState } from './utils/projectNodeServerState'
 import {
   projectNodeTestOutcome,
@@ -2255,6 +2256,22 @@ export class StudyService {
   }
 
   /**
+   * Says whether a server run has a history whose learning material does not cover it yet: recording or sealed, with a request sent, and not `complete` in learning coverage.
+   * @param record - The server run.
+   * @returns `true` while the chat can still save material for the history.
+   * @example this.nodeServerLearningIncomplete(record) // => true for a sealed history with no material
+   */
+  private nodeServerLearningIncomplete(record: StudyRecord): boolean {
+    const history = record.nodeServer?.history
+    if (!history || history.status === 'failed') return false
+    // A run that never sent its request leaves no history to explain.
+    if (!record.nodeServer?.run?.view().request) return false
+    return history.sealed
+      ? history.sealed.summary?.learningCoverage !== 'complete'
+      : true
+  }
+
+  /**
    * Reads a server history's verdicts again after its material was saved, so the run resource and Save read the coverage of the latest material; a run this window does not hold, or one not sealed yet, keeps nothing to refresh.
    * @param studyId - The history the material explains.
    * @example await this.refreshNodeServerSummary(studyId)
@@ -2418,7 +2435,7 @@ export class StudyService {
     if (record.profile === NODE_SERVER_PROFILE)
       throw new StudyError(
         'EVIDENCE_UNAVAILABLE',
-        'Server stops are explained in the chat: read nodeServer.pause in the run resource (path, line, source hash and the captured facts) and the native debugger, then continue with participants.server.continueArguments. codebook_explain and codebook_reveal take only a repository-browser snapshot, and server runs are not saved yet.',
+        'Server stops are explained in the chat: read nodeServer.pause in the run resource (path, line, source hash and the captured facts) and the native debugger, then continue with participants.server.continueArguments. codebook_explain and codebook_reveal take only a repository-browser snapshot, and a server explanation is saved after the run ends through codebook_explain_node_history (codebook://help/node-server, section save).',
       )
     const runtime = record.runtime?.view()
     for (const snapshot of runtime?.snapshots ?? []) {
@@ -2924,9 +2941,17 @@ export class StudyService {
       holdsHistory ? 'read-history' : undefined,
     ].filter((value) => value !== undefined)
     // After a stop whose release failed, only the stop is offered again (F91, D18).
-    const nextActions =
-      server?.nextActions ??
-      (record.cleanupError && !record.stopped ? ['stop'] : availableActions)
+    const nextActions = server
+      ? [
+          ...server.nextActions,
+          // A server history whose learning material does not yet cover it asks for codebook_explain_node_history, as a test run's does.
+          ...(this.nodeServerLearningIncomplete(record)
+            ? ['save-node-learning']
+            : []),
+        ]
+      : record.cleanupError && !record.stopped
+        ? ['stop']
+        : availableActions
     const material = {
       instanceId: this.instanceId,
       runId: record.id,
@@ -3277,6 +3302,12 @@ export class StudyService {
       nodeServer: server.nodeServer && {
         ...server.nodeServer,
         configurationHash: prepared?.configurationHash,
+        ...projectNodeServerHistory({
+          studyId: `${this.instanceId}_${record.id}`,
+          recorder: record.nodeServer.history,
+          unavailable: record.nodeServer.historyUnavailable,
+          historyUri: `codebook://node-history/${this.instanceId}_${record.id}`,
+        }),
       },
       manifestUri: prepared ? this.uri(record.id, 'manifest') : undefined,
       manifestHash: prepared?.configurationHash,

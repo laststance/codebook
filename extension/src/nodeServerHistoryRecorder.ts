@@ -107,6 +107,12 @@ export class NodeServerHistoryRecorder {
     }
   }
 
+  /** Why the history stopped taking evidence while the run lives (a refused or failed append, a fault of the sink), without private paths; `undefined` while it writes. */
+  get appendFailure(): string | undefined {
+    const failure = this.writer.appendFailure
+    return failure ? this.input.describeCause(failure) : undefined
+  }
+
   /** Whether the history still takes entries. */
   get isRecording(): boolean {
     return this.status === 'recording'

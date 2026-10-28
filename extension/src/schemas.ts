@@ -14,10 +14,9 @@ import {
 } from './constants'
 import { learningSummarySchema } from './learningSummarySchemas'
 import { studyIdSchema } from './legacyStudySchemas'
+import { nodeHistoryLearningMaterialContentSchema } from './nodeHistoryLearningSchemas'
 import { nodeServerConfigSchema } from './nodeServerConfigSchemas'
-import { nodeServerLearningMaterialContentSchema } from './nodeServerLearningSchemas'
 import { nodeTestConfigSchema } from './nodeTestConfigSchemas'
-import { nodeTestLearningMaterialContentSchema } from './nodeTestHistorySchemas'
 import {
   inspectionPathSchema,
   retainedRepositoryConfigSchema,
@@ -135,11 +134,7 @@ export const explainSchema = z.strictObject({
 export const explainNodeHistorySchema = z.strictObject({
   studyId: studyIdSchema,
   expectedRevision: z.number().int().nonnegative(),
-  // One tool saves the learning material of either history profile: the node-test content cites stops, outputs and the result; the node-server content cites the request, stops, outputs, the response or the request failure. The service parses it again with the schema of the profile its study id resolves to, so a refusal names the profile's own element.
-  content: z.union([
-    nodeTestLearningMaterialContentSchema,
-    nodeServerLearningMaterialContentSchema,
-  ]),
+  content: nodeHistoryLearningMaterialContentSchema,
 })
 export type StartIntent = z.infer<typeof startIntentSchema>
 export type StartInput = z.infer<typeof startSchema>

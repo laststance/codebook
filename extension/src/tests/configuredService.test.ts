@@ -2616,7 +2616,7 @@ test('configured help names the declared, the requested and the bound place, say
     .parse(JSON.parse(help.text))
   assert.equal(
     contract.entry,
-    'API 1.8, extension 0.2.0 or later. Read actual workspace source and publish an immutable source-only article first. Use its default repository/<bookId>/<nodeId> identity, exact revision, selected citation, path/hash and one-based source line/column. Leave learningItemId absent to preserve the article identity.',
+    'API 1.9, extension 0.2.0 or later. Read actual workspace source and publish an immutable source-only article first. Use its default repository/<bookId>/<nodeId> identity, exact revision, selected citation, path/hash and one-based source line/column. Leave learningItemId absent to preserve the article identity.',
   )
   assert.equal(
     (contract.sequence[2] ?? '').includes(
@@ -4472,7 +4472,7 @@ test('Node test learning material whose observed step has no reference is refuse
   assert.equal(refused.isError, true)
   assert.equal(
     toolText(refused),
-    'MCP error -32602: Input validation error: Invalid arguments for tool codebook_explain_node_history: content.steps[0] (read) is observed and has no reference. Give it the reference of a stop, an output or the result of this history ({type, sequence}, with sourceHash for a stop and channel for an output), or label it unknown. at content.steps[0].reference',
+    'MCP error -32602: Input validation error: Invalid arguments for tool codebook_explain_node_history: content.steps[0] (read) is observed and has no reference. Give it the reference of an entry of this history ({type, sequence}, with sourceHash for a stop and channel for an output): node-test cites stops, outputs and the result, node-server the request, stops, outputs, the response or the request failure; or label it unknown. at content.steps[0].reference',
   )
 })
 
@@ -4513,7 +4513,7 @@ test('the input schemas of codebook_explain and codebook_explain_node_history sa
   )
   assert.equal(
     referenceDescription('codebook_explain_node_history', 'content'),
-    'Required for an observed or source-derived step: a stop, an output or the result of this history by its sequence number (a stop with its sourceHash, an output with its channel); omit it only for an unknown step.',
+    'Required for an observed or source-derived step: an entry of this history by its sequence number. node-test: a stop (with its sourceHash), an output (with its channel) or the result. node-server: the request, a stop (with its sourceHash), an output (with its channel), the response or the request failure. Omit it only for an unknown step.',
   )
 })
 
@@ -4655,7 +4655,7 @@ test('API 1.8 discovery exposes the bounded configured profile and its executabl
     ),
     help = await readResource(service, 'codebook://help/repository-browser')
   // Assert
-  assert.equal(status.apiVersion, '1.8')
+  assert.equal(status.apiVersion, '1.9')
   assert.ok(profile && 'requiresConfiguration' in profile)
   assert.equal(profile.requiresConfiguration, true)
   assert.equal(profile.minimumExtensionVersion, '0.2.0')

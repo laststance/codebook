@@ -149,6 +149,11 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
     return operation
   }
 
+  /** The first failure that ended the timeline, if any; read by the run's resource to report a history that is failing while the run lives. @example writer.appendFailure?.message */
+  get appendFailure(): Error | undefined {
+    return this.failure
+  }
+
   /**
    * Marks the writer failed without an append having failed: a producer that met a fault of its own (a sink that threw, an entry it could not place) says so, so no later entry follows the gap and the seal reads partial with this cause. The mark takes its place in the queue: entries accepted before it are still written.
    * @param error - What went wrong; the first failure stands.

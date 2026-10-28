@@ -17,6 +17,7 @@ import {
 } from './constants'
 import { ERROR_RECOVERY, type ErrorCode } from './errors'
 import { nodeServerConfigSchema } from './nodeServerConfigSchemas'
+import { nodeServerSaveHelp } from './nodeServerSaveHelp'
 
 /** The start every sample shares: values that come from another answer are written as placeholders naming that answer, and a test replaces them before it parses each sample with {@link nodeServerConfigSchema}. */
 function sampleStart(configuration: Record<string, unknown>) {
@@ -184,6 +185,7 @@ export function nodeServerHelp() {
       'Report the response as observed only from nodeServer.response (status, content type and body) after the run reads responded; a failure or a learner pause is reported as it is.',
       'codebook_stop releases the server and its debugger; read the run until it reads stopped. A stopped run frees the port.',
     ],
+    save: nodeServerSaveHelp(),
     samples: NODE_SERVER_HELP_SAMPLES,
     supportedShape: [
       "The entry is a .ts, .mts, .cts, .js, .mjs or .cjs file run by `node`, optionally through the repository's own tsx (loader tsx for TypeScript, the default for a TypeScript entry; node for JavaScript).",
@@ -206,7 +208,7 @@ export function nodeServerHelp() {
       `At most ${CONFIGURED_OBSERVATION_LIMIT} stops and ${NODE_SERVER_REQUEST_CAPTURE_LIMIT} captured pauses per request; port ${NODE_SERVER_PORT_MIN} to ${NODE_SERVER_PORT_MAX}.`,
       `The target's own clocks (its request deadlines and timeouts) keep running while the server is paused, but Codebook's REQUEST_TIMEOUT counts running time only (${NODE_SERVER_REQUEST_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s, paused time excluded): a long pause can change the application's answer, a timeout or a 500 for example, which is not the normal path. A run whose request still waits at the run deadline ends with RUNTIME_FAILED.`,
       "Use a local or test database: a state-changing request really changes what the repository's server is configured to use.",
-      'Server runs are not saved yet: no replay, no saved study and no learning save exist for them.',
+      "A server run is saved as a Server replay (the learner's Save learning replay, or codebook_explain_node_history): see the save section. A run whose history is unavailable keeps its explanation in the chat only.",
     ],
     codes: NODE_SERVER_CODES.map(({ code, when }) => ({
       code,
