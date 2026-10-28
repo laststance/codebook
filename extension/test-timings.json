@@ -3559,6 +3559,27 @@
     "studyWorkspaceServerLibrary.test.js": {
       "totalMs": 712
     },
+    "studyWorkspaceServerReplay.test.js": {
+      "totalMs": 8428,
+      "tests": {
+        "Next and Previous stop visit each hit of a repeated stop and Next event moves on to the output and the response": 1574,
+        "Open replay of a sealed server history lands on its first stop with the stored source in the slot and the snapshot in the debugger": 345,
+        "a non-stop moment clears the debugger and says source and debugger are not recorded at this moment": 593,
+        "a saved playhead on a source entry restores the request before it": 296,
+        "a server history that is still being recorded opens only once its recording is interrupted": 260,
+        "a server history whose journal is damaged opens its verified prefix as an interrupted replay with its reason": 257,
+        "a server history without a stop opens at its request and Next stop answers that there is no next stop in this server replay": 326,
+        "a step citing the response moves the playhead there, and the explanation arriving while the replay is open keeps the playhead": 655,
+        "a stop with a lower frame presents it with its unavailable source reason": 275,
+        "an explanation saved from another window shows in this window as Saved and in the replay it opens": 293,
+        "moving through a server replay sends no request and starts no server": 658,
+        "opening a server replay and then a browser recording while a test replay presentation is still loading leaves only the recording shown": 860,
+        "seeking to the response and back to the stop presents the same snapshot and source and clears the response": 653,
+        "the Application pane of a server replay shows the sent request and no response yet at the first stop": 281,
+        "two hits at one time keep journal order and the slider ends at the end entry after the response": 291,
+        "understanding is saved only by the checkbox, and the playhead and understanding return when the replay is opened again": 811
+      }
+    },
     "studyWorkspaceStorage.test.js": {
       "totalMs": 15018,
       "tests": {
