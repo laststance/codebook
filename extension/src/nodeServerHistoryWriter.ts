@@ -103,7 +103,8 @@ class NodeServerWriterRules implements HistoryWriterRules<NodeServerHistoryTypes
               lastEntry: this.lastEntry
                 ? describeLastNodeServerEntry(this.lastEntry)
                 : 'the start of the history',
-              cause: this.describeCause(input.appendFailure),
+              // Cut to the seal's param bound so a long cause never makes the whole seal unwritable.
+              cause: cutHistoryReason(this.describeCause(input.appendFailure)),
             },
           }
         : {}),

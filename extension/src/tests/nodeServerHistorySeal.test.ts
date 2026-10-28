@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import fsPromises from 'node:fs/promises'
 import { before, test, type TestContext } from 'node:test'
 
 import { NodeHistoryRepository } from '../nodeHistoryRepository'
@@ -706,4 +707,52 @@ test('a missing list of thirty is capped to twenty with the count of thirty', ()
   // Assert
   assert.equal(capped.items.length, 20)
   assert.equal(capped.count, 30)
+})
+
+// protects=a refused entry with a very long cause still seals: the partial seal is written with the append-failure reason and a cut cause; fails_when=the uncut cause exceeds the seal schema's bound and the seal never writes; no_claim=which disk error
+test('a history whose append was refused with a 2 KB cause seals partial with the append-failure reason and a cut cause', async (context) => {
+  // Arrange
+  const { repository } = await openServerRepository(context)
+  const header = nodeServerHistoryHeader(SERVER_WORKSPACE_KEY)
+  const writer = await repository.serverHistories.start(header)
+  await writer.appendRequest({
+    elapsedMs: 1,
+    attempt: 1,
+    method: 'POST',
+    path: '/x',
+    bodyBytes: 0,
+  })
+  const openBefore = fsPromises.open
+  let failJournal = true
+  context.mock.method(
+    fsPromises,
+    'open',
+    async (...input: Parameters<typeof openBefore>) => {
+      if (failJournal && String(input[0]).endsWith('events.jsonl'))
+        throw Object.assign(new Error('disk gone, '.repeat(250)), {
+          code: 'EIO',
+        })
+      return openBefore(...input)
+    },
+  )
+  await writer
+    .appendRequestSent({ elapsedMs: 2, attempt: 1 })
+    .catch(() => undefined)
+  failJournal = false
+
+  // Act
+  await writer.seal({ elapsedMs: 9, reason: 'stopped' })
+  context.mock.restoreAll()
+  const opened = await repository.serverHistories.read(header.studyId)
+
+  // Assert
+  assert.equal(opened.status, 'partial')
+  const reason = opened.seal?.reasons.find(
+    (candidate) => candidate.code === 'SERVER_HISTORY_APPEND_FAILED',
+  )
+  assert.match(
+    reason?.text ?? '',
+    /^The history could not be written after the request \(entry 1\): disk gone, .*… \[cut\]\.$/,
+  )
+  assert.equal(reason?.params.cause?.toString().length, 1_024)
 })
