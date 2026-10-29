@@ -224,6 +224,7 @@ test('the first read comes a full quiet time after the last pause ended', async 
   const after = await observation
   // Assert
   assert.equal(firstReadWhilePaused, undefined)
+  // gstack-timing-ok: a lower bound only (a timer never fires early), so a slow runner cannot fail it
   assert.equal((firstReadAtMs ?? 0) - pauseEndedAtMs >= settleMs - 10, true)
   assert.deepEqual(after, { value: 'same' })
 })

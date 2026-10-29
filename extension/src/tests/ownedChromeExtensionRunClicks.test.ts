@@ -542,6 +542,7 @@ test('a stop during the read after a lost surface is not overwritten by the late
   await stopping
   await waitUntil(() => harness.log.includes('viewport.close'), 'the cleanup')
   // A negative check: give the held read time to finish and (wrongly) store its result.
+  // gstack-timing-ok: a slow runner can only miss a wrong store, never fail a correct run
   await sleep(100)
   // Assert
   assert.equal(harness.run.view().observed, null)

@@ -437,6 +437,7 @@ test('a pause continued before its frame capture answers leaves the Application 
   // Act
   harness.pauses.close(pause.sessionId, pause.threadId)
   capture.resolve({ data: 'cGl4ZWxz' })
+  // gstack-timing-ok: a negative check; a slow runner can only miss a wrong pin, never fail a correct run
   await new Promise((resolve) => setTimeout(resolve, 20))
   // Assert
   const viewCalls = harness.viewportCalls
