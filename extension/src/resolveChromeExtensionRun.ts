@@ -20,6 +20,7 @@ import {
   discoverStaticLoads,
   type StaticLoads,
 } from './utils/discoverStaticLoads'
+import { extensionFileUrl } from './utils/extensionFileUrl'
 import { extensionPermissionsNeedingAcknowledgement } from './utils/extensionPermissionsNeedingAcknowledgement'
 import { isInsideFolder } from './utils/isInsideFolder'
 import {
@@ -40,6 +41,25 @@ const CONTEXT_WORDS: Record<ExtensionStopContext, string> = {
 /** SHA-256 of bytes, lowercase hex. */
 function sha256Of(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex')
+}
+
+/**
+ * Reads a declared file, wording a directory or unreadable file as a configuration refusal instead of a raw file system error.
+ * @throws `INVALID_CONFIGURATION` "`<field> is not a readable file: <path>.`".
+ */
+async function readFileOrRefuse(
+  absolutePath: string,
+  declaredPath: string,
+  field: string,
+): Promise<Buffer> {
+  try {
+    return await readFile(absolutePath)
+  } catch {
+    throw new StudyError(
+      'INVALID_CONFIGURATION',
+      `${field} is not a readable file: ${declaredPath}.`,
+    )
+  }
 }
 
 /**
@@ -149,6 +169,7 @@ function describeUnfollowed(loads: StaticLoads): string {
 
 /** Everything the per-stop checks share: the root, the pinned surface page and the lazily discovered loads of each context. */
 interface StopCheckEnvironment {
+  repositoryRoot: string
   extensionRoot: string
   extensionId: string
   manifest: ExtensionManifest
@@ -174,7 +195,7 @@ async function resolveStop(
     relativePath: stop.path,
     field: `${field}.path`,
   })
-  const bytes = await readFile(absolutePath)
+  const bytes = await readFileOrRefuse(absolutePath, stop.path, `${field}.path`)
   const source = bytes.toString('utf8')
   const lines = splitSourceLines(source)
   if (stop.line > lines.length)
@@ -207,12 +228,14 @@ async function resolveStop(
 
 /** Builds the lazy, memoized static-load discovery of both contexts. */
 function createLoadsOf(options: {
+  repositoryRoot: string
   extensionRoot: string
   extensionId: string
   manifest: ExtensionManifest
   surfaceHtml: string
 }): StopCheckEnvironment['loadsOf'] {
-  const { extensionRoot, extensionId, manifest, surfaceHtml } = options
+  const { repositoryRoot, extensionRoot, extensionId, manifest, surfaceHtml } =
+    options
   const memo = new Map<ExtensionStopContext, Promise<StaticLoads>>()
   return (context) => {
     const known = memo.get(context)
@@ -221,6 +244,7 @@ function createLoadsOf(options: {
       context === 'page'
         ? discoverStaticLoads({
             extensionRoot,
+            repositoryRoot,
             extensionId,
             entry: { kind: 'page', htmlPath: surfaceHtml },
           })
@@ -232,6 +256,7 @@ function createLoadsOf(options: {
           }).then((scriptPath) =>
             discoverStaticLoads({
               extensionRoot,
+              repositoryRoot,
               extensionId,
               entry: {
                 kind: 'worker',
@@ -312,22 +337,29 @@ export async function resolveChromeExtensionRun(options: {
       : chromeExtensionIdFromKey(manifest.key)
   const surface = await resolveSurfacePage(configuration, manifest, root)
   const environment: StopCheckEnvironment = {
+    repositoryRoot,
     extensionRoot: root,
     extensionId,
     manifest,
     surfaceHtml: surface.absolutePath,
     loadsOf: createLoadsOf({
+      repositoryRoot,
       extensionRoot: root,
       extensionId,
       manifest,
       surfaceHtml: surface.absolutePath,
     }),
   }
+  // Read before the stops, so an unreadable surface is named before a stop that depends on it.
+  const surfaceBytes = await readFileOrRefuse(
+    surface.absolutePath,
+    surface.path,
+    'configuration.surface.path',
+  )
   const stops: ResolvedExtensionStop[] = []
   // Sequential, so the first failing stop is always the same one.
   for (const [position, stop] of configuration.stops.entries())
     stops.push(await resolveStop(stop, position, environment))
-  const surfaceBytes = await readFile(surface.absolutePath)
   return {
     root,
     extensionId,
@@ -335,7 +367,7 @@ export async function resolveChromeExtensionRun(options: {
     permissions: manifest.permissions,
     hostPermissions: manifest.hostPermissions,
     surface: { kind: surface.kind, path: surface.path },
-    surfaceUrl: `chrome-extension://${extensionId}/${surface.path}`,
+    surfaceUrl: extensionFileUrl(surface.path, extensionId).href,
     ...(manifest.workerPath === undefined
       ? {}
       : { workerPath: manifest.workerPath }),

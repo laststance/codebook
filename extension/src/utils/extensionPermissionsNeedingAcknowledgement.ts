@@ -2,17 +2,19 @@ import { EXTENSION_ACKNOWLEDGED_API_PERMISSIONS } from '../constants'
 
 /** The host part of a match pattern such as `https://printer.local:8080/*`, or `undefined` when the pattern has no scheme and host. */
 const MATCH_PATTERN_HOST = /^(?:\*|[a-z][a-z0-9+.-]*):\/\/([^/]*)/i
-/** Private-network and loopback hosts: localhost, 127.*, 10.*, 192.168.*, 172.16-31.*, and *.local names. */
+/**
+ * Private-network, loopback, link-local and unspecified hosts: `localhost` and `*.localhost`, `*.local` names, IPv4 `0.*`, `10.*`, `100.64.0.0/10`, `127.*`, `169.254.*` (link-local, cloud metadata), `172.16-31.*`, `192.168.*`, and bracketed IPv6 loopback, unspecified, IPv4-mapped, unique-local (`fc00::/7`) and link-local (`fe80::/10`) addresses.
+ */
 const PRIVATE_HOST =
-  /^(?:localhost|127\.[\d.]*|10\.[\d.]*|192\.168\.[\d.]*|172\.(?:1[6-9]|2\d|3[01])\.[\d.]*|(?:[^.]+\.)*local)$/i
+  /^(?:(?:[^.]+\.)*localhost|(?:[^.]+\.)*local|(?:0|10|127)\.[\d.]*|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.[\d.]*|169\.254\.[\d.]*|172\.(?:1[6-9]|2\d|3[01])\.[\d.]*|192\.168\.[\d.]*|\[(?:::1?|(?:0{1,4}:)+0{0,3}[01]|::ffff:[0-9a-f.:]*|f[cd][0-9a-f]{2}:[0-9a-f:]*|fe[89ab][0-9a-f]:[0-9a-f:]*)\])$/i
 
 /** True when a host permission matches every host or a private-network host. */
 function reachesOutsideTestProfile(hostPattern: string): boolean {
   if (hostPattern === '<all_urls>') return true
   const host = MATCH_PATTERN_HOST.exec(hostPattern)?.[1]
   if (host === undefined) return false
-  // A port is no part of a match pattern's host but may be written; ignore it.
-  const hostWithoutPort = host.replace(/:\d*$/, '')
+  // A port is no part of a match pattern's host but may be written (digits or `*`); ignore it.
+  const hostWithoutPort = host.replace(/:(?:\d+|\*)$/, '')
   return hostWithoutPort === '*' || PRIVATE_HOST.test(hostWithoutPort)
 }
 

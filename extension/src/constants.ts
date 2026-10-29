@@ -2133,6 +2133,10 @@ export const EXTENSION_ACKNOWLEDGED_API_PERMISSIONS = [
   'proxy',
   'privacy',
 ] as const
+/** One `acknowledgedPermissions` entry of a chrome-extension declaration is 1 to this many characters (ER5). */
+export const EXTENSION_ACKNOWLEDGED_PERMISSION_LIMIT_CHARS = 256
+/** A chrome-extension declaration lists at most this many `acknowledgedPermissions` entries (ER5). */
+export const EXTENSION_ACKNOWLEDGED_PERMISSION_LIMIT = 100
 /** The root js-debug attach session of a chrome-extension run is named with this prefix and the run id; child sessions are told apart by target type, never by name (SR14). */
 export const CHROME_EXTENSION_SESSION_NAME_PREFIX = 'codebook chrome extension '
 /** Every declared extension stop is requested at this column: a stop declares a line only, and the adapter binds the first position of the line. */

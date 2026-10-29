@@ -1,5 +1,5 @@
 import { realpath } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { isAbsolute, resolve } from 'node:path'
 
 import { StudyError, type ErrorCode } from '../errors'
 
@@ -33,6 +33,8 @@ export async function resolveExtensionFile(options: {
     code,
     `${field} must stay inside the extension root.`,
   )
+  // An absolute path is no extension-relative path, even when it points inside the root.
+  if (isAbsolute(relativePath)) throw outside
   const lexical = resolve(extensionRoot, relativePath)
   if (!isInsideFolder(extensionRoot, lexical)) throw outside
   const real = await realpath(lexical).catch(() => undefined)

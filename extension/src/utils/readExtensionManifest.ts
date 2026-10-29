@@ -88,18 +88,21 @@ export async function readExtensionManifest(
     throw new StudyError('MANIFEST_UNREADABLE', MANIFEST_UNREADABLE_MESSAGE)
   let manifest: unknown
   try {
-    manifest = JSON.parse(manifestBytes.toString('utf8'))
+    manifest = JSON.parse(manifestBytes.toString('utf8').replace(/^\uFEFF/, ''))
   } catch {
     throw new StudyError('MANIFEST_UNREADABLE', MANIFEST_UNREADABLE_MESSAGE)
   }
-  if (!isRecord(manifest) || typeof manifest.name !== 'string')
+  if (!isRecord(manifest))
     throw new StudyError('MANIFEST_UNREADABLE', MANIFEST_UNREADABLE_MESSAGE)
+  // The version is checked before the name, so a version 2 manifest without a name is still MANIFEST_NOT_V3.
   if (manifest.manifest_version !== 3)
     throw new StudyError(
       'MANIFEST_NOT_V3',
       'The extension root needs a Manifest V3 manifest.json.',
       'The extension root needs a Manifest V3 manifest.json. Set "manifest_version": 3 in manifest.json.',
     )
+  if (typeof manifest.name !== 'string')
+    throw new StudyError('MANIFEST_UNREADABLE', MANIFEST_UNREADABLE_MESSAGE)
   const action = isRecord(manifest.action) ? manifest.action : {}
   const background = isRecord(manifest.background) ? manifest.background : {}
   return {

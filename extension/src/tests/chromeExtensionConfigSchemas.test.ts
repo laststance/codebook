@@ -337,3 +337,39 @@ test('acknowledgedPermissions accepts a list of strings', () => {
   // Assert
   assert.deepEqual(configuration.acknowledgedPermissions, ['debugger'])
 })
+
+test('a seed issue and a non-seed issue in one configuration are both worded and the code stays SEED_INVALID', () => {
+  // protects=A11/CR-A2 one answer lets the agent fix every violation; fails_when=non-seed issues are dropped or the code changes; no_claim=other codes
+  // Arrange
+  const raw = baselineConfiguration({
+    clicks: [{ title: 't'.repeat(81), selector: '#go' }],
+    seed: { bookmarks: [{ title: 'Local', url: 'file:///etc/passwd' }] },
+  })
+  // Act
+  const refusal = refusalOf(raw)
+  // Assert
+  assert.equal(refusal.code, 'SEED_INVALID')
+  assert.match(
+    refusal.message,
+    /Seed node Local needs an http or https url\. Change configuration\.seed\.bookmarks\[0\]\.url\./,
+  )
+  assert.match(refusal.message, /configuration\.clicks\[0\]\.title: /)
+})
+
+test('acknowledgedPermissions allows 100 entries of 256 characters and refuses 101 entries or 257 characters', () => {
+  // protects=CR-A1 limits keep their values after moving to constants; fails_when=a limit changes; no_claim=entries are real permissions
+  // Arrange
+  const accepts = (entries: string[]) =>
+    chromeExtensionConfigSchema.safeParse(
+      baselineConfiguration({ acknowledgedPermissions: entries }),
+    ).success
+  // Act
+  const results = [
+    accepts(Array.from({ length: 100 }, (_, index) => `p${index}`)),
+    accepts(Array.from({ length: 101 }, (_, index) => `p${index}`)),
+    accepts(['x'.repeat(256)]),
+    accepts(['x'.repeat(257)]),
+  ]
+  // Assert
+  assert.deepEqual(results, [true, false, true, false])
+})

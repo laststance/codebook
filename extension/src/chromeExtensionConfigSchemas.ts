@@ -2,6 +2,8 @@ import { z } from 'zod'
 
 import type { ExtensionSeedBookmark } from './chromeExtensionContracts'
 import {
+  EXTENSION_ACKNOWLEDGED_PERMISSION_LIMIT,
+  EXTENSION_ACKNOWLEDGED_PERMISSION_LIMIT_CHARS,
   EXTENSION_CLICK_LIMIT,
   EXTENSION_CLICK_TITLE_LIMIT_CHARS,
   EXTENSION_SEED_TITLE_LIMIT_CHARS,
@@ -91,8 +93,8 @@ export const chromeExtensionConfigSchema = z.strictObject({
   stops: z.array(stopSchema).min(1).max(EXTENSION_STOP_LIMIT),
   observe: observeSchema,
   acknowledgedPermissions: z
-    .array(z.string().min(1).max(256))
-    .max(100)
+    .array(z.string().min(1).max(EXTENSION_ACKNOWLEDGED_PERMISSION_LIMIT_CHARS))
+    .max(EXTENSION_ACKNOWLEDGED_PERMISSION_LIMIT)
     .optional(),
 })
 

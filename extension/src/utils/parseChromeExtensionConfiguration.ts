@@ -20,16 +20,12 @@ export function parseChromeExtensionConfiguration(
 ): ChromeExtensionConfiguration {
   const result = chromeExtensionConfigSchema.safeParse(raw)
   if (result.success) return result.data
-  const seedIssues = result.error.issues.filter(
+  // Every issue is worded so one answer lets the agent fix them all; a seed issue keeps the SEED_INVALID code.
+  const hasSeedIssue = result.error.issues.some(
     (issue) => issue.path[0] === 'seed',
   )
-  if (seedIssues.length > 0)
-    throw new StudyError(
-      'SEED_INVALID',
-      describeChromeExtensionConfigurationIssues(seedIssues),
-    )
   throw new StudyError(
-    'INVALID_CONFIGURATION',
+    hasSeedIssue ? 'SEED_INVALID' : 'INVALID_CONFIGURATION',
     describeChromeExtensionConfigurationIssues(result.error.issues),
   )
 }
