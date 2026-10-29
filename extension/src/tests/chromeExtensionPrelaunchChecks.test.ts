@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { chmod, mkdir, symlink } from 'node:fs/promises'
+import { chmod, mkdir, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -178,29 +178,126 @@ test('a surface page path with a space, hash and percent sign gets an encoded su
   )
 })
 
-test('an extensionRoot of dot does not walk node_modules or .git and ignores links inside them', async (context) => {
-  // protects=A5 bounded walk; fails_when=a link under node_modules or .git outside the repository refuses the run; no_claim=files there are loadable
+test('a link inside node_modules or .git that points outside the repository is refused with extensionRoot dot', async (context) => {
+  // protects=ER6 Chrome serves every file under the root; fails_when=links under node_modules or .git are skipped; no_claim=files there are loadable
   // Arrange
   const outside = await createRepositoryFixture(context, { 'x.js': '' })
-  const repositoryRoot = await createRepositoryFixture(context, {
+  const files = {
     'manifest.json': manifestWith({ background: undefined }),
     'popup/popup.html': '<script src="popup.js"></script>',
     'popup/popup.js': 'const a = 1\nconst b = 2\n',
     'node_modules/pkg/index.js': '',
     '.git/hooks/placeholder': '',
+  }
+  const nodeModulesRoot = await createRepositoryFixture(context, files)
+  await symlink(
+    join(outside, 'x.js'),
+    join(nodeModulesRoot, 'node_modules/pkg/leak.js'),
+  )
+  const gitRoot = await createRepositoryFixture(context, files)
+  await symlink(join(outside, 'x.js'), join(gitRoot, '.git/hooks/leak'))
+  // Act
+  const nodeModulesRefusal = await refusalOf(nodeModulesRoot, {
+    extensionRoot: '.',
+    stops: [{ path: 'popup/popup.js', line: 2, context: 'page' }],
   })
-  await symlink(outside, join(repositoryRoot, 'node_modules/pkg/outside'))
-  await symlink(outside, join(repositoryRoot, '.git/hooks/outside'))
+  const gitRefusal = await refusalOf(gitRoot, {
+    extensionRoot: '.',
+    stops: [{ path: 'popup/popup.js', line: 2, context: 'page' }],
+  })
+  // Assert
+  assert.equal(
+    nodeModulesRefusal.message,
+    'The extension folder holds a link outside the repository: node_modules/pkg/leak.js.',
+  )
+  assert.equal(
+    gitRefusal.message,
+    'The extension folder holds a link outside the repository: .git/hooks/leak.',
+  )
+})
+
+test('a symlinked folder inside the repository that holds a link outside is refused', async (context) => {
+  // protects=ER6 linked folders are walked; fails_when=a link reached only through a linked folder is missed; no_claim=nothing else
+  // Arrange
+  const outside = await createRepositoryFixture(context, { 'x.js': '' })
+  const repositoryRoot = await repositoryWith(context, {
+    'shared/placeholder': '',
+  })
+  await symlink(join(outside, 'x.js'), join(repositoryRoot, 'shared/leak.js'))
+  await symlink(
+    join(repositoryRoot, 'shared'),
+    join(repositoryRoot, 'ext/popup/shared'),
+  )
+  // Act
+  const refusal = await refusalOf(repositoryRoot)
+  // Assert
+  assert.equal(refusal.code, 'EXTENSION_LINK_OUTSIDE')
+  assert.equal(
+    refusal.message,
+    'The extension folder holds a link outside the repository: ext/popup/shared/leak.js.',
+  )
+})
+
+test('a link cycle inside the extension folder terminates and the run resolves', async (context) => {
+  // protects=ER6 cycle guard by real path; fails_when=the walk never ends; no_claim=nothing
+  // Arrange
+  const repositoryRoot = await repositoryWith(context)
+  await symlink(
+    join(repositoryRoot, 'ext'),
+    join(repositoryRoot, 'ext/popup/loop'),
+  )
   // Act
   const run = await resolveChromeExtensionRun({
     repositoryRoot,
+    configuration: parsedBaseline(),
+  })
+  // Assert
+  assert.equal(run.stops.length, 2)
+})
+
+test('an extension folder with more than 50,000 entries is refused before the manifest is read', async (context) => {
+  // protects=ER6 bounded walk; fails_when=the walk lists without limit; no_claim=timing
+  // Arrange
+  const repositoryRoot = await repositoryWith(context)
+  const crowded = join(repositoryRoot, 'ext/crowded')
+  await mkdir(crowded)
+  for (let batch = 0; batch < 51; batch += 1)
+    await Promise.all(
+      Array.from({ length: 1_000 }, (_, offset) =>
+        writeFile(join(crowded, `f${batch * 1_000 + offset}`), ''),
+      ),
+    )
+  // Act
+  const refusal = await refusalOf(repositoryRoot)
+  // Assert
+  assert.equal(refusal.code, 'INVALID_CONFIGURATION')
+  assert.equal(
+    refusal.message,
+    'The extension folder holds more than 50,000 entries; point extensionRoot at the folder that holds manifest.json.',
+  )
+})
+
+test('an optional permission or optional host permission that reaches outside the test profile needs acknowledgement', async (context) => {
+  // protects=ER5 optional entries count; fails_when=optional_permissions or optional_host_permissions are ignored; no_claim=the learner was told
+  // Arrange
+  const repositoryRoot = await repositoryWith(context, {
+    'ext/manifest.json': manifestWith({
+      optional_permissions: ['debugger'],
+      optional_host_permissions: ['<all_urls>'],
+    }),
+  })
+  // Act
+  const refusal = await refusalOf(repositoryRoot)
+  const accepted = await resolveChromeExtensionRun({
+    repositoryRoot,
     configuration: parsedBaseline({
-      extensionRoot: '.',
-      stops: [{ path: 'popup/popup.js', line: 2, context: 'page' }],
+      acknowledgedPermissions: ['debugger', '<all_urls>'],
     }),
   })
   // Assert
-  assert.equal(run.stops.length, 1)
+  assert.equal(refusal.code, 'PERMISSIONS_NEED_ACKNOWLEDGEMENT')
+  assert.ok(refusal.message.includes(': debugger, <all_urls>. Pass them'))
+  assert.equal(accepted.stops.length, 2)
 })
 
 test('a link outside the repository outside node_modules still refuses with extensionRoot dot', async (context) => {

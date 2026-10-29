@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, symlink, writeFile } from 'node:fs/promises'
+import { access, mkdir, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -179,6 +179,48 @@ test('two stops at the same path, line and context are refused as STOP_DUPLICATE
   const refusal = await refusalOf(repositoryRoot, { stops: [stop, stop] })
   // Assert
   assert.equal(refusal.code, 'STOP_DUPLICATE')
+  assert.equal(refusal.message, 'Stops 1 and 2 are the same.')
+})
+
+test('two stops that name one file through a link alias are refused as STOP_DUPLICATE with their declared indexes', async (context) => {
+  // protects=SR5 duplicates by real path; fails_when=a link alias passes as a second stop; no_claim=case-insensitive file systems
+  // Arrange
+  const repositoryRoot = await repositoryWith(context)
+  await symlink('popup.js', join(repositoryRoot, 'ext/popup/alias.js'))
+  // Act
+  const refusal = await refusalOf(repositoryRoot, {
+    stops: [
+      { path: 'popup/popup.js', line: 2, context: 'page' },
+      { path: 'popup/alias.js', line: 2, context: 'page' },
+    ],
+  })
+  // Assert
+  assert.equal(refusal.code, 'STOP_DUPLICATE')
+  assert.equal(refusal.message, 'Stops 1 and 2 are the same.')
+})
+
+test('two stops that name one file by different letter case are refused where the file system ignores case', async (context) => {
+  // protects=SR5 duplicates by real path; fails_when=a case variant passes as a second stop; no_claim=case-sensitive file systems
+  // Arrange
+  const repositoryRoot = await repositoryWith(context)
+  const isCaseInsensitive = await access(
+    join(repositoryRoot, 'ext/POPUP/popup.js'),
+  ).then(
+    () => true,
+    () => false,
+  )
+  if (!isCaseInsensitive) {
+    context.skip('needs a case-insensitive file system')
+    return
+  }
+  // Act
+  const refusal = await refusalOf(repositoryRoot, {
+    stops: [
+      { path: 'popup/popup.js', line: 2, context: 'page' },
+      { path: 'POPUP/popup.js', line: 2, context: 'page' },
+    ],
+  })
+  // Assert
   assert.equal(refusal.message, 'Stops 1 and 2 are the same.')
 })
 

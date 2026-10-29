@@ -9,6 +9,10 @@ export interface ExtensionManifest {
   name: string
   permissions: readonly string[]
   hostPermissions: readonly string[]
+  /** `optional_permissions`: a trusted click can grant them with `chrome.permissions.request`, so they count like `permissions`. */
+  optionalPermissions: readonly string[]
+  /** `optional_host_permissions`, counted like `host_permissions`. */
+  optionalHostPermissions: readonly string[]
   /** `action.default_popup`, relative to the extension root without a leading `./` or `/`. */
   popupPath?: string
   /** `background.service_worker`, relative to the extension root. */
@@ -109,6 +113,8 @@ export async function readExtensionManifest(
     name: manifest.name,
     permissions: stringList(manifest.permissions),
     hostPermissions: stringList(manifest.host_permissions),
+    optionalPermissions: stringList(manifest.optional_permissions),
+    optionalHostPermissions: stringList(manifest.optional_host_permissions),
     popupPath: optionalPath(action.default_popup),
     workerPath: optionalPath(background.service_worker),
     workerType: background.type === 'module' ? 'module' : 'classic',

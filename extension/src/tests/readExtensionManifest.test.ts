@@ -149,3 +149,20 @@ test('a valid manifest key is passed through', async (context) => {
   // Assert
   assert.equal(manifest.key, key)
 })
+
+test('optional permissions and optional host permissions are read as lists', async (context) => {
+  // protects=ER5 optional entries reach the acknowledgement check; fails_when=optional_permissions or optional_host_permissions are dropped; no_claim=acknowledgement
+  // Arrange
+  const root = await createRepositoryFixture(context, {
+    'manifest.json': JSON.stringify({
+      ...BASELINE_MANIFEST,
+      optional_permissions: ['downloads', 7],
+      optional_host_permissions: ['<all_urls>'],
+    }),
+  })
+  // Act
+  const manifest = await readExtensionManifest(root)
+  // Assert
+  assert.deepEqual(manifest.optionalPermissions, ['downloads'])
+  assert.deepEqual(manifest.optionalHostPermissions, ['<all_urls>'])
+})

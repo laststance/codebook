@@ -81,6 +81,26 @@ function assertNoDuplicateStops(stops: readonly DeclaredStop[]): void {
 }
 
 /**
+ * Refuses two stops that resolve to the same real file, line and context although they were written differently (a link alias or a case variant).
+ * @throws `STOP_DUPLICATE` with the declared 1-based indexes.
+ */
+function assertNoDuplicateResolvedStops(
+  stops: readonly ResolvedExtensionStop[],
+): void {
+  const firstSeen = new Map<string, number>()
+  for (const stop of stops) {
+    const key = `${stop.context}\u0000${stop.line}\u0000${stop.absolutePath}`
+    const earlier = firstSeen.get(key)
+    if (earlier !== undefined)
+      throw new StudyError(
+        'STOP_DUPLICATE',
+        `Stops ${earlier} and ${stop.index} are the same.`,
+      )
+    firstSeen.set(key, stop.index)
+  }
+}
+
+/**
  * Resolves the declared extension root to its realpath inside the repository.
  * @throws `INVALID_CONFIGURATION` when the root leaves the repository by name or through a link, or does not exist.
  */
@@ -141,8 +161,8 @@ function assertPermissionsAcknowledged(
   acknowledged: readonly string[] | undefined,
 ): void {
   const needing = extensionPermissionsNeedingAcknowledgement(
-    manifest.permissions,
-    manifest.hostPermissions,
+    [...manifest.permissions, ...manifest.optionalPermissions],
+    [...manifest.hostPermissions, ...manifest.optionalHostPermissions],
   )
   if (needing.length === 0) return
   const wanted = [...new Set(needing)].sort()
@@ -360,6 +380,8 @@ export async function resolveChromeExtensionRun(options: {
   // Sequential, so the first failing stop is always the same one.
   for (const [position, stop] of configuration.stops.entries())
     stops.push(await resolveStop(stop, position, environment))
+  // The names may differ while the files are the same (link alias, case variant): compare the resolved paths.
+  assertNoDuplicateResolvedStops(stops)
   return {
     root,
     extensionId,

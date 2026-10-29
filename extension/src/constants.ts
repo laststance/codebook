@@ -2094,6 +2094,8 @@ export const EXTENSION_SEED_STORAGE_KEY_LIMIT = 50
 export const EXTENSION_SEED_STORAGE_LIMIT_BYTES = 65_536
 /** Static-load discovery follows script and import references at most this deep. */
 export const EXTENSION_STATIC_LOAD_DEPTH_LIMIT = 8
+/** The most entries (files, folders, links) the pre-launch link walk lists before it refuses the extension folder. */
+export const EXTENSION_LINK_WALK_ENTRY_LIMIT = 50_000
 /** A stop line longer than this marks its file as bundled (DXR9). */
 export const EXTENSION_BUNDLED_LINE_LIMIT_CHARS = 1_000
 /** How long a surface, popup or worker child may take to appear. */
