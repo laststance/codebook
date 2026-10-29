@@ -440,6 +440,36 @@ test('a paused file moved out of the Application group keeps the line the stop w
   }
 })
 
+// protects=state cell paused-file x lease-release (Cycle 0062 ship review): once an extension run ends and its view is kept, the lease's watch is gone, so a preview the editor later opens in that group is not moved; fails_when=the watch outlives the released lease and moves files around a run that already ended; no_claim=what the kept view shows
+test('a paused file opened after an extension run ended stays in the kept view’s group', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const view = await openView(harness, 'ended-watch-run-1')
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    view.end('The run ended.')
+    view.close()
+    assert.ok(harness.reader['app'])
+    const showsBefore = harness.textDocumentShows().length
+    // Act
+    harness.openPausedFileInLockedGroup('settings.js', applicationColumn)
+    // gstack-timing-ok: a negative check; a move would start its show at once, so one settle of the fake editor's file read is enough to see none.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    // Assert
+    assert.equal(harness.textDocumentShows().length, showsBefore)
+    assert.equal(
+      groupShowing(harness, 'settings.js')?.viewColumn,
+      applicationColumn,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // protects=OCR-M2 (Cycle 0062 review): a second paused file that opens in front of the view while the first is being moved moves out too; fails_when=the watch drops the events that come during a move and never looks again, so the second file covers the view; no_claim=how fast two stops come natively
 test('a second paused file opened during a move also leaves the Application group', async () => {
   // Arrange
