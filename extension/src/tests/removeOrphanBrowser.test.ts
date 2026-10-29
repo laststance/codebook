@@ -268,8 +268,8 @@ test('the sweep signals no process whose executable is not the one recorded for 
   assert.equal(await exists(folder), true)
 })
 
-// Value: protects=ER18 and B2 (the exact switch before any terminator); fails_when=a process that carries --user-data-dir=<folder> only after a -- is signalled; no_claim=Windows (the Windows job runs this file with its own parsing)
-test('the sweep signals no process that names the folder only after a switch terminator, and keeps the folder', async (context) => {
+// Value: protects=ER18 and B2 (the exact switch before any terminator); fails_when=a process that carries --user-data-dir=<folder> only after a -- is signalled, or its folder is removed on macOS, where the text ps prints cannot rule that process out; no_claim=every command-line spelling (profileProcesses tests)
+test('the sweep signals no process that names the folder only after a switch terminator, and keeps the folder only where the process text cannot rule it out (macOS)', async (context) => {
   // Arrange
   const root = await profileRoot(context)
   const folder = join(root, 'codebook-browser-owned')
@@ -287,9 +287,16 @@ test('the sweep signals no process that names the folder only after a switch ter
     signalling.stopper,
   )
   // Assert
-  assert.deepEqual(removed, [])
   assert.deepEqual(signalling.pids, [])
   assert.equal(loose.exitCode, null)
+  // macOS lists only the text ps prints, which cannot tell a -- argument from two dashes inside one, so the folder stays; Linux and Windows read the exact arguments, by which no process uses the folder, so it goes.
+  if (process.platform === 'darwin') {
+    assert.deepEqual(removed, [])
+    assert.equal(await exists(folder), true)
+  } else {
+    assert.deepEqual(removed, [folder])
+    assert.equal(await exists(folder), false)
+  }
 })
 
 // Value: protects=ER18 for folders an older launch made; fails_when=an owned-browser marker without a recorded executable lets the sweep signal a process; no_claim=migration of old folders

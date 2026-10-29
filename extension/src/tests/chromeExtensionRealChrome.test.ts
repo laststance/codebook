@@ -237,7 +237,7 @@ test(
   },
 )
 
-// Value: protects=ER12 against the real Chrome: nested folders and a Unicode title written to Bookmarks before the start are what the extension API reads; fails_when=the fixed template stops being accepted by Chrome or loses nesting, order or characters; no_claim=sync or the bookmark bar
+// Value: protects=ER12 against the real Chrome: nested folders and a Unicode title written to Bookmarks before the start are what the extension API reads; fails_when=the fixed template stops being accepted by Chrome or loses nesting, order or characters; no_claim=sync, the bookmark bar, or the permanent folder's own title (Chrome names it per platform: "Other Bookmarks" on macOS, "Other bookmarks" on Linux)
 test(
   'real Chrome: seeded nested bookmark folders and a Unicode title are what chrome.bookmarks reads',
   { timeout: TEST_TIMEOUT_MS },
@@ -273,26 +273,23 @@ test(
       `chrome-extension://${run.extensionId}/page.html`,
       `chrome.bookmarks.getTree().then((roots) => {
       const outline = (node) => ({ title: node.title, url: node.url, children: node.children?.map(outline) })
-      return outline(roots[0].children.find((child) => child.folderType === 'other'))
+      return outline(roots[0].children.find((child) => child.folderType === 'other')).children
     })`,
     )
     // Assert
-    assert.deepEqual(tree, {
-      title: 'Other Bookmarks',
-      children: [
-        {
-          title: 'Reading ノート',
-          children: [
-            {
-              title: 'Docs',
-              children: [{ title: 'Ünïcode ✓', url: 'https://docs.example/a' }],
-            },
-          ],
-        },
-        { title: 'Home', url: 'https://home.example/' },
-        { title: 'Empty folder', children: [] },
-      ],
-    })
+    assert.deepEqual(tree, [
+      {
+        title: 'Reading ノート',
+        children: [
+          {
+            title: 'Docs',
+            children: [{ title: 'Ünïcode ✓', url: 'https://docs.example/a' }],
+          },
+        ],
+      },
+      { title: 'Home', url: 'https://home.example/' },
+      { title: 'Empty folder', children: [] },
+    ])
   },
 )
 
