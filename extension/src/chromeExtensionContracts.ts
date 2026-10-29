@@ -117,7 +117,10 @@ export interface OwnedExtensionBrowser {
   startWorker(): Promise<void>
   /** Stops every service worker and waits until none of the extension's remains, at most `boundMs`. */
   stopWorkers(boundMs: number): Promise<void>
-  /** Ends the browser and removes the profile; reports what could not be confirmed instead of throwing (ER18). */
+  /**
+   * Ends the browser and removes the profile; the run releases the debugger (the debugger's `release`) and calls `browserClosing` before it calls this.
+   * Reports what could not be confirmed instead of throwing (ER18).
+   */
   close(): Promise<{ profileLeft: boolean; exitConfirmed: boolean }>
 }
 
@@ -133,7 +136,7 @@ export interface CapturedExtensionStop {
   snapshot: ReplayDebugSnapshot
 }
 
-/** The preparation phases of a chrome-extension run that pt1 code reports through `onPhase`, named as the run phase state machine names them. */
+/** The preparation phases of a chrome-extension run reported through `onPhase`, named as the run phase state machine names them: the owned launch reports `launching`, `installing` and `opening`; the debugger reports `attaching`, `waking` and `arming`. */
 export type ExtensionPreparationPhase =
   'launching' | 'installing' | 'opening' | 'attaching' | 'waking' | 'arming'
 

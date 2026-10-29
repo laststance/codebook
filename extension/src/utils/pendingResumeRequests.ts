@@ -38,6 +38,18 @@ export class PendingResumeRequests {
   }
 
   /**
+   * Drops every waiting request of a session that ended, since its adapter will never answer them.
+   * @param sessionId - The debug session that terminated.
+   * @example
+   * resumes.forgetSession('session-1')
+   */
+  forgetSession(sessionId: string): void {
+    const prefix = `${sessionId}:`
+    for (const key of this.pending.keys())
+      if (key.startsWith(prefix)) this.pending.delete(key)
+  }
+
+  /**
    * Takes the request a response answers and says which threads ran on.
    * @param sessionId - The debug session the response came from.
    * @param response - The adapter's response.

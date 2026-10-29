@@ -114,3 +114,32 @@ test('a single-thread step runs on its own thread and an evaluate answer resumes
   assert.deepEqual(stepRanOn, { threadId: 3 })
   assert.equal(evaluateRanOn, undefined)
 })
+
+// protects=the waiting requests of an ended session are dropped while other sessions' stay; fails_when=a terminated session's request is answered later or another session's request is lost; no_claim=which debugger calls it
+test('forgetting a session drops its waiting resumes and keeps another session’s', () => {
+  // Arrange
+  const resumes = new PendingResumeRequests()
+  for (const sessionId of ['session-1', 'session-2'])
+    resumes.noteRequest(sessionId, {
+      type: 'request',
+      seq: 30,
+      command: 'continue',
+      arguments: { threadId: 1 },
+    })
+
+  // Act
+  resumes.forgetSession('session-1')
+  const answer = (sessionId: string) =>
+    resumes.takeAnswered(sessionId, {
+      type: 'response',
+      seq: 31,
+      request_seq: 30,
+      command: 'continue',
+      success: true,
+      body: { allThreadsContinued: true },
+    })
+
+  // Assert
+  assert.equal(answer('session-1'), undefined)
+  assert.deepEqual(answer('session-2'), { threadId: undefined })
+})

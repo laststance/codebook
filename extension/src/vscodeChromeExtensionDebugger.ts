@@ -102,6 +102,8 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
   private readonly unverifiedWorkerStops = new Set<number>()
   private ready = false
   private releaseBegun = false
+  /** Set once the run told the debugger the owned browser is closing: sessions ending from now on are the close's doing. */
+  private browserIsClosing = false
   private readonly releaser = new SharedAttempt(() => this.releaseOwned())
   private readonly tracker: vscode.Disposable
   private readonly termination: vscode.Disposable
@@ -235,10 +237,16 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     if (entry.kind === 'worker' && this.entriesOf('worker').length === 0)
       this.unverifiedWorkerStops.clear()
     codebookStopLedger.forget(session.id)
+    this.pendingResumes.forgetSession(session.id)
     const ended = this.pauseSet.close(session.id)
     for (const pause of ended) this.clearHold(pause)
     // A worker that ends while a pause was open lost the pause and the run's state (ER8).
-    if (entry.kind === 'worker' && ended.length > 0 && !this.releaseBegun)
+    if (
+      entry.kind === 'worker' &&
+      ended.length > 0 &&
+      !this.releaseBegun &&
+      !this.browserIsClosing
+    )
       this.fail(
         new StudyError(
           'SERVICE_WORKER_LOST',
@@ -302,6 +310,7 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     const logical = this.registry.stopOfBreakpointId(
       entry.session,
       news.data.breakpoint.id,
+      CONTEXT_OF_KIND.worker,
     )
     if (logical?.stop.context !== 'service-worker') return
     const index = logical.stop.index
@@ -366,6 +375,9 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
       : 0
     await entry.classified
     if (this.releaseBegun || !Number.isInteger(body.threadId)) return
+    // A target the run ignores (another tab or extension) that pauses would hang for good: continue it.
+    if (entry.kind === 'other')
+      return this.resumeForeignPause(entry, body.threadId!, epochAtStop)
     if (entry.kind !== 'page' && entry.kind !== 'worker') return
     const context = CONTEXT_OF_KIND[entry.kind]
     const threadId = body.threadId!
@@ -380,6 +392,17 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
         : undefined
     if (!verdict) return this.keepLearnerPause(entry, threadId, body.reason)
     await this.actOnVerdict(entry, threadId, body.reason, verdict)
+  }
+
+  /** Continues a pause of a session the run does not own and journals it as an intervention, unless the thread already ran on. */
+  private async resumeForeignPause(
+    entry: SessionEntry,
+    threadId: number,
+    epochAtStop: number,
+  ): Promise<void> {
+    if (this.resumeEpochOf(entry.session.id, threadId) !== epochAtStop) return
+    this.recordIntervention('resume-foreign-pause')
+    await this.autoResume(entry, threadId)
   }
 
   private async actOnVerdict(
@@ -668,6 +691,10 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
 
   workerGeneration(): number {
     return this.generation
+  }
+
+  browserClosing(): void {
+    this.browserIsClosing = true
   }
 
   markReady(): void {

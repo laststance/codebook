@@ -101,7 +101,15 @@ export interface ChromeExtensionDebugger {
   interventions(): readonly ExtensionIntervention[]
   /** Journals an intervention the run itself makes (`stop-all-workers`). */
   recordIntervention(kind: string): void
-  /** Removes the owned breakpoints and ends the sessions; safe to call again after a failure. */
+  /**
+   * Tells the debugger the owned browser is about to close, so the sessions that end with it (a worker paused at a stop) are no failure.
+   * The run calls it after `release` began and before `OwnedExtensionBrowser.close`.
+   */
+  browserClosing(): void
+  /**
+   * Removes the owned breakpoints and ends the sessions; safe to call again after a failure.
+   * The run releases the debugger before it closes the browser, so no editor session outlives the browser it is attached to.
+   */
   release(): Promise<void>
 }
 

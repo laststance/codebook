@@ -96,6 +96,7 @@ export async function extensionEditorHarness(
   let nextAdapterId = 1
   let nextEditorBreakpointId = 0
   let captureCalls = 0
+  let refuseContinues = false
 
   class Position {
     constructor(
@@ -200,15 +201,19 @@ export async function extensionEditorHarness(
           arguments: arguments_,
         })
         requests.push({ sessionId: id, command, arguments: arguments_ })
-        if (command === 'continue')
+        if (command === 'continue') {
           tracker?.onDidSendMessage?.({
             type: 'response',
             seq: sequence + 1_000,
             request_seq: sequence,
             command,
-            success: true,
-            body: { allThreadsContinued: true },
+            success: !refuseContinues,
+            ...(refuseContinues
+              ? { message: 'the adapter refused' }
+              : { body: { allThreadsContinued: true } }),
           })
+          if (refuseContinues) throw new Error('the adapter refused')
+        }
         if (command === 'stackTrace') {
           const frame = frames.get(id)
           return {
@@ -364,6 +369,10 @@ export async function extensionEditorHarness(
           ...(hitBreakpointIds ? { hitBreakpointIds } : {}),
         },
       })
+    },
+    /** From now on the adapter answers every `continue` request with a refusal, which the editor reports as a rejected request. */
+    refuseContinues(refuse: boolean): void {
+      refuseContinues = refuse
     },
     /** The learner presses Continue in the session. */
     learnerContinues(session: FakeSession, threadId = 1): void {

@@ -161,15 +161,19 @@ export class ExtensionStopRegistry {
    * Finds the declared stop an adapter breakpoint id belongs to in one session, for the adapter's own news about it.
    * @param session - The session that sent the `breakpoint` event.
    * @param breakpointId - The id the event names.
-   * @returns The unretired logical stop whose physical breakpoint has that id in the session; `undefined` otherwise.
+   * @param context - The context of the notifying session; a page stop and a worker stop on one line share a physical breakpoint, so only this context's logical stop is the one the news is about.
+   * @returns The unretired logical stop of that context whose physical breakpoint has that id in the session; `undefined` otherwise.
    */
   stopOfBreakpointId(
     session: vscode.DebugSession,
     breakpointId: number,
+    context: ExtensionStopContext,
   ): LogicalExtensionStop | undefined {
     return this.logical.find(
       (entry) =>
-        !entry.retired && this.idOf(entry.physical, session) === breakpointId,
+        !entry.retired &&
+        entry.stop.context === context &&
+        this.idOf(entry.physical, session) === breakpointId,
     )
   }
 

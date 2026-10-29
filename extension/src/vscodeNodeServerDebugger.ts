@@ -292,6 +292,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     for (const [token, stop] of this.unreportedStops)
       if (stop.sessionId === session.id) this.unreportedStops.delete(token)
     codebookStopLedger.forget(session.id)
+    this.pendingResumes.forgetSession(session.id)
     if (!this.active.delete(session.id)) return
     this.input.record('node-server.session-terminated', {
       sessionId: session.id,

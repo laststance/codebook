@@ -836,12 +836,18 @@ test('a worker restarted before a click turns the stop unverified, then verified
   // Act
   run.editor.adapter.breakpointNews(run.worker, id, false)
   const generationAfterLoss = run.debug.workerGeneration()
-  const ready = run.debug.ensureWorkerReady(SIGNAL())
+  let readyResolved = false
+  const ready = run.debug.ensureWorkerReady(SIGNAL()).then(() => {
+    readyResolved = true
+  })
   // gstack-timing-ok: the click must keep waiting while the stop is unverified, so holding it unverified for a fixed time is the contract
   await sleep(120)
+  const resolvedBeforeVerified = readyResolved
   run.editor.adapter.breakpointNews(run.worker, id, true)
   await ready
   // Assert
+  assert.equal(resolvedBeforeVerified, false)
+  assert.equal(readyResolved, true)
   assert.equal(generationAfterLoss, 2)
   assert.deepEqual(
     plain(run.debug.interventions().map((entry) => entry.kind)),
@@ -1454,6 +1460,199 @@ test('a worker session that never appears is refused with SERVICE_WORKER_NOT_ATT
       error.message ===
         "The extension's service worker did not start while popup was open.",
   )
+  await run.debug.release()
+  await run.editor.dispose()
+})
+
+// protects=a worker `breakpoint` news is matched to the worker's own logical stop when a page stop shares the line, so a worker restart is detected; fails_when=the news resolves to the page stop, is ignored as a context mismatch and the click passes with the worker stop unverified; no_claim=real js-debug restart
+test('a worker restart on a line the page also stops at bumps the generation and the click waits for the worker stop to verify again', async () => {
+  // Arrange
+  const run = await readyRun([
+    { file: 'popup.js', line: 2, context: 'page' },
+    { file: 'popup.js', line: 2, context: 'service-worker' },
+  ])
+  const workerId = run.editor.adapterIdAt(run.worker, 'popup.js', 2)
+  // Act
+  run.editor.adapter.breakpointNews(run.worker, workerId, false, 2)
+  const generationAfterLoss = run.debug.workerGeneration()
+  let readyResolved = false
+  const ready = run.debug.ensureWorkerReady(SIGNAL()).then(() => {
+    readyResolved = true
+  })
+  // gstack-timing-ok: the click must keep waiting while the worker stop is unverified, so holding it unverified for a fixed time is the contract
+  await sleep(120)
+  const resolvedBeforeVerified = readyResolved
+  run.editor.adapter.breakpointNews(run.worker, workerId, true, 2)
+  await ready
+  // Assert
+  assert.equal(generationAfterLoss, 2)
+  assert.equal(resolvedBeforeVerified, false)
+  assert.deepEqual(
+    plain(run.debug.interventions().map((entry) => entry.kind)),
+    ['re-arm'],
+  )
+  await run.debug.release()
+  await run.editor.dispose()
+})
+
+// protects=a pause in a session the run ignores (another tab) is continued and journaled as an intervention; fails_when=the foreign thread stays paused for good or Codebook resumes it without disclosing; no_claim=which tabs js-debug attaches
+test('a pause in another tab’s session is continued and journaled as resume-foreign-pause', async () => {
+  // Arrange
+  const run = await readyRun([PAGE_STOP])
+  const other = await run.editor.addChild({
+    kind: 'page',
+    targetId: 'some-other-tab',
+    id: 'other-page',
+  })
+  // Act
+  run.editor.adapter.stop(other, 'pause', undefined, undefined, 4)
+  await until(() =>
+    run.editor.requests.some(
+      (request) =>
+        request.sessionId === 'other-page' && request.command === 'continue',
+    ),
+  )
+  // Assert
+  assert.deepEqual(
+    plain(run.editor.requests.filter((r) => r.command === 'continue')),
+    [
+      {
+        sessionId: 'other-page',
+        command: 'continue',
+        arguments: { threadId: 4 },
+      },
+    ],
+  )
+  assert.deepEqual(
+    plain(run.debug.interventions().map((entry) => entry.kind)),
+    ['resume-foreign-pause'],
+  )
+  assert.equal(run.debug.pauses().length, 0)
+  await run.debug.release()
+  await run.editor.dispose()
+})
+
+// protects=once the run told the debugger the browser is closing, a worker session that ends with an open pause is the close's doing and fails nothing; fails_when=SERVICE_WORKER_LOST is raised during cleanup; no_claim=the browser close itself
+test('a worker session that ends with an open pause after the browser is closing does not fail the run', async () => {
+  // Arrange
+  const run = await readyRun([WORKER_STOP])
+  run.editor.adapter.stop(
+    run.worker,
+    'breakpoint',
+    [run.editor.adapterIdAt(run.worker, 'service-worker.js', 3)],
+    { file: run.editor.path('service-worker.js'), line: 3 },
+  )
+  await until(() => run.debug.pauses().length === 1)
+  // Act
+  run.debug.browserClosing()
+  run.editor.adapter.end(run.worker)
+  // Assert
+  assert.deepEqual(run.failures, [])
+  assert.equal(run.debug.pauses().length, 0)
+  await run.debug.release()
+  await run.editor.dispose()
+})
+
+// protects=a declared continue the adapter refuses keeps the pause open and lets the same arguments try again; fails_when=the pause closes, stays claimed (STALE_PAUSE on retry) or the refusal is swallowed; no_claim=js-debug's own refusal reasons
+test('a declared continue the adapter refuses keeps the pause and a retry is allowed', async () => {
+  // Arrange
+  const run = await readyRun([PAGE_STOP])
+  run.editor.adapter.stop(
+    run.page,
+    'breakpoint',
+    [run.editor.adapterIdAt(run.page, 'popup.js', 2)],
+    { file: run.editor.path('popup.js'), line: 2 },
+  )
+  await until(() => run.debug.pauses()[0]?.status === 'captured')
+  const args = run.debug.pauses()[0]!.continueArguments!
+  run.editor.adapter.refuseContinues(true)
+  // Act
+  await assert.rejects(run.debug.resume(args, SIGNAL()), /refused/)
+  const stillPaused = run.debug.pauses().length
+  run.editor.adapter.refuseContinues(false)
+  await run.debug.resume(args, SIGNAL())
+  // Assert
+  assert.equal(stillPaused, 1)
+  assert.equal(run.debug.pauses().length, 0)
+  await run.debug.release()
+  await run.editor.dispose()
+})
+
+// protects=a second continue of a declared pause while the first still claims it is stale; fails_when=two continues are sent for one pause; no_claim=the order of the adapter's replies
+test('a second continue of a declared pause while the first is in progress answers STALE_PAUSE', async () => {
+  // Arrange
+  const gate = defer<void>()
+  const run = await readyRun([PAGE_STOP], { captureGate: gate.promise })
+  run.editor.adapter.stop(
+    run.page,
+    'breakpoint',
+    [run.editor.adapterIdAt(run.page, 'popup.js', 2)],
+    { file: run.editor.path('popup.js'), line: 2 },
+  )
+  await until(() => run.debug.pauses().length === 1)
+  const args = run.debug.pauses()[0]!.continueArguments!
+  // Act
+  const first = run.debug.resume(args, SIGNAL())
+  const second = run.debug.resume(args, SIGNAL())
+  // Assert
+  await assert.rejects(
+    second,
+    (error: unknown) =>
+      error instanceof StudyError && error.code === 'STALE_PAUSE',
+  )
+  gate.resolve()
+  await first
+  assert.equal(
+    run.editor.requests.filter((request) => request.command === 'continue')
+      .length,
+    1,
+  )
+  await run.debug.release()
+  await run.editor.dispose()
+})
+
+// protects=the learner pressing Continue in the editor closes a learner pause; fails_when=a continued learner thread stays listed as paused; no_claim=the learner's UI
+test('a learner pause ends when the learner continues it in the editor', async () => {
+  // Arrange
+  const run = await readyRun([PAGE_STOP])
+  run.editor.adapter.stop(run.page, 'pause')
+  await until(() => run.debug.pauses().length === 1)
+  // Act
+  run.editor.adapter.learnerContinues(run.page)
+  // Assert
+  assert.equal(run.debug.pauses().length, 0)
+  await run.debug.release()
+  await run.editor.dispose()
+})
+
+// protects=a learner pause whose owning session ends is closed and the run is not failed; fails_when=the pause stays listed or the run fails; no_claim=worker sessions (their loss fails by design)
+test('a learner pause ends with its owning session and does not fail the run', async () => {
+  // Arrange
+  const run = await readyRun([PAGE_STOP])
+  run.editor.adapter.stop(run.page, 'pause')
+  await until(() => run.debug.pauses().length === 1)
+  // Act
+  run.editor.adapter.end(run.page)
+  // Assert
+  assert.equal(run.debug.pauses().length, 0)
+  assert.deepEqual(run.failures, [])
+  await run.debug.release()
+  await run.editor.dispose()
+})
+
+// protects=a learner pause has no hold timer, so the page hold never expires it; fails_when=a learner pause fails the run with PAUSE_HOLD_EXPIRED; no_claim=the declared pause hold
+test('a learner pause stays open past the page hold without failing the run', async (context) => {
+  // Arrange
+  const run = await readyRun([PAGE_STOP])
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  // Act
+  run.editor.adapter.stop(run.page, 'pause')
+  await flush()
+  context.mock.timers.tick(600_000)
+  // Assert
+  assert.equal(run.debug.pauses().length, 1)
+  assert.deepEqual(run.failures, [])
+  context.mock.timers.reset()
   await run.debug.release()
   await run.editor.dispose()
 })
