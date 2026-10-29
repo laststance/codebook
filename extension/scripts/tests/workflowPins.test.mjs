@@ -1825,21 +1825,22 @@ test('the Test workflow gives each push its own concurrency group and cancels on
   )
 })
 
-// Value: protects=the Format workflow's formatter: `bun fmt --check` through the package script, with Bun installed from an action pinned to a full commit and a full Bun version, so the check never runs on whatever Bun the runner image ships; fails_when=the workflow runs Bun without installing it, installs an action by a tag or a branch, or leaves the Bun version open (`latest`, `1.x`); why_new=Cycle 0062 task 24; seam=the text of .github/workflows/format.yml and the package scripts; no_claim=that Bun formats like Prettier (the tools' comparison is in the Issue)
+// Value: protects=the Format workflow's formatter: `bun fmt --check` through the package script, with Bun installed from an action pinned to a full commit at the full version of .bun-version, the pin the exact-HEAD gate also checks, so the check never runs on whatever Bun the runner image ships; fails_when=the workflow runs Bun without installing it, installs an action by a tag or a branch, reads the version from anywhere but .bun-version, or .bun-version leaves the version open (`latest`, `1.x`); why_new=Cycle 0062 task 24, pt2 OCR finding F2; seam=the text of .github/workflows/format.yml, .bun-version and the package scripts; no_claim=that Bun formats like Prettier (the tools' comparison is in the Issue)
 test('the Format workflow checks formatting with a pinned Bun running bun fmt', async () => {
   // Arrange
   const workflow = await repositoryText('.github/workflows/format.yml')
   const manifest = JSON.parse(await repositoryText('extension/package.json'))
+  const bunVersion = await repositoryText('.bun-version')
 
   // Act
   const setup =
-    /uses: oven-sh\/setup-bun@([0-9a-f]{40}) # v\d+\.\d+\.\d+\n\s+with:\n\s+bun-version: (\d+\.\d+\.\d+)\n/.exec(
+    /uses: oven-sh\/setup-bun@([0-9a-f]{40}) # v\d+\.\d+\.\d+\n\s+with:\n\s+bun-version-file: \.bun-version\n/.exec(
       workflow,
     )
 
   // Assert
   assert.notEqual(setup, null)
-  assert.equal(setup?.[2], '1.4.4')
+  assert.equal(bunVersion, '1.4.4\n')
   assert.ok(
     workflow.indexOf('oven-sh/setup-bun') <
       workflow.indexOf('run: pnpm --dir extension format:check'),

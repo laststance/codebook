@@ -15,8 +15,8 @@ concurrency:
 
 jobs:
   health:
-    # Own job: it builds again and runs the complete suite under c8 for its coverage (about 10 to 12 minutes on a
-    # 16-CPU Ubuntu host), so it sets the workflow's time while the static checks finish in about a minute each.
+    # Own job: it builds again and runs the complete suite under c8 for its coverage (10 to 14 minutes on the hosted
+    # runner, 2026-10-29), so it sets the workflow's time while the static checks finish in about a minute each.
     name: Fallow health
     runs-on: ubuntu-24.04
     timeout-minutes: 20

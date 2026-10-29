@@ -1,5 +1,6 @@
-// Runs the exact-HEAD gate behind `pnpm gate`: the fifteen checks a delivery passes before merge, in order, on a clean
-// committed tree, with the Node of `.node-version` and the pnpm of `extension/package.json`'s `packageManager`.
+// Runs the exact-HEAD gate behind `pnpm gate`: the sixteen checks a delivery passes before merge, in order, on a clean
+// committed tree, with the Node of `.node-version`, the Bun of `.bun-version` and the pnpm of `extension/package.json`'s
+// `packageManager`.
 //
 //   pnpm --dir extension gate                 every check; logs under artifacts/gate/<short HEAD>/
 //   pnpm --dir extension gate --out <folder>  logs in <folder>
@@ -7,7 +8,7 @@
 //   pnpm --dir extension gate --silence-seconds <n>  end a check silent this long (default 300)
 //
 // Exit 0: every check passed and HEAD did not move. Exit 1: a check failed, or HEAD or the tree changed during the run.
-// Exit 2: refused before any check, because Node or pnpm differ from the pins, the checkout has changes, or an option is
+// Exit 2: refused before any check, because Node, pnpm or Bun differ from the pins, the checkout has changes, or an option is
 // unknown. Each check's output goes to its own log; stdout gets one line per check and the verdict. A check that prints
 // nothing for the silence bound has its whole process tree ended and counts as exit 124; SIGINT, SIGTERM or SIGHUP to
 // the gate ends the running check's tree and exits 130, 143 or 129.
@@ -48,15 +49,16 @@ export const GATE_CHECKS = [
   { name: '04-health-static', script: 'health:static' },
   { name: '05-dupes', script: 'dupes' },
   { name: '06-dead-code', script: 'dead-code' },
-  { name: '07-test', script: 'test' },
+  { name: '07-architecture', script: 'architecture' },
+  { name: '08-test', script: 'test' },
   ...READER_DOM_CHECKS.map((check, index) => ({
-    name: `${String(8 + index).padStart(2, '0')}-${check}`,
+    name: `${String(9 + index).padStart(2, '0')}-${check}`,
     readerDom: check,
   })),
-  { name: '13-test-package', script: 'test:package' },
-  { name: '14-health', script: 'health' },
+  { name: '14-test-package', script: 'test:package' },
+  { name: '15-health', script: 'health' },
   {
-    name: '15-restore-context',
+    name: '16-restore-context',
     nodeTest: '.codex/restore-product-context.test.mjs',
   },
 ]
@@ -69,32 +71,34 @@ const DEFAULT_SILENCE_SECONDS = 300
 const SILENT_EXIT_CODE = 124
 
 /**
- * Reads the versions the repository pins: Node from the root `.node-version`, pnpm from `extension/package.json`'s
+ * Reads the versions the repository pins: Node from the root `.node-version`, Bun (the formatter of the format check)
+ * from the root `.bun-version`, which the Format workflow installs too, and pnpm from `extension/package.json`'s
  * `packageManager` (its integrity suffix dropped).
  * Called by {@link main} before any check, and by tests with a folder of their own.
  * @param root - The repository's root.
- * @returns `{ node, pnpm }` as written there, for example `{ node: '24.22.1', pnpm: '12.4.2' }`.
+ * @returns `{ node, pnpm, bun }` as written there, for example `{ node: '24.22.1', pnpm: '12.4.2', bun: '1.4.4' }`.
  * @example
- * await readPins('/work/codebook') // => { node: '24.22.1', pnpm: '12.4.2' }
+ * await readPins('/work/codebook') // => { node: '24.22.1', pnpm: '12.4.2', bun: '1.4.4' }
  */
 export async function readPins(root) {
   const node = (await readFile(join(root, '.node-version'), 'utf8')).trim()
+  const bun = (await readFile(join(root, '.bun-version'), 'utf8')).trim()
   const { packageManager } = JSON.parse(
     await readFile(join(root, 'extension/package.json'), 'utf8'),
   )
   const pnpm = /^pnpm@([^+]+)/.exec(String(packageManager))?.[1]
-  return { node, pnpm }
+  return { node, pnpm, bun }
 }
 
 /**
  * Says which running tool differs from its pin, one sentence each, so the gate refuses before it runs a check on an
  * unpinned toolchain (an editor's or a version manager's own Node, say).
- * Called by {@link main} with `process.versions.node` and the pnpm version {@link readRunningPnpm} found.
+ * Called by {@link main} with `process.versions.node` and the pnpm and Bun versions {@link readRunningVersion} found.
  * @param pins - The pinned versions ({@link readPins}).
- * @param running - The versions running now; `pnpm` is `undefined` when it could not be read.
- * @returns The refusal sentences; empty when both match.
+ * @param running - The versions running now; `pnpm` or `bun` is `undefined` when it could not be read.
+ * @returns The refusal sentences; empty when all three match.
  * @example
- * pinMismatches({ node: '24.22.1', pnpm: '12.4.2' }, { node: '24.21.0', pnpm: '12.4.2' })
+ * pinMismatches({ node: '24.22.1', pnpm: '12.4.2', bun: '1.4.4' }, { node: '24.21.0', pnpm: '12.4.2', bun: '1.4.4' })
  * // => ['Node 24.21.0 runs here, but .node-version pins 24.22.1.']
  */
 export function pinMismatches(pins, running) {
@@ -106,6 +110,10 @@ export function pinMismatches(pins, running) {
   if (running.pnpm !== pins.pnpm)
     sentences.push(
       `pnpm ${running.pnpm ?? 'of an unknown version'} runs here, but extension/package.json pins ${pins.pnpm}.`,
+    )
+  if (running.bun !== pins.bun)
+    sentences.push(
+      `Bun ${running.bun ?? 'of an unknown version'} runs here, but .bun-version pins ${pins.bun}.`,
     )
   return sentences
 }
@@ -121,7 +129,18 @@ function readRunningPnpm() {
     process.env.npm_config_user_agent ?? '',
   )?.[1]
   if (fromAgent !== undefined) return fromAgent
-  const answer = spawnSync('pnpm', ['--version'], {
+  return readRunningVersion('pnpm')
+}
+
+/**
+ * Asks a tool on the checks' path for its version, in `extension/` as the package scripts run it; called by
+ * {@link readRunningPnpm} and by {@link main} for the Bun of the format check.
+ * @param tool - The command, `pnpm` or `bun`.
+ * @returns The version it prints, for example `'1.4.4'`, or `undefined` when it is missing or fails.
+ * @example readRunningVersion('bun') // => '1.4.4'
+ */
+function readRunningVersion(tool) {
+  const answer = spawnSync(tool, ['--version'], {
     cwd: extension,
     encoding: 'utf8',
     env: checkEnvironment(),
@@ -337,6 +356,7 @@ async function main() {
   const mismatches = pinMismatches(await readPins(repository), {
     node: process.versions.node,
     pnpm: readRunningPnpm(),
+    bun: readRunningVersion('bun'),
   })
   if (mismatches.length > 0) {
     console.error(`Gate refused: ${mismatches.join(' ')}`)

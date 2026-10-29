@@ -93,12 +93,24 @@ test('a run during which HEAD moved or the checkout changed fails although every
 // Value: protects=the gate on the pinned toolchain only (Cycle 0058: a version manager's shim ran the suite on Node 24.22.1 under extension/ while .node-version pinned 24.21.0, and an editor's own Node is another); fails_when=a Node or pnpm that differs from its pin passes the check, or the sentence does not name both versions; why_new=Cycle 0058 retro; seam=none; no_claim=how the running pnpm version is read
 test('a Node or pnpm that differs from its pin is named with both versions', () => {
   // Arrange
-  const pins = { node: '24.22.1', pnpm: '12.4.2' }
+  const pins = { node: '24.22.1', pnpm: '12.4.2', bun: '1.4.4' }
 
   // Act
-  const matching = pinMismatches(pins, { node: '24.22.1', pnpm: '12.4.2' })
-  const otherNode = pinMismatches(pins, { node: '24.21.0', pnpm: '12.4.2' })
-  const unknownPnpm = pinMismatches(pins, { node: '24.22.1', pnpm: undefined })
+  const matching = pinMismatches(pins, {
+    node: '24.22.1',
+    pnpm: '12.4.2',
+    bun: '1.4.4',
+  })
+  const otherNode = pinMismatches(pins, {
+    node: '24.21.0',
+    pnpm: '12.4.2',
+    bun: '1.4.4',
+  })
+  const unknownPnpm = pinMismatches(pins, {
+    node: '24.22.1',
+    pnpm: undefined,
+    bun: '1.4.4',
+  })
 
   // Assert
   assert.deepEqual(matching, [])
@@ -110,13 +122,40 @@ test('a Node or pnpm that differs from its pin is named with both versions', () 
   ])
 })
 
-// Value: protects=the pins the gate compares with: .node-version as written, and the pnpm version of packageManager without its integrity suffix; fails_when=a trailing newline or the `+sha512…` suffix makes every run a mismatch; why_new=Cycle 0058 retro; seam=a repository folder of the test; no_claim=a packageManager naming another tool
-test('the pins are read from .node-version and from packageManager without its integrity suffix', async (context) => {
+// Value: protects=the format check on the Bun CI installs (Cycle 0062 pt2 review: `bun fmt` ran on whatever Bun the PATH held, while the Format workflow pins one, so the gate and CI could format differently); fails_when=a Bun of another version, or no Bun at all, passes the toolchain check, or the sentence does not name both versions; why_new=Cycle 0062 pt2 OCR finding F2; seam=none; no_claim=how the running Bun version is read
+test('a Bun that differs from .bun-version, or no Bun on the path, is named with the pinned version', () => {
+  // Arrange
+  const pins = { node: '24.22.1', pnpm: '12.4.2', bun: '1.4.4' }
+
+  // Act
+  const otherBun = pinMismatches(pins, {
+    node: '24.22.1',
+    pnpm: '12.4.2',
+    bun: '1.4.3',
+  })
+  const missingBun = pinMismatches(pins, {
+    node: '24.22.1',
+    pnpm: '12.4.2',
+    bun: undefined,
+  })
+
+  // Assert
+  assert.deepEqual(otherBun, [
+    'Bun 1.4.3 runs here, but .bun-version pins 1.4.4.',
+  ])
+  assert.deepEqual(missingBun, [
+    'Bun of an unknown version runs here, but .bun-version pins 1.4.4.',
+  ])
+})
+
+// Value: protects=the pins the gate compares with: .node-version and .bun-version as written, and the pnpm version of packageManager without its integrity suffix; fails_when=a trailing newline or the `+sha512…` suffix makes every run a mismatch, or the Bun pin is not read; why_new=Cycle 0058 retro, Cycle 0062 pt2 OCR finding F2; seam=a repository folder of the test; no_claim=a packageManager naming another tool
+test('the pins are read from .node-version, .bun-version and from packageManager without its integrity suffix', async (context) => {
   // Arrange
   const root = await mkdtemp(join(tmpdir(), 'codebook-gate-pins-'))
   context.after(() => rm(root, { recursive: true, force: true }))
   await mkdir(join(root, 'extension'))
   await writeFile(join(root, '.node-version'), '24.22.1\n')
+  await writeFile(join(root, '.bun-version'), '1.4.4\n')
   await writeFile(
     join(root, 'extension/package.json'),
     JSON.stringify({ packageManager: 'pnpm@12.4.2+sha512.08adc661' }),
@@ -126,11 +165,11 @@ test('the pins are read from .node-version and from packageManager without its i
   const pins = await readPins(root)
 
   // Assert
-  assert.deepEqual(pins, { node: '24.22.1', pnpm: '12.4.2' })
+  assert.deepEqual(pins, { node: '24.22.1', pnpm: '12.4.2', bun: '1.4.4' })
 })
 
-// Value: protects=the gate's composition and order, the fifteen checks AGENTS.md names; fails_when=a check is dropped, added or reordered without this list changing with it; why_new=Cycle 0058 retro (the list lived in a copied shell script); seam=none; no_claim=each check's command
-test('the gate runs the fifteen delivery checks in their order', () => {
+// Value: protects=the gate's composition and order, the sixteen checks AGENTS.md names, the architecture check CI requires included; fails_when=a check is dropped, added or reordered without this list changing with it; why_new=Cycle 0058 retro (the list lived in a copied shell script), Cycle 0062 pt2 OCR finding F3 (the architecture job was not in the gate); seam=none; no_claim=each check's command
+test('the gate runs the sixteen delivery checks in their order, the import-cycle check included', () => {
   // Arrange
   const expected = [
     '01-format-check',
@@ -139,15 +178,16 @@ test('the gate runs the fifteen delivery checks in their order', () => {
     '04-health-static',
     '05-dupes',
     '06-dead-code',
-    '07-test',
-    '08-study-bootstrap',
-    '09-wiki-reader-dom',
-    '10-study-reading-pose',
-    '11-understanding-focus',
-    '12-repository-return',
-    '13-test-package',
-    '14-health',
-    '15-restore-context',
+    '07-architecture',
+    '08-test',
+    '09-study-bootstrap',
+    '10-wiki-reader-dom',
+    '11-study-reading-pose',
+    '12-understanding-focus',
+    '13-repository-return',
+    '14-test-package',
+    '15-health',
+    '16-restore-context',
   ]
 
   // Act

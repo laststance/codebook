@@ -224,11 +224,11 @@ Standing rules, stated as rules (no decision log); delivery chain and ship limit
 
 Node as `.node-version` pins it (mirrored in `extension/.node-version`, since a version manager's shim reads the nearest package's `engines` there) and pnpm as the extension's `packageManager` pins it; put that Node's own `bin` first in `PATH`; run from the repo root.
 
-Formatting: `pnpm --dir extension format` / `format:check` and the lint-staged hook run `bun fmt` (Bun 1.4.4 on `PATH`, pinned in `format.yml`; it reads `.prettierrc.json` and `.prettierignore`, and gives the Prettier 3.9.8 result on this tree, Cycle 0062 task 24). Never format a README with it: hand-edit README sentences.
+Formatting: `pnpm --dir extension format` / `format:check` and the lint-staged hook run `bun fmt` (the Bun of `.bun-version` on `PATH`, which `format.yml` installs and the gate checks; it reads `.prettierrc.json` and `.prettierignore`, and gives the Prettier 3.9.8 result on this tree, Cycle 0062 task 24). Never format a README with it: hand-edit README sentences.
 
 **Gate and focused runs.**
 
-- Exact-HEAD gate: `pnpm --dir extension gate`: the fifteen delivery checks in order (static checks, the suite, the five Reader DOM checks, package tests, measured health, the compaction-hook test), one log each under `artifacts/gate/<HEAD>`; it refuses a Node or pnpm off the pins and a checkout with changes, and exits 0 only when every check passed on an unmoved HEAD.
+- Exact-HEAD gate: `pnpm --dir extension gate`: the sixteen delivery checks in order (static checks with the import-cycle check, the suite, the five Reader DOM checks, package tests, measured health, the compaction-hook test), one log each under `artifacts/gate/<HEAD>`; it refuses a Node, pnpm or Bun off the pins and a checkout with changes, and exits 0 only when every check passed on an unmoved HEAD.
 - `pnpm --dir extension test` = build + Node's isolated runner (files parallel, tests in a file serial; never same-process concurrency globally: workspace cases mock shared prototypes and timers). `pnpm --dir extension test:package` = package tests.
 - CI failures: `node extension/scripts/ci-failures.mjs <PR>` (or `--run <id>`) prints each failed job's failing tests with their first error line, also while the run goes on.
 - Focused replay/workspace work: `pnpm --dir extension build` once, then `node --test extension/dist/tests/studyWorkspace*.test.js extension/dist/tests/playbackController.test.js` (every partition; `studyWorkspace.test.js` alone is one); reuse a current build.
