@@ -178,6 +178,19 @@ test('the popup scroll container takes the keyboard and shows the focus border w
   assert.match(popup, /outline:1px solid var\(--vscode-panel-border\)/)
 })
 
+// protects=DR7, DR12 (Cycle 0062 task 5, N62 attempt 3): the popup frame keeps its CSS size in a pane smaller than the popup, so the pane scrolls, against the style both editors inject into every webview (VS Code 1.144.0 and Cursor 3.27 `webview/browser/pre/index.html`: `img, video { max-width: 100%; max-height: 100%; }`); fails_when=the popup's image rule leaves that cap in force, so a 513 x 498 popup in a 451 px pane is cut evenly on every side by object-fit:none and nothing scrolls, as N62 attempt 3 recorded in Cursor; no_claim=real layout in the editors (N62)
+test('the popup frame lifts the editors’ default image size cap so a narrow pane scrolls it', () => {
+  // Arrange
+  const popup = viewportHtml('live', 'popup')
+  // Act
+  const popupImageRule = popup.match(/#page\{[^}]*object-fit:none[^}]*\}/)?.[0]
+  // Assert
+  assert.equal(
+    popupImageRule,
+    '#page{flex:none;width:auto;max-width:none;max-height:none;margin:0 auto;object-fit:none;outline:1px solid var(--vscode-panel-border);background:var(--vscode-editor-background)}',
+  )
+})
+
 // protects=DR7: a 400 x 300 popup frame in a 300 px pane keeps its 400 x 300 CSS size (so the pane scrolls) and a 2x frame shows at half its pixel size; fails_when=the popup frame is scaled to the pane or its device pixel ratio is ignored; no_claim=real scrolling
 test('a popup frame shows at its CSS size whatever the pane size', async () => {
   // Arrange
