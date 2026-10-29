@@ -14,6 +14,12 @@ import {
 import { StudyError } from './errors'
 import { locateClickCentre } from './utils/locateClickCentre'
 import { inspectInput, selectInput } from './utils/prepareRepositoryInputs'
+import { redactSecretText } from './utils/redactSecretText'
+import {
+  hidePrivateRoots,
+  sanitizeCause,
+  type CauseRoots,
+} from './utils/sanitizeCause'
 import { withPausableDeadline } from './utils/withPausableDeadline'
 
 /** What one input or the click may have changed in the extension: nothing, a confirmed effect, or a request was sent whose answer is unknown (ER15). */
@@ -47,6 +53,10 @@ export interface ChromeExtensionActionExecutor {
    * @throws A {@link StudyError}: `SELECTOR_NOT_FOUND` before any effect, `INPUT_PARTIAL`, `CLICK_OUTCOME_UNKNOWN` or `DIALOG_UNDECLARED` after.
    */
   run(click: ResolvedExtensionClick): Promise<ExtensionClickReceipt>
+  /** The refusal of a dialog that opened without a declared answer after its click call had ended, if any; the run checks it and fails with it. */
+  lateDialogRefusal(): StudyError | undefined
+  /** Stops answering dialogs; the run calls it once at its end. */
+  dispose(): void
 }
 
 /** The pieces an executor is given; no global is read. */
@@ -59,6 +69,8 @@ export type ExtensionExecutorInput = {
   /** Called before and after each step; throws when the run's worker restarted (ER17) or ended. */
   assertActionCurrent(): void
   record: (type: string, detail?: unknown) => unknown
+  /** The private roots a journaled dialog message and a failure cause must not show. */
+  roots: CauseRoots
   /** Unpaused time one request may take; defaults to {@link EXTENSION_STEP_REQUEST_TIMEOUT_MS}. */
   stepTimeoutMs?: number
   /** How long a dispatched click waits before it answers `running`; defaults to {@link EXTENSION_CLICK_RETURN_BOUND_MS}. */
@@ -82,7 +94,10 @@ const objectIdSchema = z.object({
   }),
   exceptionDetails: z.unknown().optional(),
 })
-const dialogSchema = z.object({ type: z.string() })
+const dialogSchema = z.object({
+  type: z.string(),
+  message: z.string().optional(),
+})
 
 /**
  * Decides how a click call returns: `paused` as soon as a declared stop pauses, `running` when the dispatch is unanswered at the return bound, `settled` when no stop paused for the settle time after the answer.
@@ -110,6 +125,8 @@ class ClickOutcomeWaiter {
 
   /** The mouse press went out: the return bound starts. */
   clickSent(): void {
+    // A stop that paused or a failure that ended the call already decided it: no timer is armed after that.
+    if (this.decided) return
     this.returnTimer = setTimeout(
       () => this.decide('running'),
       this.returnBoundMs,
@@ -119,6 +136,7 @@ class ClickOutcomeWaiter {
   /** The click's last request was answered: a stop must come within the settle time or the work is settled. */
   clickAnswered(): void {
     clearTimeout(this.returnTimer)
+    if (this.decided) return
     if (this.pauseState.hasDeclaredPause()) return this.decide('paused')
     this.settleTimer = setTimeout(() => this.decide('settled'), this.settleMs)
   }
@@ -153,6 +171,8 @@ class ClickExecution {
   private readonly origins: string[]
   private dialogFailure!: (error: unknown) => void
   private readonly dialogFailed: Promise<never>
+  /** The refusal of an undeclared dialog, kept for the run when no step was waiting to fail with it. */
+  refusedDialog?: StudyError
 
   constructor(
     private readonly input: ExtensionExecutorInput,
@@ -172,7 +192,7 @@ class ClickExecution {
     this.dialogFailed.catch(() => {})
   }
 
-  /** Answers or refuses the dialogs the click's steps open (TZ11); returns the function that stops listening. */
+  /** Answers or refuses the dialogs the click opens (TZ11), also those a timer opens after its steps ended; returns the function that stops listening. */
   listenForDialogs(): () => void {
     return this.input.cdp.on(
       'Page.javascriptDialogOpening',
@@ -186,17 +206,30 @@ class ClickExecution {
   private async answerDialog(params: Record<string, unknown>): Promise<void> {
     const type = dialogSchema.safeParse(params).data?.type ?? 'dialog'
     const answer = this.click.dialog
-    if (!answer)
-      return this.dialogFailure(
-        new StudyError(
-          'DIALOG_UNDECLARED',
-          `Click ${this.click.index} opened a ${type} dialog; declare dialog: accept or dismiss for it.`,
-        ),
+    // The dialog text may show private paths or secrets: mask, then hide the roots, as the output journal does.
+    const message = hidePrivateRoots(
+      redactSecretText(dialogSchema.safeParse(params).data?.message ?? ''),
+      this.input.roots,
+    )
+    if (!answer) {
+      const refusal = new StudyError(
+        'DIALOG_UNDECLARED',
+        `Click ${this.click.index} opened a ${type} dialog; declare dialog: accept or dismiss for it.`,
       )
+      this.refusedDialog ??= refusal
+      this.input.record('chrome-extension.dialog', {
+        clickIndex: this.click.index,
+        type,
+        answer: 'none',
+        message,
+      })
+      return this.dialogFailure(refusal)
+    }
     this.input.record('chrome-extension.dialog', {
       clickIndex: this.click.index,
       type,
       answer,
+      message,
     })
     await this.input.cdp
       .request(
@@ -234,13 +267,51 @@ class ClickExecution {
     return answer
   }
 
-  private selectorFailure(selector: string, reason?: string): StudyError {
+  /** The failure of a selector or centre lookup; `step` names the input (1-based) or the click step that looked. */
+  private selectorFailure(
+    selector: string,
+    step: number | 'click',
+    reason?: string,
+  ): StudyError {
     // After an input was typed the extension may have reacted: the failure is partial, not a refusal that consumes nothing.
-    if (this.progressState.inputsApplied > 0)
-      return this.inputPartial(this.progressState.inputsApplied + 1)
+    if (this.progressState.inputsApplied > 0) return this.partialAt(step)
+    const message = `No element matches ${selector} in the extension surface.`
+    // The reason is detail for the cause; the sentence stays the fixed contract text.
     return new StudyError(
       'SELECTOR_NOT_FOUND',
-      `No element matches ${selector} in the extension surface.${reason ? ` (${reason})` : ''}`,
+      message,
+      reason ? `${message} (${reason})` : message,
+    )
+  }
+
+  private partialAt(step: number | 'click'): StudyError {
+    return step === 'click' ? this.clickStepPartial() : this.inputPartial(step)
+  }
+
+  private clickStepPartial(): StudyError {
+    return new StudyError(
+      'INPUT_PARTIAL',
+      `The press of click ${this.click.index} could not start after its inputs were typed; the extension may have reacted.`,
+    )
+  }
+
+  /**
+   * Turns an error no step classified into the contract's failure: partial once an input had an effect, a refusal with no effect before.
+   * @param error - What a step threw.
+   * @param step - The input (1-based) or the click step that was running.
+   * @returns The {@link StudyError} itself when it already is one.
+   */
+  private classify(error: unknown, step: number | 'click'): StudyError {
+    if (error instanceof StudyError) return error
+    const hadEffect =
+      this.progressState.inputsApplied > 0 ||
+      this.progressState.inputEffects.some((effect) => effect !== 'none')
+    if (hadEffect) return this.partialAt(step)
+    return new StudyError(
+      'RUNTIME_FAILED',
+      `Click ${this.click.index} could not start; nothing was typed or pressed.`,
+      sanitizeCause(error, this.input.roots),
+      'Nothing was typed or pressed. Retry once with a new key; if it fails again, stop the run and tell the learner. Side effects: none.',
     )
   }
 
@@ -280,7 +351,7 @@ class ClickExecution {
     input: ResolvedExtensionClick['inputs'][number],
   ): Promise<void> {
     const objectId = await this.select(input.selector)
-    if (!objectId) throw this.selectorFailure(input.selector)
+    if (!objectId) throw this.selectorFailure(input.selector, index + 1)
     try {
       await this.focusInput(index, objectId, input)
       await this.insertInput(index, input.text)
@@ -323,8 +394,14 @@ class ClickExecution {
       throw this.inputPartial(index + 1)
     }
     if (!focused.success || !focused.data.ready) {
-      this.progressState.inputEffects[index] = 'confirmed'
-      throw this.selectorFailure(input.selector, focused.data?.reason)
+      // Only a focus that ran and did not land is an effect; every other reason was decided before focus() ran.
+      this.progressState.inputEffects[index] =
+        focused.data?.reason === 'input-focus-changed' ? 'confirmed' : 'none'
+      throw this.selectorFailure(
+        input.selector,
+        index + 1,
+        focused.data?.reason,
+      )
     }
   }
 
@@ -358,7 +435,7 @@ class ClickExecution {
   /** Finds the click's centre and presses the mouse there; a double click sends two press-release pairs with click counts 1 and 2. */
   private async press(waiter: ClickOutcomeWaiter): Promise<void> {
     const objectId = await this.select(this.click.selector)
-    if (!objectId) throw this.selectorFailure(this.click.selector)
+    if (!objectId) throw this.selectorFailure(this.click.selector, 'click')
     let centre
     try {
       centre = centreSchema.parse(
@@ -374,7 +451,7 @@ class ClickExecution {
       await this.releaseObject(objectId)
     }
     if (!centre.ready)
-      throw this.selectorFailure(this.click.selector, centre.reason)
+      throw this.selectorFailure(this.click.selector, 'click', centre.reason)
     const pairs = this.click.kind === 'dblclick' ? 2 : 1
     waiter.clickSent()
     for (let clickCount = 1; clickCount <= pairs; clickCount += 1)
@@ -412,10 +489,22 @@ class ClickExecution {
 
   /** Runs every step in order: the inputs, then the click. */
   async perform(waiter: ClickOutcomeWaiter): Promise<void> {
-    await this.send('Page.enable', {})
+    await this.guarded(1, () => this.send('Page.enable', {}))
     for (const [index, input] of this.click.inputs.entries())
-      await this.typeInput(index, input)
-    await this.press(waiter)
+      await this.guarded(index + 1, () => this.typeInput(index, input))
+    await this.guarded('click', () => this.press(waiter))
+  }
+
+  /** Runs one step and classifies whatever raw error it lets escape (zod, a lost evaluate answer). */
+  private async guarded(
+    step: number | 'click',
+    action: () => Promise<unknown>,
+  ): Promise<void> {
+    try {
+      await action()
+    } catch (error) {
+      throw this.classify(error, step)
+    }
   }
 }
 
@@ -431,10 +520,19 @@ class ClickExecution {
 export function createChromeExtensionActionExecutor(
   input: ExtensionExecutorInput,
 ): ChromeExtensionActionExecutor {
+  const executions: ClickExecution[] = []
+  const stopListeners: Array<() => void> = []
   return {
+    lateDialogRefusal: () =>
+      executions.find((execution) => execution.refusedDialog)?.refusedDialog,
+    dispose(): void {
+      for (const stop of stopListeners.splice(0)) stop()
+    },
     run(click) {
       const execution = new ClickExecution(input, click)
-      const stopDialogs = execution.listenForDialogs()
+      executions.push(execution)
+      // The listener outlives the click call: a timer may open a dialog later; `dispose` ends it with the run.
+      stopListeners.push(execution.listenForDialogs())
       return new Promise<ExtensionClickReceipt>((resolve, reject) => {
         let work: Promise<void> = Promise.resolve()
         const waiter = new ClickOutcomeWaiter(
@@ -454,13 +552,10 @@ export function createChromeExtensionActionExecutor(
           reject,
         )
         waiter.start()
-        work = execution
-          .perform(waiter)
-          .catch((error: unknown) => {
-            waiter.fail(error)
-            throw error
-          })
-          .finally(stopDialogs)
+        work = execution.perform(waiter).catch((error: unknown) => {
+          waiter.fail(error)
+          throw error
+        })
         // The call's own rejection or the receipt's `completed` carries the failure; this copy only marks it handled.
         work.catch(() => {})
       })

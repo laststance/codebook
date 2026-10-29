@@ -11,7 +11,12 @@ export function locateClickCentre(
   this: Element,
 ): { ready: true; x: number; y: number } | { ready: false; reason: string } {
   if (!this.isConnected) return { ready: false, reason: 'element-detached' }
-  this.scrollIntoView({ block: 'center', inline: 'center' })
+  // An instant scroll: a smooth one would still move while the centre is measured.
+  this.scrollIntoView({
+    block: 'center',
+    inline: 'center',
+    behavior: 'instant',
+  })
   const rect = this.getBoundingClientRect()
   if (rect.width <= 0 || rect.height <= 0)
     return { ready: false, reason: 'element-has-no-size' }

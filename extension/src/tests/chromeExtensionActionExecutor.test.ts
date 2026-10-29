@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { mock, test } from 'node:test'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { createChromeExtensionActionExecutor } from '../chromeExtensionActionExecutor'
@@ -56,6 +56,7 @@ function executorFor(
     pauseState: pauses,
     assertActionCurrent: () => {},
     record: (type, detail) => events.push({ type, detail }),
+    roots: { storage: [], workspace: '/Users/ada/secret-repo' },
     stepTimeoutMs: options.stepTimeoutMs ?? 2_000,
     returnBoundMs: options.returnBoundMs ?? 2_000,
     settleMs: options.settleMs ?? 10,
@@ -348,7 +349,12 @@ test('a confirm dialog opened by the click is accepted as declared and journaled
   assert.deepEqual(events, [
     {
       type: 'chrome-extension.dialog',
-      detail: { clickIndex: 1, type: 'confirm', answer: 'accept' },
+      detail: {
+        clickIndex: 1,
+        type: 'confirm',
+        answer: 'accept',
+        message: '',
+      },
     },
   ])
 })
@@ -407,4 +413,298 @@ test('a dialog without a declared answer fails the click with DIALOG_UNDECLARED'
         'Click 1 opened a confirm dialog; declare dialog: accept or dismiss for it.',
   )
   assert.equal(surface.methods().includes('Page.handleJavaScriptDialog'), false)
+})
+
+/** A click-centre answer that is not ready, for the surface's `locateClickCentre` call. */
+function centreRefusal(reason: string) {
+  return (params: Record<string, unknown>) =>
+    String(params.functionDeclaration).includes('element-has-no-size')
+      ? { result: { value: { ready: false, reason } } }
+      : { result: { value: { ready: true } } }
+}
+
+/** Runs a one-input click whose focus answer is held, returns the receipt as `paused`, then answers the focus with the given reason. */
+async function focusRefusedAfterReturn(reason: string) {
+  const focusAnswer = defer<Record<string, unknown>>()
+  const { executor, pauses } = executorFor({
+    'Runtime.callFunctionOn': () => focusAnswer.promise,
+  })
+  const call = executor.run({
+    ...CLICK,
+    inputs: [{ selector: '#name', text: 'a' }],
+  })
+  await sleep(10)
+  openDeclaredPause(pauses)
+  const receipt = await call
+  focusAnswer.resolve({ result: { value: { ready: false, reason } } })
+  await receipt.completed.catch(() => {})
+  return receipt
+}
+
+// protects=a lost answer of the second input's element lookup (after the first input was typed) is a partial input, never a raw error; fails_when=the raw error of Runtime.evaluate escapes; no_claim=which lookup was lost on the wire
+test('a lost answer of the second input lookup after the first was typed ends the click with INPUT_PARTIAL', async () => {
+  // Arrange
+  let evaluations = 0
+  const { executor } = executorFor({
+    'Runtime.evaluate': () => {
+      if (++evaluations === 2) throw new Error('socket closed')
+      return { result: { subtype: 'node', objectId: 'node-1' } }
+    },
+  })
+  // Act
+  const refusal = executor.run({
+    ...CLICK,
+    inputs: [
+      { selector: '#first', text: 'a' },
+      { selector: '#second', text: 'b' },
+    ],
+  })
+  // Assert
+  await assert.rejects(
+    refusal,
+    (error: unknown) =>
+      error instanceof StudyError &&
+      error.code === 'INPUT_PARTIAL' &&
+      error.message ===
+        'Input 2 of click 1 failed after earlier inputs were typed; the extension may have reacted.',
+  )
+})
+
+// protects=a lost answer of the click-centre call after an input was typed is a partial input named by the click step, not by a nonexistent input; fails_when=the raw error escapes or the message names Input 2 of a one-input click; no_claim=real DOM
+test('a lost answer of the click-centre call after an input was typed ends the click with INPUT_PARTIAL naming the press', async () => {
+  // Arrange
+  const { executor } = executorFor({
+    'Runtime.callFunctionOn': (params) => {
+      if (String(params.functionDeclaration).includes('element-has-no-size'))
+        throw new Error('socket closed')
+      return { result: { value: { ready: true } } }
+    },
+  })
+  // Act
+  const refusal = executor.run({
+    ...CLICK,
+    inputs: [{ selector: '#name', text: 'a' }],
+  })
+  // Assert
+  await assert.rejects(
+    refusal,
+    (error: unknown) =>
+      error instanceof StudyError &&
+      error.code === 'INPUT_PARTIAL' &&
+      error.message ===
+        'The press of click 1 could not start after its inputs were typed; the extension may have reacted.',
+  )
+})
+
+// protects=an answer of the wrong shape after an input was typed is a partial input (zod errors never escape); fails_when=a ZodError reaches the caller; no_claim=that Chrome sends such an answer
+test('a click-centre answer of the wrong shape after an input was typed ends the click with INPUT_PARTIAL', async () => {
+  // Arrange
+  const { executor } = executorFor({
+    'Runtime.callFunctionOn': (params) =>
+      String(params.functionDeclaration).includes('element-has-no-size')
+        ? { result: { value: { ready: 'yes' } } }
+        : { result: { value: { ready: true } } },
+  })
+  // Act
+  const refusal = executor.run({
+    ...CLICK,
+    inputs: [{ selector: '#name', text: 'a' }],
+  })
+  // Assert
+  await assert.rejects(
+    refusal,
+    (error: unknown) =>
+      error instanceof StudyError && error.code === 'INPUT_PARTIAL',
+  )
+})
+
+// protects=a raw failure before any effect is a StudyError that says nothing was typed or pressed; fails_when=the raw error escapes or the failure claims a partial effect; no_claim=retry behaviour of the run
+test('a lost answer of Page.enable fails with RUNTIME_FAILED and no side effect', async () => {
+  // Arrange
+  const { executor, surface } = executorFor({
+    'Page.enable': () => {
+      throw new Error('socket closed')
+    },
+  })
+  // Act
+  const refusal = executor.run(CLICK)
+  // Assert
+  await assert.rejects(refusal, (error: unknown) => {
+    assert.ok(error instanceof StudyError)
+    assert.equal(error.code, 'RUNTIME_FAILED')
+    assert.equal(
+      error.message,
+      'Click 1 could not start; nothing was typed or pressed.',
+    )
+    assert.match(error.describe().recovery, /Side effects: none\./)
+    return true
+  })
+  assert.deepEqual(
+    surface.methods().filter((method) => method.startsWith('Input.')),
+    [],
+  )
+})
+
+// protects=the fixed SELECTOR_NOT_FOUND sentence of the contract, with the reason in the cause; fails_when=the reason is appended to the message; no_claim=wording of other codes
+test('a click whose centre is covered fails with the fixed SELECTOR_NOT_FOUND sentence and the reason in the cause', async () => {
+  // Arrange
+  const { executor } = executorFor({
+    'Runtime.callFunctionOn': centreRefusal('element-obscured'),
+  })
+  // Act
+  const refusal = executor.run(CLICK)
+  // Assert
+  await assert.rejects(refusal, (error: unknown) => {
+    assert.ok(error instanceof StudyError)
+    assert.equal(error.code, 'SELECTOR_NOT_FOUND')
+    assert.equal(
+      error.message,
+      'No element matches #new-folder in the extension surface.',
+    )
+    assert.equal(
+      error.causeDetail,
+      'No element matches #new-folder in the extension surface. (element-obscured)',
+    )
+    return true
+  })
+})
+
+// protects=a focus refused before focus() ran records no effect on the input; fails_when=the input effect reads confirmed for an obscured first input; no_claim=real hit testing
+test('a first input that is obscured is refused with no side effect on the input', async () => {
+  // Arrange and Act
+  const receipt = await focusRefusedAfterReturn('input-obscured')
+  // Assert
+  assert.deepEqual(receipt.progress().inputEffects, ['none'])
+})
+
+// protects=a focus that ran and did not land counts as a confirmed effect; fails_when=it stays none although element.focus() ran; no_claim=real focus semantics
+test('a focus that ran but did not land is a confirmed effect on the input', async () => {
+  // Arrange and Act
+  const receipt = await focusRefusedAfterReturn('input-focus-changed')
+  // Assert
+  assert.deepEqual(receipt.progress().inputEffects, ['confirmed'])
+})
+
+// protects=a dialog a timer opens after the click settled is still answered and journaled with a masked message; fails_when=the listener is gone after the steps ended (the page stays blocked) or the message shows the private root; no_claim=real dialogs
+test('a dialog opened after the click settled is answered as declared and journaled with the private root hidden', async () => {
+  // Arrange
+  const { executor, surface, events } = executorFor()
+  const receipt = await executor.run({ ...CLICK, dialog: 'accept' })
+  await receipt.completed
+  // Act
+  surface.emit(
+    'Page.javascriptDialogOpening',
+    { type: 'alert', message: 'Saved /Users/ada/secret-repo/notes.md' },
+    SURFACE_SESSION,
+  )
+  await sleep(10)
+  // Assert
+  const answered = surface.sent.filter(
+    (request) => request.method === 'Page.handleJavaScriptDialog',
+  )
+  assert.deepEqual(
+    answered.map((request) => request.params),
+    [{ accept: true }],
+  )
+  assert.deepEqual(
+    events.filter((event) => event.type === 'chrome-extension.dialog'),
+    [
+      {
+        type: 'chrome-extension.dialog',
+        detail: {
+          clickIndex: 1,
+          type: 'alert',
+          answer: 'accept',
+          message: 'Saved <workspace>/notes.md',
+        },
+      },
+    ],
+  )
+})
+
+// protects=dispose ends the dialog listener so a finished run answers nothing; fails_when=a dialog after dispose is still answered; no_claim=cleanup of the connection
+test('a dialog opened after the run ended and the executor was disposed is not answered', async () => {
+  // Arrange
+  const { executor, surface } = executorFor()
+  const receipt = await executor.run({ ...CLICK, dialog: 'accept' })
+  await receipt.completed
+  executor.dispose()
+  // Act
+  surface.emit(
+    'Page.javascriptDialogOpening',
+    { type: 'alert' },
+    SURFACE_SESSION,
+  )
+  await sleep(10)
+  // Assert
+  assert.equal(surface.methods().includes('Page.handleJavaScriptDialog'), false)
+})
+
+// protects=an undeclared dialog opened after the click settled is reported to the run; fails_when=nothing tells the run that the page is blocked by an undeclared dialog; no_claim=that the dialog is dismissed
+test('an undeclared dialog opened after the click settled is reported by lateDialogRefusal', async () => {
+  // Arrange
+  const { executor, surface } = executorFor()
+  const receipt = await executor.run(CLICK)
+  await receipt.completed
+  // Act
+  surface.emit(
+    'Page.javascriptDialogOpening',
+    { type: 'confirm' },
+    SURFACE_SESSION,
+  )
+  await sleep(10)
+  // Assert
+  const refusal = executor.lateDialogRefusal()
+  assert.equal(refusal?.code, 'DIALOG_UNDECLARED')
+  assert.equal(
+    refusal?.message,
+    'Click 1 opened a confirm dialog; declare dialog: accept or dismiss for it.',
+  )
+})
+
+// protects=a call already decided as paused arms no return or settle timer afterwards; fails_when=the click's timers are armed after the pause decided the call; no_claim=timing of the outcome
+test('a click whose call returned paused during an input arms no return or settle timer for the press', async () => {
+  // Arrange
+  const answerFocus = defer<Record<string, unknown>>()
+  const { executor, pauses } = executorFor(
+    {
+      'Runtime.callFunctionOn': (params) =>
+        params.arguments && inspectionPhase(params) === 'focus'
+          ? answerFocus.promise
+          : {
+              result: { value: { ready: true, x: 1, y: 1 } },
+            },
+    },
+    { returnBoundMs: 4_321, settleMs: 8_765 },
+  )
+  const delays: unknown[] = []
+  const realSetTimeout = globalThis.setTimeout
+  mock.method(
+    globalThis,
+    'setTimeout',
+    (...args: Parameters<typeof setTimeout>) => {
+      delays.push(args[1])
+      return realSetTimeout(...args)
+    },
+  )
+  try {
+    const call = executor.run({
+      ...CLICK,
+      inputs: [{ selector: '#name', text: 'a' }],
+    })
+    await sleep(10)
+    openDeclaredPause(pauses)
+    const receipt = await call
+    // Act
+    answerFocus.resolve({ result: { value: { ready: true } } })
+    await receipt.completed
+    // Assert
+    assert.equal(receipt.outcome, 'paused')
+    assert.deepEqual(
+      delays.filter((delay) => delay === 4_321 || delay === 8_765),
+      [],
+    )
+  } finally {
+    mock.restoreAll()
+  }
 })

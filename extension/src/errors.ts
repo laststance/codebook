@@ -106,7 +106,7 @@ export const ERROR_RECOVERY = {
   SEED_NOT_APPLIED:
     "Start again once: the extension overwrote the seeded storage before the surface opened. Recovery: retry, at most one new start. The run's browser was closed and its profile removed. See codebook://help/chrome-extension#SEED_NOT_APPLIED.",
   SERVICE_WORKER_NOT_ATTACHED:
-    'Retry the action once with a new key; when the worker reports a start error, fix that error first. Recovery: retry, at most once; then stop the run. Nothing was clicked. See codebook://help/chrome-extension#SERVICE_WORKER_NOT_ATTACHED.',
+    'When a click was refused: retry the action once with a new key, then stop the run; when the worker reports a start error, fix that error first. When the start itself failed (the worker did not appear while the run was opening): the run failed, fix the start error first, then start one new run. Nothing was clicked in either case. See codebook://help/chrome-extension#SERVICE_WORKER_NOT_ATTACHED.',
   SERVICE_WORKER_LOST:
     "Stop this run; start one new run only if the learner asks, and continue worker stops sooner: the worker ended while it was paused. Recovery: new run, at most one. The run's browser was closed. See codebook://help/chrome-extension#SERVICE_WORKER_LOST.",
   SERVICE_WORKER_RESTARTED:
@@ -136,7 +136,7 @@ export const ERROR_RECOVERY = {
   SURFACE_NOT_ATTACHED:
     "Start one new run: the debugger could not attach to the extension surface. Recovery: new run, at most one. The run's browser was closed and its profile removed. See codebook://help/chrome-extension#SURFACE_NOT_ATTACHED.",
   DIALOG_UNDECLARED:
-    'Declare dialog: accept or dismiss on the named click, then start one new run: the click opened a JavaScript dialog. Recovery: fix, then one new run. Side effects: partial. See codebook://help/chrome-extension#DIALOG_UNDECLARED.',
+    'Declare dialog: accept or dismiss on the named click, then start one new run: the click opened a JavaScript dialog. Recovery: fix, then one new run. Side effects: the click was sent and its effect is unknown or confirmed; typed inputs stay typed. See codebook://help/chrome-extension#DIALOG_UNDECLARED.',
   PLAYBACK_PROFILE_UNSUPPORTED:
     'codebook_playback controls browser recordings only. Do not start, continue or stop a run to open a test replay; ask the learner to open it.',
 } as const

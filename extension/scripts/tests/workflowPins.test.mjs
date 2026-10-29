@@ -1563,6 +1563,36 @@ test('the Windows job also runs once a week and for a new Node release, so a cha
   assert.equal(pullRequestFilter.includes('.node-version'), true)
 })
 
+// Value: protects=the chrome-extension integration test of every Test shard, which needs Google Chrome 149 or later on the runner; fails_when=the version step only prints (an older runner image then fails the test with a Chrome error and no hint), the step comes after the test run, or its minimum differs from `CHROME_EXTENSION_MIN_VERSION`; why_new=Cycle 0061 pt1 OCR finding D8; seam=the text of .github/workflows/test.yml and extension/src/constants.ts; no_claim=what the runner image ships
+test('the Test workflow fails before the shards run when the runner has Google Chrome older than the chrome-extension minimum', async () => {
+  // Arrange
+  const workflow = await repositoryText('.github/workflows/test.yml')
+  const constants = await repositoryText('extension/src/constants.ts')
+
+  // Act
+  const minimum = /export const CHROME_EXTENSION_MIN_VERSION = (\d+)/.exec(
+    constants,
+  )?.[1]
+  const versionStep =
+    /- name: Check the runner's Google Chrome version\n((?: {8}.*\n)+)/.exec(
+      workflow,
+    )?.[1]
+  const stepPosition = workflow.indexOf(
+    "- name: Check the runner's Google Chrome version",
+  )
+  const testRunPosition = workflow.indexOf(
+    "- name: Run this shard's tests with coverage",
+  )
+
+  // Assert
+  assert.equal(minimum, '149')
+  assert.equal(versionStep?.includes('google-chrome --version'), true)
+  assert.equal(versionStep?.includes(`-lt ${minimum}`), true)
+  assert.equal(versionStep?.includes('::error::'), true)
+  assert.equal(versionStep?.includes('exit 1'), true)
+  assert.equal(stepPosition > 0 && stepPosition < testRunPosition, true)
+})
+
 // Value: protects=the coverage report of a pull request, which Codecov posts only once every shard has uploaded; fails_when=a shard is added to the Test workflow and one of Codecov's two counts stays behind (the report then comes after the first shards and changes with every later upload), or a count is raised without its shard (the report never comes); why_new=the shard count went from twelve to fourteen in Cycle 0045 and nothing compared the three places; seam=none
 test('the Test workflow has as many shards as Codecov waits for before it reports, in both of its settings', async () => {
   // Arrange
