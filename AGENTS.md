@@ -280,14 +280,15 @@ Node as `.node-version` pins it (mirrored in `extension/.node-version`, since a 
 
 **Fallow.**
 
-- `pnpm --dir extension dupes` / `dead-code` fail on clones or dead code beyond `fallow-dupes-baseline.json` / `fallow-dead-code-baseline.json` (2026-10-19 source, Fallow 3.34.1). `.fallowrc.json` excludes tests and scripts (`health.ignore`, `duplicates.ignore`; `ignoreFindings` keeps them entry points, so code they call counts as used).
+- `pnpm --dir extension dupes` / `dead-code` fail on clones or dead code beyond `fallow-dupes-baseline.json` / `fallow-dead-code-baseline.json` (retaken 2026-10-30, Cycle 0062 pt2, Fallow 3.37.0). `.fallowrc.json` excludes tests and scripts (`health.ignore`, `duplicates.ignore`; `ignoreFindings` keeps them entry points, so code they call counts as used).
 - `pnpm --dir extension health` (`scripts/checkHealth.mjs`, 20-min job) scores health with this run's coverage against `fallow-health-measured-baseline.json` (cyclomatic 20, cognitive 15, CRAP 30). Exit 0 clean, 1 findings, 2 refused/no verdict (e.g. pins differing from `fallow-health-reference.json`, a runner option in `NODE_OPTIONS`). Only option: `--format json`; never writes a baseline.
-  - Baseline = revision `944c1342`'s measured health, never current output: fix findings above it in the source.
-  - Changing a pinned producer or one of the three settings: retake from `944c1342` in a separate worktree with the new pins, record hashes in the reference (`health.test.mjs` pins it), state it in the PR.
+  - Baselines = the current codebase at the retake (owner, 2026-10-30: 「一旦設定は現在のコードベースがベースラインで大丈夫です」), not one fixed old revision: fix findings above the committed baseline in the source.
+  - Changing a pinned producer or one of the three settings: retake on the current code in a separate worktree with the new pins, record revision and hashes in the reference (`health.test.mjs` pins it), state it in the PR.
   - Never rename a callback or add a test only to move its static estimate.
-- `pnpm --dir extension health:static` (~2 s; in `check` after `lint`, before tests): same cyclomatic/cognitive limits without coverage, per function (`--baseline-mode identity`), against `fallow-health-baseline.json` taken on `main` at `99993f3` (against `944c1342` it fails on one anonymous `studyWorkspace.ts` function grown from moderate to high). CRAP needs coverage → stays with `pnpm health`.
+- `pnpm --dir extension health:static` (~2 s; in `check` after `lint`, before tests): same cyclomatic/cognitive limits without coverage, per function (`--baseline-mode identity`), against `fallow-health-baseline.json` (retaken 2026-10-30 on the Cycle 0062 pt2 code). CRAP needs coverage → stays with `pnpm health`.
   - Fixers run it after every change, before the full gate.
   - Fix new findings in the source; re-save the baseline (`fallow health --complexity --max-crap inf --baseline-mode identity --save-baseline fallow-health-baseline.json`) only to drop fixed findings, never to absorb one.
+- `pnpm --dir extension architecture` (~1 s; own CI job): `fallow architecture --fail-on-issues` against `fallow-architecture-baseline.json`, which holds no cycle: a new import cycle fails. Fallow's other opt-in commands (`security`, `similar-code`, `mutation`, `flags`) are no gate: only deterministic pass/fail metrics gate (Cycle 0062 D2).
 
 ## Native QA
 

@@ -1,6 +1,6 @@
 {
   "mode": "measured-istanbul",
-  "description": "Budget of the measured health gate (scripts/checkHealth.mjs): the Fallow health findings of the pre-repair source, scored with that source's own complete c8 coverage. The checker never writes it; never regenerate it from current output.",
+  "description": "Budget of the measured health gate (scripts/checkHealth.mjs): the Fallow health findings of the source at sourceRevision, scored with that source's own complete c8 coverage. The checker never writes it; retake it only as AGENTS.md describes.",
   "sourceRevision": "944c134261e1b3904a97757e652aaf6fabfca2b5",
   "baseline": {
     "file": "fallow-health-measured-baseline.json",
@@ -15,7 +15,7 @@
     "node": "24.22.1",
     "c8": "12.0.0",
     "v8ToIstanbul": "9.3.0",
-    "fallow": "3.34.1"
+    "fallow": "3.37.0"
   },
   "settings": {
     ".node-version": "d9f318747a126ce2247661af67852b185def7789492eabfad7bba322be087c33",

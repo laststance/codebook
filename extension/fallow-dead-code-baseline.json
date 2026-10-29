@@ -6,7 +6,8 @@
     "capabilities": [],
     "project_config_hash": "",
     "backend_family": "",
-    "completeness": "complete"
+    "completeness": "complete",
+    "node_modules": "present"
   },
   "identity": "dc1",
   "unused_files": [],
@@ -118,5 +119,7 @@
   "misplaced_directives": [],
   "route_collisions": [],
   "dynamic_segment_name_conflicts": [],
-  "prop_drilling_chains": []
+  "prop_drilling_chains": [],
+  "thin_wrappers": [],
+  "duplicate_prop_shapes": []
 }
