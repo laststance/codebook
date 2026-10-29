@@ -1131,17 +1131,101 @@ test('a debug session that starts after the release began is stopped once', asyn
   const editor = await extensionEditorHarness({})
   const startGate = defer<void>()
   editor.holdStartDebugging(startGate.promise)
+  const run = new AbortController()
   const created = editor.createDebugger([PAGE_STOP])
-  const attaching = created.debug.attach(SIGNAL())
+  const attaching = created.debug.attach(run.signal)
   const rejected = assert.rejects(attaching)
   await until(() => editor.started.length > 0)
   await created.debug.release()
   // Act
+  run.abort()
   startGate.resolve()
   await rejected
   // Assert
   assert.deepEqual(editor.stopped, ['root-session'])
-  assert.deepEqual(editor.listeners(), { tracker: false, termination: false })
+  assert.deepEqual(editor.listeners(), {
+    tracker: false,
+    termination: false,
+    sessionStarts: false,
+  })
+  await editor.dispose()
+})
+
+// protects=LR-D1 (Cycle 0062 ship last round): a session the editor announces as started after the release began is stopped even when the tracker never registered it; fails_when=only tracker-registered sessions are stopped and an unregistered js-debug session outlives the run; no_claim=real js-debug start timing
+test('a session announced after the release began is stopped although the tracker never saw it', async () => {
+  // Arrange
+  const editor = await extensionEditorHarness({})
+  const startGate = defer<void>()
+  editor.holdStartDebugging(startGate.promise)
+  editor.startSessionsWithoutTracker()
+  const run = new AbortController()
+  const created = editor.createDebugger([PAGE_STOP])
+  const rejected = assert.rejects(created.debug.attach(run.signal))
+  await until(() => editor.started.length > 0)
+  await created.debug.release()
+  // Act
+  run.abort()
+  startGate.resolve()
+  await rejected
+  // Assert
+  assert.deepEqual(editor.stopped, ['root-session'])
+  await editor.dispose()
+})
+
+// protects=LR-D2 (Cycle 0062 ship last round): a late session whose stop failed is stopped by the next release; fails_when=a failed late stop is marked done and the first (empty) release stays memoized, so the session is never stopped again; no_claim=real editor stop behavior
+test('a later release stops a late session whose first stop failed', async () => {
+  // Arrange
+  const editor = await extensionEditorHarness({})
+  const startGate = defer<void>()
+  editor.holdStartDebugging(startGate.promise)
+  const run = new AbortController()
+  const created = editor.createDebugger([PAGE_STOP])
+  const rejected = assert.rejects(created.debug.attach(run.signal))
+  await until(() => editor.started.length > 0)
+  await created.debug.release()
+  editor.failStopDebugging(new Error('the editor could not stop it'), 1)
+  run.abort()
+  startGate.resolve()
+  await rejected
+  // Act
+  await created.debug.release()
+  // Assert
+  assert.deepEqual(editor.stopped, ['root-session', 'root-session'])
+  assert.deepEqual(
+    plain(
+      created.events.filter(
+        (event) => event.type === 'chrome-extension.debugger-error',
+      ),
+    ),
+    [
+      {
+        type: 'chrome-extension.debugger-error',
+        detail: { message: 'Error: the editor could not stop it' },
+      },
+    ],
+  )
+  await editor.dispose()
+})
+
+// protects=LR-D3 (Cycle 0062 ship last round): the listeners kept for a start that never settles are disposed at the stop bound; fails_when=a hung startDebugging keeps the tracker and listeners alive for the process; no_claim=the real stop deadline length
+test('listeners kept for an attach that never settles are disposed at the stop bound', async () => {
+  // Arrange
+  const editor = await extensionEditorHarness({
+    constants: { CHROME_EXTENSION_STOP_DEADLINE_MS: 30 },
+  })
+  editor.holdStartDebugging(new Promise<void>(() => {}))
+  const created = editor.createDebugger([PAGE_STOP])
+  void created.debug.attach(SIGNAL()).catch(() => {})
+  await until(() => editor.started.length > 0)
+  // Act
+  await created.debug.release()
+  // Assert
+  await until(() => !editor.listeners().tracker)
+  assert.deepEqual(editor.listeners(), {
+    tracker: false,
+    termination: false,
+    sessionStarts: false,
+  })
   await editor.dispose()
 })
 
@@ -1996,6 +2080,29 @@ test('the attach succeeds when another page of the same file differs only by a q
   await editor.dispose()
 })
 
+// protects=LR-D5 (Cycle 0062 ship last round): the surface tie ignores the fragment a hash-routing page adds after load and keeps the query significant; fails_when=a page that sets location.hash is counted as no surface candidate and the attach is refused with SURFACE_NOT_ATTACHED; no_claim=which js-debug session belongs to which target
+test('the attach succeeds when the surface page lists a hash route after its address', async () => {
+  // Arrange
+  const editor = await extensionEditorHarness()
+  const created = editor.createDebugger([PAGE_STOP], {
+    targets: [
+      {
+        targetId: 'surface-target',
+        type: 'page',
+        url: `${SURFACE_URL}#/settings`,
+      },
+    ],
+  })
+  const attaching = created.debug.attach(SIGNAL())
+  await until(() => editor.started.length > 0)
+  // Act
+  await editor.addChild({ kind: 'page', id: 'page-session' })
+  // Assert
+  await attaching
+  await created.debug.release()
+  await editor.dispose()
+})
+
 // protects=the worker child is adopted when the browser's target list lists the extension's worker only after the child appeared (Cycle 0062 review OCR-L3); fails_when=one early read of the list demotes the child for good and the attach fails with SERVICE_WORKER_NOT_ATTACHED; no_claim=real js-debug timing
 test('a worker child is adopted when the target list shows the extension’s worker a moment after the child appeared', async () => {
   // Arrange
@@ -2030,8 +2137,8 @@ test('a worker child is adopted when the target list shows the extension’s wor
   await editor.dispose()
 })
 
-// protects=A3 (Cycle 0062 ship review, Codex): a worker child is the extension's worker only when the extension's worker is the only service worker listed, since js-debug's child names no target id; fails_when=a foreign worker listed beside the extension's own lets a foreign child be adopted; no_claim=which js-debug session belongs to which target
-test('a worker child is not adopted while a foreign service worker is listed beside the extension’s own', async () => {
+// protects=LR-D4 (Cycle 0062 ship last round): only service workers of the extension's own origin make the adoption ambiguous; fails_when=a component extension's or a web service worker listed in the browser refuses every real run; no_claim=which js-debug session belongs to which target
+test('a worker child is adopted while another origin’s service worker is listed beside the extension’s own', async () => {
   // Arrange
   const editor = await extensionEditorHarness({
     constants: { EXTENSION_WAKE_BOUND_MS: 80 },
@@ -2041,7 +2148,7 @@ test('a worker child is not adopted while a foreign service worker is listed bes
       { targetId: 'surface-target', type: 'page', url: SURFACE_URL },
       { targetId: 'worker-target', type: 'service_worker', url: WORKER_URL },
       {
-        targetId: 'foreign-worker-target',
+        targetId: 'foreign-target',
         type: 'service_worker',
         url: 'chrome-extension://ponmlkjihgfedcbaponmlkjihgfedcba/service-worker.js',
       },
@@ -2051,16 +2158,72 @@ test('a worker child is not adopted while a foreign service worker is listed bes
   await until(() => editor.started.length > 0)
   await editor.addChild({ kind: 'page', id: 'page-session' })
   await attaching
-  await editor.addChild({ kind: 'service_worker', id: 'foreign-worker' })
-  // Act
-  const waking = created.debug.waitForWorker(SIGNAL())
-  // Assert
+  await editor.addChild({ kind: 'service_worker', id: 'worker-session' })
+  // Act and assert
+  await created.debug.waitForWorker(SIGNAL())
+  assert.equal(created.debug.workerGeneration(), 1)
+  await created.debug.release()
+  await editor.dispose()
+})
+
+// protects=A3 (Cycle 0062 ship review, Codex): a worker child is the extension's worker only when it is the only worker of the extension listed, since js-debug's child names no target id; fails_when=a second worker of the extension lets another worker's child be adopted; no_claim=which js-debug session belongs to which target
+test('a worker child is not adopted while two service workers of the extension are listed', async () => {
+  // Arrange
+  const editor = await extensionEditorHarness({
+    constants: { EXTENSION_WAKE_BOUND_MS: 80 },
+  })
+  const created = editor.createDebugger([WORKER_STOP], {
+    targets: [
+      { targetId: 'surface-target', type: 'page', url: SURFACE_URL },
+      { targetId: 'worker-target', type: 'service_worker', url: WORKER_URL },
+      {
+        targetId: 'second-target',
+        type: 'service_worker',
+        url: `chrome-extension://${EXTENSION_ID}/other-worker.js`,
+      },
+    ],
+  })
+  const attaching = created.debug.attach(SIGNAL())
+  await until(() => editor.started.length > 0)
+  await editor.addChild({ kind: 'page', id: 'page-session' })
+  await attaching
+  await editor.addChild({ kind: 'service_worker', id: 'worker-session' })
+  // Act and assert
   await assert.rejects(
-    waking,
+    created.debug.waitForWorker(SIGNAL()),
     (error) =>
       error instanceof StudyError &&
       error.code === 'SERVICE_WORKER_NOT_ATTACHED',
   )
+  await created.debug.release()
+  await editor.dispose()
+})
+
+// protects=LR-D6 (Cycle 0062 ship last round): the manifest's worker path and the browser's listed url compare in their normalized (encoded) forms; fails_when=a worker path with a space is never found and every such run fails with SERVICE_WORKER_NOT_ATTACHED; no_claim=real Chrome's url normalization
+test('a worker whose manifest path has a space is adopted when the browser lists its encoded url', async () => {
+  // Arrange
+  const editor = await extensionEditorHarness({
+    constants: { EXTENSION_WAKE_BOUND_MS: 80 },
+  })
+  const created = editor.createDebugger([WORKER_STOP], {
+    targets: [
+      { targetId: 'surface-target', type: 'page', url: SURFACE_URL },
+      {
+        targetId: 'worker-target',
+        type: 'service_worker',
+        url: `chrome-extension://${EXTENSION_ID}/background%20worker.js`,
+      },
+    ],
+    workerPath: 'background worker.js',
+  })
+  const attaching = created.debug.attach(SIGNAL())
+  await until(() => editor.started.length > 0)
+  await editor.addChild({ kind: 'page', id: 'page-session' })
+  await attaching
+  await editor.addChild({ kind: 'service_worker', id: 'worker-session' })
+  // Act and assert
+  await created.debug.waitForWorker(SIGNAL())
+  assert.equal(created.debug.workerGeneration(), 1)
   await created.debug.release()
   await editor.dispose()
 })
@@ -2129,7 +2292,11 @@ test('a release whose session would not stop journals the failure, rethrows it a
   const releasing = created.debug.release()
   // Assert
   await assert.rejects(releasing, /the editor could not stop the session/)
-  assert.deepEqual(editor.listeners(), { tracker: false, termination: false })
+  assert.deepEqual(editor.listeners(), {
+    tracker: false,
+    termination: false,
+    sessionStarts: false,
+  })
   assert.deepEqual(
     plain(
       created.events

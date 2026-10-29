@@ -100,6 +100,9 @@ export async function extensionEditorHarness(
   let refuseContinues = false
   let stopDebuggingFailure: Error | undefined
   let startGate: Promise<void> | undefined
+  let startListener: ((session: vscode.DebugSession) => void) | undefined
+  let skipTracker = false
+  let stopFailuresLeft = Number.POSITIVE_INFINITY
 
   class Position {
     constructor(
@@ -289,6 +292,16 @@ export async function extensionEditorHarness(
           },
         }
       },
+      onDidStartDebugSession: (
+        listener: (started: vscode.DebugSession) => void,
+      ) => {
+        startListener = listener
+        return {
+          dispose(): void {
+            if (startListener === listener) startListener = undefined
+          },
+        }
+      },
       async startDebugging(
         _folder: unknown,
         configuration: vscode.DebugConfiguration,
@@ -297,13 +310,17 @@ export async function extensionEditorHarness(
         started.push({ configuration, options: startOptions })
         await startGate
         const root = makeSession('root-session', configuration)
-        const tracker = await trackerFactory?.createDebugAdapterTracker(root)
-        if (tracker) trackers.set(root.id, tracker)
+        if (!skipTracker) {
+          const tracker = await trackerFactory?.createDebugAdapterTracker(root)
+          if (tracker) trackers.set(root.id, tracker)
+        }
+        startListener?.(root)
         return true
       },
       async stopDebugging(session: FakeSession): Promise<void> {
         stopped.push(session.id)
-        if (stopDebuggingFailure) throw stopDebuggingFailure
+        if (stopDebuggingFailure && stopFailuresLeft-- > 0)
+          throw stopDebuggingFailure
       },
     },
   }
@@ -488,13 +505,19 @@ export async function extensionEditorHarness(
       startGate = gate
     },
     /** Makes the editor's `stopDebugging` reject with this error from now on. */
-    failStopDebugging(error: Error): void {
+    failStopDebugging(error: Error, times = Number.POSITIVE_INFINITY): void {
       stopDebuggingFailure = error
+      stopFailuresLeft = times
+    },
+    /** Makes sessions the editor starts from now on skip the debugger's tracker (the editor still announces them as started). */
+    startSessionsWithoutTracker(): void {
+      skipTracker = true
     },
     /** Whether the debugger's tracker factory and termination listener are still registered. */
     listeners: () => ({
       tracker: trackerFactory !== undefined,
       termination: terminate !== undefined,
+      sessionStarts: startListener !== undefined,
     }),
     captureCalls: () => captureCalls,
     session: (id: string) => sessions.get(id)!,
