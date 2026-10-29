@@ -8070,6 +8070,7 @@ export class StudyWorkspace {
         scenario: 'normal',
         signal,
         keepsEndedPane: () => isFinal,
+        movesPausedSourceOut: true,
       })
       return new ChromeExtensionViewportView(viewport, {
         onFinal: () => {
@@ -10001,7 +10002,7 @@ export class StudyWorkspace {
   /**
    * Prepares the Application pane for one run and wraps it in a leased {@link BrowserViewport}; called by {@link presentation}'s `createViewport` (repository, server and test runs) and `createChromeExtensionViewport`.
    * The lease's release closes the pane of an ended run, except when `keepsEndedPane` says the run reached its last content: an ended extension run keeps its pane and last frame, without the keyboard, until a next run's view replaces it or the learner closes the tab (ER22). A retired lease never touches a newer one's pane.
-   * @param input - The run's identity, its journal and failure hooks, and optionally the recording observer and the keep-at-end question.
+   * @param input - The run's identity, its journal and failure hooks, and optionally the recording observer, the keep-at-end question and `movesPausedSourceOut` ({@link keepPausedSourceOutOfApplication}, an extension run's lease).
    * @returns The viewport, already registered as the workspace's live one.
    * @throws What {@link prepareApplicationGroup} throws when no safe pane can be prepared.
    * @example const viewport = await this.leaseApplicationViewport({ runId, record, fail, scenario, signal })
@@ -10014,6 +10015,7 @@ export class StudyWorkspace {
     signal?: AbortSignal
     observer?: ViewportRecordingObserver
     keepsEndedPane?: () => boolean
+    movesPausedSourceOut?: boolean
   }): Promise<BrowserViewport> {
     const { runId, keepsEndedPane } = input
     // A new run may replace a closed reader, but an open recording keeps its independently selected film.
@@ -10028,6 +10030,12 @@ export class StudyWorkspace {
       leaseId = randomUUID()
     this.leaseId = leaseId
     panel.title = `codebook · Application ${runId.slice(0, 8)}`
+    const pausedSourceWatch = input.movesPausedSourceOut
+      ? this.keepPausedSourceOutOfApplication(
+          panel,
+          () => this.leaseId === leaseId,
+        )
+      : undefined
     const viewport = new BrowserViewport(
       runId,
       input.record,
@@ -10044,6 +10052,7 @@ export class StudyWorkspace {
         comesWithoutKeyboard: () => this.keepsKeyboardFromPane(),
         tookKeyboardFromEditor: () => this.tellPaneTookKeyboard(),
         released: () => {
+          pausedSourceWatch?.dispose()
           // A retired runtime cannot close or replace the panel attached to a newer lease.
           if (this.leaseId !== leaseId) return
           this.viewport = undefined
@@ -10073,6 +10082,111 @@ export class StudyWorkspace {
       this.playback?.reveal()
     }
     return viewport
+  }
+
+  /**
+   * Moves a text tab that opens in front of a live extension run's Application pane to the source group beside it, so the stopped source and the extension view stay visible in separate groups (DR6); called by {@link leaseApplicationViewport} for an extension run's lease.
+   * Cursor 3.27.22 opens a stop's paused file in the Application group although that group is locked, in front of the view (Cycle 0062 task 2, dry run of 2026-10-30); VS Code opens it in another group. An extension run has no captured source of its own: the paused file is where the learner reads the stop.
+   * @param panel - The lease's Application pane.
+   * @param isCurrent - Whether the lease is still the workspace's current one.
+   * @returns The watch, which the lease's release disposes.
+   * @example const watch = this.keepPausedSourceOutOfApplication(panel, () => this.leaseId === leaseId)
+   */
+  private keepPausedSourceOutOfApplication(
+    panel: vscode.WebviewPanel,
+    isCurrent: () => boolean,
+  ): vscode.Disposable {
+    let isMoving = false
+    const moveCoveringSource = (): void => {
+      const move =
+        isMoving || !isCurrent() ? undefined : this.coveringSourceMove(panel)
+      if (!move) return
+      isMoving = true
+      void this.movePausedSource(move)
+        .catch((error: unknown) => this.report('layout', error))
+        .finally(() => {
+          isMoving = false
+        })
+    }
+    const watches = [
+      vscode.window.tabGroups.onDidChangeTabs(moveCoveringSource),
+      vscode.window.onDidChangeActiveTextEditor(moveCoveringSource),
+      panel.onDidChangeViewState(moveCoveringSource),
+    ]
+    return {
+      dispose: (): void => {
+        for (const watch of watches) watch.dispose()
+      },
+    }
+  }
+
+  /**
+   * Finds a text tab in the Application pane's group and the group it moves to; read by {@link keepPausedSourceOutOfApplication} at each tab, editor or pane change of the lease.
+   * The destination is the first other main group that holds an editor or nothing: never a chat part, whose tabs are no editors, and never a group of a Codebook pane.
+   * @param panel - The lease's Application pane.
+   * @returns The tab, its document, the Application group's column and the destination; `undefined` when no text tab is in that group or no destination exists.
+   * @example this.coveringSourceMove(panel) // => { tab: settings.js, uri, from: 1, to: group 2 } after Cursor opened the paused file in the Application group
+   */
+  private coveringSourceMove(panel: vscode.WebviewPanel):
+    | {
+        tab: vscode.Tab
+        uri: vscode.Uri
+        from: vscode.ViewColumn
+        to: vscode.TabGroup
+      }
+    | undefined {
+    const from = panel.viewColumn,
+      groups = vscode.window.tabGroups.all,
+      applicationGroup = groups.find((group) => group.viewColumn === from)
+    const tab = applicationGroup?.tabs.find(
+      (candidate) => candidate.input instanceof vscode.TabInputText,
+    )
+    if (
+      from === undefined ||
+      !tab ||
+      !(tab.input instanceof vscode.TabInputText)
+    )
+      return undefined
+    const editorKinds = editorTabInputKinds(vscode)
+    const to = groups
+      .filter(
+        (group) =>
+          group.viewColumn !== from &&
+          (group.tabs.length === 0 || holdsEditorTab(group, editorKinds)) &&
+          !group.tabs.some((candidate) =>
+            this.isCodebookPaneInput(candidate.input),
+          ),
+      )
+      .toSorted((left, right) => left.viewColumn - right.viewColumn)[0]
+    return to && { tab, uri: tab.input.uri, from, to }
+  }
+
+  /**
+   * Closes a text tab in the Application pane's group and shows its document in the destination group without taking the keyboard, at the selection its editor had; called by {@link keepPausedSourceOutOfApplication}.
+   * It opens as a preview only when it was one and the destination holds no preview tab, which it would replace.
+   * @param move - What {@link coveringSourceMove} found.
+   * @returns Once the tab is closed and the document shown.
+   * @example await this.movePausedSource(this.coveringSourceMove(panel)!)
+   */
+  private async movePausedSource(move: {
+    tab: vscode.Tab
+    uri: vscode.Uri
+    from: vscode.ViewColumn
+    to: vscode.TabGroup
+  }): Promise<void> {
+    const selection = vscode.window.visibleTextEditors.find(
+        (editor) =>
+          editor.viewColumn === move.from &&
+          editor.document.uri.toString() === move.uri.toString(),
+      )?.selection,
+      preview = move.tab.isPreview && !move.to.tabs.some((tab) => tab.isPreview)
+    await vscode.window.tabGroups.close([move.tab], true)
+    await this.showTextDocumentNoted(move.uri, {
+      viewColumn: move.to.viewColumn,
+      preserveFocus: true,
+      preview,
+      ...(selection && { selection }),
+    })
   }
 
   /**

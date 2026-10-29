@@ -6488,6 +6488,20 @@ export async function workspaceHarness(
       activeTextEditorChanged(focusedSourceEditor())
     },
     /**
+     * Opens a stop's paused file as a preview in the group it is given, even a locked one, preserving the focus, and announces the new tab, as Cursor 3.27.22 did with the Application group at an extension run's page stop (Cycle 0062 task 2, dry run of 2026-10-30).
+     * @param filename - The paused file.
+     * @param column - The group Cursor opened it in.
+     * @returns The paused file's tab.
+     * @example harness.openPausedFileInLockedGroup('settings.js', 1)
+     */
+    openPausedFileInLockedGroup(filename: string, column: number): Tab {
+      const { tab } = openDraftTab(filename, column, true)
+      for (const listener of tabChangeListeners)
+        listener({ opened: [tab], closed: [], changed: [] })
+      activeTextEditorChanged(focusedSourceEditor())
+      return tab
+    },
+    /**
      * Shows a stop the way both editors' own stop handling does under `debug.focusEditorOnBreak: false` (`focusStackFrame(…, { preserveFocus: true })` in VS Code 1.140 and Cursor 3.23): the paused file comes to the front of its group preserving the focus, and then the stop's frame is reported. When the text editor in front of the active group had the keyboard, it is hidden and the keyboard falls to the page body (Cycle 0046 finding 589, C54 rounds 9f and step1). A test sends the adapter's `stopped` event first (`pauseDebugger` with `staysInBackground`).
      * @param sessionId - The session that stopped.
      * @param filename - The paused file.

@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { test } from 'node:test'
 
 import type { ExtensionViewportIdentity } from '../chromeExtensionContracts'
@@ -114,6 +116,49 @@ test('an extension run started beside a focused image preview opens its Applicat
       true,
     )
     assert.deepEqual(harness.tabCloseRequests(), [])
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=D2 (Cycle 0062 task 2): a stop's paused file that Cursor opens in front of the extension view, in the locked Application group, moves to the source group beside it, so the extension view and the stopped source stay visible in separate groups (DR6); fails_when=the paused file stays in front of the Application pane and covers the extension view, as Cursor 3.27.22 showed in the dry run of 2026-10-30; no_claim=Cursor's own routing of the paused file, the keyboard at the stop
+test('a paused file Cursor opens in front of the extension view moves to the source group and leaves the view in front', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeFile(
+      join(harness.directory, 'settings.js'),
+      "await chrome.storage.local.set({ theme: 'dark' })\n",
+    )
+    harness.focusMutableDraft('popup.js', 1)
+    const view = await openView(harness, 'cursor-paused-run-1')
+    const pane = harness.reader['app']
+    assert.ok(pane?.viewColumn)
+    const applicationColumn = pane.viewColumn
+    // Act
+    harness.openPausedFileInLockedGroup('settings.js', applicationColumn)
+    // Assert
+    const applicationGroup = () =>
+        harness.groups.find((group) => group.viewColumn === applicationColumn),
+      groupShowingPausedFile = () =>
+        harness.groups.find((group) =>
+          group.tabs.some((tab) => tab.label === 'settings.js'),
+        )
+    await waitUntil(
+      () =>
+        groupShowingPausedFile() !== undefined &&
+        groupShowingPausedFile() !== applicationGroup(),
+      'the paused file moves out of the Application group',
+      5_000,
+    )
+    assert.equal(applicationGroup()?.tabs.length, 1)
+    assert.equal(applicationGroup()?.activeTab, applicationGroup()?.tabs[0])
+    const sourceGroup = groupShowingPausedFile()
+    assert.ok(sourceGroup)
+    assert.notEqual(sourceGroup.viewColumn, applicationColumn)
+    assert.equal(sourceGroup.activeTab?.label, 'settings.js')
     view.close()
   } finally {
     await harness.close()
