@@ -74,6 +74,28 @@ test('the Application pane of an extension run released without a last view is c
   }
 })
 
+// protects=N61-1 (Cycle 0062 task 3): an extension run started from Cursor's Agent chat, with the first main editor group empty, opens its Application view and leaves the chat its keyboard; fails_when=the lease refuses with "Focus the first main source group before preparing the Application." because the Agent chat's tab group is counted beside the main groups; no_claim=Cursor's native focus events (N62)
+test('an extension run started from Cursor\u2019s Agent chat with an empty first group opens its Application view and keeps the chat\u2019s keyboard', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.groups[0]!.tabs = []
+    harness.groups[0]!.activeTab = undefined
+    const chat = harness.addSeparateEditorPart()
+    chat.focusTab()
+    // Act
+    const view = await openView(harness, 'cursor-agent-run-1')
+    // Assert
+    assert.ok(harness.reader['app'])
+    assert.equal(chat.focused(), true)
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
 // protects=ER22: a late cleanup of an older run never closes or replaces a newer run's view; fails_when=the older lease's release clears the newer lease, closes its pane or keeps the older pane as the kept view; no_claim=which pane object the editor reuses
 test('a late cleanup of an older extension run leaves the newer run view open', async () => {
   // Arrange

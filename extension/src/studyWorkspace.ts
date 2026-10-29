@@ -18908,7 +18908,7 @@ export class StudyWorkspace {
    * @param primary - The original first group, required by the empty single-part fallback.
    * @param mainCount - Main groups measured before the issued focus command.
    * @param sourceReceipt - The exact source or opaque-tab acknowledgement retained across that command.
-   * @returns Whether a current native report, retained acknowledgement or unchanged empty primary proves the destination.
+   * @returns Whether a current native report, retained acknowledgement, unchanged empty primary or the sole empty main group beside a chat part proves the destination.
    * @example this.hasApplicationPreparationFocus(primary, mainCount, input)
    */
   private hasApplicationPreparationFocus(
@@ -18922,7 +18922,9 @@ export class StudyWorkspace {
       Boolean(sourceReceipt?.acknowledged()) ||
       (mainCount === vscode.window.tabGroups.all.length &&
         primary === vscode.window.tabGroups.activeTabGroup &&
-        !primary.activeTab)
+        !primary.activeTab) ||
+      // Beside Cursor's Agent chat the empty main group reports no focus and the chat's group stays the named one (rows 673, F389): that shape is the proof, as for the grid read.
+      this.isSoleMainGroupBesideChat(mainCount)
     )
   }
 
