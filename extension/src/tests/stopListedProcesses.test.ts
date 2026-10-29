@@ -143,3 +143,38 @@ test('a group whose leader exits on SIGTERM but whose members survive gets SIGKI
     ],
   )
 })
+
+// Value: protects=ER18's rule that nothing but the owned browser is signalled; fails_when=after SIGTERM reached the group and the group ended, the leader's id now names an unrelated process and the stop falls back to that pid, counts it as a survivor and sends it SIGKILL; no_claim=real pid reuse timing
+test('a group that SIGTERM reached and that ended counts as stopped, and an unrelated process that now has its id is never signalled', async () => {
+  // Arrange
+  const signalled: [number, NodeJS.Signals | 0][] = []
+  let isGroupGone = false
+  const stopper: ProcessStopper = {
+    platform: 'linux',
+    signal: (pid, signal): void => {
+      signalled.push([pid, signal])
+      if (pid === -4242 && signal === 'SIGTERM') {
+        isGroupGone = true
+        return
+      }
+      // The group ended with SIGTERM; the plain id 4242 now belongs to an unrelated process, which answers the null signal.
+      if (pid === -4242 && isGroupGone) throw new Error('ESRCH')
+    },
+    taskkill: async () => undefined,
+    sleep: async () => undefined,
+  }
+  // Act
+  const stopped = await stopListedProcesses([4242], stopper, {
+    groupLeaders: [4242],
+  })
+  // Assert
+  assert.equal(stopped, true)
+  assert.deepEqual(
+    signalled.filter(([pid]) => pid === 4242),
+    [],
+  )
+  assert.deepEqual(
+    signalled.filter(([, signal]) => signal !== 0),
+    [[-4242, 'SIGTERM']],
+  )
+})

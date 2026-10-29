@@ -5,13 +5,17 @@ import {
   EXTENSION_BROWSER_KILL_GRACE_MS,
   EXTENSION_BROWSER_POLL_MS,
 } from '../../constants'
+import { windowsSystemProgramPath } from '../../utils/windowsSystemProgramPath'
+
+/** Where `taskkill` lies under the Windows system root. */
+const TASKKILL_UNDER_SYSTEM_ROOT = ['System32', 'taskkill.exe']
 
 /** What {@link stopListedProcesses} acts through; each is the real one unless a test names its own. */
 export type ProcessStopper = {
   platform: NodeJS.Platform
   /** Sends a signal; throws when the process is gone or not this user's. */
   signal: (pid: number, signal: NodeJS.Signals | 0) => void
-  /** Ends a process tree on Windows (`taskkill /PID <pid> /T /F`). */
+  /** Ends a process tree on Windows (`%SystemRoot%\System32\taskkill.exe /PID <pid> /T /F`, by its full path). */
   taskkill: (pid: number) => Promise<void>
   sleep: (ms: number) => Promise<void>
 }
@@ -22,15 +26,19 @@ export const REAL_PROCESS_STOPPER: ProcessStopper = {
   signal: (pid, signal) => {
     process.kill(pid, signal)
   },
-  taskkill: (pid) =>
-    new Promise<void>((resolve) => {
-      const child = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
+  taskkill: (pid) => {
+    const program = windowsSystemProgramPath(TASKKILL_UNDER_SYSTEM_ROOT)
+    // Without a system root on a drive letter no taskkill is started (one of another folder could run in its place); the exit check then reports the process as left.
+    if (program === undefined) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      const child = spawn(program, ['/PID', String(pid), '/T', '/F'], {
         stdio: 'ignore',
         windowsHide: true,
       })
       child.once('error', () => resolve())
       child.once('close', () => resolve())
-    }),
+    })
+  },
   sleep: (ms) => delay(ms),
 }
 
@@ -38,7 +46,9 @@ export const REAL_PROCESS_STOPPER: ProcessStopper = {
  * Says whether a process still exists, by the null signal.
  * @param pid - The process id.
  * @param stopper - The signals in use.
- * @returns `true` while the process runs.
+ * @param isGroupLeader - Whether the process was spawned as a group leader; its group is looked at first.
+ * @param wasGroupReached - Whether the first SIGTERM reached its group; a group that is gone then means the process ended, and its id is never looked at alone.
+ * @returns `true` while the process (or its group) runs.
  * @example
  * isStillRunning(4242, REAL_PROCESS_STOPPER) // => false for a gone process
  */
@@ -46,6 +56,7 @@ function isStillRunning(
   pid: number,
   stopper: ProcessStopper,
   isGroupLeader = false,
+  wasGroupReached = false,
 ): boolean {
   // A group leader that exited can leave members behind: its group still exists while any of them runs.
   if (isGroupLeader) {
@@ -53,7 +64,9 @@ function isStillRunning(
       stopper.signal(-pid, 0)
       return true
     } catch {
-      // No such group: the process itself is looked at below.
+      // A group the first signal reached and that is gone has ended: its id may name an unrelated process by now.
+      if (wasGroupReached) return false
+      // No such group from the start: the process itself is looked at below.
     }
   }
   try {
@@ -78,9 +91,15 @@ async function stillRunningAfter(
   waitMs: number,
   stopper: ProcessStopper,
   groupLeaders: readonly number[] = [],
+  reachedGroups: ReadonlySet<number> = new Set(),
 ): Promise<number[]> {
   const isRunning = (pid: number): boolean =>
-    isStillRunning(pid, stopper, groupLeaders.includes(pid))
+    isStillRunning(
+      pid,
+      stopper,
+      groupLeaders.includes(pid),
+      reachedGroups.has(pid),
+    )
   let remaining = pids.filter(isRunning)
   // Poll until nothing runs or the wait is spent.
   for (
@@ -96,7 +115,7 @@ async function stillRunningAfter(
 
 /** Which of the stopped processes lead a process group of their own, so one signal reaches their helpers too. */
 export type StopOptions = {
-  /** Processes spawned `detached` (their id is their group id); on POSIX each gets its signal as `process.kill(-pid, …)` first, then as `process.kill(pid, …)` when no such group exists. */
+  /** Processes spawned `detached` (their id is their group id); on POSIX each gets its signal as `process.kill(-pid, …)` first, then as `process.kill(pid, …)` when no such group exists at the first SIGTERM. Once the SIGTERM reached the group, only the group is looked at and signalled: a gone group means the browser ended, and its id may name an unrelated process by then. */
   groupLeaders?: readonly number[]
 }
 
@@ -106,21 +125,26 @@ export type StopOptions = {
  * @param signal - The signal.
  * @param isGroupLeader - Whether the process was spawned as a group leader.
  * @param stopper - The signals in use.
+ * @param wasGroupReached - Whether an earlier signal reached its group; then only the group is signalled, since a gone group means the process ended and its id may name an unrelated process.
+ * @returns `true` when the signal reached the group.
  * @example
- * signalProcess(4242, 'SIGTERM', true, REAL_PROCESS_STOPPER) // signals the group -4242, else the process 4242
+ * signalProcess(4242, 'SIGTERM', true, REAL_PROCESS_STOPPER) // => true after signalling the group -4242; false after falling back to the process 4242
  */
 function signalProcess(
   pid: number,
   signal: NodeJS.Signals,
   isGroupLeader: boolean,
   stopper: ProcessStopper,
-): void {
+  wasGroupReached = false,
+): boolean {
   if (isGroupLeader) {
     try {
       stopper.signal(-pid, signal)
-      return
+      return true
     } catch {
-      // No such group: fall back to the process itself.
+      // A group reached before and gone now has ended: its id is never signalled alone.
+      if (wasGroupReached) return false
+      // No such group from the start: fall back to the process itself.
     }
   }
   try {
@@ -128,6 +152,7 @@ function signalProcess(
   } catch {
     // A process that is gone already needs no signal.
   }
+  return false
 }
 
 /**
@@ -154,7 +179,11 @@ export async function stopListedProcesses(
   }
   const leads = (pid: number): boolean =>
     options.groupLeaders?.includes(pid) ?? false
-  for (const pid of pids) signalProcess(pid, 'SIGTERM', leads(pid), stopper)
+  // A leader whose group the SIGTERM reached is looked at and signalled through that group only from now on.
+  const reachedGroups = new Set<number>()
+  for (const pid of pids)
+    if (signalProcess(pid, 'SIGTERM', leads(pid), stopper))
+      reachedGroups.add(pid)
   const leaders = options.groupLeaders ?? []
   // A leader counts as running while any member of its group does.
   const survivors = await stillRunningAfter(
@@ -162,9 +191,10 @@ export async function stopListedProcesses(
     EXTENSION_BROWSER_KILL_GRACE_MS,
     stopper,
     leaders,
+    reachedGroups,
   )
   for (const pid of survivors)
-    signalProcess(pid, 'SIGKILL', leads(pid), stopper)
+    signalProcess(pid, 'SIGKILL', leads(pid), stopper, reachedGroups.has(pid))
   return (
     (
       await stillRunningAfter(
@@ -172,6 +202,7 @@ export async function stopListedProcesses(
         EXTENSION_BROWSER_KILL_GRACE_MS,
         stopper,
         leaders,
+        reachedGroups,
       )
     ).length === 0
   )

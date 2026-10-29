@@ -936,6 +936,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/src/utils/wikiRunBoundMs.ts',
     'extension/src/utils/wikiUpdateRun.ts',
     'extension/src/utils/windowsPowerShellPath.ts',
+    'extension/src/utils/windowsSystemProgramPath.ts',
     'extension/src/utils/withStorageLock.ts',
     'extension/src/utils/withoutBootTime.ts',
   ])
