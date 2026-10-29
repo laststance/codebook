@@ -80,7 +80,7 @@ export interface ResolvedExtensionRun {
 
 /**
  * A browser-level CDP connection that routes flattened target sessions (`sessionId`), used for the browser Codebook owns.
- * Implemented over the existing WebSocket `Cdp` client; the debugger and executor depend only on this shape.
+ * Implemented by {@link WebSocketFlatCdp} (a separate client from the js-debug page proxy's `Cdp`); the launch, the debugger, the executor, the observation and the Application view depend only on this shape.
  */
 export interface FlatCdpConnection {
   /** Sends one command to the browser target (no `sessionId`) or to an attached target session. */
@@ -158,3 +158,51 @@ export type ExtensionPhaseReporter = (
   name: ExtensionPreparationPhase,
   elapsedMs: number,
 ) => void
+
+/** The surface identity and declared clicks the Application view's header and hidden text name (DR1, DR8). */
+export type ExtensionViewportIdentity = {
+  /** The manifest's `name`. */
+  manifestName: string
+  surface: { kind: ExtensionSurfaceKind; path: string }
+  /** The declared click titles, in order (DR8's hidden text). */
+  clickTitles: readonly string[]
+}
+
+/**
+ * The Application view of one chrome-extension run (DR1–DR8, DR13, ER22), implemented over the leased Application panel ({@link StudyPresentation.createChromeExtensionViewport}).
+ * The run drives it in order: identity, preparing steps, the surface's screencast, phase texts and pinned pause frames, then exactly one of `surfaceLost` / `end`; `close` at every ending releases the lease without closing the kept view of an ended run.
+ */
+export interface ChromeExtensionViewport {
+  /** Writes the header: `codebook · <name> · Extension popup` (or `Extension page <path>`), then the provenance line `Operated by chat · Test profile · seeded data · Live only · replay unavailable` (DR1, C1, C2). */
+  setIdentity(identity: ExtensionViewportIdentity): void
+  /** Before the first frame: `Preparing the extension · step <k> of <N>: <sentence>` (DR4). */
+  showPreparing(step: number, steps: number, sentence: string): void
+  /**
+   * Starts the screencast of the surface target on its flat session (SR6): a popup at its own CSS size with no device-metrics override, scrolled when the pane is smaller (DR7); a page with the existing 720 × 640 metrics and fit.
+   * @param cdp - The run's browser-level connection.
+   * @param sessionId - The surface's flat session ({@link OwnedExtensionBrowser.attachSurface}).
+   */
+  attachSurface(cdp: FlatCdpConnection, sessionId: string): Promise<void>
+  /** The phase text of the header's status element (the C4 table), announced politely on a change only (DR8). */
+  setPhase(text: string): void
+  /** The hidden accessible text after the frame: the current context and the observation before and after once known (DR8). */
+  setAccessibleDetail(detail: string): void
+  /** Pins the surface's frame of a pause with its phase text, `Paused at stop <n> of <m> · <page|service worker>` (DR3); resolves once it was painted. */
+  pinPause(pngBase64: string, phaseText: string): Promise<void>
+  /** Lets the live frames show again after a pinned pause. */
+  resumeLive(): void
+  /** A failure before the surface opened: its refusal sentence and the DR10 next-step line (DR4). */
+  showFailure(sentence: string, nextStep: string): void
+  /** The surface closed or left the extension: the last frame stays dimmed with `Popup closed` or `Page closed` (DR4). */
+  surfaceLost(): void
+  /** The run ended: the last captured frame stays with `Run ended · last captured view <hh:mm:ss>` and the result line, without taking the keyboard, until the next run's view replaces it or the learner closes the tab (ER22). */
+  end(resultLine: string): void
+  /** Stops the screencast and releases the lease; the kept view of an ended run stays. Idempotent. */
+  close(): void
+}
+
+/** Creates the Application view of a chrome-extension run, before its launch (the lease must exist before the first frame). */
+export type ChromeExtensionViewportFactory = (
+  runId: string,
+  signal?: AbortSignal,
+) => Promise<ChromeExtensionViewport>

@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 import * as vscode from 'vscode'
 import { z } from 'zod'
 
+import type { ChromeExtensionViewportFactory } from './chromeExtensionContracts'
 import { ConfiguredBrowserRun } from './configuredBrowserRun'
 import type { ConfiguredDescriptor } from './configuredStudySchemas'
 import {
@@ -57,6 +58,8 @@ import { searchRepositoryVitest } from './utils/searchRepositoryVitest'
 
 export interface StudyPresentation {
   createViewport: BrowserViewportFactory
+  /** The leased Application view of a chrome-extension run ({@link ChromeExtensionViewport}); absent where no editor shows one (tests), and the run goes on without a view. */
+  createChromeExtensionViewport?: ChromeExtensionViewportFactory
   revealSource(snapshot: RuntimeSnapshot, path: string): Promise<boolean>
 }
 

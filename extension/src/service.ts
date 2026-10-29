@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 
+import type { ChromeExtensionConfiguration } from './chromeExtensionConfigSchemas'
 import { CONFIGURED_PROFILE } from './configuredProfile'
 import type {
   ConfiguredDefinition,
@@ -89,6 +90,7 @@ import type {
 } from './repositorySchemas'
 import type { RetainedStudy } from './retainedStudySchemas'
 import type {
+  ChromeExtensionRuntime,
   NodeServerRuntime,
   NodeTestRuntime,
   RuntimeSnapshot,
@@ -290,6 +292,26 @@ export interface NodeServerRecordState {
   /** Why the run has no history (storage unavailable, a full store, a refused or slow start), shown beside the run's state and answered by Save; the live run goes on. */
   historyUnavailable?: string
 }
+/** What the service keeps of a chrome-extension run beside the fields every run has (Cycle 0061 pt2). */
+export interface ChromeExtensionRecordState {
+  run?: ChromeExtensionRuntime
+  /** The declaration with its hash, once `codebook_start` parsed it. */
+  prepared?: {
+    configuration: ChromeExtensionConfiguration
+    configurationHash: string
+    acknowledgedPermissions: readonly string[]
+  }
+  /** Each `extension-click` key with its arguments' signature and its result, bound to its click at admission, so a repeat joins or replays it before any state check (DXR3). */
+  clicks: Map<
+    string,
+    {
+      signature: string
+      result: Promise<NonNullable<StudyRecord['action']>['receipt']>
+    }
+  >
+  /** Stops listening to the run's changes once the run is released. */
+  subscription?: { dispose(): void }
+}
 /** A node-server run's record with its server state, as the narrowing {@link isNodeServerRecord} gives. */
 type NodeServerStudyRecord = StudyRecord & {
   profile: typeof NODE_SERVER_PROFILE
@@ -306,6 +328,7 @@ export type StudyRecord = StudyRecordState &
       execution?: NodeTestExecutionPlan
     }
     nodeServer?: NodeServerRecordState
+    chromeExtension?: ChromeExtensionRecordState
   }
 /**
  * Why the reader must not checkpoint a retained run and why its state reports no saved history.
