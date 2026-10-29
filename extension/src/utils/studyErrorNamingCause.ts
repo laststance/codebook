@@ -8,7 +8,7 @@ import { messageNamingCause } from './messageNamingCause'
  * @param failure - The run's failure as its path built it.
  * @returns
  * - `failure` itself, its class kept, when its message is its cause or already quotes it.
- * - Otherwise a {@link StudyError} of the same code and cause whose message is {@link messageNamingCause} of the two.
+ * - Otherwise a {@link StudyError} of the same code, cause and recovery override whose message is {@link messageNamingCause} of the two.
  * @example
  * studyErrorNamingCause(new StudyError('EVIDENCE_UNAVAILABLE', 'Evidence buffering or persistence failed.', 'Error: ENOSPC: no space left on device, write')).message
  * // => 'Evidence buffering or persistence failed. Cause: ENOSPC: no space left on device, write'
@@ -20,5 +20,10 @@ export function studyErrorNamingCause(failure: StudyError): StudyError {
   // A message that names its cause already keeps its own error, its class among it.
   return message === failure.message
     ? failure
-    : new StudyError(failure.code, message, failure.causeDetail)
+    : new StudyError(
+        failure.code,
+        message,
+        failure.causeDetail,
+        failure.recoveryOverride,
+      )
 }

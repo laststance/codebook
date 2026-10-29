@@ -15,6 +15,7 @@ Cycle 0062 ([Issue #157](https://github.com/laststance/codebook/issues/157)), th
 **Runs that end cleanly and say so.**
 
 - **Stop answers within 10 s** even when a preparation step or the debugger stops answering, and closes the test Chrome once, also one that appears after the stop. While such a step is still under way, the run resource reads the cleanup as unconfirmed.
+- **A stop held past its limit tells the chat what happened to the extension**: the run's error now gives the extension run's own recovery instead of the Node server's (a paused server, a closed server and a request's data).
 - **A click that arrives while the run ends is refused** with `RUN_NOT_READY`, and a source change between two inputs of a click stops it before the next input, naming the input it stopped before.
 - **The debugger ties the surface and the service worker to the test Chrome's own pages and workers**: a second page at the surface address, no page there, or no single service worker of the extension refuses the attach instead of guessing; a failed release is journaled and retried.
 - **An extension that opens its own copy of the page you ask about still runs there**, as one whose install handler opens its full page does: the run closes that copy right after it opens its own page, which loads after the seed, and lists the close in `chromeExtension.interventions` as `close-duplicate-surface-page`.

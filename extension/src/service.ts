@@ -702,14 +702,16 @@ export class StudyService {
   /**
    * Sanitizes the words of a domain error, so the run resource and every MCP answer never name a private path in the message or the cause (F49, F261); called where {@link StudyService.prepare} and {@link StudyService.continueNodeTest} set `record.error`, by {@link StudyService.sanitizedFailure} and by {@link StudyService.unexpectedFailure}.
    * @param error - The domain error of the failure.
-   * @returns An error with the same code, whose message and cause are sanitized and bounded.
+   * @returns An error with the same code and the same recovery override, whose message and cause are sanitized and bounded.
    * @example this.sanitizedError(new StudyError('RUNTIME_FAILED', "failed at /Users/ada/repo/a.ts")).message // => 'failed at <workspace>/a.ts'
    */
   private sanitizedError(error: StudyError): StudyError {
+    // A failure's own recovery (an extension run's PAUSE_HOLD_EXPIRED) stays: the code's general one names another profile's server (N62).
     return new StudyError(
       error.code,
       this.sanitizedCause(error.message),
       this.sanitizedCause(error.causeDetail),
+      error.recoveryOverride,
     )
   }
 
