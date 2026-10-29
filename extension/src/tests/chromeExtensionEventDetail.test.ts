@@ -102,6 +102,7 @@ test('omits an unlisted event type and lists every whitelisted type', () => {
     'chrome-extension.phase',
     'chrome-extension.dialog',
     'chrome-extension.debugger-error',
+    'chrome-extension.view-unavailable',
   ])
 })
 

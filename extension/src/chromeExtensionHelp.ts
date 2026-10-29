@@ -56,6 +56,8 @@ const CHROME_EXTENSION_EVENT_WHEN: Record<string, string> = {
     'a JavaScript dialog opened on the surface: answered as the owning click declares, or refused (answer none); clickIndex names the owning click when there is one',
   'chrome-extension.debugger-error':
     'a failure inside the run’s own debugger or dialog handling that it reported instead of failing silently',
+  'chrome-extension.view-unavailable':
+    'the editor refused to place the Application view (for example a preview tab in the editor group it would use); the run goes on without it, and chromeExtension.viewUnavailable gives the same reason',
 }
 
 /**

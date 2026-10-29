@@ -122,6 +122,8 @@ export type HarnessBehaviour = {
   surfaceAnswers?: SurfaceAnswers
   /** Starts with no viewport factory. */
   withoutViewport?: boolean
+  /** The viewport factory throws this, as the editor's layout guard does when the pane cannot be placed. */
+  viewportFailure?: Error
 }
 
 /** A receipt that settled with no stop. */
@@ -352,7 +354,10 @@ export function createRunHarness(behaviour: HarnessBehaviour = {}) {
     ...(behaviour.withoutViewport
       ? {}
       : {
-          createViewport: async () => viewport,
+          createViewport: async () => {
+            if (behaviour.viewportFailure) throw behaviour.viewportFailure
+            return viewport
+          },
         }),
   })
   return {

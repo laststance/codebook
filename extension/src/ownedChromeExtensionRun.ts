@@ -140,6 +140,8 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   private readonly abort = new AbortController()
   private readonly observationAbort = new AbortController()
   private readonly roots: ReturnType<typeof causeRootsFor>
+  /** Why the Application view could not be opened, masked and root-hidden; absent while it opened or no editor offers one. */
+  private viewUnavailable?: string
   private readonly timings: ChromeExtensionRunTimings
   private readonly outputs: ChromeExtensionOutputLine[] = []
   private readonly captures: ChromeExtensionView['captures'] = []
@@ -205,6 +207,9 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       interventions: this.debug?.interventions() ?? [],
       outputs: [...this.outputs],
       outputsDropped: this.outputsDropped,
+      ...(this.viewUnavailable !== undefined && {
+        viewUnavailable: this.viewUnavailable,
+      }),
       ...(this.runFailure && { runFailure: this.runFailure }),
       ...(this.cleanupResult && { cleanup: this.cleanupResult }),
     }
@@ -490,11 +495,21 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     await this.becomeReady(resolved, browser)
   }
 
-  /** Creates the Application view; a view that cannot be created leaves the run without one. */
+  /** Creates the Application view; a view the editor refuses (its layout guard, for example a foreign preview tab where the pane would go) leaves the run without one and says why, in the view and the journal (DR6). */
   private async openViewport(): Promise<ChromeExtensionViewport | undefined> {
     try {
       return await this.input.createViewport?.(this.id, this.abort.signal)
-    } catch {
+    } catch (error) {
+      // The cause can name the learner's files: masked and root-hidden like every journaled text.
+      this.viewUnavailable = hidePrivateRoots(
+        redactSecretText(
+          error instanceof Error ? error.message : String(error),
+        ),
+        this.roots,
+      )
+      this.record('chrome-extension.view-unavailable', {
+        message: this.viewUnavailable,
+      })
       return undefined
     }
   }

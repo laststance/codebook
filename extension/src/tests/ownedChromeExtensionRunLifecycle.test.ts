@@ -349,3 +349,37 @@ test('runs without an Application view when the editor offers none', async () =>
   assert.equal(harness.run.view().phase, 'completed')
   assert.deepEqual(harness.viewportCalls, [])
 })
+
+// protects=DR6 truthfulness: an Application view the editor's layout refuses (a foreign preview tab in the destination group, seen in Cursor in the Cycle 0061 pt2 dry run) leaves the run going and says why, in the view and the journal, with the private path hidden; fails_when=the refusal is swallowed and the run shows no view and no cause; no_claim=placing the pane despite the preview tab (a carried defect)
+test('an Application view the editor refuses leaves the run ready and reports why', async () => {
+  // Arrange
+  const harness = createRunHarness({
+    viewportFailure: new StudyError(
+      'PRESENTATION_UNAVAILABLE',
+      'A destination group contains a foreign preview: "/repo/extension/background/service-worker.js" in editor group 1. Close that tab, or keep it open (double-click its tab), then try again.',
+    ),
+  })
+  // Act
+  await harness.run.prepare()
+  // Assert
+  assert.equal(harness.run.view().phase, 'ready')
+  assert.equal(
+    harness.run.view().viewUnavailable,
+    'A destination group contains a foreign preview: "<workspace>/extension/background/service-worker.js" in editor group 1. Close that tab, or keep it open (double-click its tab), then try again.',
+  )
+  assert.deepEqual(
+    harness.journal.filter(
+      (event) => event.type === 'chrome-extension.view-unavailable',
+    ),
+    [
+      {
+        type: 'chrome-extension.view-unavailable',
+        detail: {
+          message:
+            'A destination group contains a foreign preview: "<workspace>/extension/background/service-worker.js" in editor group 1. Close that tab, or keep it open (double-click its tab), then try again.',
+        },
+      },
+    ],
+  )
+  await harness.run.stop()
+})

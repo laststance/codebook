@@ -297,6 +297,8 @@ export type ChromeExtensionView = {
   outputs: readonly ChromeExtensionOutputLine[]
   /** Output lines dropped after the run's output limit, {@link EXTENSION_OUTPUT_EVENT_LIMIT}. */
   outputsDropped: number
+  /** Why the run shows no Application view (the editor refused to place it), masked and root-hidden; absent while the view opened (DR6). */
+  viewUnavailable?: string
   /** The failure that ended the run (`failed`), or `OBSERVATION_UNAVAILABLE` beside a `completed` run. */
   runFailure?: StudyError
   /** What the cleanup could not confirm (ER18); absent until the cleanup ran. */

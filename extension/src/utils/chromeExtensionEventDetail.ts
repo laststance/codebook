@@ -69,6 +69,9 @@ const CHROME_EXTENSION_EVENT_FIELDS: Record<
   'chrome-extension.debugger-error': (input) => ({
     message: boundedText(input.message, PROCESS_OUTPUT_EVENT_LIMIT_CHARS),
   }),
+  'chrome-extension.view-unavailable': (input) => ({
+    message: boundedText(input.message, PROCESS_OUTPUT_EVENT_LIMIT_CHARS),
+  }),
 }
 
 /** Every `chrome-extension.*` event type the journal publishes, in table order; the help's event list is generated from it (ER24). */

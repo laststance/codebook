@@ -243,6 +243,7 @@ test('the help lists every journal event the run writes, with its published fiel
       ['chrome-extension.phase', 'name, elapsedMs'],
       ['chrome-extension.dialog', 'type, answer, message'],
       ['chrome-extension.debugger-error', 'message'],
+      ['chrome-extension.view-unavailable', 'message'],
     ],
   )
   assert.deepEqual(

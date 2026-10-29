@@ -181,6 +181,7 @@ export function projectChromeExtensionState(
         text: input.sanitize(line.text),
       })),
       outputsDropped: view.outputsDropped,
+      viewUnavailable: view.viewUnavailable,
       lastClick: view.lastClick,
       cleanup: view.cleanup,
       failure: failure && {
