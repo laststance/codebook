@@ -63,6 +63,9 @@
     "checkNodeTestFiles.test.js": {
       "totalMs": 11
     },
+    "chromeExtensionRealChrome.test.js": {
+      "totalMs": 18500
+    },
     "citationProgress.test.js": {
       "totalMs": 80
     },
@@ -651,6 +654,9 @@
     },
     "findWikiUpdateStartBlock.test.js": {
       "totalMs": 3619
+    },
+    "flatCdpConnection.test.js": {
+      "totalMs": 20
     },
     "focusEditorGroupCommand.test.js": {
       "totalMs": 1
@@ -1269,6 +1275,9 @@
     "openWithoutFollowing.test.js": {
       "totalMs": 9
     },
+    "ownedExtensionBrowser.test.js": {
+      "totalMs": 80
+    },
     "ownedNodeTestRun.test.js": {
       "totalMs": 2665
     },
@@ -1449,6 +1458,9 @@
     },
     "removeAbandonedProfiles.test.js": {
       "totalMs": 731
+    },
+    "removeOrphanBrowser.test.js": {
+      "totalMs": 500
     },
     "removeStaleStorageClaims.test.js": {
       "totalMs": 25

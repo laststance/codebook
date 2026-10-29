@@ -1,10 +1,11 @@
-import { lstat, readdir } from 'node:fs/promises'
+import { lstat, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import {
   MANAGED_PROFILE_OWNER_FILE,
   MANAGED_PROFILE_PREFIX,
   MANAGED_PROFILE_SWEEP_LIMIT,
+  OWNED_BROWSER_MARKER_FILE,
 } from '../../constants'
 import { currentUserName } from '../../utils/currentUserName'
 import { isRecordedOwnerGone } from '../../utils/isRecordedOwnerGone'
@@ -25,6 +26,44 @@ import {
   type ProcessListingInputs,
 } from './listProcesses'
 import { profileProcesses } from './profileProcesses'
+import {
+  REAL_PROCESS_STOPPER,
+  stopListedProcesses,
+  type ProcessStopper,
+} from './stopListedProcesses'
+
+/** Says whether a profile folder was made for a browser Codebook spawned itself ({@link OWNED_BROWSER_MARKER_FILE}), so the sweep may stop that browser. */
+function isOwnedBrowserProfile(profile: string): Promise<boolean> {
+  return stat(join(profile, OWNED_BROWSER_MARKER_FILE)).then(
+    (entry) => entry.isFile(),
+    () => false,
+  )
+}
+
+/**
+ * Stops the live browser of an owned profile whose editor is gone, so the folder can be removed (ER18); called by {@link removeUnusedProfile}.
+ * Only the processes {@link profileProcesses} matched exactly (`--user-data-dir` is the folder, nothing that merely shares a prefix) are signalled, and never this process.
+ * @param profile - The owned profile folder.
+ * @param using - The processes that name the folder.
+ * @param sweep - The running sweep, for its listing and signals.
+ * @returns `true` when no process names the folder any more.
+ * @example
+ * await stopOrphanBrowser('/tmp/codebook-browser-a1b2c3', [{ pid: 4242, command: 'chrome --user-data-dir=/tmp/codebook-browser-a1b2c3' }], sweep) // => true
+ */
+async function stopOrphanBrowser(
+  profile: string,
+  using: ListedProcess[],
+  sweep: Pick<ProfileSweep, 'stopper' | 'listAgain'>,
+): Promise<boolean> {
+  const pids = using.map(({ pid }) => pid).filter((pid) => pid !== process.pid)
+  if (pids.length !== using.length) return false
+  if (!(await stopListedProcesses(pids, sweep.stopper))) return false
+  // A fresh listing proves that nothing names the folder before it is removed.
+  const remaining = await profileProcesses(profile, await sweep.listAgain(), {
+    pathsMayNotResolve: true,
+  })
+  return remaining.length === 0
+}
 
 /**
  * Removes one profile folder when no process uses it as its profile; called by {@link sweepProfile} for a folder whose owner is gone.
@@ -40,15 +79,20 @@ import { profileProcesses } from './profileProcesses'
 async function removeUnusedProfile(
   profile: string,
   processes: Promise<ListedProcess[]>,
+  sweep: Pick<ProfileSweep, 'stopper' | 'listAgain'>,
 ): Promise<boolean> {
   try {
     // A folder of this user's own root on a volume that resolves no path is judged and removed by its listed path.
+    const using = await profileProcesses(profile, await processes, {
+      pathsMayNotResolve: true,
+    })
+    // A browser still names the folder: only an owned browser's folder lets the sweep stop it first.
     if (
-      (
-        await profileProcesses(profile, await processes, {
-          pathsMayNotResolve: true,
-        })
-      ).length
+      using.length &&
+      !(
+        (await isOwnedBrowserProfile(profile)) &&
+        (await stopOrphanBrowser(profile, using, sweep))
+      )
     )
       return false
     // The marker goes last: a folder whose removal stops at an entry that refuses keeps it, and a later sweep tries again.
@@ -88,6 +132,10 @@ type ProfileSweep = {
   removed: string[]
   processes: () => Promise<ListedProcess[]>
   readStart: ProcessStartReader
+  /** Lists the processes again, after an orphan browser was stopped. */
+  listAgain: () => Promise<ListedProcess[]>
+  /** The signals by which an owned profile's orphan browser is stopped. */
+  stopper: ProcessStopper
 }
 
 /**
@@ -115,7 +163,7 @@ async function sweepProfile(
   sweep.judgedCount += 1
   // An owner that may still run: the folder is not known to be abandoned.
   if (!(await isRecordedOwnerGone(owner, judgedBy, sweep.readStart))) return
-  if (await removeUnusedProfile(profile, sweep.processes()))
+  if (await removeUnusedProfile(profile, sweep.processes(), sweep))
     sweep.removed.push(profile)
 }
 
@@ -136,6 +184,7 @@ async function sweepProfile(
  * @param listRunningProcesses - Lists the processes of this machine, asked to keep the processes whose owner cannot be confirmed; {@link listProcesses} unless a test counts the listings or names its own listing.
  * @param readStart - Reads the start of the process that has a marker's process id now; {@link readProcessStart} unless a test names its own.
  * @param userName - The operating-system user this sweep runs as; {@link currentUserName} unless a test names its own. A folder whose marker names another user is left and not counted, on every system.
+ * @param stopper - The signals by which a live browser of an owned profile ({@link OWNED_BROWSER_MARKER_FILE}) whose editor is gone is stopped before its folder is removed (ER18); {@link REAL_PROCESS_STOPPER} unless a test names its own. A folder without that file keeps the rule above: a process that names it keeps it.
  * @returns The folders that were removed, in the order the directory listed them; empty when the root cannot be read. Nothing here throws: what cannot be
  * read, judged or removed stays in place.
  * @example
@@ -149,6 +198,7 @@ export async function removeAbandonedProfiles(
   ) => Promise<ListedProcess[]> = listProcesses,
   readStart: ProcessStartReader = readProcessStart,
   userName: string | undefined = currentUserName(),
+  stopper: ProcessStopper = REAL_PROCESS_STOPPER,
 ): Promise<string[]> {
   const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
   // A link with the prefix is no profile folder of Codebook's making; only real directories are looked at.
@@ -167,6 +217,8 @@ export async function removeAbandonedProfiles(
     processes: () =>
       (listing ??= listRunningProcesses({ keepsUnconfirmedOwners: true })),
     readStart: (pid, inputs) => readStart(pid, { ...inputs, cache }),
+    listAgain: () => listRunningProcesses({ keepsUnconfirmedOwners: true }),
+    stopper,
   }
   for (const candidate of candidates) {
     // The bound counts the folders whose marker was judged, not the listing: a folder without a readable marker costs one failed read. The rest wait for a later run.

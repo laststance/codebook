@@ -2139,3 +2139,17 @@ export const CHROME_EXTENSION_SESSION_NAME_PREFIX = 'codebook chrome extension '
 export const EXTENSION_STOP_COLUMN = 1
 /** Each CDP request of a click step may run this long in unpaused time before its answer counts as lost (ER14). */
 export const EXTENSION_STEP_REQUEST_TIMEOUT_MS = 20_000
+/** How long a freshly spawned owned browser may take to publish its `DevToolsActivePort` file. */
+export const EXTENSION_BROWSER_START_BOUND_MS = 15_000
+/** Interval at which the owned launch polls the browser's files and targets. */
+export const EXTENSION_BROWSER_POLL_MS = 100
+/** Each command on the owned browser's CDP connection has this deadline unless the caller names another. */
+export const EXTENSION_CDP_COMMAND_TIMEOUT_MS = 10_000
+/** After `ServiceWorker.startWorker`, the popup opens only once the worker has had this long to apply the extension's own state (task 0). */
+export const EXTENSION_POPUP_WORKER_SETTLE_MS = 1_500
+/** Marks a profile folder whose browser Codebook spawned itself; only such a folder's live browser is stopped by the orphan sweep (ER18). */
+export const OWNED_BROWSER_MARKER_FILE = 'codebook-owned-browser'
+/** The owned launch treats the extension's workers as stopped after none has been listed for this long; Chrome starts a new extension's worker shortly after `loadUnpacked` answers. */
+export const EXTENSION_WORKER_QUIET_MS = 500
+/** One `ServiceWorker.stopAllWorkers` that is not answered in this time is sent again by the stop loop of the owned launch. */
+export const EXTENSION_STOP_COMMAND_TIMEOUT_MS = 1_000

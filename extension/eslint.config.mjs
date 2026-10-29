@@ -136,6 +136,8 @@ export default defineConfig([
       'examples/**',
       '.fallow/**',
       'skills/**',
+      // Browser-side files of the real-Chrome test's extension: classic scripts with the extension API, never compiled or shipped.
+      'src/tests/fixtures/chrome-extension/**',
     ],
   },
   ...tsPrefixer,

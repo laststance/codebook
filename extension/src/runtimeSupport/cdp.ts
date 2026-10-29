@@ -1,6 +1,7 @@
 import type { ProtocolMapping } from 'devtools-protocol/types/protocol-mapping'
 
 import { ACTIVE_TIMEOUT_MS, STREAM_TELEMETRY_INTERVAL_MS } from './constants'
+import { openWebSocket } from './utils/openWebSocket'
 
 interface PendingRequest {
   method: string
@@ -74,31 +75,7 @@ export class Cdp {
 
   /** Opens only the explicitly selected js-debug page proxy. @example await Cdp.connect(proxyUrl, log) */
   static async connect(url: string, log: Log): Promise<Cdp> {
-    const socket = new WebSocket(url)
-    const connection = new Cdp(socket, log)
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        socket.close()
-        reject(new Error('CDP connection timed out'))
-      }, ACTIVE_TIMEOUT_MS)
-      socket.addEventListener(
-        'open',
-        () => {
-          clearTimeout(timer)
-          resolve()
-        },
-        { once: true },
-      )
-      socket.addEventListener(
-        'error',
-        () => {
-          clearTimeout(timer)
-          reject(new Error('CDP connection failed'))
-        },
-        { once: true },
-      )
-    })
-    return connection
+    return new Cdp(await openWebSocket(url, ACTIVE_TIMEOUT_MS), log)
   }
 
   /** Sends a schema-typed request immediately; each ID owns its independent deadline. @example cdp.request('Runtime.evaluate', { expression: 'document.title' }) */
