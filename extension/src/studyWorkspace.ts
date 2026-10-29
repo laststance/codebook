@@ -3371,15 +3371,18 @@ export class StudyWorkspace {
   /**
    * Retains the logical reading region for one admitted handoff; foreign editors still require an exact source receipt. Called by {@link admitPresentation} before a selection or restore changes any pane.
    * @param activatedByClose - The tab the editor activated in place of a focused leftover tab this selection just closed; `undefined` when no focused tab closed or its group is now empty. That tab was never the learner's reading position, so only the group focus is kept.
+   * @param placesPaneInFocusedGroup - `false` for an Application preparation ({@link captureApplicationPreparationReturn}), whose pane goes into a new group of its own and never replaces a preview tab: a focused preview tab is then kept like any other foreign tab (Cycle 0062 task 1). Left out, a presentation that may place a pane in the focused tab's group.
    * @returns The function that gives focus back once the presentation is placed. Its third argument is `true` only after a confirmed placement: a learner's document that shares the captured source's group then stays open behind that source instead of covering it. For a focused tab that is neither a text editor nor a Study pane (an agent chat, a settings page) the function does nothing: that tab stays where it is, and {@link retainForeignTabFocus} gives its group the focus back.
-   * @throws `PRESENTATION_UNAVAILABLE`, naming the tab and how to clear it, when the focused tab is a preview (a pane placed in its group would replace it) or a captured source the editor reports no text editor for.
+   * @throws `PRESENTATION_UNAVAILABLE`, naming the tab and how to clear it, when the focused tab is a preview that a pane placed in its group would replace, or a captured source the editor reports no text editor for.
    * @example
    * ```ts
    * const restore = this.capturePresentationFocus(undefined)
+   * const restoreAfterPreparation = this.capturePresentationFocus(undefined, false) // beside a focused image preview: no refusal
    * ```
    */
   private capturePresentationFocus(
     activatedByClose: vscode.Tab | undefined,
+    placesPaneInFocusedGroup = true,
   ): (
     signal?: AbortSignal,
     assertSourceFocus?: () => void,
@@ -3473,8 +3476,8 @@ export class StudyWorkspace {
         )
       }
     const activeColumn = vscode.window.tabGroups.activeTabGroup.viewColumn
-    // A preview tab would be replaced by a pane placed in its group, so it refuses the arrangement whichever tab has the focus; the refusal names it and how to clear it.
-    if (activeTab.isPreview)
+    // A preview tab would be replaced by a pane placed in its group, so it refuses the arrangement whichever tab has the focus; the refusal names it and how to clear it. An Application preparation places its pane in a new group, so the preview stays as it is.
+    if (activeTab.isPreview && placesPaneInFocusedGroup)
       throw new StudyError(
         'PRESENTATION_UNAVAILABLE',
         foreignPreviewObstacle(this.editorTabName(activeTab), activeColumn),
@@ -16639,7 +16642,7 @@ export class StudyWorkspace {
       restoreFocus:
         focusedPanel || cancelEntryFocusReturn || chatReturn
           ? undefined
-          : this.capturePresentationFocus(undefined),
+          : this.capturePresentationFocus(undefined, false),
       knowsLearnersPlace: this.knowsLearnersPlace(focusedPanel),
       // VS Code's chat opened as an editor tab is a chat, whose group's focus gives its input the keyboard (row 625).
       toChatEditorTab: isChatEditorTabInput(

@@ -58,7 +58,7 @@ const CHROME_EXTENSION_EVENT_WHEN: Record<string, string> = {
   'chrome-extension.debugger-error':
     'a failure inside the run’s own debugger or dialog handling that it reported instead of failing silently',
   'chrome-extension.view-unavailable':
-    'the editor refused to place the Application view (for example a preview tab in the editor group it would use); the run goes on without it, and chromeExtension.viewUnavailable gives the same reason',
+    'the editor refused to place the Application view (for example a tab of a captured source the editor shows without a text editor); the run goes on without it, and chromeExtension.viewUnavailable gives the same reason',
 }
 
 /**

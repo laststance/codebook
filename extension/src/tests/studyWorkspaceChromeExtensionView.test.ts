@@ -95,6 +95,31 @@ test('an extension run started from Cursor\u2019s Agent chat with an empty first
   }
 })
 
+// protects=D1 (Cycle 0062 task 1): an extension run started while the learner's focused tab is a preview that is no text editor (an image opened by one click) opens its Application view in its own group and leaves that tab open as a preview; fails_when=the lease refuses with "A destination group contains a foreign preview: …" although the pane goes into a new group and never replaces the tab; no_claim=the native editor's own preview replacement
+test('an extension run started beside a focused image preview opens its Application view and leaves the preview open', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    const image = harness.addOpaqueTab('logo.png', 1)
+    image.isPreview = true
+    harness.focusOpaqueTab(image)
+    // Act
+    const view = await openView(harness, 'image-preview-run-1')
+    // Assert
+    assert.ok(harness.reader['app'])
+    assert.equal(image.isPreview, true)
+    assert.equal(
+      harness.groups.some((group) => group.tabs.includes(image)),
+      true,
+    )
+    assert.deepEqual(harness.tabCloseRequests(), [])
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
 // protects=ER22: a late cleanup of an older run never closes or replaces a newer run's view; fails_when=the older lease's release clears the newer lease, closes its pane or keeps the older pane as the kept view; no_claim=which pane object the editor reuses
 test('a late cleanup of an older extension run leaves the newer run view open', async () => {
   // Arrange
