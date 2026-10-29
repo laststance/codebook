@@ -139,3 +139,20 @@ test('the bundled skill keeps an extension run’s explanation in the chat and c
     /Saving an extension run is not available in this version: keep the explanation in the chat, and do not call `codebook_explain` or `codebook_explain_node_history` for it/,
   )
 })
+
+// protects=the extension route opens no Study presentation: an extension run shows its own Application view, and the browser and test rule of confirming the Study layout first would block the start (found in the Cycle 0061 pt2 dry run, where the chat stopped at the layout check and never started); fails_when=the skill leaves the chat applying the presentation rule to an extension run; no_claim=the run's own Application view (workspace tests)
+test('the bundled skill opens no Study presentation for an extension run', async () => {
+  // Arrange
+  const skill = await readBundledSkill()
+  // Act
+  const paragraph = await readExtensionRuns()
+  // Assert
+  assert.match(
+    paragraph,
+    /An extension run shows its own Application view: do not open or restore the Study presentation for it, and do not wait for its layout before `codebook_start`/,
+  )
+  assert.match(
+    skill,
+    /For a browser or test request requiring runtime observation \(a server or extension run needs no presentation\), open the learner presentation before the first application input/,
+  )
+})
