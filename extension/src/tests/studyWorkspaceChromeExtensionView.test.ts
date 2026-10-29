@@ -5,6 +5,7 @@ import type { ExtensionViewportIdentity } from '../chromeExtensionContracts'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { readerSeams, workspaceHarness } from './studyWorkspaceHarness'
+import { startFakeChromeExtensionRun } from './utils/startFakeChromeExtensionRun'
 
 const POPUP_IDENTITY: ExtensionViewportIdentity = {
   manifestName: 'Bookmark Notes',
@@ -125,9 +126,7 @@ test('Save learning replay of an extension run refuses and stores nothing', asyn
     readerSeams(harness).stopOwnTimer()
     const storage = await harness.reader.learningStorage()
     const progressBefore = await storage.readProgress()
-    harness.reader['currentRecord'] = () =>
-      // The record of the profile; lane E's start creates the real one.
-      ({ profile: 'chrome-extension', id: 'extension-run-1' }) as never
+    await startFakeChromeExtensionRun(harness)
     // Act
     const saving = harness.reader.saveLearningReplay()
     // Assert
@@ -139,7 +138,32 @@ test('Save learning replay of an extension run refuses and stores nothing', asyn
     )
     assert.deepEqual(await storage.readProgress(), progressBefore)
     await readerSeams(harness).refresh()
-    assert.equal(harness.saveStatus.visible, false)
+    assert.equal(harness.saveStatus.command, undefined)
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=C4 and DR9: an extension run's status item shows the run's phase text from its view and carries no Save command, its tooltip saying why; fails_when=the item stays hidden during the run, shows Save learning replay, or words the phase differently from the viewport; no_claim=native status bar rendering
+test('the status item of an extension run shows its phase text and offers no Save', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    // Act
+    await startFakeChromeExtensionRun(harness)
+    await readerSeams(harness).refresh()
+    // Assert
+    assert.equal(harness.saveStatus.visible, true)
+    assert.equal(
+      harness.saveStatus.text,
+      'Waiting for chat · next click 1 of 2',
+    )
+    assert.equal(
+      harness.saveStatus.tooltip,
+      'Saving an extension run is not available in this version; the live explanation stays in the chat.',
+    )
+    assert.equal(harness.saveStatus.command, undefined)
   } finally {
     await harness.close()
   }

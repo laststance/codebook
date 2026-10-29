@@ -253,6 +253,7 @@ import { causeRootsFor } from './utils/causeRootsFor'
 import { configuredObservationPosition } from './utils/configuredObservationPosition'
 import { coveredSourceObstacle } from './utils/coveredSourceObstacle'
 import { createRecordingObserver } from './utils/createRecordingObserver'
+import { describeChromeExtensionViewStatus } from './utils/describeChromeExtensionStatus'
 import {
   describeNodeLearningSave,
   NODE_LEARNING_SAVE_ACTION,
@@ -11078,7 +11079,10 @@ export class StudyWorkspace {
         return 'render'
     }
     const profile = this.currentRecord()?.profile
-    return profile === NODE_TEST_PROFILE || profile === NODE_SERVER_PROFILE
+    // A test, server or extension run keeps its status item current while no Study is shown.
+    return profile === NODE_TEST_PROFILE ||
+      profile === NODE_SERVER_PROFILE ||
+      profile === CHROME_EXTENSION_PROFILE
       ? 'save-item'
       : 'none'
   }
@@ -11659,9 +11663,22 @@ export class StudyWorkspace {
     record: ReturnType<StudyWorkspace['currentRecord']>,
     studyId: string | undefined,
   ): boolean {
-    // An extension run never offers Save (DR9).
+    // An extension run shows its phase text (C4) and never offers Save (DR9).
     if (isChromeExtensionRecord(record)) {
-      this.hideLearningSaveItem()
+      const extension = record?.chromeExtension
+      if (!extension?.run || !studyId) this.hideLearningSaveItem()
+      else
+        this.showLearningSaveItem(
+          describeChromeExtensionViewStatus(
+            extension.run.view(),
+            extension.prepared?.configuration.clicks.map(
+              (click) => click.title,
+            ) ?? [],
+          ).statusItem,
+          CHROME_EXTENSION_SAVE_REFUSAL,
+          undefined,
+          studyId,
+        )
       return true
     }
     // A server run's item shows what NodeServerLearningSave says of it, a test run's what NodeLearningSave says.
