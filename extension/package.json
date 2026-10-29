@@ -562,8 +562,8 @@
     "test:coverage": "pnpm build && c8 node --test dist/tests/*.test.js",
     "lint": "eslint . --concurrency=auto --max-warnings=0",
     "lint:fix": "eslint . --fix --concurrency=auto --max-warnings=0",
-    "format": "cd .. && prettier --write .",
-    "format:check": "cd .. && prettier --check .",
+    "format": "cd .. && bun fmt",
+    "format:check": "cd .. && bun fmt --check",
     "health": "node scripts/checkHealth.mjs",
     "gate": "node scripts/gate.mjs",
     "health:static": "fallow health --complexity --max-crap inf --baseline-mode identity --fail-on-issues --baseline fallow-health-baseline.json",
@@ -573,12 +573,12 @@
     "check": "pnpm format:check && pnpm typecheck && pnpm lint && pnpm health:static && pnpm test && pnpm test:package && pnpm dupes && pnpm dead-code && pnpm architecture && pnpm health"
   },
   "lint-staged": {
-    "!(*.ts)": "prettier --ignore-unknown --write --ignore-path ../.gitignore --ignore-path ../.prettierignore",
+    "!(*.ts)": "bun fmt --ignore-unknown --ignore-path ../.gitignore --ignore-path ../.prettierignore",
     "*.ts": [
-      "prettier --ignore-unknown --write --ignore-path ../.gitignore --ignore-path ../.prettierignore",
+      "bun fmt --ignore-unknown --ignore-path ../.gitignore --ignore-path ../.prettierignore",
       "eslint --cache --no-warn-ignored --max-warnings=0"
     ],
-    "../**/*": "prettier --ignore-unknown --write --ignore-path ../.gitignore --ignore-path ../.prettierignore"
+    "../**/*": "bun fmt --ignore-unknown --ignore-path ../.gitignore --ignore-path ../.prettierignore"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",

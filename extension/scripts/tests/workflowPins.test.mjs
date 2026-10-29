@@ -1825,6 +1825,29 @@ test('the Test workflow gives each push its own concurrency group and cancels on
   )
 })
 
+// Value: protects=the Format workflow's formatter: `bun fmt --check` through the package script, with Bun installed from an action pinned to a full commit and a full Bun version, so the check never runs on whatever Bun the runner image ships; fails_when=the workflow runs Bun without installing it, installs an action by a tag or a branch, or leaves the Bun version open (`latest`, `1.x`); why_new=Cycle 0062 task 24; seam=the text of .github/workflows/format.yml and the package scripts; no_claim=that Bun formats like Prettier (the tools' comparison is in the Issue)
+test('the Format workflow checks formatting with a pinned Bun running bun fmt', async () => {
+  // Arrange
+  const workflow = await repositoryText('.github/workflows/format.yml')
+  const manifest = JSON.parse(await repositoryText('extension/package.json'))
+
+  // Act
+  const setup =
+    /uses: oven-sh\/setup-bun@([0-9a-f]{40}) # v\d+\.\d+\.\d+\n\s+with:\n\s+bun-version: (\d+\.\d+\.\d+)\n/.exec(
+      workflow,
+    )
+
+  // Assert
+  assert.notEqual(setup, null)
+  assert.equal(setup?.[2], '1.4.4')
+  assert.ok(
+    workflow.indexOf('oven-sh/setup-bun') <
+      workflow.indexOf('run: pnpm --dir extension format:check'),
+  )
+  assert.equal(manifest.scripts['format:check'], 'cd .. && bun fmt --check')
+  assert.equal(manifest.scripts.format, 'cd .. && bun fmt')
+})
+
 // Value: protects=the split of the Fallow workflow: each check (measured health, dupes, dead-code, architecture) runs in a job of its own, so the 10 to 12 minutes of the measured health run never delay the one-minute static checks and a failed check never hides another; fails_when=two checks share a job again, a check's job runs another script, or a job lacks the shared prepare action; why_new=Cycle 0062 task 19; seam=the text of .github/workflows/fallow.yml; no_claim=that the jobs start without queueing behind the plan's 20 concurrent jobs (CI measures that)
 test('the Fallow workflow runs measured health, dupes, dead-code and architecture each in a job of its own', async () => {
   // Arrange

@@ -224,6 +224,8 @@ Standing rules, stated as rules (no decision log); delivery chain and ship limit
 
 Node as `.node-version` pins it (mirrored in `extension/.node-version`, since a version manager's shim reads the nearest package's `engines` there) and pnpm as the extension's `packageManager` pins it; put that Node's own `bin` first in `PATH`; run from the repo root.
 
+Formatting: `pnpm --dir extension format` / `format:check` and the lint-staged hook run `bun fmt` (Bun 1.4.4 on `PATH`, pinned in `format.yml`; it reads `.prettierrc.json` and `.prettierignore`, and gives the Prettier 3.9.8 result on this tree, Cycle 0062 task 24). Never format a README with it: hand-edit README sentences.
+
 **Gate and focused runs.**
 
 - Exact-HEAD gate: `pnpm --dir extension gate`: the fifteen delivery checks in order (static checks, the suite, the five Reader DOM checks, package tests, measured health, the compaction-hook test), one log each under `artifacts/gate/<HEAD>`; it refuses a Node or pnpm off the pins and a checkout with changes, and exits 0 only when every check passed on an unmoved HEAD.
