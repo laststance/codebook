@@ -2169,3 +2169,13 @@ export const EXTENSION_POLL_COMMAND_MIN_TIMEOUT_MS = 1_000
 export const EXTENSION_STOP_COMMAND_TIMEOUT_MS = 1_000
 /** `<chrome> --version` that prints nothing in this time counts as an unreadable version; no browser session is started to read it. */
 export const EXTENSION_CHROME_VERSION_READ_BOUND_MS = 5_000
+
+// Lane D (Application view of a chrome-extension run, Cycle 0061 pt2)
+/** Header line 2 of an extension run's Application view in every phase, after the run too (DR1, C1, C2). */
+export const EXTENSION_VIEW_PROVENANCE =
+  'Operated by chat · Test profile · seeded data · Live only · replay unavailable'
+/** What the editor's Save learning replay command answers for a chrome-extension run, which stores nothing (SR13, DR9). */
+export const EXTENSION_SAVE_UNAVAILABLE_SENTENCE =
+  'Saving an extension run is not available in this version; the live explanation stays in the chat.'
+/** `Page.stopScreencast` on the surface's session, sent when the view ends, is waited for this long; the view is already final without its answer. */
+export const EXTENSION_SCREENCAST_STOP_TIMEOUT_MS = 1_000

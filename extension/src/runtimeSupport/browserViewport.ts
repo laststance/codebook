@@ -8,7 +8,6 @@ import * as vscode from 'vscode'
 import { MILLISECONDS_PER_SECOND } from '../constants'
 import { settledWithin } from '../utils/settledWithin'
 
-import type { Cdp } from './cdp'
 import {
   ACTIVE_TIMEOUT_MS,
   CAPTURE_TIMEOUT_MS,
@@ -25,7 +24,58 @@ import { sha256 } from './utils/sha256'
 import { unpaintedApplicationReason } from './utils/unpaintedApplicationReason'
 import { ViewportAckTimeoutError } from './utils/viewportAckTimeoutError'
 import { viewportHtml } from './utils/viewportHtml'
+import type { ExtensionPaneState } from './utils/viewportHtml'
 import { waitUntil } from './utils/waitUntil'
+
+/** The frame fields {@link BrowserViewport} reads from a `Page.screencastFrame` event. */
+export interface ScreencastFrameEvent {
+  /** The PNG as base64. */
+  data: string
+  /** The frame number to acknowledge; never a CDP target session. */
+  sessionId: number
+  metadata: { timestamp?: number }
+}
+
+/** The commands {@link BrowserViewport.attach} sends, with their parameters. */
+export interface ScreencastCommands {
+  'Page.screencastFrameAck': { sessionId: number }
+  'Emulation.setDeviceMetricsOverride': {
+    width: number
+    height: number
+    deviceScaleFactor: number
+    mobile: boolean
+  }
+  'Page.enable': undefined
+  'Page.startScreencast': {
+    format: 'png'
+    maxWidth?: number
+    maxHeight?: number
+    everyNthFrame: number
+  }
+}
+
+/**
+ * The part of a CDP connection {@link BrowserViewport.attach} uses: js-debug's page proxy for a repository browser, and a flat-session adapter for an owned extension browser.
+ * @example await viewport.attach(cdp, signal)
+ */
+export interface ScreencastCdp {
+  /** Observes the screencast frames of the one target this connection shows. */
+  on(
+    method: 'Page.screencastFrame',
+    listener: (frame: ScreencastFrameEvent) => void,
+  ): unknown
+  request<Method extends keyof ScreencastCommands>(
+    method: Method,
+    params: ScreencastCommands[Method],
+    timeoutMs?: number,
+  ): Promise<unknown>
+  subscribe(events: string[]): Promise<void>
+  /** Only a js-debug page proxy aggregates its acknowledgement telemetry for a recording. */
+  aggregateScreencastTelemetry?(clock: () => number): void
+}
+
+/** What {@link BrowserViewport.attach} shows: a repository page fits 720 × 640; an extension popup keeps its own CSS size and scrolls; an extension page fits like a repository page. */
+export type ViewportSurface = 'page' | 'popup'
 
 export interface ViewportLease {
   panel: vscode.WebviewPanel
@@ -114,6 +164,9 @@ export class BrowserViewport {
   /** The shown history's latest moment, written into a document only when a replacement panel restores it ({@link updateHistory}). */
   private latestHistoricalHtml?: () => string
   private rendererAttached = true
+  /** The chrome-extension header, body and accessible text; absent for every other profile (DR1). */
+  private extensionPane?: ExtensionPaneState
+  private lastFrameAtMs?: number
   private readonly listeners: vscode.Disposable[] = []
   private observerFailed = false
   private observerClosed = false
@@ -152,7 +205,7 @@ export class BrowserViewport {
       () => this.paintTime(),
     )
     this.bindPanel()
-    this.panel.webview.html = viewportHtml(this.mode)
+    this.panel.webview.html = this.currentHtml()
   }
 
   /** Binds only the current renderer for construction and {@link rebindPanel}; retired callbacks cannot close the session. @example this.bindPanel() */
@@ -215,6 +268,8 @@ export class BrowserViewport {
             !('visibility' in message) || message.visibility !== 'hidden',
           )
           this.record('viewport.ready', { epoch: this.epoch })
+          // A renderer that started after the pane state was set shows it before any frame.
+          this.postExtensionPane()
           const latest = this.pinnedPause ?? this.latestLive
           if (latest && !this.placement) this.offerLiveOrRestored(latest)
         } else if (
@@ -277,12 +332,24 @@ export class BrowserViewport {
     )
   }
 
-  /** Uses js-debug's selected-target event sharing, keeping Chrome ACKs independent from slow renderer delivery. @example await viewport.attach(cdp, signal) */
-  async attach(cdp: Cdp, signal: AbortSignal): Promise<void> {
+  /**
+   * Starts showing a target's screencast; called by the repository run's {@link HostBrowser} (js-debug page proxy) and by {@link ChromeExtensionViewportView} (an owned extension browser's flat session).
+   * Uses js-debug's selected-target event sharing, keeping Chrome ACKs independent from slow renderer delivery.
+   * @param cdp - The connection of the target to show.
+   * @param signal - The run's cancellation.
+   * @param surface - `popup` shows the frame at its own size with no device-metrics override (DR7); the default fits 720 × 640.
+   * @example await viewport.attach(cdp, signal, 'popup')
+   */
+  async attach(
+    cdp: ScreencastCdp,
+    signal: AbortSignal,
+    surface: ViewportSurface = 'page',
+  ): Promise<void> {
     if (this.observer)
-      cdp.aggregateScreencastTelemetry(() => this.observerTime())
+      cdp.aggregateScreencastTelemetry?.(() => this.observerTime())
     cdp.on('Page.screencastFrame', (frame) => {
       if (this.closed) return
+      this.lastFrameAtMs = Date.now()
       void cdp
         .request(
           'Page.screencastFrameAck',
@@ -324,20 +391,70 @@ export class BrowserViewport {
       'Page.screencastFrame',
     ])
     signal.throwIfAborted()
-    await cdp.request('Emulation.setDeviceMetricsOverride', {
-      width: VIEWPORT_WIDTH_PX,
-      height: VIEWPORT_HEIGHT_PX,
-      deviceScaleFactor: 1,
-      mobile: false,
-    })
-    await cdp.request('Page.enable', undefined)
-    await cdp.request('Page.startScreencast', {
-      format: 'png',
-      maxWidth: VIEWPORT_WIDTH_PX,
-      maxHeight: VIEWPORT_HEIGHT_PX,
-      everyNthFrame: 1,
-    })
+    if (surface === 'popup') {
+      // A popup keeps the size its own content gives it: no override, no size bound on the frames (DR7).
+      await cdp.request('Page.enable', undefined)
+      await cdp.request('Page.startScreencast', {
+        format: 'png',
+        everyNthFrame: 1,
+      })
+    } else {
+      await cdp.request('Emulation.setDeviceMetricsOverride', {
+        width: VIEWPORT_WIDTH_PX,
+        height: VIEWPORT_HEIGHT_PX,
+        deviceScaleFactor: 1,
+        mobile: false,
+      })
+      await cdp.request('Page.enable', undefined)
+      await cdp.request('Page.startScreencast', {
+        format: 'png',
+        maxWidth: VIEWPORT_WIDTH_PX,
+        maxHeight: VIEWPORT_HEIGHT_PX,
+        everyNthFrame: 1,
+      })
+    }
     await this.reveal(signal)
+  }
+
+  /**
+   * Gives the chrome-extension pane its header, body text, image description and hidden detail, and keeps them for every later renderer of the pane (a reload or a replacement panel); called by {@link ChromeExtensionViewportView} on each change.
+   * @param pane - The complete pane state; the document shows exactly this.
+   * @example viewport.setExtensionPane({ title: 'codebook · Notes · Extension popup', ... })
+   */
+  setExtensionPane(pane: ExtensionPaneState): void {
+    const needsExtensionDocument = this.extensionPane?.surface !== pane.surface
+    this.extensionPane = pane
+    // The first state (and a change of surface kind) replaces the repository document with the extension's; its ready handshake then carries the state.
+    if (needsExtensionDocument && !this.closed && !this.historical) {
+      this.suspendRenderer()
+      this.panel.webview.html = this.currentHtml()
+      return
+    }
+    this.postExtensionPane()
+  }
+
+  /** When the last screencast frame arrived, in epoch milliseconds, for the ended view's `last captured view` time; `undefined` before any frame. @example viewport.lastFrameAt() */
+  lastFrameAt(): number | undefined {
+    return this.lastFrameAtMs
+  }
+
+  /** Writes the document this viewport's renderer starts from: the image document of its profile. @example this.panel.webview.html = this.currentHtml() */
+  private currentHtml(): string {
+    return viewportHtml(this.mode, this.extensionPane?.surface)
+  }
+
+  /** Sends the stored pane state to the current renderer; a renderer that is not ready yet gets it with its ready receipt ({@link bindPanel}). @example this.postExtensionPane() */
+  private postExtensionPane(): void {
+    if (!this.extensionPane || !this.epoch || this.closed) return
+    void Promise.resolve(
+      this.panel.webview.postMessage({
+        type: 'extension',
+        epoch: this.epoch,
+        pane: this.extensionPane,
+      }),
+    ).catch((error) =>
+      this.record('viewport.extension-pane-failed', { error: String(error) }),
+    )
   }
 
   /** Observes explicit phase pixels at CDP response receipt, before disk/reveal delays; it grants no paint or pause confirmation. @example viewport.recordCapture(png, 'before') */
@@ -637,7 +754,7 @@ export class BrowserViewport {
       const oldEpoch = this.epoch
       this.suspendRenderer()
       this.record('fault.viewport-reload', { oldEpoch })
-      this.panel.webview.html = viewportHtml(this.mode)
+      this.panel.webview.html = this.currentHtml()
       await waitUntil(
         () => this.epoch && this.epoch !== oldEpoch,
         'reloaded viewport epoch',
@@ -745,7 +862,7 @@ export class BrowserViewport {
     this.historical = false
     this.historicalHtml = undefined
     this.latestHistoricalHtml = undefined
-    this.panel.webview.html = viewportHtml(this.mode)
+    this.panel.webview.html = this.currentHtml()
     this.rendererAttached = true
     await this.reveal(signal)
   }
@@ -915,7 +1032,7 @@ export class BrowserViewport {
       if (this.historicalHtml === undefined)
         throw new Error('Historical viewport content is unavailable.')
       this.panel.webview.html = this.historicalHtml
-    } else this.panel.webview.html = viewportHtml(this.mode)
+    } else this.panel.webview.html = this.currentHtml()
     this.rendererAttached = true
   }
 
