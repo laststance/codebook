@@ -16,6 +16,7 @@ import {
   EXTENSION_BROWSER_START_BOUND_MS,
   EXTENSION_CDP_COMMAND_TIMEOUT_MS,
   EXTENSION_OPEN_BOUND_MS,
+  EXTENSION_POLL_COMMAND_MIN_TIMEOUT_MS,
   EXTENSION_POPUP_WORKER_SETTLE_MS,
   EXTENSION_STOP_COMMAND_TIMEOUT_MS,
   EXTENSION_STOP_WORKERS_BOUND_MS,
@@ -256,7 +257,7 @@ async function extensionCommand(
 }
 
 /**
- * Sends one command inside a poll loop: its time counts against the budget and its own timeout never exceeds what is left of it (B6).
+ * Sends one command inside a poll loop: its time counts against the budget and its own timeout never exceeds what is left of it, nor falls below {@link EXTENSION_POLL_COMMAND_MIN_TIMEOUT_MS} (B6).
  * @param cdp - The connection.
  * @param budget - The loop's budget.
  * @param method - The command.
@@ -276,8 +277,9 @@ function requestWithin(
       method,
       params,
       sessionId,
+      // The last look comes after the last pause, when the budget is spent: it still gets time to be answered, so the loop's own verdict (POPUP_NOT_OPENED, the still-listed worker) is what fails the launch.
       Math.max(
-        1,
+        EXTENSION_POLL_COMMAND_MIN_TIMEOUT_MS,
         Math.min(EXTENSION_CDP_COMMAND_TIMEOUT_MS, budget.remainingMs()),
       ),
     ),

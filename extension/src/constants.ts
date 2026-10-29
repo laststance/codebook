@@ -2163,6 +2163,8 @@ export const EXTENSION_POPUP_WORKER_SETTLE_MS = 1_500
 export const OWNED_BROWSER_MARKER_FILE = 'codebook-owned-browser'
 /** The owned launch treats the extension's workers as stopped after none has been listed for this long; Chrome starts a new extension's worker shortly after `loadUnpacked` answers. */
 export const EXTENSION_WORKER_QUIET_MS = 500
+/** A command inside an owned-launch poll loop is never sent with less time than this: the last look comes after the last pause, when the loop's bound is spent, and still needs time for a local Chrome to answer it (B6). */
+export const EXTENSION_POLL_COMMAND_MIN_TIMEOUT_MS = 1_000
 /** One `ServiceWorker.stopAllWorkers` that is not answered in this time is sent again by the stop loop of the owned launch. */
 export const EXTENSION_STOP_COMMAND_TIMEOUT_MS = 1_000
 /** `<chrome> --version` that prints nothing in this time counts as an unreadable version; no browser session is started to read it. */

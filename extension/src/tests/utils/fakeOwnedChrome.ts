@@ -43,6 +43,8 @@ export type FakeOwnedChromeBehaviour = {
   executableVersionText?: string
   /** What `Browser.getVersion` answers as `product`; defaults to a supported Chrome. */
   browserProduct?: string
+  /** How long the fake takes to answer a command: one sent with a shorter timeout fails as `timed out`, as a real Chrome's answer arrives too late for it. Unset, every timeout is met. */
+  answerLatencyMs?: number
 }
 
 /** The fake browser as a test sees it. */
@@ -212,7 +214,7 @@ export function fakeOwnedChrome(
     exitListeners.clear()
   }
   const connection: FlatCdpConnection = {
-    request: async (method, params, sessionId) => {
+    request: async (method, params, sessionId, timeoutMs) => {
       const command: RecordedCommand = {
         method,
         params,
@@ -220,6 +222,13 @@ export function fakeOwnedChrome(
       }
       commands.push(command)
       behaviour.onCommand?.(command)
+      // A command whose timeout is shorter than the fake's answer time is lost, as the connection's own timer would drop it.
+      if (
+        behaviour.answerLatencyMs !== undefined &&
+        timeoutMs !== undefined &&
+        timeoutMs < behaviour.answerLatencyMs
+      )
+        throw new FlatCdpCommandError(method, undefined, 'timed out')
       return answer(command)
     },
     on: () => () => undefined,

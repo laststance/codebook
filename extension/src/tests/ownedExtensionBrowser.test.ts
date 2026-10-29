@@ -299,6 +299,23 @@ test('launch fails with POPUP_NOT_OPENED when the action opens no popup', async 
   )
 })
 
+// Value: protects=TZ4 and B6 (the last look after the last pause still decides); fails_when=the last target look is sent with the spent budget's 1 ms timeout, so a real Chrome's answer arrives too late and the launch fails as RUNTIME_FAILED instead of POPUP_NOT_OPENED; no_claim=the 5 s bound's duration (the fake has no clock)
+test('a popup that never opens still fails with POPUP_NOT_OPENED when Chrome takes a few milliseconds to answer each command', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(
+    healthy({ popupOpens: false, answerLatencyMs: 5 }),
+  )
+  // Act
+  const error = await failureOf(launchOptions(root), chrome)
+  // Assert
+  assert.equal(error.code, 'POPUP_NOT_OPENED')
+  assert.equal(
+    error.message,
+    "The extension's action opened no popup with the seeded state.",
+  )
+})
+
 // Value: protects=a page surface and an empty seed; fails_when=a page run sends popup commands or storage commands; no_claim=real Chrome
 test('a page surface is opened with createTarget, an empty storage seed sends no storage command, and no popup action is triggered', async (context) => {
   // Arrange
@@ -480,6 +497,27 @@ test('launch fails with RUNTIME_FAILED naming the still-listed worker when no st
   // Arrange
   const root = await profileRoot(context)
   const chrome = fakeOwnedChrome(healthy({ stopLeavesWorker: true }))
+  // Act
+  const error = await failureOf(launchOptions(root), chrome)
+  // Assert
+  assert.equal(error.code, 'RUNTIME_FAILED')
+  assert.equal(
+    error.message,
+    'The extension’s service worker did not stop in time.',
+  )
+  assert.equal(
+    error.causeDetail,
+    `still listed: chrome-extension://${EXTENSION_ID}/worker.js`,
+  )
+})
+
+// Value: protects=B6 (the last look after the last pause still decides); fails_when=the last worker look is sent with the spent budget's 1 ms timeout, so a real Chrome's answer arrives too late and the failure loses the still-listed worker; no_claim=the 3 s duration (the fake sleeps instantly, the budget charges the nominal pause)
+test('a worker that never stops still fails naming the still-listed worker when Chrome takes a few milliseconds to answer each command', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(
+    healthy({ stopLeavesWorker: true, answerLatencyMs: 5 }),
+  )
   // Act
   const error = await failureOf(launchOptions(root), chrome)
   // Assert
