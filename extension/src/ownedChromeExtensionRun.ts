@@ -46,6 +46,7 @@ import type {
 import type { OwnedBrowserLaunchOptions } from './runtimeSupport/ownedExtensionBrowser'
 import { readCdpString } from './runtimeSupport/utils/cdpFieldReaders'
 import { causeRootsFor } from './utils/causeRootsFor'
+import { classifyChromeExtensionFailure } from './utils/classifyChromeExtensionFailure'
 import {
   chromeExtensionFailureNextStep,
   describeChromeExtensionFailure,
@@ -655,8 +656,12 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       this.reader !== undefined &&
       this.beforeRead !== undefined &&
       this.clicksPerformed >= resolved.clicks.length
-    )
-      this.setObserved(await this.reader.read())
+    ) {
+      const observedAfterLoss = await this.reader.read()
+      // A stop accepted during the read already ended the run and kept its own observed result.
+      if (this.ending !== undefined) return
+      this.setObserved(observedAfterLoss)
+    }
     this.fail(
       new StudyError(
         'SURFACE_LOST',
@@ -1048,7 +1053,10 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
           this.clickTitles(),
         ).viewportPhase
         if (this.surfaceAttached) return viewport.end(text)
-        const kind = this.resolved === undefined ? 'before-launch' : 'ended'
+        const kind = classifyChromeExtensionFailure(
+          this.view(),
+          ending.error.code,
+        )
         return viewport.showFailure(
           ending.error.message,
           chromeExtensionFailureNextStep(kind),

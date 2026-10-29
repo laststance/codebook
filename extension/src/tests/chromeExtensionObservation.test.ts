@@ -311,3 +311,21 @@ test('keeps missing, null and unavailable distinct in the result word', () => {
   )
   assert.equal(failed.changed, undefined)
 })
+
+// Value: protects=ER23: a value nested far deeper than the limit reads unavailable at once with the limit cause, not a stack overflow; fails_when=the cause is the call-stack message; no_claim=the 64 KiB value
+test('a value nested deeper than the stack reads as larger than the read limit', async () => {
+  // Arrange
+  let deep: unknown = 1
+  for (let level = 0; level < 20000; level += 1) deep = { next: deep }
+  const { reader } = readerOf(
+    { kind: 'storage', key: 'k' },
+    { 'Extensions.getStorageItems': () => ({ data: { k: deep } }) },
+  )
+  // Act
+  const read = await reader.read()
+  // Assert
+  assert.deepEqual(read, {
+    unavailable: true,
+    cause: 'larger than the read limit',
+  })
+})

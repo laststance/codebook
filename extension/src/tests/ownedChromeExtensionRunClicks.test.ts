@@ -501,3 +501,48 @@ test('the viewport shows waiting, then the finished result line, and never a sav
     false,
   )
 })
+
+// Value: protects=SR26, SR22: a stop accepted while the lost surface's storage read is pending keeps its own result (no observation, partial) and the late read does not overwrite it; fails_when=the late read sets observed after the stop; no_claim=real Chrome
+test('a stop during the read after a lost surface is not overwritten by the late read', async () => {
+  // Arrange
+  const hold = defer<void>()
+  const readGate = defer<void>()
+  const lateReadStarted = defer<void>()
+  let surfaceLost = false
+  const harness = createRunHarness({
+    resolved: resolvedHarnessRun({
+      observe: { kind: 'storage', key: 'lastCreated' },
+    }),
+    receipts: { 2: async () => settledReceipt(2, hold.promise, 'running') },
+    surfaceAnswers: {
+      'Extensions.getStorageItems': async () => {
+        // The first read (before the clicks) answers at once; the read after the loss is held.
+        if (surfaceLost) {
+          lateReadStarted.resolve()
+          await readGate.promise
+        }
+        return { data: { lastCreated: 'New Folder' } }
+      },
+      'Target.createTarget': () => ({ targetId: 'host-page' }),
+      'Target.attachToTarget': () => ({ sessionId: 'host-session' }),
+    },
+  })
+  await harness.run.prepare()
+  await harness.run.click()
+  await harness.run.click()
+  surfaceLost = true
+  harness.surface.emit('Target.targetInfoChanged', {
+    targetInfo: { targetId: 'surface-target', url: 'https://example.test/' },
+  })
+  await lateReadStarted.promise
+  // Act
+  const stopping = harness.run.stop()
+  readGate.resolve()
+  hold.resolve()
+  await stopping
+  await waitUntil(() => harness.log.includes('viewport.close'), 'the cleanup')
+  // A negative check: give the held read time to finish and (wrongly) store its result.
+  await sleep(100)
+  // Assert
+  assert.equal(harness.run.view().observed, null)
+})

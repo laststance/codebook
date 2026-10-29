@@ -5,6 +5,8 @@ import type {
 import { extensionObservationResult } from '../chromeExtensionObservation'
 import type { ChromeExtensionPhase, ChromeExtensionView } from '../runtime'
 
+import { classifyChromeExtensionFailure } from './classifyChromeExtensionFailure'
+
 /** The fixed next-step line of a failure (DR10): pre-launch refusals, refused clicks and ended runs each have their own. */
 export type ChromeExtensionFailureKind =
   'before-launch' | 'refused-click' | 'ended'
@@ -184,11 +186,7 @@ export function describeChromeExtensionViewStatus(
     ...(failure
       ? {
           failureSentence: failure.message,
-          failureKind:
-            view.extension === undefined ||
-            failure.code === 'CHROME_VERSION_UNSUPPORTED'
-              ? 'before-launch'
-              : 'ended',
+          failureKind: classifyChromeExtensionFailure(view, failure.code),
         }
       : {}),
   })

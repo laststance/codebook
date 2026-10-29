@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -70,4 +70,30 @@ test('treats the editor’s line-end normalization as no change', async (context
   )
   // Assert
   assert.equal(outcome, 'passed')
+})
+
+// Value: protects=ER20: an unsaved buffer opened through a symlinked path of a pinned file is checked; fails_when=the symlinked document is skipped; no_claim=case-insensitive file systems
+test('refuses an unsaved buffer opened through a symlink to a pinned file', async (context) => {
+  // Arrange
+  const { workspace, path, pinnedHashes } = await pinnedFile(context)
+  const linkPath = join(workspace, 'link.js')
+  await symlink(path, linkPath)
+  const check = createExtensionSourceCheck({
+    pinnedHashes,
+    workspace,
+    documents: () => [
+      {
+        uri: { scheme: 'file', fsPath: linkPath },
+        getText: () => 'let a = 2\n',
+      },
+    ],
+  })
+  // Act
+  const failure = await check().then(
+    () => undefined,
+    (error: unknown) => error as Error,
+  )
+  // Assert
+  assert.equal(failure?.message, 'popup.js changed after the run started.')
+  assert.equal(Reflect.get(failure ?? {}, 'code'), 'SOURCE_CHANGED')
 })

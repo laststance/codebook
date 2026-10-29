@@ -3,6 +3,7 @@ import { test } from 'node:test'
 
 import { StudyError } from '../errors'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { describeChromeExtensionViewStatus } from '../utils/describeChromeExtensionStatus'
 
 import { createRunHarness } from './utils/chromeExtensionRunHarness'
 import { defer } from './utils/defer'
@@ -382,4 +383,34 @@ test('an Application view the editor refuses leaves the run ready and reports wh
     ],
   )
   await harness.run.stop()
+})
+
+// Value: protects=DR10: a version failure raised at launch shows the same next-step line in the Application view and the status item; fails_when=the viewport shows the ended line while the status item shows the before-launch line; no_claim=the version wording
+test('a launch-time unsupported Chrome version shows the same next-step line in the view and the status item', async () => {
+  // Arrange
+  const harness = createRunHarness({
+    launchFailure: new StudyError(
+      'CHROME_VERSION_UNSUPPORTED',
+      'This Chrome version cannot run the extension.',
+    ),
+  })
+  // Act
+  await harness.run.prepare().catch(() => undefined)
+  // Assert
+  const statusItem = describeChromeExtensionViewStatus(
+    harness.run.view(),
+    [],
+  ).statusItem
+  assert.deepEqual(
+    harness.viewportCalls.find(([name]) => name === 'showFailure'),
+    [
+      'showFailure',
+      'This Chrome version cannot run the extension.',
+      'The chat can explain this part from source.',
+    ],
+  )
+  assert.equal(
+    statusItem,
+    'This Chrome version cannot run the extension. The chat can explain this part from source.',
+  )
 })

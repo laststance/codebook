@@ -61,13 +61,23 @@ function withinReadTimeout<Value>(
   return Promise.race([pending, expiry]).finally(() => clearTimeout(timer))
 }
 
-/** Counts the nesting of arrays and objects in a JSON value. */
-function jsonDepth(value: unknown): number {
-  if (typeof value !== 'object' || value === null) return 0
-  const children: unknown[] = Array.isArray(value)
-    ? value
-    : Object.values(value)
-  return 1 + Math.max(0, ...children.map(jsonDepth))
+/**
+ * Tells whether a JSON value nests deeper than a limit; stops walking at limit + 1 so a very deep value never overflows the stack.
+ * Runs before the canonical text is built (ER23).
+ */
+function exceedsDepth(value: unknown, depthLimit: number): boolean {
+  const pending: Array<{ node: unknown; depth: number }> = [
+    { node: value, depth: 0 },
+  ]
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    const { node, depth } = next
+    if (typeof node !== 'object' || node === null) continue
+    if (depth + 1 > depthLimit) return true
+    const children: unknown[] = Array.isArray(node) ? node : Object.values(node)
+    for (const child of children)
+      pending.push({ node: child, depth: depth + 1 })
+  }
+  return false
 }
 
 /** Reads a field of a CDP answer without a cast. */
@@ -193,12 +203,15 @@ export function createExtensionObservationReader(
       try {
         const read = await readRaw()
         if ('value' in read) {
+          // Depth first: canonicalJson recurses over the whole value.
+          if (exceedsDepth(read.value, depthLimit))
+            return { unavailable: true, cause: OBSERVATION_LIMIT_CAUSE }
           const canonical = canonicalJson(read.value)
           const size =
             typeof read.value === 'string'
               ? Buffer.byteLength(read.value)
               : Buffer.byteLength(canonical ?? '')
-          if (size > limitBytes || jsonDepth(read.value) > depthLimit)
+          if (size > limitBytes)
             return { unavailable: true, cause: OBSERVATION_LIMIT_CAUSE }
         }
         return read
