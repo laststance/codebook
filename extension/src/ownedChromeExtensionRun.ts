@@ -1113,7 +1113,10 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     this.safely(() => executor?.dispose())
     this.cleanupResult = browser
       ? await this.closeBrowser(browser)
-      : { profileLeft: false, exitConfirmed: true }
+      : didStepsSettle
+        ? { profileLeft: false, exitConfirmed: true }
+        : // A launch still under way may have made its profile and started Chrome before it hands back a browser: nothing is confirmed until it settles.
+          { profileLeft: true, exitConfirmed: false }
     // The viewport is read once, after the waits above: the same one is closed here and named as handled, so a late check never closes it twice.
     const closedViewport = this.viewport
     this.safely(() => closedViewport?.close())
@@ -1172,15 +1175,27 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     if (this.viewport !== undefined && this.viewport !== handled.viewport)
       this.safely(() => this.viewport?.close())
     const lateBrowser = this.browser
-    if (lateBrowser === undefined || lateBrowser === handled.browser) return
-    void this.closeBrowser(lateBrowser).then((lateResult) => {
-      // The cleanup result already settled: a failed late close must reach the run resource, never leaving a clean claim.
-      const settled = this.cleanupResult
-      this.cleanupResult = {
-        profileLeft: (settled?.profileLeft ?? false) || lateResult.profileLeft,
-        exitConfirmed:
-          (settled?.exitConfirmed ?? true) && lateResult.exitConfirmed,
+    if (lateBrowser === handled.browser) {
+      // The stuck step settled without a browser: the cleanup left unconfirmed for it is confirmed now.
+      if (handled.browser === undefined) {
+        this.cleanupResult = { profileLeft: false, exitConfirmed: true }
+        this.changed()
       }
+      return
+    }
+    if (lateBrowser === undefined) return
+    void this.closeBrowser(lateBrowser).then((lateResult) => {
+      // Without a browser the cleanup was left unconfirmed, so the late close's own result replaces it; after a closed browser a failed late close still reaches the run resource, never leaving a clean claim.
+      const settled = this.cleanupResult
+      this.cleanupResult =
+        handled.browser === undefined
+          ? lateResult
+          : {
+              profileLeft:
+                (settled?.profileLeft ?? false) || lateResult.profileLeft,
+              exitConfirmed:
+                (settled?.exitConfirmed ?? true) && lateResult.exitConfirmed,
+            }
       this.changed()
     })
   }

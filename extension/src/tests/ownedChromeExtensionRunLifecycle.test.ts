@@ -805,9 +805,10 @@ test('a late browser whose close fails is reported in the run resource cleanup',
   )
   timers.fire(10_000)
   await stopping
+  // The launch is still under way, so nothing is confirmed yet (CX2).
   assert.deepEqual(harness.run.view().cleanup, {
-    profileLeft: false,
-    exitConfirmed: true,
+    profileLeft: true,
+    exitConfirmed: false,
   })
   // Act
   launchGate.resolve()
@@ -903,6 +904,89 @@ test('a viewport the cleanup already closed is not closed again when the stuck l
     harness.log.filter((entry) => entry === 'browser.close').length,
     1,
   )
+})
+
+// protects=CX2 (Cycle 0062 ship review, Codex): a stop that passes its bound while the launch is still under way reports the cleanup unconfirmed, and the late browser's clean close then confirms it; fails_when=the resource claims no profile left and a confirmed exit before the launch's browser was ever closed; no_claim=the real launcher's profile timing
+test('a stop with the launch still under way reports its cleanup unconfirmed until the late browser is closed', async () => {
+  // Arrange
+  const launchGate = defer<void>()
+  const timers = manualClock()
+  const harness = createRunHarness({
+    launchGate: launchGate.promise,
+    clock: timers.clock,
+  })
+  const preparing = harness.run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await waitUntil(() => harness.log.includes('launch'), 'the launch to start')
+  const stopping = harness.run.stop()
+  await waitUntil(
+    () => timers.pendingDelays().includes(10_000),
+    'the stop bound to be armed',
+  )
+  // Act
+  timers.fire(10_000)
+  await stopping
+  // Assert
+  assert.equal(harness.log.includes('browser.close'), false)
+  assert.deepEqual(harness.run.view().cleanup, {
+    profileLeft: true,
+    exitConfirmed: false,
+  })
+  launchGate.resolve()
+  await preparing
+  await waitUntil(
+    () => harness.run.view().cleanup?.exitConfirmed === true,
+    'the late close to confirm the cleanup',
+  )
+  assert.deepEqual(harness.run.view().cleanup, {
+    profileLeft: false,
+    exitConfirmed: true,
+  })
+  assert.equal(
+    harness.log.filter((entry) => entry === 'browser.close').length,
+    1,
+  )
+})
+
+// protects=CX2 (Cycle 0062 ship review, Codex): a stuck step that settles after the bound without ever launching a browser confirms the cleanup it left unconfirmed; fails_when=the run resource keeps reporting a profile left after a run that never launched Chrome; no_claim=the 10 s value
+test('a stuck step that settles without a browser confirms the cleanup it left unconfirmed', async () => {
+  // Arrange
+  const viewportGate = defer<void>()
+  const timers = manualClock()
+  const harness = createRunHarness({
+    viewportGate: viewportGate.promise,
+    clock: timers.clock,
+  })
+  const preparing = harness.run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const stopping = harness.run.stop()
+  await waitUntil(
+    () => timers.pendingDelays().includes(10_000),
+    'the stop bound to be armed',
+  )
+  timers.fire(10_000)
+  await stopping
+  assert.deepEqual(harness.run.view().cleanup, {
+    profileLeft: true,
+    exitConfirmed: false,
+  })
+  // Act
+  viewportGate.resolve()
+  await preparing
+  // Assert
+  await waitUntil(
+    () => harness.run.view().cleanup?.exitConfirmed === true,
+    'the settled step to confirm the cleanup',
+  )
+  assert.deepEqual(harness.run.view().cleanup, {
+    profileLeft: false,
+    exitConfirmed: true,
+  })
+  assert.equal(harness.log.includes('launch'), false)
 })
 
 // protects=state matrix deadline × click (Cycle 0062 ship review): a click called while the cleanup after the whole-run deadline is still running is refused RUN_NOT_READY and never reaches the executor; fails_when=the click dispatches, or is refused with another code, during that cleanup; no_claim=the error wording
