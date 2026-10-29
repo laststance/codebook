@@ -851,6 +851,12 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   private assertCanClick(): ResolvedExtensionRun {
     const { resolved, debug, executor } = this
     const isAlive = this.stage === 'ready' || this.stage === 'observing'
+    // An accepted ending (stop, deadline, failure) refuses the call first, also after the last click, while its cleanup still runs; a completed run keeps the answer that every click was performed.
+    if (this.ending !== undefined && this.stage !== 'completed')
+      throw new StudyError(
+        'RUN_NOT_READY',
+        'The extension run is ending and takes no further click.',
+      )
     // After the last declared click the run only observes; a completed run performed them all.
     if (
       resolved !== undefined &&
@@ -858,12 +864,6 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       (isAlive || this.stage === 'completed')
     )
       throw this.noMoreActions()
-    // An accepted ending (stop, deadline, failure) refuses the call while its cleanup still runs.
-    if (this.ending !== undefined)
-      throw new StudyError(
-        'RUN_NOT_READY',
-        'The extension run is ending and takes no further click.',
-      )
     if (
       !isAlive ||
       resolved === undefined ||
