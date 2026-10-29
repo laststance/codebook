@@ -569,7 +569,8 @@
     "health:static": "fallow health --complexity --max-crap inf --baseline-mode identity --fail-on-issues --baseline fallow-health-baseline.json",
     "dupes": "fallow dupes --fail-on-issues --baseline fallow-dupes-baseline.json",
     "dead-code": "fallow dead-code --fail-on-issues --baseline fallow-dead-code-baseline.json",
-    "check": "pnpm format:check && pnpm typecheck && pnpm lint && pnpm health:static && pnpm test && pnpm test:package && pnpm dupes && pnpm dead-code && pnpm health"
+    "architecture": "fallow architecture --fail-on-issues --baseline fallow-architecture-baseline.json",
+    "check": "pnpm format:check && pnpm typecheck && pnpm lint && pnpm health:static && pnpm test && pnpm test:package && pnpm dupes && pnpm dead-code && pnpm architecture && pnpm health"
   },
   "lint-staged": {
     "!(*.ts)": "prettier --ignore-unknown --write --ignore-path ../.gitignore --ignore-path ../.prettierignore",
@@ -597,7 +598,7 @@
     "esbuild": "0.28.2",
     "eslint": "10.11.0",
     "eslint-config-ts-prefixer": "5.1.0",
-    "fallow": "3.34.1",
+    "fallow": "3.37.0",
     "lint-staged": "17.5.1",
     "prettier": "3.9.8",
     "typescript": "5.9.3",
