@@ -35,7 +35,7 @@ export const selectorSchema = z
   .max(REPOSITORY_SELECTOR_LIMIT_CHARS)
   .regex(/^[^\x00-\x1f\x7f]+$/)
 /** A literal text value (an input's text, an expected value) up to the literal limit. */
-export const literalSchema = z.string().max(REPOSITORY_LITERAL_LIMIT_CHARS)
+const literalSchema = z.string().max(REPOSITORY_LITERAL_LIMIT_CHARS)
 export const repositoryEntryPathSchema = z
   .string()
   .min(1)

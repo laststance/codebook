@@ -42,13 +42,15 @@ import {
 } from './constants'
 import { StudyError } from './errors'
 import { codebookStopLedger } from './runtimeSupport/codebookStopLedger'
-import { RESUME_COMMANDS } from './runtimeSupport/constants'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { WaitTimeoutError } from './runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
 import { isDebugSessionOfRun } from './utils/isDebugSessionOfRun'
+import { PendingResumeRequests } from './utils/pendingResumeRequests'
+import { SharedAttempt } from './utils/sharedAttempt'
+import { stopRunDebugSessions } from './utils/stopRunDebugSessions'
 
 type StackBody = DebugProtocol.StackTraceResponse['body']
 
@@ -88,10 +90,7 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
   private readonly pauseSet = new ExtensionPauseSet()
   private readonly output: ExtensionOutputJournal
   private readonly holdTimers = new Map<number, ReturnType<typeof setTimeout>>()
-  private readonly pendingResumes = new Map<
-    string,
-    { command: string; threadId?: number; singleThread: boolean }
-  >()
+  private readonly pendingResumes = new PendingResumeRequests()
   private readonly actionWatches = new Set<ActionWatch>()
   private readonly interventionList: ExtensionIntervention[] = []
   private handlers?: ExtensionDebuggerHandlers
@@ -99,7 +98,7 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
   private readonly unverifiedWorkerStops = new Set<number>()
   private ready = false
   private releaseBegun = false
-  private releasing?: Promise<void>
+  private readonly releaser = new SharedAttempt(() => this.releaseOwned())
   private readonly tracker: vscode.Disposable
   private readonly termination: vscode.Disposable
 
@@ -238,14 +237,7 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     const request = message as DebugProtocol.Request
     this.registry.onRequest(entry.session, request)
     // Whether the thread runs on is the adapter's answer: a rejected resume leaves it paused.
-    if (RESUME_COMMANDS.has(request.command)) {
-      const threadId: unknown = request.arguments?.threadId
-      this.pendingResumes.set(`${entry.session.id}:${request.seq}`, {
-        command: request.command,
-        threadId: typeof threadId === 'number' ? threadId : undefined,
-        singleThread: request.arguments?.singleThread === true,
-      })
-    }
+    this.pendingResumes.noteRequest(entry.session.id, request)
   }
 
   private onAdapterMessage(
@@ -255,7 +247,9 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     if (message.type === 'response') {
       const response = message as DebugProtocol.Response
       this.registry.onResponse(entry.session, response)
-      this.onResumeAnswered(entry.session.id, response)
+      // An accepted resume lets its thread, or every thread, run on; a refused one leaves the pause.
+      const ranOn = this.pendingResumes.takeAnswered(entry.session.id, response)
+      if (ranOn) this.resumeThreads(entry.session.id, ranOn.threadId)
       return
     }
     if (message.type !== 'event') return
@@ -320,22 +314,6 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
           this.registry.bindingOf(entry, sessions) === 'bound' &&
           !this.unverifiedWorkerStops.has(entry.stop.index),
       )
-  }
-
-  private onResumeAnswered(
-    sessionId: string,
-    response: DebugProtocol.Response,
-  ): void {
-    const key = `${sessionId}:${response.request_seq}`
-    const pending = this.pendingResumes.get(key)
-    if (!pending) return
-    this.pendingResumes.delete(key)
-    if (!response.success) return
-    const everyThread =
-      pending.command === 'continue'
-        ? response.body?.allThreadsContinued !== false
-        : !pending.singleThread
-    this.resumeThreads(sessionId, everyThread ? undefined : pending.threadId)
   }
 
   /** Threads ran on (Codebook's continue, the learner's, the adapter's own): their pauses end and their captures and continue arguments go stale. */
@@ -823,12 +801,7 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
   }
 
   release(): Promise<void> {
-    const attempt = (this.releasing ??= this.releaseOwned())
-    return attempt.catch((error: unknown) => {
-      // A failed release is dropped, so the next call runs it again.
-      if (this.releasing === attempt) this.releasing = undefined
-      throw error
-    })
+    return this.releaser.run()
   }
 
   /** Removes the breakpoints, ends the sessions this run started and stops listening; repeatable after a failure. */
@@ -839,13 +812,10 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     this.holdTimers.clear()
     this.output.finish()
     this.registry.removeAll()
-    const sessions = [...this.entries.values()].map((entry) => entry.session)
-    const results = await Promise.allSettled(
-      sessions.map((session) => vscode.debug.stopDebugging(session)),
+    await stopRunDebugSessions(
+      [...this.entries.values()].map((entry) => entry.session),
+      (session) => vscode.debug.stopDebugging(session),
     )
-    for (const session of sessions) codebookStopLedger.forget(session.id)
-    const failure = results.find((result) => result.status === 'rejected')
-    if (failure?.status === 'rejected') throw failure.reason
     this.tracker.dispose()
     this.termination.dispose()
   }
