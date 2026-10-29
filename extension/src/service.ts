@@ -95,6 +95,7 @@ import type {
 } from './repositorySchemas'
 import type { RetainedStudy } from './retainedStudySchemas'
 import type {
+  ChromeExtensionClickAnswer,
   ChromeExtensionRuntime,
   ChromeExtensionView,
   NodeServerRuntime,
@@ -550,12 +551,15 @@ function selectsRetiredMode(input: PresentationCommand): boolean {
 
 /** The receipt every accepted action answers: the operation, the key and the run to read. */
 type ActionReceipt = NonNullable<StudyRecord['action']>['receipt']
-/** What an accepted `extension-click` answers: the receipt with the click's index (1-based), outcome, inputs applied and dispatch. */
+/** What an accepted `extension-click` answers: the receipt with the click's index (1-based), outcome, inputs applied, dispatch and each step's side effect (DXR4). */
 export type ExtensionClickReceipt = ActionReceipt & {
   clickIndex: number
   outcome: 'paused' | 'settled' | 'running'
   inputsApplied: number
+  /** `true` once Chrome answered the press; a press sent and not answered yet (a stop paused inside the handler) reads `false` with {@link ExtensionClickReceipt.clickEffect} `unknown`. */
   clickDispatched: boolean
+  inputEffects: ChromeExtensionClickAnswer['inputEffects']
+  clickEffect: ChromeExtensionClickAnswer['clickEffect']
 }
 
 /** What `codebook_continue` answers: the acknowledgement alone, or with `answer: "next"` also the word that ended the wait (absent at the bound) and the run's state. */
@@ -5114,9 +5118,9 @@ export class StudyService {
    * Performs the next declared click of a chrome-extension run for `codebook_action`: a key is bound to its click when the call is admitted, so the same key with the same arguments returns the original receipt or joins the click in flight before any state check, also after the run ended (DXR3); a new key starts the next click.
    * @param record - The chrome-extension run.
    * @param input - The action as the tool received it.
-   * @returns The receipt: `operationId`, `key`, `runUri` and the click's `clickIndex`, `outcome`, `inputsApplied` and `clickDispatched`.
+   * @returns The receipt: `operationId`, `key`, `runUri` and the click's `clickIndex`, `outcome`, `inputsApplied`, `clickDispatched`, `inputEffects` and `clickEffect`.
    * @throws `IDEMPOTENCY_CONFLICT` for a key that names other arguments; `BUSY` for an action this profile does not offer; `RUN_NOT_READY` before the run is prepared or once it ends in an error; what {@link ChromeExtensionRuntime.click} throws (`RUN_PAUSED`, `ACTION_IN_PROGRESS`, `NO_MORE_ACTIONS`, `SELECTOR_NOT_FOUND`, `INPUT_PARTIAL`, and the others); the same key replays a stored failure.
-   * @example await this.clickExtension(record, { ...run, key: 'click-1', action: 'extension-click' }) // => { operationId, key: 'click-1', runUri, clickIndex: 1, outcome: 'settled', inputsApplied: 0, clickDispatched: true }
+   * @example await this.clickExtension(record, { ...run, key: 'click-1', action: 'extension-click' }) // => { operationId, key: 'click-1', runUri, clickIndex: 1, outcome: 'settled', inputsApplied: 0, clickDispatched: true, inputEffects: [], clickEffect: 'confirmed' }
    */
   private async clickExtension(
     record: ChromeExtensionStudyRecord,
@@ -5182,6 +5186,8 @@ export class StudyService {
       outcome: answer.outcome,
       inputsApplied: answer.inputsApplied,
       clickDispatched: answer.clickDispatched,
+      inputEffects: answer.inputEffects,
+      clickEffect: answer.clickEffect,
     }
   }
 

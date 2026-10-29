@@ -37,6 +37,8 @@ export class FakeChromeExtensionRuntime implements ChromeExtensionRuntime {
   clicksDeclared = 2
   /** The outcome the next click answers. */
   nextOutcome: ChromeExtensionClickAnswer['outcome'] = 'settled'
+  /** The click's side effect the next answer reports: `unknown` when the press was sent and not answered, as when a stop pauses inside the handler. */
+  nextClickEffect: ChromeExtensionClickAnswer['clickEffect'] = 'confirmed'
   /** When set, `prepare()` rejects with it and the run reads `failed`. */
   prepareFailure?: StudyError
   /** When set, the next `click()` rejects with it; a failed-state code also ends the run `failed`. */
@@ -140,9 +142,9 @@ export class FakeChromeExtensionRuntime implements ChromeExtensionRuntime {
       clickIndex,
       outcome: this.nextOutcome,
       inputsApplied: 0,
-      clickDispatched: true,
+      clickDispatched: this.nextClickEffect === 'confirmed',
       inputEffects: [],
-      clickEffect: 'confirmed',
+      clickEffect: this.nextClickEffect,
     }
     this.change({
       procedure: {

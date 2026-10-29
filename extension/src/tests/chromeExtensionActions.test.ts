@@ -59,8 +59,39 @@ test('extension-click answers the click index, outcome and dispatch of each decl
     outcome: 'settled',
     inputsApplied: 0,
     clickDispatched: true,
+    inputEffects: [],
+    clickEffect: 'confirmed',
   })
   assert.equal('clickIndex' in second && second.clickIndex, 2)
+})
+
+// protects=DXR4: a click whose handler paused at a stop answers that its press was sent and is not yet answered (clickEffect unknown), so the chat never reads clickDispatched false as a click that did not happen, as a VS Code chat could in the Cycle 0061 pt2 dry run; fails_when=the answer leaves out the click's side effect; no_claim=how the chat words it
+test('a click paused inside its handler answers that its press was sent and not yet answered', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const started = await startFakeChromeExtensionRun(harness)
+  started.run.nextOutcome = 'paused'
+  started.run.nextClickEffect = 'unknown'
+  // Act
+  const answer = await started.service.performAction(
+    clickInput(started, 'click-1'),
+  )
+  // Assert
+  assert.deepEqual(
+    {
+      outcome: 'outcome' in answer && answer.outcome,
+      clickDispatched: 'clickDispatched' in answer && answer.clickDispatched,
+      clickEffect: 'clickEffect' in answer && answer.clickEffect,
+      inputEffects: 'inputEffects' in answer && answer.inputEffects,
+    },
+    {
+      outcome: 'paused',
+      clickDispatched: false,
+      clickEffect: 'unknown',
+      inputEffects: [],
+    },
+  )
 })
 
 // protects=NO_MORE_ACTIONS passes through after the last declared click; fails_when=a third click is sent or another code answers; no_claim=the run's own bookkeeping
