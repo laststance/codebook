@@ -176,6 +176,27 @@ test('the pins are read from .node-version, .bun-version and from packageManager
   assert.deepEqual(pins, { node: '24.22.1', pnpm: '12.4.2', bun: '1.4.4' })
 })
 
+// Value: protects=a refusal, not a crash, when a pin file is missing (a stripped checkout or worktree): readPins names the file, which the gate prints as its refusal with exit 2; fails_when=readPins rejects with Node's raw ENOENT text, so the gate fails with exit 1 and a stack instead of the documented refusal; why_new=Cycle 0062 pt2 native adversarial finding 5; seam=a repository folder of the test; no_claim=the exit code of the process (main is not exported; its catch prints this message)
+test('a missing .bun-version is named, so the gate refuses instead of failing on a raw file error', async (context) => {
+  // Arrange
+  const root = await mkdtemp(join(tmpdir(), 'codebook-gate-pins-'))
+  context.after(() => rm(root, { recursive: true, force: true }))
+  await mkdir(join(root, 'extension'))
+  await writeFile(join(root, '.node-version'), '24.22.1\n')
+  await writeFile(
+    join(root, 'extension/package.json'),
+    JSON.stringify({ packageManager: 'pnpm@12.4.2+sha512.08adc661' }),
+  )
+
+  // Act
+  const reading = readPins(root)
+
+  // Assert
+  await assert.rejects(reading, {
+    message: '.bun-version cannot be read (ENOENT).',
+  })
+})
+
 // Value: protects=the gate's composition and order, the sixteen checks AGENTS.md names, the architecture check CI requires included; fails_when=a check is dropped, added or reordered without this list changing with it; why_new=Cycle 0058 retro (the list lived in a copied shell script), Cycle 0062 pt2 OCR finding F3 (the architecture job was not in the gate); seam=none; no_claim=each check's command
 test('the gate runs the sixteen delivery checks in their order, the import-cycle check included', () => {
   // Arrange
@@ -247,53 +268,58 @@ test('the gate fails a new import cycle: its architecture script fails beyond a 
 })
 
 // Value: protects=the gate refusing, before any check, a Bun other than .bun-version's on the path the checks use, or none at all (the format check runs bun fmt); fails_when=main stops asking the path's Bun for its version, or a mismatch or a missing Bun no longer refuses with exit 2; why_new=Cycle 0062 pt2 OCR finding F2 (pinMismatches alone does not prove the wiring); seam=none; no_claim=the Node and pnpm parts of the refusal (tested above)
-test('the gate refuses with exit 2 a Bun of another version on the path, or none, before any check runs', async (context) => {
-  // Arrange: the gate puts its own Node's folder first on the checks' path, so it runs from a copy of this Node in a folder
-  // of its own, where a real Bun installed beside Node (Homebrew, a version manager) cannot answer for the fake one.
-  const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
-  const pins = await readPins(repositoryRoot)
-  const isolatedBin = await mkdtemp(join(tmpdir(), 'codebook-gate-bun-'))
-  context.after(() => rm(isolatedBin, { recursive: true, force: true }))
-  const isolatedNode = join(isolatedBin, 'node')
-  await copyFile(process.execPath, isolatedNode)
-  await chmod(isolatedNode, 0o755)
-  const fakeBun = join(isolatedBin, 'bun')
-  await writeFile(fakeBun, '#!/bin/sh\necho 1.4.3\n', { mode: 0o755 })
-  const environment = {
-    ...plainOutputEnvironment(process.env),
-    PATH: isolatedBin,
-    npm_config_user_agent: `pnpm/${pins.pnpm} node/v${process.versions.node}`,
-  }
+test(
+  'the gate refuses with exit 2 a Bun of another version on the path, or none, before any check runs',
+  // POSIX only: the stand-in Bun is a shell script, which Windows cannot start as `bun`.
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange: the gate puts its own Node's folder first on the checks' path, so it runs from a copy of this Node in a folder
+    // of its own, where a real Bun installed beside Node (Homebrew, a version manager) cannot answer for the fake one.
+    const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
+    const pins = await readPins(repositoryRoot)
+    const isolatedBin = await mkdtemp(join(tmpdir(), 'codebook-gate-bun-'))
+    context.after(() => rm(isolatedBin, { recursive: true, force: true }))
+    const isolatedNode = join(isolatedBin, 'node')
+    await copyFile(process.execPath, isolatedNode)
+    await chmod(isolatedNode, 0o755)
+    const fakeBun = join(isolatedBin, 'bun')
+    await writeFile(fakeBun, '#!/bin/sh\necho 1.4.3\n', { mode: 0o755 })
+    const environment = {
+      ...plainOutputEnvironment(process.env),
+      PATH: isolatedBin,
+      npm_config_user_agent: `pnpm/${pins.pnpm} node/v${process.versions.node}`,
+    }
 
-  // Act
-  const otherBun = spawnSync(isolatedNode, [GATE_SCRIPT], {
-    encoding: 'utf8',
-    env: environment,
-    timeout: 30_000,
-  })
-  await rm(fakeBun)
-  const noBun = spawnSync(isolatedNode, [GATE_SCRIPT], {
-    encoding: 'utf8',
-    env: environment,
-    timeout: 30_000,
-  })
+    // Act
+    const otherBun = spawnSync(isolatedNode, [GATE_SCRIPT], {
+      encoding: 'utf8',
+      env: environment,
+      timeout: 30_000,
+    })
+    await rm(fakeBun)
+    const noBun = spawnSync(isolatedNode, [GATE_SCRIPT], {
+      encoding: 'utf8',
+      env: environment,
+      timeout: 30_000,
+    })
 
-  // Assert
-  assert.equal(otherBun.status, 2)
-  assert.ok(
-    otherBun.stderr.includes(
-      `Bun 1.4.3 runs here, but .bun-version pins ${pins.bun}.`,
-    ),
-  )
-  assert.equal(otherBun.stdout, '')
-  assert.equal(noBun.status, 2)
-  assert.ok(
-    noBun.stderr.includes(
-      `Bun of an unknown version runs here, but .bun-version pins ${pins.bun}.`,
-    ),
-  )
-  assert.equal(noBun.stdout, '')
-})
+    // Assert
+    assert.equal(otherBun.status, 2)
+    assert.ok(
+      otherBun.stderr.includes(
+        `Bun 1.4.3 runs here, but .bun-version pins ${pins.bun}.`,
+      ),
+    )
+    assert.equal(otherBun.stdout, '')
+    assert.equal(noBun.status, 2)
+    assert.ok(
+      noBun.stderr.includes(
+        `Bun of an unknown version runs here, but .bun-version pins ${pins.bun}.`,
+      ),
+    )
+    assert.equal(noBun.stdout, '')
+  },
+)
 
 // Value: protects=the command line's refusal before any check, with exit 2 and one sentence; fails_when=an unknown option is ignored and the checks start, or the refusal exits 0 or 1; why_new=Cycle 0058 retro; seam=the script started as a process; no_claim=the refusal of a dirty checkout or a toolchain mismatch (their own functions are tested above)
 test('an unknown option is refused with exit 2 before any check runs', () => {

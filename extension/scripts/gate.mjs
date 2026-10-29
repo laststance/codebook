@@ -8,7 +8,7 @@
 //   pnpm --dir extension gate --silence-seconds <n>  end a check silent this long (default 300)
 //
 // Exit 0: every check passed and HEAD did not move. Exit 1: a check failed, or HEAD or the tree changed during the run.
-// Exit 2: refused before any check, because Node, pnpm or Bun differ from the pins, the checkout has changes, or an option is
+// Exit 2: refused before any check, because Node, pnpm or Bun differ from the pins or a pin file cannot be read, the checkout has changes, or an option is
 // unknown. Each check's output goes to its own log; stdout gets one line per check and the verdict. A check that prints
 // nothing for the silence bound has its whole process tree ended and counts as exit 124; SIGINT, SIGTERM or SIGHUP to
 // the gate ends the running check's tree and exits 130, 143 or 129.
@@ -81,13 +81,29 @@ const SILENT_EXIT_CODE = 124
  * await readPins('/work/codebook') // => { node: '24.22.1', pnpm: '12.4.2', bun: '1.4.4' }
  */
 export async function readPins(root) {
-  const node = (await readFile(join(root, '.node-version'), 'utf8')).trim()
-  const bun = (await readFile(join(root, '.bun-version'), 'utf8')).trim()
+  const node = await readPinFile(root, '.node-version')
+  const bun = await readPinFile(root, '.bun-version')
   const { packageManager } = JSON.parse(
     await readFile(join(root, 'extension/package.json'), 'utf8'),
   )
   const pnpm = /^pnpm@([^+]+)/.exec(String(packageManager))?.[1]
   return { node, pnpm, bun }
+}
+
+/**
+ * Reads one version pin file of the repository's root, trimmed; called by {@link readPins}.
+ * @param root - The repository's root.
+ * @param name - The pin file, `.node-version` or `.bun-version`.
+ * @returns The version as written, for example `'1.4.4'`.
+ * @throws When the file cannot be read, with a sentence naming it, so the gate refuses instead of failing on a raw error.
+ * @example await readPinFile('/work/codebook', '.bun-version') // => '1.4.4'
+ */
+async function readPinFile(root, name) {
+  try {
+    return (await readFile(join(root, name), 'utf8')).trim()
+  } catch (error) {
+    throw new Error(`${name} cannot be read (${error.code ?? error.message}).`)
+  }
 }
 
 /**
@@ -353,7 +369,15 @@ async function main() {
     )
     return REFUSED_EXIT_CODE
   }
-  const mismatches = pinMismatches(await readPins(repository), {
+  let pins
+  // A missing or unreadable pin file is a refusal before any check, like a mismatch, not a crash with exit 1.
+  try {
+    pins = await readPins(repository)
+  } catch (error) {
+    console.error(`Gate refused: ${error.message}`)
+    return REFUSED_EXIT_CODE
+  }
+  const mismatches = pinMismatches(pins, {
     node: process.versions.node,
     pnpm: readRunningPnpm(),
     bun: readRunningVersion('bun'),
