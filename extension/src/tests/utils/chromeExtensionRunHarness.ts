@@ -122,6 +122,8 @@ export type HarnessBehaviour = {
   ensureWorkerReadyFailure?: StudyError
   sourceCheckFailure?: StudyError
   closeResult?: { profileLeft: boolean; exitConfirmed: boolean }
+  /** How many of the extension's own copies of the surface page the launch closed; default none. */
+  closedDuplicateSurfacePages?: number
   /** The receipt a click returns, by 1-based index; default a settled one. */
   receipts?: Record<number, () => Promise<ExtensionClickReceipt>>
   /** What the text observation reads, called per read. */
@@ -194,6 +196,7 @@ export function createRunHarness(behaviour: HarnessBehaviour = {}) {
     extensionId: resolved.extensionId,
     cdp: surface.connection,
     surfaceTargetId: 'surface-target',
+    closedDuplicateSurfacePages: behaviour.closedDuplicateSurfacePages ?? 0,
     controlSessionId: 'control-session',
     profile: '/tmp/codebook-browser-fake',
     startWorker: async () => undefined,

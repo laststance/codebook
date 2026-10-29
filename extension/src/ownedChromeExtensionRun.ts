@@ -582,7 +582,9 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
         ),
       ),
     )
-    // The launch stopped every worker so the debugger could attach; the run discloses it (CR10).
+    // The launch closed the extension's own copies of the surface page before it stopped the workers; the run discloses both, in that order (N62-2, CR10).
+    if (browser.closedDuplicateSurfacePages > 0)
+      debug.recordIntervention('close-duplicate-surface-page')
     debug.recordIntervention('stop-all-workers')
     await debug.attach(this.abort.signal)
     this.assertAccepting()

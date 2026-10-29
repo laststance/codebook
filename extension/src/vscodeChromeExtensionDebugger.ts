@@ -55,6 +55,7 @@ import { isDebugSessionOfRun } from './utils/isDebugSessionOfRun'
 import { PendingResumeRequests } from './utils/pendingResumeRequests'
 import { SharedAttempt } from './utils/sharedAttempt'
 import { stopRunDebugSessions } from './utils/stopRunDebugSessions'
+import { withoutFragment } from './utils/withoutFragment'
 
 type StackBody = DebugProtocol.StackTraceResponse['body']
 
@@ -1130,12 +1131,6 @@ function normalizedUrl(url: string): string {
   } catch {
     return url
   }
-}
-
-/** Drops the fragment of a url: a page that routes by hash keeps its target but is listed with the fragment, which js-debug's url filter ignores; the query stays significant. */
-function withoutFragment(url: string): string {
-  const hash = url.indexOf('#')
-  return hash < 0 ? url : url.slice(0, hash)
 }
 
 /**

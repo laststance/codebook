@@ -339,6 +339,93 @@ test('a page surface is opened with createTarget, an empty storage seed sends no
   await browser.close()
 })
 
+// Value: protects=N62-2: an extension that opens its own copy of the surface page on install (P06's full page) leaves one page at the surface url for the debugger's tie, and the copy closes before the workers stop for the attach; fails_when=the copy stays open (the tie refuses with SURFACE_NOT_ATTACHED), the launch closes its own surface or a page at another url, or the close comes after the last worker stop; no_claim=real Chrome, the debugger's tie (vscodeChromeExtensionDebugger tests)
+test("a page surface the extension also opened itself keeps the launch's own page and closes the extension's copy before the workers stop", async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const surfaceUrl = `chrome-extension://${EXTENSION_ID}/fullpage.html`
+  const chrome = fakeOwnedChrome(
+    healthy({
+      extensionOwnPages: [
+        `${surfaceUrl}#welcome`,
+        `chrome-extension://${EXTENSION_ID}/welcome.html`,
+      ],
+    }),
+  )
+  // Act
+  const browser = await launchOwnedExtensionBrowser(
+    launchOptions(root, {
+      surface: { kind: 'page', path: 'fullpage.html' },
+      surfaceUrl,
+      seed: { bookmarks: [], storage: {} },
+    }),
+    chrome.dependencies,
+  )
+  // Assert
+  const closed = chrome.commands
+    .filter(({ method }) => method === 'Target.closeTarget')
+    .map(({ params }) => params.targetId)
+  assert.deepEqual(closed, ['own-1'])
+  assert.equal(browser.surfaceTargetId, `created-1-${surfaceUrl}`)
+  assert.equal(browser.closedDuplicateSurfacePages, 1)
+  const methods = chrome.commands.map(({ method }) => method)
+  assert.ok(
+    methods.indexOf('Target.closeTarget') <
+      methods.lastIndexOf('ServiceWorker.stopAllWorkers'),
+  )
+  await browser.close()
+})
+
+// Value: protects=N62-2: a popup whose page the extension also opened in a tab is found as the popup the action opened, and the tab is the copy that closes; fails_when=the launch takes the extension's tab for the popup and closes the real popup; no_claim=real Chrome
+test("a popup whose page the extension also opened in a tab is found as the popup, and the extension's tab closes", async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(
+    healthy({
+      extensionOwnPages: [`chrome-extension://${EXTENSION_ID}/popup.html`],
+    }),
+  )
+  // Act
+  const browser = await launchOwnedExtensionBrowser(
+    launchOptions(root),
+    chrome.dependencies,
+  )
+  // Assert
+  assert.equal(browser.surfaceTargetId, 'popup-1')
+  // The seed's own host page also closes; of the pages at the popup url only the extension's tab does.
+  const closed = chrome.commands
+    .filter(({ method }) => method === 'Target.closeTarget')
+    .map(({ params }) => params.targetId)
+  assert.equal(closed.includes('own-1'), true)
+  assert.equal(closed.includes('popup-1'), false)
+  assert.equal(browser.closedDuplicateSurfacePages, 1)
+  await browser.close()
+})
+
+// Value: protects=N62-2: a launch whose extension opened no copy of the surface closes nothing; fails_when=the launch closes a page without a duplicate; no_claim=real Chrome
+test('a page surface without a copy of the extension closes no page', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(healthy())
+  const surfaceUrl = `chrome-extension://${EXTENSION_ID}/page.html`
+  // Act
+  const browser = await launchOwnedExtensionBrowser(
+    launchOptions(root, {
+      surface: { kind: 'page', path: 'page.html' },
+      surfaceUrl,
+      seed: { bookmarks: [], storage: {} },
+    }),
+    chrome.dependencies,
+  )
+  // Assert
+  assert.equal(
+    chrome.commands.some(({ method }) => method === 'Target.closeTarget'),
+    false,
+  )
+  assert.equal(browser.closedDuplicateSurfacePages, 0)
+  await browser.close()
+})
+
 // Value: protects=CR14; fails_when=a stop accepted during the install lets the sequence go on to the next step; no_claim=the stop's own handling
 test('a stop accepted while the extension installs ends the launch before the workers are touched, and closes the browser', async (context) => {
   // Arrange

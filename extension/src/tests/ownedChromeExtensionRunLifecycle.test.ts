@@ -483,6 +483,37 @@ test('records the stop-all-workers intervention of the launch', async () => {
   await harness.run.stop()
 })
 
+// Value: protects=N62-2: a launch that closed the extension's own copy of the surface page is disclosed as an intervention before the worker stop; fails_when=the close is not recorded, or is recorded after stop-all-workers; no_claim=the launch's close itself (ownedExtensionBrowser tests)
+test("lists the close of the extension's own copy of the surface page as an intervention before the worker stop", async () => {
+  // Arrange
+  const harness = createRunHarness({ closedDuplicateSurfacePages: 1 })
+  // Act
+  await harness.run.prepare()
+  // Assert
+  const interventions = harness.log.filter((entry) =>
+    entry.startsWith('intervention:'),
+  )
+  assert.deepEqual(interventions, [
+    'intervention:close-duplicate-surface-page',
+    'intervention:stop-all-workers',
+  ])
+  await harness.run.stop()
+})
+
+// Value: protects=N62-2: a launch that closed nothing lists no close; fails_when=the close intervention is listed without a closed page; no_claim=the launch's close itself
+test('lists no surface page close when the launch closed no copy of the surface page', async () => {
+  // Arrange
+  const harness = createRunHarness()
+  // Act
+  await harness.run.prepare()
+  // Assert
+  assert.equal(
+    harness.log.includes('intervention:close-duplicate-surface-page'),
+    false,
+  )
+  await harness.run.stop()
+})
+
 // Value: protects=C3: console lines the debugger journals reach the view with their context, and the dropped count with them; fails_when=outputs or the count are missing from the view; no_claim=masking (journal tests)
 test('lists the extension’s console output and the dropped count in the view', async () => {
   // Arrange

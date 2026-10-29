@@ -163,6 +163,17 @@ test('the help discloses the worker restarts and the reachable debugging port', 
   )
 })
 
+// protects=N62-2: the help tells the chat that the run closes the extension's own copy of the surface page and lists the close; fails_when=the disclosure is missing or names another intervention; no_claim=the close itself (ownedExtensionBrowser tests)
+test("the help discloses that the run closes the extension's own copy of the surface page", () => {
+  // Arrange, Act
+  const { disclosures } = chromeExtensionHelp()
+  // Assert
+  assert.equal(
+    disclosures.duplicateSurface,
+    "When the extension opened its own copy of the surface page (an install handler's tab in the fresh test profile), Codebook closes that copy right after it opens its own surface, which loads after the seed, and lists close-duplicate-surface-page in chromeExtension.interventions. Explain the extension's install-time tab as source reasoning; the run did not keep it.",
+  )
+})
+
 // protects=CR2: the help names codebook.chromeExecutable with Chrome for Testing 149 or later; fails_when=the setting or the version is missing; no_claim=the setting's effect
 test('the help names codebook.chromeExecutable with Chrome 149', () => {
   // Arrange, Act
