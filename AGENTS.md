@@ -308,6 +308,9 @@ Node as `.node-version` pins it (mirrored in `extension/.node-version`, since a 
 
 - macOS 26 VM from `ghcr.io/trycua/macos:26`, run by Cua Spaces on the Mac with its own Lume (Apple Virtualization framework): 8 CPUs, 16 GB, 150 GB disk, display 1920 × 1080, account `lume`.
 - Setup and repair inside (tools, target clone, QA profiles, OBS) need no new permission; keep its settings, profiles, data as the owner's.
+- Keep the Space's VS Code and Cursor current (owner, 2026-10-30: 「ちゃんとVM内のCursorとVSCodeのアップデートが来たらアップデートするようにしておいてください。」):
+  - `update.mode` stays `default` in both;
+  - before each native trial, check each host's update feed and install a newer release (notarized, same Team ID as the installed app); record the versions in the Issue.
 - Drive via the `cua` MCP (`space_bash`, `computer_screenshot`, `computer_click`, `computer_type`, `download`) or `cua sb exec`. The guest's Cua Driver refuses background keys (foreground delivery inside the VM is fine); `type_text` reports less than it delivered → check the screen.
 - Start with `cua doctor local:codebook-qa`. `No route to host` = the daemon lost Local Network access → restart it (`cua daemon start` from Terminal when the Cua Spaces app is not running).
 - Sign in to what trials need (Copilot, Cursor, GitHub) yourself, without asking (owner, 2026-10-22):
