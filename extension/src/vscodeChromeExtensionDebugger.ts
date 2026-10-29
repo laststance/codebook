@@ -816,9 +816,12 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     )
       return
     entry.kind = 'other'
+    // The journal names which of the two cases refused the tie: no page at the surface URL (the surface closed), or more than one.
     this.input.record('chrome-extension.debugger-error', {
       message:
-        'The attached page could not be tied to the surface target; another page matches the surface URL.',
+        matchingPageIds.length === 0
+          ? 'The attached page could not be tied to the surface target; no page is open at the surface URL.'
+          : 'The attached page could not be tied to the surface target; another page matches the surface URL.',
     })
     throw refusal()
   }

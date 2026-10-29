@@ -1942,7 +1942,7 @@ test('the attach is refused when no page target matches the surface URL, so a cl
     [
       {
         message:
-          'The attached page could not be tied to the surface target; another page matches the surface URL.',
+          'The attached page could not be tied to the surface target; no page is open at the surface URL.',
       },
     ],
   )
