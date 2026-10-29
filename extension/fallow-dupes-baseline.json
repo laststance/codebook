@@ -1,18 +1,18 @@
 {
   "kind": "dupes",
   "clone_groups": [
-    "src/studyWorkspace.ts:19917-19935|src/studyWorkspace.ts:6913-6929",
+    "src/studyWorkspace.ts:20188-20206|src/studyWorkspace.ts:6916-6932",
     "src/utils/requestCursorWikiText.ts:148-164|src/utils/runCursorWikiUpdate.ts:188-204",
     "src/utils/pinCitedBookNode.ts:49-61|src/utils/prepareRepositoryStudy.ts:70-82",
     "src/configuredBrowserRun.ts:3732-3745|src/configuredBrowserRun.ts:3917-3934",
-    "src/studyWorkspace.ts:21555-21560|src/studyWorkspace.ts:7185-7191",
+    "src/studyWorkspace.ts:21826-21831|src/studyWorkspace.ts:7188-7194",
     "src/utils/pinCitedBookNode.ts:65-74|src/utils/prepareRepositoryStudy.ts:89-98",
-    "src/studyWorkspace.ts:15792-15804|src/studyWorkspace.ts:15819-15832",
+    "src/studyWorkspace.ts:16012-16024|src/studyWorkspace.ts:16039-16052",
     "src/ownedRepositoryBreakpoint.ts:110-114|src/ownedRepositoryBreakpoint.ts:38-42",
-    "src/studyWorkspace.ts:7185-7194|src/studyWorkspace.ts:7278-7280",
+    "src/studyWorkspace.ts:7188-7197|src/studyWorkspace.ts:7281-7283",
     "src/recordingStore.ts:1084-1091|src/recordingStore.ts:1105-1112",
     "src/repositorySource.ts:321-330|src/utils/readRepositoryBuildText.ts:45-51",
-    "src/studyWorkspace.ts:6192-6201|src/utils/focusWebview.ts:57-66",
+    "src/studyWorkspace.ts:6195-6204|src/utils/focusWebview.ts:57-66",
     "src/studyWorkspace.ts:2358-2366|src/studyWorkspace.ts:2571-2579",
     "src/replayDebugAdapter.ts:251-258|src/replayDebugAdapter.ts:496-503",
     "src/configuredBrowserRun.ts:6654-6660|src/runtimeSupport/hostBrowser.ts:602-608"
