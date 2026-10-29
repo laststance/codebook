@@ -784,6 +784,40 @@ test('an undeclared dialog opened after the click settled is reported by lateDia
   )
 })
 
+// protects=a dialog the extension opens before any click fails the run as DIALOG_UNDECLARED; fails_when=the dialog is left unanswered without a refusal, so the first click hangs on the blocked page and fails 20 s later as RUNTIME_FAILED with a retry that cannot help; no_claim=what opened the dialog in the extension
+test('a dialog the extension opens before any click is refused as undeclared, journaled without a click and left unanswered', async () => {
+  // Arrange
+  const { executor, surface, events } = executorFor()
+  // Act
+  surface.emit(
+    'Page.javascriptDialogOpening',
+    { type: 'alert', message: 'Welcome' },
+    SURFACE_SESSION,
+  )
+  await waitUntil(
+    () => executor.lateDialogRefusal(),
+    'the dialog before any click is reported',
+  )
+  // Assert
+  const refusal = executor.lateDialogRefusal()
+  assert.equal(refusal?.code, 'DIALOG_UNDECLARED')
+  assert.equal(
+    refusal?.message,
+    'The extension opened its own alert dialog before any click; only a dialog that a declared click opens can be answered.',
+  )
+  assert.equal(
+    refusal?.describe().recovery,
+    'Nothing was clicked or typed: the extension opened a JavaScript dialog by itself before the first click. Recovery: none in this run; the chat can explain this part from source. See codebook://help/chrome-extension#DIALOG_UNDECLARED.',
+  )
+  assert.deepEqual(events, [
+    {
+      type: 'chrome-extension.dialog',
+      detail: { type: 'alert', answer: 'none', message: 'Welcome' },
+    },
+  ])
+  assert.equal(surface.methods().includes('Page.handleJavaScriptDialog'), false)
+})
+
 /** Runs the given clicks to completion one after the other, then emits one late confirm dialog and waits until the run has reacted. */
 async function lateConfirmAfter(clicks: ResolvedExtensionClick[]) {
   const harness = executorFor()

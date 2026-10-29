@@ -617,7 +617,8 @@ class DialogResponder {
       this.input.roots,
     )
     const owner = this.attribute()
-    if (!owner) return
+    // No click has run yet: the extension opened the dialog by itself and its page is blocked, so the run fails with that instead of the first click's lost answer.
+    if (!owner) return this.refuseBeforeAnyClick(type, message)
     if (owner.kind === 'ambiguous')
       return this.refuseAmbiguous(owner.executions, type, message)
     const { execution, answer } = owner
@@ -651,11 +652,23 @@ class DialogResponder {
       'DIALOG_UNDECLARED',
       `A ${type} dialog opened while no click was in progress and ${nameClicks(executions)} ${reason}; declare the same dialog answer for them.`,
     )
-    this.journal(executions.at(-1)!, type, 'none', message)
+    this.journal(executions.at(-1), type, 'none', message)
+  }
+
+  /** A dialog the extension opens before any click belongs to no declared click: it stays unanswered and fails the run. */
+  private refuseBeforeAnyClick(type: string, message: string): void {
+    const sentence = `The extension opened its own ${type} dialog before any click; only a dialog that a declared click opens can be answered.`
+    this.lateRefusal ??= new StudyError(
+      'DIALOG_UNDECLARED',
+      sentence,
+      sentence,
+      'Nothing was clicked or typed: the extension opened a JavaScript dialog by itself before the first click. Recovery: none in this run; the chat can explain this part from source. See codebook://help/chrome-extension#DIALOG_UNDECLARED.',
+    )
+    this.journal(undefined, type, 'none', message)
   }
 
   private journal(
-    execution: ClickExecution,
+    execution: ClickExecution | undefined,
     type: string,
     answer: string,
     message: string,
@@ -663,7 +676,8 @@ class DialogResponder {
     // A journal that throws must not leave the declared dialog unanswered (the page stays blocked): report it once and carry on.
     try {
       this.input.record('chrome-extension.dialog', {
-        clickIndex: execution.clickIndex,
+        // A dialog before any click names no click.
+        ...(execution && { clickIndex: execution.clickIndex }),
         type,
         answer,
         message,
