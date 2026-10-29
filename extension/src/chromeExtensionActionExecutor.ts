@@ -171,6 +171,7 @@ class ClickExecution {
   private readonly origins: string[]
   private dialogFailure!: (error: unknown) => void
   private readonly dialogFailed: Promise<never>
+  private effectfulInFlight = 0
   /** The refusal of an undeclared dialog, kept for the run when no step was waiting to fail with it. */
   refusedDialog?: StudyError
 
@@ -192,52 +193,29 @@ class ClickExecution {
     this.dialogFailed.catch(() => {})
   }
 
-  /** Answers or refuses the dialogs the click opens (TZ11), also those a timer opens after its steps ended; returns the function that stops listening. */
-  listenForDialogs(): () => void {
-    return this.input.cdp.on(
-      'Page.javascriptDialogOpening',
-      (params, sessionId) => {
-        if (sessionId !== this.input.surfaceSessionId) return
-        void this.answerDialog(params)
-      },
-    )
+  /** The click's declared dialog answer, if any. */
+  get declaredDialog(): ResolvedExtensionClick['dialog'] {
+    return this.click.dialog
   }
 
-  private async answerDialog(params: Record<string, unknown>): Promise<void> {
-    const type = dialogSchema.safeParse(params).data?.type ?? 'dialog'
-    const answer = this.click.dialog
-    // The dialog text may show private paths or secrets: mask, then hide the roots, as the output journal does.
-    const message = hidePrivateRoots(
-      redactSecretText(dialogSchema.safeParse(params).data?.message ?? ''),
-      this.input.roots,
-    )
-    if (!answer) {
-      const refusal = new StudyError(
-        'DIALOG_UNDECLARED',
-        `Click ${this.click.index} opened a ${type} dialog; declare dialog: accept or dismiss for it.`,
-      )
-      this.refusedDialog ??= refusal
-      this.input.record('chrome-extension.dialog', {
-        clickIndex: this.click.index,
-        type,
-        answer: 'none',
-        message,
-      })
-      return this.dialogFailure(refusal)
-    }
-    this.input.record('chrome-extension.dialog', {
-      clickIndex: this.click.index,
-      type,
-      answer,
-      message,
-    })
-    await this.input.cdp
-      .request(
-        'Page.handleJavaScriptDialog',
-        { accept: answer === 'accept' },
-        this.input.surfaceSessionId,
-      )
-      .catch((error: unknown) => this.dialogFailure(error))
+  get clickIndex(): number {
+    return this.click.index
+  }
+
+  /** Whether an effectful request (focus, insert, mouse press or release) of this click is sent and not yet answered. */
+  isEffectfulRequestInFlight(): boolean {
+    return this.effectfulInFlight > 0
+  }
+
+  /** Whether any step of this click has reached the page: a focus, a typed text or a mouse press was sent. */
+  hasReachedPage(): boolean {
+    return this.hadEffect() || this.progressState.clickEffect !== 'none'
+  }
+
+  /** Fails the step that is waiting (or the next one) with a dialog refusal or a failed answer, and keeps a refusal for the run. */
+  failDialog(error: unknown): void {
+    if (error instanceof StudyError) this.refusedDialog ??= error
+    this.dialogFailure(error)
   }
 
   /**
@@ -265,6 +243,19 @@ class ClickExecution {
     ])
     this.input.assertActionCurrent()
     return answer
+  }
+
+  /** Sends one effectful request (focus, insert, mouse press or release); a dialog opening while it is unanswered belongs to this click. */
+  private async sendEffectful(
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    this.effectfulInFlight += 1
+    try {
+      return await this.send(method, params)
+    } finally {
+      this.effectfulInFlight -= 1
+    }
   }
 
   /** The failure of a selector or centre lookup; `step` names the input (1-based) or the click step that looked. */
@@ -372,9 +363,11 @@ class ClickExecution {
     input: ResolvedExtensionClick['inputs'][number],
     phase: 'focus' | 'verify',
   ) {
+    // Only the focus call is effectful; the verify call only reads.
+    const sendStep = phase === 'focus' ? this.sendEffectful : this.send
     return readySchema.safeParse(
       (
-        (await this.send('Runtime.callFunctionOn', {
+        (await sendStep.call(this, 'Runtime.callFunctionOn', {
           objectId,
           functionDeclaration: inspectInput.toString(),
           arguments: [{ value: { ...input, origins: this.origins, phase } }],
@@ -412,7 +405,7 @@ class ClickExecution {
 
   private async insertInput(index: number, text: string): Promise<void> {
     try {
-      await this.send('Input.insertText', { text })
+      await this.sendEffectful('Input.insertText', { text })
     } catch (error) {
       if (error instanceof StudyError) throw error
       throw this.inputPartial(index + 1)
@@ -475,7 +468,7 @@ class ClickExecution {
       // From the first press on, the click's outcome is unknown until its release is answered.
       this.progressState.clickEffect = 'unknown'
       try {
-        await this.send('Input.dispatchMouseEvent', {
+        await this.sendEffectful('Input.dispatchMouseEvent', {
           type,
           x,
           y,
@@ -513,6 +506,148 @@ class ClickExecution {
   }
 }
 
+/** The dialog answer a click declares. */
+type DialogAnswer = NonNullable<ResolvedExtensionClick['dialog']>
+
+/** Whom a dialog belongs to: one click with its answer, or no single click when the clicks do not agree. */
+type DialogOwner =
+  | {
+      kind: 'click'
+      execution: ClickExecution
+      answer: DialogAnswer | undefined
+    }
+  | { kind: 'ambiguous'; executions: ClickExecution[] }
+
+/** Names clicks for a message: `click 1`, `clicks 1 and 2`, `clicks 1, 2 and 3`. */
+function nameClicks(executions: ClickExecution[]): string {
+  const numbers = executions.map((execution) => String(execution.clickIndex))
+  if (numbers.length < 2) return `click ${numbers.join('')}`
+  return `clicks ${numbers.slice(0, -1).join(', ')} and ${numbers.at(-1)}`
+}
+
+/**
+ * Answers or refuses every dialog of the run through one listener (TZ11).
+ * A dialog blocks the page, so one that opens while a click's effectful request is unanswered belongs to that click; one that opens with no request in flight is "late" and is answered only when the clicks that reached the page agree.
+ * Created once by {@link createChromeExtensionActionExecutor}; stopped by its `dispose`.
+ */
+class DialogResponder {
+  private readonly executions: ClickExecution[] = []
+  /** The refusal of a late dialog the clicks could not agree on, kept for the run. */
+  private lateRefusal?: StudyError
+  private readonly stopListening: () => void
+
+  constructor(private readonly input: ExtensionExecutorInput) {
+    this.stopListening = input.cdp.on(
+      'Page.javascriptDialogOpening',
+      (params, sessionId) => {
+        if (sessionId !== input.surfaceSessionId) return
+        void this.answerDialog(params)
+      },
+    )
+  }
+
+  add(execution: ClickExecution): void {
+    this.executions.push(execution)
+  }
+
+  stop(): void {
+    this.stopListening()
+  }
+
+  /** The first refusal the run must fail with: a click's own or the late disagreement. */
+  firstRefusal(): StudyError | undefined {
+    return (
+      this.executions.find((execution) => execution.refusedDialog)
+        ?.refusedDialog ?? this.lateRefusal
+    )
+  }
+
+  /** Decides whom the dialog belongs to (see the class description). */
+  private attribute(): DialogOwner | undefined {
+    const inFlight = this.executions.filter((execution) =>
+      execution.isEffectfulRequestInFlight(),
+    )
+    if (inFlight.length === 1) return this.ownedBy(inFlight[0]!)
+    // Late: no request in flight (or several, which name no single click).
+    const reached = this.executions.filter((execution) =>
+      execution.hasReachedPage(),
+    )
+    const candidates = reached.length > 0 ? reached : this.executions
+    const latest = candidates.at(-1)
+    if (!latest) return undefined
+    const answers = new Set(
+      candidates.map((execution) => execution.declaredDialog),
+    )
+    const agree = answers.size === 1 && !answers.has(undefined)
+    if (candidates.length === 1 || agree) return this.ownedBy(latest)
+    return { kind: 'ambiguous', executions: candidates }
+  }
+
+  private ownedBy(execution: ClickExecution): DialogOwner {
+    return { kind: 'click', execution, answer: execution.declaredDialog }
+  }
+
+  private async answerDialog(params: Record<string, unknown>): Promise<void> {
+    const parsed = dialogSchema.safeParse(params).data
+    const type = parsed?.type ?? 'dialog'
+    // The dialog text may show private paths or secrets: mask, then hide the roots, as the output journal does.
+    const message = hidePrivateRoots(
+      redactSecretText(parsed?.message ?? ''),
+      this.input.roots,
+    )
+    const owner = this.attribute()
+    if (!owner) return
+    if (owner.kind === 'ambiguous')
+      return this.refuseAmbiguous(owner.executions, type, message)
+    const { execution, answer } = owner
+    this.journal(execution, type, answer ?? 'none', message)
+    if (!answer)
+      return execution.failDialog(
+        new StudyError(
+          'DIALOG_UNDECLARED',
+          `Click ${execution.clickIndex} opened a ${type} dialog; declare dialog: accept or dismiss for it.`,
+        ),
+      )
+    await this.input.cdp
+      .request(
+        'Page.handleJavaScriptDialog',
+        { accept: answer === 'accept' },
+        this.input.surfaceSessionId,
+      )
+      .catch((error: unknown) => execution.failDialog(error))
+  }
+
+  /** A late dialog the clicks that reached the page do not agree on stays unanswered and fails the run. */
+  private refuseAmbiguous(
+    executions: ClickExecution[],
+    type: string,
+    message: string,
+  ): void {
+    const reason = executions.some((execution) => execution.declaredDialog)
+      ? 'declare different answers'
+      : 'declare no dialog answer'
+    this.lateRefusal ??= new StudyError(
+      'DIALOG_UNDECLARED',
+      `A ${type} dialog opened while no click was in progress and ${nameClicks(executions)} ${reason}; declare the same dialog answer for them.`,
+    )
+    this.journal(executions.at(-1)!, type, 'none', message)
+  }
+
+  private journal(
+    execution: ClickExecution,
+    type: string,
+    answer: string,
+    message: string,
+  ): void {
+    this.input.record('chrome-extension.dialog', {
+      clickIndex: execution.clickIndex,
+      type,
+      answer,
+      message,
+    })
+  }
+}
+
 /**
  * Creates the pause-aware executor of a chrome-extension run's declared clicks (ER14, ER15, TZ11).
  * Called by the run when it reaches `ready`; the debugger supplies the pause state and the worker watch.
@@ -525,21 +660,15 @@ class ClickExecution {
 export function createChromeExtensionActionExecutor(
   input: ExtensionExecutorInput,
 ): ChromeExtensionActionExecutor {
-  const executions: ClickExecution[] = []
-  const stopListeners: Array<() => void> = []
+  const responder = new DialogResponder(input)
   return {
-    lateDialogRefusal: () =>
-      executions.find((execution) => execution.refusedDialog)?.refusedDialog,
+    lateDialogRefusal: () => responder.firstRefusal(),
     dispose(): void {
-      for (const stop of stopListeners.splice(0)) stop()
+      responder.stop()
     },
     run(click) {
       const execution = new ClickExecution(input, click)
-      executions.push(execution)
-      // Only the latest click answers dialogs: an earlier click's listener would answer or refuse this click's dialog.
-      for (const stop of stopListeners.splice(0)) stop()
-      // The listener outlives the click call: a timer may open a dialog later; the next click or `dispose` ends it.
-      stopListeners.push(execution.listenForDialogs())
+      responder.add(execution)
       return new Promise<ExtensionClickReceipt>((resolve, reject) => {
         let work: Promise<void> = Promise.resolve()
         const waiter = new ClickOutcomeWaiter(

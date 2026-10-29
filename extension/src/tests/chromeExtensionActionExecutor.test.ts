@@ -600,21 +600,33 @@ test('a first input whose focus ran but did not land fails the click with INPUT_
   assert.equal(failure.code, 'INPUT_PARTIAL')
 })
 
-// protects=a dialog opened by a later click is answered by that click's declaration alone; fails_when=an earlier click without a dialog declaration refuses it (DIALOG_UNDECLARED) or answers it too; no_claim=real dialogs
-test('a dialog opened by the second click is answered as the second click declares and refused by no earlier click', async () => {
+// protects=a dialog opened while the second click's press is unanswered belongs to the second click even though the first declared nothing (the N61 flow); fails_when=the first click's missing declaration refuses it or the second click does not answer it; no_claim=real dialogs
+test('a dialog opened during the second click press is accepted as the second click declares although the first declared nothing', async () => {
   // Arrange
-  const { executor, surface, events } = executorFor()
+  const gate = defer<Record<string, unknown>>()
+  let isSecondClick = false
+  const { executor, surface, events } = executorFor({
+    'Input.dispatchMouseEvent': (params) =>
+      isSecondClick && params.type === 'mouseReleased' ? gate.promise : {},
+  })
   const first = await executor.run(CLICK)
   await first.completed
-  const second = await executor.run({
+  isSecondClick = true
+  // Act
+  const second = executor.run({
     ...CLICK,
     index: 2,
     title: 'Confirm folder',
     selector: '#confirm',
     dialog: 'accept',
   })
-  await second.completed
-  // Act
+  await waitUntil(
+    () =>
+      surface.sent.filter(
+        (request) => request.method === 'Input.dispatchMouseEvent',
+      ).length === 4,
+    'the second click press is in flight',
+  )
   surface.emit(
     'Page.javascriptDialogOpening',
     { type: 'confirm', message: 'Create the folder?' },
@@ -624,6 +636,10 @@ test('a dialog opened by the second click is answered as the second click declar
     () => surface.methods().includes('Page.handleJavaScriptDialog'),
     'the second click answers the dialog',
   )
+  gate.resolve({})
+  await (
+    await second
+  ).completed
   // Assert
   assert.deepEqual(
     surface.sent
@@ -730,6 +746,119 @@ test('an undeclared dialog opened after the click settled is reported by lateDia
     refusal?.message,
     'Click 1 opened a confirm dialog; declare dialog: accept or dismiss for it.',
   )
+})
+
+/** Runs the given clicks to completion one after the other, then emits one late confirm dialog and waits until the run has reacted. */
+async function lateConfirmAfter(clicks: ResolvedExtensionClick[]) {
+  const harness = executorFor()
+  for (const click of clicks)
+    await (
+      await harness.executor.run(click)
+    ).completed
+  harness.surface.emit(
+    'Page.javascriptDialogOpening',
+    { type: 'confirm' },
+    SURFACE_SESSION,
+  )
+  // gstack-timing-ok: a refusal leaves no request to wait for, so the dialog event is given a short fixed time to be processed
+  await sleep(20)
+  return harness
+}
+
+// protects=a dialog with no click in progress after exactly one click is that click's; fails_when=the late dialog is answered differently from the click's declaration or not at all; no_claim=real dialogs
+test('a late dialog after one click is dismissed as that click declares', async () => {
+  // Arrange
+  const clicks: ResolvedExtensionClick[] = [{ ...CLICK, dialog: 'dismiss' }]
+  // Act
+  const { surface, events } = await lateConfirmAfter(clicks)
+  // Assert
+  assert.deepEqual(
+    surface.sent
+      .filter((request) => request.method === 'Page.handleJavaScriptDialog')
+      .map((request) => request.params),
+    [{ accept: false }],
+  )
+  assert.deepEqual(
+    events.map((event) => event.detail),
+    [{ clickIndex: 1, type: 'confirm', answer: 'dismiss', message: '' }],
+  )
+})
+
+// protects=a late dialog is not attributed by temporal proximity when the clicks disagree; fails_when=the later click's accept answers a dialog the first click may have opened, or the run is not told; no_claim=which click opened the dialog
+test('a late dialog after a click without a declaration and a click that accepts is refused and left unanswered', async () => {
+  // Arrange
+  const clicks: ResolvedExtensionClick[] = [
+    CLICK,
+    { ...CLICK, index: 2, selector: '#confirm', dialog: 'accept' },
+  ]
+  // Act
+  const { executor, surface, events } = await lateConfirmAfter(clicks)
+  // Assert
+  assert.equal(surface.methods().includes('Page.handleJavaScriptDialog'), false)
+  const refusal = executor.lateDialogRefusal()
+  assert.equal(refusal?.code, 'DIALOG_UNDECLARED')
+  assert.equal(
+    refusal?.message,
+    'A confirm dialog opened while no click was in progress and clicks 1 and 2 declare different answers; declare the same dialog answer for them.',
+  )
+  assert.deepEqual(
+    events.map((event) => event.detail),
+    [{ clickIndex: 2, type: 'confirm', answer: 'none', message: '' }],
+  )
+})
+
+// protects=clicks that agree on the dialog answer answer a late dialog; fails_when=agreement is not enough and the page stays blocked; no_claim=which click opened the dialog
+test('a late dialog after two clicks that both declare dismiss is dismissed for the latest click', async () => {
+  // Arrange
+  const clicks: ResolvedExtensionClick[] = [
+    { ...CLICK, dialog: 'dismiss' },
+    { ...CLICK, index: 2, selector: '#confirm', dialog: 'dismiss' },
+  ]
+  // Act
+  const { executor, surface, events } = await lateConfirmAfter(clicks)
+  // Assert
+  assert.deepEqual(
+    surface.sent
+      .filter((request) => request.method === 'Page.handleJavaScriptDialog')
+      .map((request) => request.params),
+    [{ accept: false }],
+  )
+  assert.deepEqual(
+    events.map((event) => event.detail),
+    [{ clickIndex: 2, type: 'confirm', answer: 'dismiss', message: '' }],
+  )
+  assert.equal(executor.lateDialogRefusal(), undefined)
+})
+
+// protects=an undeclared dialog during a click's own press refuses that click; fails_when=the dialog is answered or refused for another click; no_claim=that the dialog is closed afterwards
+test('an undeclared dialog during the first click press is refused for the first click', async () => {
+  // Arrange
+  const gate = defer<Record<string, unknown>>()
+  const { executor, surface } = executorFor({
+    'Input.dispatchMouseEvent': (params) =>
+      params.type === 'mouseReleased' ? gate.promise : {},
+  })
+  // Act
+  const call = executor.run(CLICK)
+  await waitUntil(
+    () => surface.methods().includes('Input.dispatchMouseEvent'),
+    'the first click press is in flight',
+  )
+  surface.emit(
+    'Page.javascriptDialogOpening',
+    { type: 'confirm' },
+    SURFACE_SESSION,
+  )
+  // Assert
+  await assert.rejects(
+    call,
+    (error: unknown) =>
+      error instanceof StudyError &&
+      error.code === 'DIALOG_UNDECLARED' &&
+      error.message ===
+        'Click 1 opened a confirm dialog; declare dialog: accept or dismiss for it.',
+  )
+  assert.equal(surface.methods().includes('Page.handleJavaScriptDialog'), false)
 })
 
 // protects=a call already decided as paused arms no return or settle timer afterwards; fails_when=the click's timers are armed after the pause decided the call; no_claim=timing of the outcome
