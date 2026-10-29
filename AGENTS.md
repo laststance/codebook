@@ -222,7 +222,7 @@ Standing rules, stated as rules (no decision log); delivery chain and ship limit
 
 ## Commands and checks
 
-Node as `.node-version` pins it (mirrored in `extension/.node-version`, since a version manager's shim reads the nearest package's `engines` there) and pnpm as the extension's `packageManager` pins it; put that Node's own `bin` first in `PATH`; run from the repo root.
+Node as `.node-version` pins it (mirrored in `extension/.node-version`, since a version manager's shim reads the nearest package's `engines` there), pnpm as the extension's `packageManager` pins it, and Bun as `.bun-version` pins it (`pnpm install` does not provide it; install that version, e.g. `curl -fsSL https://bun.com/install | bash -s "bun-v$(cat .bun-version)"`, or the commit hook and the format check fail); put that Node's own `bin` first in `PATH`; run from the repo root.
 
 Formatting: `pnpm --dir extension format` / `format:check` and the lint-staged hook run `bun fmt` (the Bun of `.bun-version` on `PATH`, which `format.yml` installs and the gate checks; it reads `.prettierrc.json` and `.prettierignore`, and gives the Prettier 3.9.8 result on this tree, Cycle 0062 task 24). Never format a README with it: hand-edit README sentences.
 

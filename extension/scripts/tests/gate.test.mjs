@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -240,30 +248,33 @@ test('the gate fails a new import cycle: its architecture script fails beyond a 
 
 // Value: protects=the gate refusing, before any check, a Bun other than .bun-version's on the path the checks use, or none at all (the format check runs bun fmt); fails_when=main stops asking the path's Bun for its version, or a mismatch or a missing Bun no longer refuses with exit 2; why_new=Cycle 0062 pt2 OCR finding F2 (pinMismatches alone does not prove the wiring); seam=none; no_claim=the Node and pnpm parts of the refusal (tested above)
 test('the gate refuses with exit 2 a Bun of another version on the path, or none, before any check runs', async (context) => {
-  // Arrange
+  // Arrange: the gate puts its own Node's folder first on the checks' path, so it runs from a copy of this Node in a folder
+  // of its own, where a real Bun installed beside Node (Homebrew, a version manager) cannot answer for the fake one.
   const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
   const pins = await readPins(repositoryRoot)
-  const fakeBin = await mkdtemp(join(tmpdir(), 'codebook-gate-bun-'))
-  context.after(() => rm(fakeBin, { recursive: true, force: true }))
-  await writeFile(join(fakeBin, 'bun'), '#!/bin/sh\necho 1.4.3\n', {
-    mode: 0o755,
-  })
-  const nodeBin = join(process.execPath, '..')
-  const environmentWith = (path) => ({
+  const isolatedBin = await mkdtemp(join(tmpdir(), 'codebook-gate-bun-'))
+  context.after(() => rm(isolatedBin, { recursive: true, force: true }))
+  const isolatedNode = join(isolatedBin, 'node')
+  await copyFile(process.execPath, isolatedNode)
+  await chmod(isolatedNode, 0o755)
+  const fakeBun = join(isolatedBin, 'bun')
+  await writeFile(fakeBun, '#!/bin/sh\necho 1.4.3\n', { mode: 0o755 })
+  const environment = {
     ...plainOutputEnvironment(process.env),
-    PATH: path,
+    PATH: isolatedBin,
     npm_config_user_agent: `pnpm/${pins.pnpm} node/v${process.versions.node}`,
-  })
+  }
 
   // Act
-  const otherBun = spawnSync(process.execPath, [GATE_SCRIPT], {
+  const otherBun = spawnSync(isolatedNode, [GATE_SCRIPT], {
     encoding: 'utf8',
-    env: environmentWith(`${fakeBin}:${nodeBin}`),
+    env: environment,
     timeout: 30_000,
   })
-  const noBun = spawnSync(process.execPath, [GATE_SCRIPT], {
+  await rm(fakeBun)
+  const noBun = spawnSync(isolatedNode, [GATE_SCRIPT], {
     encoding: 'utf8',
-    env: environmentWith(nodeBin),
+    env: environment,
     timeout: 30_000,
   })
 
