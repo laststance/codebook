@@ -108,6 +108,8 @@ export type HarnessBehaviour = {
   launchGate?: Promise<void>
   /** Holds the debugger's attach until released, and ignores the run's abort meanwhile (a preparation step that never settles). */
   attachGate?: Promise<void>
+  /** Holds the viewport factory until released, and ignores the run's abort meanwhile (the first preparation step never settles). */
+  viewportGate?: Promise<void>
   /** Replaces the real clock the run's timers use, so a test fires a bound by hand. */
   clock?: RunClock
   /** Which debugger step throws. */
@@ -367,6 +369,7 @@ export function createRunHarness(behaviour: HarnessBehaviour = {}) {
       ? {}
       : {
           createViewport: async () => {
+            await behaviour.viewportGate
             if (behaviour.viewportFailure) throw behaviour.viewportFailure
             return viewport
           },

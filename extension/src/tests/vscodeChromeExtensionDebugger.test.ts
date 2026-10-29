@@ -1918,6 +1918,38 @@ test('the attach is refused when a second page matching the surface URL is open,
   await editor.dispose()
 })
 
+// protects=the adopted page child is the surface only while a page target at the surface URL exists (Cycle 0062 ship review walk-back): a surface closed before the tie check is refused; fails_when=the attach succeeds although no page target matches the surface URL; no_claim=which js-debug session belongs to which target
+test('the attach is refused when no page target matches the surface URL, so a closed surface is not adopted', async () => {
+  // Arrange
+  const editor = await extensionEditorHarness()
+  const created = editor.createDebugger([PAGE_STOP], { targets: [] })
+  const attaching = created.debug.attach(SIGNAL())
+  await until(() => editor.started.length > 0)
+  // Act
+  await editor.addChild({ kind: 'page', id: 'closed-surface-session' })
+  // Assert
+  await assert.rejects(
+    attaching,
+    (error) =>
+      error instanceof StudyError && error.code === 'SURFACE_NOT_ATTACHED',
+  )
+  assert.deepEqual(
+    plain(
+      created.events
+        .filter((event) => event.type === 'chrome-extension.debugger-error')
+        .map((event) => event.detail),
+    ),
+    [
+      {
+        message:
+          'The attached page could not be tied to the surface target; another page matches the surface URL.',
+      },
+    ],
+  )
+  await created.debug.release()
+  await editor.dispose()
+})
+
 // protects=the attach tie compares the whole surface URL (Cycle 0062 review OCR-L2); fails_when=a page of the same file with a query string counts as a second surface and the attach is refused; no_claim=which js-debug session belongs to which target
 test('the attach succeeds when another page of the same file differs only by a query string', async () => {
   // Arrange

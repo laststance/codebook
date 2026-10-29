@@ -108,6 +108,14 @@ type RunEnding =
   | { kind: 'stopped' }
   | { kind: 'failed'; error: StudyError }
 
+/** What the cleanup already read and handled; a stuck step that publishes a different one later gets that one closed. */
+type HandledResources = {
+  debug: ChromeExtensionDebugger | undefined
+  executor: ChromeExtensionActionExecutor | undefined
+  browser: OwnedExtensionBrowser | undefined
+  viewport: ChromeExtensionViewport | undefined
+}
+
 /** The sentence of each preparation phase for the viewport's "Preparing" body (DR4). */
 const PREPARING_SENTENCE: Record<ExtensionPreparationPhase, string> = {
   launching: 'Starting the test browser',
@@ -1098,7 +1106,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     this.showEnding(ending)
     for (const handle of this.cleanups.splice(0))
       this.safely(() => handle.dispose())
-    const { debug, executor, browser } = this
+    const { debug, executor, browser, viewport } = this
     this.safely(() => debug?.browserClosing())
     await this.safelyAsync(() => debug?.release())
     this.safely(() => executor?.dispose())
@@ -1106,8 +1114,9 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       ? await this.closeBrowser(browser)
       : { profileLeft: false, exitConfirmed: true }
     this.safely(() => this.viewport?.close())
-    // A step that settled only after the bound may have launched a browser nobody closed: it is closed now.
-    if (!didStepsSettle) this.closeLateBrowser(browser)
+    // A step that settled only after the bound may have published a viewport, debugger, executor or browser nobody closed: each is closed now.
+    if (!didStepsSettle)
+      this.closeLateResources({ debug, executor, browser, viewport })
   }
 
   /** Closes the browser; a close that throws or rejects reads as a profile left behind. */
@@ -1148,19 +1157,26 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     }
   }
 
-  /** After a stop bound passed, closes a browser the stuck step published later than the cleanup read it (a browser the cleanup already closed is not closed twice). */
-  private closeLateBrowser(
-    closedBrowser: OwnedExtensionBrowser | undefined,
-  ): void {
+  /** After a stop bound passed, closes what the stuck step published later than the cleanup read it (a resource the cleanup already handled is not handled twice). */
+  private closeLateResources(handled: HandledResources): void {
     void this.stepsPromise?.then(
-      () => this.closeIfNew(closedBrowser),
-      () => this.closeIfNew(closedBrowser),
+      () => this.closeIfNew(handled),
+      () => this.closeIfNew(handled),
     )
   }
 
-  private closeIfNew(closedBrowser: OwnedExtensionBrowser | undefined): void {
+  private closeIfNew(handled: HandledResources): void {
+    if (this.viewport !== undefined && this.viewport !== handled.viewport)
+      this.safely(() => this.viewport?.close())
+    if (this.debug !== undefined && this.debug !== handled.debug) {
+      const lateDebug = this.debug
+      this.safely(() => lateDebug.browserClosing())
+      void this.safelyAsync(() => lateDebug.release())
+    }
+    if (this.executor !== undefined && this.executor !== handled.executor)
+      this.safely(() => this.executor?.dispose())
     const lateBrowser = this.browser
-    if (lateBrowser === undefined || lateBrowser === closedBrowser) return
+    if (lateBrowser === undefined || lateBrowser === handled.browser) return
     void this.closeBrowser(lateBrowser).then((lateResult) => {
       // The cleanup result already settled: a failed late close must reach the run resource, never leaving a clean claim.
       const settled = this.cleanupResult

@@ -826,3 +826,127 @@ test('a late browser whose close fails is reported in the run resource cleanup',
     exitConfirmed: false,
   })
 })
+
+// protects=ER18 (Cycle 0062 ship review RT1): a viewport a stuck first step publishes after the stop bound is closed once, after the run ended; fails_when=the late viewport stays open and the Application lease stays current after the run ended; no_claim=the 10 s value
+test('a viewport a stuck step publishes after the stop bound is closed once', async () => {
+  // Arrange
+  const viewportGate = defer<void>()
+  const timers = manualClock()
+  const harness = createRunHarness({
+    viewportGate: viewportGate.promise,
+    clock: timers.clock,
+  })
+  const preparing = harness.run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const stopping = harness.run.stop()
+  await waitUntil(
+    () => timers.pendingDelays().includes(10_000),
+    'the stop bound to be armed',
+  )
+  timers.fire(10_000)
+  await stopping
+  assert.equal(harness.log.includes('viewport.close'), false)
+  // Act
+  viewportGate.resolve()
+  await preparing
+  // Assert
+  await waitUntil(
+    () => harness.log.includes('viewport.close'),
+    'the late viewport to be closed',
+  )
+  assert.equal(
+    harness.log.filter((entry) => entry === 'viewport.close').length,
+    1,
+  )
+})
+
+// protects=state matrix deadline × click (Cycle 0062 ship review): a click called while the cleanup after the whole-run deadline is still running is refused RUN_NOT_READY and never reaches the executor; fails_when=the click dispatches, or is refused with another code, during that cleanup; no_claim=the error wording
+test('a click during the cleanup after the whole-run deadline is refused and never reaches the executor', async () => {
+  // Arrange
+  const closeGate = defer<{ profileLeft: boolean; exitConfirmed: boolean }>()
+  const timers = manualClock()
+  const harness = createRunHarness({
+    clock: timers.clock,
+    timings: { runMs: 1_000 },
+  })
+  harness.browser.close = () => closeGate.promise
+  await harness.run.prepare()
+  timers.fire(1_000)
+  await waitUntil(
+    () => harness.log.includes('executor.dispose'),
+    'the cleanup to reach the browser close',
+  )
+  // Act
+  const refusal = await harness.run.click().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.equal((refusal as StudyError).code, 'RUN_NOT_READY')
+  assert.equal(harness.log.includes('executor.run:1'), false)
+  closeGate.resolve({ profileLeft: false, exitConfirmed: true })
+  await waitUntil(() => harness.run.view().phase === 'failed', 'the end')
+})
+
+// protects=state matrix failed × click (Cycle 0062 ship review): a click called while the cleanup after a browser loss is still running is refused RUN_NOT_READY and never reaches the executor; fails_when=the click dispatches, or is refused with another code, during that cleanup; no_claim=the error wording
+test('a click during the cleanup after a browser loss is refused and never reaches the executor', async () => {
+  // Arrange
+  const closeGate = defer<{ profileLeft: boolean; exitConfirmed: boolean }>()
+  const harness = createRunHarness()
+  harness.browser.close = () => closeGate.promise
+  await harness.run.prepare()
+  harness.loseBrowser()
+  await waitUntil(
+    () => harness.log.includes('executor.dispose'),
+    'the cleanup to reach the browser close',
+  )
+  // Act
+  const refusal = await harness.run.click().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.equal((refusal as StudyError).code, 'RUN_NOT_READY')
+  assert.equal(harness.log.includes('executor.run:1'), false)
+  closeGate.resolve({ profileLeft: false, exitConfirmed: true })
+  await waitUntil(() => harness.run.view().phase === 'failed', 'the end')
+})
+
+// protects=state matrix deadline × cleanup with a stuck step (Cycle 0062 ship review): the whole-run deadline ends a run whose preparation step never settles, the cleanup finishes at the stop bound and the browser that appears late is closed once; fails_when=the cleanup waits for the stuck step, or the late browser stays open or is closed twice; no_claim=the 10 s value
+test('the whole-run deadline with a stuck step ends at the stop bound and closes the late browser once', async () => {
+  // Arrange
+  const launchGate = defer<void>()
+  const timers = manualClock()
+  const harness = createRunHarness({
+    launchGate: launchGate.promise,
+    clock: timers.clock,
+    timings: { runMs: 1_000 },
+  })
+  const preparing = harness.run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await waitUntil(() => harness.log.includes('launch'), 'the launch')
+  // Act
+  timers.fire(1_000)
+  await waitUntil(
+    () => timers.pendingDelays().includes(10_000),
+    'the stop bound to be armed',
+  )
+  timers.fire(10_000)
+  await waitUntil(() => harness.run.view().phase === 'failed', 'the end')
+  assert.equal(harness.log.includes('browser.close'), false)
+  launchGate.resolve()
+  await preparing
+  // Assert
+  await waitUntil(
+    () => harness.log.includes('browser.close'),
+    'the late browser to be closed',
+  )
+  assert.equal(
+    harness.log.filter((entry) => entry === 'browser.close').length,
+    1,
+  )
+})
