@@ -73,7 +73,7 @@ function recordingStopper(): { stopper: ProcessStopper; pids: number[] } {
   }
 }
 
-// Value: protects=ER18; fails_when=a live browser of a crashed editor's owned profile survives the sweep or the folder stays; no_claim=Windows taskkill, Chrome helper processes
+// Value: protects=ER18, with SIGTERM on Linux and macOS and taskkill /T /F on Windows (the Windows job runs this file); fails_when=a live browser of a crashed editor's owned profile survives the sweep or the folder stays; no_claim=Chrome helper processes
 test('the sweep stops the live browser that names an owned profile of a dead editor and removes the folder', async (context) => {
   // Arrange
   const root = await profileRoot(context)
@@ -89,7 +89,9 @@ test('the sweep stops the live browser that names an owned profile of a dead edi
   // Assert
   assert.deepEqual(removed, [folder])
   assert.equal(await exists(folder), false)
-  assert.equal(browser.signalCode, 'SIGTERM')
+  // POSIX ends the browser with SIGTERM; Windows ends its tree with taskkill /F, which leaves exit code 1 and no signal.
+  if (process.platform === 'win32') assert.equal(browser.exitCode, 1)
+  else assert.equal(browser.signalCode, 'SIGTERM')
 })
 
 // Value: protects=ER18's exact-match rule; fails_when=a process whose --user-data-dir only shares a prefix with the folder is signalled; no_claim=every command-line spelling (profileProcesses tests)

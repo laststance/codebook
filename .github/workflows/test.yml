@@ -56,6 +56,11 @@ jobs:
         working-directory: extension
         run: node scripts/build-fast.mjs
 
+      # The chrome-extension integration test drives the runner's Google Chrome and fails on CI without version 149 or
+      # later; this line records the version it ran on.
+      - name: Print the runner's Google Chrome version
+        run: google-chrome --version
+
       # Two lanes match the runner's two processors; most of the suite waits on real deadlines.
       - name: Run this shard's tests with coverage
         working-directory: extension

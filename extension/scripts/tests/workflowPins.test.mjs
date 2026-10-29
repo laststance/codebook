@@ -822,6 +822,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/src/runtimeSupport/utils/profileProcesses.ts',
     'extension/src/runtimeSupport/utils/removeAbandonedProfiles.ts',
     'extension/src/runtimeSupport/utils/sha256.ts',
+    'extension/src/runtimeSupport/utils/stopListedProcesses.ts',
     'extension/src/runtimeSupport/utils/windowsCommandLineArguments.ts',
     'extension/src/tests/canJudgeOwnerHere.test.ts',
     'extension/src/tests/claimWikiUpdateMarker.test.ts',
@@ -846,6 +847,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/src/tests/readWikiRegularFile.test.ts',
     'extension/src/tests/refreshCursorMcpCatalogFileIdentity.test.ts',
     'extension/src/tests/removeAbandonedProfiles.test.ts',
+    'extension/src/tests/removeOrphanBrowser.test.ts',
     'extension/src/tests/removeStaleStorageClaims.test.ts',
     'extension/src/tests/removeStaleStorageLock.test.ts',
     'extension/src/tests/removeWithoutFollowing.test.ts',
@@ -958,7 +960,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
   assert.deepEqual(runCommandsOf(workflow), [
     'git config --global core.autocrlf false',
     'node scripts/build-fast.mjs',
-    'node --test --test-concurrency=1 dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js dist/tests/listProcesses.test.js dist/tests/dropSecondNameOfMovedFile.test.js dist/tests/removeWithoutFollowing.test.js dist/tests/listFolderTreeWithoutFollowing.test.js dist/tests/isFolderOfItsOwn.test.js dist/tests/runBoundedQuery.test.js dist/tests/runtime-profileProcesses.test.js dist/tests/removeAbandonedProfiles.test.js dist/tests/isProgramFile.test.js',
+    'node --test --test-concurrency=1 dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js dist/tests/listProcesses.test.js dist/tests/dropSecondNameOfMovedFile.test.js dist/tests/removeWithoutFollowing.test.js dist/tests/listFolderTreeWithoutFollowing.test.js dist/tests/isFolderOfItsOwn.test.js dist/tests/runBoundedQuery.test.js dist/tests/runtime-profileProcesses.test.js dist/tests/removeAbandonedProfiles.test.js dist/tests/removeOrphanBrowser.test.js dist/tests/isProgramFile.test.js',
     'node --test --test-concurrency=1 scripts/tests/openWithoutFollowing.test.mjs',
   ])
   assert.deepEqual(actionReferences, [
@@ -1452,7 +1454,7 @@ const WINDOWS_JOB_TEST_KINDS = [
   },
   {
     kind: 'the sweep of abandoned browser profiles',
-    tests: ['removeAbandonedProfiles'],
+    tests: ['removeAbandonedProfiles', 'removeOrphanBrowser'],
   },
   {
     kind: 'the program check of the search for Git',
