@@ -2660,6 +2660,40 @@ test('a page screencast keeps the 720 by 640 metrics override and bounded frames
   harness.viewport.close()
 })
 
+// protects=C1: a surface change while the replacement pane is not yet restored leaves that pane's document alone (the learner may be using it); fails_when=setExtensionPane writes the extension document into a replacement pane before restorePlacement; no_claim=the restored document's content
+test('a surface change during a pane handoff leaves the replacement pane document unchanged', async () => {
+  // Arrange
+  const harness = await viewportHarness('normal', true)
+  const pane = {
+    surface: 'popup' as const,
+    title: 'codebook · Bookmark Notes · Extension popup',
+    phase: 'Preparing the extension',
+    provenance: 'Operated by chat',
+    message: '',
+    imageAlt: 'Extension popup of Bookmark Notes',
+    detail: '',
+    dimmed: false,
+  }
+  harness.viewport.setExtensionPane(pane)
+  harness.ready(FIRST_EPOCH)
+  const firstFrame = harness.nextFrame()
+  const capture = harness.viewport.present('cGF1c2U=', 'paused-1')
+  const original = await firstFrame
+  harness.receive({ type: 'painted', epoch: FIRST_EPOCH, id: original.id })
+  await capture
+  const replacement = viewportPanel()
+  const release = await harness.viewport.holdPlacement(
+    new AbortController().signal,
+  )
+  harness.rebind(replacement)
+  // Act
+  harness.viewport.setExtensionPane({ ...pane, surface: 'page' })
+  // Assert
+  assert.equal(replacement.panel.webview.html, '')
+  release()
+  harness.viewport.close()
+})
+
 // protects=DR1 and DR8: the extension pane state replaces the document with the extension's and reaches the renderer with its ready handshake and after each change; fails_when=the first state is lost before a renderer exists or a later change is not sent; no_claim=how the editor paints the document
 test('the extension pane state reaches the renderer once it is ready and after each change', async () => {
   // Arrange

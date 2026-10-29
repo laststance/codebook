@@ -424,6 +424,8 @@ export class BrowserViewport {
   setExtensionPane(pane: ExtensionPaneState): void {
     const needsExtensionDocument = this.extensionPane?.surface !== pane.surface
     this.extensionPane = pane
+    // A replacement pane not yet restored is not ours to write: only store; restorePanelContents writes the extension document through currentHtml.
+    if (!this.rendererAttached) return
     // The first state (and a change of surface kind) replaces the repository document with the extension's; its ready handshake then carries the state.
     if (needsExtensionDocument && !this.closed && !this.historical) {
       this.suspendRenderer()
