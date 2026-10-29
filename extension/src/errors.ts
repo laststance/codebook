@@ -1,4 +1,7 @@
-import { STUDY_ARCHIVE_UNAVAILABLE_MESSAGE } from './constants'
+import {
+  CHROME_EXTENSION_MIN_VERSION,
+  STUDY_ARCHIVE_UNAVAILABLE_MESSAGE,
+} from './constants'
 import { newerStudyFormatMessage } from './utils/newerStudyFormatMessage'
 
 export const ERROR_RECOVERY = {
@@ -77,10 +80,8 @@ export const ERROR_RECOVERY = {
     "Do not send the request again: tell the learner the server did not answer within 30 s of running time, and have them check the application's data before one new run, since a POST, PUT, PATCH or DELETE may or may not have changed it. Recovery: learner check, at most one new run. The server keeps running and the run reads request-failed. Stop this run; start one new run with a new key only if the learner asks. See codebook://help/node-server#REQUEST_TIMEOUT.",
   PAUSE_HOLD_EXPIRED:
     "Tell the learner the server stayed paused longer than 300 s, so Codebook ended the run without resuming the paused code. Recovery: learner decision, at most one new run. The run is stopped and its server closed; whether the request changed the application's data is unknown, so have the learner check it. Start one new run with a new key only if the learner asks, and continue each stop within the hold. See codebook://help/node-server#PAUSE_HOLD_EXPIRED.",
-  CHROME_VERSION_UNSUPPORTED:
-    'Set codebook.chromeExecutable to Google Chrome or Chrome for Testing 149 or later, or update Chrome, then start again: an unpacked extension loads only from Chrome 149. Recovery: environment, then one new start. Nothing was launched. See codebook://help/chrome-extension#CHROME_VERSION_UNSUPPORTED.',
-  CHROME_COMMAND_UNAVAILABLE:
-    "Set codebook.chromeExecutable to Google Chrome or Chrome for Testing 149 or later: this Chrome lacks an Extensions or ServiceWorker command Codebook uses. Recovery: environment, then one new start. The run's browser was closed and its profile removed. See codebook://help/chrome-extension#CHROME_COMMAND_UNAVAILABLE.",
+  CHROME_VERSION_UNSUPPORTED: `Set codebook.chromeExecutable to Google Chrome or Chrome for Testing ${CHROME_EXTENSION_MIN_VERSION} or later, or update Chrome, then start again: an unpacked extension loads only from Chrome ${CHROME_EXTENSION_MIN_VERSION}. Recovery: environment, then one new start. Nothing was launched. See codebook://help/chrome-extension#CHROME_VERSION_UNSUPPORTED.`,
+  CHROME_COMMAND_UNAVAILABLE: `Set codebook.chromeExecutable to Google Chrome or Chrome for Testing ${CHROME_EXTENSION_MIN_VERSION} or later: this Chrome lacks an Extensions or ServiceWorker command Codebook uses. Recovery: environment, then one new start. The run's browser was closed and its profile removed. See codebook://help/chrome-extension#CHROME_COMMAND_UNAVAILABLE.`,
   MANIFEST_UNREADABLE:
     'Fix manifest.json in the extension root so it is valid JSON (and its key, if any, a valid public key), then start again. Recovery: fix, then one new start. Nothing was launched. See codebook://help/chrome-extension#MANIFEST_UNREADABLE.',
   MANIFEST_NOT_V3:

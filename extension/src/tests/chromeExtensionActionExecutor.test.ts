@@ -45,6 +45,8 @@ function executorFor(
     stepTimeoutMs?: number
     returnBoundMs?: number
     settleMs?: number
+    /** Replaces the journal sink, for a test whose journal fails. */
+    record?: (type: string, detail: unknown) => void
   } = {},
 ) {
   const surface = fakeExtensionSurface(answers)
@@ -56,13 +58,22 @@ function executorFor(
     extensionId: 'abcdefghijklmnopabcdefghijklmnop',
     pauseState: pauses,
     assertActionCurrent: () => {},
-    record: (type, detail) => events.push({ type, detail }),
+    record:
+      options.record ?? ((type, detail) => void events.push({ type, detail })),
     roots: { storage: [], workspace: '/Users/ada/secret-repo' },
     stepTimeoutMs: options.stepTimeoutMs ?? 2_000,
     returnBoundMs: options.returnBoundMs ?? 2_000,
     settleMs: options.settleMs ?? 10,
   })
   return { executor, surface, pauses, events }
+}
+
+/** Resolves once the fake surface has been sent a request of this method, so a test acts on the step's request instead of a timer. */
+function requestSent(surface: { methods: () => string[] }, method: string) {
+  return waitUntil(
+    () => surface.methods().includes(method),
+    `the ${method} request is sent`,
+  )
 }
 
 /** The phase an in-page inspection of an input was asked for. */
@@ -178,7 +189,7 @@ test('a stop paused longer than the step deadline during the first input returns
   const answerInsert = defer<Record<string, unknown>>()
   const { executor, surface, pauses } = executorFor(
     { 'Input.insertText': () => answerInsert.promise },
-    { stepTimeoutMs: 40 },
+    { stepTimeoutMs: 500 },
   )
   const click: ResolvedExtensionClick = {
     ...CLICK,
@@ -186,10 +197,11 @@ test('a stop paused longer than the step deadline during the first input returns
   }
   // Act
   const call = executor.run(click)
-  await sleep(10)
+  await requestSent(surface, 'Input.insertText')
   const pause = openDeclaredPause(pauses)
   const receipt = await call
-  await sleep(150)
+  // gstack-timing-ok: the contract is that the pause outlasts the 500 ms step deadline without a timeout, so the hold is real time
+  await sleep(700)
   pauses.close(pause.sessionId, pause.threadId)
   answerInsert.resolve({})
   await receipt.completed
@@ -309,7 +321,7 @@ test('a slow click handler returns running at the bound and completes later', as
       'Input.dispatchMouseEvent': (params) =>
         params.type === 'mouseReleased' ? release.promise : {},
     },
-    { returnBoundMs: 30 },
+    { returnBoundMs: 1_000 },
   )
   // Act
   const receipt = await executor.run(CLICK)
@@ -332,13 +344,21 @@ test('a confirm dialog opened by the click is accepted as declared and journaled
   })
   // Act
   const call = executor.run({ ...CLICK, dialog: 'accept' })
-  await sleep(20)
+  await waitUntil(
+    () =>
+      surface.sent.some(
+        (request) =>
+          request.method === 'Input.dispatchMouseEvent' &&
+          request.params.type === 'mouseReleased',
+      ),
+    'the mouse release is in flight',
+  )
   surface.emit(
     'Page.javascriptDialogOpening',
     { type: 'confirm' },
     SURFACE_SESSION,
   )
-  await sleep(5)
+  await requestSent(surface, 'Page.handleJavaScriptDialog')
   gate.resolve({})
   const receipt = await call
   await receipt.completed
@@ -370,13 +390,21 @@ test('a dialog declared as dismiss is dismissed', async () => {
   })
   // Act
   const call = executor.run({ ...CLICK, dialog: 'dismiss' })
-  await sleep(20)
+  await waitUntil(
+    () =>
+      surface.sent.some(
+        (request) =>
+          request.method === 'Input.dispatchMouseEvent' &&
+          request.params.type === 'mouseReleased',
+      ),
+    'the mouse release is in flight',
+  )
   surface.emit(
     'Page.javascriptDialogOpening',
     { type: 'confirm' },
     SURFACE_SESSION,
   )
-  await sleep(5)
+  await requestSent(surface, 'Page.handleJavaScriptDialog')
   gate.resolve({})
   await (
     await call
@@ -398,7 +426,15 @@ test('a dialog without a declared answer fails the click with DIALOG_UNDECLARED'
   })
   // Act
   const call = executor.run(CLICK)
-  await sleep(20)
+  await waitUntil(
+    () =>
+      surface.sent.some(
+        (request) =>
+          request.method === 'Input.dispatchMouseEvent' &&
+          request.params.type === 'mouseReleased',
+      ),
+    'the mouse release is in flight',
+  )
   surface.emit(
     'Page.javascriptDialogOpening',
     { type: 'confirm' },
@@ -427,14 +463,14 @@ function centreRefusal(reason: string) {
 /** Runs a one-input click whose focus answer is held, returns the receipt as `paused`, then answers the focus with the given reason. */
 async function focusRefusedAfterReturn(reason: string) {
   const focusAnswer = defer<Record<string, unknown>>()
-  const { executor, pauses } = executorFor({
+  const { executor, surface, pauses } = executorFor({
     'Runtime.callFunctionOn': () => focusAnswer.promise,
   })
   const call = executor.run({
     ...CLICK,
     inputs: [{ selector: '#name', text: 'a' }],
   })
-  await sleep(10)
+  await requestSent(surface, 'Runtime.callFunctionOn')
   openDeclaredPause(pauses)
   const receipt = await call
   focusAnswer.resolve({ result: { value: { ready: false, reason } } })
@@ -865,7 +901,7 @@ test('an undeclared dialog during the first click press is refused for the first
 test('a click whose call returned paused during an input arms no return or settle timer for the press', async () => {
   // Arrange
   const answerFocus = defer<Record<string, unknown>>()
-  const { executor, pauses } = executorFor(
+  const { executor, surface, pauses } = executorFor(
     {
       'Runtime.callFunctionOn': (params) =>
         params.arguments && inspectionPhase(params) === 'focus'
@@ -891,7 +927,7 @@ test('a click whose call returned paused during an input arms no return or settl
       ...CLICK,
       inputs: [{ selector: '#name', text: 'a' }],
     })
-    await sleep(10)
+    await requestSent(surface, 'Runtime.callFunctionOn')
     openDeclaredPause(pauses)
     const receipt = await call
     // Act
@@ -905,5 +941,66 @@ test('a click whose call returned paused during an input arms no return or settl
     )
   } finally {
     mock.restoreAll()
+  }
+})
+
+// protects=a journal that throws while a dialog is answered never becomes an unhandled rejection and is itself journaled masked and root-hidden; fails_when=the throw escapes the listener or the debugger-error is missing or unmasked; no_claim=what the run does with the journal afterwards
+test('a journal failure while answering a dialog is recorded as a masked debugger error instead of an unhandled rejection', async () => {
+  // Arrange
+  const recorded: Array<{ type: string; detail: unknown }> = []
+  let shouldThrow = true
+  const unhandled: unknown[] = []
+  const onUnhandled = (reason: unknown) => unhandled.push(reason)
+  process.on('unhandledRejection', onUnhandled)
+  const gate = defer<Record<string, unknown>>()
+  const { executor, surface } = executorFor(
+    {
+      'Input.dispatchMouseEvent': (params) =>
+        params.type === 'mouseReleased' ? gate.promise : {},
+    },
+    {
+      record: (type, detail) => {
+        if (shouldThrow) {
+          shouldThrow = false
+          throw new Error(
+            'disk full at /Users/ada/secret-repo/out.log token Bearer abcdefghijklmnop1234567890',
+          )
+        }
+        recorded.push({ type, detail })
+      },
+    },
+  )
+  try {
+    // Act
+    const call = executor.run({ ...CLICK, dialog: 'accept' })
+    await waitUntil(
+      () =>
+        surface.sent.some(
+          (request) =>
+            request.method === 'Input.dispatchMouseEvent' &&
+            request.params.type === 'mouseReleased',
+        ),
+      'the mouse release is in flight',
+    )
+    surface.emit(
+      'Page.javascriptDialogOpening',
+      { type: 'confirm' },
+      SURFACE_SESSION,
+    )
+    await waitUntil(() => recorded.length > 0, 'the debugger error is recorded')
+    gate.resolve({})
+    await (
+      await call
+    ).completed
+    // gstack-timing-ok: asserts nothing is raised later, so a short fixed wait lets a stray rejection surface
+    await sleep(20)
+    // Assert
+    assert.equal(recorded[0]?.type, 'chrome-extension.debugger-error')
+    const { message } = recorded[0]?.detail as { message: string }
+    assert.equal(message.includes('/Users/ada/secret-repo'), false)
+    assert.equal(message.includes('abcdefghijklmnop1234567890'), false)
+    assert.deepEqual(unhandled, [])
+  } finally {
+    process.off('unhandledRejection', onUnhandled)
   }
 })

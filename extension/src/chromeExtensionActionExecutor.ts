@@ -541,7 +541,9 @@ class DialogResponder {
       'Page.javascriptDialogOpening',
       (params, sessionId) => {
         if (sessionId !== input.surfaceSessionId) return
-        void this.answerDialog(params)
+        this.answerDialog(params).catch((error: unknown) =>
+          this.recordAnswerFailure(error),
+        )
       },
     )
   }
@@ -585,6 +587,25 @@ class DialogResponder {
 
   private ownedBy(execution: ClickExecution): DialogOwner {
     return { kind: 'click', execution, answer: execution.declaredDialog }
+  }
+
+  /**
+   * Journals a throw from {@link DialogResponder.answerDialog} so it never becomes an unhandled rejection.
+   * Called by the listener's catch; the message is masked and root-hidden like the dialog text.
+   */
+  private recordAnswerFailure(error: unknown): void {
+    try {
+      this.input.record('chrome-extension.debugger-error', {
+        message: hidePrivateRoots(
+          redactSecretText(
+            error instanceof Error ? error.message : String(error),
+          ),
+          this.input.roots,
+        ),
+      })
+    } catch {
+      // A journal that throws again has nowhere left to report; the run's own failure paths stay intact.
+    }
   }
 
   private async answerDialog(params: Record<string, unknown>): Promise<void> {
