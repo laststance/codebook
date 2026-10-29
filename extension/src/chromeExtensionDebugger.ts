@@ -5,6 +5,7 @@ import type {
   ResolvedExtensionRun,
 } from './chromeExtensionContracts'
 import type { StudyError } from './errors'
+import type { CdpTargetInfo } from './runtimeSupport/utils/cdpFieldReaders'
 import type { CauseRoots } from './utils/sanitizeCause'
 
 /** The arguments the chat copies from the run resource to continue one extension pause (DXR5); a pause of a replaced worker or an earlier hold never matches again. */
@@ -124,8 +125,10 @@ export type ExtensionDebuggerInput = {
   >
   /** The owned browser's debugging port. */
   port: number
-  /** Target id of the open surface (informational: js-debug's child sessions carry their own session ids, so the page child is found by the session tree). */
+  /** Target id of the open surface; the page child is adopted only while this is the single page target matching the surface URL (js-debug's child sessions carry their own session ids, so the session cannot name its target). */
   surfaceTargetId: string
+  /** Reads the owned browser's targets over Codebook's own connection (`Target.getTargets`), to tie js-debug's child sessions to the surface and the extension's worker. */
+  readTargets(): Promise<readonly CdpTargetInfo[]>
   /** Starts the extension's service worker (`ServiceWorker.startWorker`). */
   startWorker(): Promise<void>
   /** Refuses (`SOURCE_CHANGED`) while the disk or an open editor document differs from the pinned bytes (ER20). */

@@ -58,7 +58,7 @@ const CHROME_EXTENSION_EVENT_WHEN: Record<string, string> = {
   'chrome-extension.debugger-error':
     'a failure inside the run’s own debugger or dialog handling that it reported instead of failing silently',
   'chrome-extension.view-unavailable':
-    'the editor refused to place the Application view (for example a preview tab in the editor group it would use); the run goes on without it, and chromeExtension.viewUnavailable gives the same reason',
+    'the editor refused to place the Application view (for example a tab of a captured source the editor shows without a text editor); the run goes on without it, and chromeExtension.viewUnavailable gives the same reason',
 }
 
 /**
@@ -598,6 +598,8 @@ export function chromeExtensionHelp() {
       acknowledgedPermissions: `A manifest that declares ${EXTENSION_ACKNOWLEDGED_API_PERMISSIONS.join(', ')}, host permissions that match all hosts, or a private-network host is refused with PERMISSIONS_NEED_ACKNOWLEDGEMENT until configuration.acknowledgedPermissions lists exactly those entries; tell the learner first. No dialog asks.`,
       workerRestart:
         "Codebook restarts the extension's service worker before the clicks (and again before a click when the worker idled out), and lists each such step in chromeExtension.interventions. Worker startup, idle shutdown and wake timing are therefore not observed by the run: explain them as source reasoning, labeled so.",
+      duplicateSurface:
+        "When the extension opened its own copy of the surface page (an install handler's tab in the fresh test profile), Codebook closes that copy right after it opens its own surface, which loads after the seed, and lists close-duplicate-surface-page in chromeExtension.interventions. Explain the extension's install-time tab as source reasoning; the run did not keep it.",
       debuggingPort:
         "The test browser's debugging port is random and bound to 127.0.0.1; web pages cannot reach it, but any local process of the same user can reach it while the run lives, the same trust boundary as the profile folder.",
       chromeExecutable: `Chrome 149 or later is needed. Set the VS Code setting codebook.chromeExecutable to Google Chrome or to Chrome for Testing ${CHROME_EXTENSION_MIN_VERSION} or later when the default Chrome is older or missing (CHROME_VERSION_UNSUPPORTED, CHROME_COMMAND_UNAVAILABLE).`,

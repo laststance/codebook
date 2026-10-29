@@ -22,6 +22,7 @@ import {
   type ChromeExtensionRunTimings,
 } from '../../ownedChromeExtensionRun'
 import type { ChromeExtensionRuntime } from '../../runtime'
+import type { RunClock } from '../../utils/runningTimeLimit'
 import { REAL_DEADLINE_TIMERS } from '../../utils/slotDeadline'
 
 import {
@@ -105,6 +106,14 @@ export type HarnessBehaviour = {
   launchFailure?: StudyError
   /** Holds the launch until released, to stop the run during a phase step. */
   launchGate?: Promise<void>
+  /** Holds the debugger's attach until released, and ignores the run's abort meanwhile (a preparation step that never settles). */
+  attachGate?: Promise<void>
+  /** Holds the viewport factory until released, and ignores the run's abort meanwhile (the first preparation step never settles). */
+  viewportGate?: Promise<void>
+  /** Holds the debugger's release until released (a debugger that stops answering at the cleanup). */
+  releaseGate?: Promise<void>
+  /** Replaces the real clock the run's timers use, so a test fires a bound by hand. */
+  clock?: RunClock
   /** Which debugger step throws. */
   debuggerFailure?: {
     step: 'attach' | 'waitForWorker' | 'armStops'
@@ -113,6 +122,8 @@ export type HarnessBehaviour = {
   ensureWorkerReadyFailure?: StudyError
   sourceCheckFailure?: StudyError
   closeResult?: { profileLeft: boolean; exitConfirmed: boolean }
+  /** How many of the extension's own copies of the surface page the launch closed; default none. */
+  closedDuplicateSurfacePages?: number
   /** The receipt a click returns, by 1-based index; default a settled one. */
   receipts?: Record<number, () => Promise<ExtensionClickReceipt>>
   /** What the text observation reads, called per read. */
@@ -185,6 +196,7 @@ export function createRunHarness(behaviour: HarnessBehaviour = {}) {
     extensionId: resolved.extensionId,
     cdp: surface.connection,
     surfaceTargetId: 'surface-target',
+    closedDuplicateSurfacePages: behaviour.closedDuplicateSurfacePages ?? 0,
     controlSessionId: 'control-session',
     profile: '/tmp/codebook-browser-fake',
     startWorker: async () => undefined,
@@ -222,6 +234,7 @@ export function createRunHarness(behaviour: HarnessBehaviour = {}) {
       attach: async (): Promise<void> => {
         input.onPhase?.('attaching', 10)
         log.push('debugger.attach')
+        await behaviour.attachGate
         fail('attach')
       },
       waitForWorker: async (): Promise<void> => {
@@ -259,6 +272,7 @@ export function createRunHarness(behaviour: HarnessBehaviour = {}) {
       release: async (): Promise<void> => {
         debuggerState.released += 1
         log.push('debugger.release')
+        await behaviour.releaseGate
       },
     }
   }
@@ -307,7 +321,10 @@ export function createRunHarness(behaviour: HarnessBehaviour = {}) {
   }
 
   const dependencies: ChromeExtensionRunDependencies = {
-    clock: { now: () => performance.now(), set: REAL_DEADLINE_TIMERS.set },
+    clock: behaviour.clock ?? {
+      now: () => performance.now(),
+      set: REAL_DEADLINE_TIMERS.set,
+    },
     resolveRun: async (options) => {
       resolveInputs.push(options)
       log.push('resolve')
@@ -358,6 +375,7 @@ export function createRunHarness(behaviour: HarnessBehaviour = {}) {
       ? {}
       : {
           createViewport: async () => {
+            await behaviour.viewportGate
             if (behaviour.viewportFailure) throw behaviour.viewportFailure
             return viewport
           },
@@ -390,5 +408,35 @@ export function createRunHarness(behaviour: HarnessBehaviour = {}) {
         status: 'captured',
         pausedAtMs: 0,
       }),
+  }
+}
+
+/**
+ * A clock whose timers fire only when a test says so, to cross a production bound (10 s) without waiting.
+ * @returns The {@link RunClock}, the delays of the timers still pending, and `fire` that runs and removes every pending timer of one delay.
+ * @example
+ * const timers = manualClock()
+ * timers.fire(10_000)
+ */
+export function manualClock() {
+  const timers = new Set<{ callback: () => void; delayMs: number }>()
+  const clock: RunClock = {
+    now: () => performance.now(),
+    set: (callback, delayMs) => {
+      const timer = { callback, delayMs }
+      timers.add(timer)
+      return (): void => void timers.delete(timer)
+    },
+  }
+  return {
+    clock,
+    pendingDelays: (): number[] => [...timers].map((timer) => timer.delayMs),
+    fire: (delayMs: number): void => {
+      for (const timer of [...timers])
+        if (timer.delayMs === delayMs) {
+          timers.delete(timer)
+          timer.callback()
+        }
+    },
   }
 }

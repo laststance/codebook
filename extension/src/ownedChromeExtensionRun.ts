@@ -26,6 +26,7 @@ import {
   type ExtensionObservationReader,
 } from './chromeExtensionObservation'
 import {
+  CHROME_EXTENSION_STOP_DEADLINE_MS,
   EXTENSION_OUTPUT_EVENT_LIMIT,
   EXTENSION_PIN_CAPTURE_TIMEOUT_MS,
   MILLISECONDS_PER_SECOND,
@@ -44,7 +45,10 @@ import type {
   ChromeExtensionView,
 } from './runtime'
 import type { OwnedBrowserLaunchOptions } from './runtimeSupport/ownedExtensionBrowser'
-import { readCdpString } from './runtimeSupport/utils/cdpFieldReaders'
+import {
+  readCdpString,
+  readCdpTargets,
+} from './runtimeSupport/utils/cdpFieldReaders'
 import { causeRootsFor } from './utils/causeRootsFor'
 import { classifyChromeExtensionFailure } from './utils/classifyChromeExtensionFailure'
 import {
@@ -104,6 +108,15 @@ type RunEnding =
   | { kind: 'stopped' }
   | { kind: 'failed'; error: StudyError }
 
+/**
+ * What the cleanup already closed; a stuck step that publishes a different one later gets that one closed.
+ * Only the viewport and the browser can come late: {@link OwnedChromeExtensionRun}'s preparation publishes each just before an `assertAccepting` check, while the debugger, the executor and every cleanup handle follow such a check with no wait between.
+ */
+type HandledResources = {
+  browser: OwnedExtensionBrowser | undefined
+  viewport: ChromeExtensionViewport | undefined
+}
+
 /** The sentence of each preparation phase for the viewport's "Preparing" body (DR4). */
 const PREPARING_SENTENCE: Record<ExtensionPreparationPhase, string> = {
   launching: 'Starting the test browser',
@@ -149,6 +162,9 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   private readonly pinnedGenerations = new Set<number>()
   private stage: ChromeExtensionPhase = 'starting'
   private launchedAtMs: number | undefined
+  /** Settles when a cleanup left a step that ignored its abort behind at the stop bound, so {@link OwnedChromeExtensionRun.prepare} answers then instead of waiting on that step. */
+  private readonly stepsLeftBehind: Promise<void>
+  private resolveStepsLeftBehind: () => void = () => undefined
   private resolved: ResolvedExtensionRun | undefined
   private browser: OwnedExtensionBrowser | undefined
   private debug: ChromeExtensionDebugger | undefined
@@ -168,6 +184,9 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   private observed: ChromeExtensionObserved | null | undefined
   private result: 'complete' | 'partial' | undefined
   private runFailure: StudyError | undefined
+  /** What the close of a browser a late step brought up reported ({@link closeIfNew}); merged into a late close of the run's own browser. */
+  private lateBrowserCloseResult:
+    NonNullable<ChromeExtensionView['cleanup']> | undefined
   private cleanupResult: ChromeExtensionView['cleanup']
   private outputsDropped = 0
   private ending: RunEnding | undefined
@@ -175,10 +194,15 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   private stepsPromise: Promise<void> | undefined
   private cancelRunTimer: (() => void) | undefined
   private cancelSetupTimer: (() => void) | undefined
+  /** The cancels of the pause pins' capture timers still running; the cleanup ends them. */
+  private readonly pinTimerCancels = new Set<() => void>()
   private lastViewportText: string | undefined
   private readonly cleanups: { dispose(): void }[] = []
 
   constructor(private readonly input: OwnedChromeExtensionRunInput) {
+    this.stepsLeftBehind = new Promise<void>((resolve) => {
+      this.resolveStepsLeftBehind = resolve
+    })
     this.id = input.runId
     this.roots = input.privateRoots ?? causeRootsFor([], input.workspace)
     this.timings = input.dependencies.timings ?? {}
@@ -409,7 +433,8 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     this.armDeadlines()
     this.stepsPromise = this.prepareSteps()
     try {
-      await this.stepsPromise
+      // A step the cleanup left behind at the stop bound is not waited for: the ended run answers, so the service's stop returns and frees the run slot.
+      await Promise.race([this.stepsPromise, this.stepsLeftBehind])
       // A stop, deadline or failure accepted at the very end still ends the run.
       this.assertAccepting()
     } catch (error) {
@@ -478,6 +503,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       manifestName: resolved.manifestName,
       surface: resolved.surface,
       clickTitles: resolved.clicks.map((click) => click.title),
+      stopFiles: resolved.stops.map((stop) => stop.absolutePath),
     })
     this.changed()
     const launchStartedAtMs = performance.now()
@@ -535,6 +561,8 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       run: resolved,
       port: browser.port,
       surfaceTargetId: browser.surfaceTargetId,
+      readTargets: async () =>
+        readCdpTargets(await browser.cdp.request('Target.getTargets', {})),
       startWorker: () => browser.startWorker(),
       assertSourcesUnchanged: () => this.sourceCheck?.(),
       roots: this.roots,
@@ -557,7 +585,9 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
         ),
       ),
     )
-    // The launch stopped every worker so the debugger could attach; the run discloses it (CR10).
+    // The launch closed the extension's own copies of the surface page before it stopped the workers; the run discloses both, in that order (N62-2, CR10).
+    if (browser.closedDuplicateSurfacePages > 0)
+      debug.recordIntervention('close-duplicate-surface-page')
     debug.recordIntervention('stop-all-workers')
     await debug.attach(this.abort.signal)
     this.assertAccepting()
@@ -599,6 +629,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
         this.assertAccepting()
         this.actionGuard?.assertCurrent()
       },
+      assertSourcesUnchanged: () => this.sourceCheck?.(),
       record: this.record,
       roots: this.roots,
       ...(this.timings.settleMs === undefined
@@ -738,6 +769,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       browser === undefined
     )
       return
+    let cancelTimer: (() => void) | undefined
     try {
       const shot = await Promise.race([
         browser.cdp.request(
@@ -746,12 +778,18 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
           sessionId,
           EXTENSION_PIN_CAPTURE_TIMEOUT_MS,
         ),
-        new Promise<never>((_resolve, reject) =>
-          setTimeout(
+        new Promise<never>((_resolve, reject) => {
+          const cancelClockTimer = this.input.dependencies.clock.set(
             () => reject(new Error('screenshot timed out')),
             EXTENSION_PIN_CAPTURE_TIMEOUT_MS,
-          ).unref(),
-        ),
+          )
+          // A cancel (cleanup or the finally) also settles the race: a paused page may never answer the capture, and a cancelled timer alone would leave the race pending forever.
+          cancelTimer = (): void => {
+            cancelClockTimer()
+            reject(new Error('screenshot cancelled'))
+          }
+          this.pinTimerCancels.add(cancelTimer)
+        }),
       ])
       if (this.ending !== undefined || !this.isPauseOpen(generation)) return
       const text = `Paused at stop ${stopIndex ?? '?'} of ${this.view().stopsDeclared} · ${context === 'service-worker' ? 'service worker' : 'page'}`
@@ -764,6 +802,12 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
         this.viewport?.resumeLive()
     } catch {
       // The live frame stays; the phase text already names the pause.
+    } finally {
+      // The capture's timer must not outlive the capture (it would keep a stopped run's timer alive).
+      if (cancelTimer !== undefined) {
+        cancelTimer()
+        this.pinTimerCancels.delete(cancelTimer)
+      }
     }
   }
 
@@ -812,6 +856,12 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   private assertCanClick(): ResolvedExtensionRun {
     const { resolved, debug, executor } = this
     const isAlive = this.stage === 'ready' || this.stage === 'observing'
+    // An accepted ending (stop, deadline, failure) refuses the call first, also after the last click, while its cleanup still runs; a completed run keeps the answer that every click was performed.
+    if (this.ending !== undefined && this.stage !== 'completed')
+      throw new StudyError(
+        'RUN_NOT_READY',
+        'The extension run is ending and takes no further click.',
+      )
     // After the last declared click the run only observes; a completed run performed them all.
     if (
       resolved !== undefined &&
@@ -1010,7 +1060,8 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
 
   /** Fails the run with an error; the first ending wins. */
   private fail(error: StudyError): void {
-    void this.endRun({ kind: 'failed', error })
+    // A cleanup that rejects must not become an unhandled rejection; the failure is already recorded.
+    this.endRun({ kind: 'failed', error }).catch(() => undefined)
   }
 
   async stop(): Promise<void> {
@@ -1061,21 +1112,179 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   private async cleanup(ending: RunEnding): Promise<void> {
     this.cancelRunTimer?.()
     this.cancelSetupTimer?.()
-    // A step still in flight finishes (it was aborted) before anything is closed, so a browser that appears late is closed too.
-    await this.stepsPromise?.catch(() => undefined)
+    for (const cancelPinTimer of [...this.pinTimerCancels])
+      this.safely(cancelPinTimer)
+    this.pinTimerCancels.clear()
+    // One stop bound from the stop's admission covers every wait below, so no step or debugger that stops answering holds the stop past it.
+    const stopBound = this.armStopBound()
+    try {
+      await this.cleanupWithin(ending, stopBound.passed)
+    } finally {
+      stopBound.cancel()
+    }
+  }
+
+  /**
+   * The cleanup's waits and closes, each wait bounded by the stop bound; called once by {@link OwnedChromeExtensionRun.cleanup}.
+   * A step still in flight finishes (it was aborted) before anything is closed, so a browser that appears late is closed too; one that ignores the abort is left behind at the bound. A debugger release that does not answer within the bound is journaled and the test browser is closed without it; a browser close that does not answer within the bound reads as unconfirmed until it does.
+   * @param ending - How the run ends.
+   * @param boundPassed - Settles when the stop bound passes.
+   * @example await this.cleanupWithin(ending, stopBound.passed)
+   */
+  private async cleanupWithin(
+    ending: RunEnding,
+    boundPassed: Promise<false>,
+  ): Promise<void> {
+    const didStepsSettle = await this.settlesBefore(
+      this.stepsPromise,
+      boundPassed,
+    )
     this.showEnding(ending)
     for (const handle of this.cleanups.splice(0))
       this.safely(() => handle.dispose())
     const { debug, executor, browser } = this
     this.safely(() => debug?.browserClosing())
-    await this.safelyAsync(() => debug?.release())
+    const didReleaseSettle = await this.settlesBefore(
+      this.safelyAsync(() => debug?.release()),
+      boundPassed,
+    )
+    // A release past the bound is left running; the run says so where its other debugger failures go.
+    if (!didReleaseSettle)
+      this.record('chrome-extension.debugger-error', {
+        message:
+          'The debugger did not let go within the stop bound; the test browser is closed without waiting for it.',
+      })
     this.safely(() => executor?.dispose())
     this.cleanupResult = browser
-      ? await browser
-          .close()
-          .catch(() => ({ profileLeft: true, exitConfirmed: false }))
-      : { profileLeft: false, exitConfirmed: true }
-    this.safely(() => this.viewport?.close())
+      ? await this.closeBrowserWithin(browser, boundPassed)
+      : didStepsSettle
+        ? { profileLeft: false, exitConfirmed: true }
+        : // A launch still under way may have made its profile and started Chrome before it hands back a browser: nothing is confirmed until it settles.
+          { profileLeft: true, exitConfirmed: false }
+    // The viewport is read once, after the waits above: the same one is closed here and named as handled, so a late check never closes it twice.
+    const closedViewport = this.viewport
+    this.safely(() => closedViewport?.close())
+    // A step that settled only after the bound may have published a viewport or browser nobody closed: each is closed then.
+    if (!didStepsSettle) {
+      this.closeLateResources({ browser, viewport: closedViewport })
+      this.resolveStepsLeftBehind()
+    }
+  }
+
+  /**
+   * Closes the test browser, but waits for it only until the stop bound passes; called by {@link cleanupWithin}.
+   * A close that answers late reads as unconfirmed meanwhile, and its own result replaces that once it answers, merged with what a late browser's close reported in between ({@link closeIfNew}).
+   * @param browser - The run's browser.
+   * @param boundPassed - Settles when the stop bound passes.
+   * @returns The close's result, or `{ profileLeft: true, exitConfirmed: false }` when the bound passed first.
+   * @example this.cleanupResult = await this.closeBrowserWithin(browser, stopBound.passed)
+   */
+  private async closeBrowserWithin(
+    browser: OwnedExtensionBrowser,
+    boundPassed: Promise<false>,
+  ): Promise<NonNullable<ChromeExtensionView['cleanup']>> {
+    const closing = this.closeBrowser(browser)
+    const settled = await Promise.race([closing, boundPassed])
+    if (settled !== false) return settled
+    void closing.then((lateResult) => {
+      const otherLate = this.lateBrowserCloseResult
+      this.cleanupResult = otherLate
+        ? {
+            profileLeft: lateResult.profileLeft || otherLate.profileLeft,
+            exitConfirmed: lateResult.exitConfirmed && otherLate.exitConfirmed,
+          }
+        : lateResult
+      this.changed()
+    })
+    return { profileLeft: true, exitConfirmed: false }
+  }
+
+  /** Closes the browser; a close that throws or rejects reads as a profile left behind. */
+  private async closeBrowser(
+    browser: OwnedExtensionBrowser,
+  ): Promise<NonNullable<ChromeExtensionView['cleanup']>> {
+    try {
+      return await browser.close()
+    } catch {
+      return { profileLeft: true, exitConfirmed: false }
+    }
+  }
+
+  /**
+   * Arms the stop bound: {@link CHROME_EXTENSION_STOP_DEADLINE_MS} on the run's clock.
+   * Called first by {@link OwnedChromeExtensionRun.cleanup}; a step or a debugger that ignores its abort would otherwise hold the stop forever.
+   * @returns `passed`, which settles with `false` when the bound passes, and `cancel`, which the cleanup calls when it ends.
+   * @example const stopBound = this.armStopBound()
+   */
+  private armStopBound(): { passed: Promise<false>; cancel: () => void } {
+    let cancel = (): void => undefined
+    const passed = new Promise<false>((resolve) => {
+      cancel = this.input.dependencies.clock.set(
+        () => resolve(false),
+        CHROME_EXTENSION_STOP_DEADLINE_MS,
+      )
+    })
+    return { passed, cancel }
+  }
+
+  /**
+   * Waits for some work, but never past the stop bound; used by {@link cleanupWithin} for the in-flight step and the debugger release.
+   * @param work - The work; `undefined` when there is none.
+   * @param boundPassed - Settles when the stop bound passes.
+   * @returns `true` when the work settled (or there was none), `false` when the bound passed first.
+   * @example await this.settlesBefore(this.stepsPromise, stopBound.passed) // => false when the step never settles
+   */
+  private async settlesBefore(
+    work: Promise<unknown> | undefined,
+    boundPassed: Promise<false>,
+  ): Promise<boolean> {
+    if (work === undefined) return true
+    return Promise.race([
+      work.then(
+        () => true as const,
+        () => true as const,
+      ),
+      boundPassed,
+    ])
+  }
+
+  /** After a stop bound passed, closes what the stuck step published later than the cleanup read it (a resource the cleanup already handled is not handled twice). */
+  private closeLateResources(handled: HandledResources): void {
+    void this.stepsPromise?.then(
+      () => this.closeIfNew(handled),
+      () => this.closeIfNew(handled),
+    )
+  }
+
+  private closeIfNew(handled: HandledResources): void {
+    if (this.viewport !== undefined && this.viewport !== handled.viewport)
+      this.safely(() => this.viewport?.close())
+    const lateBrowser = this.browser
+    if (lateBrowser === handled.browser) {
+      // The stuck step settled without a browser before its launch began: nothing was made, so the unconfirmed cleanup is confirmed. A launch that began and failed made its profile and Chrome and keeps its own close result, so the cleanup stays unconfirmed.
+      if (handled.browser === undefined && this.launchedAtMs === undefined) {
+        this.cleanupResult = { profileLeft: false, exitConfirmed: true }
+        this.changed()
+      }
+      return
+    }
+    if (lateBrowser === undefined) return
+    void this.closeBrowser(lateBrowser).then((lateResult) => {
+      // Kept for a close of the run's own browser that answers after this one ({@link closeBrowserWithin}).
+      this.lateBrowserCloseResult = lateResult
+      // Without a browser the cleanup was left unconfirmed, so the late close's own result replaces it; after a closed browser a failed late close still reaches the run resource, never leaving a clean claim.
+      const settled = this.cleanupResult
+      this.cleanupResult =
+        handled.browser === undefined
+          ? lateResult
+          : {
+              profileLeft:
+                (settled?.profileLeft ?? false) || lateResult.profileLeft,
+              exitConfirmed:
+                (settled?.exitConfirmed ?? true) && lateResult.exitConfirmed,
+            }
+      this.changed()
+    })
   }
 
   /** Hands the last frame and the result line to the viewport (DR4, DR5, DR10, ER22). */

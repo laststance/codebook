@@ -68,6 +68,8 @@ export type ExtensionExecutorInput = {
   pauseState: ExtensionPauseState
   /** Called before and after each step; throws when the run's worker restarted (ER17) or ended. */
   assertActionCurrent(): void
+  /** Refuses with `SOURCE_CHANGED` while the pinned sources differ from disk or an open editor document (ER20); called before each input step and before the press, so a change between two steps stops the click before the next one is sent. Absent → no per-step check. */
+  assertSourcesUnchanged?: () => void | Promise<void>
   record: (type: string, detail?: unknown) => unknown
   /** The private roots a journaled dialog message and a failure cause must not show. */
   roots: CauseRoots
@@ -275,6 +277,31 @@ class ClickExecution {
     )
   }
 
+  /**
+   * Runs the source check before a step; a change after earlier inputs were typed says which step the click stopped before, since the click's answer is not delivered on this failure.
+   * @param step - The input (1-based) or the click press about to start.
+   * @throws {@link StudyError} `SOURCE_CHANGED`, naming the stopped step once an input had an effect.
+   */
+  private async assertSourcesCurrent(step: number | 'click'): Promise<void> {
+    try {
+      await this.input.assertSourcesUnchanged?.()
+    } catch (error) {
+      if (
+        !(error instanceof StudyError) ||
+        error.code !== 'SOURCE_CHANGED' ||
+        !this.hadEffect()
+      )
+        throw error
+      const stoppedBefore = step === 'click' ? 'its press' : `input ${step}`
+      throw new StudyError(
+        'SOURCE_CHANGED',
+        `${error.message} Click ${this.click.index} stopped before ${stoppedBefore} after ${this.progressState.inputsApplied} input(s) were typed; the extension may have reacted.`,
+        error.causeDetail,
+        error.recoveryOverride,
+      )
+    }
+  }
+
   /** Whether any input of this click was typed or reached the page (a focus that ran counts), so a later failure is partial. */
   private hadEffect(): boolean {
     return (
@@ -346,6 +373,7 @@ class ClickExecution {
     index: number,
     input: ResolvedExtensionClick['inputs'][number],
   ): Promise<void> {
+    await this.assertSourcesCurrent(index + 1)
     const objectId = await this.select(input.selector)
     if (!objectId) throw this.selectorFailure(input.selector, index + 1)
     try {
@@ -432,6 +460,7 @@ class ClickExecution {
 
   /** Finds the click's centre and presses the mouse there; a double click sends two press-release pairs with click counts 1 and 2. */
   private async press(waiter: ClickOutcomeWaiter): Promise<void> {
+    await this.assertSourcesCurrent('click')
     const objectId = await this.select(this.click.selector)
     if (!objectId) throw this.selectorFailure(this.click.selector, 'click')
     let centre

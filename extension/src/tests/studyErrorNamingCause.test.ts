@@ -52,3 +52,27 @@ test('a run failure whose message is its own cause stays the same error, its cla
   )
   assert.equal(namedIntegrity instanceof EvidenceIntegrityError, true)
 })
+
+// Value: protects=a run failure that carries its own recovery (an extension run's PAUSE_HOLD_EXPIRED) keeping it when its message gains the cause; fails_when=the named failure answers the code's general recovery, which speaks of a paused server (N62 attempt 2, Cycle 0062); why_new=Cycle 0062 N62 attempt 2; seam=none
+test('a run failure with its own recovery keeps that recovery when its message gains the cause', () => {
+  // Arrange
+  const failure = new StudyError(
+    'PAUSE_HOLD_EXPIRED',
+    'The study operation failed.',
+    'A stop was held longer than 280 s.',
+    'Tell the learner the extension stayed paused longer than 280 s.',
+  )
+
+  // Act
+  const named = studyErrorNamingCause(failure)
+
+  // Assert
+  assert.equal(
+    named.message,
+    'The study operation failed. Cause: A stop was held longer than 280 s.',
+  )
+  assert.equal(
+    named.describe().recovery,
+    'Tell the learner the extension stayed paused longer than 280 s.',
+  )
+})

@@ -100,6 +100,28 @@ test('a click that answered running offers the next click once its work has fini
   await harness.run.stop()
 })
 
+// protects=a click while the run ends (Cycle 0062 final-range CodeRabbit CLI): a click after the last declared one, while a stop's cleanup still runs, is refused as the run ending with RUN_NOT_READY, as the README names it; fails_when=it answers NO_MORE_ACTIONS while the run is ending; no_claim=a completed run's answer (NO_MORE_ACTIONS, pinned below)
+test('a click after the last declared one during a stop cleanup is refused as the run ending', async () => {
+  // Arrange
+  const closeGate = defer<{ profileLeft: boolean; exitConfirmed: boolean }>()
+  const harness = createRunHarness({ readText: textScript(['a', 'b']) })
+  harness.browser.close = () => closeGate.promise
+  await harness.run.prepare()
+  await harness.run.click()
+  await harness.run.click()
+  const stopping = harness.run.stop()
+  await waitUntil(
+    () => harness.log.includes('executor.dispose'),
+    'the cleanup to reach the browser close',
+  )
+  // Act
+  const code = await codeOf(harness.run.click())
+  // Assert
+  assert.equal(code, 'RUN_NOT_READY')
+  closeGate.resolve({ profileLeft: false, exitConfirmed: true })
+  await stopping
+})
+
 // Value: protects=SR2, SR12: a click after the last declared one is refused with NO_MORE_ACTIONS; fails_when=a third click reaches the executor; no_claim=the idempotent replay of the same key (service)
 test('refuses a click after the last declared one with NO_MORE_ACTIONS', async () => {
   // Arrange
@@ -429,8 +451,10 @@ test('does not read the result under a pause and finishes after the pause ends',
   await waitUntil(() => reads() >= 3, 'the observation to be polling')
   // Act
   const pause = harness.openDeclaredPause(1, 'page')
+  // gstack-timing-ok: a negative check that polling stays quiet during the pause; a slow runner can only miss a wrong extra read, never fail a correct run
   await sleep(150)
   const readsAtPause = reads()
+  // gstack-timing-ok: the same negative check, second window; a slow runner can only miss a wrong extra read, never fail a correct run
   await sleep(150)
   const readsLater = reads()
   harness.pauses.close(pause.sessionId, pause.threadId)

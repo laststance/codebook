@@ -12,7 +12,7 @@ const readBundledSkill = (): Promise<string> =>
 
 /**
  * Reads the **Extension runs.** paragraph of the bundled skill, so each rule of the chrome-extension route is pinned where the chat reads it.
- * Why: skill 1.0.55 keeps the extension route in one paragraph (Cycle 0061 task 7); every test below asserts on it. Called by each test in this file.
+ * Why: skill 1.0.55 keeps the extension route in one paragraph (Cycle 0061 task 7), and 1.0.56 adds the missing-view rule (Cycle 0062 task 4); every test below asserts on it. Called by each test in this file.
  * @returns The paragraph's single line, starting with `**Extension runs.**`.
  * @throws When the skill has no such paragraph (skill 1.0.54 and earlier).
  * @example
@@ -154,5 +154,17 @@ test('the bundled skill opens no Study presentation for an extension run', async
   assert.match(
     skill,
     /For a browser or test request requiring runtime observation \(a server or extension run needs no presentation\), open the learner presentation before the first application input/,
+  )
+})
+
+// protects=N61-2 (Cycle 0062 task 4): when an extension run goes on without its Application view, the chat tells the learner so, with the run's own reason and the step it names, and that a new run shows the view after that step; fails_when=the skill gives no rule for chromeExtension.viewUnavailable (skill 1.0.55), so the learner is not told why the view is missing; no_claim=how a given chat model words it
+test('the bundled skill tells the learner why an extension run shows no Application view and what to do', async () => {
+  // Arrange / Act
+  const paragraph = await readExtensionRuns()
+
+  // Assert
+  assert.match(
+    paragraph,
+    /When the run resource lists `chromeExtension\.viewUnavailable`, tell the learner that the Application view is not shown and why, in that reason's own words with the step it names, and that the run goes on without the view; after that step, a new run shows it\./,
   )
 })

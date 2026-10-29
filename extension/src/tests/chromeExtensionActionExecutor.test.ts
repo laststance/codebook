@@ -47,6 +47,8 @@ function executorFor(
     settleMs?: number
     /** Replaces the journal sink, for a test whose journal fails. */
     record?: (type: string, detail: unknown) => void
+    /** The per-step source check (ER20); absent → none. */
+    assertSourcesUnchanged?: () => void | Promise<void>
   } = {},
 ) {
   const surface = fakeExtensionSurface(answers)
@@ -58,6 +60,9 @@ function executorFor(
     extensionId: 'abcdefghijklmnopabcdefghijklmnop',
     pauseState: pauses,
     assertActionCurrent: () => {},
+    ...(options.assertSourcesUnchanged && {
+      assertSourcesUnchanged: options.assertSourcesUnchanged,
+    }),
     record:
       options.record ?? ((type, detail) => void events.push({ type, detail })),
     roots: { storage: [], workspace: '/Users/ada/secret-repo' },
@@ -288,6 +293,132 @@ test('a missing second input after the first was typed ends the click with INPUT
       error.message ===
         'Input 2 of click 1 failed after earlier inputs were typed; the extension may have reacted.',
   )
+})
+
+// protects=ER20 (Cycle 0062 task 15): the source check runs before each input step and before the press, so a source change between two inputs stops the click with SOURCE_CHANGED before the next input is sent; fails_when=the check runs once per click and a second input is typed or the mouse pressed from changed sources; no_claim=what the check compares (run tests)
+test('a source change between two inputs stops the click with SOURCE_CHANGED before the second input and the press', async () => {
+  // Arrange
+  let checks = 0
+  const { executor, surface } = executorFor(
+    {},
+    {
+      assertSourcesUnchanged: () => {
+        checks += 1
+        if (checks === 2)
+          throw new StudyError('SOURCE_CHANGED', 'A pinned source changed.')
+      },
+    },
+  )
+  // Act
+  const click = executor.run({
+    ...CLICK,
+    inputs: [
+      { selector: '#first', text: 'a' },
+      { selector: '#second', text: 'b' },
+    ],
+  })
+  // Assert
+  await assert.rejects(
+    click,
+    (error: unknown) =>
+      error instanceof StudyError && error.code === 'SOURCE_CHANGED',
+  )
+  assert.equal(
+    surface.methods().filter((method) => method === 'Input.insertText').length,
+    1,
+  )
+  assert.equal(surface.methods().includes('Input.dispatchMouseEvent'), false)
+})
+
+// protects=ER20 (Cycle 0062 review OCR-L1): a SOURCE_CHANGED after typed inputs names the input the click stopped before and says the extension may have reacted, since no click answer is delivered on this failure; fails_when=the message is only the source check's sentence; no_claim=what the check compares
+test('a source change after the first input says the click stopped before input 2 with input 1 typed', async () => {
+  // Arrange
+  let checks = 0
+  const { executor } = executorFor(
+    {},
+    {
+      assertSourcesUnchanged: () => {
+        checks += 1
+        if (checks === 2)
+          throw new StudyError('SOURCE_CHANGED', 'A pinned source changed.')
+      },
+    },
+  )
+  // Act
+  const click = executor.run({
+    ...CLICK,
+    inputs: [
+      { selector: '#first', text: 'a' },
+      { selector: '#second', text: 'b' },
+    ],
+  })
+  // Assert
+  await assert.rejects(
+    click,
+    (error: unknown) =>
+      error instanceof StudyError &&
+      error.code === 'SOURCE_CHANGED' &&
+      error.message ===
+        `A pinned source changed. Click ${CLICK.index} stopped before input 2 after 1 input(s) were typed; the extension may have reacted.`,
+  )
+})
+
+// protects=ER20 (Cycle 0062 task 15): a source change after the only input was typed stops the click before its press and says so; fails_when=the press-step wording is lost (the click reads as stopped before an input) or the press is still sent; why_new=the neighbouring test covers the input-2 wording only; seam=none; no_claim=what the check compares
+test('a source change after the only input says the click stopped before its press and sends no mouse event', async () => {
+  // Arrange
+  let checks = 0
+  const { executor, surface } = executorFor(
+    {},
+    {
+      assertSourcesUnchanged: () => {
+        checks += 1
+        if (checks === 2)
+          throw new StudyError('SOURCE_CHANGED', 'A pinned source changed.')
+      },
+    },
+  )
+  // Act
+  const click = executor.run({
+    ...CLICK,
+    inputs: [{ selector: '#first', text: 'a' }],
+  })
+  // Assert
+  await assert.rejects(
+    click,
+    (error: unknown) =>
+      error instanceof StudyError &&
+      error.code === 'SOURCE_CHANGED' &&
+      error.message ===
+        `A pinned source changed. Click ${CLICK.index} stopped before its press after 1 input(s) were typed; the extension may have reacted.`,
+  )
+  assert.equal(surface.methods().includes('Input.dispatchMouseEvent'), false)
+})
+
+// protects=ER20 (Cycle 0062 task 15): a source change found before any input had an effect keeps the check's own sentence, since nothing was typed that the extension could react to; fails_when=the stopped-before note is added to a click that did nothing; why_new=the neighbouring tests all type an input first; seam=none; no_claim=what the check compares
+test('a source change before the first input keeps the plain sentence and types nothing', async () => {
+  // Arrange
+  const { executor, surface } = executorFor(
+    {},
+    {
+      assertSourcesUnchanged: () => {
+        throw new StudyError('SOURCE_CHANGED', 'A pinned source changed.')
+      },
+    },
+  )
+  // Act
+  const click = executor.run({
+    ...CLICK,
+    inputs: [{ selector: '#first', text: 'a' }],
+  })
+  // Assert
+  await assert.rejects(
+    click,
+    (error: unknown) =>
+      error instanceof StudyError &&
+      error.code === 'SOURCE_CHANGED' &&
+      error.message === 'A pinned source changed.',
+  )
+  assert.equal(surface.methods().includes('Input.insertText'), false)
 })
 
 // protects=a lost answer after the mouse press is an unknown outcome; fails_when=it reads as partial input or as success; no_claim=whether the page reacted

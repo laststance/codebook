@@ -553,6 +553,9 @@ export async function workspaceHarness(
   /** See `holdNextTextDocumentShow`. */
   let heldTextDocumentShow:
     { entered: () => void; wait: Promise<void>; uri?: string } | undefined
+  /** See `redirectNextTextDocumentShow`. */
+  let redirectedTextDocumentShow:
+    { uri: string; viewColumn: number } | undefined
   /** See `holdNextTabCloseEffect`. */
   let heldTabCloseEffect:
     { entered: () => void; wait: Promise<void> } | undefined
@@ -2408,6 +2411,31 @@ export async function workspaceHarness(
     }
   }
   /**
+   * Opens a text tab in front of a group without giving it the keyboard and announces the new tab to the reader's tab listeners; the step of `openPausedFileInLockedGroup` and `openAnnouncedTextTab`.
+   * @param filename - The file.
+   * @param column - The group, locked or not.
+   * @param state - The tab's preview and unsaved-change flags, and optionally the line its text editor's caret stands on, as where the debugger revealed a stop.
+   * @returns The tab.
+   * @example openAnnouncedTextTab('settings.js', 1, { isPreview: true, isDirty: false, selectedLine: 41 })
+   */
+  function openAnnouncedTextTab(
+    filename: string,
+    column: number,
+    state: { isPreview: boolean; isDirty: boolean; selectedLine?: number },
+  ): Tab {
+    const { tab, editor } = openDraftTab(filename, column, true)
+    tab.isPreview = state.isPreview
+    tab.isDirty = state.isDirty
+    if (state.selectedLine !== undefined) {
+      const caret = new Position(state.selectedLine, 0)
+      editor.selections = [{ anchor: caret, active: caret }]
+    }
+    for (const listener of tabChangeListeners)
+      listener({ opened: [tab], closed: [], changed: [] })
+    activeTextEditorChanged(focusedSourceEditor())
+    return tab
+  }
+  /**
    * Gives the text editor of a draft's tab the keyboard, whoever had it before: the tab is in front of its group, the group is the active one, and the editor is reported as the active text editor; called by `focusMutableDraft` for a learner's click and by `pauseDebugger` for the debugger's own opening of the paused file.
    * The group is the one that holds the tab now: Cursor's model replaces every group object at a tab change (`replaceGroupObjects`), so the object the draft was opened in may be retired (Cycle 0046 row 703).
    * @param opened - What `openDraftTab` returned for that draft.
@@ -3407,6 +3435,7 @@ export async function workspaceHarness(
         for (const listener of viewChanged) listener()
       },
       viewListenerCount: () => viewChanged.length,
+      disposeListenerCount: () => disposed.length,
       onDidChangeViewState(callback: () => void) {
         viewChanged.push(callback)
         return {
@@ -4909,6 +4938,16 @@ export async function workspaceHarness(
             heldShow.entered()
             await heldShow.wait
           }
+          // In the model of `redirectNextTextDocumentShow`, the editor shows the document in another column than asked.
+          if (
+            redirectedTextDocumentShow?.uri === sourceDocument.uri.toString()
+          ) {
+            options = {
+              ...options,
+              viewColumn: redirectedTextDocumentShow.viewColumn,
+            }
+            redirectedTextDocumentShow = undefined
+          }
           textDocumentShows.push({
             name: basename(sourceDocument.uri.path),
             viewColumn: options?.viewColumn,
@@ -5906,6 +5945,12 @@ export async function workspaceHarness(
       return replacement
     },
     focusedSource: focusedSourceEditor,
+    /** Counts the disposal listeners every open pane holds, so a test sees a listener a reused pane gains per run. @example harness.disposeListenerCount() // => 3 */
+    disposeListenerCount: () =>
+      [...panels].reduce(
+        (count, panel) => count + panel.disposeListenerCount(),
+        0,
+      ),
     focusListenerCount: () =>
       activeEditorListeners.size +
       selectionListeners.size +
@@ -6479,6 +6524,34 @@ export async function workspaceHarness(
     openFileWithoutKeyboard(filename: string, column: number): void {
       openDraftTab(filename, column, true)
       activeTextEditorChanged(focusedSourceEditor())
+    },
+    /**
+     * Opens a stop's paused file as a preview in the group it is given, even a locked one, preserving the focus, and announces the new tab, as Cursor 3.27.22 did with the Application group at an extension run's page stop (Cycle 0062 task 2, dry run of 2026-10-30).
+     * @param filename - The paused file.
+     * @param column - The group Cursor opened it in.
+     * @returns The paused file's tab.
+     * @example harness.openPausedFileInLockedGroup('settings.js', 1)
+     */
+    openPausedFileInLockedGroup(filename: string, column: number): Tab {
+      return openAnnouncedTextTab(filename, column, {
+        isPreview: true,
+        isDirty: false,
+      })
+    },
+    /**
+     * Opens a text tab in front of a group, even a locked one, without giving it the keyboard, and announces it: a file the learner dragged there (kept) or an edited preview, beside the paused file of `openPausedFileInLockedGroup`.
+     * @param filename - The file.
+     * @param column - The group.
+     * @param state - Whether the tab is a preview and whether it has unsaved changes.
+     * @returns The tab.
+     * @example harness.openAnnouncedTextTab('notes.js', 1, { isPreview: false, isDirty: false })
+     */
+    openAnnouncedTextTab(
+      filename: string,
+      column: number,
+      state: { isPreview: boolean; isDirty: boolean; selectedLine?: number },
+    ): Tab {
+      return openAnnouncedTextTab(filename, column, state)
     },
     /**
      * Shows a stop the way both editors' own stop handling does under `debug.focusEditorOnBreak: false` (`focusStackFrame(…, { preserveFocus: true })` in VS Code 1.140 and Cursor 3.23): the paused file comes to the front of its group preserving the focus, and then the stop's frame is reported. When the text editor in front of the active group had the keyboard, it is hidden and the keyboard falls to the page body (Cycle 0046 finding 589, C54 rounds 9f and step1). A test sends the adapter's `stopped` event first (`pauseDebugger` with `staysInBackground`).
@@ -7370,6 +7443,15 @@ export async function workspaceHarness(
         })
       heldTextDocumentShow = { entered, wait, uri: options?.uri }
       return { started, release }
+    },
+    /**
+     * Makes the editor show the next `showTextDocument` of a document in another column than the one asked, as an editor does when the asked group closed meanwhile or it reveals the file where it already was.
+     * @param uri - The exact document URI.
+     * @param viewColumn - The column the editor shows it in.
+     * @example harness.redirectNextTextDocumentShow(uri, applicationColumn)
+     */
+    redirectNextTextDocumentShow(uri: string, viewColumn: number): void {
+      redirectedTextDocumentShow = { uri, viewColumn }
     },
     /**
      * Makes the editor refuse to close every open tab whose document URI contains a text, as it does for a tab it keeps (an answer of `false` for its group's requested tabs).

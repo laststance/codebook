@@ -43,6 +43,8 @@ export type FakeOwnedChromeBehaviour = {
   executableVersionText?: string
   /** What `Browser.getVersion` answers as `product`; defaults to a supported Chrome. */
   browserProduct?: string
+  /** Pages the extension opens itself once it is installed (an install handler's tab), by url; `Target.closeTarget` closes them. */
+  extensionOwnPages?: string[]
   /** How long the fake takes to answer a command: one sent with a shorter timeout fails as `timed out`, as a real Chrome's answer arrives too late for it. Unset, every timeout is met. */
   answerLatencyMs?: number
 }
@@ -106,6 +108,8 @@ export function fakeOwnedChrome(
   const storage: Record<string, unknown> = {}
   const sessions = new Map<string, string>()
   let targetCount = 0
+  let installed = false
+  const closedTargets = new Set<string>()
 
   const answer = (command: RecordedCommand): Record<string, unknown> => {
     const { method, params, sessionId } = command
@@ -127,6 +131,7 @@ export function fakeOwnedChrome(
       case 'Target.createTarget':
         return { targetId: `created-${++targetCount}-${String(params.url)}` }
       case 'Target.closeTarget':
+        closedTargets.add(String(params.targetId))
         return { success: true }
       case 'Extensions.loadUnpacked':
         if (behaviour.loadRejection !== undefined)
@@ -135,6 +140,7 @@ export function fakeOwnedChrome(
             -32600,
             behaviour.loadRejection.replace('<root>', String(params.path)),
           )
+        installed = true
         return { id: behaviour.loadedId }
       case 'ServiceWorker.stopAllWorkers':
         if (stopTimeoutsLeft > 0) {
@@ -179,6 +185,16 @@ export function fakeOwnedChrome(
       return [{ targetId: 'tab-1', type: 'tab', url: 'about:blank' }]
     const targets = [
       { targetId: 'page-1', type: 'page', url: 'about:blank' },
+      // The extension's own pages are listed before a popup, as tabs opened earlier are.
+      ...(installed
+        ? (behaviour.extensionOwnPages ?? [])
+            .map((url, index) => ({
+              targetId: `own-${index + 1}`,
+              type: 'page',
+              url,
+            }))
+            .filter((page) => !closedTargets.has(page.targetId))
+        : []),
       ...(workerRunning
         ? [
             {

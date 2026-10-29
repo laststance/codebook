@@ -25,6 +25,8 @@ export type ExtensionPaneViewport = Pick<
 export interface ChromeExtensionViewportOptions {
   /** Called once when the view reaches its last content (the run ended or failed before a surface): the owner then keeps the pane after the lease is released (ER22). */
   onFinal?: () => void
+  /** Called with the run's stop files (absolute paths) when the identity is set, so the lease moves only those paused files out of the Application group. */
+  onStopFiles?: (stopFiles: readonly string[]) => void
 }
 
 /**
@@ -68,7 +70,7 @@ function flatSessionScreencast(
  * Created by {@link StudyWorkspace}'s `createChromeExtensionViewport` over a leased pane; driven by the chrome-extension run, which calls exactly one of {@link surfaceLost} / {@link end} and then {@link close}.
  * @example
  * const view = new ChromeExtensionViewportView(browserViewport)
- * view.setIdentity({ manifestName: 'Notes', surface: { kind: 'popup', path: 'popup.html' }, clickTitles: ['Add'] })
+ * view.setIdentity({ manifestName: 'Notes', surface: { kind: 'popup', path: 'popup.html' }, clickTitles: ['Add'], stopFiles: ['/repo/popup.js'] })
  */
 export class ChromeExtensionViewportView implements ChromeExtensionViewport {
   private identity?: ExtensionViewportIdentity
@@ -91,6 +93,7 @@ export class ChromeExtensionViewportView implements ChromeExtensionViewport {
 
   setIdentity(identity: ExtensionViewportIdentity): void {
     this.identity = identity
+    this.options.onStopFiles?.(identity.stopFiles)
     this.publish()
   }
 

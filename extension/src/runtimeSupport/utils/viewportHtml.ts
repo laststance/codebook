@@ -52,8 +52,9 @@ export function viewportHtml(
   const bodyMarkup = isExtension
     ? `<div id="scroller"${isPopup ? ' tabindex="0" role="region" aria-label="Extension popup view"' : ''}>${imageMarkup}</div><div id="detail" class="visually-hidden"></div>`
     : imageMarkup
+  // Both editors inject `img, video { max-width: 100%; max-height: 100% }` into every webview; a popup frame keeps its own size so a narrower pane scrolls it.
   const popupStyle = isPopup
-    ? '#page{flex:none;width:auto;margin:0 auto;object-fit:none;outline:1px solid var(--vscode-panel-border);background:var(--vscode-editor-background)}'
+    ? '#page{flex:none;width:auto;max-width:none;max-height:none;margin:0 auto;object-fit:none;outline:1px solid var(--vscode-panel-border);background:var(--vscode-editor-background)}'
     : ''
   const extensionStyle = isExtension
     ? `#title,#provenance{flex:0 0 auto}#provenance{flex-basis:100%;color:var(--vscode-descriptionForeground)}header{justify-content:flex-start}#message{flex:0 0 auto;padding:8px 12px;white-space:pre-line}#scroller{flex:1;min-height:0;display:flex;flex-direction:column;overflow:${isPopup ? 'auto' : 'hidden'}}#scroller:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:-1px}.dimmed #page{opacity:.45}.visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}${popupStyle}`

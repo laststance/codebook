@@ -3,6 +3,7 @@ import { test } from 'node:test'
 
 import { StudyError } from '../errors'
 import { readResource } from '../resources'
+import { CHROME_EXTENSION_RECOVERY } from '../utils/chromeExtensionRecovery'
 
 import { createHarness } from './helpers'
 import { defer } from './utils/defer'
@@ -377,6 +378,31 @@ test('a failed run frees the slot and shows its failure as the run error', async
   assert.equal(
     state.error.message,
     "The extension's browser stopped unexpectedly.",
+  )
+})
+
+// protects=N62 attempt 2 (Cycle 0062): a failed extension run's error keeps the extension's own recovery the run gave it, as a stop held past its limit does; fails_when=the run resource answers the code's general recovery instead, which tells the chat about a paused server, its closed server and a request's data (N62 attempt 2 in VS Code read exactly that); no_claim=the hold's own timing (debugger tests)
+test('a failed extension run keeps its own recovery in the run error, not the server wording of its code', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { run, record } = await startFakeChromeExtensionRun(harness)
+  // Act
+  run.fail(
+    new StudyError(
+      'PAUSE_HOLD_EXPIRED',
+      'A stop was held longer than 300 s.',
+      undefined,
+      CHROME_EXTENSION_RECOVERY.pauseHoldExpired(300_000),
+    ),
+  )
+  await new Promise((resolve) => setImmediate(resolve))
+  const state = await readRunResource(harness, record.id)
+  // Assert
+  assert.equal(state.error.code, 'PAUSE_HOLD_EXPIRED')
+  assert.equal(
+    state.error.recovery,
+    "Tell the learner the extension stayed paused longer than 300 s, so Codebook ended the run without resuming the paused code. Recovery: learner decision, at most one new run. The run is stopped and its owned browser closed; whether the click changed the extension's data is unknown, so have the learner check it. Start one new run with a new key only if the learner asks, and continue each stop within the hold. See codebook://help/chrome-extension#PAUSE_HOLD_EXPIRED.",
   )
 })
 

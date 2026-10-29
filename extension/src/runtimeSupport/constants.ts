@@ -20,6 +20,10 @@ export const CDP_BRIDGE_PAYLOAD_LIMIT_BYTES = 16 * 1024 * 1024
 export const CDP_BRIDGE_PENDING_LIMIT = 64
 export const VIEWPORT_WIDTH_PX = 720
 export const VIEWPORT_HEIGHT_PX = 640
+/** Chrome caps an extension popup at 800 x 600 CSS px, so a popup screencast needs no larger frame. */
+export const EXTENSION_POPUP_MAX_WIDTH_PX = 800
+/** Chrome caps an extension popup at 800 x 600 CSS px (height side of {@link EXTENSION_POPUP_MAX_WIDTH_PX}). */
+export const EXTENSION_POPUP_MAX_HEIGHT_PX = 600
 export const STREAM_TELEMETRY_INTERVAL_MS = 1_000
 export const NANOSECONDS_PER_MILLISECOND = 1_000_000
 export const SCENARIOS = [

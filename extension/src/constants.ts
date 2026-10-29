@@ -10,7 +10,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.10'
-export const EXTENSION_VERSION = '0.2.59'
+export const EXTENSION_VERSION = '0.2.60'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -2183,6 +2183,10 @@ export const EXTENSION_SCREENCAST_STOP_TIMEOUT_MS = 1_000
 export const EXTENSION_OBSERVED_VALUE_LIMIT_CHARS = 4_096
 /** How long the run waits for the surface screenshot it pins at a pause; a paused page may never answer it. */
 export const EXTENSION_PIN_CAPTURE_TIMEOUT_MS = 2_000
+/** How long a chrome-extension run's stop waits for a preparation step still in flight, from the stop's admission; a step that ignores its abort cannot hold the stop past it. Shares the node-server stop bound ({@link NODE_SERVER_STOP_DEADLINE_MS}). */
+export const CHROME_EXTENSION_STOP_DEADLINE_MS = NODE_SERVER_STOP_DEADLINE_MS
+/** How many moves in a row of a paused file out of an extension run's Application group may fail before the lease stops trying; a show the editor keeps refusing then leaves the file where it is instead of looping (Cycle 0062 task 2). */
+export const PAUSED_SOURCE_MOVE_ATTEMPTS = 2
 
 // Lane F (Cycle 0061 pt2, MCP surface and help)
 /**

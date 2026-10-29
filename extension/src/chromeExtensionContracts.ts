@@ -111,6 +111,8 @@ export interface OwnedExtensionBrowser {
   cdp: FlatCdpConnection
   /** Target id of the open surface (popup or page). */
   surfaceTargetId: string
+  /** How many other pages at the surface url the launch closed after it opened the surface (the extension's own copies, for example an install handler's tab); the run lists a close as the `close-duplicate-surface-page` intervention. */
+  closedDuplicateSurfacePages: number
   /** A session of the run's own about:blank page, used for `ServiceWorker.*` commands. */
   controlSessionId: string
   /** Owner-marked profile folder. */
@@ -171,6 +173,8 @@ export type ExtensionViewportIdentity = {
   surface: { kind: ExtensionSurfaceKind; path: string }
   /** The declared click titles, in order (DR8's hidden text). */
   clickTitles: readonly string[]
+  /** The declared stops' files as canonical absolute paths: the only files the Application group's lease moves out when the editor opens them in front of the view. */
+  stopFiles: readonly string[]
 }
 
 /**

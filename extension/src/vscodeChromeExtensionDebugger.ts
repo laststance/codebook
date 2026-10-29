@@ -30,6 +30,7 @@ import {
 } from './chromeExtensionStopRegistry'
 import {
   CHROME_EXTENSION_SESSION_NAME_PREFIX,
+  CHROME_EXTENSION_STOP_DEADLINE_MS,
   EXTENSION_OPEN_BOUND_MS,
   EXTENSION_WAKE_BOUND_MS,
   EXTENSION_WORKER_PAUSE_HOLD_MS,
@@ -49,10 +50,12 @@ import { WaitTimeoutError } from './runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
 import { CHROME_EXTENSION_RECOVERY } from './utils/chromeExtensionRecovery'
+import { extensionFileUrl } from './utils/extensionFileUrl'
 import { isDebugSessionOfRun } from './utils/isDebugSessionOfRun'
 import { PendingResumeRequests } from './utils/pendingResumeRequests'
 import { SharedAttempt } from './utils/sharedAttempt'
 import { stopRunDebugSessions } from './utils/stopRunDebugSessions'
+import { withoutFragment } from './utils/withoutFragment'
 
 type StackBody = DebugProtocol.StackTraceResponse['body']
 
@@ -101,6 +104,17 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
   private readonly unverifiedWorkerStops = new Set<number>()
   private ready = false
   private releaseBegun = false
+  /** Whether `startDebugging` of {@link attach} has not settled; while it is, the tracker stays so a session it starts late is still recognized as this run's. */
+  private attachPending = false
+  /** Ids of the sessions the editor confirmed stopped; an id joins only after its stop succeeded, so a failed stop is retried. */
+  private readonly stoppedSessionIds = new Set<string>()
+  /** The stop of each session the editor is still carrying out, by session id (see {@link stopOnce}). */
+  private readonly stopsInFlight = new Map<string, Promise<void>>()
+  /** Every session of this run the editor announced as started, whether or not its tracker registered it (a session starting after the release began may skip the tracker). */
+  private readonly startedSessions = new Map<string, vscode.DebugSession>()
+  /** Ends the late-session watch when a pending attach never settles; see {@link armLateWatchBound}. */
+  private lateWatchTimer?: ReturnType<typeof setTimeout>
+  private listenersDisposed = false
   /** Whether a second page matching the surface URL has been journaled already. */
   private secondPageJournaled = false
   /** Set once a page child was adopted as the surface; stays set after that session ends so a later page child is never promoted. */
@@ -110,6 +124,7 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
   private readonly releaser = new SharedAttempt(() => this.releaseOwned())
   private readonly tracker: vscode.Disposable
   private readonly termination: vscode.Disposable
+  private readonly sessionStarts: vscode.Disposable
   private readonly reportPhase: ReturnType<typeof createPhaseReporter>
 
   constructor(private readonly input: ExtensionDebuggerInput) {
@@ -126,6 +141,10 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     this.termination = vscode.debug.onDidTerminateDebugSession((session) =>
       this.onSessionTerminated(session),
     )
+    this.sessionStarts = vscode.debug.onDidStartDebugSession((session) => {
+      if (isDebugSessionOfRun(session, this.name))
+        this.startedSessions.set(session.id, session)
+    })
   }
 
   get pauseState() {
@@ -212,7 +231,10 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
    */
   private adoptWorker(entry: SessionEntry): void {
     entry.kind = 'worker'
-    entry.targetUrl = `chrome-extension://${this.input.run.extensionId}/${this.input.run.workerPath ?? ''}`
+    entry.targetUrl = extensionFileUrl(
+      this.input.run.workerPath ?? '',
+      this.input.run.extensionId,
+    ).href
     // A replacement worker verifies its stops through `setBreakpoints`, not a `breakpoint` event: earlier losses are superseded.
     this.unverifiedWorkerStops.clear()
     this.bumpGeneration()
@@ -760,26 +782,35 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
         'SURFACE_NOT_ATTACHED',
         `The debugger could not attach to the extension ${run.surface.kind}.`,
       )
-    const started = await vscode.debug.startDebugging(
-      vscode.workspace.getWorkspaceFolder(vscode.Uri.file(workspace)),
-      {
-        type: 'pwa-chrome',
-        request: 'attach',
-        name: this.name,
-        port: this.input.port,
-        webRoot: run.root,
-        urlFilter: run.surfaceUrl,
-        pathMapping: {
-          [`chrome-extension://${run.extensionId}/`]: `${run.root}/`,
+    this.attachPending = true
+    let started: boolean
+    try {
+      started = await vscode.debug.startDebugging(
+        vscode.workspace.getWorkspaceFolder(vscode.Uri.file(workspace)),
+        {
+          type: 'pwa-chrome',
+          request: 'attach',
+          name: this.name,
+          port: this.input.port,
+          webRoot: run.root,
+          urlFilter: run.surfaceUrl,
+          pathMapping: {
+            [`chrome-extension://${run.extensionId}/`]: `${run.root}/`,
+          },
+          targetSelection: 'automatic',
         },
-        targetSelection: 'automatic',
-      },
-      // The editor would save the learner's modified documents as the session starts; a learner's document is saved by the learner alone.
-      { suppressSaveBeforeStart: true },
-    )
+        // The editor would save the learner's modified documents as the session starts; a learner's document is saved by the learner alone.
+        { suppressSaveBeforeStart: true },
+      )
+    } finally {
+      this.attachPending = false
+      clearTimeout(this.lateWatchTimer)
+      // The release began while the editor was still starting the session: it could not know that session, so it ends here (a stop that outlasted its bound must not leave a debugger running).
+      if (this.releaseBegun) await this.endLateWatch()
+    }
     signal.throwIfAborted()
     if (!started) throw refusal()
-    await this.waitOr(
+    const surface = await this.waitOr(
       async () => {
         return this.entriesOf('page')[0]
       },
@@ -788,6 +819,44 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
       signal,
       refusal,
     )
+    await this.verifySurface(surface, refusal)
+  }
+
+  /**
+   * Ties the adopted page child to the surface: it is kept only while the surface is the single page target at the surface URL, compared without its fragment (a hash route keeps the page; a page of the same file with another query is another page), because js-debug's child session names no target id and a second matching tab could have attached first.
+   * Called by {@link attach} once the page child exists; the attach is refused (and the child demoted to `other`) when the match is not unique or the surface target is gone.
+   * @param entry - The page child adopted as the surface.
+   * @param refusal - Builds the attach's refusal.
+   * @throws The refusal from `refusal` when the surface cannot be proven to be the adopted child.
+   */
+  private async verifySurface(
+    entry: SessionEntry,
+    refusal: () => StudyError,
+  ): Promise<void> {
+    const targets = await this.input.readTargets()
+    const matchingPageIds = targets
+      .filter(
+        (target) =>
+          target.type === 'page' &&
+          withoutFragment(target.url) ===
+            withoutFragment(this.input.run.surfaceUrl),
+      )
+      .map((target) => target.targetId)
+    // Exactly the surface: nothing else could have attached first.
+    if (
+      matchingPageIds.length === 1 &&
+      matchingPageIds[0] === this.input.surfaceTargetId
+    )
+      return
+    entry.kind = 'other'
+    // The journal names which of the two cases refused the tie: no page at the surface URL (the surface closed), or more than one.
+    this.input.record('chrome-extension.debugger-error', {
+      message:
+        matchingPageIds.length === 0
+          ? 'The attached page could not be tied to the surface target; no page is open at the surface URL.'
+          : 'The attached page could not be tied to the surface target; another page matches the surface URL.',
+    })
+    throw refusal()
   }
 
   private workerNotAttached(): StudyError {
@@ -815,7 +884,7 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
       this.recordIntervention('start-worker')
       await this.input.startWorker()
     }
-    await this.waitOr(
+    const worker = await this.waitOr(
       async () => {
         return this.entriesOf('worker')[0]
       },
@@ -823,6 +892,48 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
       EXTENSION_WAKE_BOUND_MS,
       signal,
       () => this.workerNotAttached(),
+    )
+    await this.verifyWorker(worker, signal)
+  }
+
+  /**
+   * Ties the adopted worker child to the extension's own service worker: it is kept only while the owned browser lists exactly one service-worker target of the extension's origin, at the extension's worker URL (a second worker of the extension makes the adoption ambiguous; other origins' workers are not counted).
+   * Called by {@link wakeWorker} after a worker child appears; a worker child while no such single target exists is another extension's and is demoted to `other`.
+   * @param entry - The worker child adopted as the extension's worker.
+   * @param signal - The run's abort signal.
+   * @throws {@link StudyError} `SERVICE_WORKER_NOT_ATTACHED` when the extension's worker target is not listed within the wake bound.
+   */
+  private async verifyWorker(
+    entry: SessionEntry,
+    signal: AbortSignal,
+  ): Promise<void> {
+    // The target list can trail the worker's child session, so it is polled within the wake bound before the child is demoted.
+    await this.waitOr(
+      async () => {
+        const origin = `chrome-extension://${this.input.run.extensionId}/`
+        const workers = (await this.input.readTargets()).filter(
+          (target) =>
+            target.type === 'service_worker' &&
+            normalizedUrl(target.url).startsWith(origin),
+        )
+        // Exactly the extension's worker among the extension's own: js-debug's child names no target id, so a second worker of the extension could be the one adopted; another origin's worker (a component extension, a web worker) is never the extension's. Chrome lists the url encoded and normalized, so both sides are compared normalized (LR-D6).
+        return (
+          workers.length === 1 &&
+          normalizedUrl(workers[0]?.url ?? '') ===
+            normalizedUrl(entry.targetUrl ?? '')
+        )
+      },
+      "the extension's service worker target to be the only one of the extension listed",
+      EXTENSION_WAKE_BOUND_MS,
+      signal,
+      () => {
+        entry.kind = 'other'
+        this.input.record('chrome-extension.debugger-error', {
+          message:
+            "A worker child of the surface is not the extension's service worker and is ignored.",
+        })
+        return this.workerNotAttached()
+      },
     )
   }
 
@@ -902,11 +1013,22 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     this.input.record('chrome-extension.intervention', { kind, time })
   }
 
-  release(): Promise<void> {
-    return this.releaser.run()
+  /**
+   * Releases the run once and, on every call, retries any session whose stop failed (also one the pending attach started late).
+   * @throws The editor's error for the first session that did not stop.
+   */
+  async release(): Promise<void> {
+    await this.releaser.run()
+    try {
+      await this.stopKnownSessions()
+    } catch (error) {
+      // A retried stop that fails again is journaled like the first, then still reaches the caller.
+      this.recordStopFailure(error)
+      throw error
+    }
   }
 
-  /** Removes the breakpoints, ends the sessions this run started and stops listening; repeatable after a failure. */
+  /** Removes the breakpoints, ends the sessions this run started and stops listening; a session that would not stop is journaled as a debugger error and rethrown after the listeners are disposed; repeatable after a failure. */
   private async releaseOwned(): Promise<void> {
     this.releaseBegun = true
     this.abort.abort()
@@ -914,12 +1036,100 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     this.holdTimers.clear()
     this.output.finish()
     this.registry.removeAll()
-    await stopRunDebugSessions(
-      [...this.entries.values()].map((entry) => entry.session),
-      (session) => vscode.debug.stopDebugging(session),
+    try {
+      await this.stopKnownSessions()
+    } catch (error) {
+      // The failure is journaled where the run's other debugger failures go, then still reaches the caller; a repeat release runs again.
+      this.recordStopFailure(error)
+      throw error
+    } finally {
+      // Listeners go in every case: a failed stop never leaves them alive; a pending attach keeps them, for a bounded time, until it settles (see endLateWatch).
+      if (this.attachPending) this.armLateWatchBound()
+      else this.disposeListeners()
+    }
+  }
+
+  private recordStopFailure(error: unknown): void {
+    this.input.record('chrome-extension.debugger-error', {
+      message: error instanceof Error ? error.message : String(error),
+    })
+  }
+
+  /**
+   * Asks the editor to stop every session of this run not yet confirmed stopped: the tracker's entries and the sessions the editor announced.
+   * An id is marked stopped only after its stop succeeded, so a later call retries a failed one.
+   * @throws The editor's error for the first session that did not stop; every other session was still asked to stop.
+   */
+  private async stopKnownSessions(): Promise<void> {
+    const known = new Map(this.startedSessions)
+    for (const entry of this.entries.values())
+      known.set(entry.session.id, entry.session)
+    const pending = [...known.values()].filter(
+      (session) => !this.stoppedSessionIds.has(session.id),
     )
+    const results = await Promise.allSettled(
+      pending.map((session) => this.stopOnce(session)),
+    )
+    const failure = results.find((result) => result.status === 'rejected')
+    if (failure?.status === 'rejected') throw failure.reason
+  }
+
+  /** Stops one session, sharing the stop already in flight for it, so overlapping stop paths ask the editor once; a failed stop is forgotten when it settles, so a later call retries it. */
+  private stopOnce(session: vscode.DebugSession): Promise<void> {
+    const inFlight = this.stopsInFlight.get(session.id)
+    if (inFlight) return inFlight
+    const stop = stopRunDebugSessions([session], (target) =>
+      vscode.debug.stopDebugging(target),
+    )
+      .then(() => {
+        this.stoppedSessionIds.add(session.id)
+      })
+      .finally(() => this.stopsInFlight.delete(session.id))
+    this.stopsInFlight.set(session.id, stop)
+    return stop
+  }
+
+  /** Bounds how long the listeners wait for an attach that never settles after the release began; at the bound the known sessions are stopped once more and the listeners go. */
+  private armLateWatchBound(): void {
+    // A repeated release re-arms the one bound; the earlier timer never fires on its own.
+    clearTimeout(this.lateWatchTimer)
+    this.lateWatchTimer = setTimeout(
+      () => void this.endLateWatch(),
+      CHROME_EXTENSION_STOP_DEADLINE_MS,
+    )
+    // The bound alone never keeps the editor process alive.
+    this.lateWatchTimer.unref?.()
+  }
+
+  /** Stops the sessions the pending attach started after the release began, journals a failed stop (a later release retries it), and disposes the listeners the release left for it. */
+  private async endLateWatch(): Promise<void> {
+    try {
+      await this.stopKnownSessions()
+    } catch (error) {
+      this.recordStopFailure(error)
+    } finally {
+      this.disposeListeners()
+    }
+  }
+
+  private disposeListeners(): void {
+    if (this.listenersDisposed) return
+    this.listenersDisposed = true
     this.tracker.dispose()
     this.termination.dispose()
+    this.sessionStarts.dispose()
+  }
+}
+
+/**
+ * Normalizes a url the way Chrome lists it (encoded, dot segments resolved), so a manifest path and a listed target compare equal; an unparsable value is returned as given.
+ * Called by the worker tie of {@link VscodeChromeExtensionDebugger}.
+ */
+function normalizedUrl(url: string): string {
+  try {
+    return new URL(url).href
+  } catch {
+    return url
   }
 }
 
@@ -929,7 +1139,7 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
  * @param input - The run id, the resolved run, the owned browser's port and surface, and the journal.
  * @returns The debugger, listening to the editor's debug sessions of this run only.
  * @example
- * const debug = createVscodeChromeExtensionDebugger({ runId, workspace, run, port, surfaceTargetId, startWorker, assertSourcesUnchanged, roots, record })
+ * const debug = createVscodeChromeExtensionDebugger({ runId, workspace, run, port, surfaceTargetId, readTargets, startWorker, assertSourcesUnchanged, roots, record })
  * await debug.attach(signal)
  */
 export function createVscodeChromeExtensionDebugger(

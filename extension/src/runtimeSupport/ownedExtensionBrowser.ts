@@ -30,6 +30,7 @@ import { StudyError } from '../errors'
 import type { StorageOwnerIdentity } from '../utils/readRecordedOwner'
 import { removeWithoutFollowing } from '../utils/removeWithoutFollowing'
 import { retryWhileBusy } from '../utils/retryWhileBusy'
+import { withoutFragment } from '../utils/withoutFragment'
 
 import {
   connectFlatCdp,
@@ -459,6 +460,10 @@ async function openPopup(
     // The worker applies the extension's own state first (task 0).
     await session.dependencies.sleep(EXTENSION_POPUP_WORKER_SETTLE_MS)
   }
+  // A page the extension opened at the popup's url before the action (an install handler's tab) is no popup.
+  const pagesBeforeAction = new Set(
+    (await pagesAtUrl(session.cdp, surfaceUrl)).map((page) => page.targetId),
+  )
   const tabs = readCdpTargets(
     await session.cdp.request('Target.getTargets', {
       filter: [{ type: 'tab' }],
@@ -479,12 +484,63 @@ async function openPopup(
     assertNotStopped(session.signal)
     const popup = readCdpTargets(
       await requestWithin(session.cdp, budget, 'Target.getTargets', {}),
-    ).find((target) => target.type === 'page' && target.url === surfaceUrl)
+    ).find(
+      (target) =>
+        target.type === 'page' &&
+        target.url === surfaceUrl &&
+        !pagesBeforeAction.has(target.targetId),
+    )
     if (popup) return popup.targetId
     if (budget.isSpent()) break
     await budget.pause(session.dependencies.sleep, EXTENSION_BROWSER_POLL_MS)
   }
   throw new StudyError('POPUP_NOT_OPENED', popupNotOpenedSentence())
+}
+
+/**
+ * Lists the page targets open at a url, compared without the fragment; read by {@link openPopup} before it triggers the action and by {@link closeDuplicateSurfacePages}.
+ * @param cdp - The browser connection.
+ * @param url - The surface url.
+ * @returns The page targets at that url, in Chrome's order.
+ * @example await pagesAtUrl(cdp, 'chrome-extension://abc/fullpage.html') // => [{ targetId: 'T1', type: 'page', url: 'chrome-extension://abc/fullpage.html' }]
+ */
+async function pagesAtUrl(
+  cdp: FlatCdpConnection,
+  url: string,
+): Promise<CdpTargetInfo[]> {
+  return readCdpTargets(await cdp.request('Target.getTargets', {})).filter(
+    (target) =>
+      target.type === 'page' &&
+      withoutFragment(target.url) === withoutFragment(url),
+  )
+}
+
+/**
+ * Closes the pages at the surface url other than the surface the launch opened, so the debugger's surface tie finds one page there; called by the launch right after it opens the surface and before it stops the workers for the attach.
+ * An extension can open its own copy of the surface page, as an install handler opens a welcome or full page tab in each fresh test profile; that copy loaded before the seed, so the run keeps its own surface and the run lists the close as an intervention.
+ * @param cdp - The browser connection.
+ * @param surfaceUrl - The surface url.
+ * @param surfaceTargetId - The surface the launch opened, which stays.
+ * @returns How many pages Chrome closed; a close that failed (the copy closed by itself meanwhile) is not counted.
+ * @example await closeDuplicateSurfacePages(cdp, 'chrome-extension://abc/fullpage.html', 'T2') // => 1 after the extension's own tab T1 closed
+ */
+async function closeDuplicateSurfacePages(
+  cdp: FlatCdpConnection,
+  surfaceUrl: string,
+  surfaceTargetId: string,
+): Promise<number> {
+  const duplicates = (await pagesAtUrl(cdp, surfaceUrl)).filter(
+    (page) => page.targetId !== surfaceTargetId,
+  )
+  let closed = 0
+  // A copy that closed by itself meanwhile, or that Chrome refuses to close, ends nothing here: the debugger's surface tie still refuses a second page it finds.
+  for (const page of duplicates) {
+    const answer = await cdp
+      .request('Target.closeTarget', { targetId: page.targetId })
+      .catch(() => undefined)
+    if (answer !== undefined && answer.success !== false) closed += 1
+  }
+  return closed
 }
 
 /** The fixed sentence of `POPUP_NOT_OPENED`. */
@@ -875,6 +931,12 @@ export async function launchOwnedExtensionBrowser(
             }),
             'targetId',
           )
+    // The run keeps one surface: the page it opened after the seed, not a copy the extension opened itself before it (N62-2).
+    const closedDuplicateSurfacePages = await closeDuplicateSurfacePages(
+      cdp,
+      options.run.surfaceUrl,
+      surfaceTargetId,
+    )
     // The debugger attaches to a surface whose worker is stopped (TZ3).
     await stopExtensionWorkers(session, EXTENSION_STOP_WORKERS_BOUND_MS)
     assertNotStopped(options.signal)
@@ -884,6 +946,7 @@ export async function launchOwnedExtensionBrowser(
       extensionId,
       cdp,
       surfaceTargetId,
+      closedDuplicateSurfacePages,
       controlSessionId,
       profile,
       startWorker: async (): Promise<void> => {

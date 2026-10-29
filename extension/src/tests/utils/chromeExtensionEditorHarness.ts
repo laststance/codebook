@@ -98,6 +98,12 @@ export async function extensionEditorHarness(
   let nextEditorBreakpointId = 0
   let captureCalls = 0
   let refuseContinues = false
+  let stopDebuggingFailure: Error | undefined
+  let stopGate: Promise<void> | undefined
+  let startGate: Promise<void> | undefined
+  let startListener: ((session: vscode.DebugSession) => void) | undefined
+  let skipTracker = false
+  let stopFailuresLeft = Number.POSITIVE_INFINITY
 
   class Position {
     constructor(
@@ -287,19 +293,36 @@ export async function extensionEditorHarness(
           },
         }
       },
+      onDidStartDebugSession: (
+        listener: (started: vscode.DebugSession) => void,
+      ) => {
+        startListener = listener
+        return {
+          dispose(): void {
+            if (startListener === listener) startListener = undefined
+          },
+        }
+      },
       async startDebugging(
         _folder: unknown,
         configuration: vscode.DebugConfiguration,
         startOptions?: vscode.DebugSessionOptions,
       ) {
         started.push({ configuration, options: startOptions })
+        await startGate
         const root = makeSession('root-session', configuration)
-        const tracker = await trackerFactory?.createDebugAdapterTracker(root)
-        if (tracker) trackers.set(root.id, tracker)
+        if (!skipTracker) {
+          const tracker = await trackerFactory?.createDebugAdapterTracker(root)
+          if (tracker) trackers.set(root.id, tracker)
+        }
+        startListener?.(root)
         return true
       },
       async stopDebugging(session: FakeSession): Promise<void> {
         stopped.push(session.id)
+        await stopGate
+        if (stopDebuggingFailure && stopFailuresLeft-- > 0)
+          throw stopDebuggingFailure
       },
     },
   }
@@ -479,6 +502,29 @@ export async function extensionEditorHarness(
     started,
     stopped,
     editorBreakpoints,
+    /** Holds every `stopDebugging` call (after it is counted) until the test settles `gate`, so a stop stays in flight. */
+    holdStopDebugging(gate: Promise<void>): void {
+      stopGate = gate
+    },
+    /** Holds every `startDebugging` call (before its session exists) until the test settles `gate`. */
+    holdStartDebugging(gate: Promise<void>): void {
+      startGate = gate
+    },
+    /** Makes the editor's `stopDebugging` reject with this error from now on. */
+    failStopDebugging(error: Error, times = Number.POSITIVE_INFINITY): void {
+      stopDebuggingFailure = error
+      stopFailuresLeft = times
+    },
+    /** Makes sessions the editor starts from now on skip the debugger's tracker (the editor still announces them as started). */
+    startSessionsWithoutTracker(): void {
+      skipTracker = true
+    },
+    /** Whether the debugger's tracker factory and termination listener are still registered. */
+    listeners: () => ({
+      tracker: trackerFactory !== undefined,
+      termination: terminate !== undefined,
+      sessionStarts: startListener !== undefined,
+    }),
     captureCalls: () => captureCalls,
     session: (id: string) => sessions.get(id)!,
     /** The adapter id the session gave the editor breakpoint at a place. */
@@ -507,6 +553,8 @@ export async function extensionEditorHarness(
       stops: TestStop[],
       overrides: {
         startWorker?: () => Promise<void>
+        /** The browser's targets; defaults to the surface page and the extension's worker. */
+        targets?: Array<{ targetId: string; type: string; url: string }>
         assertSourcesUnchanged?: () => void
         workerPath?: string
         onPhase?: ExtensionPhaseReporter
@@ -543,6 +591,15 @@ export async function extensionEditorHarness(
           },
           port: 9333,
           surfaceTargetId: SURFACE_TARGET,
+          readTargets: async () =>
+            overrides.targets ?? [
+              { targetId: SURFACE_TARGET, type: 'page', url: SURFACE_URL },
+              {
+                targetId: 'worker-target',
+                type: 'service_worker',
+                url: WORKER_URL,
+              },
+            ],
           startWorker:
             overrides.startWorker ??
             (async (): Promise<void> => {
