@@ -2148,8 +2148,11 @@ export const CHROME_EXTENSION_SESSION_NAME_PREFIX = 'codebook chrome extension '
 export const EXTENSION_STOP_COLUMN = 1
 /** Each CDP request of a click step may run this long in unpaused time before its answer counts as lost (ER14). */
 export const EXTENSION_STEP_REQUEST_TIMEOUT_MS = 20_000
-/** How long a freshly spawned owned browser may take to publish its `DevToolsActivePort` file. */
-export const EXTENSION_BROWSER_START_BOUND_MS = 15_000
+/**
+ * How long a freshly spawned owned browser may take to publish its `DevToolsActivePort` file.
+ * Why 30 s: Chrome's first start after a boot reads its whole install from a cold disk; on fresh Ubuntu CI runners the first launch took 10–13 s and once passed 15 s, while later launches took about 2 s. Puppeteer's default launch timeout is also 30 s.
+ */
+export const EXTENSION_BROWSER_START_BOUND_MS = 30_000
 /** Interval at which the owned launch polls the browser's files and targets. */
 export const EXTENSION_BROWSER_POLL_MS = 100
 /** Each command on the owned browser's CDP connection has this deadline unless the caller names another. */
