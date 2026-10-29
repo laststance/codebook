@@ -14,24 +14,22 @@ export async function openWebSocket(
 ): Promise<WebSocket> {
   const socket = new WebSocket(url)
   await new Promise<void>((resolve, reject) => {
+    let isSettled = false
+    // The first outcome wins: closing a connecting socket fires its error listener at once.
+    const settle = (outcome: () => void): void => {
+      if (isSettled) return
+      isSettled = true
+      clearTimeout(timer)
+      outcome()
+    }
     const timer = setTimeout(() => {
+      settle(() => reject(new Error('CDP connection timed out')))
       socket.close()
-      reject(new Error('CDP connection timed out'))
     }, timeoutMs)
-    socket.addEventListener(
-      'open',
-      () => {
-        clearTimeout(timer)
-        resolve()
-      },
-      { once: true },
-    )
+    socket.addEventListener('open', () => settle(resolve), { once: true })
     socket.addEventListener(
       'error',
-      () => {
-        clearTimeout(timer)
-        reject(new Error('CDP connection failed'))
-      },
+      () => settle(() => reject(new Error('CDP connection failed'))),
       { once: true },
     )
   })
