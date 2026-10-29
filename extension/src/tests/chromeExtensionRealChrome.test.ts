@@ -477,9 +477,9 @@ test(
   },
 )
 
-// Value: protects=SR26, ER26 against the real Chrome: closing the real popup raises Target.targetDestroyed for the surface target on the browser connection, a text read then finds no context, and a storage read still completes; fails_when=the destroy event is not delivered after discovery is on, or a read after the close hangs or lies; no_claim=the run's own failure handling (run tests)
+// Value: protects=SR26, ER26 against the real Chrome: closing the real popup raises Target.targetDestroyed for the surface target on the browser connection, a text read on the closed surface's old session answers unavailable with Chrome's own refusal instead of hanging, and a storage read once the session is forgotten still completes; fails_when=the destroy event is not delivered after discovery is on, or a read after the close hangs or lies; no_claim=the run's own failure handling and the reader's branch without a session (run tests)
 test(
-  'real Chrome: a closed popup announces itself, a text read is unavailable and a storage read still completes',
+  'real Chrome: a closed popup announces itself, a text read on its old session is unavailable and a storage read still completes',
   { timeout: TEST_TIMEOUT_MS },
   async (context) => {
     const chrome = await requireChrome(context)
@@ -489,7 +489,7 @@ test(
       seed: { bookmarks: [], storage: { seeded: 'yes' } },
     })
     const { browser } = await launch(context, chrome, run)
-    let surfaceSession: string | undefined = await browser.attachSurface()
+    const surfaceSession = await browser.attachSurface()
     const destroyedTargets: unknown[] = []
     browser.cdp.on('Target.targetDestroyed', (params) =>
       destroyedTargets.push(params.targetId),
@@ -504,21 +504,22 @@ test(
       'the surface target to be reported destroyed',
       WORKER_LISTED_WAIT_MS,
     )
-    surfaceSession = undefined
+    // The closed surface's old session: Chrome itself answers the read.
     const text = await observeOnSurface(
       browser,
       { kind: 'text', selector: '#go' },
       () => surfaceSession,
     )
+    // The run forgets the session once the surface is lost; storage then reads on a page of its own.
     const storage = await observeOnSurface(
       browser,
       { kind: 'storage', key: 'seeded' },
-      () => surfaceSession,
+      () => undefined,
     )
     // Assert
     assert.deepEqual(text, {
       unavailable: true,
-      cause: 'the extension surface no longer exists',
+      cause: 'Runtime.evaluate: Session with given id not found.',
     })
     assert.deepEqual(storage, { value: 'yes' })
   },

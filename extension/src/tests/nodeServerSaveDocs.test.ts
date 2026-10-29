@@ -4,12 +4,13 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { NODE_SERVER_HISTORY_REASON_CODES } from '../constants'
+import { nodeServerSaveHelp } from '../nodeServerSaveHelp'
 
 /** Reads a file of the extension package; tests run from `dist/tests`. */
 const readPackageFile = (...path: string[]): Promise<string> =>
   readFile(join(__dirname, '..', '..', ...path), 'utf8')
 
-// protects=the skill saves a server explanation only on API 1.9 or later, through codebook_explain_node_history, citing request, stops, output and response, claims saved only on complete coverage and an empty captureMissing, and links the canonical help; fails_when=any of those rules leaves the skill; no_claim=how a chat follows it
+// protects=the skill saves a server explanation only on API 1.9 or later (1.10 read as later than 1.9, CodeRabbit pt2 round 3), through codebook_explain_node_history, citing request, stops, output and response, claims saved only on complete coverage and an empty captureMissing, and links the canonical help; fails_when=any of those rules leaves the skill; no_claim=how a chat follows it
 test('the bundled skill saves a server explanation only on API 1.9, claims saved on complete coverage, and links the canonical help', async () => {
   // Arrange / Act
   const skill = await readPackageFile('skills', 'codebook', 'SKILL.md')
@@ -22,7 +23,7 @@ test('the bundled skill saves a server explanation only on API 1.9, claims saved
   assert.match(paragraph, /codebook_explain_node_history/)
   assert.match(
     paragraph,
-    /check that `codebook_status` reports API 1\.9 or later; on an older API tell the learner to update Codebook and do not try to save/,
+    /check that `codebook_status` reports API 1\.9 or later \(compare the number after the dot as a whole number: 1\.10 is later than 1\.9\); on an older API tell the learner to update Codebook and do not try to save/,
   )
   assert.match(paragraph, /cite the request, every stop you explained/)
   assert.match(
@@ -31,6 +32,18 @@ test('the bundled skill saves a server explanation only on API 1.9, claims saved
   )
   assert.match(paragraph, /codebook:\/\/help\/node-server/)
   assert.ok(skill.includes('metadata:\n  version: "1.0.55"\n'))
+})
+
+// protects=the canonical save help keeps the version check true at API 1.10: an agent comparing 1.10 and 1.9 as decimals would refuse every server save; fails_when=the help's requires line drops the whole-number comparison; no_claim=how a model compares versions
+test('the node-server save help says that API 1.10 is later than 1.9', () => {
+  // Arrange / Act
+  const help = nodeServerSaveHelp()
+
+  // Assert
+  assert.equal(
+    help.requires,
+    'codebook_status reports API 1.9 or later (compare the number after the dot as a whole number: 1.10 is later than 1.9). On an older API, tell the learner to update Codebook and do not try to save a server explanation.',
+  )
 })
 
 // protects=the skill tells the chat to save every deciding value it named and to save source-read claims as their own source-derived step, with an observed step stating only its cited entry, and to check its chat answer's deciding values against what it saves before saving; fails_when=any of those rules leaves the skill; no_claim=how a chat follows it

@@ -108,6 +108,28 @@ async function sessionAnswer(
   )
 }
 
+// protects=the server-save version check survives API 1.10: the instructions every client gets say to compare the number after the dot as a whole number, so an agent reading 1.10 as a decimal does not refuse to save a server run as if the API were older than 1.9 (CodeRabbit pt2 round 3); fails_when=the instructions keep only "on an older API tell the learner to update Codebook"; no_claim=how a model compares versions
+test('the MCP instructions say that API 1.10 is later than 1.9 before an older API stops a server save', async () => {
+  // Arrange
+  const harness = await createHarness(),
+    endpoint = await startServer(harness.service),
+    connection = await connect(endpoint.descriptor)
+  try {
+    // Act
+    const instructions = connection.client.getInstructions() ?? ''
+    // Assert
+    assert.ok(
+      instructions.includes(
+        'on an older API (compare the number after the dot as a whole number: 1.10 is later than 1.9) tell the learner to update Codebook.',
+      ),
+    )
+  } finally {
+    await connection.close()
+    await endpoint.close()
+    await harness.close()
+  }
+})
+
 test('MCP discovery declares application execution effects without broadening source reader or storage annotations', async () => {
   // Arrange
   const harness = await createHarness(),
