@@ -429,8 +429,10 @@ test('does not read the result under a pause and finishes after the pause ends',
   await waitUntil(() => reads() >= 3, 'the observation to be polling')
   // Act
   const pause = harness.openDeclaredPause(1, 'page')
+  // gstack-timing-ok: a negative check that polling stays quiet during the pause; a slow runner can only miss a wrong extra read, never fail a correct run
   await sleep(150)
   const readsAtPause = reads()
+  // gstack-timing-ok: the same negative check, second window; a slow runner can only miss a wrong extra read, never fail a correct run
   await sleep(150)
   const readsLater = reads()
   harness.pauses.close(pause.sessionId, pause.threadId)

@@ -309,6 +309,7 @@ test('the first read comes a full quiet time after the last pause ended', async 
     pollMs: 5,
   })
   // Act
+  // gstack-timing-ok: a negative check that the first read waits out the pause; a slow runner can only miss a wrong early read, never fail a correct run
   await new Promise((resolve) => setTimeout(resolve, settleMs + 80))
   const firstReadWhilePaused = firstReadAtMs
   const pauseEndedAtMs = performance.now()
