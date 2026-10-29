@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 
 import type { ChromeExtensionConfiguration } from './chromeExtensionConfigSchemas'
+import { describeChromeExtensionProfile } from './chromeExtensionProfile'
 import { CONFIGURED_PROFILE } from './configuredProfile'
 import type {
   ConfiguredDefinition,
@@ -21,12 +22,16 @@ import {
   REPOSITORY_SOURCE_LIMIT_BYTES,
   ACTIVE_TIMEOUT_MS,
   API_VERSION,
+  CHROME_EXTENSION_FAILED_STATE_CODES,
+  CHROME_EXTENSION_PROFILE,
+  CHROME_EXTENSION_SAVE_REFUSAL,
   CONTINUE_ANSWER_CALL_BUDGET_MS,
   CONTINUE_ANSWER_GRACE_MS,
   MAINTENANCE_INTERVAL_MS,
   MAX_EXPLANATIONS,
   MAX_RUNS,
   MAX_UI_TEXT_CHARS,
+  EXTENSION_CLICK_ACTION,
   NODE_SERVER_ACTION,
   NODE_SERVER_PROFILE,
   NODE_SERVER_STATE_CHANGING_METHODS,
@@ -91,6 +96,7 @@ import type {
 import type { RetainedStudy } from './retainedStudySchemas'
 import type {
   ChromeExtensionRuntime,
+  ChromeExtensionView,
   NodeServerRuntime,
   NodeTestRuntime,
   RuntimeSnapshot,
@@ -117,6 +123,7 @@ import type { StudyWorkspace } from './studyWorkspace'
 import { buildRecordingContext } from './utils/buildRecordingContext'
 import { causeRootsFor } from './utils/causeRootsFor'
 import { configuredStops } from './utils/configuredStops'
+import { createChromeExtensionJournal } from './utils/createChromeExtensionJournal'
 import { createNodeServerJournal } from './utils/createNodeServerJournal'
 import { cutCauseForDisplay } from './utils/cutCauseForDisplay'
 import { cutTextToFit } from './utils/cutTextToFit'
@@ -159,10 +166,12 @@ import { namesLineNumber } from './utils/namesLineNumber'
 import { nextNodeServerState } from './utils/nextNodeServerState'
 import { nodeTestResultKind } from './utils/nodeTestResultKind'
 import { numberSourceLines } from './utils/numberSourceLines'
+import { parseChromeExtensionConfiguration } from './utils/parseChromeExtensionConfiguration'
 import type { NodeTestExecutionPlan } from './utils/planNodeTestExecution'
 import { prepareNodeServerStudy } from './utils/prepareNodeServerStudy'
 import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
 import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy'
+import { projectChromeExtensionState } from './utils/projectChromeExtensionState'
 import { projectNodeServerHistory } from './utils/projectNodeServerHistory'
 import { projectNodeServerState } from './utils/projectNodeServerState'
 import {
@@ -312,6 +321,11 @@ export interface ChromeExtensionRecordState {
   /** Stops listening to the run's changes once the run is released. */
   subscription?: { dispose(): void }
 }
+/** A chrome-extension run's record with its extension state, as the narrowing {@link isChromeExtensionRecord} gives. */
+type ChromeExtensionStudyRecord = StudyRecord & {
+  profile: typeof CHROME_EXTENSION_PROFILE
+  chromeExtension: ChromeExtensionRecordState
+}
 /** A node-server run's record with its server state, as the narrowing {@link isNodeServerRecord} gives. */
 type NodeServerStudyRecord = StudyRecord & {
   profile: typeof NODE_SERVER_PROFILE
@@ -449,6 +463,7 @@ const SUPPORTED_PROFILES: readonly string[] = [
   REPOSITORY_BROWSER_PROFILE,
   NODE_TEST_PROFILE,
   NODE_SERVER_PROFILE,
+  CHROME_EXTENSION_PROFILE,
 ]
 
 /**
@@ -481,6 +496,34 @@ function isNodeServerRecord(
 }
 
 /**
+ * Gives the fields a new run's record starts with because it is a chrome-extension run: its journal list and its click keys.
+ * @param profile - The profile of the start.
+ * @returns The fields for a chrome-extension run; none for another profile.
+ * @example chromeExtensionRecordFields('chrome-extension').nodeEvents // => []
+ */
+function chromeExtensionRecordFields(profile: string) {
+  const chromeExtension: ChromeExtensionRecordState = { clicks: new Map() }
+  return profile === CHROME_EXTENSION_PROFILE
+    ? { nodeEvents: [], chromeExtension }
+    : {}
+}
+
+/**
+ * Narrows a run's record to a chrome-extension run, for the code paths that exist only for that profile.
+ * @param record - Any run's record.
+ * @returns `true` for a record of the chrome-extension profile, which always holds its extension state.
+ * @example if (isChromeExtensionRecord(record)) record.chromeExtension.run?.view()
+ */
+function isChromeExtensionRecord(
+  record: StudyRecord,
+): record is ChromeExtensionStudyRecord {
+  return (
+    record.profile === CHROME_EXTENSION_PROFILE &&
+    record.chromeExtension !== undefined
+  )
+}
+
+/**
  * Tells {@link StudyService.selectPresentation} whether a command selects a layout that is retired, so that only a reader already in that layout may keep it.
  * @param input - The presentation command.
  * @returns `true` for a `select` of any mode but {@link SELECTABLE_PRESENTATION_MODE}; `false` for that mode and for every other action.
@@ -492,6 +535,34 @@ function selectsRetiredMode(input: PresentationCommand): boolean {
   return (
     input.action === 'select' && input.mode !== SELECTABLE_PRESENTATION_MODE
   )
+}
+
+/** The receipt every accepted action answers: the operation, the key and the run to read. */
+type ActionReceipt = NonNullable<StudyRecord['action']>['receipt']
+/** What an accepted `extension-click` answers: the receipt with the click's index (1-based), outcome, inputs applied and dispatch. */
+export type ExtensionClickReceipt = ActionReceipt & {
+  clickIndex: number
+  outcome: 'paused' | 'settled' | 'running'
+  inputsApplied: number
+  clickDispatched: boolean
+}
+
+/** What `codebook_continue` answers: the acknowledgement alone, or with `answer: "next"` also the word that ended the wait (absent at the bound) and the run's state. */
+export type ContinueAnswer =
+  | { accepted: boolean; runUri: string }
+  | {
+      accepted: boolean
+      runUri: string
+      next?: string
+      state: ReturnType<StudyService['state']>
+    }
+
+/** What `codebook_start` answers: the run's receipt, and for a chrome-extension run also the loaded extension (`phase`, `extension`) or, when its preparation ended in an error, `failure` with the run's `state`. */
+export type StartAnswer = ReturnType<StudyService['start']> & {
+  phase?: ChromeExtensionView['phase']
+  extension?: ChromeExtensionView['extension']
+  failure?: ReturnType<StudyError['describe']>
+  state?: ReturnType<StudyService['state']>
 }
 
 /** Owns MCP intent/history independently of transport sessions; commands construct it once per editor instance. @example service.start({instanceId, profile: REPOSITORY_BROWSER_PROFILE, key: "study-1", configuration}) */
@@ -883,11 +954,16 @@ export class StudyService {
         this.nodeServerProfileEntry(
           profilePrerequisites?.[NODE_SERVER_PROFILE] ?? commonPrerequisites,
         ),
+        this.chromeExtensionProfileEntry(
+          profilePrerequisites,
+          commonPrerequisites,
+        ),
       ],
       capabilities: [
         'start',
         REPOSITORY_BROWSER_ACTION,
         NODE_SERVER_ACTION,
+        EXTENSION_CLICK_ACTION,
         'pause-evidence',
         'continue',
         'explain',
@@ -987,6 +1063,33 @@ export class StudyService {
         : ['Repository source/book storage is unavailable.']),
     ]
     return describeNodeServerProfile({
+      ready: reported.ready && missing.length === 0,
+      missing,
+    })
+  }
+
+  /**
+   * Describes the chrome-extension profile for `codebook_status` with everything that keeps it from starting here: the environment's missing items (Chrome 149 or later, a supported system) and a missing run factory.
+   * @param profilePrerequisites - The environment's prerequisites by profile, when it reports any.
+   * @param commonPrerequisites - The shared prerequisites, used when the environment reports none for the profile.
+   * @returns The profile entry ({@link describeChromeExtensionProfile}).
+   * @example this.chromeExtensionProfileEntry(undefined, { ready: true, missing: [] }).prerequisites.ready // => true when the adapter exists
+   */
+  private chromeExtensionProfileEntry(
+    profilePrerequisites:
+      | Awaited<ReturnType<StudyEnvironment['prerequisites']>>['profiles']
+      | undefined,
+    commonPrerequisites: { ready: boolean; missing: string[] },
+  ) {
+    const reported =
+      profilePrerequisites?.[CHROME_EXTENSION_PROFILE] ?? commonPrerequisites
+    const missing = [
+      ...reported.missing,
+      ...(this.environment.createChromeExtensionRun
+        ? []
+        : ['The owned Chrome extension adapter is unavailable.']),
+    ]
+    return describeChromeExtensionProfile({
       ready: reported.ready && missing.length === 0,
       missing,
     })
@@ -1252,9 +1355,34 @@ export class StudyService {
    * @example
    * await service.startOnStoredBook(input) // throws 'configuration.book.nodeId mode does not exist in revision 1 of book interface, which has the node: theme. …'
    */
-  async startOnStoredBook(input: StartInput) {
+  async startOnStoredBook(input: StartInput): Promise<StartAnswer> {
     await this.refuseMissingBookNode(input)
-    return this.start(input)
+    const receipt = this.start(input)
+    if (input.profile !== CHROME_EXTENSION_PROFILE) return receipt
+    return this.chromeExtensionStartAnswer(receipt)
+  }
+
+  /**
+   * Waits for a chrome-extension run's preparation and answers the start with what the run loaded (CR5): the manifest's `name`, `permissions` and `host_permissions`, or the refusal with the run's state beside it, so a pre-launch refusal reaches the chat in the answer of `codebook_start` itself.
+   * @param receipt - The receipt of {@link StudyService.start}.
+   * @returns The receipt with `phase` and `extension` once the run is ready; the receipt with `failure` (the described error) and `state` when the preparation ended in an error.
+   * @example await this.chromeExtensionStartAnswer(receipt) // => { ...receipt, phase: 'ready', extension: { manifest: { name: 'Demo', permissions: ['storage'], hostPermissions: [] }, … } }
+   */
+  private async chromeExtensionStartAnswer(
+    receipt: ReturnType<StudyService['start']>,
+  ): Promise<StartAnswer> {
+    const record = this.record(receipt)
+    await record.preparation
+    const view = isChromeExtensionRecord(record)
+      ? record.chromeExtension.run?.view()
+      : undefined
+    if (record.error)
+      return {
+        ...receipt,
+        failure: record.error.describe(),
+        state: this.state(record),
+      }
+    return { ...receipt, phase: view?.phase, extension: view?.extension }
   }
 
   /**
@@ -1333,7 +1461,7 @@ export class StudyService {
         `Available profiles: ${SUPPORTED_PROFILES.join(', ')}`,
       )
     // The tool boundary accepts any node-server object, so this is where every violation is listed (D4).
-    if (!previous) this.assertNodeServerDeclaration(input)
+    if (!previous) this.assertProfileDeclaration(input)
     const parsed = startIntentSchema.safeParse(input)
     if (!parsed.success)
       throw new StudyError(
@@ -1377,6 +1505,7 @@ export class StudyService {
         ? { nodeStops: [], nodeEvents: [], nodePhase: 'preparing' as const }
         : {}),
       ...nodeServerRecordFields(intent.profile),
+      ...chromeExtensionRecordFields(intent.profile),
       // A reader refresh can arrive before the admission answers; until then the run is not a checkpoint candidate.
       ...(intent.profile === REPOSITORY_BROWSER_PROFILE && this.recordings
         ? { historyExcluded: 'awaiting-admission' as const }
@@ -1386,6 +1515,18 @@ export class StudyService {
     this.startKeys.set(input.key, record)
     record.preparation = this.prepare(record)
     return this.receipt(record)
+  }
+
+  /**
+   * Refuses a start whose declaration does not parse for the profiles whose declarations the tool boundary leaves to the service (node-server and chrome-extension); called by {@link StudyService.start} for a start that begins a new run.
+   * @param input - The start as the tool received it.
+   * @throws What {@link StudyService.assertNodeServerDeclaration} or {@link parseChromeExtensionConfiguration} throws; nothing for another profile.
+   * @example this.assertProfileDeclaration({ ...input, profile: 'chrome-extension', configuration: { ...declaration, inspections: [] } }) // throws INVALID_CONFIGURATION
+   */
+  private assertProfileDeclaration(input: StartInput): void {
+    this.assertNodeServerDeclaration(input)
+    if (input.profile === CHROME_EXTENSION_PROFILE)
+      parseChromeExtensionConfiguration(input.configuration)
   }
 
   /**
@@ -1442,7 +1583,10 @@ export class StudyService {
         (record) => historyExclusionState(record.historyExcluded) === 'ended',
       ) ??
       retained.find(
-        (record) => record.profile === NODE_SERVER_PROFILE && record.stopped,
+        (record) =>
+          (record.profile === NODE_SERVER_PROFILE ||
+            record.profile === CHROME_EXTENSION_PROFILE) &&
+          record.stopped,
       )
     if (!evicted) return false
     this.forgetRecord(evicted)
@@ -1570,12 +1714,22 @@ export class StudyService {
    * const answer = await service.continueToNextState(runState.participants.browser.continueArguments)
    * // => { accepted: true, runUri, next: 'observation', state: { observations: [..., { inspectionUri }], ... } }
    */
-  async continueToNextState(input: ContinueInput, signal?: AbortSignal) {
+  async continueToNextState(
+    input: ContinueInput,
+    signal?: AbortSignal,
+  ): Promise<ContinueAnswer> {
     const startedAtMs = this.now()
     const server = this.records.get(input.runId)
     // A node-server run waits for its request's next state, not for a runtime snapshot.
     if (server && isNodeServerRecord(server))
       return this.continueNodeServerToNextState(
+        server,
+        input,
+        startedAtMs,
+        signal,
+      )
+    if (server && isChromeExtensionRecord(server))
+      return this.continueChromeExtensionToNextState(
         server,
         input,
         startedAtMs,
@@ -1726,6 +1880,8 @@ export class StudyService {
     this.presentationController?.assertPresentationIdle()
     if (isNodeServerRecord(record))
       return this.continueNodeServer(record, input)
+    if (isChromeExtensionRecord(record))
+      return this.continueChromeExtension(record, input)
     if (record.profile === NODE_TEST_PROFILE) {
       const current = record.nodeStops?.at(-1)
       if (
@@ -1759,8 +1915,10 @@ export class StudyService {
     // A reveal accepted for this pause finishes first: resuming under it would retire the pause its reader is still presenting.
     if (record.sourceReveals.size)
       await Promise.allSettled([...record.sourceReveals])
+    // The extension participant belongs to a chrome-extension run, which never reaches this path.
     if (
       !record.runtime ||
+      input.participant === 'extension' ||
       record.stopping ||
       record.stopped ||
       record.error ||
@@ -1998,6 +2156,8 @@ export class StudyService {
   explain(input: ExplainInput): Promise<ExplanationReceipt> {
     this.assertMutable(input.instanceId)
     const record = this.record(input)
+    // An extension run is explained in the chat only; nothing of it is stored.
+    this.refuseExtensionSave(record)
     // An explanation after the removal would be written into a directory that is in the Trash.
     this.assertEvidenceAvailable(record)
     // Internal callers must satisfy the same fact bounds as MCP before reserving or persisting an explanation.
@@ -2256,6 +2416,13 @@ export class StudyService {
     const identity = explainNodeHistorySchema
       .pick({ studyId: true, expectedRevision: true })
       .parse(rest)
+    // A study id of a chrome-extension run names no history: refuse before any store is read.
+    const extensionRun = [...this.records.values()].find(
+      (record) =>
+        record.profile === CHROME_EXTENSION_PROFILE &&
+        identity.studyId === `${this.instanceId}_${record.id}`,
+    )
+    if (extensionRun) this.refuseExtensionSave(extensionRun)
     if (!this.nodeHistoryStore)
       throw new StudyError(
         'PREREQUISITE_MISSING',
@@ -2495,6 +2662,20 @@ export class StudyService {
     }
   }
 
+  /**
+   * Refuses to save or explain a chrome-extension run: its live explanation stays in the chat and no study changes (SR13, SR37); called by {@link StudyService.explain} and {@link StudyService.explainNodeHistory}.
+   * @param record - The run named by the call.
+   * @throws `EVIDENCE_UNAVAILABLE` with {@link CHROME_EXTENSION_SAVE_REFUSAL} for a chrome-extension run; nothing for another profile.
+   * @example this.refuseExtensionSave(record) // throws 'Saving an extension run is not available in this version; the live explanation stays in the chat.'
+   */
+  private refuseExtensionSave(record: StudyRecord): void {
+    if (record.profile === CHROME_EXTENSION_PROFILE)
+      throw new StudyError(
+        'EVIDENCE_UNAVAILABLE',
+        CHROME_EXTENSION_SAVE_REFUSAL,
+      )
+  }
+
   /** Validates explicit instance/run identity for both control and history reads. @example service.record({instanceId,runId}) */
   record(input: RunInput): StudyRecord {
     this.assertInstance(input.instanceId)
@@ -2514,6 +2695,7 @@ export class StudyService {
 
   /** Resolves committed snapshot identity without treating an old capture as a current pause. @example service.snapshot(record, snapshotUri).values */
   snapshot(record: StudyRecord, uri: string): RuntimeSnapshot {
+    this.refuseExtensionSave(record)
     if (record.profile === NODE_TEST_PROFILE)
       throw new StudyError(
         'EVIDENCE_UNAVAILABLE',
@@ -2608,6 +2790,7 @@ export class StudyService {
     return (
       record.profile === NODE_TEST_PROFILE ||
       record.profile === NODE_SERVER_PROFILE ||
+      record.profile === CHROME_EXTENSION_PROFILE ||
       historyExclusionState(record.historyExcluded) !== 'kept'
     )
   }
@@ -2894,6 +3077,21 @@ export class StudyService {
           sanitize: (text) => this.sanitizedCause(text),
         })
       : undefined
+    // An extension run's state, actions, pauses and observation come from its run (SR17).
+    const extension = isChromeExtensionRecord(record)
+      ? projectChromeExtensionState({
+          instanceId: this.instanceId,
+          runId: record.id,
+          view: record.chromeExtension.run?.view(),
+          controllable: canControl,
+          stopped: record.stopped,
+          ending:
+            record.stopping ||
+            Boolean(record.cleanupError) ||
+            Boolean(record.error),
+          sanitize: (text) => this.sanitizedCause(text),
+        })
+      : undefined
     const nodeStop = record.nodeStops?.at(-1)
     const nodeStopUri = nodeStop
       ? this.uri(record.id, `node-stops/${nodeStop.index}`)
@@ -2980,6 +3178,7 @@ export class StudyService {
         : {}),
       ...(nodeParticipants ?? {}),
       ...(server ? { server: server.participant } : {}),
+      ...(extension ? { extension: extension.participant } : {}),
       browser: participantView('browser'),
     }
     const finalOutcome =
@@ -3028,17 +3227,19 @@ export class StudyService {
       holdsHistory ? 'read-history' : undefined,
     ].filter((value) => value !== undefined)
     // After a stop whose release failed, only the stop is offered again (F91, D18).
-    const nextActions = server
-      ? [
-          ...server.nextActions,
-          // A server history whose learning material does not yet cover it asks for codebook_explain_node_history, as a test run's does.
-          ...(this.nodeServerLearningIncomplete(record)
-            ? ['save-node-learning']
-            : []),
-        ]
-      : record.cleanupError && !record.stopped
-        ? ['stop']
-        : availableActions
+    const nextActions = extension
+      ? extension.nextActions
+      : server
+        ? [
+            ...server.nextActions,
+            // A server history whose learning material does not yet cover it asks for codebook_explain_node_history, as a test run's does.
+            ...(this.nodeServerLearningIncomplete(record)
+              ? ['save-node-learning']
+              : []),
+          ]
+        : record.cleanupError && !record.stopped
+          ? ['stop']
+          : availableActions
     const material = {
       instanceId: this.instanceId,
       runId: record.id,
@@ -3221,6 +3422,9 @@ export class StudyService {
       runUri: this.uri(record.id),
       ...(server && isNodeServerRecord(record)
         ? this.nodeServerMaterial(record, server)
+        : {}),
+      ...(extension && isChromeExtensionRecord(record)
+        ? this.chromeExtensionMaterial(record, extension)
         : {}),
     }
     // Receipt fields are excluded from the signature to avoid a save/report/save feedback loop.
@@ -3410,6 +3614,44 @@ export class StudyService {
   }
 
   /**
+   * Gives the fields of the run resource that a chrome-extension run replaces: its state, its `chromeExtension` block, `claimable`, the manifest it freezes and its failure; read by {@link StudyService.state}.
+   * @param record - The chrome-extension run.
+   * @param extension - Its projection ({@link projectChromeExtensionState}).
+   * @returns The fields, which the resource spreads over the generic ones so they enter the material signature.
+   * @example this.chromeExtensionMaterial(record, extension).claimable // => true after an observed result
+   */
+  private chromeExtensionMaterial(
+    record: ChromeExtensionStudyRecord,
+    extension: ReturnType<typeof projectChromeExtensionState>,
+  ) {
+    const prepared = record.chromeExtension.prepared
+    const view = record.chromeExtension.run?.view()
+    return {
+      state: extension.state,
+      // An extension run is never saved: it reads pending-teardown while it lives and not-demonstrated once it ended.
+      finalOutcome:
+        record.stopped || record.error
+          ? ('not-demonstrated' as const)
+          : ('pending-teardown' as const),
+      runtimeState: extension.state,
+      runtimeRunId: record.chromeExtension.run?.id,
+      chromeExtension: extension.chromeExtension && {
+        ...extension.chromeExtension,
+        configurationHash: prepared?.configurationHash,
+      },
+      claimable: extension.claimable,
+      manifestUri: prepared ? this.uri(record.id, 'manifest') : undefined,
+      manifestHash: prepared?.configurationHash,
+      // A run that failed shows its failure even before the service adopted it.
+      error:
+        record.error?.describe() ??
+        (view?.phase === 'failed' && view.runFailure
+          ? this.sanitizedError(view.runFailure).describe()
+          : undefined),
+    }
+  }
+
+  /**
    * Says where a test run's history stands for {@link projectNodeTestOutcome}; read by {@link StudyService.state}.
    * @param record - The test run.
    * @returns `none` before the history began, else the history's own status.
@@ -3513,6 +3755,7 @@ export class StudyService {
       if (record.stopped || record.stopping || record.cleanupError) continue
       // A server's own failure ends its run; a failed request never does (D1).
       this.adoptNodeServerFailure(record)
+      this.adoptChromeExtensionEnd(record)
       const evidenceFailure = record.runtime?.evidence.failure
       if (evidenceFailure) {
         const message = 'Evidence buffering or persistence failed.'
@@ -3626,6 +3869,7 @@ export class StudyService {
       record.stopped ||
       record.stopping ||
       record.runtime?.view().status === 'completed' ||
+      record.chromeExtension?.run?.view().phase === 'completed' ||
       // A test run's result was observed: only its release is left.
       record.nodePhase === 'completed'
     )
@@ -3645,6 +3889,8 @@ export class StudyService {
   private async prepare(record: StudyRecord): Promise<void> {
     if (record.profile === NODE_SERVER_PROFILE)
       return this.prepareNodeServer(record)
+    if (record.profile === CHROME_EXTENSION_PROFILE)
+      return this.prepareChromeExtension(record)
     try {
       // Reserve intent -> immutable article/all citations -> owned adapter -> input; retries never repeat these reads.
       if (record.profile === REPOSITORY_BROWSER_PROFILE) {
@@ -4236,10 +4482,16 @@ export class StudyService {
         : record.nodeServer?.run
       const cancellingServer = cancellingServerRun?.stop()
       if (cancellingServer) void cancellingServer.catch(() => undefined)
+      const cancellingExtensionRun = record.prepared
+        ? undefined
+        : record.chromeExtension?.run
+      const cancellingExtension = cancellingExtensionRun?.stop()
+      if (cancellingExtension) void cancellingExtension.catch(() => undefined)
       await record.preparation
       await cancelling
       await cancellingNode
       await cancellingServer
+      await cancellingExtension
       await Promise.allSettled(
         [...record.explanationKeys.values()].map((value) => value.result),
       )
@@ -4284,6 +4536,11 @@ export class StudyService {
       const serverRun = record.nodeServer?.run
       if (serverRun && serverRun !== cancellingServerRun) await serverRun.stop()
       record.nodeServer?.subscription?.dispose()
+      // The extension's browser, debugger and profile folder are released in the run's one cleanup path; it is safe to ask again.
+      const extensionRun = record.chromeExtension?.run
+      if (extensionRun && extensionRun !== cancellingExtensionRun)
+        await extensionRun.stop()
+      record.chromeExtension?.subscription?.dispose()
       // The history ends with the run: stopped, closed or failed, sealed once however many callers join this stop.
       await this.sealNodeServerHistory(record)
       // A root listing that was not released is the run's to release: one still running fails this stop, so the run stays unstopped, the next start answers BUSY, and the next stop tries again.
@@ -4496,9 +4753,13 @@ export class StudyService {
    * @throws What {@link StudyService.action} or {@link StudyService.requestNodeServer} throws.
    * @example await service.performAction({ ...run, key: 'send', action: 'http-request' })
    */
-  async performAction(input: ActionInput) {
+  async performAction(
+    input: ActionInput,
+  ): Promise<ActionReceipt | ExtensionClickReceipt> {
     this.assertMutable(input.instanceId)
     const record = this.record(input)
+    if (isChromeExtensionRecord(record))
+      return this.clickExtension(record, input)
     return isNodeServerRecord(record)
       ? this.requestNodeServer(record, input)
       : this.action(input)
@@ -4741,16 +5002,32 @@ export class StudyService {
     const generationBefore = record.nodeServer.run?.view().pauseGeneration ?? 0
     const receipt = await this.continue(input)
     if (input.answer !== 'next') return receipt
+    const next = await this.waitForContinuation(
+      () => this.nextNodeServerStep(record, generationBefore),
+      startedAtMs,
+      signal,
+    )
+    return { ...receipt, ...(next && { next }), state: this.state(record) }
+  }
+
+  /**
+   * Waits for the state a continuation leads to, within the one bound of every profile's `answer: "next"`: the earlier of the acknowledgement plus {@link ACTIVE_TIMEOUT_MS} and {@link CONTINUE_ANSWER_GRACE_MS}, and the call's start plus {@link CONTINUE_ANSWER_CALL_BUDGET_MS}; called by the node-server and chrome-extension waits.
+   * @param step - Reads the run at each turn and names what ended the step, or `undefined` while it is still on its way.
+   * @param startedAtMs - When the call began.
+   * @param signal - The request's cancellation.
+   * @returns The word `step` returned; `undefined` at the bound and for an abandoned request.
+   * @example await this.waitForContinuation(() => this.nextChromeExtensionStep(record, before), this.now()) // => 'result'
+   */
+  private waitForContinuation<Next extends string>(
+    step: () => Next | undefined,
+    startedAtMs: number,
+    signal?: AbortSignal,
+  ) {
     const waitEndsAtMs = Math.min(
       this.now() + ACTIVE_TIMEOUT_MS + CONTINUE_ANSWER_GRACE_MS,
       startedAtMs + CONTINUE_ANSWER_CALL_BUDGET_MS,
     )
-    const next = await waitForNextRunState(
-      () => this.nextNodeServerStep(record, generationBefore),
-      () => this.now() >= waitEndsAtMs,
-      signal,
-    )
-    return { ...receipt, ...(next && { next }), state: this.state(record) }
+    return waitForNextRunState(step, () => this.now() >= waitEndsAtMs, signal)
   }
 
   /**
@@ -4834,6 +5111,319 @@ export class StudyService {
     } catch {
       // The line is also in the run's events; the channel has nowhere to write.
     }
+  }
+
+  /**
+   * Performs the next declared click of a chrome-extension run for `codebook_action`: a key is bound to its click when the call is admitted, so the same key with the same arguments returns the original receipt or joins the click in flight before any state check, also after the run ended (DXR3); a new key starts the next click.
+   * @param record - The chrome-extension run.
+   * @param input - The action as the tool received it.
+   * @returns The receipt: `operationId`, `key`, `runUri` and the click's `clickIndex`, `outcome`, `inputsApplied` and `clickDispatched`.
+   * @throws `IDEMPOTENCY_CONFLICT` for a key that names other arguments; `BUSY` for an action this profile does not offer; `RUN_NOT_READY` before the run is prepared or once it ends in an error; what {@link ChromeExtensionRuntime.click} throws (`RUN_PAUSED`, `ACTION_IN_PROGRESS`, `NO_MORE_ACTIONS`, `SELECTOR_NOT_FOUND`, `INPUT_PARTIAL`, and the others); the same key replays a stored failure.
+   * @example await this.clickExtension(record, { ...run, key: 'click-1', action: 'extension-click' }) // => { operationId, key: 'click-1', runUri, clickIndex: 1, outcome: 'settled', inputsApplied: 0, clickDispatched: true }
+   */
+  private async clickExtension(
+    record: ChromeExtensionStudyRecord,
+    input: ActionInput,
+  ) {
+    const signature = JSON.stringify([input.key, input.action])
+    const bound = record.chromeExtension.clicks.get(input.key)
+    // A repeat of a bound key answers before any state check, so a lost response is recovered without a second click.
+    if (bound) {
+      if (bound.signature === signature) return bound.result
+      throw new StudyError(
+        'IDEMPOTENCY_CONFLICT',
+        'Action key already names different arguments.',
+        `Read ${this.uri(record.id)} for the run's progress.`,
+      )
+    }
+    if (input.action !== EXTENSION_CLICK_ACTION)
+      throw new StudyError(
+        'BUSY',
+        `Expected ${EXTENSION_CLICK_ACTION}, received ${input.action}.`,
+        `Read ${this.uri(record.id)} for current nextActions; nothing was clicked.`,
+      )
+    this.presentationController?.assertPresentationIdle()
+    const run = record.chromeExtension.run
+    if (
+      !run ||
+      !record.prepared ||
+      record.stopping ||
+      record.error ||
+      record.cleanupError ||
+      (!record.stopped && this.now() >= record.deadlineAt)
+    )
+      throw new StudyError(
+        'RUN_NOT_READY',
+        'The extension run is not ready for a click. Read the run resource until its phase is ready.',
+      )
+    const result = this.performExtensionClick(record, run, input.key)
+    // The key is bound in the same turn the click starts, so no second call can slip between them.
+    record.chromeExtension.clicks.set(input.key, { signature, result })
+    return result
+  }
+
+  /**
+   * Runs one click of a chrome-extension run and shapes its receipt; the work behind {@link StudyService.clickExtension}'s stored result.
+   * @param record - The chrome-extension run.
+   * @param run - The run that performs the click.
+   * @param key - The action's key.
+   * @returns The receipt with the click's answer.
+   * @throws What {@link ChromeExtensionRuntime.click} throws.
+   * @example await this.performExtensionClick(record, run, 'click-1') // => { operationId: 'run:click:1', key: 'click-1', runUri, clickIndex: 1, … }
+   */
+  private async performExtensionClick(
+    record: ChromeExtensionStudyRecord,
+    run: ChromeExtensionRuntime,
+    key: string,
+  ) {
+    const answer = await run.click()
+    return {
+      operationId: `${run.id}:click:${answer.clickIndex}`,
+      key,
+      runUri: this.uri(record.id),
+      clickIndex: answer.clickIndex,
+      outcome: answer.outcome,
+      inputsApplied: answer.inputsApplied,
+      clickDispatched: answer.clickDispatched,
+    }
+  }
+
+  /**
+   * Continues one declared pause of a chrome-extension run with the arguments the run resource listed; called by {@link StudyService.continue}.
+   * @param record - The chrome-extension run.
+   * @param input - The continuation arguments.
+   * @returns The acknowledgement: `accepted` and the run's URI.
+   * @throws `STALE_PAUSE` for another participant, an ended run or a pause that is no longer open; `NO_PAUSE` when nothing is paused; what the run throws (`LEARNER_PAUSED`, `SOURCE_CHANGED`).
+   * @example await this.continueChromeExtension(record, state.chromeExtension.pauses[0].continueArguments)
+   */
+  private async continueChromeExtension(
+    record: ChromeExtensionStudyRecord,
+    input: ContinueInput,
+  ) {
+    const run = record.chromeExtension.run
+    if (!run)
+      throw new StudyError(
+        'NO_PAUSE',
+        'The extension run is not started yet, so nothing is paused. Read the run resource until its phase is ready.',
+      )
+    if (
+      record.stopping ||
+      record.stopped ||
+      record.error ||
+      record.cleanupError ||
+      this.now() >= record.deadlineAt
+    )
+      throw new StudyError(
+        'STALE_PAUSE',
+        'The extension run is ending or has ended, so this pause is historical and cannot be resumed.',
+      )
+    const declared = run
+      .view()
+      .pauses.filter((pause) => pause.continueArguments)
+    if (declared.length === 0)
+      throw new StudyError(
+        'NO_PAUSE',
+        'The extension is not paused at a declared stop. Read the run resource; continue only a pause it lists.',
+      )
+    const isListed = declared.some(
+      (pause) =>
+        input.participant === 'extension' &&
+        pause.continueArguments?.sessionId === input.sessionId &&
+        pause.continueArguments.threadId === input.threadId &&
+        pause.continueArguments.generation === input.generation,
+    )
+    if (!isListed)
+      throw new StudyError(
+        'STALE_PAUSE',
+        'This is not a current pause of the extension. Copy a continueArguments of chromeExtension.pauses from the run resource.',
+      )
+    await run.continue({
+      participant: 'extension',
+      sessionId: input.sessionId,
+      threadId: input.threadId,
+      generation: input.generation,
+    })
+    return { accepted: true, runUri: this.uri(record.id) }
+  }
+
+  /**
+   * Continues a chrome-extension run and, with `answer: "next"`, waits for what it does next: a new declared pause, the observed result, the run's failure or its stop (bounded as the other profiles' wait).
+   * @param record - The chrome-extension run.
+   * @param input - The continuation arguments.
+   * @param startedAtMs - When the call began, for the call's budget.
+   * @param signal - The request's cancellation.
+   * @returns The acknowledgement; with `answer: "next"` also `next` (`observation`, `result`, `failure` or `stopped`; absent at the bound) and the run's `state`.
+   * @throws What {@link StudyService.continueChromeExtension} throws.
+   * @example await this.continueChromeExtensionToNextState(record, args, this.now()) // => { accepted: true, runUri, next: 'result', state }
+   */
+  private async continueChromeExtensionToNextState(
+    record: ChromeExtensionStudyRecord,
+    input: ContinueInput,
+    startedAtMs: number,
+    signal?: AbortSignal,
+  ): Promise<ContinueAnswer> {
+    // The pauses open before the continuation tell the next one from those being continued.
+    const generationsBefore = new Set(
+      (record.chromeExtension.run?.view().pauses ?? []).map(
+        (pause) => pause.generation,
+      ),
+    )
+    const receipt = await this.continue(input)
+    if (input.answer !== 'next') return receipt
+    const next = await this.waitForContinuation(
+      () => this.nextChromeExtensionStep(record, generationsBefore),
+      startedAtMs,
+      signal,
+    )
+    return { ...receipt, ...(next && { next }), state: this.state(record) }
+  }
+
+  /**
+   * Reads what a continued chrome-extension run did, at every turn of the wait of {@link StudyService.continueChromeExtensionToNextState}.
+   * @param record - The chrome-extension run.
+   * @param generationsBefore - The generations of the pauses open when the call began.
+   * @returns
+   * - `'failure'` once the run failed or has an error
+   * - `'result'` once the run completed (also while it is already released)
+   * - `'stopped'` once a run that did not complete is stopping or stopped
+   * - `'observation'` once a declared pause that was not open before is open
+   * - `undefined` while the run is still on its way
+   * @example this.nextChromeExtensionStep(record, new Set([1])) // => 'observation' once generation 2 is paused
+   */
+  private nextChromeExtensionStep(
+    record: ChromeExtensionStudyRecord,
+    generationsBefore: ReadonlySet<number>,
+  ): 'failure' | 'result' | 'stopped' | 'observation' | undefined {
+    // The whole-run deadline is the run's own end: apply it now, so the answer carries it.
+    this.expireAtDeadline(record)
+    this.adoptChromeExtensionEnd(record)
+    const view = record.chromeExtension.run?.view()
+    if (view?.phase === 'failed' || record.error) return 'failure'
+    if (view?.phase === 'completed') return 'result'
+    if (this.stopping || record.stopping || record.stopped) return 'stopped'
+    const isNewPause = view?.pauses.some(
+      (pause) =>
+        pause.kind === 'declared' &&
+        pause.continueArguments !== undefined &&
+        !generationsBefore.has(pause.generation),
+    )
+    return isNewPause ? 'observation' : undefined
+  }
+
+  /**
+   * Gives a chrome-extension run's own end its release: a run that failed gets its failure as the run's error, and a run that completed or failed is released at once, so the one-active-run slot is free and a new start is not refused with `BUSY` (SR30); called when the run reports a change and at each maintenance turn.
+   * @param record - Any run; another profile's is left alone.
+   * @example this.adoptChromeExtensionEnd(record) // record.error?.code === 'BROWSER_LOST' once the run reported it
+   */
+  private adoptChromeExtensionEnd(record: StudyRecord): void {
+    const view = record.chromeExtension?.run?.view()
+    if (!view || record.stopped || record.stopping) return
+    if (view.phase !== 'failed' && view.phase !== 'completed') return
+    if (view.phase === 'failed' && !record.error)
+      record.error = this.sanitizedError(
+        view.runFailure ??
+          new StudyError('RUNTIME_FAILED', 'The extension run failed.'),
+      )
+    void this.stopRecord(record).catch((error) => {
+      this.failByRelease(record, error)
+    })
+  }
+
+  /**
+   * Gives a tool call that ended in a chrome-extension run's failure its error with the run's state beside it (DXR6); read by the protocol for `codebook_action`.
+   * @param error - What the call threw.
+   * @param input - The run named by the call.
+   * @returns The described error and the run's state for a {@link CHROME_EXTENSION_FAILED_STATE_CODES} error of a chrome-extension run; `undefined` otherwise, which the caller answers as a plain error.
+   * @example service.failedExtensionRunState(error, run)?.state.chromeExtension.phase // => 'failed'
+   */
+  failedExtensionRunState(error: unknown, input: RunInput) {
+    if (
+      !(error instanceof StudyError) ||
+      !CHROME_EXTENSION_FAILED_STATE_CODES.includes(error.code)
+    )
+      return undefined
+    const record = this.records.get(input.runId)
+    if (!record || record.profile !== CHROME_EXTENSION_PROFILE) return undefined
+    return {
+      failure: this.sanitizedError(error).describe(),
+      state: this.state(record),
+    }
+  }
+
+  /**
+   * Prepares a chrome-extension run asynchronously: the declaration's hash, the profile's prerequisites, then the environment's run and its own preparation; a rejection is the run's error and the run is released.
+   * @param record - The chrome-extension run.
+   * @example record.preparation = this.prepareChromeExtension(record)
+   */
+  private async prepareChromeExtension(record: StudyRecord): Promise<void> {
+    // Every chrome-extension record is created with its extension state.
+    if (!isChromeExtensionRecord(record)) return
+    try {
+      await this.startChromeExtensionRun(record)
+    } catch (error) {
+      // A stop cancelled this preparation: the run ends as stopped, with no error of its own.
+      if (record.stopping) return
+      record.error ??= this.sanitizedError(this.preparationError(record, error))
+    }
+    // Release after preparation settles, so this promise is never awaited from itself.
+    if (record.error)
+      queueMicrotask(() => {
+        void this.stopRecord(record).catch(() => undefined)
+      })
+  }
+
+  /**
+   * The steps of a chrome-extension preparation, each of which can refuse the run before the next one starts.
+   * @param record - The chrome-extension run.
+   * @throws `PREREQUISITE_MISSING` for an untrusted workspace, an unready profile or an environment without the run factory; the run's rejection.
+   * @example await this.startChromeExtensionRun(record)
+   */
+  private async startChromeExtensionRun(
+    record: ChromeExtensionStudyRecord,
+  ): Promise<void> {
+    this.environment.assertWorkspace?.()
+    const state = record.chromeExtension
+    const configuration = record.configuration
+    // The permissions the chat acknowledged travel inside its declaration; the run matches them exactly against the manifest (ER5).
+    state.prepared = {
+      configuration,
+      configurationHash: sha256(JSON.stringify(configuration)),
+      acknowledgedPermissions: configuration.acknowledgedPermissions ?? [],
+    }
+    const prerequisites = await this.environment
+      .prerequisites()
+      .then(
+        (reported) => reported.profiles?.[CHROME_EXTENSION_PROFILE] ?? reported,
+      )
+    if (!prerequisites.ready)
+      throw new StudyError(
+        'PREREQUISITE_MISSING',
+        prerequisites.missing.join('; '),
+      )
+    if (!this.environment.createChromeExtensionRun)
+      throw new StudyError(
+        'PREREQUISITE_MISSING',
+        'The owned Chrome extension adapter is unavailable.',
+      )
+    if (this.stopping || record.stopping) return
+    // One snapshot of the private roots for this run, so its journal and its causes agree.
+    const runRoots = this.causeRoots
+    const run = await this.environment.createChromeExtensionRun({
+      runId: record.id,
+      configuration,
+      acknowledgedPermissions: state.prepared.acknowledgedPermissions,
+      record: createChromeExtensionJournal(record.nodeEvents ?? [], {
+        sanitize: (text) => this.sanitizedCause(text, runRoots),
+      }),
+      privateRoots: runRoots,
+    })
+    state.run = run
+    state.subscription = run.onDidChange(() =>
+      this.adoptChromeExtensionEnd(record),
+    )
+    if (this.stopping || record.stopping) return
+    await run.prepare()
+    record.prepared = true
   }
 
   /**

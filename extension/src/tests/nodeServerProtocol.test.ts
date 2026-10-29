@@ -263,6 +263,7 @@ test('the MCP server names node-server and http-request in its instructions, too
   assert.deepEqual(action && 'enum' in action ? action.enum : undefined, [
     'repository-click',
     'http-request',
+    'extension-click',
   ])
   assert.ok(
     resources.some(

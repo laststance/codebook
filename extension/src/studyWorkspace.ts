@@ -36,7 +36,8 @@ import {
   MAIN_THREAD_WEBVIEW_PREFIX,
   MAX_DEFERRED_OPEN_REPLIES,
   MAX_SOURCE_DOCUMENTS,
-  EXTENSION_SAVE_UNAVAILABLE_SENTENCE,
+  CHROME_EXTENSION_SAVE_REFUSAL,
+  CHROME_EXTENSION_PROFILE,
   NODE_SERVER_PROFILE,
   NODE_TEST_PROFILE,
   MILLISECONDS_PER_SECOND,
@@ -11557,7 +11558,7 @@ export class StudyWorkspace {
       record = this.currentRecord()
     // An extension run stores nothing: the command refuses before any study, recording or checkpoint is touched (SR13, DR9).
     if (isChromeExtensionRecord(record))
-      throw new Error(EXTENSION_SAVE_UNAVAILABLE_SENTENCE)
+      throw new Error(CHROME_EXTENSION_SAVE_REFUSAL)
     // A server or test run's Save belongs to its own class, with the same delayed-click guard as a browser save.
     const nodeSave = this.nodeRunSave(service, record, expectedStudyId)
     if (nodeSave) return nodeSave
@@ -14139,7 +14140,8 @@ export class StudyWorkspace {
     const liveDescriptor =
       record &&
       record.profile !== NODE_TEST_PROFILE &&
-      record.profile !== NODE_SERVER_PROFILE
+      record.profile !== NODE_SERVER_PROFILE &&
+      record.profile !== CHROME_EXTENSION_PROFILE
         ? describeStudy(
             record.profile === REPOSITORY_BROWSER_PROFILE
               ? { ...record, descriptor: record.definition?.descriptor }
@@ -14382,7 +14384,8 @@ export class StudyWorkspace {
       // A test run and a server run have no browser Study to show.
       liveProfile:
         live?.profile === NODE_TEST_PROFILE ||
-        live?.profile === NODE_SERVER_PROFILE
+        live?.profile === NODE_SERVER_PROFILE ||
+        live?.profile === CHROME_EXTENSION_PROFILE
           ? undefined
           : live?.profile,
       liveTitle: liveDescriptor?.title,
