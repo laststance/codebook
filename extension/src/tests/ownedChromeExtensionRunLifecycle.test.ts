@@ -738,3 +738,44 @@ test('the pause pin leaves no capture timer pending once the run has ended', asy
   // Assert
   assert.deepEqual(timers.pendingDelays(), [])
 })
+
+// protects=DR3 (Cycle 0062 review OCR-M6): the pin capture settles when the run ends although the paused page never answers its screenshot; fails_when=cleanup cancels the 2 s timer without settling the race, so the capture never ends; no_claim=the pin's frame
+test('a pause pin whose page never answers settles when the run ends', async () => {
+  // Arrange
+  const neverAnswers = defer<Record<string, unknown>>()
+  const timers = manualClock()
+  const harness = createRunHarness({
+    clock: timers.clock,
+    surfaceAnswers: { 'Page.captureScreenshot': () => neverAnswers.promise },
+  })
+  const originalRace = Promise.race.bind(Promise)
+  const races: Promise<unknown>[] = []
+  Promise.race = ((values: Iterable<unknown>) => {
+    const race = originalRace(values as Iterable<Promise<unknown>>)
+    races.push(race)
+    return race
+  }) as typeof Promise.race
+  try {
+    await harness.run.prepare()
+    harness.openDeclaredPause(1, 'service-worker')
+    await waitUntil(
+      () => timers.pendingDelays().includes(2_000),
+      'the pin capture timer to be armed',
+    )
+    const pinRace = races[races.length - 1]
+    assert.notEqual(pinRace, undefined)
+    // Act
+    await harness.run.stop()
+    // Assert
+    const settled = await originalRace([
+      Promise.resolve(pinRace).then(
+        () => 'settled',
+        () => 'settled',
+      ),
+      new Promise<string>((resolve) => setTimeout(resolve, 200, 'pending')),
+    ])
+    assert.equal(settled, 'settled')
+  } finally {
+    Promise.race = originalRace
+  }
+})

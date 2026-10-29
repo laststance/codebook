@@ -757,10 +757,15 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
           EXTENSION_PIN_CAPTURE_TIMEOUT_MS,
         ),
         new Promise<never>((_resolve, reject) => {
-          cancelTimer = this.input.dependencies.clock.set(
+          const cancelClockTimer = this.input.dependencies.clock.set(
             () => reject(new Error('screenshot timed out')),
             EXTENSION_PIN_CAPTURE_TIMEOUT_MS,
           )
+          // A cancel (cleanup or the finally) also settles the race: a paused page may never answer the capture, and a cancelled timer alone would leave the race pending forever.
+          cancelTimer = (): void => {
+            cancelClockTimer()
+            reject(new Error('screenshot cancelled'))
+          }
           this.pinTimerCancels.add(cancelTimer)
         }),
       ])
