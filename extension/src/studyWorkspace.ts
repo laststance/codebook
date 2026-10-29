@@ -10214,11 +10214,11 @@ export class StudyWorkspace {
 
   /**
    * Shows the paused file in the destination group without taking the keyboard, at the selection its editor had, and then closes its tab in front of the Application pane; called by {@link keepPausedSourceOutOfApplication}.
-   * The show comes first, so the document is never left without a tab and its close asks nothing. It opens as a preview unless the destination holds a preview tab, which it would replace. The tab is found again by its document for the close (Cursor builds every tab object anew at a tab change), and only while it is still an unedited preview: one the learner kept or edited during the show stays.
+   * The show comes first, so the document is never left without a tab and its close asks nothing; the copy is closed only after the current tab groups show the document in a group other than the Application's. It opens as a preview unless the destination holds a preview tab, which it would replace. The tab is found again by its document for the close (Cursor builds every tab object anew at a tab change), and only while it is still an unedited preview: one the learner kept or edited during the show stays.
    * @param move - What {@link coveringSourceMove} found.
    * @param isWatching - Whether the lease's watch still runs; a lease released during the show closes nothing.
    * @returns Once the document is shown and the copy closed.
-   * @throws What the show or the close threw, and an error when the editor refuses the close; the watch reports it and counts a failed move.
+   * @throws What the show or the close threw, an error when the show left the document without a tab outside the Application group (its copy is then kept), and an error when the editor refuses the close; the watch reports it and counts a failed move.
    * @example await this.movePausedSource(move, isWatching)
    */
   private async movePausedSource(
@@ -10234,7 +10234,7 @@ export class StudyWorkspace {
         editor.viewColumn === move.from &&
         editor.document.uri.toString() === move.uri.toString(),
     )?.selections[0]
-    await this.showTextDocumentNoted(move.uri, {
+    const shownEditor = await this.showTextDocumentNoted(move.uri, {
       viewColumn: move.to.viewColumn,
       preserveFocus: true,
       preview: !move.to.tabs.some((tab) => tab.isPreview && !isPausedFile(tab)),
@@ -10243,6 +10243,15 @@ export class StudyWorkspace {
       }),
     })
     if (!isWatching()) return
+    // The show may have landed elsewhere (the destination group closed meanwhile, or the editor revealed the file in the Application group itself); closing the copy then would leave the file without a tab, so close nothing and count a failed move.
+    const hasTabOutsideApplication = vscode.window.tabGroups.all.some(
+      (group) =>
+        group.viewColumn !== move.from && group.tabs.some(isPausedFile),
+    )
+    if (!hasTabOutsideApplication)
+      throw new Error(
+        `The editor showed "${basename(move.uri.fsPath)}" in column ${shownEditor.viewColumn ?? 'none'}, not outside the Application group, so its copy in front of the view stays.`,
+      )
     // Checked again after the show: a tab the learner kept or edited meanwhile is theirs and stays.
     const copy = vscode.window.tabGroups.all
       .find((group) => group.viewColumn === move.from)

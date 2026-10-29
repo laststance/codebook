@@ -553,6 +553,9 @@ export async function workspaceHarness(
   /** See `holdNextTextDocumentShow`. */
   let heldTextDocumentShow:
     { entered: () => void; wait: Promise<void>; uri?: string } | undefined
+  /** See `redirectNextTextDocumentShow`. */
+  let redirectedTextDocumentShow:
+    { uri: string; viewColumn: number } | undefined
   /** See `holdNextTabCloseEffect`. */
   let heldTabCloseEffect:
     { entered: () => void; wait: Promise<void> } | undefined
@@ -4935,6 +4938,16 @@ export async function workspaceHarness(
             heldShow.entered()
             await heldShow.wait
           }
+          // In the model of `redirectNextTextDocumentShow`, the editor shows the document in another column than asked.
+          if (
+            redirectedTextDocumentShow?.uri === sourceDocument.uri.toString()
+          ) {
+            options = {
+              ...options,
+              viewColumn: redirectedTextDocumentShow.viewColumn,
+            }
+            redirectedTextDocumentShow = undefined
+          }
           textDocumentShows.push({
             name: basename(sourceDocument.uri.path),
             viewColumn: options?.viewColumn,
@@ -7430,6 +7443,15 @@ export async function workspaceHarness(
         })
       heldTextDocumentShow = { entered, wait, uri: options?.uri }
       return { started, release }
+    },
+    /**
+     * Makes the editor show the next `showTextDocument` of a document in another column than the one asked, as an editor does when the asked group closed meanwhile or it reveals the file where it already was.
+     * @param uri - The exact document URI.
+     * @param viewColumn - The column the editor shows it in.
+     * @example harness.redirectNextTextDocumentShow(uri, applicationColumn)
+     */
+    redirectNextTextDocumentShow(uri: string, viewColumn: number): void {
+      redirectedTextDocumentShow = { uri, viewColumn }
     },
     /**
      * Makes the editor refuse to close every open tab whose document URI contains a text, as it does for a tab it keeps (an answer of `false` for its group's requested tabs).

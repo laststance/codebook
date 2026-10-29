@@ -517,6 +517,46 @@ test('a preview of a file that is no stop file stays in the Application group wh
   }
 })
 
+// protects=CXA4 (Cycle 0062 ship review, Codex adversarial challenge): when the editor shows the paused file in the Application group itself instead of the destination, the copy in front of the view is not closed, so the file keeps a tab; fails_when=the move closes the Application group's copy after any resolved show, leaving the paused file with no tab; no_claim=which native condition makes the editor show it there
+test('a paused file the editor shows in the Application group again is not left without a tab', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const view = await openView(harness, 'misplaced-show-run-1')
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    harness.redirectNextTextDocumentShow(
+      harness.editor.Uri.file(
+        join(harness.directory, 'settings.js'),
+      ).toString(),
+      applicationColumn,
+    )
+    // Act
+    harness.openPausedFileInLockedGroup('settings.js', applicationColumn)
+    await waitUntil(
+      () =>
+        harness.textDocumentShows().some((show) => show.name === 'settings.js'),
+      'the move shows the file',
+      5_000,
+    )
+    // gstack-timing-ok: a negative check; the close would follow the show within the same move, so one settle shows whether it was sent.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    // Assert
+    assert.equal(
+      harness.groups.some((group) =>
+        group.tabs.some((tab) => tab.label === 'settings.js'),
+      ),
+      true,
+    )
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
 // protects=CX1 (Cycle 0062 ship review, Codex): a paused file the learner keeps open (double-click) while its move is under way stays in front of the extension view, since the close checks the tab again; fails_when=the move closes the tab by its document alone, closing a tab the learner kept or edited during the show; no_claim=the editor's own keep gesture
 test('a paused file the learner keeps during its move stays where the learner kept it', async () => {
   // Arrange
