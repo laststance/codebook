@@ -715,6 +715,7 @@ test('a second paused file opened during a move also leaves the Application grou
       'both paused files leave the Application group',
       5_000,
     )
+    assert.notEqual(groupShowing(harness, 'settings.js'), undefined)
     assert.notEqual(groupShowing(harness, 'service-worker.js'), undefined)
     view.close()
   } finally {
@@ -860,6 +861,7 @@ test('a next extension run reuses the kept Application pane without adding a dis
     first.end('The first run ended.')
     first.close()
     const pane = harness.reader['app']
+    assert.ok(pane)
     const listenersAfterFirstRun = harness.disposeListenerCount()
     // Act
     const second = await openView(harness, 'kept-run-2')
