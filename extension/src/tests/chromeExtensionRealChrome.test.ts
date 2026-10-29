@@ -17,7 +17,10 @@ import type {
   OwnedExtensionBrowser,
   ResolvedExtensionRun,
 } from '../chromeExtensionContracts'
-import { CHROME_EXTENSION_MIN_VERSION } from '../constants'
+import {
+  CHROME_EXTENSION_MIN_VERSION,
+  EXTENSION_STOP_WORKERS_BOUND_MS,
+} from '../constants'
 import { StudyError } from '../errors'
 import { launchOwnedExtensionBrowser } from '../runtimeSupport/ownedExtensionBrowser'
 import { assertSupportedChromeVersion } from '../runtimeSupport/utils/assertSupportedChromeVersion'
@@ -27,9 +30,12 @@ import {
 } from '../runtimeSupport/utils/cdpFieldReaders'
 import { listProcesses } from '../runtimeSupport/utils/listProcesses'
 import { readChromeExecutableVersion } from '../runtimeSupport/utils/readChromeExecutableVersion'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { resolveChromeExecutable } from '../utils/resolveChromeExecutable'
 
 const TEST_TIMEOUT_MS = 60_000
+/** How long a started worker may take to be listed; the coverage run of the whole suite once needed more than a second. */
+const WORKER_LISTED_WAIT_MS = 15_000
 const FIXTURE = join(__dirname, '../../src/tests/fixtures/chrome-extension')
 const BROKEN_FIXTURE = join(FIXTURE, 'broken-worker')
 
@@ -311,11 +317,18 @@ test(
     )
     // Act
     await browser.startWorker()
-    await delay(1_000)
-    const started = (await targetsOf(browser)).filter(
-      ({ type }) => type === 'service_worker',
+    // On a loaded machine (the coverage run of the whole suite) the worker target took longer than a second to appear: poll the target list for it.
+    const started = await waitUntil(
+      async () => {
+        const workers = (await targetsOf(browser)).filter(
+          ({ type }) => type === 'service_worker',
+        )
+        return workers.length > 0 ? workers : undefined
+      },
+      'the extension’s service worker is listed after startWorker',
+      WORKER_LISTED_WAIT_MS,
     )
-    await browser.stopWorkers(3_000)
+    await browser.stopWorkers(EXTENSION_STOP_WORKERS_BOUND_MS)
     const after = (await targetsOf(browser)).filter(
       ({ type }) => type === 'service_worker',
     )
