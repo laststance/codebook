@@ -18,6 +18,8 @@ extension/artifacts
 .serena
 .idea
 .playwright-cli
+# Local gstack outputs (retros, scorecards, ship measurements); the global gitignore hides them, which the formatter does not read.
+.context
 
 # Agent worktrees are full checkouts, formatted from inside each one.
 .claude

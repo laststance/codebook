@@ -600,7 +600,6 @@
     "eslint-config-ts-prefixer": "5.1.0",
     "fallow": "3.37.0",
     "lint-staged": "17.5.1",
-    "prettier": "3.9.8",
     "typescript": "5.9.3",
     "xml2js": "0.6.2",
     "yauzl": "3.4.0",
