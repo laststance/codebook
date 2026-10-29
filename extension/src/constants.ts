@@ -2122,3 +2122,14 @@ export const EXTENSION_OUTPUT_EVENT_LIMIT = 200
 export const EXTENSION_WORKER_PAUSE_HOLD_MS = 280_000
 /** After SIGTERM, an owned browser gets this long before SIGKILL. */
 export const EXTENSION_BROWSER_KILL_GRACE_MS = 5_000
+/** A declared chrome-extension click title is 1 to this many characters (DR2). */
+export const EXTENSION_CLICK_TITLE_LIMIT_CHARS = 80
+/** API permissions that reach outside the run's test profile; a manifest declaring one needs `acknowledgedPermissions` (ER5). */
+export const EXTENSION_ACKNOWLEDGED_API_PERMISSIONS = [
+  'nativeMessaging',
+  'debugger',
+  'management',
+  'downloads',
+  'proxy',
+  'privacy',
+] as const
