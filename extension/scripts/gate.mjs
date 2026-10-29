@@ -77,16 +77,30 @@ const SILENT_EXIT_CODE = 124
  * Called by {@link main} before any check, and by tests with a folder of their own.
  * @param root - The repository's root.
  * @returns `{ node, pnpm, bun }` as written there, for example `{ node: '24.22.1', pnpm: '12.4.2', bun: '1.4.4' }`.
+ * @throws When a pin file or the manifest cannot be read, or `packageManager` names no pnpm version, with a sentence
+ * naming it, which {@link main} prints as a refusal.
  * @example
  * await readPins('/work/codebook') // => { node: '24.22.1', pnpm: '12.4.2', bun: '1.4.4' }
  */
 export async function readPins(root) {
   const node = await readPinFile(root, '.node-version')
   const bun = await readPinFile(root, '.bun-version')
-  const { packageManager } = JSON.parse(
-    await readFile(join(root, 'extension/package.json'), 'utf8'),
-  )
+  let packageManager
+  try {
+    ;({ packageManager } = JSON.parse(
+      await readFile(join(root, 'extension/package.json'), 'utf8'),
+    ))
+  } catch (error) {
+    throw new Error(
+      `extension/package.json cannot be read (${error.code ?? error.message}).`,
+    )
+  }
   const pnpm = /^pnpm@([^+]+)/.exec(String(packageManager))?.[1]
+  // Without a pin, an unreadable running pnpm (`undefined`) would equal it and pass as a match.
+  if (pnpm === undefined)
+    throw new Error(
+      'extension/package.json names no pnpm version in packageManager.',
+    )
   return { node, pnpm, bun }
 }
 

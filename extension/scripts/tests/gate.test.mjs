@@ -197,6 +197,37 @@ test('a missing .bun-version is named, so the gate refuses instead of failing on
   })
 })
 
+// Value: protects=the pnpm pin never passing as a match when it cannot be read: a packageManager without a pnpm version, or a manifest that is no JSON, is named, so the gate refuses instead of comparing an undefined pin with an unreadable running pnpm; fails_when=readPins returns pnpm undefined (undefined === undefined passes) or rejects with a raw SyntaxError; why_new=Cycle 0062 pt2 native adversarial round 2; seam=a repository folder of the test; no_claim=the process exit code (main prints this message as its refusal)
+test('a manifest without a pnpm version, or not JSON, is named, so an unreadable pnpm pin never passes as a match', async (context) => {
+  // Arrange
+  const withoutPnpm = await mkdtemp(join(tmpdir(), 'codebook-gate-pins-'))
+  const notJson = await mkdtemp(join(tmpdir(), 'codebook-gate-pins-'))
+  context.after(() => rm(withoutPnpm, { recursive: true, force: true }))
+  context.after(() => rm(notJson, { recursive: true, force: true }))
+  for (const root of [withoutPnpm, notJson]) {
+    await mkdir(join(root, 'extension'))
+    await writeFile(join(root, '.node-version'), '24.22.1\n')
+    await writeFile(join(root, '.bun-version'), '1.4.4\n')
+  }
+  await writeFile(
+    join(withoutPnpm, 'extension/package.json'),
+    JSON.stringify({ name: 'codebook' }),
+  )
+  await writeFile(join(notJson, 'extension/package.json'), '{ not json')
+
+  // Act
+  const readingWithoutPnpm = readPins(withoutPnpm)
+  const readingNotJson = readPins(notJson)
+
+  // Assert
+  await assert.rejects(readingWithoutPnpm, {
+    message: 'extension/package.json names no pnpm version in packageManager.',
+  })
+  await assert.rejects(readingNotJson, {
+    message: /^extension\/package\.json cannot be read \(/,
+  })
+})
+
 // Value: protects=the gate's composition and order, the sixteen checks AGENTS.md names, the architecture check CI requires included; fails_when=a check is dropped, added or reordered without this list changing with it; why_new=Cycle 0058 retro (the list lived in a copied shell script), Cycle 0062 pt2 OCR finding F3 (the architecture job was not in the gate); seam=none; no_claim=each check's command
 test('the gate runs the sixteen delivery checks in their order, the import-cycle check included', () => {
   // Arrange
