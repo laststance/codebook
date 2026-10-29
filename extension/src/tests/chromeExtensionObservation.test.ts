@@ -190,8 +190,8 @@ test('a result that keeps changing within the bound reads unavailable', async ()
   )
 })
 
-// Value: protects=SR23: a newly reached stop during the settle wait restarts the quiet time, so the observation never starts under a stop; fails_when=the read starts while a stop is open; no_claim=the debugger's pause set
-test('the settle wait holds while a stop is paused and starts again when it ends', async () => {
+// Value: protects=SR23: the settle timer does not run while a stop is paused and starts anew when it ends, so the first read comes a full quiet time after the pause ended; fails_when=the timer keeps running under the pause and a read starts at once when it ends; no_claim=the debugger's pause set
+test('the first read comes a full quiet time after the last pause ended', async () => {
   // Arrange
   const pauses = new ExtensionPauseSet()
   const pause = pauses.open({
@@ -204,24 +204,27 @@ test('the settle wait holds while a stop is paused and starts again when it ends
     status: 'captured',
     pausedAtMs: 0,
   })
-  let readsStarted = 0
+  const settleMs = 120
+  let firstReadAtMs: number | undefined
   const observation = observeAfterLastClick({
     read: async () => {
-      readsStarted += 1
+      firstReadAtMs ??= performance.now()
       return { value: 'same' }
     },
     pauseState: pauses,
     signal: new AbortController().signal,
-    settleMs: 20,
+    settleMs,
     pollMs: 5,
   })
   // Act
-  await new Promise((resolve) => setTimeout(resolve, 100))
-  const readsWhilePaused = readsStarted
+  await new Promise((resolve) => setTimeout(resolve, settleMs + 80))
+  const firstReadWhilePaused = firstReadAtMs
+  const pauseEndedAtMs = performance.now()
   pauses.close(pause.sessionId, pause.threadId)
   const after = await observation
   // Assert
-  assert.equal(readsWhilePaused, 0)
+  assert.equal(firstReadWhilePaused, undefined)
+  assert.equal((firstReadAtMs ?? 0) - pauseEndedAtMs >= settleMs - 10, true)
   assert.deepEqual(after, { value: 'same' })
 })
 

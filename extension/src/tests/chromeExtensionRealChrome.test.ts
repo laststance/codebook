@@ -14,9 +14,11 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
 
 import type {
+  ExtensionObservation,
   OwnedExtensionBrowser,
   ResolvedExtensionRun,
 } from '../chromeExtensionContracts'
+import { createExtensionObservationReader } from '../chromeExtensionObservation'
 import {
   CHROME_EXTENSION_MIN_VERSION,
   EXTENSION_STOP_WORKERS_BOUND_MS,
@@ -425,5 +427,99 @@ test(
     assert.deepEqual(closing, { profileLeft: false, exitConfirmed: true })
     assert.deepEqual(await namesProfile(), [])
     assert.deepEqual(await readdir(root), [])
+  },
+)
+
+/** Reads the run's observation through the product reader on the surface session of a launched browser. */
+async function observeOnSurface(
+  browser: OwnedExtensionBrowser,
+  observe: ExtensionObservation,
+  surfaceSessionId: () => string | undefined,
+) {
+  const reader = createExtensionObservationReader({
+    cdp: browser.cdp,
+    extensionId: browser.extensionId,
+    observe,
+    surfaceSessionId,
+  })
+  return reader.read()
+}
+
+// Value: protects=ER26, CR9 against the real Chrome: the popup, text and storage observations read what a real popup page and the extension's storage hold, and a missing element or key reads missing; fails_when=a reader command or expression stops working in a Chrome release; no_claim=js-debug attach and native pause (task 0, N61)
+test(
+  'real Chrome: the popup, text and storage observations read a real popup and missing reads as missing',
+  { timeout: TEST_TIMEOUT_MS },
+  async (context) => {
+    const chrome = await requireChrome(context)
+    if (!chrome) return
+    // Arrange
+    const run = await runOf(FIXTURE, {
+      seed: { bookmarks: [], storage: { seeded: 'yes' } },
+    })
+    const { browser } = await launch(context, chrome, run)
+    const surfaceSession = await browser.attachSurface()
+    const read = (observe: ExtensionObservation) =>
+      observeOnSurface(browser, observe, () => surfaceSession)
+    // Act
+    const text = await read({ kind: 'text', selector: '#go' })
+    const noElement = await read({ kind: 'text', selector: '#nothing' })
+    const popup = await read({ kind: 'popup' })
+    const storage = await read({ kind: 'storage', key: 'seeded' })
+    const noKey = await read({ kind: 'storage', key: 'absent' })
+    // Assert
+    assert.deepEqual(text, { value: 'Go' })
+    assert.deepEqual(noElement, { missing: true })
+    assert.deepEqual(popup, {
+      value: `chrome-extension://${run.extensionId}/popup.html`,
+    })
+    assert.deepEqual(storage, { value: 'yes' })
+    assert.deepEqual(noKey, { missing: true })
+  },
+)
+
+// Value: protects=SR26, ER26 against the real Chrome: closing the real popup raises Target.targetDestroyed for the surface target on the browser connection, a text read then finds no context, and a storage read still completes; fails_when=the destroy event is not delivered after discovery is on, or a read after the close hangs or lies; no_claim=the run's own failure handling (run tests)
+test(
+  'real Chrome: a closed popup announces itself, a text read is unavailable and a storage read still completes',
+  { timeout: TEST_TIMEOUT_MS },
+  async (context) => {
+    const chrome = await requireChrome(context)
+    if (!chrome) return
+    // Arrange
+    const run = await runOf(FIXTURE, {
+      seed: { bookmarks: [], storage: { seeded: 'yes' } },
+    })
+    const { browser } = await launch(context, chrome, run)
+    let surfaceSession: string | undefined = await browser.attachSurface()
+    const destroyedTargets: unknown[] = []
+    browser.cdp.on('Target.targetDestroyed', (params) =>
+      destroyedTargets.push(params.targetId),
+    )
+    await browser.cdp.request('Target.setDiscoverTargets', { discover: true })
+    // Act
+    await browser.cdp.request('Target.closeTarget', {
+      targetId: browser.surfaceTargetId,
+    })
+    await waitUntil(
+      () => destroyedTargets.includes(browser.surfaceTargetId),
+      'the surface target to be reported destroyed',
+      WORKER_LISTED_WAIT_MS,
+    )
+    surfaceSession = undefined
+    const text = await observeOnSurface(
+      browser,
+      { kind: 'text', selector: '#go' },
+      () => surfaceSession,
+    )
+    const storage = await observeOnSurface(
+      browser,
+      { kind: 'storage', key: 'seeded' },
+      () => surfaceSession,
+    )
+    // Assert
+    assert.deepEqual(text, {
+      unavailable: true,
+      cause: 'the extension surface no longer exists',
+    })
+    assert.deepEqual(storage, { value: 'yes' })
   },
 )
