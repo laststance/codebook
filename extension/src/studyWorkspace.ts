@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
-import { basename, dirname, join, normalize } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 import * as vscode from 'vscode'
 import { z } from 'zod'
@@ -241,6 +241,7 @@ import {
   openingServerEvent,
   restoreServerPlayhead,
 } from './utils/buildServerReplayModel'
+import { canonicalFsPath } from './utils/canonicalFsPath'
 import { capturedAppHtml } from './utils/capturedAppHtml'
 import { capturedSourceDeclaredPath } from './utils/capturedSourceDeclaredPath'
 import {
@@ -8073,14 +8074,17 @@ export class StudyWorkspace {
         scenario: 'normal',
         signal,
         keepsEndedPane: () => isFinal,
-        movesPausedSourceOut: (fsPath) => stopFilePaths.has(normalize(fsPath)),
+        movesPausedSourceOut: (fsPath) =>
+          stopFilePaths.has(canonicalFsPath(fsPath)),
       })
       return new ChromeExtensionViewportView(viewport, {
         onFinal: () => {
           isFinal = true
         },
         onStopFiles: (stopFiles) => {
-          stopFilePaths = new Set(stopFiles.map((file) => normalize(file)))
+          stopFilePaths = new Set(
+            stopFiles.map((file) => canonicalFsPath(file)),
+          )
         },
       })
     },
