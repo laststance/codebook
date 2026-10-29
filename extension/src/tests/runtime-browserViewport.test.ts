@@ -2637,8 +2637,8 @@ test('a live popup frame message carries the CSS size the browser reported', asy
   harness.viewport.close()
 })
 
-// protects=DR7: a popup surface shows the frame at its own size, so no device-metrics override is sent and the screencast has no size bound; fails_when=a popup is forced to 720 x 640; no_claim=the popup's real pixels
-test('a popup screencast starts without a device-metrics override or a size bound', async () => {
+// protects=DR7 (Cycle 0062 task 18): a popup surface shows the frame at its own size, so no device-metrics override is sent, and the screencast is bounded only by Chrome's own popup cap of 800 x 600; fails_when=a popup is forced to 720 x 640 or the screencast is unbounded; no_claim=the popup's real pixels
+test('a popup screencast starts without a device-metrics override and is bounded at Chrome’s 800 by 600 popup cap', async () => {
   // Arrange
   const harness = await viewportHarness('normal')
   const { cdp, requests } = screencastConnection()
@@ -2656,7 +2656,12 @@ test('a popup screencast starts without a device-metrics override or a size boun
     { method: 'Page.enable', params: null },
     {
       method: 'Page.startScreencast',
-      params: { format: 'png', everyNthFrame: 1 },
+      params: {
+        format: 'png',
+        maxWidth: 800,
+        maxHeight: 600,
+        everyNthFrame: 1,
+      },
     },
   ])
   harness.viewport.close()

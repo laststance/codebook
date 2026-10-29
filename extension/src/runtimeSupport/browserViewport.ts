@@ -13,6 +13,8 @@ import {
   CAPTURE_TIMEOUT_MS,
   KEYBOARD_OWNER_ANSWER_TIMEOUT_MS,
   STREAM_TELEMETRY_INTERVAL_MS,
+  EXTENSION_POPUP_MAX_HEIGHT_PX,
+  EXTENSION_POPUP_MAX_WIDTH_PX,
   VIEWPORT_HEIGHT_PX,
   VIEWPORT_WIDTH_PX,
   type Scenario,
@@ -396,10 +398,12 @@ export class BrowserViewport {
     ])
     signal.throwIfAborted()
     if (surface === 'popup') {
-      // A popup keeps the size its own content gives it: no override, no size bound on the frames (DR7).
+      // A popup keeps the size its own content gives it: no override; frames are bounded only at Chrome's own popup cap (DR7).
       await cdp.request('Page.enable', undefined)
       await cdp.request('Page.startScreencast', {
         format: 'png',
+        maxWidth: EXTENSION_POPUP_MAX_WIDTH_PX,
+        maxHeight: EXTENSION_POPUP_MAX_HEIGHT_PX,
         everyNthFrame: 1,
       })
     } else {
