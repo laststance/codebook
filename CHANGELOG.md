@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.60.0] - 2026-10-30 (development candidate)
+
+Cycle 0062 ([Issue #157](https://github.com/laststance/codebook/issues/157)), the first of the two pull requests of a bug-fix cycle. It fixes every defect Cycle 0061 carried for the Chrome extension runs, and the defects its own reviews found; it adds no feature. A native dry run in Cursor 3.27.22 in the macOS Space showed why the paused source covered the extension view (Cursor opens a stop's file in the view's locked group). The native trial N62 runs on this pull request's head before the merge in VS Code and Cursor, and the Issue records it. The second pull request changes only the checks (Fallow and Bun).
+
+**Explaining a Chrome extension in Cursor (skill 1.0.56).**
+
+- **The Application view opens when you start the run from Cursor's Agent chat** while the first editor group is empty, and the chat keeps the keyboard.
+- **A preview tab you have in front, such as an image opened by one click, no longer keeps the view from opening**: the view opens in its own group and the tab stays a preview.
+- **At a stop, the stop's file that Cursor opens in front of the view moves to the editor group beside it**, at the stop's line, so the view and the stopped source stay visible together. A tab of it you kept open or edited there stays where it is, and no other file is moved.
+- **When the view still cannot open, the chat tells you why**, with the reason the run gives in `chromeExtension.viewUnavailable` and the step that reason names.
+
+**Runs that end cleanly and say so.**
+
+- **Stop answers within 10 s** even when a preparation step or the debugger stops answering, and closes the test Chrome once, also one that appears after the stop. While such a step is still under way, the run resource reads the cleanup as unconfirmed.
+- **A click that arrives while the run ends is refused** with `RUN_NOT_READY`, and a source change between two inputs of a click stops it before the next input, naming the input it stopped before.
+- **The debugger ties the surface and the service worker to the test Chrome's own pages and workers**: a second page at the surface address, no page there, or no single service worker of the extension refuses the attach instead of guessing; a failed release is journaled and retried.
+
+**Compatibility.** MCP API 1.10 is unchanged. The bundled skill moves to 1.0.56. To update, install this VSIX, reopen the work window and run **Codebook: Set Up AI Chat**.
+
 ## [0.2.59.0] - 2026-10-29 (development candidate)
 
 Cycle 0061 ([Issue #154](https://github.com/laststance/codebook/issues/154)), the second and last pull request of a feature cycle: the chat can now explain a Chrome Manifest V3 extension of the opened repository live. Ask `/codebook` how the extension's popup or one of its pages handles a few clicks; the chat starts the extension in a test Chrome of its own, performs the clicks, stops in the extension's page script and its service worker in the editor's own debugger, explains each stop with the values you see in the Variables view, and reports what the clicks changed. Native dry runs in the macOS Space paused a real popup and service worker in VS Code 1.142.0 (Copilot Chat, GPT-6.1 Terra) and Cursor 3.27.12 (Agent, Grok 4.6 High Fast) on a pinned clone of `laststance/bookmark-xp-explorer` (development evidence, no acceptance credit); the native trial N61 runs on the final candidate before the merge, and the Issue records it.
