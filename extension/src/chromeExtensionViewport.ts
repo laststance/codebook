@@ -147,6 +147,8 @@ export class ChromeExtensionViewportView implements ChromeExtensionViewport {
       this.identity?.surface.kind === 'popup' ? 'Popup closed' : 'Page closed'
     this.stopScreencast()
     this.publish()
+    // The dimmed last frame is the run's final view: the pane is kept after the run, as an ended run's is (ER22).
+    this.options.onFinal?.()
   }
 
   end(resultLine: string): void {

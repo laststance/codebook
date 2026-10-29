@@ -517,10 +517,12 @@ test(
       () => undefined,
     )
     // Assert
-    assert.deepEqual(text, {
-      unavailable: true,
-      cause: 'Runtime.evaluate: Session with given id not found.',
-    })
+    // Chrome words its own refusal; the read names the command that met it.
+    assert.equal('unavailable' in text && text.unavailable, true)
+    assert.match(
+      'cause' in text ? String(text.cause) : '',
+      /^Runtime\.evaluate: /,
+    )
     assert.deepEqual(storage, { value: 'yes' })
   },
 )

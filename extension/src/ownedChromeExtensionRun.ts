@@ -248,6 +248,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       ...(this.clickInFlight === undefined
         ? {}
         : { clickInFlight: this.clickInFlight }),
+      ...(this.workPending && { clickWorkPending: true }),
     }
   }
 
@@ -899,6 +900,8 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       () => {
         this.workPending = false
         this.afterClickWork(isLastClick)
+        // The click's work ended after its call answered: the view offers the next step again.
+        this.changed()
       },
       (error: unknown) => {
         this.workPending = false
@@ -989,8 +992,10 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
 
   /** Builds and keeps the observation report from the baseline and an after read. */
   private setObserved(after: ExtensionObservedRawRead): void {
+    const observe = this.resolved?.observe
     this.observed = buildExtensionObserved({
-      kind: this.resolved?.observe.kind ?? 'text',
+      kind: observe?.kind ?? 'text',
+      ...(observe?.kind === 'storage' && { key: observe.key }),
       before: this.beforeRead ?? {
         unavailable: true,
         cause: 'no baseline was read',

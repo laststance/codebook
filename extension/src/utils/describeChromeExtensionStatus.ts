@@ -157,7 +157,7 @@ export function describeChromeExtensionViewStatus(
   const allClicksDone = procedure.clicksPerformed >= procedure.clicksDeclared
   const clickIsGoingOn =
     procedure.clickInFlight !== undefined ||
-    view.lastClick?.outcome === 'running' ||
+    procedure.clickWorkPending === true ||
     (allClicksDone && view.phase === 'ready')
   const dispatchedIndex = procedure.clickInFlight ?? procedure.clicksPerformed
   const declaredPause = view.pauses.find((pause) => pause.kind === 'declared')

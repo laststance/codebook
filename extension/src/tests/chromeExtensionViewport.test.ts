@@ -197,6 +197,21 @@ test('a lost surface dims the last frame and says which surface closed', () => {
   )
 })
 
+// protects=ER22 for a lost surface: the dimmed "Popup closed" frame is the run's final view, so the pane is kept after the run as an ended run's is (Codex review, Cycle 0061 pt2 /ship pass 1); fails_when=surfaceLost does not report the final view and the cleanup closes the Application tab with the last frame; no_claim=the workspace's lease rules
+test('a lost surface reports its dimmed frame as the final view so the pane is kept', () => {
+  // Arrange
+  const { viewport } = paneViewport()
+  let finals = 0
+  const view = new ChromeExtensionViewportView(viewport, {
+    onFinal: () => finals++,
+  })
+  view.setIdentity(POPUP)
+  // Act
+  view.surfaceLost()
+  // Assert
+  assert.equal(finals, 1)
+})
+
 // protects=ER22 and DR4: the ended view says when the last frame was captured and shows the result line; fails_when=the time format or the result line is lost; no_claim=the clock of a real run
 test('an ended view names the last captured time and keeps the result line', () => {
   // Arrange

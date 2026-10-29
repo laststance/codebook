@@ -251,6 +251,155 @@ test('the whole-run deadline fails a ready run and cleans it up', async () => {
   )
 })
 
+/**
+ * Builds a run harness whose text observation answers the baseline at once and holds every later read until the test releases it.
+ * Why: the state-matrix cells below end a run while its after-click read is still in flight.
+ * @param behaviour - What else differs from a healthy run.
+ * @returns The harness, the held read's release and a count of the reads sent.
+ * @example const { harness, held, reads } = harnessWithHeldResultRead({ timings: { runMs: 1_000 } })
+ */
+function harnessWithHeldResultRead(
+  behaviour: Parameters<typeof createRunHarness>[0] = {},
+) {
+  const held = defer<Record<string, unknown>>()
+  let reads = 0
+  const harness = createRunHarness({
+    ...behaviour,
+    surfaceAnswers: {
+      'Runtime.evaluate': () => {
+        reads += 1
+        return reads === 1
+          ? { result: { value: { text: 'before' } } }
+          : held.promise
+      },
+    },
+  })
+  return { harness, held, reads: (): number => reads }
+}
+
+// Value: protects=state matrix preparing × deadline (acceptance 5): a run not ready within the setup bound fails with that limit, starts no later phase, and closes the browser that appeared late once; fails_when=the setup timer is not armed, names another limit, or the late browser stays open; no_claim=the 90 s value (constant)
+test('a run not ready within the setup bound fails with that limit and closes the late browser once', async () => {
+  // Arrange
+  const launchGate = defer<void>()
+  const harness = createRunHarness({
+    launchGate: launchGate.promise,
+    timings: { setupMs: 1_000 },
+  })
+  const preparing = harness.run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Act
+  await waitUntil(
+    () => harness.run.view().runFailure !== undefined,
+    'the setup bound',
+  )
+  launchGate.resolve()
+  const failure = await preparing
+  // Assert
+  assert.equal(
+    (failure as StudyError).message,
+    'The extension run was not ready within 1 s and was ended.',
+  )
+  assert.equal(harness.run.view().phase, 'failed')
+  assert.equal(harness.log.includes('debugger.attach'), false)
+  assert.equal(
+    harness.log.filter((entry) => entry === 'browser.close').length,
+    1,
+  )
+})
+
+// Value: protects=state matrix paused × stop (SR22, acceptance 5): stopping a run at a declared pause reads partial with no observation and no claim, through the one cleanup; fails_when=the stopped run reads complete, keeps an observation, or skips a cleanup step; no_claim=the debugger's own release of the pause (debugger tests)
+test('stopping a run at a declared pause reads partial with no observation and runs the one cleanup', async () => {
+  // Arrange
+  const harness = createRunHarness()
+  await harness.run.prepare()
+  await harness.run.click()
+  harness.openDeclaredPause(1, 'page')
+  // Act
+  await harness.run.stop()
+  // Assert
+  const view = harness.run.view()
+  assert.deepEqual(
+    [view.phase, view.result, view.observed, view.claimable],
+    ['completed', 'partial', null, false],
+  )
+  assert.deepEqual(cleanupSteps(harness.log), FULL_CLEANUP)
+})
+
+// Value: protects=state matrix paused × deadline (acceptance 5): the whole-run deadline ends a run held at a declared pause with the limit's sentence, through the one cleanup; fails_when=a paused run outlives its limit or the browser is not closed once; no_claim=the 600 s value (constant)
+test('the whole-run deadline ends a run held at a declared pause and cleans it up once', async () => {
+  // Arrange
+  const harness = createRunHarness({ timings: { runMs: 1_000 } })
+  await harness.run.prepare()
+  harness.openDeclaredPause(1, 'page')
+  // Act
+  await waitUntil(() => harness.run.view().phase === 'failed', 'the deadline')
+  // Assert
+  assert.equal(
+    harness.run.view().runFailure?.message,
+    'The extension run reached its limit of 1 s and was ended.',
+  )
+  assert.equal(
+    harness.log.filter((entry) => entry === 'browser.close').length,
+    1,
+  )
+})
+
+// Value: protects=state matrix observing × stop (SR22, CR14): a stop while the result is being read ends the run partial with no observation, and the read that answers later is not stored; fails_when=the late read becomes the observed result of a stopped run; no_claim=the lost-surface read (clicks tests)
+test('stopping while the result is read keeps no observation, even when the read answers later', async () => {
+  // Arrange
+  const { harness, held, reads } = harnessWithHeldResultRead()
+  await harness.run.prepare()
+  await harness.run.click()
+  await harness.run.click()
+  await waitUntil(() => reads() >= 2, 'the after-click read to start')
+  // Act
+  const stopping = harness.run.stop()
+  held.resolve({ result: { value: { text: 'after' } } })
+  await stopping
+  // gstack-timing-ok: a negative check; a slow runner can only miss a wrong store, never fail a correct run
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  // Assert
+  const view = harness.run.view()
+  assert.deepEqual(
+    [view.phase, view.result, view.observed, view.claimable],
+    ['completed', 'partial', null, false],
+  )
+  assert.equal(
+    harness.log.filter((entry) => entry === 'browser.close').length,
+    1,
+  )
+})
+
+// Value: protects=state matrix observing × deadline (acceptance 5): the whole-run deadline during the result read fails the run with the limit's sentence and stores no result from the late read; fails_when=the late read is stored as observed or the run is not cleaned up once; no_claim=the 600 s value (constant)
+test('the whole-run deadline during the result read fails the run and stores no late result', async () => {
+  // Arrange
+  const { harness, held, reads } = harnessWithHeldResultRead({
+    timings: { runMs: 1_000 },
+  })
+  await harness.run.prepare()
+  await harness.run.click()
+  await harness.run.click()
+  await waitUntil(() => reads() >= 2, 'the after-click read to start')
+  // Act
+  await waitUntil(() => harness.run.view().phase === 'failed', 'the deadline')
+  held.resolve({ result: { value: { text: 'after' } } })
+  // gstack-timing-ok: a negative check; a slow runner can only miss a wrong store, never fail a correct run
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  // Assert
+  assert.equal(
+    harness.run.view().runFailure?.message,
+    'The extension run reached its limit of 1 s and was ended.',
+  )
+  assert.equal(harness.run.view().observed ?? null, null)
+  assert.equal(harness.run.view().claimable, false)
+  assert.equal(
+    harness.log.filter((entry) => entry === 'browser.close').length,
+    1,
+  )
+})
+
 // Value: protects=acceptance 5: the learner stopping the debug session ends the run through the one cleanup; fails_when=the run stays ready with a dead debugger; no_claim=the editor's own session events
 test('the end of the debug session fails the run and cleans it up once', async () => {
   // Arrange

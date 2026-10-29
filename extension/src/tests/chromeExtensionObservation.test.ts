@@ -9,6 +9,7 @@ import {
   observeAfterLastClick,
 } from '../chromeExtensionObservation'
 import { ExtensionPauseSet } from '../chromeExtensionPauseSet'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { maskExtensionObservedRead } from '../utils/maskExtensionObservedRead'
 
 import {
@@ -188,6 +189,75 @@ test('a storage read after the surface is lost fails at its timeout when its ext
     unavailable: true,
     cause: 'the read did not answer within 40 ms',
   })
+})
+
+// Value: protects=ER23 for the observed key itself: a storage observation of a secret-named key (password) reports both values masked whole, while changed is still decided on the real values (Codex review, Cycle 0061 pt2 /ship pass 1); fails_when=the key is dropped before masking and the password reaches the run resource in plain text; no_claim=which key names count as secret (isSecretName)
+test('a storage observation of a secret-named key reports both values masked and still says it changed', () => {
+  // Act
+  const observed = buildExtensionObserved({
+    kind: 'storage',
+    key: 'password',
+    before: { value: 'demo-unprefixed-private-value' },
+    after: { value: 'another-unprefixed-private-value' },
+    observedAtMs: 1_200,
+    roots: { storage: [] },
+  })
+  // Assert
+  assert.deepEqual(observed, {
+    kind: 'storage',
+    before: { value: '[masked]' },
+    after: { value: '[masked]' },
+    changed: true,
+    observedAtMs: 1_200,
+  })
+})
+
+// Value: protects=ER16 during the result read: a stop that pauses while a read is in flight voids that read, so two equal reads around a pause never end the observation with the pause open (Codex review, Cycle 0061 pt2 /ship pass 1); fails_when=the read that a pause overlapped completes the observation and the run is cleaned up under an open pause; no_claim=the debugger's own pause events
+test('a read during which a stop paused is dropped and the observation waits for the pause to end', async () => {
+  // Arrange
+  const pauses = new ExtensionPauseSet()
+  const controller = new AbortController()
+  let reads = 0
+  let pause: ReturnType<ExtensionPauseSet['open']> | undefined
+  const observation = observeAfterLastClick({
+    read: async () => {
+      reads += 1
+      // The second read is in flight when the worker pauses at a declared stop.
+      if (reads === 2)
+        pause = pauses.open({
+          sessionId: 'worker',
+          threadId: 1,
+          context: 'service-worker',
+          reason: 'breakpoint',
+          kind: 'declared',
+          stopIndex: 2,
+          status: 'captured',
+          pausedAtMs: 0,
+        })
+      return { value: 'same' }
+    },
+    pauseState: pauses,
+    signal: controller.signal,
+    settleMs: 20,
+    pollMs: 5,
+    boundMs: 2_000,
+  })
+  await waitUntil(() => pause !== undefined, 'the pause during the second read')
+  // gstack-timing-ok: a negative check; a slow runner can only miss a wrong early end, never fail a correct run
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  const readsWhilePaused = reads
+  let settledWhilePaused = false
+  void observation.then(() => {
+    settledWhilePaused = pauses.isPaused()
+  })
+  // Act
+  pauses.close(pause!.sessionId, pause!.threadId)
+  const after = await observation
+  // Assert
+  assert.equal(readsWhilePaused, 2)
+  assert.equal(settledWhilePaused, false)
+  assert.equal(reads >= 4, true)
+  assert.deepEqual(after, { value: 'same' })
 })
 
 // Value: protects=CR9: a value that never holds still for two reads within the bound reads unavailable instead of an arbitrary last value; fails_when=the last changing value is reported as the result; no_claim=the 5 s bound

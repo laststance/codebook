@@ -63,6 +63,43 @@ test('answers each click with its 1-based index and counts performed clicks', as
   await harness.run.stop()
 })
 
+// Value: protects=DXR5 after a slow click: a click that answered running and then finished offers the next click again, in the run resource's next actions and in the status text (Codex review, Cycle 0061 pt2 /ship pass 1); fails_when=the click's frozen running answer keeps next actions at read-run and the chat never sends the second click; no_claim=the 10 s answer bound (executor tests)
+test('a click that answered running offers the next click once its work has finished', async () => {
+  // Arrange
+  const work = defer<void>()
+  const harness = createRunHarness({
+    receipts: { 1: async () => settledReceipt(1, work.promise, 'running') },
+  })
+  await harness.run.prepare()
+  const first = await harness.run.click()
+  const procedureWhileRunning = harness.run.view().procedure
+  // Act
+  work.resolve()
+  await waitUntil(
+    () => harness.run.view().procedure.clickWorkPending === undefined,
+    "the first click's work to end",
+  )
+  // Assert
+  assert.equal(first.outcome, 'running')
+  assert.deepEqual(procedureWhileRunning, {
+    clicksDeclared: 2,
+    clicksPerformed: 1,
+    clickWorkPending: true,
+  })
+  assert.deepEqual(harness.run.view().procedure, {
+    clicksDeclared: 2,
+    clicksPerformed: 1,
+  })
+  assert.equal(
+    describeChromeExtensionViewStatus(harness.run.view(), [
+      'Open dialog',
+      'Confirm',
+    ]).statusItem,
+    'Waiting for chat · next click 2 of 2',
+  )
+  await harness.run.stop()
+})
+
 // Value: protects=SR2, SR12: a click after the last declared one is refused with NO_MORE_ACTIONS; fails_when=a third click reaches the executor; no_claim=the idempotent replay of the same key (service)
 test('refuses a click after the last declared one with NO_MORE_ACTIONS', async () => {
   // Arrange

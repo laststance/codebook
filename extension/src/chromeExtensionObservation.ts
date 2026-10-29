@@ -16,6 +16,7 @@ import {
 import type { ChromeExtensionObserved } from './runtime'
 import { readCdpString } from './runtimeSupport/utils/cdpFieldReaders'
 import { canonicalJson } from './utils/canonicalJson'
+import { isSecretName } from './utils/isSecretName'
 import {
   maskExtensionObservedRead,
   type ExtensionObservedRawRead,
@@ -347,19 +348,20 @@ export async function observeAfterLastClick(
   const now = input.now ?? ((): number => performance.now())
   const pollMs = input.pollMs ?? EXTENSION_OBSERVE_POLL_MS
   const boundMs = input.boundMs ?? EXTENSION_OBSERVE_BOUND_MS
-  await waitUntilExtensionSettled(
-    pauseState,
-    input.settleMs ?? EXTENSION_OBSERVE_SETTLE_MS,
-    signal,
-  )
+  const settleMs = input.settleMs ?? EXTENSION_OBSERVE_SETTLE_MS
+  await waitUntilExtensionSettled(pauseState, settleMs, signal)
   input.onReading?.()
   // The bound counts only unpaused time: pause intervals are summed from the pause set's own changes.
   const startedAtMs = now()
   let pausedTotalMs = 0
   let pausedSinceMs: number | undefined
+  // Counts pause-set changes while paused, so a read that a pause overlapped is recognized after it answers.
+  let pauseChanges = 0
   const stopListening = pauseState.onChange(() => {
-    if (pauseState.isPaused()) pausedSinceMs ??= now()
-    else if (pausedSinceMs !== undefined) {
+    if (pauseState.isPaused()) {
+      pausedSinceMs ??= now()
+      pauseChanges += 1
+    } else if (pausedSinceMs !== undefined) {
       pausedTotalMs += now() - pausedSinceMs
       pausedSinceMs = undefined
     }
@@ -378,8 +380,15 @@ export async function observeAfterLastClick(
     while (unpausedMs() < boundMs) {
       signal.throwIfAborted()
       await waitUntilUnpaused(pauseState, signal)
+      const pauseChangesBeforeRead = pauseChanges
       const read = await input.read()
       signal.throwIfAborted()
+      // A pause opened while the read was in flight: the read may predate the work the pause holds, so it is dropped and the quiet time starts again after the pause (ER16).
+      if (pauseChanges !== pauseChangesBeforeRead || pauseState.isPaused()) {
+        previous = undefined
+        await waitUntilExtensionSettled(pauseState, settleMs, signal)
+        continue
+      }
       // A value over the limit stays over it: no later read can fix it.
       if ('unavailable' in read && read.cause === OBSERVATION_LIMIT_CAUSE)
         return read
@@ -422,23 +431,25 @@ function extensionObservationChanged(
 
 /**
  * Builds the observation report of the run resource from the two raw reads (CR9, DXR7).
- * @param input - The kind, both raw reads, the milliseconds since the launch and the private roots.
+ * @param input - The kind, the observed storage key (a secret-like key masks both values whole), both raw reads, the milliseconds since the launch and the private roots.
  * @returns The masked, bounded report; `changed` is absent when either read is unavailable.
  * @example
  * buildExtensionObserved({ kind: 'text', before: { value: 'a' }, after: { value: 'b' }, observedAtMs: 4_000, roots: {} }).changed // => true
  */
 export function buildExtensionObserved(input: {
   kind: ExtensionObservation['kind']
+  key?: string
   before: ExtensionObservedRawRead
   after: ExtensionObservedRawRead
   observedAtMs: number
   roots: CauseRoots
 }): ChromeExtensionObserved {
   const changed = extensionObservationChanged(input.before, input.after)
+  const isSecretValue = input.key !== undefined && isSecretName(input.key)
   return {
     kind: input.kind,
-    before: maskExtensionObservedRead(input.before, input.roots),
-    after: maskExtensionObservedRead(input.after, input.roots),
+    before: maskExtensionObservedRead(input.before, input.roots, isSecretValue),
+    after: maskExtensionObservedRead(input.after, input.roots, isSecretValue),
     ...(changed === undefined ? {} : { changed }),
     observedAtMs: input.observedAtMs,
   }

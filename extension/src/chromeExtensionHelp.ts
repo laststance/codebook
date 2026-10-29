@@ -614,6 +614,6 @@ export function chromeExtensionHelp() {
         'Click 1 answers outcome paused at the page stop (stop 1, before the message is sent); continue it, the worker stop (stop 2) pauses next; continue it, the popup shows pong, the run observes #status and completes with claimable true and observed.changed true (idle before, pong after).',
     },
     recovery:
-      'A lost response is recovered by reading the run resource, never by clicking again: codebook_action with the same key returns its receipt, and chromeExtension.lastClick, chromeExtension.procedure and the error say what happened. A failed run never continues: read its error, then start at most one new run when the recovery of its code allows it.',
+      'A lost response is recovered by reading the run resource, never by clicking again: codebook_action with the same key returns its receipt, and chromeExtension.lastClick, chromeExtension.procedure (clickWorkPending is true while a click that answered paused or running still works) and the error say what happened. A failed run never continues: read its error, then start at most one new run when the recovery of its code allows it.',
   }
 }

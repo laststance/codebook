@@ -224,3 +224,38 @@ test('the run resource hides private roots in output lines and in the failure me
     cause: 'cause <home>/ext/sw.js',
   })
 })
+
+// protects=DXR5 after a slow click: the next actions follow the click's current work, not its call's frozen running answer, so a finished slow click offers extension-click again (Codex review, Cycle 0061 pt2 /ship pass 1); fails_when=a lastClick outcome of running keeps next actions at read-run forever; no_claim=the run's own work tracking (run tests)
+test('a finished click that answered running offers the next click, and one still working offers read-run', () => {
+  // Arrange
+  const lastClick = {
+    clickIndex: 1,
+    outcome: 'running' as const,
+    inputsApplied: 0,
+    clickDispatched: true,
+    inputEffects: [],
+    clickEffect: 'confirmed' as const,
+  }
+  const finished = viewOf({
+    procedure: { clicksDeclared: 2, clicksPerformed: 1 },
+    lastClick,
+  })
+  const working = viewOf({
+    procedure: {
+      clicksDeclared: 2,
+      clicksPerformed: 1,
+      clickWorkPending: true,
+    },
+    lastClick,
+  })
+  // Act
+  const finishedActions = projectChromeExtensionState(
+    inputOf(finished),
+  ).nextActions
+  const workingActions = projectChromeExtensionState(
+    inputOf(working),
+  ).nextActions
+  // Assert
+  assert.deepEqual(finishedActions, ['extension-click', 'stop'])
+  assert.deepEqual(workingActions, ['read-run', 'stop'])
+})

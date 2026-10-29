@@ -272,11 +272,12 @@ export type ChromeExtensionView = {
       hostPermissions: readonly string[]
     }
   }
-  /** Clicks performed of declared (CR9's `procedure`); `clickInFlight` is the 1-based index of a click whose call has not settled. */
+  /** Clicks performed of declared (CR9's `procedure`); `clickInFlight` is the 1-based index of a click whose call has not settled; `clickWorkPending` says the latest click's work still goes on after its call answered `paused` or `running`. */
   procedure: {
     clicksDeclared: number
     clicksPerformed: number
     clickInFlight?: number
+    clickWorkPending?: boolean
   }
   /** The answer of the latest click call, updated while its steps go on. */
   lastClick?: ChromeExtensionClickAnswer

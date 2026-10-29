@@ -96,9 +96,10 @@ function extensionNextActions(
   const clicksLeft = view
     ? view.procedure.clicksPerformed < view.procedure.clicksDeclared
     : false
+  // The click's current work, not its call's frozen answer: a click that answered running and finished offers the next one.
   const isClickUnderWay =
     view?.procedure.clickInFlight !== undefined ||
-    view?.lastClick?.outcome === 'running'
+    view?.procedure.clickWorkPending === true
   const isWaitingOnRun =
     state === 'observing' ||
     (state === 'ready' && (isClickUnderWay || !clicksLeft))
