@@ -470,6 +470,55 @@ test('a paused file opened after an extension run ended stays in the kept viewâ€
   }
 })
 
+// protects=CX1 (Cycle 0062 ship review, Codex): a paused file the learner keeps open (double-click) while its move is under way stays in front of the extension view, since the close checks the tab again; fails_when=the move closes the tab by its document alone, closing a tab the learner kept or edited during the show; no_claim=the editor's own keep gesture
+test('a paused file the learner keeps during its move stays where the learner kept it', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const view = await openView(harness, 'kept-during-move-run-1')
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    const show = harness.holdNextTextDocumentShow({
+      uri: harness.editor.Uri.file(
+        join(harness.directory, 'settings.js'),
+      ).toString(),
+    })
+    const paused = harness.openPausedFileInLockedGroup(
+      'settings.js',
+      applicationColumn,
+    )
+    await show.started
+    // Act: the learner keeps the tab open while the move waits for its show.
+    paused.isPreview = false
+    show.release()
+    await waitUntil(
+      () =>
+        harness.groups.some(
+          (group) =>
+            group.viewColumn !== applicationColumn &&
+            group.tabs.some((tab) => tab.label === 'settings.js'),
+        ),
+      'the move shows the file in the group below',
+      5_000,
+    )
+    // gstack-timing-ok: a negative check; the close follows the show within the same move, so one settle shows whether it was sent.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    // Assert
+    assert.equal(
+      harness.groups
+        .find((group) => group.viewColumn === applicationColumn)
+        ?.tabs.includes(paused),
+      true,
+    )
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
 // protects=OCR-M2 (Cycle 0062 review): a second paused file that opens in front of the view while the first is being moved moves out too; fails_when=the watch drops the events that come during a move and never looks again, so the second file covers the view; no_claim=how fast two stops come natively
 test('a second paused file opened during a move also leaves the Application group', async () => {
   // Arrange

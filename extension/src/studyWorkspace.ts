@@ -10203,7 +10203,7 @@ export class StudyWorkspace {
 
   /**
    * Shows the paused file in the destination group without taking the keyboard, at the selection its editor had, and then closes its tab in front of the Application pane; called by {@link keepPausedSourceOutOfApplication}.
-   * The show comes first, so the document is never left without a tab and its close asks nothing. It opens as a preview unless the destination holds a preview tab, which it would replace. The tab is found again by its document for the close: Cursor builds every tab object anew at a tab change.
+   * The show comes first, so the document is never left without a tab and its close asks nothing. It opens as a preview unless the destination holds a preview tab, which it would replace. The tab is found again by its document for the close (Cursor builds every tab object anew at a tab change), and only while it is still an unedited preview: one the learner kept or edited during the show stays.
    * @param move - What {@link coveringSourceMove} found.
    * @param isWatching - Whether the lease's watch still runs; a lease released during the show closes nothing.
    * @returns Once the document is shown and the copy closed.
@@ -10232,9 +10232,10 @@ export class StudyWorkspace {
       }),
     })
     if (!isWatching()) return
+    // Checked again after the show: a tab the learner kept or edited meanwhile is theirs and stays.
     const copy = vscode.window.tabGroups.all
       .find((group) => group.viewColumn === move.from)
-      ?.tabs.find(isPausedFile)
+      ?.tabs.find((tab) => isPausedFile(tab) && tab.isPreview && !tab.isDirty)
     // A close the editor refuses leaves the copy in front of the view: a failed move, which the watch counts so it never loops.
     if (copy && !(await vscode.window.tabGroups.close([copy], true)))
       throw new Error(
