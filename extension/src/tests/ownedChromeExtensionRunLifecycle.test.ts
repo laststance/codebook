@@ -989,6 +989,77 @@ test('a stuck step that settles without a browser confirms the cleanup it left u
   assert.equal(harness.log.includes('launch'), false)
 })
 
+// protects=A1 (Cycle 0062 ship review, Codex adversarial): once a stop passes its bound with a preparation step that never settles, the run's preparation answers too, so the service's stop, which waits for it, returns and frees the run slot; fails_when=prepare keeps waiting on the stuck step after the run ended; no_claim=the service's own stop path (it awaits this preparation)
+test('the preparation answers once the stop bound passes although a preparation step never settles', async () => {
+  // Arrange
+  const viewportGate = defer<void>()
+  const timers = manualClock()
+  const harness = createRunHarness({
+    viewportGate: viewportGate.promise,
+    clock: timers.clock,
+  })
+  let settled: unknown = 'pending'
+  const preparing = harness.run.prepare().then(
+    () => 'resolved',
+    (error: unknown) => error,
+  )
+  void preparing.then((outcome) => {
+    settled = outcome
+  })
+  const stopping = harness.run.stop()
+  await waitUntil(
+    () => timers.pendingDelays().includes(10_000),
+    'the stop bound to be armed',
+  )
+  // Act
+  timers.fire(10_000)
+  await stopping
+  // Assert
+  await waitUntil(
+    () => settled !== 'pending',
+    'the preparation to answer after the stop bound',
+  )
+  assert.equal(
+    (settled as StudyError).message,
+    'The extension run was stopped before it was ready.',
+  )
+  viewportGate.resolve()
+})
+
+// protects=A2 (Cycle 0062 ship review, Codex adversarial; native INVESTIGATE): a launch that began and then failed after the stop bound keeps the cleanup unconfirmed, since its own close result (profile and Chrome) is not handed back; fails_when=the run resource confirms a clean exit for a launch that made a profile and a Chrome it may not have removed; no_claim=the launcher's own failure cleanup
+test('a launch that began and failed after the stop bound keeps the cleanup unconfirmed', async () => {
+  // Arrange
+  const launchGate = defer<void>()
+  const timers = manualClock()
+  const harness = createRunHarness({
+    launchGate: launchGate.promise,
+    launchFailure: new StudyError('RUNTIME_FAILED', 'Chrome did not start.'),
+    clock: timers.clock,
+  })
+  const preparing = harness.run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await waitUntil(() => harness.log.includes('launch'), 'the launch to start')
+  const stopping = harness.run.stop()
+  await waitUntil(
+    () => timers.pendingDelays().includes(10_000),
+    'the stop bound to be armed',
+  )
+  timers.fire(10_000)
+  await stopping
+  // Act
+  launchGate.resolve()
+  await preparing
+  // gstack-timing-ok: a negative check; the late check runs as soon as the failed launch settles, so one settle shows whether it changed the cleanup.
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  // Assert
+  assert.deepEqual(harness.run.view().cleanup, {
+    profileLeft: true,
+    exitConfirmed: false,
+  })
+})
+
 // protects=state matrix deadline × click (Cycle 0062 ship review): a click called while the cleanup after the whole-run deadline is still running is refused RUN_NOT_READY and never reaches the executor; fails_when=the click dispatches, or is refused with another code, during that cleanup; no_claim=the error wording
 test('a click during the cleanup after the whole-run deadline is refused and never reaches the executor', async () => {
   // Arrange

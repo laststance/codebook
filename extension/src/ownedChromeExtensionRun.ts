@@ -162,6 +162,9 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   private readonly pinnedGenerations = new Set<number>()
   private stage: ChromeExtensionPhase = 'starting'
   private launchedAtMs: number | undefined
+  /** Settles when a cleanup left a step that ignored its abort behind at the stop bound, so {@link OwnedChromeExtensionRun.prepare} answers then instead of waiting on that step. */
+  private readonly stepsLeftBehind: Promise<void>
+  private resolveStepsLeftBehind: () => void = () => undefined
   private resolved: ResolvedExtensionRun | undefined
   private browser: OwnedExtensionBrowser | undefined
   private debug: ChromeExtensionDebugger | undefined
@@ -194,6 +197,9 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   private readonly cleanups: { dispose(): void }[] = []
 
   constructor(private readonly input: OwnedChromeExtensionRunInput) {
+    this.stepsLeftBehind = new Promise<void>((resolve) => {
+      this.resolveStepsLeftBehind = resolve
+    })
     this.id = input.runId
     this.roots = input.privateRoots ?? causeRootsFor([], input.workspace)
     this.timings = input.dependencies.timings ?? {}
@@ -424,7 +430,8 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     this.armDeadlines()
     this.stepsPromise = this.prepareSteps()
     try {
-      await this.stepsPromise
+      // A step the cleanup left behind at the stop bound is not waited for: the ended run answers, so the service's stop returns and frees the run slot.
+      await Promise.race([this.stepsPromise, this.stepsLeftBehind])
       // A stop, deadline or failure accepted at the very end still ends the run.
       this.assertAccepting()
     } catch (error) {
@@ -1121,8 +1128,10 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     const closedViewport = this.viewport
     this.safely(() => closedViewport?.close())
     // A step that settled only after the bound may have published a viewport or browser nobody closed: each is closed then.
-    if (!didStepsSettle)
+    if (!didStepsSettle) {
       this.closeLateResources({ browser, viewport: closedViewport })
+      this.resolveStepsLeftBehind()
+    }
   }
 
   /** Closes the browser; a close that throws or rejects reads as a profile left behind. */
@@ -1176,8 +1185,8 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       this.safely(() => this.viewport?.close())
     const lateBrowser = this.browser
     if (lateBrowser === handled.browser) {
-      // The stuck step settled without a browser: the cleanup left unconfirmed for it is confirmed now.
-      if (handled.browser === undefined) {
+      // The stuck step settled without a browser before its launch began: nothing was made, so the unconfirmed cleanup is confirmed. A launch that began and failed made its profile and Chrome and keeps its own close result, so the cleanup stays unconfirmed.
+      if (handled.browser === undefined && this.launchedAtMs === undefined) {
         this.cleanupResult = { profileLeft: false, exitConfirmed: true }
         this.changed()
       }
