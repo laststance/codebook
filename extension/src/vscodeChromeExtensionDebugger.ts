@@ -681,7 +681,9 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
         'the continuation',
         signal,
       )
-      this.resumeThreads(pause.sessionId, pause.threadId)
+      // Only this pause ends here, and only if no answer ended it yet: the adapter's answer already closed it when the tracker saw it, and the thread's next stop may be reported before this call returns; that newer pause stays open (ER16).
+      if (this.pauseSet.isCurrent(pause))
+        this.resumeThreads(pause.sessionId, pause.threadId)
     } catch (error) {
       pause.resuming = false
       throw error

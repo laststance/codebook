@@ -92,6 +92,8 @@ export async function extensionEditorHarness(
   let trackerFactory: vscode.DebugAdapterTrackerFactory | undefined
   let terminate: ((session: vscode.DebugSession) => void) | undefined
   let requestSequence = 100
+  /** A stop each session's adapter reports right after it answers its next `continue`, by session id. */
+  const stopsAfterContinue = new Map<string, () => void>()
   let nextAdapterId = 1
   let nextEditorBreakpointId = 0
   let captureCalls = 0
@@ -212,6 +214,10 @@ export async function extensionEditorHarness(
               : { body: { allThreadsContinued: true } }),
           })
           if (refuseContinues) throw new Error('the adapter refused')
+          // An adapter can report the thread's next stop right after its answer, before the editor's call returns.
+          const nextStop = stopsAfterContinue.get(id)
+          stopsAfterContinue.delete(id)
+          nextStop?.()
         }
         if (command === 'stackTrace') {
           const frame = frames.get(id)
@@ -377,6 +383,17 @@ export async function extensionEditorHarness(
           ...(hitBreakpointIds ? { hitBreakpointIds } : {}),
         },
       })
+    },
+    /** The session's adapter reports this stop right after it answers the next `continue`, before the editor's `customRequest` returns, as js-debug can when the resumed code reaches the next breakpoint at once. */
+    stopAfterContinue(
+      session: FakeSession,
+      reason: string,
+      hitBreakpointIds: number[],
+      frame: FrameAt,
+    ): void {
+      stopsAfterContinue.set(session.id, () =>
+        adapter.stop(session, reason, hitBreakpointIds, frame),
+      )
     },
     /** From now on the adapter answers every `continue` request with a refusal, which the editor reports as a rejected request. */
     refuseContinues(refuse: boolean): void {

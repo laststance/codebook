@@ -1478,6 +1478,39 @@ test('waking starts the extension worker once when no worker session is attached
   await editor.dispose()
 })
 
+// protects=ER16: a stop the adapter reports right after it answered a continue, before the continue call returns, stays an open pause that is captured and offered to the chat; fails_when=the continue's own bookkeeping closes the thread's newer pause, as in the Cycle 0061 pt2 native dry run, where the page stayed paused at its second stop while the run forgot it, listed it as reached and timed out reading the result; no_claim=real js-debug message timing
+test('a stop the adapter reports right after answering a continue stays open and is captured', async () => {
+  // Arrange
+  const run = await readyRun([PAGE_STOP, SECOND_PAGE_STOP], {
+    withWorker: false,
+  })
+  run.editor.adapter.stop(
+    run.page,
+    'breakpoint',
+    [run.editor.adapterIdAt(run.page, 'popup.js', 2)],
+    { file: run.editor.path('popup.js'), line: 2 },
+  )
+  await until(() => run.debug.pauses()[0]?.status === 'captured')
+  const [first] = run.debug.pauses()
+  run.editor.adapter.stopAfterContinue(
+    run.page,
+    'breakpoint',
+    [run.editor.adapterIdAt(run.page, 'popup.js', 3)],
+    { file: run.editor.path('popup.js'), line: 3 },
+  )
+  // Act
+  await run.debug.resume(first!.continueArguments!, SIGNAL())
+  await until(() => run.debug.pauses()[0]?.status === 'captured')
+  // Assert
+  assert.deepEqual(
+    run.debug.pauses().map((pause) => [pause.stopIndex, pause.status]),
+    [[2, 'captured']],
+  )
+  assert.deepEqual(plain(run.debug.stopsNotReached()), [])
+  await run.debug.release()
+  await run.editor.dispose()
+})
+
 // protects=a worker that never starts is refused with SERVICE_WORKER_NOT_ATTACHED; fails_when=the wait ends with another code; no_claim=the real 5 s bound
 test('a worker session that never appears is refused with SERVICE_WORKER_NOT_ATTACHED', async () => {
   // Arrange
