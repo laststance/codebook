@@ -2102,8 +2102,11 @@ export const EXTENSION_BUNDLED_LINE_LIMIT_CHARS = 1_000
 export const EXTENSION_WAKE_BOUND_MS = 5_000
 /** How long `Extensions.triggerAction` may take to open the popup target. */
 export const EXTENSION_OPEN_BOUND_MS = 5_000
-/** How long Codebook waits for every service worker of the extension to stop before the debugger attaches. */
-export const EXTENSION_STOP_WORKERS_BOUND_MS = 3_000
+/**
+ * How long Codebook waits for every service worker of the extension to stop before the debugger attaches.
+ * A freshly installed extension's worker can stay listed for more than 3 s while Chrome finishes starting it under load (seen in a full test-suite run on Chrome 156), so the bound leaves room; the wait still ends 500 ms after the worker is gone.
+ */
+export const EXTENSION_STOP_WORKERS_BOUND_MS = 10_000
 /** How long a dispatched click waits for a pause or settled work before it answers `running`. */
 export const EXTENSION_CLICK_RETURN_BOUND_MS = 10_000
 /** No stop reached for this long after the last click settles the work before the observation. */
