@@ -19,6 +19,7 @@ import {
 } from './constants'
 import { FrameDelivery, type ViewFrame } from './frameDelivery'
 import { awaitResponse } from './utils/awaitResponse'
+import { cssSizeOf } from './utils/cssSizeOf'
 import { isStackFrameItem } from './utils/isStackFrameItem'
 import { sha256 } from './utils/sha256'
 import { unpaintedApplicationReason } from './utils/unpaintedApplicationReason'
@@ -33,7 +34,8 @@ export interface ScreencastFrameEvent {
   data: string
   /** The frame number to acknowledge; never a CDP target session. */
   sessionId: number
-  metadata: { timestamp?: number }
+  /** `timestamp` is epoch seconds; `deviceWidth` and `deviceHeight` are the page's CSS pixels. */
+  metadata: { timestamp?: number; deviceWidth?: number; deviceHeight?: number }
 }
 
 /** The commands {@link BrowserViewport.attach} sends, with their parameters. */
@@ -373,6 +375,8 @@ export class BrowserViewport {
         phase: 'live',
         required: false,
         delayAck: false,
+        // The popup document sizes the image by the page's own CSS size (DR7).
+        ...cssSizeOf(frame.metadata),
       }
       if (this.observer) this.aggregateLive('viewport.stream-received')
       else

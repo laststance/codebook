@@ -111,8 +111,12 @@ window.addEventListener('message', async event => {
   // Ignore a decode overtaken by a newer frame or pause invalidation.
   if (revision !== renderRevision) return;
   page.src = decoded.src;
-  // A popup frame shows at its CSS size: the device pixel ratio turns the frame's pixels back into CSS pixels.
-  if (isPopup) { page.style.width = decoded.naturalWidth / window.devicePixelRatio + 'px'; page.style.height = decoded.naturalHeight / window.devicePixelRatio + 'px'; }
+  // A popup frame shows at its CSS size: the browser's reported size, else the device pixel ratio turns the frame's pixels back into CSS pixels.
+  if (isPopup) {
+    const hasCssSize = message.cssWidth > 0 && message.cssHeight > 0;
+    page.style.width = (hasCssSize ? message.cssWidth : decoded.naturalWidth / window.devicePixelRatio) + 'px';
+    page.style.height = (hasCssSize ? message.cssHeight : decoded.naturalHeight / window.devicePixelRatio) + 'px';
+  }
   page.hidden = false;
   // An extension pane's phase comes from its own state, not from the frame.
   if (!isExtension) phase.textContent = message.phase;

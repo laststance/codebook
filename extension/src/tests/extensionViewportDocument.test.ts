@@ -204,6 +204,29 @@ test('a popup frame shows at its CSS size whatever the pane size', async () => {
   )
 })
 
+// protects=C2/DR7: a popup frame whose message carries the browser's CSS size shows at that size even when the webview's device pixel ratio differs from the browser's; fails_when=the size comes from naturalWidth / devicePixelRatio although the metadata gave one; no_claim=real zoom
+test('a popup frame shows at the CSS size the browser reported under a 1.25 webview device pixel ratio', async () => {
+  // Arrange
+  const rendered = runDocument(
+    viewportHtml('live', 'popup'),
+    { width: 400, height: 300 },
+    1.25,
+  )
+  // Act
+  await rendered.send({
+    type: 'frame',
+    data: 'cGl4ZWxz',
+    phase: 'live',
+    cssWidth: 400,
+    cssHeight: 300,
+  })
+  // Assert
+  assert.deepEqual(
+    [rendered.elements.page!.style.width, rendered.elements.page!.style.height],
+    ['400px', '300px'],
+  )
+})
+
 // protects=DR7: an extension page's frame keeps the fit and gets no fixed size; fails_when=a page surface sizes the image in pixels; no_claim=the 720 x 640 metrics (viewport test)
 test('an extension page frame keeps its fitting layout', async () => {
   // Arrange

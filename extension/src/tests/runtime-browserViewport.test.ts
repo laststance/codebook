@@ -2605,6 +2605,38 @@ function screencastConnection() {
 
 const FIRST_EPOCH = '11111111-1111-1111-1111-111111111111'
 
+// protects=C2: a live frame's CSS size from the screencast metadata reaches the document message; fails_when=the popup is sized by the webview's device pixel ratio only; no_claim=the document's styling (document test)
+test('a live popup frame message carries the CSS size the browser reported', async () => {
+  // Arrange
+  const harness = await viewportHarness('normal')
+  const listeners: ((frame: ViewportModule.ScreencastFrameEvent) => void)[] = []
+  const cdp: ViewportModule.ScreencastCdp = {
+    on: (_method, listener) => listeners.push(listener),
+    request: async () => ({}),
+    subscribe: async () => undefined,
+  }
+  const attaching = harness.viewport.attach(
+    cdp,
+    new AbortController().signal,
+    'popup',
+  )
+  await delay(0)
+  harness.ready(FIRST_EPOCH)
+  await attaching
+  const sent = harness.nextFrame()
+  // Act
+  for (const listener of listeners)
+    listener({
+      data: 'cGl4ZWxz',
+      sessionId: 1,
+      metadata: { timestamp: 1, deviceWidth: 400, deviceHeight: 300 },
+    })
+  const message = await sent
+  // Assert
+  assert.deepEqual([message.cssWidth, message.cssHeight], [400, 300])
+  harness.viewport.close()
+})
+
 // protects=DR7: a popup surface shows the frame at its own size, so no device-metrics override is sent and the screencast has no size bound; fails_when=a popup is forced to 720 x 640; no_claim=the popup's real pixels
 test('a popup screencast starts without a device-metrics override or a size bound', async () => {
   // Arrange

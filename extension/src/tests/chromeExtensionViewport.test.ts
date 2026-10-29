@@ -10,6 +10,7 @@ import {
   type ExtensionPaneViewport,
 } from '../chromeExtensionViewport'
 import type { ScreencastCdp } from '../runtimeSupport/browserViewport'
+import { readScreencastFrame } from '../runtimeSupport/utils/readScreencastFrame'
 import type { ExtensionPaneState } from '../runtimeSupport/utils/viewportHtml'
 
 const POPUP: ExtensionViewportIdentity = {
@@ -318,4 +319,25 @@ test('closing removes every listener from the shared connection and stops the sc
     },
   ])
   assert.deepEqual(calls, ['close'])
+})
+
+// protects=C2: the screencast metadata's CSS size (deviceWidth, deviceHeight) is read and a frame without it keeps only what it has; fails_when=the CSS size is dropped or a missing size becomes zero; no_claim=what the browser reports for real
+test('a screencast frame keeps the CSS size of its metadata and tolerates metadata without it', () => {
+  // Arrange
+  const withSize = {
+    data: 'cGl4ZWxz',
+    sessionId: 3,
+    metadata: { timestamp: 1, deviceWidth: 400, deviceHeight: 300 },
+  }
+  const withoutSize = {
+    data: 'cGl4ZWxz',
+    sessionId: 3,
+    metadata: { timestamp: 1 },
+  }
+  // Act
+  const sized = readScreencastFrame(withSize)
+  const unsized = readScreencastFrame(withoutSize)
+  // Assert
+  assert.deepEqual(sized, withSize)
+  assert.deepEqual(unsized, withoutSize)
 })
