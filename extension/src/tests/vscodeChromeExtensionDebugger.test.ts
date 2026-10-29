@@ -128,6 +128,91 @@ test('attaching starts a pwa-chrome attach for the surface and finds the page ch
   await editor.dispose()
 })
 
+// protects=CR15 (the run journals attaching, waking and arming); fails_when=a phase is missing, renamed or reordered, or an elapsed time decreases; no_claim=the launch phases
+test('setup with a service-worker stop reports attaching, waking and arming in order with non-decreasing elapsed milliseconds', async () => {
+  // Arrange
+  const reported: Array<{ name: string; elapsedMs: number }> = []
+  const editor = await extensionEditorHarness()
+  const created = editor.createDebugger([WORKER_STOP], {
+    onPhase: (name, elapsedMs) => reported.push({ name, elapsedMs }),
+  })
+  // Act
+  const attaching = created.debug.attach(SIGNAL())
+  await until(() => editor.started.length > 0)
+  await editor.addChild({
+    kind: 'page',
+    targetId: SURFACE_TARGET,
+    id: 'page-session',
+  })
+  await attaching
+  await editor.addChild({
+    kind: 'service_worker',
+    targetId: WORKER_TARGET,
+    id: 'worker-session',
+  })
+  await created.debug.waitForWorker(SIGNAL())
+  await created.debug.armStops(SIGNAL())
+  // Assert
+  assert.deepEqual(
+    reported.map(({ name }) => name),
+    ['attaching', 'waking', 'arming'],
+  )
+  const times = reported.map(({ elapsedMs }) => elapsedMs)
+  assert.deepEqual(
+    times,
+    [...times].sort((left, right) => left - right),
+  )
+  await created.debug.release()
+  await editor.dispose()
+})
+
+// protects=waking is reported only when a service-worker stop is declared; fails_when=a page-only run reports waking; no_claim=whether the run still waits for the worker
+test('setup with only a page stop reports attaching and arming but no waking', async () => {
+  // Arrange
+  const names: string[] = []
+  const editor = await extensionEditorHarness()
+  const created = editor.createDebugger([PAGE_STOP], {
+    onPhase: (name) => names.push(name),
+  })
+  // Act
+  const attaching = created.debug.attach(SIGNAL())
+  await until(() => editor.started.length > 0)
+  await editor.addChild({
+    kind: 'page',
+    targetId: SURFACE_TARGET,
+    id: 'page-session',
+  })
+  await attaching
+  await created.debug.armStops(SIGNAL())
+  // Assert
+  assert.deepEqual(names, ['attaching', 'arming'])
+  await created.debug.release()
+  await editor.dispose()
+})
+
+// protects=the setup surviving a faulty journal; fails_when=a throwing onPhase callback fails the attach; no_claim=what the callback does
+test('a throwing onPhase callback does not break the attach', async () => {
+  // Arrange
+  const editor = await extensionEditorHarness()
+  const created = editor.createDebugger([PAGE_STOP], {
+    onPhase: () => {
+      throw new Error('journal unavailable')
+    },
+  })
+  // Act
+  const attaching = created.debug.attach(SIGNAL())
+  await until(() => editor.started.length > 0)
+  await editor.addChild({
+    kind: 'page',
+    targetId: SURFACE_TARGET,
+    id: 'page-session',
+  })
+  // Assert
+  await assert.doesNotReject(attaching)
+  await created.debug.release()
+  await editor.dispose()
+})
+
 // protects=a worker of another extension never arms or pauses a declared stop; fails_when=the stop is armed in or paused by the other extension's worker; no_claim=js-debug's own session creation
 test('a service-worker stop is armed and paused only in this extension’s worker, not in another extension’s worker', async () => {
   // Arrange

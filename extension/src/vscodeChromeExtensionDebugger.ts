@@ -43,6 +43,7 @@ import {
 import { StudyError } from './errors'
 import { codebookStopLedger } from './runtimeSupport/codebookStopLedger'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
+import { createPhaseReporter } from './runtimeSupport/utils/createPhaseReporter'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { WaitTimeoutError } from './runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
@@ -104,11 +105,16 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
   private readonly releaser = new SharedAttempt(() => this.releaseOwned())
   private readonly tracker: vscode.Disposable
   private readonly termination: vscode.Disposable
+  private readonly reportPhase: ReturnType<typeof createPhaseReporter>
 
   constructor(private readonly input: ExtensionDebuggerInput) {
     this.name = `${CHROME_EXTENSION_SESSION_NAME_PREFIX}${input.runId}`
     this.registry = new ExtensionStopRegistry(input.run.stops)
     this.output = new ExtensionOutputJournal(input.record, input.roots)
+    this.reportPhase = createPhaseReporter(
+      input.onPhase,
+      input.phaseStartedAtMs,
+    )
     this.tracker = vscode.debug.registerDebugAdapterTrackerFactory('*', {
       createDebugAdapterTracker: (session) => this.trackerFor(session),
     })
@@ -704,6 +710,7 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
   }
 
   async attach(signal: AbortSignal): Promise<void> {
+    this.reportPhase('attaching')
     const { run, workspace } = this.input
     const refusal = (): StudyError =>
       new StudyError(
@@ -749,6 +756,9 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
   }
 
   async waitForWorker(signal: AbortSignal): Promise<void> {
+    // `waking` exists only for a declared service-worker stop.
+    if (this.input.run.stops.some((stop) => stop.context === 'service-worker'))
+      this.reportPhase('waking')
     await this.waitOr(
       async () => {
         await Promise.all([...this.entries.values()].map((e) => e.classified))
@@ -762,6 +772,7 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
   }
 
   async armStops(signal: AbortSignal): Promise<void> {
+    this.reportPhase('arming')
     this.registry.arm()
     await this.waitOr(
       () => this.assertAllBound(),

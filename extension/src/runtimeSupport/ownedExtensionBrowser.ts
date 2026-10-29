@@ -6,6 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { isDeepStrictEqual } from 'node:util'
 
 import type {
+  ExtensionPhaseReporter,
   FlatCdpConnection,
   OwnedExtensionBrowser,
   ResolvedExtensionRun,
@@ -36,14 +37,17 @@ import {
   FlatCdpCommandError,
   isMethodNotFound,
 } from './flatCdpConnection'
+import { assertSupportedChromeVersion } from './utils/assertSupportedChromeVersion'
 import {
   readCdpString,
   readCdpTargets,
   type CdpTargetInfo,
 } from './utils/cdpFieldReaders'
+import { createPhaseReporter } from './utils/createPhaseReporter'
 import { ownedBrowserBookmarks } from './utils/ownedBrowserBookmarks'
 import { writeOwnedBrowserMarker } from './utils/ownedBrowserMarker'
 import { PollBudget } from './utils/pollBudget'
+import { readChromeExecutableVersion } from './utils/readChromeExecutableVersion'
 import { readDevToolsActivePort } from './utils/readDevToolsActivePort'
 import { removeAbandonedProfiles } from './utils/removeAbandonedProfiles'
 import {
@@ -62,6 +66,8 @@ export interface BrowserProcess {
 
 /** What the launch acts through; each is the real one unless a test names its own. */
 export interface OwnedBrowserDependencies {
+  /** Reads what the executable prints for `--version`, without a browser session; an empty string when unreadable. */
+  readExecutableVersion(executable: string): Promise<string>
   spawnBrowser(executable: string, args: string[]): BrowserProcess
   connect(url: string, timeoutMs: number): Promise<FlatCdpConnection>
   sleep(ms: number): Promise<void>
@@ -83,10 +89,13 @@ export interface OwnedBrowserLaunchOptions {
   owner: StorageOwnerIdentity
   /** Set once a stop, the deadline or a debug-session end was accepted: no further step starts (CR14). */
   signal?: AbortSignal
+  /** Told when `launching`, `installing` and `opening` start, with the monotonic milliseconds since the launch began; a throwing callback is ignored (CR15). */
+  onPhase?: ExtensionPhaseReporter
 }
 
 /** The real process, socket, timer, signals and sweep. */
 const REAL_OWNED_BROWSER_DEPENDENCIES: OwnedBrowserDependencies = {
+  readExecutableVersion: readChromeExecutableVersion,
   spawnBrowser: (executable, args) => {
     // On POSIX the browser leads its own process group, so one signal ends its helpers too (B8); Windows ends the tree with `taskkill /T`.
     const child = spawn(executable, args, {
@@ -616,7 +625,7 @@ function asLaunchFailure(
  * @param options - The resolved run, the Chrome path, the profile root, the owner identity and an optional abort signal.
  * @param dependencies - The process, socket, timer, signals and sweep; the real ones in the product.
  * @returns The {@link OwnedExtensionBrowser} contract.
- * @throws {@link StudyError} with `CHROME_COMMAND_UNAVAILABLE`, `EXTENSION_LOAD_FAILED`, `EXTENSION_ID_MISMATCH`, `SEED_NOT_APPLIED`, `POPUP_NOT_OPENED` or `RUNTIME_FAILED`.
+ * @throws {@link StudyError} with `CHROME_VERSION_UNSUPPORTED`, `CHROME_COMMAND_UNAVAILABLE`, `EXTENSION_LOAD_FAILED`, `EXTENSION_ID_MISMATCH`, `SEED_NOT_APPLIED`, `POPUP_NOT_OPENED` or `RUNTIME_FAILED`.
  * @example
  * const browser = await launchOwnedExtensionBrowser({ chromeExecutable, run, profileRoot: '/tmp', owner })
  * await browser.startWorker()
@@ -634,7 +643,14 @@ export async function launchOwnedExtensionBrowser(
   let closing:
     Promise<{ profileLeft: boolean; exitConfirmed: boolean }> | undefined
   const close = () => (closing ??= closeOwnedBrowser(started, dependencies))
+  const reportPhase = createPhaseReporter(options.onPhase)
   try {
+    reportPhase('launching')
+    assertNotStopped(options.signal)
+    // Refuse an unsupported Chrome before anything is created or spawned.
+    assertSupportedChromeVersion(
+      await dependencies.readExecutableVersion(options.chromeExecutable),
+    )
     assertNotStopped(options.signal)
     dependencies.startSweep(options.profileRoot, options.owner)
     started.profile = await prepareProfile(options)
@@ -662,6 +678,8 @@ export async function launchOwnedExtensionBrowser(
     )
     started.cdp = cdp
     const chromeVersion = await readChromeVersion(cdp)
+    // Defence: judge the browser that actually started, not only the executable's `--version`.
+    assertSupportedChromeVersion(chromeVersion)
     const controlSessionId = await attachControlSession(
       cdp,
       dependencies,
@@ -677,6 +695,7 @@ export async function launchOwnedExtensionBrowser(
       signal: options.signal,
     }
     assertNotStopped(options.signal)
+    reportPhase('installing')
     await installExtension(cdp, chromeVersion, options.run)
     await extensionCommand(
       cdp,
@@ -690,6 +709,7 @@ export async function launchOwnedExtensionBrowser(
     await stopExtensionWorkers(session, EXTENSION_STOP_WORKERS_BOUND_MS)
     await seedStorage(session, options.run.seed.storage)
     assertNotStopped(options.signal)
+    reportPhase('opening')
     const surfaceTargetId =
       options.run.surface.kind === 'popup'
         ? await openPopup(session, options.run.surfaceUrl)

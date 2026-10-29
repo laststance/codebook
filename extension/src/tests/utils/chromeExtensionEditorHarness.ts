@@ -6,7 +6,10 @@ import { join, resolve } from 'node:path'
 import type { DebugProtocol } from '@vscode/debugprotocol'
 import type * as vscode from 'vscode'
 
-import type { ExtensionStopContext } from '../../chromeExtensionContracts'
+import type {
+  ExtensionPhaseReporter,
+  ExtensionStopContext,
+} from '../../chromeExtensionContracts'
 import type {
   ChromeExtensionDebugger,
   ExtensionDebuggerHandlers,
@@ -474,6 +477,7 @@ export async function extensionEditorHarness(
         startWorker?: () => Promise<void>
         assertSourcesUnchanged?: () => void
         workerPath?: string
+        onPhase?: ExtensionPhaseReporter
       } = {},
     ) {
       const events: Array<{ type: string; detail: unknown }> = []
@@ -521,6 +525,9 @@ export async function extensionEditorHarness(
             overrides.assertSourcesUnchanged ?? ((): void => {}),
           roots: { storage: [], workspace: [folder], home: ['/Users/ada'] },
           record: (type, detail) => events.push({ type, detail }),
+          ...(overrides.onPhase !== undefined && {
+            onPhase: overrides.onPhase,
+          }),
         })
       debug.subscribe(handlers)
       return {

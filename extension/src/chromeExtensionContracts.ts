@@ -132,3 +132,13 @@ export interface CapturedExtensionStop {
   capturedAtMs: number
   snapshot: ReplayDebugSnapshot
 }
+
+/** The preparation phases of a chrome-extension run that pt1 code reports through `onPhase`, named as the run phase state machine names them. */
+export type ExtensionPreparationPhase =
+  'launching' | 'installing' | 'opening' | 'attaching' | 'waking' | 'arming'
+
+/** Reports that a preparation phase started, with the milliseconds on a monotonic clock since the preparation began; the run lifecycle journals it as `chrome-extension.phase` (CR15). */
+export type ExtensionPhaseReporter = (
+  name: ExtensionPreparationPhase,
+  elapsedMs: number,
+) => void

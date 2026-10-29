@@ -39,6 +39,10 @@ export type FakeOwnedChromeBehaviour = {
   workerStartsWithPopup?: boolean
   /** The spawned browser ends at once and never publishes `DevToolsActivePort`. */
   exitsAtSpawn?: boolean
+  /** What `<chrome> --version` prints; defaults to a supported Chrome. */
+  executableVersionText?: string
+  /** What `Browser.getVersion` answers as `product`; defaults to a supported Chrome. */
+  browserProduct?: string
 }
 
 /** The fake browser as a test sees it. */
@@ -46,6 +50,8 @@ export type FakeOwnedChrome = {
   dependencies: OwnedBrowserDependencies
   commands: RecordedCommand[]
   spawned: { executable: string; args: string[] }[]
+  /** The executables whose `--version` was read, in order. */
+  versionReads: string[]
   /** The signals sent to the browser process, in order. */
   signals: (NodeJS.Signals | 0)[]
   closed: () => boolean
@@ -83,6 +89,7 @@ export function fakeOwnedChrome(
 ): FakeOwnedChrome {
   const commands: RecordedCommand[] = []
   const spawned: FakeOwnedChrome['spawned'] = []
+  const versionReads: string[] = []
   const signals: (NodeJS.Signals | 0)[] = []
   const signalledIds: number[] = []
   let stopTimeoutsLeft = behaviour.stopTimesOutOnce ? 1 : 0
@@ -102,7 +109,7 @@ export function fakeOwnedChrome(
       throw new FlatCdpCommandError(method, -32601, `'${method}' wasn't found`)
     switch (method) {
       case 'Browser.getVersion':
-        return { product: 'Chrome/156.0.0.1' }
+        return { product: behaviour.browserProduct ?? 'Chrome/156.0.0.1' }
       case 'Target.getTargets':
         return { targetInfos: listTargets(params) }
       case 'Target.attachToTarget': {
@@ -213,10 +220,15 @@ export function fakeOwnedChrome(
   return {
     commands,
     spawned,
+    versionReads,
     signals,
     signalledIds,
     closed: () => connectionClosed,
     dependencies: {
+      readExecutableVersion: async (executable) => {
+        versionReads.push(executable)
+        return behaviour.executableVersionText ?? 'Google Chrome 156.0.8078.74'
+      },
       spawnBrowser: (executable, args) => {
         spawned.push({ executable, args })
         if (behaviour.exitsAtSpawn) {

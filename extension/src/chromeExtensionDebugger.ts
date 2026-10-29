@@ -1,5 +1,6 @@
 import type {
   CapturedExtensionStop,
+  ExtensionPhaseReporter,
   ExtensionStopContext,
   ResolvedExtensionRun,
 } from './chromeExtensionContracts'
@@ -128,4 +129,8 @@ export type ExtensionDebuggerInput = {
   record: (type: string, detail?: unknown) => unknown
   /** Clock for timestamps; defaults to `Date.now`. */
   now?: () => number
+  /** Told when `attaching`, `waking` (only with a service-worker stop) and `arming` start, with the monotonic milliseconds since `phaseStartedAtMs`; a throwing callback is ignored (CR15). */
+  onPhase?: ExtensionPhaseReporter
+  /** The `performance.now()` reading of the run's launch start, so launch and debugger phases share one elapsed clock; the debugger's creation when omitted. */
+  phaseStartedAtMs?: number
 }

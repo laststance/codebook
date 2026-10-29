@@ -20,11 +20,13 @@ import type {
 import { CHROME_EXTENSION_MIN_VERSION } from '../constants'
 import { StudyError } from '../errors'
 import { launchOwnedExtensionBrowser } from '../runtimeSupport/ownedExtensionBrowser'
+import { assertSupportedChromeVersion } from '../runtimeSupport/utils/assertSupportedChromeVersion'
 import {
   readCdpString,
   readCdpTargets,
 } from '../runtimeSupport/utils/cdpFieldReaders'
 import { listProcesses } from '../runtimeSupport/utils/listProcesses'
+import { readChromeExecutableVersion } from '../runtimeSupport/utils/readChromeExecutableVersion'
 import { resolveChromeExecutable } from '../utils/resolveChromeExecutable'
 
 const TEST_TIMEOUT_MS = 60_000
@@ -216,6 +218,22 @@ test(
       false,
     )
     assert.deepEqual(storage, { viewMode: 'popup' })
+  },
+)
+
+// Value: protects=acceptance 4 against the real Chrome: the installed Chrome's own `--version` output is read and accepted by the pre-launch check; fails_when=the real output spelling is not recognised or the reader returns nothing; no_claim=refusal of an old Chrome (unit tests)
+test(
+  'real Chrome: the installed executable prints a version the pre-launch check accepts',
+  { timeout: TEST_TIMEOUT_MS },
+  async (context) => {
+    const chrome = await requireChrome(context)
+    if (!chrome) return
+    // Arrange
+    // Act
+    const printed = await readChromeExecutableVersion(chrome.executable)
+    // Assert
+    assert.match(printed, /\d+\.\d+\.\d+\.\d+/)
+    assert.doesNotThrow(() => assertSupportedChromeVersion(printed))
   },
 )
 

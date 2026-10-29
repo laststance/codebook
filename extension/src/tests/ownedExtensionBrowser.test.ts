@@ -683,3 +683,129 @@ test('close reports profileLeft when the profile folder cannot be removed', asyn
   assert.deepEqual(closing, { profileLeft: true, exitConfirmed: true })
   assert.equal((await readdir(root)).length, 1)
 })
+
+// Value: protects=acceptance 4 (Chrome below 149 refused before launch); fails_when=an old Chrome is spawned or the refusal loses its code or sentence; no_claim=the version reader's real process
+test('launch refuses Chrome 148 with CHROME_VERSION_UNSUPPORTED before any profile or browser exists', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(
+    healthy({ executableVersionText: 'Google Chrome 148.0.7778.96' }),
+  )
+  // Act
+  const error = await failureOf(launchOptions(root), chrome)
+  // Assert
+  assert.equal(error.code, 'CHROME_VERSION_UNSUPPORTED')
+  assert.equal(
+    error.message,
+    'Chrome 149 or later is needed to load an unpacked extension; found 148.0.7778.96.',
+  )
+  assert.deepEqual(chrome.versionReads, ['/chrome/bin/chrome'])
+  assert.deepEqual(chrome.spawned, [])
+  assert.deepEqual(await readdir(root), [])
+})
+
+// Value: protects=the unreadable-version decision (refused, naming unknown); fails_when=an executable that prints no version is launched anyway; no_claim=why it printed nothing
+test('launch refuses an executable whose version cannot be read, naming unknown, and spawns nothing', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(healthy({ executableVersionText: '' }))
+  // Act
+  const error = await failureOf(launchOptions(root), chrome)
+  // Assert
+  assert.equal(error.code, 'CHROME_VERSION_UNSUPPORTED')
+  assert.equal(
+    error.message,
+    'Chrome 149 or later is needed to load an unpacked extension; found unknown.',
+  )
+  assert.deepEqual(chrome.spawned, [])
+})
+
+// Value: protects=the defence after connecting (the spawned browser's own product is judged); fails_when=a browser reporting Chrome 148 through Browser.getVersion is used or left open; no_claim=--version being right
+test('launch refuses a connected browser that reports Chrome 148 and closes it', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(
+    healthy({ browserProduct: 'HeadlessChrome/148.0.7778.96' }),
+  )
+  // Act
+  const error = await failureOf(launchOptions(root), chrome)
+  // Assert
+  assert.equal(error.code, 'CHROME_VERSION_UNSUPPORTED')
+  assert.equal(
+    error.message,
+    'Chrome 149 or later is needed to load an unpacked extension; found 148.0.7778.96.',
+  )
+  assert.equal(chrome.closed(), true)
+  assert.deepEqual(await readdir(root), [])
+})
+
+// Value: protects=CR15 (the run journals each phase); fails_when=a phase is missing, renamed, reordered or reported with a decreasing time for a popup run; no_claim=the debugger's phases
+test('launch reports launching, installing and opening in order with non-decreasing elapsed milliseconds for a popup surface', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(healthy())
+  const reported: { name: string; elapsedMs: number }[] = []
+  // Act
+  const browser = await launchOwnedExtensionBrowser(
+    {
+      ...launchOptions(root),
+      onPhase: (name, elapsedMs) => reported.push({ name, elapsedMs }),
+    },
+    chrome.dependencies,
+  )
+  // Assert
+  assert.deepEqual(
+    reported.map(({ name }) => name),
+    ['launching', 'installing', 'opening'],
+  )
+  const times = reported.map(({ elapsedMs }) => elapsedMs)
+  assert.ok((times[0] ?? -1) >= 0)
+  assert.deepEqual(
+    times,
+    [...times].sort((left, right) => left - right),
+  )
+  await browser.close()
+})
+
+// Value: protects=CR15 for a page surface; fails_when=the page path skips or duplicates a phase; no_claim=elapsed accuracy
+test('launch reports the same three phases for a page surface', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(healthy())
+  const names: string[] = []
+  // Act
+  const browser = await launchOwnedExtensionBrowser(
+    {
+      ...launchOptions(root, {
+        surface: { kind: 'page', path: 'page.html' },
+        surfaceUrl: `chrome-extension://${EXTENSION_ID}/page.html`,
+        seed: { bookmarks: [], storage: {} },
+      }),
+      onPhase: (name) => names.push(name),
+    },
+    chrome.dependencies,
+  )
+  // Assert
+  assert.deepEqual(names, ['launching', 'installing', 'opening'])
+  await browser.close()
+})
+
+// Value: protects=the launch surviving a faulty journal; fails_when=a throwing onPhase callback fails or aborts the launch; no_claim=what the callback does
+test('a throwing onPhase callback does not break the launch', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(healthy())
+  // Act
+  const browser = await launchOwnedExtensionBrowser(
+    {
+      ...launchOptions(root),
+      onPhase: () => {
+        throw new Error('journal unavailable')
+      },
+    },
+    chrome.dependencies,
+  )
+  // Assert
+  assert.equal(browser.surfaceTargetId, 'popup-1')
+  await browser.close()
+})

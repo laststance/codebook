@@ -2157,3 +2157,5 @@ export const OWNED_BROWSER_MARKER_FILE = 'codebook-owned-browser'
 export const EXTENSION_WORKER_QUIET_MS = 500
 /** One `ServiceWorker.stopAllWorkers` that is not answered in this time is sent again by the stop loop of the owned launch. */
 export const EXTENSION_STOP_COMMAND_TIMEOUT_MS = 1_000
+/** `<chrome> --version` that prints nothing in this time counts as an unreadable version; no browser session is started to read it. */
+export const EXTENSION_CHROME_VERSION_READ_BOUND_MS = 5_000
