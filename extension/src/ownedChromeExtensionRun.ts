@@ -108,10 +108,11 @@ type RunEnding =
   | { kind: 'stopped' }
   | { kind: 'failed'; error: StudyError }
 
-/** What the cleanup already read and handled; a stuck step that publishes a different one later gets that one closed. */
+/**
+ * What the cleanup already closed; a stuck step that publishes a different one later gets that one closed.
+ * Only the viewport and the browser can come late: {@link OwnedChromeExtensionRun}'s preparation publishes each just before an `assertAccepting` check, while the debugger, the executor and every cleanup handle follow such a check with no wait between.
+ */
 type HandledResources = {
-  debug: ChromeExtensionDebugger | undefined
-  executor: ChromeExtensionActionExecutor | undefined
   browser: OwnedExtensionBrowser | undefined
   viewport: ChromeExtensionViewport | undefined
 }
@@ -1106,17 +1107,19 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     this.showEnding(ending)
     for (const handle of this.cleanups.splice(0))
       this.safely(() => handle.dispose())
-    const { debug, executor, browser, viewport } = this
+    const { debug, executor, browser } = this
     this.safely(() => debug?.browserClosing())
     await this.safelyAsync(() => debug?.release())
     this.safely(() => executor?.dispose())
     this.cleanupResult = browser
       ? await this.closeBrowser(browser)
       : { profileLeft: false, exitConfirmed: true }
-    this.safely(() => this.viewport?.close())
-    // A step that settled only after the bound may have published a viewport, debugger, executor or browser nobody closed: each is closed now.
+    // The viewport is read once, after the waits above: the same one is closed here and named as handled, so a late check never closes it twice.
+    const closedViewport = this.viewport
+    this.safely(() => closedViewport?.close())
+    // A step that settled only after the bound may have published a viewport or browser nobody closed: each is closed then.
     if (!didStepsSettle)
-      this.closeLateResources({ debug, executor, browser, viewport })
+      this.closeLateResources({ browser, viewport: closedViewport })
   }
 
   /** Closes the browser; a close that throws or rejects reads as a profile left behind. */
@@ -1168,13 +1171,6 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   private closeIfNew(handled: HandledResources): void {
     if (this.viewport !== undefined && this.viewport !== handled.viewport)
       this.safely(() => this.viewport?.close())
-    if (this.debug !== undefined && this.debug !== handled.debug) {
-      const lateDebug = this.debug
-      this.safely(() => lateDebug.browserClosing())
-      void this.safelyAsync(() => lateDebug.release())
-    }
-    if (this.executor !== undefined && this.executor !== handled.executor)
-      this.safely(() => this.executor?.dispose())
     const lateBrowser = this.browser
     if (lateBrowser === undefined || lateBrowser === handled.browser) return
     void this.closeBrowser(lateBrowser).then((lateResult) => {

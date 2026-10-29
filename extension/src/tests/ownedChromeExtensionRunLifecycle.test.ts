@@ -862,6 +862,49 @@ test('a viewport a stuck step publishes after the stop bound is closed once', as
   )
 })
 
+// protects=state matrix viewport × already-handled (Cycle 0062 ship review pass 2): when a stuck launch publishes its browser only after the stop bound, the late check closes that browser and leaves the viewport the cleanup already closed alone; fails_when=the late check closes the viewport a second time; no_claim=the 10 s value
+test('a viewport the cleanup already closed is not closed again when the stuck launch publishes its browser late', async () => {
+  // Arrange
+  const launchGate = defer<void>()
+  const timers = manualClock()
+  const harness = createRunHarness({
+    launchGate: launchGate.promise,
+    clock: timers.clock,
+  })
+  const preparing = harness.run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await waitUntil(() => harness.log.includes('launch'), 'the launch to start')
+  const stopping = harness.run.stop()
+  await waitUntil(
+    () => timers.pendingDelays().includes(10_000),
+    'the stop bound to be armed',
+  )
+  timers.fire(10_000)
+  await stopping
+  assert.equal(
+    harness.log.filter((entry) => entry === 'viewport.close').length,
+    1,
+  )
+  // Act
+  launchGate.resolve()
+  await preparing
+  // Assert
+  await waitUntil(
+    () => harness.log.includes('browser.close'),
+    'the late browser to be closed',
+  )
+  assert.equal(
+    harness.log.filter((entry) => entry === 'viewport.close').length,
+    1,
+  )
+  assert.equal(
+    harness.log.filter((entry) => entry === 'browser.close').length,
+    1,
+  )
+})
+
 // protects=state matrix deadline × click (Cycle 0062 ship review): a click called while the cleanup after the whole-run deadline is still running is refused RUN_NOT_READY and never reaches the executor; fails_when=the click dispatches, or is refused with another code, during that cleanup; no_claim=the error wording
 test('a click during the cleanup after the whole-run deadline is refused and never reaches the executor', async () => {
   // Arrange
