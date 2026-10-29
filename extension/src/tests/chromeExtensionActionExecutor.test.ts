@@ -585,6 +585,65 @@ test('a focus that ran but did not land is a confirmed effect on the input', asy
   assert.deepEqual(receipt.progress().inputEffects, ['confirmed'])
 })
 
+// protects=a first input whose focus ran but did not land fails the click as partial, matching its confirmed effect; fails_when=the click is refused with SELECTOR_NOT_FOUND (side effects none) while the input effect reads confirmed; no_claim=real focus semantics
+test('a first input whose focus ran but did not land fails the click with INPUT_PARTIAL', async () => {
+  // Arrange
+  const receipt = await focusRefusedAfterReturn('input-focus-changed')
+  // Act
+  const failure = await receipt.completed.then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.ok(failure instanceof StudyError)
+  assert.equal(failure.code, 'INPUT_PARTIAL')
+})
+
+// protects=a dialog opened by a later click is answered by that click's declaration alone; fails_when=an earlier click without a dialog declaration refuses it (DIALOG_UNDECLARED) or answers it too; no_claim=real dialogs
+test('a dialog opened by the second click is answered as the second click declares and refused by no earlier click', async () => {
+  // Arrange
+  const { executor, surface, events } = executorFor()
+  const first = await executor.run(CLICK)
+  await first.completed
+  const second = await executor.run({
+    ...CLICK,
+    index: 2,
+    title: 'Confirm folder',
+    selector: '#confirm',
+    dialog: 'accept',
+  })
+  await second.completed
+  // Act
+  surface.emit(
+    'Page.javascriptDialogOpening',
+    { type: 'confirm', message: 'Create the folder?' },
+    SURFACE_SESSION,
+  )
+  await sleep(10)
+  // Assert
+  assert.deepEqual(
+    surface.sent
+      .filter((request) => request.method === 'Page.handleJavaScriptDialog')
+      .map((request) => request.params),
+    [{ accept: true }],
+  )
+  assert.deepEqual(
+    events.filter((event) => event.type === 'chrome-extension.dialog'),
+    [
+      {
+        type: 'chrome-extension.dialog',
+        detail: {
+          clickIndex: 2,
+          type: 'confirm',
+          answer: 'accept',
+          message: 'Create the folder?',
+        },
+      },
+    ],
+  )
+  assert.equal(executor.lateDialogRefusal(), undefined)
+})
+
 // protects=a dialog a timer opens after the click settled is still answered and journaled with a masked message; fails_when=the listener is gone after the steps ended (the page stays blocked) or the message shows the private root; no_claim=real dialogs
 test('a dialog opened after the click settled is answered as declared and journaled with the private root hidden', async () => {
   // Arrange

@@ -273,14 +273,22 @@ class ClickExecution {
     step: number | 'click',
     reason?: string,
   ): StudyError {
-    // After an input was typed the extension may have reacted: the failure is partial, not a refusal that consumes nothing.
-    if (this.progressState.inputsApplied > 0) return this.partialAt(step)
+    // Once an input had an effect the extension may have reacted: the failure is partial, not a refusal that consumes nothing.
+    if (this.hadEffect()) return this.partialAt(step)
     const message = `No element matches ${selector} in the extension surface.`
     // The reason is detail for the cause; the sentence stays the fixed contract text.
     return new StudyError(
       'SELECTOR_NOT_FOUND',
       message,
       reason ? `${message} (${reason})` : message,
+    )
+  }
+
+  /** Whether any input of this click was typed or reached the page (a focus that ran counts), so a later failure is partial. */
+  private hadEffect(): boolean {
+    return (
+      this.progressState.inputsApplied > 0 ||
+      this.progressState.inputEffects.some((effect) => effect !== 'none')
     )
   }
 
@@ -303,10 +311,7 @@ class ClickExecution {
    */
   private classify(error: unknown, step: number | 'click'): StudyError {
     if (error instanceof StudyError) return error
-    const hadEffect =
-      this.progressState.inputsApplied > 0 ||
-      this.progressState.inputEffects.some((effect) => effect !== 'none')
-    if (hadEffect) return this.partialAt(step)
+    if (this.hadEffect()) return this.partialAt(step)
     return new StudyError(
       'RUNTIME_FAILED',
       `Click ${this.click.index} could not start; nothing was typed or pressed.`,
@@ -531,7 +536,9 @@ export function createChromeExtensionActionExecutor(
     run(click) {
       const execution = new ClickExecution(input, click)
       executions.push(execution)
-      // The listener outlives the click call: a timer may open a dialog later; `dispose` ends it with the run.
+      // Only the latest click answers dialogs: an earlier click's listener would answer or refuse this click's dialog.
+      for (const stop of stopListeners.splice(0)) stop()
+      // The listener outlives the click call: a timer may open a dialog later; the next click or `dispose` ends it.
       stopListeners.push(execution.listenForDialogs())
       return new Promise<ExtensionClickReceipt>((resolve, reject) => {
         let work: Promise<void> = Promise.resolve()
