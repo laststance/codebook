@@ -1814,6 +1814,44 @@ test('a second page child of the attach is ignored and journaled once as a debug
   await editor.dispose()
 })
 
+// protects=once the surface session has ended, a later page child is another tab, never a new surface whose pause is captured as a declared stop; fails_when=the later page is adopted as the surface or its pause is captured; no_claim=which tabs js-debug attaches
+test('a page child appearing after the surface session ended is ignored and its pause is not captured', async () => {
+  // Arrange
+  const editor = await extensionEditorHarness()
+  const created = editor.createDebugger([PAGE_STOP])
+  const attaching = created.debug.attach(SIGNAL())
+  await until(() => editor.started.length > 0)
+  await editor.addChild({ kind: 'page', id: 'page-session' })
+  await attaching
+  editor.adapter.end(editor.session('page-session'))
+  // Act
+  await editor.addChild({ kind: 'page', id: 'later-page' })
+  const later = editor.session('later-page')
+  editor.adapter.stop(later, 'pause', undefined, undefined, 4)
+  await until(() =>
+    editor.requests.some(
+      (request) =>
+        request.sessionId === 'later-page' && request.command === 'continue',
+    ),
+  )
+  // Assert
+  assert.deepEqual(created.debug.pauses(), [])
+  assert.deepEqual(
+    plain(
+      created.events
+        .filter((event) => event.type === 'chrome-extension.debugger-error')
+        .map((event) => event.detail),
+    ),
+    [
+      {
+        message: 'A second page matching the surface URL is open and ignored.',
+      },
+    ],
+  )
+  await created.debug.release()
+  await editor.dispose()
+})
+
 // protects=a service-worker child directly under the root (not under the surface) never arms a stop and its pause is continued; fails_when=it is adopted as the extension's worker; no_claim=js-debug's session creation
 test('a service-worker child under the root instead of the surface page is not the extension’s worker and never pauses a stop', async () => {
   // Arrange

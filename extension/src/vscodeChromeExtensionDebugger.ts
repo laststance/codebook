@@ -103,6 +103,8 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
   private releaseBegun = false
   /** Whether a second page matching the surface URL has been journaled already. */
   private secondPageJournaled = false
+  /** Set once a page child was adopted as the surface; stays set after that session ends so a later page child is never promoted. */
+  private surfaceAdopted = false
   /** Set once the run told the debugger the owned browser is closing: sessions ending from now on are the close's doing. */
   private browserIsClosing = false
   private readonly releaser = new SharedAttempt(() => this.releaseOwned())
@@ -188,9 +190,10 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     else entry.kind = 'other'
   }
 
-  /** The first page child of the attach is the surface; a later one is another matching tab, journaled once so it is visible. */
+  /** The first page child of the attach is the surface; a later one (even after the surface session ended) is another matching tab, journaled once so it is visible. */
   private classifyPage(entry: SessionEntry): void {
-    if (this.entriesOf('page').length === 0) {
+    if (!this.surfaceAdopted) {
+      this.surfaceAdopted = true
       entry.kind = 'page'
       return
     }
@@ -202,7 +205,10 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     })
   }
 
-  /** Adopts a worker session of the surface's page as the extension's worker and starts a new generation. */
+  /**
+   * Adopts a worker session of the surface's page as the extension's worker and starts a new generation.
+   * js-debug exposes no URL for a worker session, so the capture's `targetUrl` is derived from the manifest's worker path; the session tree (a worker child of the surface page) proves the worker belongs to the surface.
+   */
   private adoptWorker(entry: SessionEntry): void {
     entry.kind = 'worker'
     entry.targetUrl = `chrome-extension://${this.input.run.extensionId}/${this.input.run.workerPath ?? ''}`

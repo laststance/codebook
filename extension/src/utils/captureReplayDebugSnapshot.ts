@@ -57,7 +57,7 @@ interface CaptureInput {
     maxVariables: number
     maxDepth: number
     includeScope?(frameIndex: number, scopeName: string): boolean
-    /** Saves every top-level variable of the stopped frame's captured scopes before expanding any of them, so one large object (a page's `this`) cannot use the whole budget before the locals; the chrome-extension debugger asks for it. */
+    /** Saves every top-level variable of the stopped frame's captured scopes before expanding any of them, so one large object (a page's `this`) cannot use the whole budget before the locals; the chrome-extension debugger asks for it. Accepted limit: top-level values are guaranteed, but the second pass still expands children in adapter order, so a huge first value can use the child budget before later locals' children (children are best effort within the budget). */
     topLevelFirst?: boolean
   }
 }

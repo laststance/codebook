@@ -147,6 +147,7 @@ export interface CapturedExtensionStop {
   context: ExtensionStopContext
   /** Incremented for each new worker child session; 0 for page stops. */
   workerGeneration: number
+  /** A page stop's URL is the surface URL; a worker stop's URL is derived from the manifest's worker path (`chrome-extension://<id>/<workerPath>`) because js-debug exposes no URL for a worker session, and the session tree proves the worker belongs to the surface. */
   targetUrl: string
   sha256: string
   capturedAtMs: number
