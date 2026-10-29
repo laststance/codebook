@@ -14,11 +14,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  fallow:
-    # One job for the three checks, so a push stays below the 20 concurrent jobs of the plan (the Test workflow alone
-    # starts fourteen). dupes and dead-code take about a second each; health builds again and runs the complete suite
-    # under c8 for its coverage (75 s on a 16-CPU Ubuntu host), so it sets this job's time.
-    name: Fallow (health, dupes, dead-code)
+  health:
+    # Own job: it builds again and runs the complete suite under c8 for its coverage (about 10 to 12 minutes on a
+    # 16-CPU Ubuntu host), so it sets the workflow's time while the static checks finish in about a minute each.
+    name: Fallow health
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -31,19 +30,57 @@ jobs:
 
       # Package and native-QA scripts import the compiled extension from dist; build it so those imports resolve.
       - name: Build
-        id: build
         run: pnpm --dir extension build
 
-      # scripts/checkHealth.mjs: score health with this run's own coverage against the pre-repair measured baseline;
+      # scripts/checkHealth.mjs: score health with this run's own coverage against the measured baseline;
       # stale, mixed, failed or partial evidence is refused (exit 2) instead of scored.
       - name: Run measured fallow health
         run: pnpm --dir extension health
 
-      # A failed check does not hide the result of the next one.
+  dupes:
+    # Reads the source only (no build): about a second of analysis after the shared setup.
+    name: Fallow dupes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prepare environment
+        uses: ./.github/actions/prepare
+
       - name: Run fallow dupes
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: pnpm --dir extension dupes
 
+  dead-code:
+    # Reads the source only (no build): about a second of analysis after the shared setup.
+    name: Fallow dead-code
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prepare environment
+        uses: ./.github/actions/prepare
+
       - name: Run fallow dead-code
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: pnpm --dir extension dead-code
+
+  architecture:
+    # Import cycles against fallow-architecture-baseline.json: no new cycle may appear.
+    name: Fallow architecture
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prepare environment
+        uses: ./.github/actions/prepare
+
+      - name: Run fallow architecture
+        run: pnpm --dir extension architecture

@@ -1824,3 +1824,43 @@ test('the Test workflow gives each push its own concurrency group and cancels on
     ].join('\n'),
   )
 })
+
+// Value: protects=the split of the Fallow workflow: each check (measured health, dupes, dead-code, architecture) runs in a job of its own, so the 10 to 12 minutes of the measured health run never delay the one-minute static checks and a failed check never hides another; fails_when=two checks share a job again, a check's job runs another script, or a job lacks the shared prepare action; why_new=Cycle 0062 task 19; seam=the text of .github/workflows/fallow.yml; no_claim=that the jobs start without queueing behind the plan's 20 concurrent jobs (CI measures that)
+test('the Fallow workflow runs measured health, dupes, dead-code and architecture each in a job of its own', async () => {
+  // Arrange
+  const workflow = await repositoryText('.github/workflows/fallow.yml')
+
+  // Act
+  // A job starts with a two-space key under `jobs:`; the comment lines inside it are no setting.
+  const jobs = Object.fromEntries(
+    [
+      ...workflow
+        .slice(workflow.indexOf('\njobs:\n'))
+        .matchAll(/^ {2}([a-z-]+):\n((?: {4}.*\n|\n)+)/gm),
+    ].map(([, key, body]) => [
+      key,
+      body
+        .split('\n')
+        .filter((line) => !line.trim().startsWith('#'))
+        .join('\n'),
+    ]),
+  )
+  const scriptsOf = (job) =>
+    [...job.matchAll(/run: pnpm --dir extension ([a-z-]+)/g)].map(
+      (match) => match[1],
+    )
+
+  // Assert
+  assert.deepEqual(Object.keys(jobs), [
+    'health',
+    'dupes',
+    'dead-code',
+    'architecture',
+  ])
+  assert.deepEqual(scriptsOf(jobs.health), ['build', 'health'])
+  assert.deepEqual(scriptsOf(jobs.dupes), ['dupes'])
+  assert.deepEqual(scriptsOf(jobs['dead-code']), ['dead-code'])
+  assert.deepEqual(scriptsOf(jobs.architecture), ['architecture'])
+  for (const job of Object.values(jobs))
+    assert.match(job, /uses: \.\/\.github\/actions\/prepare\n/)
+})
