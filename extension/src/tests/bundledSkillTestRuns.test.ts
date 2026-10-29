@@ -24,12 +24,12 @@ test('the bundled skill routes a question about a test, or about library behavio
 })
 
 // Value: protects=the skill's version being the one the release names, in one place; fails_when=the skill text changes without its version moving, or the version moves without this pin; why_new=F86 (the version was pinned inside the routing test); seam=none; no_claim=the wording of the skill
-test('the bundled skill declares version 1.0.54 in its metadata', async () => {
+test('the bundled skill declares version 1.0.55 in its metadata', async () => {
   // Arrange / Act
   const skill = await readBundledSkill()
 
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.54"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.55"\n'))
 })
 
 // Value: protects=a test stop explained in chat, never through codebook_explain, which belongs to the browser profile; fails_when=the skill tells the chat to save every committed pause with codebook_explain, which refuses a test stop; why_new=1.0.45 said codebook_explain at every pause of any run (C49-7, AC9); seam=none; no_claim=the refusal codebook_explain gives a test stop (service tests)

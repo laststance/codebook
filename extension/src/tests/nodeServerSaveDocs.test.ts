@@ -10,7 +10,7 @@ const readPackageFile = (...path: string[]): Promise<string> =>
   readFile(join(__dirname, '..', '..', ...path), 'utf8')
 
 // protects=the skill saves a server explanation only on API 1.9 or later, through codebook_explain_node_history, citing request, stops, output and response, claims saved only on complete coverage and an empty captureMissing, and links the canonical help; fails_when=any of those rules leaves the skill; no_claim=how a chat follows it
-test('the bundled skill 1.0.54 saves a server explanation only on API 1.9, claims saved on complete coverage, and links the canonical help', async () => {
+test('the bundled skill saves a server explanation only on API 1.9, claims saved on complete coverage, and links the canonical help', async () => {
   // Arrange / Act
   const skill = await readPackageFile('skills', 'codebook', 'SKILL.md')
   const paragraph = skill
@@ -30,7 +30,7 @@ test('the bundled skill 1.0.54 saves a server explanation only on API 1.9, claim
     /only when the run resource reads `nodeServer\.learningCoverage` `complete` and an empty `nodeServer\.captureMissing`/,
   )
   assert.match(paragraph, /codebook:\/\/help\/node-server/)
-  assert.ok(skill.includes('metadata:\n  version: "1.0.54"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.55"\n'))
 })
 
 // protects=the skill tells the chat to save every deciding value it named and to save source-read claims as their own source-derived step, with an observed step stating only its cited entry, and to check its chat answer's deciding values against what it saves before saving; fails_when=any of those rules leaves the skill; no_claim=how a chat follows it
