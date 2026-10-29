@@ -77,6 +77,66 @@ export const ERROR_RECOVERY = {
     "Do not send the request again: tell the learner the server did not answer within 30 s of running time, and have them check the application's data before one new run, since a POST, PUT, PATCH or DELETE may or may not have changed it. Recovery: learner check, at most one new run. The server keeps running and the run reads request-failed. Stop this run; start one new run with a new key only if the learner asks. See codebook://help/node-server#REQUEST_TIMEOUT.",
   PAUSE_HOLD_EXPIRED:
     "Tell the learner the server stayed paused longer than 300 s, so Codebook ended the run without resuming the paused code. Recovery: learner decision, at most one new run. The run is stopped and its server closed; whether the request changed the application's data is unknown, so have the learner check it. Start one new run with a new key only if the learner asks, and continue each stop within the hold. See codebook://help/node-server#PAUSE_HOLD_EXPIRED.",
+  CHROME_VERSION_UNSUPPORTED:
+    'Set codebook.chromeExecutable to Google Chrome or Chrome for Testing 149 or later, or update Chrome, then start again: an unpacked extension loads only from Chrome 149. Recovery: environment, then one new start. Nothing was launched. See codebook://help/chrome-extension#CHROME_VERSION_UNSUPPORTED.',
+  CHROME_COMMAND_UNAVAILABLE:
+    "Set codebook.chromeExecutable to Google Chrome or Chrome for Testing 149 or later: this Chrome lacks an Extensions or ServiceWorker command Codebook uses. Recovery: environment, then one new start. The run's browser was closed and its profile removed. See codebook://help/chrome-extension#CHROME_COMMAND_UNAVAILABLE.",
+  MANIFEST_UNREADABLE:
+    'Fix manifest.json in the extension root so it is valid JSON (and its key, if any, a valid public key), then start again. Recovery: fix, then one new start. Nothing was launched. See codebook://help/chrome-extension#MANIFEST_UNREADABLE.',
+  MANIFEST_NOT_V3:
+    'Set "manifest_version": 3 in the extension root\'s manifest.json, or choose the folder of a Manifest V3 extension, then start again. Recovery: fix, then one new start. Nothing was launched. See codebook://help/chrome-extension#MANIFEST_NOT_V3.',
+  MANIFEST_SURFACE_MISSING:
+    'Choose a surface or stop the manifest declares (action.default_popup for a popup, background.service_worker for a worker stop), then start again. Recovery: fix, then one new start. Nothing was launched. See codebook://help/chrome-extension#MANIFEST_SURFACE_MISSING.',
+  SEED_INVALID:
+    'Change the named seed field (a bookmark node holds a url or children, never both; urls are http or https; keys and sizes stay within the limits), then start again. Recovery: fix, then one new start. Nothing was launched. See codebook://help/chrome-extension#SEED_INVALID.',
+  STOP_DUPLICATE:
+    'Remove one of the two identical stops (same path, line and context), then start again. Recovery: fix, then one new start. Nothing was launched. See codebook://help/chrome-extension#STOP_DUPLICATE.',
+  STOP_FILE_NOT_LOADED:
+    'Move the stop into a file the surface page or the worker loads statically (script src, static import, export from, literal importScripts), or into a script file instead of an inline script, then start again. Recovery: fix, then one new start. Nothing was launched. See codebook://help/chrome-extension#STOP_FILE_NOT_LOADED.',
+  BUNDLED_EXTENSION_UNSUPPORTED:
+    'Choose an unbundled source file and line (no sourceMappingURL comment, a stop line under 1,000 characters), or explain that part from source: this version explains unbundled extension sources only. Recovery: fix, then one new start. Nothing was launched. See codebook://help/chrome-extension#BUNDLED_EXTENSION_UNSUPPORTED.',
+  PERMISSIONS_NEED_ACKNOWLEDGEMENT:
+    'Tell the learner which declared permissions reach outside the test profile, then start again with exactly those entries in acknowledgedPermissions. Recovery: fix, then one new start. Nothing was launched. See codebook://help/chrome-extension#PERMISSIONS_NEED_ACKNOWLEDGEMENT.',
+  EXTENSION_LINK_OUTSIDE:
+    'Remove or replace the named link: the extension folder may not reach files outside the repository. Recovery: fix, then one new start. Nothing was launched. See codebook://help/chrome-extension#EXTENSION_LINK_OUTSIDE.',
+  EXTENSION_LOAD_FAILED:
+    "Fix the manifest or file problem Chrome named, then start again once. Recovery: fix, at most one new start. The run's browser was closed and its profile removed. See codebook://help/chrome-extension#EXTENSION_LOAD_FAILED.",
+  EXTENSION_ID_MISMATCH:
+    "Report the expected and returned ids to the learner; Chrome derived another id for this folder, so stops could not be mapped. Recovery: new run, at most one. The run's browser was closed and its profile removed. See codebook://help/chrome-extension#EXTENSION_ID_MISMATCH.",
+  SEED_NOT_APPLIED:
+    "Start again once: the extension overwrote the seeded storage before the surface opened. Recovery: retry, at most one new start. The run's browser was closed and its profile removed. See codebook://help/chrome-extension#SEED_NOT_APPLIED.",
+  SERVICE_WORKER_NOT_ATTACHED:
+    'Retry the action once with a new key; when the worker reports a start error, fix that error first. Recovery: retry, at most once; then stop the run. Nothing was clicked. See codebook://help/chrome-extension#SERVICE_WORKER_NOT_ATTACHED.',
+  SERVICE_WORKER_LOST:
+    "Stop this run; start one new run only if the learner asks, and continue worker stops sooner: the worker ended while it was paused. Recovery: new run, at most one. The run's browser was closed. See codebook://help/chrome-extension#SERVICE_WORKER_LOST.",
+  SERVICE_WORKER_RESTARTED:
+    'Stop this run; start one new run only if the learner asks: the worker restarted during a click, so its first event may have run before its stops. Recovery: new run, at most one. Side effects: unknown. See codebook://help/chrome-extension#SERVICE_WORKER_RESTARTED.',
+  STOP_NOT_BOUND:
+    "Move the stop to a line that runs in its declared context, then start one new run. Recovery: new run, at most one. The run's browser was closed. See codebook://help/chrome-extension#STOP_NOT_BOUND.",
+  RUN_PAUSED:
+    "Continue the paused stop with the run resource's continueArguments, then send the next click with a new key. Recovery: retry after continue. Nothing was clicked. See codebook://help/chrome-extension#RUN_PAUSED.",
+  ACTION_IN_PROGRESS:
+    'Wait for the click in progress by reading the run resource, then send the next click with a new key. Recovery: retry once the run is ready. Nothing was clicked. See codebook://help/chrome-extension#ACTION_IN_PROGRESS.',
+  SELECTOR_NOT_FOUND:
+    'Retry once with a new key after the surface settles; if it fails again, stop and start one new run with a corrected selector. Recovery: retry once, then new run. Side effects: none. See codebook://help/chrome-extension#SELECTOR_NOT_FOUND.',
+  NO_MORE_ACTIONS:
+    'Read the run resource for the observation: every declared click was performed. Recovery: none. Nothing was clicked. See codebook://help/chrome-extension#NO_MORE_ACTIONS.',
+  INPUT_PARTIAL:
+    'Stop this run and tell the learner the extension may have reacted to the typed text; start one new run only if the learner asks. Recovery: new run, at most one. Side effects: partial. See codebook://help/chrome-extension#INPUT_PARTIAL.',
+  CLICK_OUTCOME_UNKNOWN:
+    "Stop this run and tell the learner the click's outcome is unknown; check the extension's state before one new run. Recovery: new run, at most one. Side effects: unknown. See codebook://help/chrome-extension#CLICK_OUTCOME_UNKNOWN.",
+  OBSERVATION_UNAVAILABLE:
+    'Explain the stops from their captured values and say the result was not observed; never report it as observed (claimable is false). Recovery: none. The run completed and its browser was closed. See codebook://help/chrome-extension#OBSERVATION_UNAVAILABLE.',
+  BROWSER_LOST:
+    "Stop this run and read its journal for the browser's termination reason; start one new run only if the learner asks. Recovery: new run, at most one. The run's profile was removed. See codebook://help/chrome-extension#BROWSER_LOST.",
+  SURFACE_LOST:
+    "Stop this run: the extension surface closed or left the extension before the result; start one new run only if the learner asks. Recovery: new run, at most one. The run's browser was closed. See codebook://help/chrome-extension#SURFACE_LOST.",
+  POPUP_NOT_OPENED:
+    "Seed the storage the extension reads to enable its popup, or choose the popup as a page surface, then start again. Recovery: fix, then one new start. The run's browser was closed and its profile removed. See codebook://help/chrome-extension#POPUP_NOT_OPENED.",
+  SURFACE_NOT_ATTACHED:
+    "Start one new run: the debugger could not attach to the extension surface. Recovery: new run, at most one. The run's browser was closed and its profile removed. See codebook://help/chrome-extension#SURFACE_NOT_ATTACHED.",
+  DIALOG_UNDECLARED:
+    'Declare dialog: accept or dismiss on the named click, then start one new run: the click opened a JavaScript dialog. Recovery: fix, then one new run. Side effects: partial. See codebook://help/chrome-extension#DIALOG_UNDECLARED.',
   PLAYBACK_PROFILE_UNSUPPORTED:
     'codebook_playback controls browser recordings only. Do not start, continue or stop a run to open a test replay; ask the learner to open it.',
 } as const

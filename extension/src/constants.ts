@@ -2070,3 +2070,55 @@ export const NODE_SERVER_HISTORY_REASON_CODES = {
   captureBudgetExhausted: 'SERVER_HISTORY_CAPTURE_BUDGET_EXHAUSTED',
   outputTruncated: 'SERVER_HISTORY_OUTPUT_TRUNCATED',
 } as const
+/** The profile of a run of the opened repository's unpacked Manifest V3 extension in a browser Codebook owns. */
+export const CHROME_EXTENSION_PROFILE = 'chrome-extension'
+/** The one action a chrome-extension run offers: perform its next declared click. */
+export const EXTENSION_CLICK_ACTION = 'extension-click'
+/** The oldest Chrome major version whose CDP `Extensions.loadUnpacked` installs an unpacked extension without a switch. */
+export const CHROME_EXTENSION_MIN_VERSION = 149
+/** At most this many declared clicks per chrome-extension run. */
+export const EXTENSION_CLICK_LIMIT = 3
+/** At most this many declared stops per chrome-extension run. */
+export const EXTENSION_STOP_LIMIT = 4
+/** A seeded bookmark tree holds at most this many nodes in total. */
+export const EXTENSION_SEED_BOOKMARK_LIMIT = 200
+/** A seeded bookmark tree is at most this deep. */
+export const EXTENSION_SEED_DEPTH_LIMIT = 6
+/** A seeded bookmark title is at most this long. */
+export const EXTENSION_SEED_TITLE_LIMIT_CHARS = 256
+/** A seeded bookmark url is at most this long. */
+export const EXTENSION_SEED_URL_LIMIT_CHARS = 2_048
+/** Seeded storage holds at most this many keys. */
+export const EXTENSION_SEED_STORAGE_KEY_LIMIT = 50
+/** Seeded storage is at most this large as JSON. */
+export const EXTENSION_SEED_STORAGE_LIMIT_BYTES = 65_536
+/** Static-load discovery follows script and import references at most this deep. */
+export const EXTENSION_STATIC_LOAD_DEPTH_LIMIT = 8
+/** A stop line longer than this marks its file as bundled (DXR9). */
+export const EXTENSION_BUNDLED_LINE_LIMIT_CHARS = 1_000
+/** How long a surface, popup or worker child may take to appear. */
+export const EXTENSION_WAKE_BOUND_MS = 5_000
+/** How long `Extensions.triggerAction` may take to open the popup target. */
+export const EXTENSION_OPEN_BOUND_MS = 5_000
+/** How long Codebook waits for every service worker of the extension to stop before the debugger attaches. */
+export const EXTENSION_STOP_WORKERS_BOUND_MS = 3_000
+/** How long a dispatched click waits for a pause or settled work before it answers `running`. */
+export const EXTENSION_CLICK_RETURN_BOUND_MS = 10_000
+/** No stop reached for this long after the last click settles the work before the observation. */
+export const EXTENSION_OBSERVE_SETTLE_MS = 1_000
+/** The observation polls at most this long, counting unpaused time only. */
+export const EXTENSION_OBSERVE_BOUND_MS = 5_000
+/** Interval between observation reads. */
+export const EXTENSION_OBSERVE_POLL_MS = 250
+/** Each observation read has its own deadline (ER9). */
+export const EXTENSION_OBSERVE_READ_TIMEOUT_MS = 2_000
+/** An observation reads at most this many bytes (ER23). */
+export const EXTENSION_OBSERVE_READ_LIMIT_BYTES = 65_536
+/** An observed JSON value is read at most this deep (ER23). */
+export const EXTENSION_OBSERVE_DEPTH_LIMIT = 8
+/** At most this many worker or page console events are journaled per run (ER10). */
+export const EXTENSION_OUTPUT_EVENT_LIMIT = 200
+/** A paused service-worker stop is held at most this long, the bound task 0 measured (ER8). */
+export const EXTENSION_WORKER_PAUSE_HOLD_MS = 280_000
+/** After SIGTERM, an owned browser gets this long before SIGKILL. */
+export const EXTENSION_BROWSER_KILL_GRACE_MS = 5_000
