@@ -124,6 +124,8 @@ export type HarnessBehaviour = {
   withoutViewport?: boolean
   /** The viewport factory throws this, as the editor's layout guard does when the pane cannot be placed. */
   viewportFailure?: Error
+  /** The created viewport cannot show the surface, as when a learner's tab opened in its group makes the editor's lease refuse the reveal. */
+  viewportAttachFailure?: Error
 }
 
 /** A receipt that settled with no stop. */
@@ -282,6 +284,7 @@ export function createRunHarness(behaviour: HarnessBehaviour = {}) {
       viewportCalls.push(['showPreparing', step, steps, sentence]),
     attachSurface: async () => {
       viewportCalls.push(['attachSurface'])
+      if (behaviour.viewportAttachFailure) throw behaviour.viewportAttachFailure
     },
     setPhase: (text) => viewportCalls.push(['setPhase', text]),
     setAccessibleDetail: (detail) =>

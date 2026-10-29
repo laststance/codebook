@@ -41,6 +41,8 @@ export class FakeChromeExtensionRuntime implements ChromeExtensionRuntime {
   nextClickEffect: ChromeExtensionClickAnswer['clickEffect'] = 'confirmed'
   /** When set, `prepare()` rejects with it and the run reads `failed`. */
   prepareFailure?: StudyError
+  /** When set, `prepare()` reads `installing` and waits for it before it ends (a slow preparation). */
+  prepareGate?: ReturnType<typeof defer<void>>
   /** When set, the next `click()` rejects with it; a failed-state code also ends the run `failed`. */
   clickFailure?: StudyError
   /** When set, `click()` waits for it before it answers (a click in flight). */
@@ -63,6 +65,10 @@ export class FakeChromeExtensionRuntime implements ChromeExtensionRuntime {
 
   async prepare(): Promise<void> {
     this.calls.push('prepare')
+    if (this.prepareGate) {
+      this.change({ phase: 'installing' })
+      await this.prepareGate.promise
+    }
     if (this.prepareFailure) {
       this.change({ phase: 'failed', runFailure: this.prepareFailure })
       throw this.prepareFailure

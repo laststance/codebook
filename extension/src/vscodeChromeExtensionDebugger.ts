@@ -177,6 +177,7 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
    * Decides what a session is from the session tree js-debug builds, never from its name (SR14) and never from `__pendingTargetId`.
    * `__pendingTargetId` is the CDP session id of js-debug's own attachment, not the target id (js-debug's trace: `Target.attachedToTarget {"sessionId":"9EE0E073…","targetInfo":{"targetId":"E85B34F1…"}}` gave `__pendingTargetId: "9EE0E073…"`), so it can match no target id Codebook knows.
    * The surface is the first page child of the run's attach (the attach filters by the surface URL); the extension's worker is a worker child of that page session; everything else is `other`.
+   * No worker can be a direct child of the attach: js-debug attaches at the top only targets passing `requirePageTarget` (type `page`, `browserAttacher.ts` in js-debug 1.93.0 and 1.140.0), and reaches workers through the auto-attach of an attached session, which names that session as the parent.
    */
   private classify(entry: SessionEntry): void {
     const configuration = entry.session.configuration

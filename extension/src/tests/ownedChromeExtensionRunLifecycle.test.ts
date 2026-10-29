@@ -385,6 +385,67 @@ test('an Application view the editor refuses leaves the run ready and reports wh
   await harness.run.stop()
 })
 
+// protects=DR6 for a view that cannot show the surface: a learner's tab opened in the Application view's group makes the editor refuse the reveal, and the run still becomes ready without a view, says why and closes the half-made view (CodeRabbit pt2 round 2); fails_when=the refused reveal ends the run as RUNTIME_FAILED although the extension was ready; no_claim=the editor's lease rules
+test('an Application view that cannot show the surface leaves the run ready and reports why', async () => {
+  // Arrange
+  const harness = createRunHarness({
+    viewportAttachFailure: new StudyError(
+      'PRESENTATION_UNAVAILABLE',
+      'Editor group 2 has a tab that is not Codebook\'s: "/repo/notes.md". Close it, then try again.',
+    ),
+  })
+  // Act
+  await harness.run.prepare()
+  // Assert
+  assert.equal(harness.run.view().phase, 'ready')
+  assert.equal(
+    harness.run.view().viewUnavailable,
+    'Editor group 2 has a tab that is not Codebook\'s: "<workspace>/notes.md". Close it, then try again.',
+  )
+  assert.deepEqual(
+    harness.journal.filter(
+      (event) => event.type === 'chrome-extension.view-unavailable',
+    ),
+    [
+      {
+        type: 'chrome-extension.view-unavailable',
+        detail: {
+          message:
+            'Editor group 2 has a tab that is not Codebook\'s: "<workspace>/notes.md". Close it, then try again.',
+        },
+      },
+    ],
+  )
+  assert.deepEqual(harness.viewportCalls.at(-1), ['close'])
+  await harness.run.stop()
+  assert.equal(harness.run.view().phase, 'completed')
+})
+
+// protects=DR3 live frame after a quick continue: a pause continued while its frame capture is still in flight leaves the Application view live, not frozen on "Paused at stop n" (a service-worker stop does not pause the page, so its capture answers at once and can arrive after the continue; CodeRabbit pt2 round 2); fails_when=the late capture pins the ended pause and the view stays frozen until the next debugger change; no_claim=the capture timeout path
+test('a pause continued before its frame capture answers leaves the Application view live', async () => {
+  // Arrange
+  const capture = defer<Record<string, unknown>>()
+  const harness = createRunHarness({
+    surfaceAnswers: { 'Page.captureScreenshot': () => capture.promise },
+  })
+  await harness.run.prepare()
+  const pause = harness.openDeclaredPause(1, 'service-worker')
+  await waitUntil(
+    () => harness.surface.methods().includes('Page.captureScreenshot'),
+    'the pause frame capture was sent',
+  )
+  // Act
+  harness.pauses.close(pause.sessionId, pause.threadId)
+  capture.resolve({ data: 'cGl4ZWxz' })
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  // Assert
+  const viewCalls = harness.viewportCalls
+    .map(([name]) => name)
+    .filter((name) => name === 'pinPause' || name === 'resumeLive')
+  assert.deepEqual(viewCalls, ['resumeLive'])
+  await harness.run.stop()
+})
+
 // Value: protects=DR10: a version failure raised at launch shows the same next-step line in the Application view and the status item; fails_when=the viewport shows the ended line while the status item shows the before-launch line; no_claim=the version wording
 test('a launch-time unsupported Chrome version shows the same next-step line in the view and the status item', async () => {
   // Arrange

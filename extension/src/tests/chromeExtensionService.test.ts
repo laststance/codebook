@@ -5,6 +5,7 @@ import { StudyError } from '../errors'
 import { readResource } from '../resources'
 
 import { createHarness } from './helpers'
+import { defer } from './utils/defer'
 import {
   FAKE_EXTENSION_MANIFEST,
   FakeChromeExtensionRuntime,
@@ -147,6 +148,37 @@ test('codebook_start answers the manifest name, permissions and host permissions
     hostPermissions: ['https://example.com/*'],
   })
   assert.equal(answer.failure, undefined)
+})
+
+// protects=CR4: a preparation longer than the start's bound answers its phase before an MCP client gives up on the call (Cursor's agent CLI ends a tool call after 60 s, and the preparation may take up to the 90 s setup bound), and the run resource reaches ready with the manifest afterwards; fails_when=codebook_start holds the answer until the preparation ends, so the chat loses the runId to a client timeout; no_claim=the real client timeouts
+test('codebook_start answers the preparation phase when the extension is still loading at its bound, and the run resource reaches ready', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const run = new FakeChromeExtensionRuntime()
+  run.prepareGate = defer<void>()
+  harness.service.environment.createChromeExtensionRun = async () => run
+  harness.service.chromeExtensionStartAnswerMs = 30
+  // Act
+  const answer = await harness.service.startOnStoredBook({
+    instanceId: harness.service.instanceId,
+    profile: 'chrome-extension',
+    key: 'slow-start',
+    configuration: chromeExtensionConfigurationOf(harness),
+  })
+  run.prepareGate.resolve()
+  await harness.service.record(answer).preparation
+  const state = await readRunResource(harness, answer.runId)
+  // Assert
+  assert.equal(answer.phase, 'installing')
+  assert.equal(answer.extension, undefined)
+  assert.equal(answer.failure, undefined)
+  assert.equal(state.chromeExtension.phase, 'ready')
+  assert.deepEqual(state.chromeExtension.manifest, {
+    name: 'Ping demo',
+    permissions: ['storage'],
+    hostPermissions: ['https://example.com/*'],
+  })
 })
 
 // protects=a start whose preparation fails answers the refusal with the run's state beside it; fails_when=the failure is lost or the state missing; no_claim=which pre-launch check refused

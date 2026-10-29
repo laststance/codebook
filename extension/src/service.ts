@@ -25,6 +25,7 @@ import {
   CHROME_EXTENSION_FAILED_STATE_CODES,
   CHROME_EXTENSION_PROFILE,
   CHROME_EXTENSION_SAVE_REFUSAL,
+  CHROME_EXTENSION_START_ANSWER_MS,
   CONTINUE_ANSWER_CALL_BUDGET_MS,
   CONTINUE_ANSWER_GRACE_MS,
   MAINTENANCE_INTERVAL_MS,
@@ -188,6 +189,7 @@ import {
   type CauseRoots,
 } from './utils/sanitizeCause'
 import { sanitizedStack } from './utils/sanitizedStack'
+import { settledWithin } from './utils/settledWithin'
 import { sleepUntilAborted } from './utils/sleepUntilAborted'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
 import { startNodeServerHistory } from './utils/startNodeServerHistory'
@@ -625,6 +627,8 @@ export class StudyService {
   nodeServerHistorySealBoundMs = NODE_SERVER_HISTORY_SEAL_BOUND_MS
   /** Sealed server histories whose unreadable summary already has its Output › Codebook entry. */
   private readonly nodeServerSummaryDiagnosed = new WeakSet<object>()
+  /** How long `codebook_start` of a chrome-extension run waits for its preparation before it answers the phase reached (CR4); a test sets a short one. */
+  chromeExtensionStartAnswerMs = CHROME_EXTENSION_START_ANSWER_MS
   /** How long the learner has to answer the confirmation of a state-changing node-server request before it reads as not confirmed (D6); a test sets a short one. */
   confirmationTimeoutMs = REPOSITORY_PAUSE_HOLD_TIMEOUT_MS
   /** The extension's own storage folders beside {@link storageRoot}, which the extension sets when it creates the service; no shown cause names them. */
@@ -1379,18 +1383,27 @@ export class StudyService {
 
   /**
    * Waits for a chrome-extension run's preparation and answers the start with what the run loaded (CR5): the manifest's `name`, `permissions` and `host_permissions`, or the refusal with the run's state beside it, so a pre-launch refusal reaches the chat in the answer of `codebook_start` itself.
+   * The wait ends after {@link StudyService.chromeExtensionStartAnswerMs}, before an MCP client gives up on the call (CR4); the chat then reads the run resource until the run is ready.
    * @param receipt - The receipt of {@link StudyService.start}.
-   * @returns The receipt with `phase` and `extension` once the run is ready; the receipt with `failure` (the described error) and `state` when the preparation ended in an error.
+   * @returns
+   * - the receipt with `phase` and `extension` once the run is ready
+   * - the receipt with `failure` (the described error) and `state` when the preparation ended in an error
+   * - the receipt with the preparation `phase` reached (no `extension`) when the preparation is still under way at the bound
    * @example await this.chromeExtensionStartAnswer(receipt) // => { ...receipt, phase: 'ready', extension: { manifest: { name: 'Demo', permissions: ['storage'], hostPermissions: [] }, … } }
    */
   private async chromeExtensionStartAnswer(
     receipt: ReturnType<StudyService['start']>,
   ): Promise<StartAnswer> {
     const record = this.record(receipt)
-    await record.preparation
+    const prepared = await settledWithin(
+      record.preparation,
+      this.chromeExtensionStartAnswerMs,
+    )
     const view = isChromeExtensionRecord(record)
       ? record.chromeExtension.run?.view()
       : undefined
+    // Still preparing at the bound: the phase reached, and the run resource follows the rest.
+    if (!prepared) return { ...receipt, phase: view?.phase ?? 'starting' }
     if (record.error)
       return {
         ...receipt,

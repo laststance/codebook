@@ -2185,6 +2185,11 @@ export const EXTENSION_OBSERVED_VALUE_LIMIT_CHARS = 4_096
 export const EXTENSION_PIN_CAPTURE_TIMEOUT_MS = 2_000
 
 // Lane F (Cycle 0061 pt2, MCP surface and help)
+/**
+ * `codebook_start` of a chrome-extension run answers within this time: a preparation still under way answers its `phase`, and the chat reads the run resource until `ready` (CR4).
+ * Why 40 s: a preparation may take up to the 90 s setup bound, near the smallest MCP client timeout found for a tool call (120 s idle in Cursor, {@link CURSOR_MCP_BRIDGE_REQUEST_TIMEOUT_MS}; Cursor's agent CLI keeps the MCP SDK's fixed 60 s, which progress notifications do not extend), so the start keeps inside the 45 s every waiting tool call keeps ({@link CONTINUE_ANSWER_CALL_BUDGET_MS}), with room for the book read before it.
+ */
+export const CHROME_EXTENSION_START_ANSWER_MS = 40_000
 /** The oldest Codebook extension version that serves the chrome-extension profile, reported by `codebook_status`. */
 export const CHROME_EXTENSION_MINIMUM_EXTENSION_VERSION = '0.2.58'
 /** What `codebook_explain`, `codebook_explain_node_history` and the Save command answer for a chrome-extension run: nothing of it is saved in this version (SR13, SR37). */

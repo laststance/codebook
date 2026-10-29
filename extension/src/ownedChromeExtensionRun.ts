@@ -501,18 +501,24 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     try {
       return await this.input.createViewport?.(this.id, this.abort.signal)
     } catch (error) {
-      // The cause can name the learner's files: masked and root-hidden like every journaled text.
-      this.viewUnavailable = hidePrivateRoots(
-        redactSecretText(
-          error instanceof Error ? error.message : String(error),
-        ),
-        this.roots,
-      )
-      this.record('chrome-extension.view-unavailable', {
-        message: this.viewUnavailable,
-      })
+      this.reportViewUnavailable(error)
       return undefined
     }
+  }
+
+  /**
+   * Records why the run goes on without its Application view (DR6): in {@link ChromeExtensionView.viewUnavailable} and the journal.
+   * Called when the editor refuses to create the view, and when the created view cannot show the surface (a learner's tab opened in its group).
+   * @param error - The editor's refusal; its text can name the learner's files, so it is masked and root-hidden like every journaled text.
+   */
+  private reportViewUnavailable(error: unknown): void {
+    this.viewUnavailable = hidePrivateRoots(
+      redactSecretText(error instanceof Error ? error.message : String(error)),
+      this.roots,
+    )
+    this.record('chrome-extension.view-unavailable', {
+      message: this.viewUnavailable,
+    })
   }
 
   /** `attaching`, `waking` and `arming`: the debugger reports its own phases. */
@@ -572,7 +578,15 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     const sessionId = await browser.attachSurface()
     this.surfaceSessionId = sessionId
     this.assertAccepting()
-    await this.viewport?.attachSurface(browser.cdp, sessionId)
+    try {
+      await this.viewport?.attachSurface(browser.cdp, sessionId)
+    } catch (error) {
+      // A view that cannot show the surface leaves the run without one, as a refused view does (DR6).
+      this.reportViewUnavailable(error)
+      this.safely(() => this.viewport?.close())
+      this.viewport = undefined
+    }
+    this.assertAccepting()
     this.surfaceAttached = true
     this.watchSurface(resolved, browser)
     this.executor = this.input.dependencies.createExecutor({
@@ -701,7 +715,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
         !this.pinnedGenerations.has(pause.generation)
       ) {
         this.pinnedGenerations.add(pause.generation)
-        void this.pinPause(pause.stopIndex, pause.context)
+        void this.pinPause(pause.generation, pause.stopIndex, pause.context)
       }
     }
     if (!this.debug?.pauses().some((pause) => pause.kind === 'declared'))
@@ -711,6 +725,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
 
   /** Pins the surface's frame of a declared pause under its phase text (DR3); a paused page may not answer the capture, then the live frame stays. */
   private async pinPause(
+    generation: number,
     stopIndex: number | undefined,
     context: 'page' | 'service-worker',
   ): Promise<void> {
@@ -737,12 +752,29 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
           ).unref(),
         ),
       ])
-      if (this.ending !== undefined) return
+      if (this.ending !== undefined || !this.isPauseOpen(generation)) return
       const text = `Paused at stop ${stopIndex ?? '?'} of ${this.view().stopsDeclared} · ${context === 'service-worker' ? 'service worker' : 'page'}`
       await this.viewport.pinPause(readCdpString(shot, 'data'), text)
+      // A continue answered while the frame was being pinned found nothing pinned: the live frame returns now.
+      if (
+        !this.isPauseOpen(generation) &&
+        !this.debug?.pauses().some((open) => open.kind === 'declared')
+      )
+        this.viewport?.resumeLive()
     } catch {
       // The live frame stays; the phase text already names the pause.
     }
+  }
+
+  /** Whether the declared pause of this generation is still open; a screenshot answered after its continue must not pin it (the live frame would stay frozen). */
+  private isPauseOpen(generation: number): boolean {
+    return Boolean(
+      this.debug
+        ?.pauses()
+        .some(
+          (open) => open.kind === 'declared' && open.generation === generation,
+        ),
+    )
   }
 
   // ------------------------------------------------------------------ clicks

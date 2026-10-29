@@ -100,15 +100,15 @@ test('the bundled skill explains each extension stop with its four elements and 
   )
 })
 
-// protects=DXR5: after a running click the chat follows the run resource, never codebook_continue; fails_when=the chat calls codebook_continue to wait for a running click; no_claim=how often it reads
-test('the bundled skill follows a running click through the run resource, not codebook_continue', async () => {
+// protects=DXR5 and CR4: after a running click, or a start that answered a preparation phase at its 40 s bound, the chat follows the run resource, never codebook_continue; fails_when=the chat calls codebook_continue to wait, or clicks before the run is ready; no_claim=how often it reads
+test('the bundled skill follows a still-preparing start and a running click through the run resource, not codebook_continue', async () => {
   // Arrange / Act
   const paragraph = await readExtensionRuns()
 
   // Assert
   assert.match(
     paragraph,
-    /After a click answers `outcome: "running"`, follow the run by reading its resource, not with `codebook_continue`/,
+    /After `codebook_start` answers a preparation `phase` instead of `ready`, or a click answers `outcome: "running"`, follow the run by reading its resource, not with `codebook_continue`/,
   )
 })
 
