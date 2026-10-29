@@ -47,6 +47,8 @@ function executorFor(
     settleMs?: number
     /** Replaces the journal sink, for a test whose journal fails. */
     record?: (type: string, detail: unknown) => void
+    /** The per-step source check (ER20); absent → none. */
+    assertSourcesUnchanged?: () => void | Promise<void>
   } = {},
 ) {
   const surface = fakeExtensionSurface(answers)
@@ -58,6 +60,9 @@ function executorFor(
     extensionId: 'abcdefghijklmnopabcdefghijklmnop',
     pauseState: pauses,
     assertActionCurrent: () => {},
+    ...(options.assertSourcesUnchanged && {
+      assertSourcesUnchanged: options.assertSourcesUnchanged,
+    }),
     record:
       options.record ?? ((type, detail) => void events.push({ type, detail })),
     roots: { storage: [], workspace: '/Users/ada/secret-repo' },
@@ -288,6 +293,41 @@ test('a missing second input after the first was typed ends the click with INPUT
       error.message ===
         'Input 2 of click 1 failed after earlier inputs were typed; the extension may have reacted.',
   )
+})
+
+// protects=ER20 (Cycle 0062 task 15): the source check runs before each input step and before the press, so a source change between two inputs stops the click with SOURCE_CHANGED before the next input is sent; fails_when=the check runs once per click and a second input is typed or the mouse pressed from changed sources; no_claim=what the check compares (run tests)
+test('a source change between two inputs stops the click with SOURCE_CHANGED before the second input and the press', async () => {
+  // Arrange
+  let checks = 0
+  const { executor, surface } = executorFor(
+    {},
+    {
+      assertSourcesUnchanged: () => {
+        checks += 1
+        if (checks === 2)
+          throw new StudyError('SOURCE_CHANGED', 'A pinned source changed.')
+      },
+    },
+  )
+  // Act
+  const click = executor.run({
+    ...CLICK,
+    inputs: [
+      { selector: '#first', text: 'a' },
+      { selector: '#second', text: 'b' },
+    ],
+  })
+  // Assert
+  await assert.rejects(
+    click,
+    (error: unknown) =>
+      error instanceof StudyError && error.code === 'SOURCE_CHANGED',
+  )
+  assert.equal(
+    surface.methods().filter((method) => method === 'Input.insertText').length,
+    1,
+  )
+  assert.equal(surface.methods().includes('Input.dispatchMouseEvent'), false)
 })
 
 // protects=a lost answer after the mouse press is an unknown outcome; fails_when=it reads as partial input or as success; no_claim=whether the page reacted

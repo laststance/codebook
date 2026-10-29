@@ -68,6 +68,8 @@ export type ExtensionExecutorInput = {
   pauseState: ExtensionPauseState
   /** Called before and after each step; throws when the run's worker restarted (ER17) or ended. */
   assertActionCurrent(): void
+  /** Refuses with `SOURCE_CHANGED` while the pinned sources differ from disk or an open editor document (ER20); called before each input step and before the press, so a change between two steps stops the click before the next one is sent. Absent → no per-step check. */
+  assertSourcesUnchanged?: () => void | Promise<void>
   record: (type: string, detail?: unknown) => unknown
   /** The private roots a journaled dialog message and a failure cause must not show. */
   roots: CauseRoots
@@ -346,6 +348,7 @@ class ClickExecution {
     index: number,
     input: ResolvedExtensionClick['inputs'][number],
   ): Promise<void> {
+    await this.input.assertSourcesUnchanged?.()
     const objectId = await this.select(input.selector)
     if (!objectId) throw this.selectorFailure(input.selector, index + 1)
     try {
@@ -432,6 +435,7 @@ class ClickExecution {
 
   /** Finds the click's centre and presses the mouse there; a double click sends two press-release pairs with click counts 1 and 2. */
   private async press(waiter: ClickOutcomeWaiter): Promise<void> {
+    await this.input.assertSourcesUnchanged?.()
     const objectId = await this.select(this.click.selector)
     if (!objectId) throw this.selectorFailure(this.click.selector, 'click')
     let centre

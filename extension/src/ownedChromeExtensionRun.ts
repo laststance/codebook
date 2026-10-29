@@ -604,6 +604,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
         this.assertAccepting()
         this.actionGuard?.assertCurrent()
       },
+      assertSourcesUnchanged: () => this.sourceCheck?.(),
       record: this.record,
       roots: this.roots,
       ...(this.timings.settleMs === undefined
