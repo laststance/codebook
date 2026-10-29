@@ -5,9 +5,9 @@ import { CHROME_EXTENSION_PROFILE } from '../constants'
  * Called by {@link StudyWorkspace.saveLearningReplay} and its status item.
  * @param record - The current run's record, if any; only its `profile` is read.
  * @returns `true` for a chrome-extension run, `false` for any other run or none.
- * @example isChromeExtensionRecord({ profile: 'chrome-extension' }) // => true
+ * @example hasChromeExtensionProfile({ profile: 'chrome-extension' }) // => true
  */
-export function isChromeExtensionRecord(
+export function hasChromeExtensionProfile(
   record: { profile: string } | undefined,
 ): boolean {
   return record?.profile === CHROME_EXTENSION_PROFILE

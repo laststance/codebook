@@ -295,6 +295,7 @@ import {
 import type { CodebookDiagnostic } from './utils/formatCodebookDiagnostic'
 import type { StudyRemovalAvailability } from './utils/fullLibraryMessage'
 import { groupCreatedAtColumn } from './utils/groupCreatedAtColumn'
+import { hasChromeExtensionProfile } from './utils/hasChromeExtensionProfile'
 import { hasRowAtMinimumHeight } from './utils/hasRowAtMinimumHeight'
 import { holdsEditorTab } from './utils/holdsEditorTab'
 import {
@@ -309,7 +310,6 @@ import type {
 import { isApplicationGroupMarkerProven } from './utils/isApplicationGroupMarkerProven'
 import { isBalancedEditorLayout } from './utils/isBalancedEditorLayout'
 import { isChatEditorTabInput } from './utils/isChatEditorTabInput'
-import { isChromeExtensionRecord } from './utils/isChromeExtensionRecord'
 import { isCodebookPaneViewType } from './utils/isCodebookPaneViewType'
 import { isCollapsedEditorGroup } from './utils/isCollapsedEditorGroup'
 import { isCollapsedEditorLayout } from './utils/isCollapsedEditorLayout'
@@ -11549,7 +11549,7 @@ export class StudyWorkspace {
     const service = this.service,
       record = this.currentRecord()
     // An extension run stores nothing: the command refuses before any study, recording or checkpoint is touched (SR13, DR9).
-    if (isChromeExtensionRecord(record))
+    if (hasChromeExtensionProfile(record))
       throw new Error(CHROME_EXTENSION_SAVE_REFUSAL)
     // A server or test run's Save belongs to its own class, with the same delayed-click guard as a browser save.
     const nodeSave = this.nodeRunSave(service, record, expectedStudyId)
@@ -11652,7 +11652,7 @@ export class StudyWorkspace {
     studyId: string | undefined,
   ): boolean {
     // An extension run shows its phase text (C4) and never offers Save (DR9).
-    if (isChromeExtensionRecord(record)) {
+    if (hasChromeExtensionProfile(record)) {
       const extension = record?.chromeExtension
       if (!extension?.run || !studyId) this.hideLearningSaveItem()
       else
