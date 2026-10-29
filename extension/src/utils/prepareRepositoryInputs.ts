@@ -59,14 +59,14 @@ export async function prepareRepositoryInputs(
 }
 
 /** Resolves one node without modifying the target page or copying its current input value. @example selectInput('#email', origins) */
-function selectInput(selector: string, origins: readonly string[]) {
+export function selectInput(selector: string, origins: readonly string[]) {
   if (!origins.includes(location.origin)) return undefined
   const matches = document.querySelectorAll(selector)
   return matches.length === 1 ? matches[0] : undefined
 }
 
 /** Inspects the exact retained node in the owned page; a replaced control never inherits input authority. @example inspectInput.call(element, {selector:'#email',text:'invalid@example.invalid',origin,phase:'focus'}) */
-function inspectInput(
+export function inspectInput(
   this: Element,
   input: {
     selector: string

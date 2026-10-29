@@ -2133,3 +2133,9 @@ export const EXTENSION_ACKNOWLEDGED_API_PERMISSIONS = [
   'proxy',
   'privacy',
 ] as const
+/** The root js-debug attach session of a chrome-extension run is named with this prefix and the run id; child sessions are told apart by target type, never by name (SR14). */
+export const CHROME_EXTENSION_SESSION_NAME_PREFIX = 'codebook chrome extension '
+/** Every declared extension stop is requested at this column: a stop declares a line only, and the adapter binds the first position of the line. */
+export const EXTENSION_STOP_COLUMN = 1
+/** Each CDP request of a click step may run this long in unpaused time before its answer counts as lost (ER14). */
+export const EXTENSION_STEP_REQUEST_TIMEOUT_MS = 20_000
