@@ -215,17 +215,25 @@ test('a manifest without a pnpm version, or not JSON, is named, so an unreadable
   )
   await writeFile(join(notJson, 'extension/package.json'), '{ not json')
 
-  // Act
-  const readingWithoutPnpm = readPins(withoutPnpm)
-  const readingNotJson = readPins(notJson)
+  // Act: both rejections are caught as they happen, so neither is unhandled while the other is awaited.
+  const [withoutPnpmError, notJsonError] = await Promise.all(
+    [withoutPnpm, notJson].map((root) =>
+      readPins(root).then(
+        () => undefined,
+        (error) => error,
+      ),
+    ),
+  )
 
   // Assert
-  await assert.rejects(readingWithoutPnpm, {
-    message: 'extension/package.json names no pnpm version in packageManager.',
-  })
-  await assert.rejects(readingNotJson, {
-    message: /^extension\/package\.json cannot be read \(/,
-  })
+  assert.equal(
+    withoutPnpmError?.message,
+    'extension/package.json names no pnpm version in packageManager.',
+  )
+  assert.match(
+    notJsonError?.message ?? '',
+    /^extension\/package\.json cannot be read \(/,
+  )
 })
 
 // Value: protects=the gate's composition and order, the sixteen checks AGENTS.md names, the architecture check CI requires included; fails_when=a check is dropped, added or reordered without this list changing with it; why_new=Cycle 0058 retro (the list lived in a copied shell script), Cycle 0062 pt2 OCR finding F3 (the architecture job was not in the gate); seam=none; no_claim=each check's command
