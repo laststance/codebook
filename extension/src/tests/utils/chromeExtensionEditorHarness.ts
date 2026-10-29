@@ -99,6 +99,7 @@ export async function extensionEditorHarness(
   let captureCalls = 0
   let refuseContinues = false
   let stopDebuggingFailure: Error | undefined
+  let stopGate: Promise<void> | undefined
   let startGate: Promise<void> | undefined
   let startListener: ((session: vscode.DebugSession) => void) | undefined
   let skipTracker = false
@@ -319,6 +320,7 @@ export async function extensionEditorHarness(
       },
       async stopDebugging(session: FakeSession): Promise<void> {
         stopped.push(session.id)
+        await stopGate
         if (stopDebuggingFailure && stopFailuresLeft-- > 0)
           throw stopDebuggingFailure
       },
@@ -500,6 +502,10 @@ export async function extensionEditorHarness(
     started,
     stopped,
     editorBreakpoints,
+    /** Holds every `stopDebugging` call (after it is counted) until the test settles `gate`, so a stop stays in flight. */
+    holdStopDebugging(gate: Promise<void>): void {
+      stopGate = gate
+    },
     /** Holds every `startDebugging` call (before its session exists) until the test settles `gate`. */
     holdStartDebugging(gate: Promise<void>): void {
       startGate = gate

@@ -108,6 +108,8 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
   /** Ids of the sessions the editor confirmed stopped; an id joins only after its stop succeeded, so a failed stop is retried. */
   private readonly stoppedSessionIds = new Set<string>()
   /** Every session of this run the editor announced as started, whether or not its tracker registered it (a session starting after the release began may skip the tracker). */
+  /** The stop of each session the editor is still carrying out, by session id (see {@link stopOnce}). */
+  private readonly stopsInFlight = new Map<string, Promise<void>>()
   private readonly startedSessions = new Map<string, vscode.DebugSession>()
   /** Ends the late-session watch when a pending attach never settles; see {@link armLateWatchBound}. */
   private lateWatchTimer?: ReturnType<typeof setTimeout>
@@ -1059,15 +1061,25 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
       (session) => !this.stoppedSessionIds.has(session.id),
     )
     const results = await Promise.allSettled(
-      pending.map(async (session) => {
-        await stopRunDebugSessions([session], (target) =>
-          vscode.debug.stopDebugging(target),
-        )
-        this.stoppedSessionIds.add(session.id)
-      }),
+      pending.map((session) => this.stopOnce(session)),
     )
     const failure = results.find((result) => result.status === 'rejected')
     if (failure?.status === 'rejected') throw failure.reason
+  }
+
+  /** Stops one session, sharing the stop already in flight for it, so overlapping stop paths ask the editor once; a failed stop is forgotten when it settles, so a later call retries it. */
+  private stopOnce(session: vscode.DebugSession): Promise<void> {
+    const inFlight = this.stopsInFlight.get(session.id)
+    if (inFlight) return inFlight
+    const stop = stopRunDebugSessions([session], (target) =>
+      vscode.debug.stopDebugging(target),
+    )
+      .then(() => {
+        this.stoppedSessionIds.add(session.id)
+      })
+      .finally(() => this.stopsInFlight.delete(session.id))
+    this.stopsInFlight.set(session.id, stop)
+    return stop
   }
 
   /** Bounds how long the listeners wait for an attach that never settles after the release began; at the bound the known sessions are stopped once more and the listeners go. */

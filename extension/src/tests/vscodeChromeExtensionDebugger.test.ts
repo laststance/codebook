@@ -1207,6 +1207,39 @@ test('a later release stops a late session whose first stop failed', async () =>
   await editor.dispose()
 })
 
+// protects=overlapping stop paths ask the editor once per session (Cycle 0062 final-range CodeRabbit CLI); fails_when=a second release or the late watch stops a session whose stop is still in flight, so the editor is asked twice and a rejected repeat journals a spurious debugger error; no_claim=real editor stop timing
+test('overlapping stop paths stop one late session once and journal nothing', async () => {
+  // Arrange
+  const editor = await extensionEditorHarness({})
+  const startGate = defer<void>()
+  const stopGate = defer<void>()
+  editor.holdStartDebugging(startGate.promise)
+  editor.holdStopDebugging(stopGate.promise)
+  const run = new AbortController()
+  const created = editor.createDebugger([PAGE_STOP])
+  const rejected = assert.rejects(created.debug.attach(run.signal))
+  await until(() => editor.started.length > 0)
+  await created.debug.release()
+  run.abort()
+  startGate.resolve()
+  await until(() => editor.stopped.length === 1)
+  // Act
+  const second = created.debug.release()
+  await sleep(20)
+  stopGate.resolve()
+  await second
+  await rejected
+  // Assert
+  assert.deepEqual(editor.stopped, ['root-session'])
+  assert.deepEqual(
+    created.events.filter(
+      (event) => event.type === 'chrome-extension.debugger-error',
+    ),
+    [],
+  )
+  await editor.dispose()
+})
+
 // protects=LR-D3 (Cycle 0062 ship last round): the listeners kept for a start that never settles are disposed at the stop bound; fails_when=a hung startDebugging keeps the tracker and listeners alive for the process; no_claim=the real stop deadline length
 test('listeners kept for an attach that never settles are disposed at the stop bound', async () => {
   // Arrange
