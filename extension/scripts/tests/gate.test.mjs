@@ -197,6 +197,93 @@ test('the gate runs the sixteen delivery checks in their order, the import-cycle
   assert.deepEqual(names, expected)
 })
 
+// Value: protects=the gate's import-cycle check fails a new cycle: 07-architecture runs a package script that fails on findings beyond a baseline holding no cycle, and every script the gate runs exists; fails_when=a retake absorbs a cycle into the baseline, the script loses --fail-on-issues or its baseline, or a gate script is missing from package.json; why_new=Cycle 0062 pt2 task 20 (no new cycle may appear); seam=none; no_claim=that Fallow finds every cycle
+test('the gate fails a new import cycle: its architecture script fails beyond a baseline that holds no cycle', async () => {
+  // Arrange
+  const extensionRoot = fileURLToPath(new URL('../../', import.meta.url))
+  const manifest = JSON.parse(
+    await readFile(join(extensionRoot, 'package.json'), 'utf8'),
+  )
+  const baseline = JSON.parse(
+    await readFile(
+      join(extensionRoot, 'fallow-architecture-baseline.json'),
+      'utf8',
+    ),
+  )
+
+  // Act
+  const architectureCheck = GATE_CHECKS.find(
+    (check) => check.name === '07-architecture',
+  )
+  const missingScripts = GATE_CHECKS.flatMap((check) =>
+    check.script === undefined ? [] : [check.script],
+  ).filter((script) => typeof manifest.scripts[script] !== 'string')
+  const recordedCycles = {
+    circular_dependencies: baseline.circular_dependencies,
+    re_export_cycles: baseline.re_export_cycles,
+    package_cycles: baseline.package_cycles,
+  }
+
+  // Assert
+  assert.equal(architectureCheck?.script, 'architecture')
+  assert.equal(
+    manifest.scripts.architecture,
+    'fallow architecture --fail-on-issues --baseline fallow-architecture-baseline.json',
+  )
+  assert.deepEqual(recordedCycles, {
+    circular_dependencies: [],
+    re_export_cycles: [],
+    package_cycles: [],
+  })
+  assert.deepEqual(missingScripts, [])
+})
+
+// Value: protects=the gate refusing, before any check, a Bun other than .bun-version's on the path the checks use, or none at all (the format check runs bun fmt); fails_when=main stops asking the path's Bun for its version, or a mismatch or a missing Bun no longer refuses with exit 2; why_new=Cycle 0062 pt2 OCR finding F2 (pinMismatches alone does not prove the wiring); seam=none; no_claim=the Node and pnpm parts of the refusal (tested above)
+test('the gate refuses with exit 2 a Bun of another version on the path, or none, before any check runs', async (context) => {
+  // Arrange
+  const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
+  const pins = await readPins(repositoryRoot)
+  const fakeBin = await mkdtemp(join(tmpdir(), 'codebook-gate-bun-'))
+  context.after(() => rm(fakeBin, { recursive: true, force: true }))
+  await writeFile(join(fakeBin, 'bun'), '#!/bin/sh\necho 1.4.3\n', {
+    mode: 0o755,
+  })
+  const nodeBin = join(process.execPath, '..')
+  const environmentWith = (path) => ({
+    ...plainOutputEnvironment(process.env),
+    PATH: path,
+    npm_config_user_agent: `pnpm/${pins.pnpm} node/v${process.versions.node}`,
+  })
+
+  // Act
+  const otherBun = spawnSync(process.execPath, [GATE_SCRIPT], {
+    encoding: 'utf8',
+    env: environmentWith(`${fakeBin}:${nodeBin}`),
+    timeout: 30_000,
+  })
+  const noBun = spawnSync(process.execPath, [GATE_SCRIPT], {
+    encoding: 'utf8',
+    env: environmentWith(nodeBin),
+    timeout: 30_000,
+  })
+
+  // Assert
+  assert.equal(otherBun.status, 2)
+  assert.ok(
+    otherBun.stderr.includes(
+      `Bun 1.4.3 runs here, but .bun-version pins ${pins.bun}.`,
+    ),
+  )
+  assert.equal(otherBun.stdout, '')
+  assert.equal(noBun.status, 2)
+  assert.ok(
+    noBun.stderr.includes(
+      `Bun of an unknown version runs here, but .bun-version pins ${pins.bun}.`,
+    ),
+  )
+  assert.equal(noBun.stdout, '')
+})
+
 // Value: protects=the command line's refusal before any check, with exit 2 and one sentence; fails_when=an unknown option is ignored and the checks start, or the refusal exits 0 or 1; why_new=Cycle 0058 retro; seam=the script started as a process; no_claim=the refusal of a dirty checkout or a toolchain mismatch (their own functions are tested above)
 test('an unknown option is refused with exit 2 before any check runs', () => {
   // Arrange
