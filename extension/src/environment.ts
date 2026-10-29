@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { constants as filesystemConstants } from 'node:fs'
 import { access, readFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 
@@ -20,6 +21,7 @@ import type { NodeServerConfiguration } from './nodeServerConfigSchemas'
 import type { NodeServerHistorySink } from './nodeServerHistorySink'
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
 import type {
+  ChromeExtensionRunInput,
   NodeTestPreparationControl,
   RuntimeControl,
   RuntimeDefinition,
@@ -29,6 +31,7 @@ import type {
 } from './runtime'
 import type { BrowserViewportFactory } from './runtimeSupport/browserViewport'
 import type { HostConfiguration } from './runtimeSupport/hostBrowser'
+import { managedProfileRoot } from './runtimeSupport/utils/managedProfileRoot'
 import { createStateChangingRequestAsker } from './utils/askToSendStateChangingRequest'
 import { assertConfiguredSourceDocuments } from './utils/assertConfiguredSourceDocuments'
 import {
@@ -37,6 +40,7 @@ import {
 } from './utils/assertDevelopmentWorkspace'
 import { causeRootsFor } from './utils/causeRootsFor'
 import { checkNodeTestFiles } from './utils/checkNodeTestFiles'
+import { chromeExtensionPrerequisiteGaps } from './utils/chromeExtensionPrerequisiteGaps'
 import { configuredStops } from './utils/configuredStops'
 import { createChromeExecutableLookup } from './utils/createChromeExecutableLookup'
 import { createMemoryOrphanStore } from './utils/createMemoryOrphanStore'
@@ -328,7 +332,7 @@ export async function createEnvironment(
         if (ownedConfiguredLock) break
       }
       const [
-        { ready, missing, nodeMissing },
+        { ready, missing, nodeMissing, chrome },
         checkedConfigured,
         vitestSearch,
         machineMissing,
@@ -391,6 +395,17 @@ export async function createEnvironment(
             ready: nodeMissing.length === 0 && machineMissing.length === 0,
             missing: [...nodeMissing, ...machineMissing],
           },
+          'chrome-extension': (() => {
+            const gaps = chromeExtensionPrerequisiteGaps({
+              platform: process.platform,
+              // Node is no part of this profile: only the Chrome lookup's own findings count.
+              chromeMissing: missing.filter(
+                (gap) => !nodeMissing.includes(gap),
+              ),
+              chromeVersion: chrome?.version,
+            })
+            return { ready: gaps.length === 0, missing: gaps }
+          })(),
         },
       }
     },
@@ -548,6 +563,47 @@ export async function createEnvironment(
         dependencies: createProductNodeServerRunDependencies({
           node,
           utilities: createNodeServerRunUtilities(orphanStore),
+        }),
+      })
+    },
+    async createChromeExtensionRun(input: ChromeExtensionRunInput) {
+      const { chrome } = await resolvePrerequisites()
+      const gaps = chromeExtensionPrerequisiteGaps({
+        platform: process.platform,
+        chromeMissing: chrome === undefined ? ['Chrome is not installed.'] : [],
+        chromeVersion: chrome?.version,
+      })
+      if (chrome === undefined || gaps.length > 0)
+        throw new StudyError(
+          'PREREQUISITE_MISSING',
+          gaps.join('; ') || 'Chrome is not installed.',
+        )
+      if (requireWorkspace() !== workspace)
+        throw new StudyError(
+          'STALE_INSTANCE',
+          'Workspace identity changed before the extension run.',
+        )
+      // Load the VS Code-backed run only after a caller selects this profile; environment unit tests run in plain Node.
+      const [
+        { createOwnedChromeExtensionRun },
+        { createProductChromeExtensionRunDependencies },
+      ] = await Promise.all([
+        import('./ownedChromeExtensionRun.js'),
+        import('./chromeExtensionRunDependencies.js'),
+      ])
+      return createOwnedChromeExtensionRun({
+        ...input,
+        workspace,
+        ...(presentation?.createChromeExtensionViewport
+          ? { createViewport: presentation.createChromeExtensionViewport }
+          : {}),
+        dependencies: createProductChromeExtensionRunDependencies({
+          workspace,
+          chromeExecutable: chrome.binary,
+          profileRoot: managedProfileRoot(process.platform, {
+            environment: process.env,
+            homeDirectory: homedir,
+          }),
         }),
       })
     },

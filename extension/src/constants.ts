@@ -2179,3 +2179,9 @@ export const EXTENSION_SAVE_UNAVAILABLE_SENTENCE =
   'Saving an extension run is not available in this version; the live explanation stays in the chat.'
 /** `Page.stopScreencast` on the surface's session, sent when the view ends, is waited for this long; the view is already final without its answer. */
 export const EXTENSION_SCREENCAST_STOP_TIMEOUT_MS = 1_000
+
+// Lane E: chrome-extension run lifecycle and observation (Cycle 0061 pt2)
+/** The most characters of an observed value the run resource reports before it cuts it and marks it `truncated` (ER23). */
+export const EXTENSION_OBSERVED_VALUE_LIMIT_CHARS = 4_096
+/** How long the run waits for the surface screenshot it pins at a pause; a paused page may never answer it. */
+export const EXTENSION_PIN_CAPTURE_TIMEOUT_MS = 2_000
