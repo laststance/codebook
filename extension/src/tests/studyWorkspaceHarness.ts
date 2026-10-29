@@ -2411,18 +2411,22 @@ export async function workspaceHarness(
    * Opens a text tab in front of a group without giving it the keyboard and announces the new tab to the reader's tab listeners; the step of `openPausedFileInLockedGroup` and `openAnnouncedTextTab`.
    * @param filename - The file.
    * @param column - The group, locked or not.
-   * @param state - The tab's preview and unsaved-change flags.
+   * @param state - The tab's preview and unsaved-change flags, and optionally the line its text editor's caret stands on, as where the debugger revealed a stop.
    * @returns The tab.
-   * @example openAnnouncedTextTab('settings.js', 1, { isPreview: true, isDirty: false })
+   * @example openAnnouncedTextTab('settings.js', 1, { isPreview: true, isDirty: false, selectedLine: 41 })
    */
   function openAnnouncedTextTab(
     filename: string,
     column: number,
-    state: { isPreview: boolean; isDirty: boolean },
+    state: { isPreview: boolean; isDirty: boolean; selectedLine?: number },
   ): Tab {
-    const { tab } = openDraftTab(filename, column, true)
+    const { tab, editor } = openDraftTab(filename, column, true)
     tab.isPreview = state.isPreview
     tab.isDirty = state.isDirty
+    if (state.selectedLine !== undefined) {
+      const caret = new Position(state.selectedLine, 0)
+      editor.selections = [{ anchor: caret, active: caret }]
+    }
     for (const listener of tabChangeListeners)
       listener({ opened: [tab], closed: [], changed: [] })
     activeTextEditorChanged(focusedSourceEditor())
@@ -6532,7 +6536,7 @@ export async function workspaceHarness(
     openAnnouncedTextTab(
       filename: string,
       column: number,
-      state: { isPreview: boolean; isDirty: boolean },
+      state: { isPreview: boolean; isDirty: boolean; selectedLine?: number },
     ): Tab {
       return openAnnouncedTextTab(filename, column, state)
     },

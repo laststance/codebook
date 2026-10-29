@@ -328,6 +328,118 @@ test('a paused file whose close the editor refuses is moved only up to the attem
   }
 })
 
+// protects=Step 7 gap (Cycle 0062 ship): when the group below the Application group holds no editor (a chat part's tab), the paused file is not moved into it; fails_when=the move picks a chat part or any other group in place of the learner's group the Application group was inserted above; why_new=the other move tests all have the learner's group below; seam=none; no_claim=Cursor's own group numbering
+test('a paused file is not moved into a group below the extension view that holds no editor', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const view = await openView(harness, 'chat-below-run-1')
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    const below = harness.groups.find(
+      (group) => group.viewColumn === applicationColumn + 1,
+    )
+    assert.ok(below)
+    below.tabs = []
+    below.activeTab = undefined
+    harness.addOpaqueTab('Agent chat', applicationColumn + 1)
+    const showsBefore = harness.textDocumentShows().length
+    // Act
+    harness.openPausedFileInLockedGroup('settings.js', applicationColumn)
+    // gstack-timing-ok: a negative check; a move would start its show at once, so one settle of the fake editor's file read is enough to see none.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    // Assert
+    assert.equal(harness.textDocumentShows().length, showsBefore)
+    assert.equal(
+      groupShowing(harness, 'settings.js')?.viewColumn,
+      applicationColumn,
+    )
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Step 7 gap (Cycle 0062 ship): a paused file moved into a group that shows the learner's own preview tab opens there as a kept tab, so it never replaces that preview; fails_when=the move opens the paused file as a preview beside the learner's preview, which the editor would replace; why_new=the other move tests have no preview in the destination; seam=none; no_claim=the editor's own preview replacement
+test('a paused file moved beside the learner’s preview tab opens as a kept tab and leaves the preview', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const view = await openView(harness, 'preview-below-run-1')
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    const learnersPreview = harness.addTextPreview(
+      join(harness.directory, 'notes.js'),
+      applicationColumn + 1,
+    )
+    // Act
+    harness.openPausedFileInLockedGroup('settings.js', applicationColumn)
+    // Assert
+    await waitUntil(
+      () =>
+        groupShowing(harness, 'settings.js')?.viewColumn ===
+        applicationColumn + 1,
+      'the paused file moves into the group below',
+      5_000,
+    )
+    const moved = groupShowing(harness, 'settings.js')?.tabs.find(
+      (tab) => tab.label === 'settings.js',
+    )
+    assert.equal(moved?.isPreview, false)
+    assert.equal(learnersPreview.isPreview, true)
+    assert.equal(
+      groupShowing(harness, 'notes.js')?.viewColumn,
+      applicationColumn + 1,
+    )
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Step 7 gap (Cycle 0062 ship): the moved paused file keeps the line the editor revealed the stop at; fails_when=the move shows the file without the paused editor's selection, so the learner lands on another line than the stop; why_new=the other move tests do not read the moved editor's caret; seam=none; no_claim=the editor's own reveal scrolling
+test('a paused file moved out of the Application group keeps the line the stop was revealed at', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const view = await openView(harness, 'caret-run-1')
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    // Act
+    harness.openAnnouncedTextTab('settings.js', applicationColumn, {
+      isPreview: true,
+      isDirty: false,
+      selectedLine: 41,
+    })
+    // Assert
+    await waitUntil(
+      () =>
+        groupShowing(harness, 'settings.js')?.viewColumn ===
+        applicationColumn + 1,
+      'the paused file moves into the group below',
+      5_000,
+    )
+    const movedEditor = harness.editor.window.visibleTextEditors.find(
+      (editor) =>
+        editor.viewColumn === applicationColumn + 1 &&
+        editor.document.uri.path.endsWith('/settings.js'),
+    )
+    assert.equal(movedEditor?.selections[0]?.active.line, 41)
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
 // protects=OCR-M2 (Cycle 0062 review): a second paused file that opens in front of the view while the first is being moved moves out too; fails_when=the watch drops the events that come during a move and never looks again, so the second file covers the view; no_claim=how fast two stops come natively
 test('a second paused file opened during a move also leaves the Application group', async () => {
   // Arrange

@@ -10217,16 +10217,19 @@ export class StudyWorkspace {
     const isPausedFile = (tab: vscode.Tab): boolean =>
       tab.input instanceof vscode.TabInputText &&
       tab.input.uri.toString() === move.uri.toString()
-    const selection = vscode.window.visibleTextEditors.find(
+    // The primary selection is where the editor revealed the stop; the copy keeps it as a range.
+    const primary = vscode.window.visibleTextEditors.find(
       (editor) =>
         editor.viewColumn === move.from &&
         editor.document.uri.toString() === move.uri.toString(),
-    )?.selection
+    )?.selections[0]
     await this.showTextDocumentNoted(move.uri, {
       viewColumn: move.to.viewColumn,
       preserveFocus: true,
       preview: !move.to.tabs.some((tab) => tab.isPreview && !isPausedFile(tab)),
-      ...(selection && { selection }),
+      ...(primary && {
+        selection: new vscode.Range(primary.anchor, primary.active),
+      }),
     })
     if (!isWatching()) return
     const copy = vscode.window.tabGroups.all
