@@ -1918,10 +1918,72 @@ test('the attach is refused when a second page matching the surface URL is open,
   await editor.dispose()
 })
 
+// protects=the attach tie compares the whole surface URL (Cycle 0062 review OCR-L2); fails_when=a page of the same file with a query string counts as a second surface and the attach is refused; no_claim=which js-debug session belongs to which target
+test('the attach succeeds when another page of the same file differs only by a query string', async () => {
+  // Arrange
+  const editor = await extensionEditorHarness()
+  const created = editor.createDebugger([PAGE_STOP], {
+    targets: [
+      { targetId: 'query-tab', type: 'page', url: `${SURFACE_URL}?x=1` },
+      { targetId: 'surface-target', type: 'page', url: SURFACE_URL },
+    ],
+  })
+  const attaching = created.debug.attach(SIGNAL())
+  await until(() => editor.started.length > 0)
+  // Act
+  await editor.addChild({ kind: 'page', id: 'page-session' })
+  // Assert
+  await attaching
+  assert.deepEqual(
+    created.events.filter(
+      (event) => event.type === 'chrome-extension.debugger-error',
+    ),
+    [],
+  )
+  await created.debug.release()
+  await editor.dispose()
+})
+
+// protects=the worker child is adopted when the browser's target list lists the extension's worker only after the child appeared (Cycle 0062 review OCR-L3); fails_when=one early read of the list demotes the child for good and the attach fails with SERVICE_WORKER_NOT_ATTACHED; no_claim=real js-debug timing
+test('a worker child is adopted when the target list shows the extension’s worker a moment after the child appeared', async () => {
+  // Arrange
+  const targets: { targetId: string; type: string; url: string }[] = [
+    { targetId: 'surface-target', type: 'page', url: SURFACE_URL },
+  ]
+  const editor = await extensionEditorHarness()
+  const created = editor.createDebugger([WORKER_STOP], { targets })
+  const attaching = created.debug.attach(SIGNAL())
+  await until(() => editor.started.length > 0)
+  await editor.addChild({ kind: 'page', id: 'page-session' })
+  await attaching
+  await editor.addChild({ kind: 'service_worker', id: 'worker-session' })
+  // Act
+  const waking = created.debug.waitForWorker(SIGNAL())
+  void sleep(50).then(() =>
+    targets.push({
+      targetId: 'worker-target',
+      type: 'service_worker',
+      url: WORKER_URL,
+    }),
+  )
+  // Assert
+  await waking
+  assert.deepEqual(
+    created.events.filter(
+      (event) => event.type === 'chrome-extension.debugger-error',
+    ),
+    [],
+  )
+  await created.debug.release()
+  await editor.dispose()
+})
+
 // protects=a worker child of the surface page is the extension's worker only while the browser lists the extension's service-worker target (Cycle 0062 task 12); fails_when=a worker child of another URL is adopted and armed; no_claim=which js-debug session belongs to which target
 test('a worker child of the surface page is not adopted while the extension’s own worker target is not listed', async () => {
   // Arrange
-  const editor = await extensionEditorHarness()
+  const editor = await extensionEditorHarness({
+    constants: { EXTENSION_WAKE_BOUND_MS: 80 },
+  })
   const created = editor.createDebugger([WORKER_STOP], {
     targets: [
       {

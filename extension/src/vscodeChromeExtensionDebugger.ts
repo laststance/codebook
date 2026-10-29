@@ -792,7 +792,7 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
   }
 
   /**
-   * Ties the adopted page child to the surface: it is kept only while the surface is the single page target matching the surface URL, because js-debug's child session names no target id and a second matching tab could have attached first.
+   * Ties the adopted page child to the surface: it is kept only while the surface is the single page target with exactly the surface URL (a page of the same file with a query or fragment is another page), because js-debug's child session names no target id and a second matching tab could have attached first.
    * Called by {@link attach} once the page child exists; the attach is refused (and the child demoted to `other`) when the match is not unique or the surface target is gone.
    * @param entry - The page child adopted as the surface.
    * @param refusal - Builds the attach's refusal.
@@ -806,8 +806,7 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     const matchingPageIds = targets
       .filter(
         (target) =>
-          target.type === 'page' &&
-          target.url.startsWith(this.input.run.surfaceUrl),
+          target.type === 'page' && target.url === this.input.run.surfaceUrl,
       )
       .map((target) => target.targetId)
     // Exactly the surface: nothing else could have attached first.
@@ -858,28 +857,39 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
       signal,
       () => this.workerNotAttached(),
     )
-    await this.verifyWorker(worker)
+    await this.verifyWorker(worker, signal)
   }
 
   /**
    * Ties the adopted worker child to the extension's own service worker: it is kept only while the owned browser lists a service-worker target at the extension's worker URL.
    * Called by {@link wakeWorker} after a worker child appears; a worker child while no such target exists is another extension's and is demoted to `other`.
    * @param entry - The worker child adopted as the extension's worker.
-   * @throws {@link StudyError} `SERVICE_WORKER_NOT_ATTACHED` when the extension's worker target is not listed.
+   * @param signal - The run's abort signal.
+   * @throws {@link StudyError} `SERVICE_WORKER_NOT_ATTACHED` when the extension's worker target is not listed within the wake bound.
    */
-  private async verifyWorker(entry: SessionEntry): Promise<void> {
-    const targets = await this.input.readTargets()
-    const isOwnWorkerListed = targets.some(
-      (target) =>
-        target.type === 'service_worker' && target.url === entry.targetUrl,
+  private async verifyWorker(
+    entry: SessionEntry,
+    signal: AbortSignal,
+  ): Promise<void> {
+    // The target list can trail the worker's child session, so it is polled within the wake bound before the child is demoted.
+    await this.waitOr(
+      async () =>
+        (await this.input.readTargets()).some(
+          (target) =>
+            target.type === 'service_worker' && target.url === entry.targetUrl,
+        ),
+      "the extension's service worker target to be listed",
+      EXTENSION_WAKE_BOUND_MS,
+      signal,
+      () => {
+        entry.kind = 'other'
+        this.input.record('chrome-extension.debugger-error', {
+          message:
+            "A worker child of the surface is not the extension's service worker and is ignored.",
+        })
+        return this.workerNotAttached()
+      },
     )
-    if (isOwnWorkerListed) return
-    entry.kind = 'other'
-    this.input.record('chrome-extension.debugger-error', {
-      message:
-        "A worker child of the surface is not the extension's service worker and is ignored.",
-    })
-    throw this.workerNotAttached()
   }
 
   async armStops(signal: AbortSignal): Promise<void> {
