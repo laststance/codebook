@@ -3407,6 +3407,7 @@ export async function workspaceHarness(
         for (const listener of viewChanged) listener()
       },
       viewListenerCount: () => viewChanged.length,
+      disposeListenerCount: () => disposed.length,
       onDidChangeViewState(callback: () => void) {
         viewChanged.push(callback)
         return {
@@ -5906,6 +5907,12 @@ export async function workspaceHarness(
       return replacement
     },
     focusedSource: focusedSourceEditor,
+    /** Counts the disposal listeners every open pane holds, so a test sees a listener a reused pane gains per run. @example harness.disposeListenerCount() // => 3 */
+    disposeListenerCount: () =>
+      [...panels].reduce(
+        (count, panel) => count + panel.disposeListenerCount(),
+        0,
+      ),
     focusListenerCount: () =>
       activeEditorListeners.size +
       selectionListeners.size +

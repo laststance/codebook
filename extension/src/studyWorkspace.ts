@@ -1128,8 +1128,6 @@ export class StudyWorkspace {
   private previewTabOfFrame?: { uri: string; column: vscode.ViewColumn }
   private moments?: vscode.WebviewView
   private viewport?: BrowserViewport
-  /** The pane of an ended chrome-extension run whose last frame stays until a next run or the learner replaces it (ER22). */
-  private keptEndedPane?: vscode.WebviewPanel
   private leaseId?: string
   private outline?: vscode.TreeView<RetainedStudySelection['itemId']>
   private readonly treeChanges = new vscode.EventEmitter<
@@ -10026,14 +10024,7 @@ export class StudyWorkspace {
       ),
       leaseId = randomUUID()
     this.leaseId = leaseId
-    // A newer run's pane replaces the kept view of an ended extension run.
-    this.keptEndedPane = undefined
     panel.title = `codebook · Application ${runId.slice(0, 8)}`
-    if (keepsEndedPane)
-      panel.onDidDispose(() => {
-        // The learner closing the tab, or a study closing, drops the kept view (ER22).
-        if (this.keptEndedPane === panel) this.keptEndedPane = undefined
-      })
     const viewport = new BrowserViewport(
       runId,
       input.record,
@@ -10055,11 +10046,8 @@ export class StudyWorkspace {
           this.viewport = undefined
           this.leaseId = undefined
           const readerShowsSelection = this.opened && this.baselines
-          // An ended extension run's pane stays as it is, unless an open reader owns the pane.
-          if (keepsEndedPane?.() && !readerShowsSelection) {
-            this.keptEndedPane = panel
-            return
-          }
+          // An ended extension run's pane stays as it is, unless an open reader owns the pane; it stays the workspace's pane until a next run's lease reuses it or the learner closes it.
+          if (keepsEndedPane?.() && !readerShowsSelection) return
           if (readerShowsSelection)
             void this.renderSelection().catch((error) =>
               this.report('reader', error),

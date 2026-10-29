@@ -40,7 +40,6 @@ test('the Application view of an ended extension run stays open after its lease 
     // Assert
     assert.equal(harness.reader['app'], pane)
     assert.equal(harness.counts().panels, panelsBefore)
-    assert.equal(harness.reader['keptEndedPane'], pane)
     assert.equal(harness.reader['viewport'], undefined)
     const lastPane = harness.viewportInstances[0]!.extensionPanes.at(-1)
     assert.equal(lastPane?.phase, 'Run ended · no view was captured')
@@ -68,7 +67,7 @@ test('the Application pane of an extension run released without a last view is c
       'the unfinished extension run closes its Application pane',
       5_000,
     )
-    assert.equal(harness.reader['keptEndedPane'], undefined)
+    assert.equal(harness.reader['app'], undefined)
   } finally {
     await harness.close()
   }
@@ -112,7 +111,6 @@ test('a late cleanup of an older extension run leaves the newer run view open', 
     // Assert
     assert.equal(harness.reader['viewport'], newerViewport)
     assert.equal(harness.counts().panels, panelsBefore)
-    assert.equal(harness.reader['keptEndedPane'], undefined)
     assert.notEqual(harness.reader['leaseId'], undefined)
     newer.close()
   } finally {
@@ -130,11 +128,34 @@ test('closing the tab of an ended extension run drops its kept view', async () =
     view.end('The run ended.')
     view.close()
     const pane = harness.reader['app']
-    assert.equal(harness.reader['keptEndedPane'], pane)
+    assert.ok(pane)
     // Act
-    pane?.dispose()
+    pane.dispose()
     // Assert
-    assert.equal(harness.reader['keptEndedPane'], undefined)
+    assert.equal(harness.reader['app'], undefined)
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=ER22 (Cycle 0062 task 8): a next extension run reuses the kept pane of an ended run without adding a disposal listener to it; fails_when=each run that reuses the kept pane adds another onDidDispose listener, so they pile up over a session; no_claim=how many listeners the editor itself holds
+test('a next extension run reuses the kept Application pane without adding a disposal listener', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    const first = await openView(harness, 'kept-run-1')
+    first.end('The first run ended.')
+    first.close()
+    const pane = harness.reader['app']
+    const listenersAfterFirstRun = harness.disposeListenerCount()
+    // Act
+    const second = await openView(harness, 'kept-run-2')
+    second.end('The second run ended.')
+    second.close()
+    // Assert
+    assert.equal(harness.reader['app'], pane)
+    assert.equal(harness.disposeListenerCount(), listenersAfterFirstRun)
   } finally {
     await harness.close()
   }
