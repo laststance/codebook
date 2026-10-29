@@ -1125,6 +1125,26 @@ test('releasing removes the owned breakpoints and stops every session of the run
   await run.editor.dispose()
 })
 
+// protects=CXS1 (Cycle 0062 ship review, Codex): a session the editor starts after the release began, because the attach's startDebugging had not settled, is the run's and is stopped; fails_when=the release ends with the editor still starting the session and nothing stops it afterwards, so a js-debug session outlives the run; no_claim=real js-debug start timing
+test('a debug session that starts after the release began is stopped once', async () => {
+  // Arrange
+  const editor = await extensionEditorHarness({})
+  const startGate = defer<void>()
+  editor.holdStartDebugging(startGate.promise)
+  const created = editor.createDebugger([PAGE_STOP])
+  const attaching = created.debug.attach(SIGNAL())
+  const rejected = assert.rejects(attaching)
+  await until(() => editor.started.length > 0)
+  await created.debug.release()
+  // Act
+  startGate.resolve()
+  await rejected
+  // Assert
+  assert.deepEqual(editor.stopped, ['root-session'])
+  assert.deepEqual(editor.listeners(), { tracker: false, termination: false })
+  await editor.dispose()
+})
+
 // protects=a worker restart that loses two declared worker stops is one restart: one generation, one failure of the click, one re-arm; fails_when=the generation grows or the click fails once per stop; no_claim=real js-debug restart news
 test('a restart that loses two worker stops bumps the generation once, fails the click once and journals one re-arm', async () => {
   // Arrange

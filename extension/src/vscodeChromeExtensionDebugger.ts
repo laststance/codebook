@@ -101,6 +101,10 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
   private readonly unverifiedWorkerStops = new Set<number>()
   private ready = false
   private releaseBegun = false
+  /** Whether `startDebugging` of {@link attach} has not settled; while it is, the tracker stays so a session it starts late is still recognized as this run's. */
+  private attachPending = false
+  /** Ids of the sessions the release already asked the editor to stop, so a late stop never repeats them. */
+  private readonly releasedSessionIds = new Set<string>()
   /** Whether a second page matching the surface URL has been journaled already. */
   private secondPageJournaled = false
   /** Set once a page child was adopted as the surface; stays set after that session ends so a later page child is never promoted. */
@@ -760,23 +764,31 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
         'SURFACE_NOT_ATTACHED',
         `The debugger could not attach to the extension ${run.surface.kind}.`,
       )
-    const started = await vscode.debug.startDebugging(
-      vscode.workspace.getWorkspaceFolder(vscode.Uri.file(workspace)),
-      {
-        type: 'pwa-chrome',
-        request: 'attach',
-        name: this.name,
-        port: this.input.port,
-        webRoot: run.root,
-        urlFilter: run.surfaceUrl,
-        pathMapping: {
-          [`chrome-extension://${run.extensionId}/`]: `${run.root}/`,
+    this.attachPending = true
+    let started: boolean
+    try {
+      started = await vscode.debug.startDebugging(
+        vscode.workspace.getWorkspaceFolder(vscode.Uri.file(workspace)),
+        {
+          type: 'pwa-chrome',
+          request: 'attach',
+          name: this.name,
+          port: this.input.port,
+          webRoot: run.root,
+          urlFilter: run.surfaceUrl,
+          pathMapping: {
+            [`chrome-extension://${run.extensionId}/`]: `${run.root}/`,
+          },
+          targetSelection: 'automatic',
         },
-        targetSelection: 'automatic',
-      },
-      // The editor would save the learner's modified documents as the session starts; a learner's document is saved by the learner alone.
-      { suppressSaveBeforeStart: true },
-    )
+        // The editor would save the learner's modified documents as the session starts; a learner's document is saved by the learner alone.
+        { suppressSaveBeforeStart: true },
+      )
+    } finally {
+      this.attachPending = false
+      // The release began while the editor was still starting the session: it could not know that session, so it ends here (a stop that outlasted its bound must not leave a debugger running).
+      if (this.releaseBegun) await this.stopLateSessions()
+    }
     signal.throwIfAborted()
     if (!started) throw refusal()
     const surface = await this.waitOr(
@@ -984,9 +996,10 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     this.output.finish()
     this.registry.removeAll()
     try {
-      await stopRunDebugSessions(
-        [...this.entries.values()].map((entry) => entry.session),
-        (session) => vscode.debug.stopDebugging(session),
+      const sessions = [...this.entries.values()].map((entry) => entry.session)
+      for (const session of sessions) this.releasedSessionIds.add(session.id)
+      await stopRunDebugSessions(sessions, (session) =>
+        vscode.debug.stopDebugging(session),
       )
     } catch (error) {
       // The failure is journaled where the run's other debugger failures go, then still reaches the caller; a repeat release runs again.
@@ -995,9 +1008,32 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
       })
       throw error
     } finally {
-      // Listeners go in every case: a failed stop never leaves the tracker or termination listener alive.
-      this.tracker.dispose()
-      this.termination.dispose()
+      // Listeners go in every case: a failed stop never leaves the tracker or termination listener alive; a pending attach keeps them until it settles (see stopLateSessions).
+      if (!this.attachPending) this.disposeListeners()
+    }
+  }
+
+  private disposeListeners(): void {
+    this.tracker.dispose()
+    this.termination.dispose()
+  }
+
+  /** Stops the sessions the pending attach started after the release began, journals a failed stop, and disposes the listeners the release left for it. */
+  private async stopLateSessions(): Promise<void> {
+    const late = [...this.entries.values()]
+      .map((entry) => entry.session)
+      .filter((session) => !this.releasedSessionIds.has(session.id))
+    try {
+      for (const session of late) this.releasedSessionIds.add(session.id)
+      await stopRunDebugSessions(late, (session) =>
+        vscode.debug.stopDebugging(session),
+      )
+    } catch (error) {
+      this.input.record('chrome-extension.debugger-error', {
+        message: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      this.disposeListeners()
     }
   }
 }

@@ -99,6 +99,7 @@ export async function extensionEditorHarness(
   let captureCalls = 0
   let refuseContinues = false
   let stopDebuggingFailure: Error | undefined
+  let startGate: Promise<void> | undefined
 
   class Position {
     constructor(
@@ -294,6 +295,7 @@ export async function extensionEditorHarness(
         startOptions?: vscode.DebugSessionOptions,
       ) {
         started.push({ configuration, options: startOptions })
+        await startGate
         const root = makeSession('root-session', configuration)
         const tracker = await trackerFactory?.createDebugAdapterTracker(root)
         if (tracker) trackers.set(root.id, tracker)
@@ -481,6 +483,10 @@ export async function extensionEditorHarness(
     started,
     stopped,
     editorBreakpoints,
+    /** Holds every `startDebugging` call (before its session exists) until the test settles `gate`. */
+    holdStartDebugging(gate: Promise<void>): void {
+      startGate = gate
+    },
     /** Makes the editor's `stopDebugging` reject with this error from now on. */
     failStopDebugging(error: Error): void {
       stopDebuggingFailure = error
