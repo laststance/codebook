@@ -10,9 +10,7 @@ import {
   EXTENSION_ID,
   type ConstantOverrides,
   extensionEditorHarness,
-  SURFACE_TARGET,
   SURFACE_URL,
-  WORKER_TARGET,
   WORKER_URL,
   type TestStop,
 } from './utils/chromeExtensionEditorHarness'
@@ -52,7 +50,6 @@ async function readyRun(
   await until(() => editor.started.length > 0)
   const page = await editor.addChild({
     kind: 'page',
-    targetId: SURFACE_TARGET,
     id: 'page-session',
     title: 'Popup « Bookmarks',
   })
@@ -62,7 +59,6 @@ async function readyRun(
       ? undefined
       : await editor.addChild({
           kind: 'service_worker',
-          targetId: WORKER_TARGET,
           id: 'worker-session',
           title: 'Bookmarks: service-worker.js',
         })
@@ -97,13 +93,6 @@ test('attaching starts a pwa-chrome attach for the surface and finds the page ch
   await until(() => editor.started.length > 0)
   await editor.addChild({
     kind: 'page',
-    targetId: 'some-other-tab',
-    id: 'other-page',
-    title: 'Popup « Bookmarks',
-  })
-  await editor.addChild({
-    kind: 'page',
-    targetId: SURFACE_TARGET,
     id: 'page-session',
     title: 'Bookmarks: something else entirely',
   })
@@ -141,13 +130,11 @@ test('setup with a service-worker stop reports attaching, waking and arming in o
   await until(() => editor.started.length > 0)
   await editor.addChild({
     kind: 'page',
-    targetId: SURFACE_TARGET,
     id: 'page-session',
   })
   await attaching
   await editor.addChild({
     kind: 'service_worker',
-    targetId: WORKER_TARGET,
     id: 'worker-session',
   })
   await created.debug.waitForWorker(SIGNAL())
@@ -179,7 +166,6 @@ test('setup with only a page stop reports attaching and arming but no waking', a
   await until(() => editor.started.length > 0)
   await editor.addChild({
     kind: 'page',
-    targetId: SURFACE_TARGET,
     id: 'page-session',
   })
   await attaching
@@ -204,7 +190,6 @@ test('a throwing onPhase callback does not break the attach', async () => {
   await until(() => editor.started.length > 0)
   await editor.addChild({
     kind: 'page',
-    targetId: SURFACE_TARGET,
     id: 'page-session',
   })
   // Assert
@@ -217,29 +202,21 @@ test('a throwing onPhase callback does not break the attach', async () => {
 test('a service-worker stop is armed and paused only in this extension’s worker, not in another extension’s worker', async () => {
   // Arrange
   const editor = await extensionEditorHarness()
-  const created = editor.createDebugger([WORKER_STOP], {
-    targetUrls: {
-      [WORKER_TARGET]: WORKER_URL,
-      'foreign-worker':
-        'chrome-extension://zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz/sw.js',
-    },
-  })
+  const created = editor.createDebugger([WORKER_STOP])
   const attaching = created.debug.attach(SIGNAL())
   await until(() => editor.started.length > 0)
   await editor.addChild({
     kind: 'page',
-    targetId: SURFACE_TARGET,
     id: 'page-session',
   })
   await attaching
   const foreign = await editor.addChild({
     kind: 'service_worker',
-    targetId: 'foreign-worker',
+    parent: editor.session('root-session'),
     id: 'foreign-session',
   })
   const own = await editor.addChild({
     kind: 'service_worker',
-    targetId: WORKER_TARGET,
     id: 'worker-session',
   })
   await created.debug.waitForWorker(SIGNAL())
@@ -277,13 +254,11 @@ test('a service-worker stop the worker bound on another line is refused with STO
   await until(() => editor.started.length > 0)
   await editor.addChild({
     kind: 'page',
-    targetId: SURFACE_TARGET,
     id: 'page-session',
   })
   await attaching
   const worker = await editor.addChild({
     kind: 'service_worker',
-    targetId: WORKER_TARGET,
     id: 'worker-session',
   })
   editor.setBoundLine(worker, 4)
@@ -566,7 +541,6 @@ test('a declared hit before ready is resumed and journaled as a prepare pause an
   await until(() => editor.started.length > 0)
   const page = await editor.addChild({
     kind: 'page',
-    targetId: SURFACE_TARGET,
     id: 'page-session',
   })
   await attaching
@@ -860,24 +834,17 @@ test('a worker session that ends under a learner pause fails the run with SERVIC
 test('a pause in another extension’s worker is continued and journaled as resume-foreign-pause', async () => {
   // Arrange
   const editor = await extensionEditorHarness()
-  const created = editor.createDebugger([PAGE_STOP], {
-    targetUrls: {
-      [WORKER_TARGET]: WORKER_URL,
-      'foreign-worker':
-        'chrome-extension://zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz/service-worker.js',
-    },
-  })
+  const created = editor.createDebugger([PAGE_STOP])
   const attaching = created.debug.attach(SIGNAL())
   await until(() => editor.started.length > 0)
   await editor.addChild({
     kind: 'page',
-    targetId: SURFACE_TARGET,
     id: 'page-session',
   })
   await attaching
   const foreign = await editor.addChild({
     kind: 'service_worker',
-    targetId: 'foreign-worker',
+    parent: editor.session('root-session'),
     id: 'foreign-worker-session',
   })
   // Act
@@ -893,45 +860,6 @@ test('a pause in another extension’s worker is continued and journaled as resu
   assert.deepEqual(plain(created.debug.interventions().map((e) => e.kind)), [
     'resume-foreign-pause',
   ])
-  await created.debug.release()
-  await editor.dispose()
-})
-
-// protects=a pause in a worker session whose classification failed (URL lookup never answers) is kept, never continued, and journaled as unclassified-pause-kept; fails_when=Codebook continues the pause or says nothing; no_claim=that the session is the run's worker
-test('a pause in a worker session whose URL lookup failed is kept and journaled as unclassified-pause-kept', async () => {
-  // Arrange
-  const editor = await extensionEditorHarness({
-    constants: { EXTENSION_WAKE_BOUND_MS: 30 },
-  })
-  const created = editor.createDebugger([WORKER_STOP], {
-    targetUrlOf: async () => {
-      throw new Error('target not known')
-    },
-  })
-  const attaching = created.debug.attach(SIGNAL())
-  await until(() => editor.started.length > 0)
-  await editor.addChild({
-    kind: 'page',
-    targetId: SURFACE_TARGET,
-    id: 'page-session',
-  })
-  await attaching
-  const worker = await editor.addChild({
-    kind: 'service_worker',
-    targetId: WORKER_TARGET,
-    id: 'worker-session',
-  })
-  // Act
-  editor.adapter.stop(worker, 'pause', undefined, undefined, 8)
-  await until(() => created.debug.interventions().length === 1)
-  // Assert
-  assert.deepEqual(plain(created.debug.interventions().map((e) => e.kind)), [
-    'unclassified-pause-kept',
-  ])
-  assert.deepEqual(
-    editor.requests.filter((request) => request.command === 'continue'),
-    [],
-  )
   await created.debug.release()
   await editor.dispose()
 })
@@ -988,7 +916,6 @@ test('a missing worker is started again before a click, journaled, and its stops
     startWorker: async () => {
       await editor.addChild({
         kind: 'service_worker',
-        targetId: WORKER_TARGET,
         id: 'worker-session-2',
       })
     },
@@ -997,13 +924,11 @@ test('a missing worker is started again before a click, journaled, and its stops
   await until(() => editor.started.length > 0)
   await editor.addChild({
     kind: 'page',
-    targetId: SURFACE_TARGET,
     id: 'page-session',
   })
   await attaching
   const first = await editor.addChild({
     kind: 'service_worker',
-    targetId: WORKER_TARGET,
     id: 'worker-session',
   })
   await created.debug.waitForWorker(SIGNAL())
@@ -1062,7 +987,6 @@ test('a new worker child session during an action fails the run with SERVICE_WOR
   // Act
   await run.editor.addChild({
     kind: 'service_worker',
-    targetId: WORKER_TARGET,
     id: 'worker-session-2',
   })
   await until(() => run.failures.length === 1)
@@ -1089,7 +1013,6 @@ test('a source that changed before the capture fails the run with SOURCE_CHANGED
   await until(() => editor.started.length > 0)
   const page = await editor.addChild({
     kind: 'page',
-    targetId: SURFACE_TARGET,
     id: 'page-session',
   })
   await attaching
@@ -1261,7 +1184,6 @@ test('a replacement worker session that verifies its stops through setBreakpoint
   run.editor.adapter.end(run.worker)
   await run.editor.addChild({
     kind: 'service_worker',
-    targetId: WORKER_TARGET,
     id: 'worker-session-2',
   })
   // Act
@@ -1399,39 +1321,6 @@ test('a continue processed right after a stop leaves no pause for the running th
   await run.editor.dispose()
 })
 
-// protects=a failed target-URL lookup does not make the run's own worker foreign for good; fails_when=the worker is never adopted; no_claim=the CDP lookup
-test('a worker whose first target URL lookup fails is still adopted after a retry', async () => {
-  // Arrange
-  const editor = await extensionEditorHarness()
-  let lookups = 0
-  const created = editor.createDebugger([WORKER_STOP], {
-    targetUrlOf: async () => {
-      lookups += 1
-      if (lookups === 1) throw new Error('target not known yet')
-      return WORKER_URL
-    },
-  })
-  const attaching = created.debug.attach(SIGNAL())
-  await until(() => editor.started.length > 0)
-  await editor.addChild({
-    kind: 'page',
-    targetId: SURFACE_TARGET,
-    id: 'page-session',
-  })
-  await attaching
-  await editor.addChild({
-    kind: 'service_worker',
-    targetId: WORKER_TARGET,
-    id: 'worker-session',
-  })
-  // Act
-  await created.debug.waitForWorker(SIGNAL())
-  // Assert
-  assert.equal(lookups, 2)
-  await created.debug.release()
-  await editor.dispose()
-})
-
 // protects=output arriving after the release began is not journaled; fails_when=a late console line reaches the journal; no_claim=output order
 test('console output that arrives after the release began is not journaled', async () => {
   // Arrange
@@ -1485,34 +1374,26 @@ test('a hit of a live stop while a replacement of its file is unanswered is stil
 test('with two foreign workers and the run’s own, only the own worker’s hit opens a pause', async () => {
   // Arrange
   const editor = await extensionEditorHarness()
-  const created = editor.createDebugger([WORKER_STOP], {
-    targetUrls: {
-      'foreign-one': 'chrome-extension://zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz/a.js',
-      [WORKER_TARGET]: WORKER_URL,
-      'foreign-two': 'chrome-extension://yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy/b.js',
-    },
-  })
+  const created = editor.createDebugger([WORKER_STOP])
   const attaching = created.debug.attach(SIGNAL())
   await until(() => editor.started.length > 0)
   await editor.addChild({
     kind: 'page',
-    targetId: SURFACE_TARGET,
     id: 'page-session',
   })
   await attaching
   const foreignOne = await editor.addChild({
     kind: 'service_worker',
-    targetId: 'foreign-one',
+    parent: editor.session('root-session'),
     id: 'foreign-one-session',
   })
   const own = await editor.addChild({
     kind: 'service_worker',
-    targetId: WORKER_TARGET,
     id: 'worker-session',
   })
   const foreignTwo = await editor.addChild({
     kind: 'service_worker',
-    targetId: 'foreign-two',
+    parent: editor.session('root-session'),
     id: 'foreign-two-session',
   })
   await created.debug.waitForWorker(SIGNAL())
@@ -1623,7 +1504,6 @@ test('a pause in another tab’s session is continued and journaled as resume-fo
   const run = await readyRun([PAGE_STOP])
   const other = await run.editor.addChild({
     kind: 'page',
-    targetId: 'some-other-tab',
     id: 'other-page',
   })
   // Act
@@ -1777,4 +1657,120 @@ test('a learner pause stays open past the page hold without failing the run', as
   context.mock.timers.reset()
   await run.debug.release()
   await run.editor.dispose()
+})
+
+// protects=real js-debug 1.140 gives a page child a `__pendingTargetId` that is its own CDP session id, so the surface is found by the session tree; fails_when=the attach is refused with SURFACE_NOT_ATTACHED because the session id is compared with the target id; no_claim=real js-debug
+test('attach succeeds when the page child carries js-debug’s own session id instead of the surface target id', async () => {
+  // Arrange
+  const editor = await extensionEditorHarness()
+  const { debug } = editor.createDebugger([PAGE_STOP])
+  const attaching = debug.attach(SIGNAL())
+  await until(() => editor.started.length > 0)
+  // Act
+  const page = await editor.addChild({ kind: 'page', id: 'page-session' })
+  await attaching
+  // Assert
+  assert.equal(
+    page.configuration.__pendingTargetId,
+    'js-debug-session-page-session',
+  )
+  await debug.release()
+  await editor.dispose()
+})
+
+// protects=a service worker started under the surface's page session is the run's worker with the generation bumped and the manifest's worker URL; fails_when=the worker is never adopted (SERVICE_WORKER_NOT_ATTACHED) or its URL differs; no_claim=how js-debug creates the worker session
+test('a worker child under the surface page is adopted as the extension’s worker with the chrome-extension worker URL', async () => {
+  // Arrange
+  const editor = await extensionEditorHarness()
+  const created = editor.createDebugger([WORKER_STOP])
+  const attaching = created.debug.attach(SIGNAL())
+  await until(() => editor.started.length > 0)
+  await editor.addChild({ kind: 'page', id: 'page-session' })
+  await attaching
+  const generationBefore = created.debug.workerGeneration()
+  // Act
+  await editor.addChild({ kind: 'service_worker', id: 'worker-session' })
+  await created.debug.waitForWorker(SIGNAL())
+  await created.debug.armStops(SIGNAL())
+  created.debug.markReady()
+  const worker = editor.session('worker-session')
+  editor.adapter.stop(
+    worker,
+    'breakpoint',
+    [editor.adapterIdAt(worker, 'service-worker.js', 3)],
+    { file: editor.path('service-worker.js'), line: 3 },
+  )
+  await until(() => created.debug.pauses().length === 1)
+  // Assert
+  assert.equal(created.debug.workerGeneration(), generationBefore + 1)
+  assert.equal(created.debug.pauses()[0]?.sessionId, 'worker-session')
+  await created.debug.release()
+  await editor.dispose()
+})
+
+// protects=a second page child of the attach is another tab: ignored, its pause continued, and journaled once so it is visible; fails_when=the second page becomes the surface, arms a stop, or nothing is journaled; no_claim=which tabs js-debug attaches
+test('a second page child of the attach is ignored and journaled once as a debugger error', async () => {
+  // Arrange
+  const editor = await extensionEditorHarness()
+  const created = editor.createDebugger([PAGE_STOP])
+  const attaching = created.debug.attach(SIGNAL())
+  await until(() => editor.started.length > 0)
+  await editor.addChild({ kind: 'page', id: 'page-session' })
+  await attaching
+  // Act
+  await editor.addChild({ kind: 'page', id: 'second-page' })
+  await editor.addChild({ kind: 'page', id: 'third-page' })
+  const second = editor.session('second-page')
+  editor.adapter.stop(second, 'pause', undefined, undefined, 4)
+  await until(() =>
+    editor.requests.some(
+      (request) =>
+        request.sessionId === 'second-page' && request.command === 'continue',
+    ),
+  )
+  // Assert
+  assert.deepEqual(
+    plain(
+      created.events
+        .filter((event) => event.type === 'chrome-extension.debugger-error')
+        .map((event) => event.detail),
+    ),
+    [
+      {
+        message: 'A second page matching the surface URL is open and ignored.',
+      },
+    ],
+  )
+  assert.deepEqual(created.debug.pauses(), [])
+  await created.debug.release()
+  await editor.dispose()
+})
+
+// protects=a service-worker child directly under the root (not under the surface) never arms a stop and its pause is continued; fails_when=it is adopted as the extension's worker; no_claim=js-debug's session creation
+test('a service-worker child under the root instead of the surface page is not the extension’s worker and never pauses a stop', async () => {
+  // Arrange
+  const editor = await extensionEditorHarness()
+  const created = editor.createDebugger([WORKER_STOP])
+  const attaching = created.debug.attach(SIGNAL())
+  await until(() => editor.started.length > 0)
+  await editor.addChild({ kind: 'page', id: 'page-session' })
+  await attaching
+  // Act
+  const stray = await editor.addChild({
+    kind: 'service_worker',
+    id: 'stray-worker',
+    parent: editor.session('root-session'),
+  })
+  editor.adapter.stop(stray, 'pause', undefined, undefined, 5)
+  await until(() =>
+    editor.requests.some(
+      (request) =>
+        request.sessionId === 'stray-worker' && request.command === 'continue',
+    ),
+  )
+  // Assert
+  assert.deepEqual(created.debug.pauses(), [])
+  assert.equal(created.debug.workerGeneration(), 0)
+  await created.debug.release()
+  await editor.dispose()
 })

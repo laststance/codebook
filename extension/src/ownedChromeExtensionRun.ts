@@ -44,10 +44,7 @@ import type {
   ChromeExtensionView,
 } from './runtime'
 import type { OwnedBrowserLaunchOptions } from './runtimeSupport/ownedExtensionBrowser'
-import {
-  readCdpString,
-  readCdpTargets,
-} from './runtimeSupport/utils/cdpFieldReaders'
+import { readCdpString } from './runtimeSupport/utils/cdpFieldReaders'
 import { causeRootsFor } from './utils/causeRootsFor'
 import {
   chromeExtensionFailureNextStep,
@@ -515,7 +512,6 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       run: resolved,
       port: browser.port,
       surfaceTargetId: browser.surfaceTargetId,
-      targetUrlOf: (targetId) => this.targetUrlOf(browser, targetId),
       startWorker: () => browser.startWorker(),
       assertSourcesUnchanged: () => this.sourceCheck?.(),
       roots: this.roots,
@@ -548,16 +544,6 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     }
     await debug.armStops(this.abort.signal)
     this.assertAccepting()
-  }
-
-  /** Resolves a CDP target id to its URL. */
-  private async targetUrlOf(
-    browser: OwnedExtensionBrowser,
-    targetId: string,
-  ): Promise<string | undefined> {
-    const answer = await browser.cdp.request('Target.getTargets', {})
-    return readCdpTargets(answer).find((target) => target.targetId === targetId)
-      ?.url
   }
 
   /** `ready`: the surface's session, the executor, the baseline read and the debugger's ready mark. */

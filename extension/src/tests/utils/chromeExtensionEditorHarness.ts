@@ -24,7 +24,6 @@ import { sourceBreakpointRequest } from './sourceBreakpointRequest'
 /** The extension id every run of the harness loads. */
 export const EXTENSION_ID = 'abcdefghijklmnopabcdefghijklmnop'
 export const SURFACE_TARGET = 'surface-target'
-export const WORKER_TARGET = 'worker-target'
 export const SURFACE_URL = `chrome-extension://${EXTENSION_ID}/popup.html`
 export const WORKER_URL = `chrome-extension://${EXTENSION_ID}/service-worker.js`
 
@@ -324,14 +323,21 @@ export async function extensionEditorHarness(
     },
   )
 
+  let lastPageChild: FakeSession | undefined
+
   /** Adds a child session of the attach, as js-debug does for a target, and gives it the editor's current breakpoints. */
   const addChild = async (child: {
     kind: 'page' | 'service_worker'
-    targetId: string
     id: string
     title?: string
+    /** The parent session; a page child defaults to the root, a worker child to the most recent page child (js-debug parents a worker under its page). */
+    parent?: FakeSession
   }): Promise<FakeSession> => {
     const root = sessions.get('root-session')!
+    const parent =
+      child.parent ??
+      (child.kind === 'service_worker' ? lastPageChild : undefined) ??
+      root
     const session = makeSession(
       child.id,
       {
@@ -339,11 +345,13 @@ export async function extensionEditorHarness(
         request: 'attach',
         name: child.title ?? `child ${child.id}`,
         __browserTargetType: child.kind,
-        __pendingTargetId: child.targetId,
-        __parentId: root.id,
+        // js-debug's own CDP session id of the attachment, never a target id (real js-debug 1.140).
+        __pendingTargetId: `js-debug-session-${child.id}`,
+        __parentId: parent.id,
       },
-      root,
+      parent,
     )
+    if (child.kind === 'page') lastPageChild = session
     const tracker = await trackerFactory?.createDebugAdapterTracker(session)
     if (tracker) trackers.set(session.id, tracker)
     sendBreakpoints(session.id)
@@ -481,8 +489,6 @@ export async function extensionEditorHarness(
     createDebugger(
       stops: TestStop[],
       overrides: {
-        targetUrls?: Record<string, string>
-        targetUrlOf?: (targetId: string) => Promise<string | undefined>
         startWorker?: () => Promise<void>
         assertSourcesUnchanged?: () => void
         workerPath?: string
@@ -497,9 +503,6 @@ export async function extensionEditorHarness(
           changes += 1
         },
         onFailure: (error) => failures.push(error),
-      }
-      const targetUrls = overrides.targetUrls ?? {
-        [WORKER_TARGET]: WORKER_URL,
       }
       const startWorkerCalls: number[] = []
       const debug: ChromeExtensionDebugger =
@@ -523,8 +526,6 @@ export async function extensionEditorHarness(
           },
           port: 9333,
           surfaceTargetId: SURFACE_TARGET,
-          targetUrlOf:
-            overrides.targetUrlOf ?? (async (targetId) => targetUrls[targetId]),
           startWorker:
             overrides.startWorker ??
             (async (): Promise<void> => {
