@@ -16,7 +16,14 @@ import { loadModule } from './loadModule'
  */
 export async function createEnvironmentWith(
   context: TestContext,
-  options: { gaps: string[]; modalChoice?: string | undefined },
+  options: {
+    gaps: string[]
+    modalChoice?: string | undefined
+    /** What the Chrome executable prints for `--version`; an old, unsupported Chrome by default. */
+    chromeVersionText?: string
+    /** Whether the bundled JavaScript Debugger is enabled in the fake editor; enabled by default. */
+    jsDebugEnabled?: boolean
+  },
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-server-env-'))
   context.after(() => rm(directory, { recursive: true, force: true }))
@@ -51,7 +58,9 @@ export async function createEnvironmentWith(
         searchRepositoryVitest: async () => ({ vitestSearch: 'none' }),
       },
       'node:util': {
-        promisify: () => async () => ({ stdout: 'Google Chrome 140.0' }),
+        promisify: () => async () => ({
+          stdout: options.chromeVersionText ?? 'Google Chrome 140.0',
+        }),
       },
       vscode: {
         workspace: {
@@ -75,7 +84,10 @@ export async function createEnvironmentWith(
           remoteName: 'wsl',
         },
         version: '1.140.0',
-        extensions: { getExtension: () => ({}) },
+        extensions: {
+          getExtension: () =>
+            options.jsDebugEnabled === false ? undefined : {},
+        },
         debug: {
           registerDebugAdapterTrackerFactory: () => disposable,
           onDidTerminateDebugSession: () => disposable,

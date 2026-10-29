@@ -1,7 +1,10 @@
 import { z } from 'zod'
 
+import { chromeExtensionConfigSchema } from './chromeExtensionConfigSchemas'
 import { configuredFactPathSchema } from './configuredStudySchemas'
 import {
+  CHROME_EXTENSION_PROFILE,
+  EXTENSION_CLICK_ACTION,
   NODE_SERVER_ACTION,
   NODE_SERVER_PROFILE,
   NODE_TEST_PROFILE,
@@ -30,11 +33,11 @@ const checkedStartConfigurationSchema = z.union([
   retainedRepositoryConfigSchema,
   nodeTestConfigSchema,
 ])
-/** The node-server member of the start's configuration: any object. The SDK validates the input before the handler runs, so a strict member would answer the SDK's "Input validation error" and never reach `INVALID_CONFIGURATION`, which lists every violation and names `codebook://help/node-server` (D4); {@link StudyService.start} parses it with {@link nodeServerConfigSchema}. */
+/** The node-server and chrome-extension member of the start's configuration: any object. The SDK validates the input before the handler runs, so a strict member would answer the SDK's "Input validation error" and never reach `INVALID_CONFIGURATION`, which lists every violation and names `codebook://help/node-server` (D4); {@link StudyService.start} parses it with {@link nodeServerConfigSchema} or {@link chromeExtensionConfigSchema}. */
 const nodeServerStartConfigurationSchema = z
   .record(z.string(), z.unknown())
   .describe(
-    'For profile node-server: the declaration described by codebook://help/node-server. A wrong one is answered with INVALID_CONFIGURATION listing every violation.',
+    'For profile node-server: the declaration described by codebook://help/node-server; for profile chrome-extension: the declaration described by codebook://help/chrome-extension, with acknowledgedPermissions inside it when the manifest declares permissions that reach outside the test profile. A wrong one is answered with INVALID_CONFIGURATION listing every violation.',
   )
 // MCP requires an object root; the service resolves its closed domain variant before reserving any effects.
 export const startSchema = z
@@ -54,6 +57,7 @@ export const startSchema = z
     // The permissive node-server member must not loosen the other profiles: their configurations are checked exactly as before.
     if (
       input.profile === NODE_SERVER_PROFILE ||
+      input.profile === CHROME_EXTENSION_PROFILE ||
       input.configuration === undefined
     )
       return
@@ -86,16 +90,26 @@ export const startIntentSchema = z.discriminatedUnion('profile', [
     key,
     configuration: nodeServerConfigSchema,
   }),
+  z.strictObject({
+    ...instanceShape,
+    profile: z.literal(CHROME_EXTENSION_PROFILE),
+    key,
+    configuration: chromeExtensionConfigSchema,
+  }),
 ])
 export const runSchema = z.strictObject(runShape)
 export const actionSchema = z.strictObject({
   ...runShape,
   key,
-  action: z.enum([REPOSITORY_BROWSER_ACTION, NODE_SERVER_ACTION]),
+  action: z.enum([
+    REPOSITORY_BROWSER_ACTION,
+    NODE_SERVER_ACTION,
+    EXTENSION_CLICK_ACTION,
+  ]),
 })
 export const continueSchema = z.strictObject({
   ...runShape,
-  participant: z.enum(['server', 'browser']),
+  participant: z.enum(['server', 'browser', 'extension']),
   sessionId: z.string().min(1).max(KEY_LENGTH_LIMIT),
   threadId: z.number().int().nonnegative(),
   generation: z.number().int().positive(),

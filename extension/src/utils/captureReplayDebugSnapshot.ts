@@ -57,7 +57,16 @@ interface CaptureInput {
     maxVariables: number
     maxDepth: number
     includeScope?(frameIndex: number, scopeName: string): boolean
+    /** Saves every top-level variable of the stopped frame's captured scopes before expanding any of them, so one large object (a page's `this`) cannot use the whole budget before the locals; the chrome-extension debugger asks for it. Accepted limit: top-level values are guaranteed, but the second pass still expands children in adapter order, so a huge first value can use the child budget before later locals' children (children are best effort within the budget). */
+    topLevelFirst?: boolean
   }
+}
+
+/** A top-level variable saved without its children, waiting for the second pass of a top-level-first capture. */
+type PendingExpansion = {
+  index: number
+  variable: z.infer<typeof variableResponse>['variables'][number]
+  scopeHandle: number
 }
 
 /** Called at a verified live pause to persist bounded values, never live DAP handles; stale pauses abort the whole capture. Only the stopped frame's local scopes are copied ({@link shouldCaptureReplayScope}). @example await captureReplayDebugSnapshot({ stack, verifiedSource, request, assertCurrent }) */
@@ -164,31 +173,85 @@ export async function captureReplayDebugSnapshot(
             variables,
             unavailable: 'Historical variable count limit reached.',
           }
-        const index = snapshot.variables.length
-        // Redaction contract: a secret-named variable keeps its name and type but reads [masked], and its subtree is neither read nor saved; any other value is masked where a secret-named member shows in its preview or where it looks like a credential. Masking comes before shortening.
-        const isSecretVariable = isSecretName(variable.name)
-        const saved: ReplayDebugSnapshot['variables'][number] = {
-          name: shorten(variable.name),
-          value: isSecretVariable
-            ? REDACTION_MASK
-            : shorten(redactValuePreview(variable.value)),
-          type: variable.type && shorten(variable.type),
-          children: [],
-        }
-        snapshot.variables.push(saved)
+        const index = saveVariable(variable)
         variables.push(index)
-        if (isSecretVariable) continue
-        const nested = await captureVariables(
-          variable.variablesReference,
-          depth + 1,
-          nextAncestors,
-        )
-        saved.children = nested.variables
-        saved.unavailable = nested.unavailable
+        await expandVariable(index, variable, depth + 1, nextAncestors)
       }
       return { variables }
     } catch (error) {
       return { variables: [], unavailable: unavailable(error) }
+    }
+  }
+  /** Saves one adapter variable without its children and returns its index. */
+  const saveVariable = (variable: PendingExpansion['variable']): number => {
+    // Redaction contract: a secret-named variable keeps its name and type but reads [masked], and its subtree is neither read nor saved; any other value is masked where a secret-named member shows in its preview or where it looks like a credential. Masking comes before shortening.
+    snapshot.variables.push({
+      name: shorten(variable.name),
+      value: isSecretName(variable.name)
+        ? REDACTION_MASK
+        : shorten(redactValuePreview(variable.value)),
+      type: variable.type && shorten(variable.type),
+      children: [],
+    })
+    return snapshot.variables.length - 1
+  }
+  /** Reads a saved variable's children into it; a secret-named variable's subtree is never read. */
+  const expandVariable = async (
+    index: number,
+    variable: PendingExpansion['variable'],
+    depth: number,
+    ancestors: Set<number>,
+  ): Promise<void> => {
+    if (isSecretName(variable.name)) return
+    const nested = await captureVariables(
+      variable.variablesReference,
+      depth,
+      ancestors,
+    )
+    const saved = snapshot.variables[index]!
+    saved.children = nested.variables
+    saved.unavailable = nested.unavailable
+  }
+  /** Saves one scope's own variables without their children, for the first pass of a top-level-first capture. */
+  const captureScopeShallow = async (
+    handle: number,
+  ): Promise<{
+    variables: number[]
+    pending: PendingExpansion[]
+    unavailable?: string
+  }> => {
+    const variables: number[] = [],
+      pending: PendingExpansion[] = []
+    // As captureVariables: a scope without a handle is empty, and a spent budget sends no request.
+    if (handle === 0) return { variables, pending }
+    if (snapshot.variables.length >= maxVariables)
+      return {
+        variables,
+        pending,
+        unavailable: 'Historical variable count limit reached.',
+      }
+    try {
+      const response = variableResponse.parse(
+        await read('variables', {
+          variablesReference: handle,
+          start: 0,
+          count: maxVariables + 1,
+        }),
+      )
+      for (const variable of response.variables) {
+        if (snapshot.variables.length >= maxVariables)
+          return {
+            variables,
+            pending,
+            unavailable: 'Historical variable count limit reached.',
+          }
+        const index = saveVariable(variable)
+        variables.push(index)
+        pending.push({ index, variable, scopeHandle: handle })
+      }
+      return { variables, pending }
+    } catch (error) {
+      return { variables, pending, unavailable: unavailable(error) }
     }
   }
   if (
@@ -218,6 +281,7 @@ export async function captureReplayDebugSnapshot(
       )
       if (response.scopes.length > REPLAY_DEBUG_MAX_SCOPES)
         saved.unavailable = 'Historical scope count limit reached.'
+      const pending: PendingExpansion[] = []
       for (const scope of response.scopes.slice(0, REPLAY_DEBUG_MAX_SCOPES)) {
         if (!includeScope(index, scope.name, scope.presentationHint)) {
           saved.scopes.push({
@@ -227,11 +291,31 @@ export async function captureReplayDebugSnapshot(
           })
           continue
         }
+        if (input.limits?.topLevelFirst) {
+          const shallow = await captureScopeShallow(scope.variablesReference)
+          pending.push(...shallow.pending)
+          saved.scopes.push({
+            name: shorten(scope.name),
+            variables: shallow.variables,
+            ...(shallow.unavailable !== undefined && {
+              unavailable: shallow.unavailable,
+            }),
+          })
+          continue
+        }
         saved.scopes.push({
           name: shorten(scope.name),
           ...(await captureVariables(scope.variablesReference, 0, new Set())),
         })
       }
+      // Every top-level value is kept before any is expanded; the expansions share what the budget leaves.
+      for (const entry of pending)
+        await expandVariable(
+          entry.index,
+          entry.variable,
+          1,
+          new Set([entry.scopeHandle]),
+        )
     } catch (error) {
       saved.unavailable = unavailable(error)
     }

@@ -5,11 +5,12 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.10 is additive: the `chrome-extension` profile (the `extension-click` action, the `extension` participant of `codebook_continue`, the `chromeExtension` block and `claimable` of the run resource, `codebook://help/chrome-extension`); a chrome-extension run is not saved in this version.
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.9'
-export const EXTENSION_VERSION = '0.2.58'
+export const API_VERSION = '1.10'
+export const EXTENSION_VERSION = '0.2.59'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -2169,3 +2170,43 @@ export const EXTENSION_POLL_COMMAND_MIN_TIMEOUT_MS = 1_000
 export const EXTENSION_STOP_COMMAND_TIMEOUT_MS = 1_000
 /** `<chrome> --version` that prints nothing in this time counts as an unreadable version; no browser session is started to read it. */
 export const EXTENSION_CHROME_VERSION_READ_BOUND_MS = 5_000
+
+// Lane D (Application view of a chrome-extension run, Cycle 0061 pt2)
+/** Header line 2 of an extension run's Application view in every phase, after the run too (DR1, C1, C2). */
+export const EXTENSION_VIEW_PROVENANCE =
+  'Operated by chat · Test profile · seeded data · Live only · replay unavailable'
+/** `Page.stopScreencast` on the surface's session, sent when the view ends, is waited for this long; the view is already final without its answer. */
+export const EXTENSION_SCREENCAST_STOP_TIMEOUT_MS = 1_000
+
+// Lane E: chrome-extension run lifecycle and observation (Cycle 0061 pt2)
+/** The most characters of an observed value the run resource reports before it cuts it and marks it `truncated` (ER23). */
+export const EXTENSION_OBSERVED_VALUE_LIMIT_CHARS = 4_096
+/** How long the run waits for the surface screenshot it pins at a pause; a paused page may never answer it. */
+export const EXTENSION_PIN_CAPTURE_TIMEOUT_MS = 2_000
+
+// Lane F (Cycle 0061 pt2, MCP surface and help)
+/**
+ * `codebook_start` of a chrome-extension run answers within this time: a preparation still under way answers its `phase`, and the chat reads the run resource until `ready` (CR4).
+ * Why 40 s: a preparation may take up to the 90 s setup bound, near the smallest MCP client timeout found for a tool call (120 s idle in Cursor, {@link CURSOR_MCP_BRIDGE_REQUEST_TIMEOUT_MS}; Cursor's agent CLI keeps the MCP SDK's fixed 60 s, which progress notifications do not extend), so the start keeps inside the 45 s every waiting tool call keeps ({@link CONTINUE_ANSWER_CALL_BUDGET_MS}), with room for the book read before it.
+ */
+export const CHROME_EXTENSION_START_ANSWER_MS = 40_000
+/** The oldest Codebook extension version that serves the chrome-extension profile, reported by `codebook_status`. */
+export const CHROME_EXTENSION_MINIMUM_EXTENSION_VERSION = '0.2.59'
+/** What `codebook_explain`, `codebook_explain_node_history` and the Save command answer for a chrome-extension run: nothing of it is saved in this version (SR13, SR37). */
+export const CHROME_EXTENSION_SAVE_REFUSAL =
+  'Saving an extension run is not available in this version; the live explanation stays in the chat.'
+/** The error codes after which a chrome-extension run is `failed` or ended and cleaned up; a tool call whose wait ends in one answers with the run's state beside the error (DXR6). */
+export const CHROME_EXTENSION_FAILED_STATE_CODES: readonly string[] = [
+  'INPUT_PARTIAL',
+  'CLICK_OUTCOME_UNKNOWN',
+  'DIALOG_UNDECLARED',
+  'SOURCE_CHANGED',
+  'SERVICE_WORKER_RESTARTED',
+  'SERVICE_WORKER_LOST',
+  'STOP_NOT_BOUND',
+  'SURFACE_LOST',
+  'BROWSER_LOST',
+  'OBSERVATION_UNAVAILABLE',
+  // A debug session that ended, a run or setup time limit and a wrapped error also leave the run failed (DXR6).
+  'RUNTIME_FAILED',
+]

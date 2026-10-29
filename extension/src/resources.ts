@@ -2,6 +2,7 @@ import { join } from 'node:path'
 
 import { z } from 'zod'
 
+import { chromeExtensionHelp } from './chromeExtensionHelp'
 import { CONFIGURED_PROFILE } from './configuredProfile'
 import {
   API_VERSION,
@@ -20,6 +21,7 @@ import {
   REPOSITORY_RUN_TIMEOUT_MS,
   SOURCE_LIMIT_BYTES,
   NODE_TEST_MINIMUM_VITEST_MAJOR,
+  CHROME_EXTENSION_PROFILE,
   NODE_SERVER_PROFILE,
   NODE_TEST_PROFILE,
   ACTIVE_TIMEOUT_MS,
@@ -244,6 +246,8 @@ export async function readResource(
         'Configured Study v3/v4, books v1/v2, progress v1-v4, recordings v1/v2/v3. Version 2 intent saves Study v4 and recording v3 with per-stop source and participant identity. Corrupt or unsupported preferred formats fail without fallback or deletion. A study saved in a newer format is refused as saved by a newer Codebook and is kept. Direct entry offers Open article; Return to Wiki requires a saved actual origin.',
     })
   if (uri === 'codebook://help/node-server') return json(nodeServerHelp())
+  if (uri === 'codebook://help/chrome-extension')
+    return json(chromeExtensionHelp())
   if (uri === 'codebook://help/node-test')
     return json({
       profile: NODE_TEST_PROFILE,
@@ -409,6 +413,21 @@ export async function readResource(
           ? `pages/${manifestPage[1]}/${manifestPage[2]}`
           : undefined,
       )
+    if (
+      record.profile === CHROME_EXTENSION_PROFILE &&
+      record.chromeExtension?.prepared
+    )
+      return readJsonPage(
+        service.uri(record.id, 'manifest'),
+        {
+          profile: CHROME_EXTENSION_PROFILE,
+          configurationHash: record.chromeExtension.prepared.configurationHash,
+          configuration: record.chromeExtension.prepared.configuration,
+        },
+        manifestPage
+          ? `pages/${manifestPage[1]}/${manifestPage[2]}`
+          : undefined,
+      )
     const manifest = record.runtime?.view().manifest
     if (!manifest)
       throw new StudyError(
@@ -430,7 +449,8 @@ export async function readResource(
     const cursor = Number(cursorText),
       events =
         record.profile === NODE_TEST_PROFILE ||
-        record.profile === NODE_SERVER_PROFILE
+        record.profile === NODE_SERVER_PROFILE ||
+        record.profile === CHROME_EXTENSION_PROFILE
           ? (record.nodeEvents ?? [])
           : (record.runtime?.view().events ?? [])
     const page = events
@@ -522,6 +542,11 @@ export async function readResource(
     return json(explanation)
   }
   if (suffix.startsWith('images/')) {
+    if (record.profile === CHROME_EXTENSION_PROFILE)
+      throw new StudyError(
+        'EVIDENCE_UNAVAILABLE',
+        'Extension runs have no stored images: the Application view shows the live surface; read the run resource for the stops, the observation and the failure.',
+      )
     if (record.profile === NODE_SERVER_PROFILE)
       throw new StudyError(
         'EVIDENCE_UNAVAILABLE',

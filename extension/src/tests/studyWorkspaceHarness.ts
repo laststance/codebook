@@ -3735,6 +3735,20 @@ export async function workspaceHarness(
       this.abandonPaint?.(new Error('Viewport disposed'))
       this.lease.released()
     }
+    /** Every pane state the chrome-extension view sent, in order. */
+    readonly extensionPanes: { phase: string; message: string }[] = []
+    /** Records the chrome-extension pane state the real viewport would send to its renderer. @example viewport.setExtensionPane(pane) */
+    setExtensionPane(pane: { phase: string; message: string }): void {
+      this.extensionPanes.push(pane)
+    }
+    /** The fake screencast has shown no frame. */
+    lastFrameAt(): number | undefined {
+      return undefined
+    }
+    /** The fake renderer needs no screencast. */
+    async attach(): Promise<void> {}
+    /** The fake renderer has no pinned pause to leave. */
+    resume(): void {}
     /** Reserves the simulated renderer so workspace tests enforce drain before adoption. @example const release = await viewport.holdPlacement() */
     async holdPlacement() {
       assert.equal(this.closed, false)

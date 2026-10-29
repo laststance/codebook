@@ -61,7 +61,7 @@ test('a node-server start with a valid declaration prepares to ready and offers 
 })
 
 // protects=the unsupported-profile refusal lists every profile the service has; fails_when=node-server is missing from the list, so an agent cannot learn that it exists from the refusal; no_claim=status
-test('an unknown profile is refused as UNSUPPORTED_PROFILE naming all three profiles', async (context) => {
+test('an unknown profile is refused as UNSUPPORTED_PROFILE naming all four profiles', async (context) => {
   // Arrange
   const harness = await createHarness()
   context.after(() => harness.close())
@@ -84,7 +84,7 @@ test('an unknown profile is refused as UNSUPPORTED_PROFILE naming all three prof
   assert.equal(refusal.code, 'UNSUPPORTED_PROFILE')
   assert.equal(
     refusal.message,
-    'Available profiles: repository-browser, node-test, node-server',
+    'Available profiles: repository-browser, node-test, node-server, chrome-extension',
   )
 })
 

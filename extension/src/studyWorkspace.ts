@@ -6,6 +6,7 @@ import * as vscode from 'vscode'
 import { z } from 'zod'
 
 import type { RecordedStudyGroups } from './applicationGroupMarkerSchemas'
+import { ChromeExtensionViewportView } from './chromeExtensionViewport'
 import {
   AGENT_SELECTION_APPLICATION_KEYBOARD_MESSAGES,
   AGENT_SELECTION_FAILED_PANE_KEYBOARD_MESSAGES,
@@ -35,6 +36,8 @@ import {
   MAIN_THREAD_WEBVIEW_PREFIX,
   MAX_DEFERRED_OPEN_REPLIES,
   MAX_SOURCE_DOCUMENTS,
+  CHROME_EXTENSION_SAVE_REFUSAL,
+  CHROME_EXTENSION_PROFILE,
   NODE_SERVER_PROFILE,
   NODE_TEST_PROFILE,
   MILLISECONDS_PER_SECOND,
@@ -185,11 +188,13 @@ import {
 } from './retainedStudySchemas'
 import type { RuntimeParticipant, RuntimeView, StudyRuntime } from './runtime'
 import { BrowserViewport } from './runtimeSupport/browserViewport'
+import type { ViewportRecordingObserver } from './runtimeSupport/browserViewport'
 import { codebookStopLedger } from './runtimeSupport/codebookStopLedger'
 import {
   CAPTURE_TIMEOUT_MS,
   KEYBOARD_OWNER_ANSWER_TIMEOUT_MS,
   VIEWPORT_ACK_TIMEOUT_REASON,
+  type Scenario,
 } from './runtimeSupport/constants'
 import { StopKeyboardHandOver } from './runtimeSupport/stopKeyboardHandOver'
 import { StoredDebugStops } from './runtimeSupport/storedDebugStops'
@@ -248,6 +253,7 @@ import { causeRootsFor } from './utils/causeRootsFor'
 import { configuredObservationPosition } from './utils/configuredObservationPosition'
 import { coveredSourceObstacle } from './utils/coveredSourceObstacle'
 import { createRecordingObserver } from './utils/createRecordingObserver'
+import { describeChromeExtensionViewStatus } from './utils/describeChromeExtensionStatus'
 import {
   describeNodeLearningSave,
   NODE_LEARNING_SAVE_ACTION,
@@ -303,6 +309,7 @@ import type {
 import { isApplicationGroupMarkerProven } from './utils/isApplicationGroupMarkerProven'
 import { isBalancedEditorLayout } from './utils/isBalancedEditorLayout'
 import { isChatEditorTabInput } from './utils/isChatEditorTabInput'
+import { isChromeExtensionRecord } from './utils/isChromeExtensionRecord'
 import { isCodebookPaneViewType } from './utils/isCodebookPaneViewType'
 import { isCollapsedEditorGroup } from './utils/isCollapsedEditorGroup'
 import { isCollapsedEditorLayout } from './utils/isCollapsedEditorLayout'
@@ -1121,6 +1128,8 @@ export class StudyWorkspace {
   private previewTabOfFrame?: { uri: string; column: vscode.ViewColumn }
   private moments?: vscode.WebviewView
   private viewport?: BrowserViewport
+  /** The pane of an ended chrome-extension run whose last frame stays until a next run or the learner replaces it (ER22). */
+  private keptEndedPane?: vscode.WebviewPanel
   private leaseId?: string
   private outline?: vscode.TreeView<RetainedStudySelection['itemId']>
   private readonly treeChanges = new vscode.EventEmitter<
@@ -8038,63 +8047,34 @@ export class StudyWorkspace {
 
   readonly presentation: StudyPresentation = {
     createViewport: async (runId, record, fail, scenario, signal) => {
-      // A new run may replace a closed reader, but an open recording keeps its independently selected film.
-      if (!this.opened) this.leavePlayback()
-      const panel = await this.prepareApplicationGroup(
-          signal,
-          undefined,
-          false,
-          undefined,
-          true,
-        ),
-        leaseId = randomUUID()
-      this.leaseId = leaseId
-      panel.title = `codebook · Application ${runId.slice(0, 8)}`
       const studyRecord = [...(this.service?.records.values() ?? [])].find(
         (candidate) => candidate.runtime?.id === runId,
       )
-      const viewport = new BrowserViewport(
+      return this.leaseApplicationViewport({
         runId,
         record,
         fail,
         scenario,
-        {
-          panel,
-          assertCanReveal: (current) => {
-            if (this.leaseId !== leaseId)
-              throw new Error('The Application lease was replaced.')
-            this.assertApplicationReveal(current)
-          },
-          // Before the pane covers the paused file, the chat that had the keyboard before the pause gets it back, and a file the learner's selected frame opened keeps the pane from the keyboard; a pane that had to take it tells the learner once where it is.
-          comesWithoutKeyboard: () => this.keepsKeyboardFromPane(),
-          tookKeyboardFromEditor: () => this.tellPaneTookKeyboard(),
-          released: () => {
-            // A retired runtime cannot close or replace the panel attached to a newer lease.
-            if (this.leaseId !== leaseId) return
-            this.viewport = undefined
-            this.leaseId = undefined
-            if (this.opened && this.baselines)
-              void this.renderSelection().catch((error) =>
-                this.report('reader', error),
-              )
-            else
-              void this.closeApplicationPaneOfEndedRun().catch((error) =>
-                this.report('reader', error),
-              )
-          },
+        signal,
+        observer: studyRecord && createRecordingObserver(studyRecord),
+      })
+    },
+    createChromeExtensionViewport: async (runId, signal) => {
+      let isFinal = false
+      const viewport = await this.leaseApplicationViewport({
+        runId,
+        // The extension run journals its own events; the pane's delivery detail has no reader.
+        record: () => undefined,
+        fail: () => undefined,
+        scenario: 'normal',
+        signal,
+        keepsEndedPane: () => isFinal,
+      })
+      return new ChromeExtensionViewportView(viewport, {
+        onFinal: () => {
+          isFinal = true
         },
-        studyRecord && createRecordingObserver(studyRecord),
-      )
-      this.viewport = viewport
-      if (this.opened && !this.selection.follow && this.baselines)
-        viewport.showHistory(this.applicationHtml(this.message()))
-      // A new live lease cannot replace the independently selected recording renderer.
-      if (this.recordingActive) {
-        this.dropReplayViewport()
-        this.playback?.hide()
-        this.playback?.reveal()
-      }
-      return viewport
+      })
     },
     revealSource: async (snapshot) => {
       if (
@@ -10018,6 +9998,93 @@ export class StudyWorkspace {
   }
 
   /**
+   * Prepares the Application pane for one run and wraps it in a leased {@link BrowserViewport}; called by {@link presentation}'s `createViewport` (repository, server and test runs) and `createChromeExtensionViewport`.
+   * The lease's release closes the pane of an ended run, except when `keepsEndedPane` says the run reached its last content: an ended extension run keeps its pane and last frame, without the keyboard, until a next run's view replaces it or the learner closes the tab (ER22). A retired lease never touches a newer one's pane.
+   * @param input - The run's identity, its journal and failure hooks, and optionally the recording observer and the keep-at-end question.
+   * @returns The viewport, already registered as the workspace's live one.
+   * @throws What {@link prepareApplicationGroup} throws when no safe pane can be prepared.
+   * @example const viewport = await this.leaseApplicationViewport({ runId, record, fail, scenario, signal })
+   */
+  private async leaseApplicationViewport(input: {
+    runId: string
+    record: (type: string, detail?: unknown) => unknown
+    fail: (reason: string) => void
+    scenario: Scenario
+    signal?: AbortSignal
+    observer?: ViewportRecordingObserver
+    keepsEndedPane?: () => boolean
+  }): Promise<BrowserViewport> {
+    const { runId, keepsEndedPane } = input
+    // A new run may replace a closed reader, but an open recording keeps its independently selected film.
+    if (!this.opened) this.leavePlayback()
+    const panel = await this.prepareApplicationGroup(
+        input.signal,
+        undefined,
+        false,
+        undefined,
+        true,
+      ),
+      leaseId = randomUUID()
+    this.leaseId = leaseId
+    // A newer run's pane replaces the kept view of an ended extension run.
+    this.keptEndedPane = undefined
+    panel.title = `codebook · Application ${runId.slice(0, 8)}`
+    if (keepsEndedPane)
+      panel.onDidDispose(() => {
+        // The learner closing the tab, or a study closing, drops the kept view (ER22).
+        if (this.keptEndedPane === panel) this.keptEndedPane = undefined
+      })
+    const viewport = new BrowserViewport(
+      runId,
+      input.record,
+      input.fail,
+      input.scenario,
+      {
+        panel,
+        assertCanReveal: (current) => {
+          if (this.leaseId !== leaseId)
+            throw new Error('The Application lease was replaced.')
+          this.assertApplicationReveal(current)
+        },
+        // Before the pane covers the paused file, the chat that had the keyboard before the pause gets it back, and a file the learner's selected frame opened keeps the pane from the keyboard; a pane that had to take it tells the learner once where it is.
+        comesWithoutKeyboard: () => this.keepsKeyboardFromPane(),
+        tookKeyboardFromEditor: () => this.tellPaneTookKeyboard(),
+        released: () => {
+          // A retired runtime cannot close or replace the panel attached to a newer lease.
+          if (this.leaseId !== leaseId) return
+          this.viewport = undefined
+          this.leaseId = undefined
+          const readerShowsSelection = this.opened && this.baselines
+          // An ended extension run's pane stays as it is, unless an open reader owns the pane.
+          if (keepsEndedPane?.() && !readerShowsSelection) {
+            this.keptEndedPane = panel
+            return
+          }
+          if (readerShowsSelection)
+            void this.renderSelection().catch((error) =>
+              this.report('reader', error),
+            )
+          else
+            void this.closeApplicationPaneOfEndedRun().catch((error) =>
+              this.report('reader', error),
+            )
+        },
+      },
+      input.observer,
+    )
+    this.viewport = viewport
+    if (this.opened && !this.selection.follow && this.baselines)
+      viewport.showHistory(this.applicationHtml(this.message()))
+    // A new live lease cannot replace the independently selected recording renderer.
+    if (this.recordingActive) {
+      this.dropReplayViewport()
+      this.playback?.hide()
+      this.playback?.reveal()
+    }
+    return viewport
+  }
+
+  /**
    * Closes the Application pane a live run leaves behind when no Study workspace shows its history, and gives the keyboard an element again when that pane had it; called by the lease's `released` of {@link presentation} at the run's end, while the reader is closed or has no study to show.
    * A pane that is closed while it has the keyboard leaves the keyboard on the page body: a key the learner presses then goes nowhere until they click (Cursor 3.23.12 at the end of a run of five stops, measured natively on 2026-10-07: the extension host named a text editor as active, the workbench page had no focus). So when the pane was the editor's active editor in the focused window, the active editor group gets the keyboard once the pane's tab and the group it may have left empty are gone, by the rule of a Close ({@link giveActiveGroupKeyboardAfterClose}), and the learner is told once in an editor session with {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}.
    * Native active-tab flags do not prove keyboard ownership beside a terminal, view or side-view chat. The current owned document is inspected without focus effects through {@link readWebviewFocus}: an explicit false leaves outside typing alone, while an unavailable receipt keeps the guarded native fallback. A newer lease, reader opening or document is never retired after the inspection wait. A window without the focus is left alone.
@@ -11012,7 +11079,10 @@ export class StudyWorkspace {
         return 'render'
     }
     const profile = this.currentRecord()?.profile
-    return profile === NODE_TEST_PROFILE || profile === NODE_SERVER_PROFILE
+    // A test, server or extension run keeps its status item current while no Study is shown.
+    return profile === NODE_TEST_PROFILE ||
+      profile === NODE_SERVER_PROFILE ||
+      profile === CHROME_EXTENSION_PROFILE
       ? 'save-item'
       : 'none'
   }
@@ -11490,6 +11560,9 @@ export class StudyWorkspace {
   async saveLearningReplay(expectedStudyId?: string): Promise<void> {
     const service = this.service,
       record = this.currentRecord()
+    // An extension run stores nothing: the command refuses before any study, recording or checkpoint is touched (SR13, DR9).
+    if (isChromeExtensionRecord(record))
+      throw new Error(CHROME_EXTENSION_SAVE_REFUSAL)
     // A server or test run's Save belongs to its own class, with the same delayed-click guard as a browser save.
     const nodeSave = this.nodeRunSave(service, record, expectedStudyId)
     if (nodeSave) return nodeSave
@@ -11579,6 +11652,48 @@ export class StudyWorkspace {
     }
   }
 
+  /**
+   * Draws the status item of a run whose profile owns its Save (server, test) or has none (extension); called by {@link publishLearningSave} before the browser run's own item.
+   * @param record - The current run, if any.
+   * @param studyId - The run's study id, when a service is attached.
+   * @returns `true` when the item was drawn or hidden for this run's profile; `false` for a browser run, which the caller draws.
+   * @example if (this.drawProfileSaveItem(record, studyId)) return
+   */
+  private drawProfileSaveItem(
+    record: ReturnType<StudyWorkspace['currentRecord']>,
+    studyId: string | undefined,
+  ): boolean {
+    // An extension run shows its phase text (C4) and never offers Save (DR9).
+    if (isChromeExtensionRecord(record)) {
+      const extension = record?.chromeExtension
+      if (!extension?.run || !studyId) this.hideLearningSaveItem()
+      else
+        this.showLearningSaveItem(
+          describeChromeExtensionViewStatus(
+            extension.run.view(),
+            extension.prepared?.configuration.clicks.map(
+              (click) => click.title,
+            ) ?? [],
+          ).statusItem,
+          CHROME_EXTENSION_SAVE_REFUSAL,
+          undefined,
+          studyId,
+        )
+      return true
+    }
+    // A server run's item shows what NodeServerLearningSave says of it, a test run's what NodeLearningSave says.
+    let view
+    if (record?.profile === NODE_SERVER_PROFILE && studyId)
+      view = this.nodeServerLearningSave.item(record)
+    else if (record?.profile === NODE_TEST_PROFILE)
+      view = this.nodeLearningSave.item(record)
+    else return false
+    if (!view || !studyId) this.hideLearningSaveItem()
+    else
+      this.showLearningSaveItem(view.text, view.tooltip, view.command, studyId)
+    return true
+  }
+
   /** Keeps capture/save reachable beside native chat: every {@link publish} calls it, and it updates the status bar item without changing editor focus and assigns the item's command only when the command or its study changed. @example this.publishLearningSave() */
   publishLearningSave(): void {
     if (this.disposed) return
@@ -11597,26 +11712,7 @@ export class StudyWorkspace {
             this.learningSave.signature))
         ? this.learningSave
         : undefined
-    // A server run's item shows what NodeServerLearningSave says of it.
-    if (record?.profile === NODE_SERVER_PROFILE && studyId) {
-      const view = this.nodeServerLearningSave.item(record)
-      if (!view) {
-        this.hideLearningSaveItem()
-        return
-      }
-      this.showLearningSaveItem(view.text, view.tooltip, view.command, studyId)
-      return
-    }
-    // A test run's item shows what NodeLearningSave says of it.
-    if (record?.profile === NODE_TEST_PROFILE) {
-      const view = this.nodeLearningSave.item(record)
-      if (!view || !studyId) {
-        this.hideLearningSaveItem()
-        return
-      }
-      this.showLearningSaveItem(view.text, view.tooltip, view.command, studyId)
-      return
-    }
+    if (this.drawProfileSaveItem(record, studyId)) return
     if (!record?.recording || !studyId || record.historyExcluded) {
       this.hideLearningSaveItem()
       return
@@ -14061,7 +14157,8 @@ export class StudyWorkspace {
     const liveDescriptor =
       record &&
       record.profile !== NODE_TEST_PROFILE &&
-      record.profile !== NODE_SERVER_PROFILE
+      record.profile !== NODE_SERVER_PROFILE &&
+      record.profile !== CHROME_EXTENSION_PROFILE
         ? describeStudy(
             record.profile === REPOSITORY_BROWSER_PROFILE
               ? { ...record, descriptor: record.definition?.descriptor }
@@ -14304,7 +14401,8 @@ export class StudyWorkspace {
       // A test run and a server run have no browser Study to show.
       liveProfile:
         live?.profile === NODE_TEST_PROFILE ||
-        live?.profile === NODE_SERVER_PROFILE
+        live?.profile === NODE_SERVER_PROFILE ||
+        live?.profile === CHROME_EXTENSION_PROFILE
           ? undefined
           : live?.profile,
       liveTitle: liveDescriptor?.title,

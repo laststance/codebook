@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.2.59.0] - 2026-10-29 (development candidate)
+
+Cycle 0061 ([Issue #154](https://github.com/laststance/codebook/issues/154)), the second and last pull request of a feature cycle: the chat can now explain a Chrome Manifest V3 extension of the opened repository live. Ask `/codebook` how the extension's popup or one of its pages handles a few clicks; the chat starts the extension in a test Chrome of its own, performs the clicks, stops in the extension's page script and its service worker in the editor's own debugger, explains each stop with the values you see in the Variables view, and reports what the clicks changed. Native dry runs in the macOS Space paused a real popup and service worker in VS Code 1.142.0 (Copilot Chat, GPT-6.1 Terra) and Cursor 3.27.12 (Agent, Grok 4.6 High Fast) on a pinned clone of `laststance/bookmark-xp-explorer` (development evidence, no acceptance credit); the native trial N61 runs on the final candidate before the merge, and the Issue records it.
+
+**Explain a Chrome extension (MCP API 1.10, skill 1.0.55).**
+
+- **A new `chrome-extension` profile** in `codebook_status`, with its help at `codebook://help/chrome-extension`. It is listed only when Google Chrome or Chrome for Testing 149 or later is found, on macOS or Linux; a missing prerequisite is named with its fix.
+- **`codebook_start` answers with the manifest's name, permissions and host permissions** the run uses, which the chat tells you, or with the refusal and the run's state. A preparation still under way after 40 s answers its phase instead, and the chat reads the run resource until the run is ready.
+- **One click per `codebook_action`**: each call performs the next declared click and answers its one-based index, whether a stop paused, the work settled or it is still running, and what each step did. A click whose work is still going reads `clickWorkPending` in the run resource, and the next click is offered again once it ends.
+- **The result is read before the first click and after the last one**, once no stop is paused; it reads changed, unchanged, missing or unavailable, with values under secret-like keys masked (an observed storage key with such a name masked whole). The run is claimable only when it completed and the result was read.
+- **The Application view shows the extension's popup at its own size, or its page**, with a header that names the extension and the surface, the frame of each stop, a dimmed last frame when the popup closes, and the last captured view after the run. The status bar says where the run stands.
+- **Every way a run ends removes what it owns**: the debugger, the test Chrome and its profile folder.
+- **The bundled skill routes an extension question to the profile** only when `codebook_status` lists it, checks the question against what the profile can run, tells you the extension, the surface, the clicks and the test data before it starts, and keeps the explanation in the chat.
+
+**Limits.** Live only: an extension run is not saved as a learning replay in this version. Unbundled extensions only, no content scripts, no stop in startup code, one popup or extension page per run, one to three clicks, macOS and Linux.
+
+**Compatibility.** MCP API 1.10 is additive: every earlier profile, tool and resource answers as before. The bundled skill moves to 1.0.55. To update, install this VSIX, reopen the work window and run **Codebook: Set Up AI Chat**; after going back to an earlier VSIX, the profile is not listed and skill 1.0.55 says extension runs are not available.
+
 ## [0.2.58.0] - 2026-10-29 (development candidate)
 
 Cycle 0061 ([Issue #154](https://github.com/laststance/codebook/issues/154)), the first of the two pull requests of a feature cycle that explains a Chrome Manifest V3 extension of the opened repository live, paused in its page script and its service worker. This pull request lays that profile's parts; nothing reaches the chat or the Codebook views yet, so there is no new command, setting or chat behaviour to use. The second pull request offers the `chrome-extension` profile through `codebook_status`, `codebook_start` and the bundled skill, shows the extension in the Application view and carries the native trial in VS Code and Cursor. Before any product code, a trial in the macOS Space settled how both editors can debug an extension: Codebook starts Google Chrome 149 or later itself, loads the unpacked extension over Chrome's DevTools protocol, and attaches the editor's own JavaScript debugger, which paused a real page script and service worker with their values in VS Code 1.142.0 and Cursor 3.27.12 (development evidence on a pinned clone of `laststance/bookmark-xp-explorer`).

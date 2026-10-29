@@ -92,7 +92,7 @@ export function nodeServerSaveHelp() {
     summary:
       "A node-server run is saved as a Server replay: the learner's Save learning replay, or you through codebook_explain_node_history, keeps the question, summary and sequence beside the recorded request, output, executed source at each stop, debugger values and response. Replaying it never sends the request or starts the server.",
     requires:
-      'codebook_status reports API 1.9 or later. On an older API, tell the learner to update Codebook and do not try to save a server explanation.',
+      'codebook_status reports API 1.9 or later (compare the number after the dot as a whole number: 1.10 is later than 1.9). On an older API, tell the learner to update Codebook and do not try to save a server explanation.',
     stopBudget: `At most ${NODE_SERVER_REQUEST_CAPTURE_LIMIT} stop hits are recorded per request; a hit beyond that is not recorded and the history reads partial (${CODES.captureBudgetExhausted}).`,
     route: [
       'codebook_continue until the run reads responded or request-failed, then explain the stops in chat as before.',

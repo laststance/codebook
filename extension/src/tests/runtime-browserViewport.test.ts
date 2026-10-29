@@ -2585,3 +2585,174 @@ for (const [situation, pausedFile] of [
       assert.equal(harness.keyboardTakes(), takesTold)
       harness.viewport.close()
     })
+
+/** A screencast connection that records its commands with their parameters as plain JSON. */
+function screencastConnection() {
+  const requests: { method: string; params: unknown }[] = []
+  const cdp: ViewportModule.ScreencastCdp = {
+    on: () => undefined,
+    request: async (method, params) => {
+      requests.push({
+        method,
+        params: JSON.parse(JSON.stringify(params ?? null)),
+      })
+      return {}
+    },
+    subscribe: async () => undefined,
+  }
+  return { cdp, requests }
+}
+
+const FIRST_EPOCH = '11111111-1111-1111-1111-111111111111'
+
+// protects=C2: a live frame's CSS size from the screencast metadata reaches the document message; fails_when=the popup is sized by the webview's device pixel ratio only; no_claim=the document's styling (document test)
+test('a live popup frame message carries the CSS size the browser reported', async () => {
+  // Arrange
+  const harness = await viewportHarness('normal')
+  const listeners: ((frame: ViewportModule.ScreencastFrameEvent) => void)[] = []
+  const cdp: ViewportModule.ScreencastCdp = {
+    on: (_method, listener) => listeners.push(listener),
+    request: async () => ({}),
+    subscribe: async () => undefined,
+  }
+  const attaching = harness.viewport.attach(
+    cdp,
+    new AbortController().signal,
+    'popup',
+  )
+  await delay(0)
+  harness.ready(FIRST_EPOCH)
+  await attaching
+  const sent = harness.nextFrame()
+  // Act
+  for (const listener of listeners)
+    listener({
+      data: 'cGl4ZWxz',
+      sessionId: 1,
+      metadata: { timestamp: 1, deviceWidth: 400, deviceHeight: 300 },
+    })
+  const message = await sent
+  // Assert
+  assert.deepEqual([message.cssWidth, message.cssHeight], [400, 300])
+  harness.viewport.close()
+})
+
+// protects=DR7: a popup surface shows the frame at its own size, so no device-metrics override is sent and the screencast has no size bound; fails_when=a popup is forced to 720 x 640; no_claim=the popup's real pixels
+test('a popup screencast starts without a device-metrics override or a size bound', async () => {
+  // Arrange
+  const harness = await viewportHarness('normal')
+  const { cdp, requests } = screencastConnection()
+  // Act
+  const attaching = harness.viewport.attach(
+    cdp,
+    new AbortController().signal,
+    'popup',
+  )
+  await delay(0)
+  harness.ready(FIRST_EPOCH)
+  await attaching
+  // Assert
+  assert.deepEqual(requests, [
+    { method: 'Page.enable', params: null },
+    {
+      method: 'Page.startScreencast',
+      params: { format: 'png', everyNthFrame: 1 },
+    },
+  ])
+  harness.viewport.close()
+})
+
+// protects=DR7 and other profiles unchanged: a page surface keeps the 720 x 640 metrics and the bounded screencast; fails_when=the repository or extension page stream loses its fixed size; no_claim=the js-debug path (covered by the stream test)
+test('a page screencast keeps the 720 by 640 metrics override and bounded frames', async () => {
+  // Arrange
+  const harness = await viewportHarness('normal')
+  const { cdp, requests } = screencastConnection()
+  // Act
+  const attaching = harness.viewport.attach(cdp, new AbortController().signal)
+  await delay(0)
+  harness.ready(FIRST_EPOCH)
+  await attaching
+  // Assert
+  assert.deepEqual(requests, [
+    {
+      method: 'Emulation.setDeviceMetricsOverride',
+      params: { width: 720, height: 640, deviceScaleFactor: 1, mobile: false },
+    },
+    { method: 'Page.enable', params: null },
+    {
+      method: 'Page.startScreencast',
+      params: {
+        format: 'png',
+        maxWidth: 720,
+        maxHeight: 640,
+        everyNthFrame: 1,
+      },
+    },
+  ])
+  harness.viewport.close()
+})
+
+// protects=C1: a surface change while the replacement pane is not yet restored leaves that pane's document alone (the learner may be using it); fails_when=setExtensionPane writes the extension document into a replacement pane before restorePlacement; no_claim=the restored document's content
+test('a surface change during a pane handoff leaves the replacement pane document unchanged', async () => {
+  // Arrange
+  const harness = await viewportHarness('normal', true)
+  const pane = {
+    surface: 'popup' as const,
+    title: 'codebook · Bookmark Notes · Extension popup',
+    phase: 'Preparing the extension',
+    provenance: 'Operated by chat',
+    message: '',
+    imageAlt: 'Extension popup of Bookmark Notes',
+    detail: '',
+    dimmed: false,
+  }
+  harness.viewport.setExtensionPane(pane)
+  harness.ready(FIRST_EPOCH)
+  const firstFrame = harness.nextFrame()
+  const capture = harness.viewport.present('cGF1c2U=', 'paused-1')
+  const original = await firstFrame
+  harness.receive({ type: 'painted', epoch: FIRST_EPOCH, id: original.id })
+  await capture
+  const replacement = viewportPanel()
+  const release = await harness.viewport.holdPlacement(
+    new AbortController().signal,
+  )
+  harness.rebind(replacement)
+  // Act
+  harness.viewport.setExtensionPane({ ...pane, surface: 'page' })
+  // Assert
+  assert.equal(replacement.panel.webview.html, '')
+  release()
+  harness.viewport.close()
+})
+
+// protects=DR1 and DR8: the extension pane state replaces the document with the extension's and reaches the renderer with its ready handshake and after each change; fails_when=the first state is lost before a renderer exists or a later change is not sent; no_claim=how the editor paints the document
+test('the extension pane state reaches the renderer once it is ready and after each change', async () => {
+  // Arrange
+  const harness = await viewportHarness('normal')
+  const pane = {
+    surface: 'popup' as const,
+    title: 'codebook · Bookmark Notes · Extension popup',
+    phase: 'Preparing the extension',
+    provenance:
+      'Operated by chat · Test profile · seeded data · Live only · replay unavailable',
+    message: '',
+    imageAlt:
+      'Extension popup of Bookmark Notes, captured from the test browser',
+    detail: '',
+    dimmed: false,
+  }
+  // Act
+  harness.viewport.setExtensionPane(pane)
+  harness.ready(FIRST_EPOCH)
+  const firstDocument = harness.panel.webview.html
+  harness.viewport.setExtensionPane({ ...pane, phase: 'Running the click' })
+  const posted = () =>
+    harness.messages
+      .filter((message) => message.type === 'extension')
+      .map((message) => (message.pane as typeof pane).phase)
+  // Assert
+  assert.match(firstDocument, /<div id="scroller" tabindex="0"/)
+  assert.deepEqual(posted(), ['Preparing the extension', 'Running the click'])
+  harness.viewport.close()
+})

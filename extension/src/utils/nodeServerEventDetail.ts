@@ -8,35 +8,17 @@ import {
 } from '../constants'
 
 import { cutTextToFit } from './cutTextToFit'
+import {
+  boundedText,
+  integerField,
+  sanitizedEventFields,
+} from './eventFieldReaders'
 import { redactSecretText } from './redactSecretText'
 
 type EventFields = Record<string, unknown>
 
 /** The HTTP methods a declared request may use. */
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
-
-/**
- * Reads a text field of a run's event: masked first, then cut, so a secret split by the cut can never survive.
- * @param value - The raw field.
- * @param limit - The most characters kept.
- * @returns The masked, cut text; `null` for a field that is no text.
- * @example boundedText('Bearer abcdefgh12345 more', 12) // => 'Bearer [mask'
- */
-function boundedText(value: unknown, limit: number): string | null {
-  return typeof value === 'string'
-    ? redactSecretText(value).slice(0, limit)
-    : null
-}
-
-/**
- * Reads a whole-number field of a run's event.
- * @param value - The raw field.
- * @returns The integer; `null` for anything else.
- * @example integerField(200) // => 200
- */
-function integerField(value: unknown): number | null {
-  return typeof value === 'number' && Number.isInteger(value) ? value : null
-}
 
 /**
  * Reads a response body for its event: masked, then cut between characters so the event stays small whatever the escaping makes of it.
@@ -167,15 +149,6 @@ export function nodeServerEventDetail(
     ? NODE_SERVER_EVENT_FIELDS[type]
     : undefined
   if (!fields) return { omitted: true }
-  const entries =
-    detail && typeof detail === 'object' ? Object.entries(detail) : []
   // Private roots go before any cut, so a path at a cut can never survive as a fragment.
-  return fields(
-    Object.fromEntries(
-      entries.map(([name, value]) => [
-        name,
-        typeof value === 'string' ? sanitize(value) : value,
-      ]),
-    ),
-  )
+  return fields(sanitizedEventFields(detail, sanitize))
 }

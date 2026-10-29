@@ -1,10 +1,28 @@
 import type {
+  ExtensionClickOutcome,
+  ExtensionSideEffect,
+} from './chromeExtensionActionExecutor'
+import type { ChromeExtensionConfiguration } from './chromeExtensionConfigSchemas'
+import type {
+  CapturedExtensionStop,
+  ExtensionObservation,
+  ExtensionPreparationPhase,
+  ExtensionStopContext,
+  ExtensionSurfaceKind,
+} from './chromeExtensionContracts'
+import type {
+  ExtensionContinueArguments,
+  ExtensionIntervention,
+  ExtensionPauseView,
+} from './chromeExtensionDebugger'
+import type {
   ConfiguredDefinition,
   ConfiguredDescriptor,
   ConfiguredObservation,
   ConfiguredStudy,
 } from './configuredStudySchemas'
 import type {
+  CHROME_EXTENSION_PROFILE,
   NODE_SERVER_PROFILE,
   NODE_TEST_PROFILE,
   REPOSITORY_BROWSER_ACTION,
@@ -191,6 +209,139 @@ export interface NodeServerRuntime {
   stop(): Promise<void>
 }
 
+/** The phase of a chrome-extension run (SR17): `starting`, the preparation phases the launch and the debugger report, then `ready`, `paused`, `observing` and the two endings. Nothing before `ready` counts as a learning stop. */
+export type ChromeExtensionPhase =
+  | 'starting'
+  | ExtensionPreparationPhase
+  | 'ready'
+  | 'paused'
+  | 'observing'
+  | 'completed'
+  | 'failed'
+
+/**
+ * One read of the run's declared observation as the run resource reports it (CR9, ER23): a value (masked, root-hidden, cut at 4,096 characters with `truncated`), a missing element or key, or a failed read with its cause.
+ * A real `null` is a value; `missing` and `unavailable` are distinct from it.
+ */
+export type ChromeExtensionObservedRead =
+  | { value: unknown; truncated?: true }
+  | { missing: true }
+  | { unavailable: true; cause: string }
+
+/** The observation report of a chrome-extension run (CR9, DXR7): the baseline read at `ready` and the read after the last click. */
+export type ChromeExtensionObserved = {
+  kind: ExtensionObservation['kind']
+  before: ChromeExtensionObservedRead
+  after: ChromeExtensionObservedRead
+  /** Compared on the unmasked canonical values; absent when either read is unavailable. */
+  changed?: boolean
+  /** Milliseconds since the run's launch when the after read agreed. */
+  observedAtMs: number
+}
+
+/** What one `extension-click` call answers (SR2, DXR4); the progress is read when the call returned. */
+export type ChromeExtensionClickAnswer = {
+  /** 1-based index of the declared click this call performed (DXR8). */
+  clickIndex: number
+  outcome: ExtensionClickOutcome
+  inputsApplied: number
+  clickDispatched: boolean
+  inputEffects: ExtensionSideEffect[]
+  clickEffect: ExtensionSideEffect
+}
+
+/** One console line of the extension (C3), masked, root-hidden and cut at the event limit. */
+export type ChromeExtensionOutputLine = {
+  context: ExtensionStopContext
+  text: string
+  /** Milliseconds since the run's launch. */
+  atMs: number
+}
+
+/** What a chrome-extension run shows the service: the run resource's `chromeExtension` block and `claimable` come from it (SR17, CR5, CR9, CR10, ER16, DXR7). */
+export type ChromeExtensionView = {
+  phase: ChromeExtensionPhase
+  /** Set once `starting` resolved the configuration; absent while the run is still resolving it or when it refused before. */
+  extension?: {
+    id: string
+    surface: { kind: ExtensionSurfaceKind; path: string; url: string }
+    /** The manifest's `name`, `permissions` and `host_permissions` (CR5). */
+    manifest: {
+      name: string
+      permissions: readonly string[]
+      hostPermissions: readonly string[]
+    }
+  }
+  /** Clicks performed of declared (CR9's `procedure`); `clickInFlight` is the 1-based index of a click whose call has not settled; `clickWorkPending` says the latest click's work still goes on after its call answered `paused` or `running`. */
+  procedure: {
+    clicksDeclared: number
+    clicksPerformed: number
+    clickInFlight?: number
+    clickWorkPending?: boolean
+  }
+  /** The answer of the latest click call, updated while its steps go on. */
+  lastClick?: ChromeExtensionClickAnswer
+  /** Every open pause with its own continue arguments (ER16). */
+  pauses: ExtensionPauseView[]
+  /** Every captured declared stop, in capture order. */
+  captures: CapturedExtensionStop[]
+  stopsDeclared: number
+  /** 1-based indexes of declared stops not reached (DXR8). */
+  stopsNotReached: number[]
+  /** `complete` or `partial` (any stop not reached) once the run is `completed` or was stopped after `ready` (SR17, SR22). */
+  result?: 'complete' | 'partial'
+  /** The observation once read; `null` when the run was stopped before its last click (SR22); absent before. */
+  observed?: ChromeExtensionObserved | null
+  /** `true` only when the run completed and the observation was read (changed, unchanged or missing) (DXR7). */
+  claimable: boolean
+  interventions: readonly ExtensionIntervention[]
+  outputs: readonly ChromeExtensionOutputLine[]
+  /** Output lines dropped after the run's output limit, {@link EXTENSION_OUTPUT_EVENT_LIMIT}. */
+  outputsDropped: number
+  /** Why the run shows no Application view (the editor refused to place it), masked and root-hidden; absent while the view opened (DR6). */
+  viewUnavailable?: string
+  /** The failure that ended the run (`failed`), or `OBSERVATION_UNAVAILABLE` beside a `completed` run. */
+  runFailure?: StudyError
+  /** What the cleanup could not confirm (ER18); absent until the cleanup ran. */
+  cleanup?: { profileLeft: boolean; exitConfirmed: boolean }
+}
+
+/**
+ * A chrome-extension run the service drives (Cycle 0061 pt2): resolves and checks the declaration, launches the owned Chrome with the unpacked extension, attaches the editor's debugger, arms the stops, performs one declared click per call, observes the result and cleans up through one path.
+ * Created by {@link StudyEnvironment.createChromeExtensionRun}; the service owns keys, receipts (DXR3), the run resource and the save/explain refusal (SR13).
+ */
+export interface ChromeExtensionRuntime {
+  readonly id: string
+  /** Runs `starting` through `ready` and reads the observation baseline; resolves at `ready`, rejects with the run's typed {@link StudyError} after its cleanup. */
+  prepare(): Promise<void>
+  view(): ChromeExtensionView
+  /** Calls the listener after every change of {@link ChromeExtensionRuntime.view}. */
+  onDidChange(listener: () => void): { dispose(): void }
+  /**
+   * Performs the next declared click and answers once a declared stop pauses, the work settles or the return bound passes (SR2).
+   * @throws `RUN_NOT_READY`, `RUN_PAUSED`, `ACTION_IN_PROGRESS`, `NO_MORE_ACTIONS`, `SELECTOR_NOT_FOUND` or `SERVICE_WORKER_NOT_ATTACHED` with nothing consumed; `INPUT_PARTIAL`, `CLICK_OUTCOME_UNKNOWN`, `DIALOG_UNDECLARED`, `SOURCE_CHANGED`, `SERVICE_WORKER_RESTARTED` after the run failed and was cleaned up.
+   */
+  click(): Promise<ChromeExtensionClickAnswer>
+  /** Continues one declared pause with the arguments the run resource listed (DXR5). @throws `STALE_PAUSE`, `NO_PAUSE`, `LEARNER_PAUSED`, `SOURCE_CHANGED`. */
+  continue(args: ExtensionContinueArguments): Promise<void>
+  /** Ends the run through its one cleanup path (CR14); idempotent; a stop before the last click leaves `result: 'partial'` and `observed: null` (SR22). */
+  stop(): Promise<void>
+}
+
+/** What {@link StudyEnvironment.createChromeExtensionRun} is given. */
+export type ChromeExtensionRunInput = {
+  /** The service's run id, named in the debug session and the journal. */
+  runId: string
+  /** The strictly parsed declaration. */
+  configuration: ChromeExtensionConfiguration
+  /** `codebook_start`'s `acknowledgedPermissions`, matched exactly against the manifest's permissions that reach outside the test profile (ER5). */
+  acknowledgedPermissions: readonly string[]
+  /** Journals the run's whitelisted `chrome-extension.*` events (SR32). */
+  record: (type: string, detail?: unknown) => unknown
+  /** The service's private roots, hidden in journaled text and causes. */
+  privateRoots?: CauseRoots
+}
+
 export type ConfiguredRuntimeSnapshot = Omit<
   ConfiguredObservation,
   'snapshotUri' | 'interpretations'
@@ -319,7 +470,8 @@ export interface StudyEnvironment {
       Record<
         | typeof REPOSITORY_BROWSER_PROFILE
         | typeof NODE_TEST_PROFILE
-        | typeof NODE_SERVER_PROFILE,
+        | typeof NODE_SERVER_PROFILE
+        | typeof CHROME_EXTENSION_PROFILE,
         {
           ready: boolean
           missing: string[]
@@ -334,6 +486,13 @@ export interface StudyEnvironment {
    */
   nodeTestStartPrerequisites?(): Promise<{ ready: boolean; missing: string[] }>
   nodeServerStartPrerequisites?(): Promise<{
+    ready: boolean
+    missing: string[]
+  }>
+  /**
+   * The prerequisites a chrome-extension start waits on: the editor's own, the platform and the Chrome lookup, never the other profiles' checks (Vitest search, node-server gaps, Node lookup). Environments without it make the start wait on {@link StudyEnvironment.prerequisites}.
+   */
+  chromeExtensionStartPrerequisites?(): Promise<{
     ready: boolean
     missing: string[]
   }>
@@ -379,6 +538,12 @@ export interface StudyEnvironment {
     history?: NodeServerHistorySink,
     privateRoots?: CauseRoots,
   ): Promise<NodeServerRuntime>
+  /**
+   * Creates the chrome-extension run of a parsed declaration ({@link ChromeExtensionRuntime}); its {@link ChromeExtensionRuntime.prepare} resolves the extension, launches the owned Chrome and attaches. Environments without it read chrome-extension as not ready.
+   */
+  createChromeExtensionRun?(
+    input: ChromeExtensionRunInput,
+  ): Promise<ChromeExtensionRuntime>
   /**
    * Asks the learner in a native modal whether to send a state-changing request (POST, PUT, PATCH, DELETE), naming its method and path and that the server uses the repository's own configured database (TD-6); the chat AI cannot answer it.
    * @returns `true` for Send; `false` for Cancel, a dismissal, or the signal's abort (D6: no answer within the pause-hold bound).

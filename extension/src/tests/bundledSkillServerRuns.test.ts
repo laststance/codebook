@@ -118,7 +118,7 @@ test('the bundled skill opens no Study workspace for a server run', async () => 
   )
   assert.match(
     skill,
-    /requiring runtime observation \(a server run needs no presentation\), open the learner presentation/,
+    /requiring runtime observation \(a server or extension run needs no presentation\), open the learner presentation/,
   )
 })
 
@@ -130,7 +130,7 @@ test('the bundled skill still opens the Study presentation for a test run', asyn
   // Assert
   assert.match(
     skill,
-    /For a browser or test request requiring runtime observation \(a server run needs no presentation\), open the learner presentation before the first application input\./,
+    /For a browser or test request requiring runtime observation \(a server or extension run needs no presentation\), open the learner presentation before the first application input\./,
   )
 })
 

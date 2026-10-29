@@ -7,6 +7,9 @@ export interface ViewFrame {
   phase: string
   required: boolean
   delayAck: boolean
+  /** The captured page's CSS width and height in pixels, when the browser reported them; a popup document sizes the image by these. */
+  cssWidth?: number
+  cssHeight?: number
 }
 export interface FrameMessage extends ViewFrame {
   type: 'frame'

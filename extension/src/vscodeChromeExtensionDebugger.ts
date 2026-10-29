@@ -61,14 +61,12 @@ const breakpointNewsSchema = z.object({
   breakpoint: z.object({ id: z.number().int(), verified: z.boolean() }),
 })
 
-/** What a run-owned session turned out to be: the attach itself, the surface's page, the extension's worker, a target proven foreign (other tabs, other extensions' workers), or a worker target whose URL lookup failed (`unclassified`: it may be the run's own). */
-type SessionKind =
-  'pending' | 'root' | 'page' | 'worker' | 'other' | 'unclassified'
+/** What a run-owned session turned out to be: the attach itself, the surface's page, the extension's worker, or any other session of the run (a second tab, a worker outside the surface's tree). */
+type SessionKind = 'root' | 'page' | 'worker' | 'other'
 
 type SessionEntry = {
   session: vscode.DebugSession
   kind: SessionKind
-  classified: Promise<void>
   /** The target URL of an adopted worker, recorded in each capture. */
   targetUrl?: string
 }
@@ -103,6 +101,10 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
   private readonly unverifiedWorkerStops = new Set<number>()
   private ready = false
   private releaseBegun = false
+  /** Whether a second page matching the surface URL has been journaled already. */
+  private secondPageJournaled = false
+  /** Set once a page child was adopted as the surface; stays set after that session ends so a later page child is never promoted. */
+  private surfaceAdopted = false
   /** Set once the run told the debugger the owned browser is closing: sessions ending from now on are the close's doing. */
   private browserIsClosing = false
   private readonly releaser = new SharedAttempt(() => this.releaseOwned())
@@ -156,13 +158,9 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     session: vscode.DebugSession,
   ): vscode.DebugAdapterTracker | undefined {
     if (!isDebugSessionOfRun(session, this.name)) return undefined
-    const entry: SessionEntry = {
-      session,
-      kind: 'pending',
-      classified: Promise.resolve(),
-    }
-    entry.classified = this.classify(entry)
+    const entry: SessionEntry = { session, kind: 'other' }
     this.entries.set(session.id, entry)
+    this.classify(entry)
     return {
       onWillReceiveMessage: (message): void =>
         this.onClientMessage(entry, message),
@@ -176,53 +174,48 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
   }
 
   /**
-   * Decides what a session is from the target the adapter created it for, never from its name (SR14).
-   * Sets `entry.kind`; a worker is adopted only when its target URL is under the run's extension id.
+   * Decides what a session is from the session tree js-debug builds, never from its name (SR14) and never from `__pendingTargetId`.
+   * `__pendingTargetId` is the CDP session id of js-debug's own attachment, not the target id (js-debug's trace: `Target.attachedToTarget {"sessionId":"9EE0E073…","targetInfo":{"targetId":"E85B34F1…"}}` gave `__pendingTargetId: "9EE0E073…"`), so it can match no target id Codebook knows.
+   * The surface is the first page child of the run's attach (the attach filters by the surface URL); the extension's worker is a worker child of that page session; everything else is `other`.
+   * No worker can be a direct child of the attach: js-debug attaches at the top only targets passing `requirePageTarget` (type `page`, `browserAttacher.ts` in js-debug 1.93.0 and 1.140.0), and reaches workers through the auto-attach of an attached session, which names that session as the parent.
    */
-  private async classify(entry: SessionEntry): Promise<void> {
+  private classify(entry: SessionEntry): void {
     const configuration = entry.session.configuration
     const targetType: unknown = configuration.__browserTargetType
-    const targetId: unknown = configuration.__pendingTargetId
+    const parent = this.entries.get(entry.session.parentSession?.id ?? '')
     if (configuration.name === this.name) entry.kind = 'root'
-    else if (targetType === 'page')
-      entry.kind = targetId === this.input.surfaceTargetId ? 'page' : 'other'
-    else if (targetType === 'service_worker' && typeof targetId === 'string') {
-      // One failed or empty lookup must not make the run's own worker `other` for good: retry within the wake bound.
-      const url = await waitUntil(
-        () => this.input.targetUrlOf(targetId).catch(() => undefined),
-        'the worker target URL',
-        EXTENSION_WAKE_BOUND_MS,
-        this.abort.signal,
-      ).catch(() => undefined)
-      this.applyWorkerUrl(entry, url)
-    } else entry.kind = 'other'
+    else if (targetType === 'page' && parent?.kind === 'root')
+      this.classifyPage(entry)
+    else if (targetType === 'service_worker' && parent?.kind === 'page')
+      this.adoptWorker(entry)
+    else entry.kind = 'other'
   }
 
-  /** Sets a worker session's kind from its target URL: own worker, proven foreign (URL known, not this extension's), or unclassified (no URL). */
-  private applyWorkerUrl(entry: SessionEntry, url: string | undefined): void {
-    if (url === undefined) {
-      entry.kind = 'unclassified'
+  /** The first page child of the attach is the surface; a later one (even after the surface session ended) is another matching tab, journaled once so it is visible. */
+  private classifyPage(entry: SessionEntry): void {
+    if (!this.surfaceAdopted) {
+      this.surfaceAdopted = true
+      entry.kind = 'page'
       return
     }
-    const isOwnWorker = url.startsWith(
-      `chrome-extension://${this.input.run.extensionId}/`,
-    )
-    entry.kind = isOwnWorker ? 'worker' : 'other'
-    if (!isOwnWorker) return
-    entry.targetUrl = url
+    entry.kind = 'other'
+    if (this.secondPageJournaled) return
+    this.secondPageJournaled = true
+    this.input.record('chrome-extension.debugger-error', {
+      message: 'A second page matching the surface URL is open and ignored.',
+    })
+  }
+
+  /**
+   * Adopts a worker session of the surface's page as the extension's worker and starts a new generation.
+   * js-debug exposes no URL for a worker session, so the capture's `targetUrl` is derived from the manifest's worker path; the session tree (a worker child of the surface page) proves the worker belongs to the surface.
+   */
+  private adoptWorker(entry: SessionEntry): void {
+    entry.kind = 'worker'
+    entry.targetUrl = `chrome-extension://${this.input.run.extensionId}/${this.input.run.workerPath ?? ''}`
     // A replacement worker verifies its stops through `setBreakpoints`, not a `breakpoint` event: earlier losses are superseded.
     this.unverifiedWorkerStops.clear()
     this.bumpGeneration()
-  }
-
-  /** Looks the target URL of an unclassified worker session up once more, so a stop is not judged on a lookup that failed earlier. */
-  private async reclassify(entry: SessionEntry): Promise<void> {
-    const targetId: unknown = entry.session.configuration.__pendingTargetId
-    if (typeof targetId !== 'string') return
-    const url = await this.input.targetUrlOf(targetId).catch(() => undefined)
-    // The session may have ended or the run been released while the lookup was pending.
-    if (this.releaseBegun || !this.entries.has(entry.session.id)) return
-    this.applyWorkerUrl(entry, url)
   }
 
   private entriesOf(kind: 'page' | 'worker'): SessionEntry[] {
@@ -392,15 +385,8 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     const epochAtStop = Number.isInteger(body.threadId)
       ? this.resumeEpochOf(entry.session.id, body.threadId!)
       : 0
-    await entry.classified
-    if (entry.kind === 'unclassified') await this.reclassify(entry)
     if (this.releaseBegun || !Number.isInteger(body.threadId)) return
-    // A target whose classification failed may be the run's own worker: its pause stays, never continued silently.
-    if (entry.kind === 'unclassified') {
-      this.recordIntervention('unclassified-pause-kept')
-      return
-    }
-    // A target proven foreign (another tab or extension) that pauses would hang for good: continue it.
+    // A session outside the surface's tree (another tab or worker) that pauses would hang for good: continue it.
     if (entry.kind === 'other')
       return this.resumeForeignPause(entry, body.threadId!, epochAtStop)
     if (entry.kind !== 'page' && entry.kind !== 'worker') return
@@ -556,7 +542,6 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     entry: SessionEntry,
     body: DebugProtocol.OutputEvent['body'],
   ): Promise<void> {
-    await entry.classified
     if (this.releaseBegun) return
     if (entry.kind !== 'page' && entry.kind !== 'worker') return
     if (body.category === 'telemetry') return
@@ -626,6 +611,8 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
         maxFrames: NODE_REPLAY_DEBUG_MAX_FRAMES,
         maxVariables: NODE_REPLAY_DEBUG_MAX_VARIABLES,
         maxDepth: NODE_REPLAY_DEBUG_MAX_DEPTH,
+        // A page's or worker's `this` is a host object with many members: the locals are kept before any value is expanded.
+        topLevelFirst: true,
       },
     })
     // The pinned bytes and the editor's documents are checked again after the read.
@@ -634,6 +621,8 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     assertCurrent()
     return {
       stopIndex: stop.index,
+      path: stop.path,
+      line: stop.line,
       context: pause.context,
       workerGeneration:
         pause.context === 'service-worker' ? this.generation : 0,
@@ -703,7 +692,9 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
         'the continuation',
         signal,
       )
-      this.resumeThreads(pause.sessionId, pause.threadId)
+      // Only this pause ends here, and only if no answer ended it yet: the adapter's answer already closed it when the tracker saw it, and the thread's next stop may be reported before this call returns; that newer pause stays open (ER16).
+      if (this.pauseSet.isCurrent(pause))
+        this.resumeThreads(pause.sessionId, pause.threadId)
     } catch (error) {
       pause.resuming = false
       throw error
@@ -790,7 +781,6 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     if (!started) throw refusal()
     await this.waitOr(
       async () => {
-        await Promise.all([...this.entries.values()].map((e) => e.classified))
         return this.entriesOf('page')[0]
       },
       'the extension surface session',
@@ -811,9 +801,22 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     // `waking` exists only for a declared service-worker stop.
     if (this.input.run.stops.some((stop) => stop.context === 'service-worker'))
       this.reportPhase('waking')
+    await this.wakeWorker(signal)
+  }
+
+  /**
+   * Starts the extension's worker when no worker session of the surface is attached, then waits for its child session; called by {@link waitForWorker} at `waking` and by {@link ensureWorkerReady} before each click.
+   * Why: the launch stops every worker so js-debug can attach (TZ3), and an idle worker stops by itself later (SR1); either way nothing starts it but this, and the start is journaled as an intervention (CR10).
+   * @param signal - The run's abort signal.
+   * @throws {@link StudyError} `SERVICE_WORKER_NOT_ATTACHED` when no worker session appears within the wake bound.
+   */
+  private async wakeWorker(signal: AbortSignal): Promise<void> {
+    if (this.entriesOf('worker').length === 0) {
+      this.recordIntervention('start-worker')
+      await this.input.startWorker()
+    }
     await this.waitOr(
       async () => {
-        await Promise.all([...this.entries.values()].map((e) => e.classified))
         return this.entriesOf('worker')[0]
       },
       'the extension worker session',
@@ -876,12 +879,8 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
 
   async ensureWorkerReady(signal: AbortSignal): Promise<void> {
     if (!this.input.run.workerPath) return
-    if (this.entriesOf('worker').length === 0) {
-      // The worker went idle: Codebook starts it again before the click (SR1).
-      this.recordIntervention('start-worker')
-      await this.input.startWorker()
-      await this.waitForWorker(signal)
-    }
+    // The worker went idle: Codebook starts it again before the click (SR1).
+    await this.wakeWorker(signal)
     await this.waitOr(
       () => this.workerStopsBound(),
       'the worker stops to be verified',
@@ -930,7 +929,7 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
  * @param input - The run id, the resolved run, the owned browser's port and surface, and the journal.
  * @returns The debugger, listening to the editor's debug sessions of this run only.
  * @example
- * const debug = createVscodeChromeExtensionDebugger({ runId, workspace, run, port, surfaceTargetId, targetUrlOf, startWorker, assertSourcesUnchanged, roots, record })
+ * const debug = createVscodeChromeExtensionDebugger({ runId, workspace, run, port, surfaceTargetId, startWorker, assertSourcesUnchanged, roots, record })
  * await debug.attach(signal)
  */
 export function createVscodeChromeExtensionDebugger(
