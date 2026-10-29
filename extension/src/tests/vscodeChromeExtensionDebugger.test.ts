@@ -2030,6 +2030,41 @@ test('a worker child is adopted when the target list shows the extension’s wor
   await editor.dispose()
 })
 
+// protects=A3 (Cycle 0062 ship review, Codex): a worker child is the extension's worker only when the extension's worker is the only service worker listed, since js-debug's child names no target id; fails_when=a foreign worker listed beside the extension's own lets a foreign child be adopted; no_claim=which js-debug session belongs to which target
+test('a worker child is not adopted while a foreign service worker is listed beside the extension’s own', async () => {
+  // Arrange
+  const editor = await extensionEditorHarness({
+    constants: { EXTENSION_WAKE_BOUND_MS: 80 },
+  })
+  const created = editor.createDebugger([WORKER_STOP], {
+    targets: [
+      { targetId: 'surface-target', type: 'page', url: SURFACE_URL },
+      { targetId: 'worker-target', type: 'service_worker', url: WORKER_URL },
+      {
+        targetId: 'foreign-worker-target',
+        type: 'service_worker',
+        url: 'chrome-extension://ponmlkjihgfedcbaponmlkjihgfedcba/service-worker.js',
+      },
+    ],
+  })
+  const attaching = created.debug.attach(SIGNAL())
+  await until(() => editor.started.length > 0)
+  await editor.addChild({ kind: 'page', id: 'page-session' })
+  await attaching
+  await editor.addChild({ kind: 'service_worker', id: 'foreign-worker' })
+  // Act
+  const waking = created.debug.waitForWorker(SIGNAL())
+  // Assert
+  await assert.rejects(
+    waking,
+    (error) =>
+      error instanceof StudyError &&
+      error.code === 'SERVICE_WORKER_NOT_ATTACHED',
+  )
+  await created.debug.release()
+  await editor.dispose()
+})
+
 // protects=a worker child of the surface page is the extension's worker only while the browser lists the extension's service-worker target (Cycle 0062 task 12); fails_when=a worker child of another URL is adopted and armed; no_claim=which js-debug session belongs to which target
 test('a worker child of the surface page is not adopted while the extension’s own worker target is not listed', async () => {
   // Arrange

@@ -876,8 +876,8 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
   }
 
   /**
-   * Ties the adopted worker child to the extension's own service worker: it is kept only while the owned browser lists a service-worker target at the extension's worker URL.
-   * Called by {@link wakeWorker} after a worker child appears; a worker child while no such target exists is another extension's and is demoted to `other`.
+   * Ties the adopted worker child to the extension's own service worker: it is kept only while the owned browser lists exactly one service-worker target, at the extension's worker URL (another listed worker makes the adoption ambiguous).
+   * Called by {@link wakeWorker} after a worker child appears; a worker child while no such single target exists is another extension's and is demoted to `other`.
    * @param entry - The worker child adopted as the extension's worker.
    * @param signal - The run's abort signal.
    * @throws {@link StudyError} `SERVICE_WORKER_NOT_ATTACHED` when the extension's worker target is not listed within the wake bound.
@@ -888,12 +888,14 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
   ): Promise<void> {
     // The target list can trail the worker's child session, so it is polled within the wake bound before the child is demoted.
     await this.waitOr(
-      async () =>
-        (await this.input.readTargets()).some(
-          (target) =>
-            target.type === 'service_worker' && target.url === entry.targetUrl,
-        ),
-      "the extension's service worker target to be listed",
+      async () => {
+        const workers = (await this.input.readTargets()).filter(
+          (target) => target.type === 'service_worker',
+        )
+        // Exactly the extension's worker: js-debug's child names no target id, so another listed worker could be the one adopted.
+        return workers.length === 1 && workers[0]?.url === entry.targetUrl
+      },
+      "the extension's service worker target to be the only one listed",
       EXTENSION_WAKE_BOUND_MS,
       signal,
       () => {
