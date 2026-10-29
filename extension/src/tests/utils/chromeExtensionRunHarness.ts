@@ -110,6 +110,8 @@ export type HarnessBehaviour = {
   attachGate?: Promise<void>
   /** Holds the viewport factory until released, and ignores the run's abort meanwhile (the first preparation step never settles). */
   viewportGate?: Promise<void>
+  /** Holds the debugger's release until released (a debugger that stops answering at the cleanup). */
+  releaseGate?: Promise<void>
   /** Replaces the real clock the run's timers use, so a test fires a bound by hand. */
   clock?: RunClock
   /** Which debugger step throws. */
@@ -267,6 +269,7 @@ export function createRunHarness(behaviour: HarnessBehaviour = {}) {
       release: async (): Promise<void> => {
         debuggerState.released += 1
         log.push('debugger.release')
+        await behaviour.releaseGate
       },
     }
   }

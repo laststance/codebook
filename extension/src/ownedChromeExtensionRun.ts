@@ -1110,14 +1110,45 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     for (const cancelPinTimer of [...this.pinTimerCancels])
       this.safely(cancelPinTimer)
     this.pinTimerCancels.clear()
-    // A step still in flight finishes (it was aborted) before anything is closed, so a browser that appears late is closed too; one that ignores the abort is left behind at the stop bound.
-    const didStepsSettle = await this.waitForStepsWithinStopBound()
+    // One stop bound from the stop's admission covers every wait below, so no step or debugger that stops answering holds the stop past it.
+    const stopBound = this.armStopBound()
+    try {
+      await this.cleanupWithin(ending, stopBound.passed)
+    } finally {
+      stopBound.cancel()
+    }
+  }
+
+  /**
+   * The cleanup's waits and closes, each wait bounded by the stop bound; called once by {@link OwnedChromeExtensionRun.cleanup}.
+   * A step still in flight finishes (it was aborted) before anything is closed, so a browser that appears late is closed too; one that ignores the abort is left behind at the bound. A debugger release that does not answer within the bound is journaled and the test browser is closed without it.
+   * @param ending - How the run ends.
+   * @param boundPassed - Settles when the stop bound passes.
+   * @example await this.cleanupWithin(ending, stopBound.passed)
+   */
+  private async cleanupWithin(
+    ending: RunEnding,
+    boundPassed: Promise<false>,
+  ): Promise<void> {
+    const didStepsSettle = await this.settlesBefore(
+      this.stepsPromise,
+      boundPassed,
+    )
     this.showEnding(ending)
     for (const handle of this.cleanups.splice(0))
       this.safely(() => handle.dispose())
     const { debug, executor, browser } = this
     this.safely(() => debug?.browserClosing())
-    await this.safelyAsync(() => debug?.release())
+    const didReleaseSettle = await this.settlesBefore(
+      this.safelyAsync(() => debug?.release()),
+      boundPassed,
+    )
+    // A release past the bound is left running; the run says so where its other debugger failures go.
+    if (!didReleaseSettle)
+      this.record('chrome-extension.debugger-error', {
+        message:
+          'The debugger did not let go within the stop bound; the test browser is closed without waiting for it.',
+      })
     this.safely(() => executor?.dispose())
     this.cleanupResult = browser
       ? await this.closeBrowser(browser)
@@ -1147,30 +1178,41 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   }
 
   /**
-   * Waits for the in-flight preparation step, but never past {@link CHROME_EXTENSION_STOP_DEADLINE_MS}.
-   * Called first by {@link OwnedChromeExtensionRun.cleanup}; a step that ignores its abort would otherwise hold the stop forever.
-   * @returns `true` when the step settled (or none ran), `false` when the bound passed first.
+   * Arms the stop bound: {@link CHROME_EXTENSION_STOP_DEADLINE_MS} on the run's clock.
+   * Called first by {@link OwnedChromeExtensionRun.cleanup}; a step or a debugger that ignores its abort would otherwise hold the stop forever.
+   * @returns `passed`, which settles with `false` when the bound passes, and `cancel`, which the cleanup calls when it ends.
+   * @example const stopBound = this.armStopBound()
    */
-  private async waitForStepsWithinStopBound(): Promise<boolean> {
-    if (this.stepsPromise === undefined) return true
-    let cancelBound = (): void => undefined
-    const bound = new Promise<false>((resolve) => {
-      cancelBound = this.input.dependencies.clock.set(
+  private armStopBound(): { passed: Promise<false>; cancel: () => void } {
+    let cancel = (): void => undefined
+    const passed = new Promise<false>((resolve) => {
+      cancel = this.input.dependencies.clock.set(
         () => resolve(false),
         CHROME_EXTENSION_STOP_DEADLINE_MS,
       )
     })
-    try {
-      return await Promise.race([
-        this.stepsPromise.then(
-          () => true as const,
-          () => true as const,
-        ),
-        bound,
-      ])
-    } finally {
-      cancelBound()
-    }
+    return { passed, cancel }
+  }
+
+  /**
+   * Waits for some work, but never past the stop bound; used by {@link cleanupWithin} for the in-flight step and the debugger release.
+   * @param work - The work; `undefined` when there is none.
+   * @param boundPassed - Settles when the stop bound passes.
+   * @returns `true` when the work settled (or there was none), `false` when the bound passed first.
+   * @example await this.settlesBefore(this.stepsPromise, stopBound.passed) // => false when the step never settles
+   */
+  private async settlesBefore(
+    work: Promise<unknown> | undefined,
+    boundPassed: Promise<false>,
+  ): Promise<boolean> {
+    if (work === undefined) return true
+    return Promise.race([
+      work.then(
+        () => true as const,
+        () => true as const,
+      ),
+      boundPassed,
+    ])
   }
 
   /** After a stop bound passed, closes what the stuck step published later than the cleanup read it (a resource the cleanup already handled is not handled twice). */

@@ -1077,6 +1077,47 @@ test('a launch that began and failed after the stop bound keeps the cleanup unco
   })
 })
 
+// protects=B1 (Cycle 0062 ship last round, Codex adversarial): a stop whose debugger release never answers still settles at the stop bound, closes the test browser and journals the release it left behind; fails_when=the cleanup waits on the release forever, so the stop never returns and Chrome is never closed; no_claim=js-debug's own stop behaviour
+test('a stop whose debugger release never answers settles at the stop bound and closes the browser', async () => {
+  // Arrange
+  const releaseGate = defer<void>()
+  const timers = manualClock()
+  const harness = createRunHarness({
+    releaseGate: releaseGate.promise,
+    clock: timers.clock,
+  })
+  await harness.run.prepare()
+  let stopped = false
+  const stopping = harness.run.stop().then(() => {
+    stopped = true
+  })
+  await waitUntil(
+    () => harness.log.includes('debugger.release'),
+    'the release to start',
+  )
+  assert.equal(stopped, false)
+  // Act
+  timers.fire(10_000)
+  await stopping
+  // Assert
+  assert.equal(
+    harness.log.filter((entry) => entry === 'browser.close').length,
+    1,
+  )
+  assert.deepEqual(
+    harness.journal
+      .filter((entry) => entry.type === 'chrome-extension.debugger-error')
+      .map((entry) => entry.detail),
+    [
+      {
+        message:
+          'The debugger did not let go within the stop bound; the test browser is closed without waiting for it.',
+      },
+    ],
+  )
+  releaseGate.resolve()
+})
+
 // protects=state matrix deadline × click (Cycle 0062 ship review): a click called while the cleanup after the whole-run deadline is still running is refused RUN_NOT_READY and never reaches the executor; fails_when=the click dispatches, or is refused with another code, during that cleanup; no_claim=the error wording
 test('a click during the cleanup after the whole-run deadline is refused and never reaches the executor', async () => {
   // Arrange
