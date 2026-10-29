@@ -59,7 +59,7 @@ function isFolderValue(value: string, folder: string): boolean {
  * namesProfileByText('chrome --user-data-dir=/tmp/codebook-browser-ab --user-data-dir=/tmp/codebook-browser-a --headless', '/tmp/codebook-browser-a') // => true
  * namesProfileByText('chrome --user-data-dir=/tmp/codebook-browser-a --user-data-dir=/tmp/other', '/tmp/codebook-browser-a')        // => false
  */
-function namesProfileByText(command: string, folder: string): boolean {
+export function namesProfileByText(command: string, folder: string): boolean {
   let valueStart: number | undefined
   let hasFolderPrefix: boolean | undefined
   // A later switch replaces the value; each possible terminator still gets its own reading.
@@ -99,7 +99,7 @@ const POSIX_SWITCH_PREFIXES = ['--', '-']
  * @example
  * profileFolderOfArguments(['--user-data-dir=/tmp/a', '--', '--user-data-dir=/tmp/b']) // => '/tmp/a'
  */
-function profileFolderOfArguments(
+export function profileFolderOfArguments(
   switchArguments: string[],
 ): string | undefined {
   let profileFolder: string | undefined
@@ -164,7 +164,7 @@ const PROFILE_FLAG = '--user-data-dir='
  * @example
  * comparableWindowsPath('C:/Users/A B/AppData/Local/Temp/./codebook-browser-x\\') // => 'c:\\users\\a b\\appdata\\local\\temp\\codebook-browser-x'
  */
-function comparableWindowsPath(path: string): string {
+export function comparableWindowsPath(path: string): string {
   return win32.normalize(path).replace(/\\+$/, '').toLowerCase()
 }
 
@@ -245,7 +245,10 @@ function isSingleArgumentSwitchOnWindows(argument: string): boolean {
  * @example
  * namesProfileOnWindows('chrome.exe "--User-Data-Dir=C:/USERS/a b/temp/codebook-browser-x"', 'C:\\Users\\a b\\Temp\\codebook-browser-x') // => true
  */
-function namesProfileOnWindows(command: string, folder: string): boolean {
+export function namesProfileOnWindows(
+  command: string,
+  folder: string,
+): boolean {
   const wanted = comparableWindowsPath(folder)
   // Chrome trims each argument before it reads a switch or the terminator in it.
   const switches = windowsCommandLineArguments(command)
@@ -276,7 +279,7 @@ function namesProfileOnWindows(command: string, folder: string): boolean {
  * await foldersOfProfile('/tmp/codebook-browser-a', false) // => ['/private/tmp/codebook-browser-a'] on macOS
  * await foldersOfProfile('R:\\codebook-browser-a', true)   // => ['R:\\codebook-browser-a'] on a RAM disk that resolves no path
  */
-async function foldersOfProfile(
+export async function foldersOfProfile(
   profile: string,
   pathsMayNotResolve: boolean,
 ): Promise<string[]> {

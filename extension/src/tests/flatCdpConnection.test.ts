@@ -123,3 +123,43 @@ test('a command that is not answered in its own time fails with a timeout, and a
   assert.equal(String(outstandingError), 'Error: A.open: CDP disconnected')
   await assert.rejects(cdp.request('A.late', {}), /CDP disconnected/)
 })
+
+// Value: protects=B5 (one faulty observer must not starve the others); fails_when=a throwing listener stops the listeners after it or throws into the socket handler; no_claim=what the observer does
+test('an event reaches every listener even when an earlier one throws', () => {
+  // Arrange
+  const { transport, receive } = fakeTransport()
+  const cdp = new WebSocketFlatCdp(transport)
+  const seen: string[] = []
+  cdp.on('Target.targetCreated', () => {
+    throw new Error('observer defect')
+  })
+  cdp.on('Target.targetCreated', () => {
+    seen.push('second')
+  })
+  // Act
+  receive({ method: 'Target.targetCreated', params: {} })
+  // Assert
+  assert.deepEqual(seen, ['second'])
+})
+
+for (const frame of ['null', '7', '[1,2]', '"text"']) {
+  // Value: protects=B5 (a frame that is JSON but no object); fails_when=receive throws on it instead of ending the connection; no_claim=what Chrome sends
+  test(`a ${frame} frame ends the connection and rejects the outstanding command`, async () => {
+    // Arrange
+    const handlers: ((event: { data: string }) => void)[] = []
+    const transport: FlatCdpTransport = {
+      addEventListener: (type: string, handler: unknown) => {
+        if (type === 'message' && typeof handler === 'function')
+          handlers.push(handler as (event: { data: string }) => void)
+      },
+      send: () => undefined,
+      close: () => undefined,
+    }
+    const cdp = new WebSocketFlatCdp(transport)
+    const pending = cdp.request('Browser.getVersion', {})
+    // Act
+    for (const handler of handlers) handler({ data: frame })
+    // Assert
+    await assert.rejects(pending, /CDP disconnected/)
+  })
+}

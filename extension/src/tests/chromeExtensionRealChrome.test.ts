@@ -242,6 +242,7 @@ test(
             ],
           },
           { title: 'Home', url: 'https://home.example/' },
+          { title: 'Empty folder' },
         ],
         storage: {},
       },
@@ -270,6 +271,7 @@ test(
           ],
         },
         { title: 'Home', url: 'https://home.example/' },
+        { title: 'Empty folder', children: [] },
       ],
     })
   },

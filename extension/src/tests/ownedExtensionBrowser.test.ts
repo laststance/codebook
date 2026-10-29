@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import {
+  chmod,
   mkdtemp,
   readFile,
   readdir,
@@ -12,6 +13,7 @@ import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { StudyError } from '../errors'
+import { FlatCdpCommandError } from '../runtimeSupport/flatCdpConnection'
 import {
   launchOwnedExtensionBrowser,
   type OwnedBrowserLaunchOptions,
@@ -385,4 +387,299 @@ test('the debugging endpoint is read only from a complete file of Chrome’s two
   })
   assert.equal(readDevToolsActivePort('51234'), undefined)
   assert.equal(readDevToolsActivePort(''), undefined)
+})
+
+// Value: protects=ER19 and B3 (Chrome answers object keys sorted); fails_when=the read-back compares JSON text, so a seed whose keys are not sorted fails SEED_NOT_APPLIED on a healthy Chrome; no_claim=values Chrome changes
+test('launch accepts a nested seed whose keys Chrome answers in sorted order', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(healthy())
+  const seed = {
+    zebra: { second: 2, first: [{ b: 1, a: 2 }] },
+    apple: 'fruit',
+  }
+  // Act
+  const browser = await launchOwnedExtensionBrowser(
+    launchOptions(root, { seed: { bookmarks: [], storage: seed } }),
+    chrome.dependencies,
+  )
+  // Assert
+  assert.equal(browser.surfaceTargetId, 'popup-1')
+  assert.deepEqual(await browser.close(), {
+    profileLeft: false,
+    exitConfirmed: true,
+  })
+})
+
+// Value: protects=ER12 and CR-B2 (a seed node without url or children is a folder); fails_when=an empty folder is written as a url node with url ''; no_claim=Chrome loading the file
+test('the seeded Bookmarks file writes a node without url or children as an empty folder', () => {
+  // Arrange
+  const seed = [
+    { title: 'Empty' },
+    { title: 'Home', url: 'https://home.example/' },
+  ]
+  // Act
+  const file = JSON.parse(ownedBrowserBookmarks(seed))
+  // Assert
+  const [empty, home] = file.roots.other.children
+  assert.deepEqual(
+    [empty.type, empty.children, empty.url, home.type, home.url],
+    ['folder', [], undefined, 'url', 'https://home.example/'],
+  )
+})
+
+// Value: protects=B7 (the stop-again branch); fails_when=a worker that starts with the popup is left running when the debugger attaches; no_claim=real worker timing
+test('launch stops a worker that starts again when the popup opens, before it returns', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(healthy({ workerStartsWithPopup: true }))
+  // Act
+  const browser = await launchOwnedExtensionBrowser(
+    launchOptions(root),
+    chrome.dependencies,
+  )
+  // Assert
+  const methods = chrome.commands.map(({ method }) => method)
+  const afterPopup = methods.slice(methods.indexOf('Extensions.triggerAction'))
+  assert.equal(
+    afterPopup.filter((method) => method === 'ServiceWorker.stopAllWorkers')
+      .length >= 1,
+    true,
+  )
+  await browser.close()
+})
+
+// Value: protects=TZ3 and the 1 s stop timeout; fails_when=a stop command that times out ends the launch, or is not sent again; no_claim=the real 1 s duration
+test('launch sends the worker stop again after the first one times out and still succeeds', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(healthy({ stopTimesOutOnce: true }))
+  // Act
+  const browser = await launchOwnedExtensionBrowser(
+    launchOptions(root),
+    chrome.dependencies,
+  )
+  // Assert
+  const stops = chrome.commands.filter(
+    ({ method }) => method === 'ServiceWorker.stopAllWorkers',
+  )
+  assert.equal(stops.length >= 2, true)
+  await browser.close()
+})
+
+// Value: protects=B6 (the bound counts the whole wait); fails_when=a worker that never stops waits unbounded, or the failure loses its cause; no_claim=the 3 s duration (the fake sleeps instantly, the budget charges the nominal pause)
+test('launch fails with RUNTIME_FAILED naming the still-listed worker when no stop ends it in time', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(healthy({ stopLeavesWorker: true }))
+  // Act
+  const error = await failureOf(launchOptions(root), chrome)
+  // Assert
+  assert.equal(error.code, 'RUNTIME_FAILED')
+  assert.equal(
+    error.message,
+    'The extension’s service worker did not stop in time.',
+  )
+  assert.equal(
+    error.causeDetail,
+    `still listed: chrome-extension://${EXTENSION_ID}/worker.js`,
+  )
+})
+
+for (const phase of [
+  'Browser.getVersion',
+  'ServiceWorker.stopAllWorkers',
+  'Extensions.getStorageItems',
+  'Extensions.triggerAction',
+]) {
+  // Value: protects=CR14 and B6 (an accepted stop ends the launch in every phase); fails_when=a phase does not look at the signal, so the launch goes on to the next step; no_claim=the stop's own handling
+  test(`a stop accepted at ${phase} ends the launch, ends the browser and removes the profile`, async (context) => {
+    // Arrange
+    const root = await profileRoot(context)
+    const stop = new AbortController()
+    let fired = false
+    const chrome = fakeOwnedChrome(
+      healthy({
+        onCommand: ({ method }) => {
+          if (method === phase && !fired) {
+            fired = true
+            stop.abort()
+          }
+        },
+      }),
+    )
+    // Act
+    const error = await failureOf(launchOptions(root, {}, stop.signal), chrome)
+    // Assert
+    assert.equal(error.code, 'RUNTIME_FAILED')
+    assert.equal(
+      error.message,
+      'The start was stopped before the extension browser was ready.',
+    )
+    assert.equal(chrome.signals.includes('SIGTERM'), true)
+    assert.equal(chrome.closed(), true)
+    assert.deepEqual(await readdir(root), [])
+  })
+}
+
+// Value: protects=CR14 (a stop accepted while Chrome starts); fails_when=the wait for DevToolsActivePort ignores the signal; no_claim=the real file
+test('a stop accepted right after the spawn ends the launch before any connection and ends the browser', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const stop = new AbortController()
+  const chrome = fakeOwnedChrome(healthy())
+  let connected = false
+  const dependencies = {
+    ...chrome.dependencies,
+    spawnBrowser: (executable: string, args: string[]) => {
+      const browser = chrome.dependencies.spawnBrowser(executable, args)
+      stop.abort()
+      return browser
+    },
+    connect: async (url: string, timeoutMs: number) => {
+      connected = true
+      return chrome.dependencies.connect(url, timeoutMs)
+    },
+  }
+  // Act
+  const error = await launchOwnedExtensionBrowser(
+    launchOptions(root, {}, stop.signal),
+    dependencies,
+  ).then(
+    () => undefined,
+    (thrown: unknown) => thrown,
+  )
+  // Assert
+  assert.equal(error instanceof StudyError && error.code, 'RUNTIME_FAILED')
+  assert.equal(connected, false)
+  assert.equal(chrome.signals.includes('SIGTERM'), true)
+  assert.deepEqual(await readdir(root), [])
+})
+
+// Value: protects=ER18; fails_when=a connection that cannot be opened leaves the browser or the profile, or throws a raw error; no_claim=real sockets
+test('launch fails with RUNTIME_FAILED when the debugging connection cannot be opened, with the profile path hidden in the cause', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(healthy())
+  const dependencies = {
+    ...chrome.dependencies,
+    connect: async (): Promise<never> => {
+      throw new Error(`connect ECONNREFUSED near ${root}/codebook-browser-x`)
+    },
+  }
+  // Act
+  const error = await launchOwnedExtensionBrowser(
+    launchOptions(root),
+    dependencies,
+  ).then(
+    () => undefined,
+    (thrown: unknown) => thrown,
+  )
+  // Assert
+  assert.ok(error instanceof StudyError)
+  assert.equal(error.code, 'RUNTIME_FAILED')
+  assert.equal(error.message, 'The extension browser could not be started.')
+  assert.equal(chrome.signals.includes('SIGTERM'), true)
+  assert.deepEqual(await readdir(root), [])
+})
+
+// Value: protects=ER18; fails_when=a spawn that ends before it publishes its port is reported as a timeout or leaves the folder; no_claim=Chrome's real startup failures
+test('launch fails with RUNTIME_FAILED when Chrome ends before it publishes its debugging port, and removes the profile', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(healthy({ exitsAtSpawn: true }))
+  // Act
+  const error = await failureOf(launchOptions(root), chrome)
+  // Assert
+  assert.equal(error.code, 'RUNTIME_FAILED')
+  assert.equal(error.message, 'Chrome ended before it was ready.')
+  assert.deepEqual(await readdir(root), [])
+})
+
+// Value: protects=B4 (every command failure is a StudyError); fails_when=an unmapped command's failure escapes as a raw FlatCdpCommandError, or shows the extension root; no_claim=which commands Chrome fails
+test('a failing unmapped command ends the launch as RUNTIME_FAILED with the cause masked and the root hidden', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(
+    healthy({
+      rejectMethod: {
+        method: 'Browser.getVersion',
+        error: new FlatCdpCommandError(
+          'Browser.getVersion',
+          -32000,
+          `internal ${EXTENSION_ROOT}/x with Bearer abcdef0123456789`,
+        ),
+      },
+    }),
+  )
+  // Act
+  const error = await failureOf(launchOptions(root), chrome)
+  // Assert
+  assert.equal(error.code, 'RUNTIME_FAILED')
+  assert.equal(error.message, 'The extension browser could not be started.')
+  assert.equal(error.causeDetail.includes(EXTENSION_ROOT), false)
+  assert.equal(error.causeDetail.includes('abcdef0123456789'), false)
+  assert.equal(chrome.closed(), true)
+  assert.deepEqual(await readdir(root), [])
+})
+
+// Value: protects=B4 and the BROWSER_LOST contract; fails_when=a connection lost outside loadUnpacked is reported as another code; no_claim=the debugger's own loss handling
+test('a connection lost during an unmapped command ends the launch as BROWSER_LOST', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(
+    healthy({
+      rejectMethod: {
+        method: 'Target.attachToTarget',
+        error: new FlatCdpCommandError(
+          'Target.attachToTarget',
+          undefined,
+          'CDP disconnected',
+        ),
+      },
+    }),
+  )
+  // Act
+  const error = await failureOf(launchOptions(root), chrome)
+  // Assert
+  assert.equal(error.code, 'BROWSER_LOST')
+  assert.equal(error.message, 'Chrome ended during the start.')
+  assert.deepEqual(await readdir(root), [])
+})
+
+// Value: protects=B8; fails_when=the close signals only the main pid, leaving helpers that keep the profile busy; no_claim=real process groups (real-Chrome test)
+test('close signals the browser through its process group first on POSIX', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(healthy())
+  const browser = await launchOwnedExtensionBrowser(
+    launchOptions(root),
+    chrome.dependencies,
+  )
+  // Act
+  await browser.close()
+  // Assert
+  assert.deepEqual(chrome.signalledIds, [-987_654])
+})
+
+// Value: protects=ER18's report (profileLeft); fails_when=a folder that cannot be removed is reported as removed, or close throws; no_claim=Windows locks (POSIX permissions here)
+test('close reports profileLeft when the profile folder cannot be removed', async (context) => {
+  if (process.platform === 'win32' || process.getuid?.() === 0) {
+    context.skip('needs POSIX permissions and a user that is not root')
+    return
+  }
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(healthy())
+  const browser = await launchOwnedExtensionBrowser(
+    launchOptions(root),
+    chrome.dependencies,
+  )
+  // A parent that refuses removals keeps the folder.
+  await chmod(root, 0o555)
+  // Act
+  const closing = await browser.close().finally(() => chmod(root, 0o755))
+  // Assert
+  assert.deepEqual(closing, { profileLeft: true, exitConfirmed: true })
+  assert.equal((await readdir(root)).length, 1)
 })

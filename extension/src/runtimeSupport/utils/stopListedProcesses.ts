@@ -78,42 +78,74 @@ async function stillRunningAfter(
   return remaining
 }
 
+/** Which of the stopped processes lead a process group of their own, so one signal reaches their helpers too. */
+export type StopOptions = {
+  /** Processes spawned `detached` (their id is their group id); on POSIX each gets its signal as `process.kill(-pid, …)` first, then as `process.kill(pid, …)` when no such group exists. */
+  groupLeaders?: readonly number[]
+}
+
 /**
- * Stops the processes of an abandoned owned browser: SIGTERM, then SIGKILL after the grace time; `taskkill /T /F` on Windows (ER18).
- * Called by the orphan sweep ({@link removeAbandonedProfiles}) for processes whose command line carries exactly the dead run's profile folder; it signals nothing else.
+ * Sends one signal to a process, or to its whole group when it leads one; called by {@link stopListedProcesses}.
+ * @param pid - The process id.
+ * @param signal - The signal.
+ * @param isGroupLeader - Whether the process was spawned as a group leader.
+ * @param stopper - The signals in use.
+ * @example
+ * signalProcess(4242, 'SIGTERM', true, REAL_PROCESS_STOPPER) // signals the group -4242, else the process 4242
+ */
+function signalProcess(
+  pid: number,
+  signal: NodeJS.Signals,
+  isGroupLeader: boolean,
+  stopper: ProcessStopper,
+): void {
+  if (isGroupLeader) {
+    try {
+      stopper.signal(-pid, signal)
+      return
+    } catch {
+      // No such group: fall back to the process itself.
+    }
+  }
+  try {
+    stopper.signal(pid, signal)
+  } catch {
+    // A process that is gone already needs no signal.
+  }
+}
+
+/**
+ * Stops the processes of an owned browser: SIGTERM, then SIGKILL after the grace time; `taskkill /T /F` on Windows (ER18).
+ * Called by the owned launch's close for its own browser and by the orphan sweep ({@link removeAbandonedProfiles}) for processes proven to be the dead run's browser; it signals nothing else.
  * @param pids - The matched processes.
  * @param stopper - The signals in use; the real ones in the product.
- * @returns `true` when none of them runs any more.
+ * @param options - The processes that lead their own group ({@link StopOptions}).
+ * @returns `true` when none of them runs any more; on Windows the exit is awaited for the same grace time as a SIGKILL, since `taskkill` can return before the process is gone.
  * @example
  * await stopListedProcesses([4242, 4243], REAL_PROCESS_STOPPER) // => true
  */
 export async function stopListedProcesses(
   pids: number[],
   stopper: ProcessStopper = REAL_PROCESS_STOPPER,
+  options: StopOptions = {},
 ): Promise<boolean> {
   if (stopper.platform === 'win32') {
     for (const pid of pids) await stopper.taskkill(pid)
-    return (await stillRunningAfter(pids, 0, stopper)).length === 0
+    return (
+      (await stillRunningAfter(pids, EXTENSION_BROWSER_KILL_GRACE_MS, stopper))
+        .length === 0
+    )
   }
-  for (const pid of pids) {
-    try {
-      stopper.signal(pid, 'SIGTERM')
-    } catch {
-      // A process that is gone already needs no signal.
-    }
-  }
+  const leads = (pid: number): boolean =>
+    options.groupLeaders?.includes(pid) ?? false
+  for (const pid of pids) signalProcess(pid, 'SIGTERM', leads(pid), stopper)
   const survivors = await stillRunningAfter(
     pids,
     EXTENSION_BROWSER_KILL_GRACE_MS,
     stopper,
   )
-  for (const pid of survivors) {
-    try {
-      stopper.signal(pid, 'SIGKILL')
-    } catch {
-      // It ended between the check and the signal.
-    }
-  }
+  for (const pid of survivors)
+    signalProcess(pid, 'SIGKILL', leads(pid), stopper)
   return (
     (
       await stillRunningAfter(

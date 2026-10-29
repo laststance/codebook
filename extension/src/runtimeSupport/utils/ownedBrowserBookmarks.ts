@@ -49,12 +49,13 @@ export function ownedBrowserBookmarks(
   // Depth-first, so a folder's id precedes its children's.
   const toNode = (bookmark: ExtensionSeedBookmark): BookmarkNode => {
     const id = String(nextId++)
-    if (bookmark.children === undefined)
+    // A node with a url is a bookmark; anything else is a folder, also an empty one (a title without url or children).
+    if (bookmark.url !== undefined)
       return {
         id,
         name: bookmark.title,
         type: 'url',
-        url: bookmark.url ?? '',
+        url: bookmark.url,
         date_added: '0',
         date_last_used: '0',
       }
@@ -65,7 +66,7 @@ export function ownedBrowserBookmarks(
       date_added: '0',
       date_last_used: '0',
       date_modified: '0',
-      children: bookmark.children.map(toNode),
+      children: (bookmark.children ?? []).map(toNode),
     }
   }
   const root = (

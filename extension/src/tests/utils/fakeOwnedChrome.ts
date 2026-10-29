@@ -29,6 +29,16 @@ export type FakeOwnedChromeBehaviour = {
   popupOpens: boolean
   /** Runs when a command arrives, before it is answered. */
   onCommand?: (command: RecordedCommand) => void
+  /** A method that rejects with this error every time it is sent (an unmapped command's failure, a lost connection). */
+  rejectMethod?: { method: string; error: Error }
+  /** The first `ServiceWorker.stopAllWorkers` answers nothing in time, as Chrome may while a worker registers. */
+  stopTimesOutOnce?: boolean
+  /** `ServiceWorker.stopAllWorkers` answers but the worker keeps running. */
+  stopLeavesWorker?: boolean
+  /** The worker starts again when the action opens the popup (the extension's own startup work). */
+  workerStartsWithPopup?: boolean
+  /** The spawned browser ends at once and never publishes `DevToolsActivePort`. */
+  exitsAtSpawn?: boolean
 }
 
 /** The fake browser as a test sees it. */
@@ -39,6 +49,25 @@ export type FakeOwnedChrome = {
   /** The signals sent to the browser process, in order. */
   signals: (NodeJS.Signals | 0)[]
   closed: () => boolean
+  /** The pids and group ids (negative) the browser was signalled through, in order. */
+  signalledIds: number[]
+}
+
+/** Copies a JSON value with the keys of every object in sorted order, as Chrome returns storage. */
+function sortedKeys(value: unknown): Record<string, unknown> {
+  const sort = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(sort)
+    if (typeof node !== 'object' || node === null) return node
+    return Object.fromEntries(
+      Object.entries(node)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, child]) => [key, sort(child)]),
+    )
+  }
+  const sorted = sort(value)
+  return typeof sorted === 'object' && sorted !== null && !Array.isArray(sorted)
+    ? Object.fromEntries(Object.entries(sorted))
+    : {}
 }
 
 /**
@@ -55,6 +84,8 @@ export function fakeOwnedChrome(
   const commands: RecordedCommand[] = []
   const spawned: FakeOwnedChrome['spawned'] = []
   const signals: (NodeJS.Signals | 0)[] = []
+  const signalledIds: number[] = []
+  let stopTimeoutsLeft = behaviour.stopTimesOutOnce ? 1 : 0
   let workerRunning = true
   let popupOpen = false
   let connectionClosed = false
@@ -65,6 +96,8 @@ export function fakeOwnedChrome(
 
   const answer = (command: RecordedCommand): Record<string, unknown> => {
     const { method, params, sessionId } = command
+    if (method === behaviour.rejectMethod?.method)
+      throw behaviour.rejectMethod.error
     if (method === behaviour.missingMethod)
       throw new FlatCdpCommandError(method, -32601, `'${method}' wasn't found`)
     switch (method) {
@@ -91,7 +124,11 @@ export function fakeOwnedChrome(
           )
         return { id: behaviour.loadedId }
       case 'ServiceWorker.stopAllWorkers':
-        workerRunning = false
+        if (stopTimeoutsLeft > 0) {
+          stopTimeoutsLeft -= 1
+          throw new FlatCdpCommandError(method, undefined, 'timed out')
+        }
+        workerRunning = Boolean(behaviour.stopLeavesWorker)
         return {}
       case 'ServiceWorker.startWorker':
         workerRunning = true
@@ -102,9 +139,11 @@ export function fakeOwnedChrome(
         return {}
       case 'Extensions.getStorageItems':
         assertExtensionPage(sessionId)
-        return { data: behaviour.storedData ?? { ...storage } }
+        // Chrome answers the keys of every object sorted.
+        return { data: sortedKeys(behaviour.storedData ?? storage) }
       case 'Extensions.triggerAction':
         popupOpen = behaviour.popupOpens
+        if (behaviour.workerStartsWithPopup) workerRunning = true
         return {}
       default:
         return {}
@@ -175,10 +214,15 @@ export function fakeOwnedChrome(
     commands,
     spawned,
     signals,
+    signalledIds,
     closed: () => connectionClosed,
     dependencies: {
       spawnBrowser: (executable, args) => {
         spawned.push({ executable, args })
+        if (behaviour.exitsAtSpawn) {
+          alive = false
+          return browser
+        }
         const profileSwitch = args.find((arg) =>
           arg.startsWith('--user-data-dir='),
         )
@@ -194,8 +238,9 @@ export function fakeOwnedChrome(
       sleep: async () => undefined,
       stopper: {
         platform: 'linux',
-        signal: (_pid, signal): void => {
+        signal: (pid, signal): void => {
           signals.push(signal)
+          if (signal !== 0) signalledIds.push(pid)
           if (signal === 'SIGTERM' || signal === 'SIGKILL') alive = false
           // The null signal throws once the process is gone, as the system does.
           if (signal === 0 && !alive) throw new Error('ESRCH')

@@ -1,7 +1,9 @@
 import { spawn } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
+import { isDeepStrictEqual } from 'node:util'
 
 import type {
   FlatCdpConnection,
@@ -24,8 +26,10 @@ import {
 } from '../constants'
 import { StudyError } from '../errors'
 import type { StorageOwnerIdentity } from '../utils/readRecordedOwner'
+import { redactSecretText } from '../utils/redactSecretText'
 import { removeWithoutFollowing } from '../utils/removeWithoutFollowing'
 import { retryWhileBusy } from '../utils/retryWhileBusy'
+import { hidePrivateRoots } from '../utils/sanitizeCause'
 
 import {
   connectFlatCdp,
@@ -38,6 +42,8 @@ import {
   type CdpTargetInfo,
 } from './utils/cdpFieldReaders'
 import { ownedBrowserBookmarks } from './utils/ownedBrowserBookmarks'
+import { writeOwnedBrowserMarker } from './utils/ownedBrowserMarker'
+import { PollBudget } from './utils/pollBudget'
 import { readDevToolsActivePort } from './utils/readDevToolsActivePort'
 import { removeAbandonedProfiles } from './utils/removeAbandonedProfiles'
 import {
@@ -82,9 +88,11 @@ export interface OwnedBrowserLaunchOptions {
 /** The real process, socket, timer, signals and sweep. */
 const REAL_OWNED_BROWSER_DEPENDENCIES: OwnedBrowserDependencies = {
   spawnBrowser: (executable, args) => {
+    // On POSIX the browser leads its own process group, so one signal ends its helpers too (B8); Windows ends the tree with `taskkill /T`.
     const child = spawn(executable, args, {
       stdio: 'ignore',
       windowsHide: true,
+      detached: process.platform !== 'win32',
     })
     let exited = false
     child.once('exit', () => {
@@ -155,7 +163,11 @@ async function prepareProfile(
       join(profile, 'Default', 'Bookmarks'),
       ownedBrowserBookmarks(options.run.seed.bookmarks),
     )
-    await writeOwnedProfileMarkers(profile, options.owner)
+    await writeOwnedProfileMarkers(
+      profile,
+      options.owner,
+      options.chromeExecutable,
+    )
     return profile
   } catch (error) {
     if (made !== undefined)
@@ -177,12 +189,9 @@ async function waitForEndpoint(
   signal: AbortSignal | undefined,
 ): Promise<string> {
   const file = join(profile, 'DevToolsActivePort')
-  // Poll until the file is complete, the browser ended or the bound passed.
-  for (
-    let waited = 0;
-    waited <= EXTENSION_BROWSER_START_BOUND_MS;
-    waited += EXTENSION_BROWSER_POLL_MS
-  ) {
+  const budget = new PollBudget(EXTENSION_BROWSER_START_BOUND_MS)
+  // Poll until the file is complete, the browser ended or the bound passed; the last look comes after the last pause.
+  for (;;) {
     assertNotStopped(signal)
     if (browser.hasExited())
       throw new StudyError(
@@ -190,10 +199,11 @@ async function waitForEndpoint(
         'Chrome ended before it was ready.',
       )
     const endpoint = readDevToolsActivePort(
-      await readFile(file, 'utf8').catch(() => ''),
+      await budget.measure(() => readFile(file, 'utf8').catch(() => '')),
     )
     if (endpoint) return `ws://127.0.0.1:${endpoint.port}${endpoint.path}`
-    await dependencies.sleep(EXTENSION_BROWSER_POLL_MS)
+    if (budget.isSpent()) break
+    await budget.pause(dependencies.sleep, EXTENSION_BROWSER_POLL_MS)
   }
   throw new StudyError('RUNTIME_FAILED', 'Chrome did not become ready in time.')
 }
@@ -219,12 +229,46 @@ async function extensionCommand(
   }
 }
 
+/**
+ * Sends one command inside a poll loop: its time counts against the budget and its own timeout never exceeds what is left of it (B6).
+ * @param cdp - The connection.
+ * @param budget - The loop's budget.
+ * @param method - The command.
+ * @param params - Its parameters.
+ * @param sessionId - The target session, when the command goes to one.
+ * @returns The command's answer.
+ */
+function requestWithin(
+  cdp: FlatCdpConnection,
+  budget: PollBudget,
+  method: string,
+  params: Record<string, unknown>,
+  sessionId?: string,
+): Promise<Record<string, unknown>> {
+  return budget.measure(() =>
+    cdp.request(
+      method,
+      params,
+      sessionId,
+      Math.max(
+        1,
+        Math.min(EXTENSION_CDP_COMMAND_TIMEOUT_MS, budget.remainingMs()),
+      ),
+    ),
+  )
+}
+
 /** The service-worker targets of one extension. */
 async function workerTargets(
   cdp: FlatCdpConnection,
   extensionId: string,
+  budget?: PollBudget,
 ): Promise<CdpTargetInfo[]> {
-  const targets = readCdpTargets(await cdp.request('Target.getTargets', {}))
+  const targets = readCdpTargets(
+    budget
+      ? await requestWithin(cdp, budget, 'Target.getTargets', {})
+      : await cdp.request('Target.getTargets', {}),
+  )
   return targets.filter(
     (target) =>
       target.type === 'service_worker' &&
@@ -253,26 +297,40 @@ async function stopExtensionWorkers(
   session: Session,
   boundMs: number,
 ): Promise<void> {
+  const budget = new PollBudget(boundMs)
   // Chrome may leave a stop unanswered while a worker that cannot start is being registered; the target list below decides, so a stop that times out is not an error.
   const stop = () =>
-    extensionCommand(
-      session.cdp,
-      session.chromeVersion,
-      'ServiceWorker.stopAllWorkers',
-      {},
-      session.controlSessionId,
-      EXTENSION_STOP_COMMAND_TIMEOUT_MS,
-    ).catch((error: unknown) => {
-      const isTimeout =
-        error instanceof FlatCdpCommandError && error.detail === 'timed out'
-      if (!isTimeout) throw error
-      return {}
-    })
+    budget
+      .measure(() =>
+        extensionCommand(
+          session.cdp,
+          session.chromeVersion,
+          'ServiceWorker.stopAllWorkers',
+          {},
+          session.controlSessionId,
+          Math.max(
+            1,
+            Math.min(EXTENSION_STOP_COMMAND_TIMEOUT_MS, budget.remainingMs()),
+          ),
+        ),
+      )
+      .catch((error: unknown) => {
+        const isTimeout =
+          error instanceof FlatCdpCommandError && error.detail === 'timed out'
+        if (!isTimeout) throw error
+        return {}
+      })
+  assertNotStopped(session.signal)
   await stop()
   let quietMs = 0
-  // Poll the target list until the extension has had no worker for the quiet period.
-  for (let waited = 0; waited <= boundMs; waited += EXTENSION_BROWSER_POLL_MS) {
-    const running = await workerTargets(session.cdp, session.extensionId)
+  // Poll the target list until the extension has had no worker for the quiet period; the last look comes after the last pause.
+  for (;;) {
+    assertNotStopped(session.signal)
+    const running = await workerTargets(
+      session.cdp,
+      session.extensionId,
+      budget,
+    )
     if (running.length === 0) {
       quietMs += EXTENSION_BROWSER_POLL_MS
       if (quietMs >= EXTENSION_WORKER_QUIET_MS) return
@@ -281,7 +339,8 @@ async function stopExtensionWorkers(
       quietMs = 0
       await stop()
     }
-    await session.dependencies.sleep(EXTENSION_BROWSER_POLL_MS)
+    if (budget.isSpent()) break
+    await budget.pause(session.dependencies.sleep, EXTENSION_BROWSER_POLL_MS)
   }
   const remaining = await workerTargets(session.cdp, session.extensionId)
   throw new StudyError(
@@ -337,10 +396,9 @@ async function seedStorage(
     const data = stored.data
     const readBack =
       typeof data === 'object' && data !== null ? data : Object.create(null)
+    // Chrome answers object keys sorted, so the comparison ignores key order.
     const differing = keys.find(
-      (key) =>
-        JSON.stringify(Reflect.get(readBack, key)) !==
-        JSON.stringify(storage[key]),
+      (key) => !isDeepStrictEqual(Reflect.get(readBack, key), storage[key]),
     )
     if (differing !== undefined)
       throw new StudyError(
@@ -382,18 +440,16 @@ async function openPopup(
     'Extensions.triggerAction',
     { id: session.extensionId, targetId: initialTab.targetId },
   )
-  // Poll for the popup page up to the open bound.
-  for (
-    let waited = 0;
-    waited <= EXTENSION_OPEN_BOUND_MS;
-    waited += EXTENSION_BROWSER_POLL_MS
-  ) {
+  const budget = new PollBudget(EXTENSION_OPEN_BOUND_MS)
+  // Poll for the popup page up to the open bound; the last look comes after the last pause.
+  for (;;) {
     assertNotStopped(session.signal)
     const popup = readCdpTargets(
-      await session.cdp.request('Target.getTargets', {}),
+      await requestWithin(session.cdp, budget, 'Target.getTargets', {}),
     ).find((target) => target.type === 'page' && target.url === surfaceUrl)
     if (popup) return popup.targetId
-    await session.dependencies.sleep(EXTENSION_BROWSER_POLL_MS)
+    if (budget.isSpent()) break
+    await budget.pause(session.dependencies.sleep, EXTENSION_BROWSER_POLL_MS)
   }
   throw new StudyError('POPUP_NOT_OPENED', popupNotOpenedSentence())
 }
@@ -440,24 +496,29 @@ async function installExtension(
 async function attachControlSession(
   cdp: FlatCdpConnection,
   dependencies: OwnedBrowserDependencies,
+  signal: AbortSignal | undefined,
 ): Promise<string> {
-  // The initial page may need a moment to appear after the endpoint is published.
-  for (
-    let waited = 0;
-    waited <= EXTENSION_BROWSER_START_BOUND_MS;
-    waited += EXTENSION_BROWSER_POLL_MS
-  ) {
+  const budget = new PollBudget(EXTENSION_BROWSER_START_BOUND_MS)
+  // The initial page may need a moment to appear after the endpoint is published; the last look comes after the last pause.
+  for (;;) {
+    assertNotStopped(signal)
     const page = readCdpTargets(
-      await cdp.request('Target.getTargets', {}),
+      await requestWithin(cdp, budget, 'Target.getTargets', {}),
     ).find((target) => target.type === 'page' && target.url === 'about:blank')
     if (page) {
-      const attached = await cdp.request('Target.attachToTarget', {
-        targetId: page.targetId,
-        flatten: true,
-      })
+      const attached = await requestWithin(
+        cdp,
+        budget,
+        'Target.attachToTarget',
+        {
+          targetId: page.targetId,
+          flatten: true,
+        },
+      )
       return readCdpString(attached, 'sessionId')
     }
-    await dependencies.sleep(EXTENSION_BROWSER_POLL_MS)
+    if (budget.isSpent()) break
+    await budget.pause(dependencies.sleep, EXTENSION_BROWSER_POLL_MS)
   }
   throw new StudyError('RUNTIME_FAILED', 'Chrome opened no blank page.')
 }
@@ -484,7 +545,10 @@ async function closeOwnedBrowser(
   let exitConfirmed = true
   const pid = started.browser?.pid
   if (pid !== undefined && !started.browser?.hasExited())
-    exitConfirmed = await stopListedProcesses([pid], dependencies.stopper)
+    // The browser leads its own group on POSIX (B8), so its helpers end with it.
+    exitConfirmed = await stopListedProcesses([pid], dependencies.stopper, {
+      groupLeaders: [pid],
+    })
   let profileLeft = false
   if (started.profile !== undefined) {
     const profile = started.profile
@@ -502,6 +566,48 @@ async function closeOwnedBrowser(
     )
   }
   return { profileLeft, exitConfirmed }
+}
+
+/**
+ * Gives any failure of the launch the {@link StudyError} contract (B4): a {@link StudyError} passes unchanged; a lost connection or a browser that ended is `BROWSER_LOST`; anything else is `RUNTIME_FAILED`.
+ * Called by {@link launchOwnedExtensionBrowser}'s outer catch, after the browser was closed. The raw CDP detail stays as the cause, with secrets masked and the extension root, the profile folder and the home directory hidden.
+ * @param error - What the launch threw.
+ * @param browserHadExited - Whether the browser process had ended before the close.
+ * @param extensionRoot - The extension's root, hidden in the cause.
+ * @param profile - The profile folder, when one was made; hidden in the cause.
+ * @returns The error to throw.
+ * @example
+ * asLaunchFailure(new FlatCdpCommandError('Browser.getVersion', undefined, 'CDP disconnected'), false, '/work/ext', undefined).code // => 'BROWSER_LOST'
+ */
+function asLaunchFailure(
+  error: unknown,
+  browserHadExited: boolean,
+  extensionRoot: string,
+  profile: string | undefined,
+): StudyError {
+  if (error instanceof StudyError) return error
+  const detail =
+    error instanceof FlatCdpCommandError ? error.detail : String(error)
+  const isConnectionLost =
+    error instanceof FlatCdpCommandError &&
+    error.code === undefined &&
+    (error.detail === 'CDP disconnected' || error.detail === 'send failed')
+  const cause = hidePrivateRoots(redactSecretText(detail), {
+    storage: profile === undefined ? [] : [profile],
+    workspace: extensionRoot,
+    home: homedir(),
+  })
+  if (browserHadExited || isConnectionLost)
+    return new StudyError(
+      'BROWSER_LOST',
+      'Chrome ended during the start.',
+      cause,
+    )
+  return new StudyError(
+    'RUNTIME_FAILED',
+    'The extension browser could not be started.',
+    cause,
+  )
 }
 
 /**
@@ -538,6 +644,12 @@ export async function launchOwnedExtensionBrowser(
       options.chromeExecutable,
       browserArguments(profile),
     )
+    // Record the pid beside the executable: the sweep's proof of which browser is this run's. The executable alone already proves it, so a failed write changes nothing.
+    if (started.browser.pid !== undefined)
+      await writeOwnedBrowserMarker(profile, {
+        executable: options.chromeExecutable,
+        pid: started.browser.pid,
+      }).catch(() => undefined)
     const endpoint = await waitForEndpoint(
       profile,
       started.browser,
@@ -550,7 +662,11 @@ export async function launchOwnedExtensionBrowser(
     )
     started.cdp = cdp
     const chromeVersion = await readChromeVersion(cdp)
-    const controlSessionId = await attachControlSession(cdp, dependencies)
+    const controlSessionId = await attachControlSession(
+      cdp,
+      dependencies,
+      options.signal,
+    )
     const { extensionId } = options.run
     const session: Session = {
       cdp,
@@ -607,7 +723,10 @@ export async function launchOwnedExtensionBrowser(
       close,
     }
   } catch (error) {
+    // Judge whether the browser was already gone before the close below ends it.
+    const hadExited = Boolean(started.browser?.hasExited())
+    const { profile } = started
     await close()
-    throw error
+    throw asLaunchFailure(error, hadExited, options.run.root, profile)
   }
 }

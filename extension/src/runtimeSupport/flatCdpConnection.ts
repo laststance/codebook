@@ -63,6 +63,26 @@ type WireMessage = {
 }
 
 /**
+ * Reads one frame as a message; called by {@link WebSocketFlatCdp} for every frame.
+ * @param text - The frame's text.
+ * @returns The message; `undefined` for text that is no JSON and for JSON that is no object (`null`, a number, a string, an array).
+ * @example
+ * parseWireMessage('{"id":1,"result":{}}') // => { id: 1, result: {} }
+ * parseWireMessage('null')                 // => undefined
+ */
+function parseWireMessage(text: string): WireMessage | undefined {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return undefined
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
+    return undefined
+  return parsed
+}
+
+/**
  * A browser-level CDP client that routes flattened target sessions, for the browser Codebook spawns itself.
  * Why not {@link Cdp}: that client wraps one js-debug page proxy, types its commands by the page protocol and has no `sessionId`; a browser endpoint needs both the browser's own commands and one session per attached target.
  * Created by {@link connectFlatCdp} in the owned launch; the debugger and the click executor depend only on {@link FlatCdpConnection}.
@@ -139,11 +159,9 @@ export class WebSocketFlatCdp implements FlatCdpConnection {
 
   /** Routes one wire message: an answer settles its command, an event reaches the listeners of its method. */
   private receive(text: string): void {
-    let message: WireMessage
-    try {
-      message = JSON.parse(text)
-    } catch {
-      // A frame that is no JSON cannot be attributed to a command: the connection is no longer trustworthy.
+    const message = parseWireMessage(text)
+    // A frame that is no JSON object cannot be attributed to a command: the connection is no longer trustworthy.
+    if (!message) {
       this.close()
       return
     }
@@ -165,8 +183,22 @@ export class WebSocketFlatCdp implements FlatCdpConnection {
       return
     }
     if (message.method === undefined) return
-    for (const listener of this.listeners.get(message.method) ?? [])
-      listener(message.params ?? {}, message.sessionId)
+    this.notify(message.method, message.params ?? {}, message.sessionId)
+  }
+
+  /** Gives an event to every listener of its method, each on its own: one that throws must not starve the ones after it or escape into the socket handler. */
+  private notify(
+    method: string,
+    params: Record<string, unknown>,
+    sessionId: string | undefined,
+  ): void {
+    for (const listener of [...(this.listeners.get(method) ?? [])]) {
+      try {
+        listener(params, sessionId)
+      } catch {
+        // A faulty observer is the observer's defect, not the connection's.
+      }
+    }
   }
 
   /** Rejects every outstanding command once; later commands are refused at once. */

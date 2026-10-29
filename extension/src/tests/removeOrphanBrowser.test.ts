@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
+import { listProcesses } from '../runtimeSupport/utils/listProcesses'
 import { removeAbandonedProfiles } from '../runtimeSupport/utils/removeAbandonedProfiles'
 import type { ProcessStopper } from '../runtimeSupport/utils/stopListedProcesses'
 
@@ -18,20 +19,30 @@ async function profileRoot(context: TestContext): Promise<string> {
   return root
 }
 
-/** Makes a profile folder of a dead editor; `owned` adds the owned-browser marker. */
-async function profileFolder(folder: string, owned: boolean): Promise<void> {
+/** Makes a profile folder of a dead editor; `owned` adds the owned-browser marker that records the stand-in browser's executable (node), as the launch records Chrome's. */
+async function profileFolder(
+  folder: string,
+  owned: boolean,
+  executable: string = process.execPath,
+): Promise<void> {
   await mkdir(join(folder, 'Default'), { recursive: true })
   await writeFile(
     join(folder, 'codebook-owner.json'),
     JSON.stringify({ pid: ID_OF_NO_PROCESS, hostname: 'workstation' }),
   )
-  if (owned) await writeFile(join(folder, 'codebook-owned-browser'), '')
+  if (owned)
+    await writeFile(
+      join(folder, 'codebook-owned-browser'),
+      JSON.stringify({ executable }),
+    )
 }
 
 /** Starts a stand-in browser whose command line names `profile` as Chrome's user data directory. */
 async function startBrowser(
   context: TestContext,
   profile: string,
+  /** Puts a switch terminator (`--`) before the profile switch, so Chrome would read it as a loose argument. */
+  afterTerminator = false,
 ): Promise<ChildProcess> {
   const browser = spawn(
     process.execPath,
@@ -40,6 +51,7 @@ async function startBrowser(
       'process.stdout.write("ready"); setInterval(() => {}, 1000)',
       // A loose argument ends Node's own options without a switch terminator.
       'chrome',
+      ...(afterTerminator ? ['--'] : []),
       `--user-data-dir=${profile}`,
     ],
     { stdio: ['ignore', 'pipe', 'ignore'] },
@@ -190,4 +202,100 @@ test('the sweep leaves the browser and folder of an owned profile whose editor s
   assert.deepEqual(removed, [])
   assert.deepEqual(signalling.pids, [])
   assert.equal(await exists(folder), true)
+})
+
+// Value: protects=ER18 (a process that does not match exactly is never signalled; B1); fails_when=the sweep signals a pid from a listing made before it, for example a pid that was reused since; no_claim=the real reuse of a pid
+test('the sweep lists the processes again before it signals and signals nothing when the browser is gone from the new listing', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const folder = join(root, 'codebook-browser-owned')
+  await profileFolder(folder, true)
+  await startBrowser(context, folder)
+  const signalling = recordingStopper()
+  let listings = 0
+  // The first listing still holds the stand-in browser; every later one is the machine after it ended.
+  const listing = async (inputs: Parameters<typeof listProcesses>[0]) =>
+    ++listings === 1 ? listProcesses(inputs) : []
+  // Act
+  const removed = await removeAbandonedProfiles(
+    root,
+    { hostname: 'workstation' },
+    listing,
+    undefined,
+    undefined,
+    signalling.stopper,
+  )
+  // Assert
+  assert.deepEqual(removed, [folder])
+  assert.deepEqual(signalling.pids, [])
+})
+
+// Value: protects=ER18 and B2 (only the recorded executable is signalled); fails_when=a process that is not the recorded browser but prints --user-data-dir=<folder> is signalled; no_claim=Chrome helper executables
+test('the sweep signals no process whose executable is not the one recorded for the owned profile, and keeps the folder', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const folder = join(root, 'codebook-browser-owned')
+  await profileFolder(folder, true, '/opt/google/chrome/chrome')
+  const impostor = await startBrowser(context, folder)
+  const signalling = recordingStopper()
+  // Act
+  const removed = await removeAbandonedProfiles(
+    root,
+    { hostname: 'workstation' },
+    undefined,
+    undefined,
+    undefined,
+    signalling.stopper,
+  )
+  // Assert
+  assert.deepEqual(removed, [])
+  assert.deepEqual(signalling.pids, [])
+  assert.equal(impostor.exitCode, null)
+  assert.equal(await exists(folder), true)
+})
+
+// Value: protects=ER18 and B2 (the exact switch before any terminator); fails_when=a process that carries --user-data-dir=<folder> only after a -- is signalled; no_claim=Windows (the Windows job runs this file with its own parsing)
+test('the sweep signals no process that names the folder only after a switch terminator, and keeps the folder', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const folder = join(root, 'codebook-browser-owned')
+  await profileFolder(folder, true)
+  const loose = await startBrowser(context, folder, true)
+  const signalling = recordingStopper()
+  // Act
+  const removed = await removeAbandonedProfiles(
+    root,
+    { hostname: 'workstation' },
+    undefined,
+    undefined,
+    undefined,
+    signalling.stopper,
+  )
+  // Assert
+  assert.deepEqual(removed, [])
+  assert.deepEqual(signalling.pids, [])
+  assert.equal(loose.exitCode, null)
+})
+
+// Value: protects=ER18 for folders an older launch made; fails_when=an owned-browser marker without a recorded executable lets the sweep signal a process; no_claim=migration of old folders
+test('the sweep signals nothing for an owned profile whose marker records no executable', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const folder = join(root, 'codebook-browser-owned')
+  await profileFolder(folder, true)
+  await writeFile(join(folder, 'codebook-owned-browser'), '')
+  await startBrowser(context, folder)
+  const signalling = recordingStopper()
+  // Act
+  const removed = await removeAbandonedProfiles(
+    root,
+    { hostname: 'workstation' },
+    undefined,
+    undefined,
+    undefined,
+    signalling.stopper,
+  )
+  // Assert
+  assert.deepEqual(removed, [])
+  assert.deepEqual(signalling.pids, [])
 })

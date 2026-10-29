@@ -1,11 +1,10 @@
-import { lstat, readdir, stat } from 'node:fs/promises'
+import { lstat, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import {
   MANAGED_PROFILE_OWNER_FILE,
   MANAGED_PROFILE_PREFIX,
   MANAGED_PROFILE_SWEEP_LIMIT,
-  OWNED_BROWSER_MARKER_FILE,
 } from '../../constants'
 import { currentUserName } from '../../utils/currentUserName'
 import { isRecordedOwnerGone } from '../../utils/isRecordedOwnerGone'
@@ -25,6 +24,11 @@ import {
   type ListedProcess,
   type ProcessListingInputs,
 } from './listProcesses'
+import {
+  readOwnedBrowserMarker,
+  type OwnedBrowserMarker,
+} from './ownedBrowserMarker'
+import { ownedBrowserProcesses } from './ownedBrowserProcesses'
 import { profileProcesses } from './profileProcesses'
 import {
   REAL_PROCESS_STOPPER,
@@ -32,36 +36,45 @@ import {
   type ProcessStopper,
 } from './stopListedProcesses'
 
-/** Says whether a profile folder was made for a browser Codebook spawned itself ({@link OWNED_BROWSER_MARKER_FILE}), so the sweep may stop that browser. */
-function isOwnedBrowserProfile(profile: string): Promise<boolean> {
-  return stat(join(profile, OWNED_BROWSER_MARKER_FILE)).then(
-    (entry) => entry.isFile(),
-    () => false,
-  )
-}
-
 /**
  * Stops the live browser of an owned profile whose editor is gone, so the folder can be removed (ER18); called by {@link removeUnusedProfile}.
- * Only the processes {@link profileProcesses} matched exactly (`--user-data-dir` is the folder, nothing that merely shares a prefix) are signalled, and never this process.
+ * The processes are listed again right now, because the sweep's one listing may be minutes old and a pid can have been reused since. Only processes proven to be the browser Codebook spawned for the folder ({@link ownedBrowserProcesses}: the recorded executable and the exact `--user-data-dir`) are signalled, and never this process; when anything else still names the folder, nothing is signalled and the folder stays.
  * @param profile - The owned profile folder.
- * @param using - The processes that name the folder.
+ * @param marker - The executable and pid recorded in the folder's owned-browser marker.
  * @param sweep - The running sweep, for its listing and signals.
  * @returns `true` when no process names the folder any more.
  * @example
- * await stopOrphanBrowser('/tmp/codebook-browser-a1b2c3', [{ pid: 4242, command: 'chrome --user-data-dir=/tmp/codebook-browser-a1b2c3' }], sweep) // => true
+ * await stopOrphanBrowser('/tmp/codebook-browser-a1b2c3', { executable: '/opt/chrome/chrome', pid: 4242 }, sweep) // => true
  */
 async function stopOrphanBrowser(
   profile: string,
-  using: ListedProcess[],
+  marker: OwnedBrowserMarker,
   sweep: Pick<ProfileSweep, 'stopper' | 'listAgain'>,
 ): Promise<boolean> {
-  const pids = using.map(({ pid }) => pid).filter((pid) => pid !== process.pid)
-  if (pids.length !== using.length) return false
-  if (!(await stopListedProcesses(pids, sweep.stopper))) return false
-  // A fresh listing proves that nothing names the folder before it is removed.
-  const remaining = await profileProcesses(profile, await sweep.listAgain(), {
-    pathsMayNotResolve: true,
+  const inputs = { pathsMayNotResolve: true }
+  const named = await profileProcesses(profile, await sweep.listAgain(), inputs)
+  // Nothing names the folder any more.
+  if (named.length === 0) return true
+  const proven = await ownedBrowserProcesses(
+    profile,
+    marker.executable,
+    named,
+    inputs,
+  )
+  // A process that only names the folder is not Codebook's to stop: the folder stays.
+  if (proven.length !== named.length) return false
+  const pids = proven.map(({ pid }) => pid)
+  if (pids.includes(process.pid)) return false
+  const stopped = await stopListedProcesses(pids, sweep.stopper, {
+    groupLeaders: marker.pid === undefined ? [] : [marker.pid],
   })
+  if (!stopped) return false
+  // A fresh listing proves that nothing names the folder before it is removed.
+  const remaining = await profileProcesses(
+    profile,
+    await sweep.listAgain(),
+    inputs,
+  )
   return remaining.length === 0
 }
 
@@ -87,14 +100,11 @@ async function removeUnusedProfile(
       pathsMayNotResolve: true,
     })
     // A browser still names the folder: only an owned browser's folder lets the sweep stop it first.
-    if (
-      using.length &&
-      !(
-        (await isOwnedBrowserProfile(profile)) &&
-        (await stopOrphanBrowser(profile, using, sweep))
-      )
-    )
-      return false
+    if (using.length) {
+      const marker = await readOwnedBrowserMarker(profile)
+      if (!marker || !(await stopOrphanBrowser(profile, marker, sweep)))
+        return false
+    }
     // The marker goes last: a folder whose removal stops at an entry that refuses keeps it, and a later sweep tries again.
     await removeWithoutFollowing(profile, {
       lastEntry: MANAGED_PROFILE_OWNER_FILE,
@@ -184,7 +194,7 @@ async function sweepProfile(
  * @param listRunningProcesses - Lists the processes of this machine, asked to keep the processes whose owner cannot be confirmed; {@link listProcesses} unless a test counts the listings or names its own listing.
  * @param readStart - Reads the start of the process that has a marker's process id now; {@link readProcessStart} unless a test names its own.
  * @param userName - The operating-system user this sweep runs as; {@link currentUserName} unless a test names its own. A folder whose marker names another user is left and not counted, on every system.
- * @param stopper - The signals by which a live browser of an owned profile ({@link OWNED_BROWSER_MARKER_FILE}) whose editor is gone is stopped before its folder is removed (ER18); {@link REAL_PROCESS_STOPPER} unless a test names its own. A folder without that file keeps the rule above: a process that names it keeps it.
+ * @param stopper - The signals by which a live browser of an owned profile (`codebook-owned-browser`) whose editor is gone is stopped before its folder is removed (ER18); {@link REAL_PROCESS_STOPPER} unless a test names its own. A folder without that file keeps the rule above: a process that names it keeps it.
  * @returns The folders that were removed, in the order the directory listed them; empty when the root cannot be read. Nothing here throws: what cannot be
  * read, judged or removed stays in place.
  * @example
