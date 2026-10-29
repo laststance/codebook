@@ -1759,7 +1759,7 @@ test('activation gives the service and the Study reader one sink that writes une
     assert.equal(entries.length, 2)
     assert.match(
       entries[0]!,
-      /^HISTORY_SEAL_FAILED · study a_b · profile node-test\nCodebook \d+\.\d+\.\d+ \(API 1\.9\) · Visual Studio Code 1\.143\.0\nCause: EIO: i\/o error$/,
+      /^HISTORY_SEAL_FAILED · study a_b · profile node-test\nCodebook \d+\.\d+\.\d+ \(API 1\.10\) · Visual Studio Code 1\.143\.0\nCause: EIO: i\/o error$/,
     )
     assert.match(
       entries[1]!,

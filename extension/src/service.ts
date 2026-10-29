@@ -524,6 +524,17 @@ function isChromeExtensionRecord(
 }
 
 /**
+ * Refuses to save or explain a chrome-extension run: its live explanation stays in the chat and no study changes (SR13, SR37); called by {@link StudyService.explain}, {@link StudyService.explainNodeHistory} and {@link StudyService.snapshot}.
+ * @param record - The run named by the call.
+ * @throws `EVIDENCE_UNAVAILABLE` with {@link CHROME_EXTENSION_SAVE_REFUSAL} for a chrome-extension run; nothing for another profile.
+ * @example refuseExtensionSave(record) // throws 'Saving an extension run is not available in this version; the live explanation stays in the chat.'
+ */
+function refuseExtensionSave(record: StudyRecord): void {
+  if (record.profile === CHROME_EXTENSION_PROFILE)
+    throw new StudyError('EVIDENCE_UNAVAILABLE', CHROME_EXTENSION_SAVE_REFUSAL)
+}
+
+/**
  * Tells {@link StudyService.selectPresentation} whether a command selects a layout that is retired, so that only a reader already in that layout may keep it.
  * @param input - The presentation command.
  * @returns `true` for a `select` of any mode but {@link SELECTABLE_PRESENTATION_MODE}; `false` for that mode and for every other action.
@@ -2157,7 +2168,7 @@ export class StudyService {
     this.assertMutable(input.instanceId)
     const record = this.record(input)
     // An extension run is explained in the chat only; nothing of it is stored.
-    this.refuseExtensionSave(record)
+    refuseExtensionSave(record)
     // An explanation after the removal would be written into a directory that is in the Trash.
     this.assertEvidenceAvailable(record)
     // Internal callers must satisfy the same fact bounds as MCP before reserving or persisting an explanation.
@@ -2422,7 +2433,7 @@ export class StudyService {
         record.profile === CHROME_EXTENSION_PROFILE &&
         identity.studyId === `${this.instanceId}_${record.id}`,
     )
-    if (extensionRun) this.refuseExtensionSave(extensionRun)
+    if (extensionRun) refuseExtensionSave(extensionRun)
     if (!this.nodeHistoryStore)
       throw new StudyError(
         'PREREQUISITE_MISSING',
@@ -2662,20 +2673,6 @@ export class StudyService {
     }
   }
 
-  /**
-   * Refuses to save or explain a chrome-extension run: its live explanation stays in the chat and no study changes (SR13, SR37); called by {@link StudyService.explain} and {@link StudyService.explainNodeHistory}.
-   * @param record - The run named by the call.
-   * @throws `EVIDENCE_UNAVAILABLE` with {@link CHROME_EXTENSION_SAVE_REFUSAL} for a chrome-extension run; nothing for another profile.
-   * @example this.refuseExtensionSave(record) // throws 'Saving an extension run is not available in this version; the live explanation stays in the chat.'
-   */
-  private refuseExtensionSave(record: StudyRecord): void {
-    if (record.profile === CHROME_EXTENSION_PROFILE)
-      throw new StudyError(
-        'EVIDENCE_UNAVAILABLE',
-        CHROME_EXTENSION_SAVE_REFUSAL,
-      )
-  }
-
   /** Validates explicit instance/run identity for both control and history reads. @example service.record({instanceId,runId}) */
   record(input: RunInput): StudyRecord {
     this.assertInstance(input.instanceId)
@@ -2695,7 +2692,7 @@ export class StudyService {
 
   /** Resolves committed snapshot identity without treating an old capture as a current pause. @example service.snapshot(record, snapshotUri).values */
   snapshot(record: StudyRecord, uri: string): RuntimeSnapshot {
-    this.refuseExtensionSave(record)
+    refuseExtensionSave(record)
     if (record.profile === NODE_TEST_PROFILE)
       throw new StudyError(
         'EVIDENCE_UNAVAILABLE',
