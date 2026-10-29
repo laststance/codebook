@@ -16,7 +16,12 @@ import {
 } from '../../utils/windowsPowerShellPath'
 
 /** One running process as the system's listing names it: its id and its whole command line with every argument. */
-export type ListedProcess = { pid: number; command: string }
+export type ListedProcess = {
+  pid: number
+  command: string
+  /** The id of the process's parent; present only in a listing asked with {@link ProcessListingInputs.withParentPids}. */
+  parentPid?: number
+}
 
 /** What {@link listProcesses} lists with; each is the real one unless a test names its own. */
 export type ProcessListingInputs = {
@@ -38,6 +43,8 @@ export type ProcessListingInputs = {
    * Keeps, on Windows, a process of another logon session whose owner cannot be confirmed as this user (its owner, or this user's own identifier, cannot be read), for a caller that must count every process that may be this user's: the sweep of abandoned profile folders ({@link removeAbandonedProfiles}) holds a folder such a process names. Left out (the run's attach and close, {@link profileProcesses}), such a process is not listed, so it is never taken for this user's browser. macOS and Linux confirm every owner by its user id and list no such process.
    */
   keepsUnconfirmedOwners?: boolean
+  /** Lists each process with its parent's id ({@link ListedProcess.parentPid}), for the orphan sweep that must tell a browser's helpers from a stranger that only names its folder (ER18); left out, the listing is the one every other caller reads. */
+  withParentPids?: boolean
 }
 
 /** The listing of one system: the command that prints every process on a line of its own, and the reader of what it printed. */
@@ -50,6 +57,9 @@ type ProcessListingForm = {
 
 /** A line `ps` prints for {@link unixListing}: the process id, the effective user id and the command line. The pattern captures text in every group of a line it matches. */
 const UNIX_PROCESS_LINE = /^\s*(\d+)\s+(\d+)\s+(.+)$/
+
+/** A line `ps` prints for {@link unixListing} with parents: the process id, the parent's id, the effective user id and the command line. */
+const UNIX_PROCESS_LINE_WITH_PARENT = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+)$/
 
 /**
  * Says whether a listed process is one of the user whose processes the `ps` listing reads; called by {@link unixProcessOfLine}.
@@ -76,12 +86,22 @@ function isProcessOfUser(ownerId: number, userId: number | undefined): boolean {
 function unixProcessOfLine(
   line: string,
   userId: number | undefined,
+  withParentPids = false,
 ): ListedProcess | undefined {
   // A line the pattern matches has text in every group, so its command line stands for the whole match.
-  const [, pid, ownerId, command] = UNIX_PROCESS_LINE.exec(line) ?? []
+  const [, pid, second, third, fourth] = withParentPids
+    ? (UNIX_PROCESS_LINE_WITH_PARENT.exec(line) ?? [])
+    : (UNIX_PROCESS_LINE.exec(line) ?? [])
+  // With parents the columns are pid, ppid, uid, command; without, pid, uid, command.
+  const ownerId = withParentPids ? third : second
+  const command = withParentPids ? fourth : third
   // A process of another user is not listed.
   if (!command || !isProcessOfUser(Number(ownerId), userId)) return undefined
-  return { pid: Number(pid), command }
+  return {
+    pid: Number(pid),
+    command,
+    ...(withParentPids && { parentPid: Number(second) }),
+  }
 }
 
 /**
@@ -94,13 +114,20 @@ function unixProcessOfLine(
  */
 function unixListing(
   userId: number | undefined,
+  withParentPids = false,
 ): Omit<ProcessListingForm, 'file'> {
   return {
-    listingArguments: ['-axww', '-o', 'pid=,uid=,command='],
+    listingArguments: [
+      '-axww',
+      '-o',
+      withParentPids ? 'pid=,ppid=,uid=,command=' : 'pid=,uid=,command=',
+    ],
     processesOf: (printed) =>
       printed
         .split('\n')
-        .flatMap((line) => unixProcessOfLine(line, userId) ?? []),
+        .flatMap(
+          (line) => unixProcessOfLine(line, userId, withParentPids) ?? [],
+        ),
   }
 }
 
@@ -119,11 +146,22 @@ const WINDOWS_LISTING_COMMAND = [
   `Get-CimInstance -ClassName Win32_Process -Property ProcessId,SessionId,CommandLine -ErrorAction Stop | ForEach-Object { $process = $_; if ($process.SessionId -eq $editor.SessionId -or $process.CommandLine -like '*${MANAGED_PROFILE_PREFIX}*') { $owner = '?'; if ($process.SessionId -ne $editor.SessionId) { try { $sid = (Invoke-CimMethod -InputObject $process -MethodName GetOwnerSid -ErrorAction Stop).Sid } catch { $sid = '' }; if ($sid) { $owner = $sid } }; try { $commandLine = [uri]::EscapeDataString([string]$process.CommandLine) } catch { $commandLine = '' }; '{0} {1} {2} {3}' -f $process.ProcessId, $process.SessionId, $owner, $commandLine } }`,
 ].join('; ')
 
+/** {@link WINDOWS_LISTING_COMMAND} with each process's parent: the first token of a process line is `<pid>/<parent pid>`. */
+const WINDOWS_LISTING_WITH_PARENTS_COMMAND = WINDOWS_LISTING_COMMAND.replace(
+  '-Property ProcessId,SessionId,CommandLine',
+  '-Property ProcessId,ParentProcessId,SessionId,CommandLine',
+)
+  .replace("'{0} {1} {2} {3}' -f", "'{0}/{4} {1} {2} {3}' -f")
+  .replace(
+    '$owner, $commandLine }',
+    '$owner, $commandLine, $process.ParentProcessId }',
+  )
+
 /** The first line {@link WINDOWS_LISTING_COMMAND} prints: the editor's logon session and the SID of the user PowerShell runs as. */
 const WINDOWS_EDITOR_LINE = /^editor (\d+) (\S+)$/
 
 /** A process line {@link WINDOWS_LISTING_COMMAND} prints: its id, its logon session, the SID of its owner and its percent-encoded command line. A process without a readable command line has no text after its owner and does not match. */
-const WINDOWS_PROCESS_LINE = /^(\d+) (\d+) (\S+) (\S+)$/
+const WINDOWS_PROCESS_LINE = /^(\d+)(?:\/(\d+))? (\d+) (\S+) (\S+)$/
 
 /** How {@link WINDOWS_LISTING_COMMAND} prints a SID it could not read. */
 const UNREAD_OWNER = '?'
@@ -232,6 +270,7 @@ function windowsEditorOf(lines: string[]): WindowsOwnership {
 /** A process line of the Windows listing as {@link windowsLineOf} reads it: the process id, its session and owner, and its decoded command line. */
 type WindowsProcessLine = {
   pid: number
+  parentPid?: number
   ownership: WindowsOwnership
   command: string
 }
@@ -246,12 +285,17 @@ type WindowsProcessLine = {
  */
 function windowsLineOf(line: string): WindowsProcessLine | undefined {
   // A line the pattern matches has text in every group, so its session and owner stand for the whole match.
-  const [, pid, session, sid, encodedCommand] =
+  const [, pid, parentPid, session, sid, encodedCommand] =
     WINDOWS_PROCESS_LINE.exec(line) ?? []
   const ownership = windowsOwnershipOf(session, sid)
   const command = decodedCommandLine(encodedCommand)
   if (!ownership || !command) return undefined
-  return { pid: Number(pid), ownership, command }
+  return {
+    pid: Number(pid),
+    ownership,
+    command,
+    ...(parentPid !== undefined && { parentPid: Number(parentPid) }),
+  }
 }
 
 /**
@@ -279,7 +323,11 @@ function windowsProcessOfLine(
     )
   )
     return undefined
-  return { pid: read.pid, command: read.command }
+  return {
+    pid: read.pid,
+    command: read.command,
+    ...(read.parentPid !== undefined && { parentPid: read.parentPid }),
+  }
 }
 
 /**
@@ -312,13 +360,16 @@ function windowsProcessesOf(
  */
 function windowsListing(
   keepsUnconfirmedOwners: boolean,
+  withParentPids = false,
 ): Omit<ProcessListingForm, 'file'> {
   return {
     listingArguments: [
       '-NoProfile',
       '-NonInteractive',
       '-Command',
-      WINDOWS_LISTING_COMMAND,
+      withParentPids
+        ? WINDOWS_LISTING_WITH_PARENTS_COMMAND
+        : WINDOWS_LISTING_COMMAND,
     ],
     processesOf: (printed) =>
       windowsProcessesOf(printed, keepsUnconfirmedOwners),
@@ -342,7 +393,10 @@ async function listingFormOf(
   // ps is started from its absolute paths only, by the same lookup as the process group checks of the inspectors.
   if (platform !== 'win32')
     return {
-      ...unixListing(inputs.userId ?? process.geteuid?.()),
+      ...unixListing(
+        inputs.userId ?? process.geteuid?.(),
+        inputs.withParentPids === true,
+      ),
       file: await psProgramPath('The process listing', inputs),
     }
   const file = windowsPowerShellPath(inputs.environment)
@@ -351,7 +405,13 @@ async function listingFormOf(
     throw new Error(
       'The process listing was not started: neither SystemRoot nor windir names the Windows folder, and Codebook starts Windows PowerShell only from it.',
     )
-  return { ...windowsListing(inputs.keepsUnconfirmedOwners === true), file }
+  return {
+    ...windowsListing(
+      inputs.keepsUnconfirmedOwners === true,
+      inputs.withParentPids === true,
+    ),
+    file,
+  }
 }
 
 /** Says whether a failed listing was ended because it ran longer than its time bound: Node.js marks the error of a child it ended itself. @example isEndedAtTimeBound(Object.assign(new Error('Command failed: ps'), { killed: true, signal: 'SIGKILL' })) // => true */

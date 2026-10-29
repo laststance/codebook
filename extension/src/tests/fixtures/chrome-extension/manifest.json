@@ -1,0 +1,8 @@
+{
+  "manifest_version": 3,
+  "name": "Codebook test fixture",
+  "version": "1.0",
+  "permissions": ["storage", "bookmarks"],
+  "action": { "default_popup": "popup.html" },
+  "background": { "service_worker": "worker.js" }
+}

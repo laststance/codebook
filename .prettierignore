@@ -21,3 +21,6 @@ extension/artifacts
 
 # Agent worktrees are full checkouts, formatted from inside each one.
 .claude
+
+# The real-Chrome test's broken-worker fixture has a syntax error on purpose.
+extension/src/tests/fixtures/chrome-extension/broken-worker/worker.js

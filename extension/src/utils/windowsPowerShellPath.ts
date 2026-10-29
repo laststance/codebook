@@ -1,9 +1,5 @@
-import { win32 } from 'node:path'
-
-import {
-  environmentVariable,
-  type ProcessEnvironment,
-} from './environmentVariable'
+import type { ProcessEnvironment } from './environmentVariable'
+import { windowsSystemProgramPath } from './windowsSystemProgramPath'
 
 /** The environment the Windows system root is read from (`SystemRoot`, then `windir`, by names compared without regard to case as Windows compares them): `process.env` in the product, a test's own object in tests. */
 export type SystemRootEnvironment = ProcessEnvironment
@@ -15,9 +11,6 @@ const POWERSHELL_UNDER_SYSTEM_ROOT = [
   'v1.0',
   'powershell.exe',
 ]
-
-/** A path on a drive named by its letter, from that drive's root: `C:\…` or `C:/…`. A path rooted on the current drive (`\Windows`) or on a network share (`\\server\share`) is none. */
-const DRIVE_LETTER_PATH = /^[A-Za-z]:[\\/]/
 
 /**
  * Names the program a Windows query starts, by its full path under the Windows system root, so that no `powershell.exe` of another folder is ever started in its place; called by {@link readProcessStart}'s Windows query and by {@link listProcesses} for the Windows listing.
@@ -35,13 +28,5 @@ const DRIVE_LETTER_PATH = /^[A-Za-z]:[\\/]/
 export function windowsPowerShellPath(
   environment: SystemRootEnvironment = process.env,
 ): string | undefined {
-  const systemRoot = ['SystemRoot', 'windir']
-    .map((name) => environmentVariable(environment, name))
-    .find(
-      (root): root is string =>
-        root !== undefined && DRIVE_LETTER_PATH.test(root),
-    )
-  return systemRoot === undefined
-    ? undefined
-    : win32.join(systemRoot, ...POWERSHELL_UNDER_SYSTEM_ROOT)
+  return windowsSystemProgramPath(POWERSHELL_UNDER_SYSTEM_ROOT, environment)
 }

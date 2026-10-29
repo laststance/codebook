@@ -9,7 +9,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.9'
-export const EXTENSION_VERSION = '0.2.57'
+export const EXTENSION_VERSION = '0.2.58'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -2070,3 +2070,102 @@ export const NODE_SERVER_HISTORY_REASON_CODES = {
   captureBudgetExhausted: 'SERVER_HISTORY_CAPTURE_BUDGET_EXHAUSTED',
   outputTruncated: 'SERVER_HISTORY_OUTPUT_TRUNCATED',
 } as const
+/** The profile of a run of the opened repository's unpacked Manifest V3 extension in a browser Codebook owns. */
+export const CHROME_EXTENSION_PROFILE = 'chrome-extension'
+/** The one action a chrome-extension run offers: perform its next declared click. */
+export const EXTENSION_CLICK_ACTION = 'extension-click'
+/** The oldest Chrome major version whose CDP `Extensions.loadUnpacked` installs an unpacked extension without a switch. */
+export const CHROME_EXTENSION_MIN_VERSION = 149
+/** At most this many declared clicks per chrome-extension run. */
+export const EXTENSION_CLICK_LIMIT = 3
+/** At most this many declared stops per chrome-extension run. */
+export const EXTENSION_STOP_LIMIT = 4
+/** A seeded bookmark tree holds at most this many nodes in total. */
+export const EXTENSION_SEED_BOOKMARK_LIMIT = 200
+/** A seeded bookmark tree is at most this deep. */
+export const EXTENSION_SEED_DEPTH_LIMIT = 6
+/** A seeded bookmark title is at most this long. */
+export const EXTENSION_SEED_TITLE_LIMIT_CHARS = 256
+/** A seeded bookmark url is at most this long. */
+export const EXTENSION_SEED_URL_LIMIT_CHARS = 2_048
+/** Seeded storage holds at most this many keys. */
+export const EXTENSION_SEED_STORAGE_KEY_LIMIT = 50
+/** Seeded storage is at most this large as JSON. */
+export const EXTENSION_SEED_STORAGE_LIMIT_BYTES = 65_536
+/** Static-load discovery follows script and import references at most this deep. */
+export const EXTENSION_STATIC_LOAD_DEPTH_LIMIT = 8
+/** The most entries (files, folders, links) the pre-launch link walk lists before it refuses the extension folder. */
+export const EXTENSION_LINK_WALK_ENTRY_LIMIT = 50_000
+/** A stop line longer than this marks its file as bundled (DXR9). */
+export const EXTENSION_BUNDLED_LINE_LIMIT_CHARS = 1_000
+/** How long a surface, popup or worker child may take to appear. */
+export const EXTENSION_WAKE_BOUND_MS = 5_000
+/** How long `Extensions.triggerAction` may take to open the popup target. */
+export const EXTENSION_OPEN_BOUND_MS = 5_000
+/**
+ * How long Codebook waits for every service worker of the extension to stop before the debugger attaches.
+ * A freshly installed extension's worker can stay listed for more than 3 s while Chrome finishes starting it under load (seen in a full test-suite run on Chrome 156), so the bound leaves room; the wait still ends 500 ms after the worker is gone.
+ */
+export const EXTENSION_STOP_WORKERS_BOUND_MS = 10_000
+/** How long a dispatched click waits for a pause or settled work before it answers `running`. */
+export const EXTENSION_CLICK_RETURN_BOUND_MS = 10_000
+/** No stop reached for this long after the last click settles the work before the observation. */
+export const EXTENSION_OBSERVE_SETTLE_MS = 1_000
+/** The observation polls at most this long, counting unpaused time only. */
+export const EXTENSION_OBSERVE_BOUND_MS = 5_000
+/** Interval between observation reads. */
+export const EXTENSION_OBSERVE_POLL_MS = 250
+/** Each observation read has its own deadline (ER9). */
+export const EXTENSION_OBSERVE_READ_TIMEOUT_MS = 2_000
+/** An observation reads at most this many bytes (ER23). */
+export const EXTENSION_OBSERVE_READ_LIMIT_BYTES = 65_536
+/** An observed JSON value is read at most this deep (ER23). */
+export const EXTENSION_OBSERVE_DEPTH_LIMIT = 8
+/** At most this many worker or page console events are journaled per run (ER10). */
+export const EXTENSION_OUTPUT_EVENT_LIMIT = 200
+/** A paused service-worker stop is held at most this long, the bound task 0 measured (ER8). */
+export const EXTENSION_WORKER_PAUSE_HOLD_MS = 280_000
+/** After SIGTERM, an owned browser gets this long before SIGKILL. */
+export const EXTENSION_BROWSER_KILL_GRACE_MS = 5_000
+/** A declared chrome-extension click title is 1 to this many characters (DR2). */
+export const EXTENSION_CLICK_TITLE_LIMIT_CHARS = 80
+/** API permissions that reach outside the run's test profile; a manifest declaring one needs `acknowledgedPermissions` (ER5). */
+export const EXTENSION_ACKNOWLEDGED_API_PERMISSIONS = [
+  'nativeMessaging',
+  'debugger',
+  'management',
+  'downloads',
+  'proxy',
+  'privacy',
+] as const
+/** One `acknowledgedPermissions` entry of a chrome-extension declaration is 1 to this many characters (ER5). */
+export const EXTENSION_ACKNOWLEDGED_PERMISSION_LIMIT_CHARS = 256
+/** A chrome-extension declaration lists at most this many `acknowledgedPermissions` entries (ER5). */
+export const EXTENSION_ACKNOWLEDGED_PERMISSION_LIMIT = 100
+/** The root js-debug attach session of a chrome-extension run is named with this prefix and the run id; child sessions are told apart by target type, never by name (SR14). */
+export const CHROME_EXTENSION_SESSION_NAME_PREFIX = 'codebook chrome extension '
+/** Every declared extension stop is requested at this column: a stop declares a line only, and the adapter binds the first position of the line. */
+export const EXTENSION_STOP_COLUMN = 1
+/** Each CDP request of a click step may run this long in unpaused time before its answer counts as lost (ER14). */
+export const EXTENSION_STEP_REQUEST_TIMEOUT_MS = 20_000
+/**
+ * How long a freshly spawned owned browser may take to publish its `DevToolsActivePort` file.
+ * Why 30 s: Chrome's first start after a boot reads its whole install from a cold disk; on fresh Ubuntu CI runners the first launch took 10–13 s and once passed 15 s, while later launches took about 2 s. Puppeteer's default launch timeout is also 30 s.
+ */
+export const EXTENSION_BROWSER_START_BOUND_MS = 30_000
+/** Interval at which the owned launch polls the browser's files and targets. */
+export const EXTENSION_BROWSER_POLL_MS = 100
+/** Each command on the owned browser's CDP connection has this deadline unless the caller names another. */
+export const EXTENSION_CDP_COMMAND_TIMEOUT_MS = 10_000
+/** After `ServiceWorker.startWorker`, the popup opens only once the worker has had this long to apply the extension's own state (task 0). */
+export const EXTENSION_POPUP_WORKER_SETTLE_MS = 1_500
+/** Marks a profile folder whose browser Codebook spawned itself; only such a folder's live browser is stopped by the orphan sweep (ER18). */
+export const OWNED_BROWSER_MARKER_FILE = 'codebook-owned-browser'
+/** The owned launch treats the extension's workers as stopped after none has been listed for this long; Chrome starts a new extension's worker shortly after `loadUnpacked` answers. */
+export const EXTENSION_WORKER_QUIET_MS = 500
+/** A command inside an owned-launch poll loop is never sent with less time than this: the last look comes after the last pause, when the loop's bound is spent, and still needs time for a local Chrome to answer it (B6). */
+export const EXTENSION_POLL_COMMAND_MIN_TIMEOUT_MS = 1_000
+/** One `ServiceWorker.stopAllWorkers` that is not answered in this time is sent again by the stop loop of the owned launch. */
+export const EXTENSION_STOP_COMMAND_TIMEOUT_MS = 1_000
+/** `<chrome> --version` that prints nothing in this time counts as an unreadable version; no browser session is started to read it. */
+export const EXTENSION_CHROME_VERSION_READ_BOUND_MS = 5_000

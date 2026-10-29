@@ -819,9 +819,12 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/scripts/utils/readVsixBytes.mjs',
     'extension/src/runtimeSupport/utils/linuxCommandLineArguments.ts',
     'extension/src/runtimeSupport/utils/listProcesses.ts',
+    'extension/src/runtimeSupport/utils/ownedBrowserMarker.ts',
+    'extension/src/runtimeSupport/utils/ownedBrowserProcesses.ts',
     'extension/src/runtimeSupport/utils/profileProcesses.ts',
     'extension/src/runtimeSupport/utils/removeAbandonedProfiles.ts',
     'extension/src/runtimeSupport/utils/sha256.ts',
+    'extension/src/runtimeSupport/utils/stopListedProcesses.ts',
     'extension/src/runtimeSupport/utils/windowsCommandLineArguments.ts',
     'extension/src/tests/canJudgeOwnerHere.test.ts',
     'extension/src/tests/claimWikiUpdateMarker.test.ts',
@@ -846,6 +849,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/src/tests/readWikiRegularFile.test.ts',
     'extension/src/tests/refreshCursorMcpCatalogFileIdentity.test.ts',
     'extension/src/tests/removeAbandonedProfiles.test.ts',
+    'extension/src/tests/removeOrphanBrowser.test.ts',
     'extension/src/tests/removeStaleStorageClaims.test.ts',
     'extension/src/tests/removeStaleStorageLock.test.ts',
     'extension/src/tests/removeWithoutFollowing.test.ts',
@@ -932,6 +936,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/src/utils/wikiRunBoundMs.ts',
     'extension/src/utils/wikiUpdateRun.ts',
     'extension/src/utils/windowsPowerShellPath.ts',
+    'extension/src/utils/windowsSystemProgramPath.ts',
     'extension/src/utils/withStorageLock.ts',
     'extension/src/utils/withoutBootTime.ts',
   ])
@@ -958,7 +963,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
   assert.deepEqual(runCommandsOf(workflow), [
     'git config --global core.autocrlf false',
     'node scripts/build-fast.mjs',
-    'node --test --test-concurrency=1 dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js dist/tests/listProcesses.test.js dist/tests/dropSecondNameOfMovedFile.test.js dist/tests/removeWithoutFollowing.test.js dist/tests/listFolderTreeWithoutFollowing.test.js dist/tests/isFolderOfItsOwn.test.js dist/tests/runBoundedQuery.test.js dist/tests/runtime-profileProcesses.test.js dist/tests/removeAbandonedProfiles.test.js dist/tests/isProgramFile.test.js',
+    'node --test --test-concurrency=1 dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js dist/tests/listProcesses.test.js dist/tests/dropSecondNameOfMovedFile.test.js dist/tests/removeWithoutFollowing.test.js dist/tests/listFolderTreeWithoutFollowing.test.js dist/tests/isFolderOfItsOwn.test.js dist/tests/runBoundedQuery.test.js dist/tests/runtime-profileProcesses.test.js dist/tests/removeAbandonedProfiles.test.js dist/tests/removeOrphanBrowser.test.js dist/tests/isProgramFile.test.js',
     'node --test --test-concurrency=1 scripts/tests/openWithoutFollowing.test.mjs',
   ])
   assert.deepEqual(actionReferences, [
@@ -1452,7 +1457,7 @@ const WINDOWS_JOB_TEST_KINDS = [
   },
   {
     kind: 'the sweep of abandoned browser profiles',
-    tests: ['removeAbandonedProfiles'],
+    tests: ['removeAbandonedProfiles', 'removeOrphanBrowser'],
   },
   {
     kind: 'the program check of the search for Git',
@@ -1559,6 +1564,36 @@ test('the Windows job also runs once a week and for a new Node release, so a cha
   ])
   assert.equal(pushFilter.includes('.node-version'), true)
   assert.equal(pullRequestFilter.includes('.node-version'), true)
+})
+
+// Value: protects=the chrome-extension integration test of every Test shard, which needs Google Chrome 149 or later on the runner; fails_when=the version step only prints (an older runner image then fails the test with a Chrome error and no hint), the step comes after the test run, or its minimum differs from `CHROME_EXTENSION_MIN_VERSION`; why_new=Cycle 0061 pt1 OCR finding D8; seam=the text of .github/workflows/test.yml and extension/src/constants.ts; no_claim=what the runner image ships
+test('the Test workflow fails before the shards run when the runner has Google Chrome older than the chrome-extension minimum', async () => {
+  // Arrange
+  const workflow = await repositoryText('.github/workflows/test.yml')
+  const constants = await repositoryText('extension/src/constants.ts')
+
+  // Act
+  const minimum = /export const CHROME_EXTENSION_MIN_VERSION = (\d+)/.exec(
+    constants,
+  )?.[1]
+  const versionStep =
+    /- name: Check the runner's Google Chrome version\n((?: {8}.*\n)+)/.exec(
+      workflow,
+    )?.[1]
+  const stepPosition = workflow.indexOf(
+    "- name: Check the runner's Google Chrome version",
+  )
+  const testRunPosition = workflow.indexOf(
+    "- name: Run this shard's tests with coverage",
+  )
+
+  // Assert
+  assert.equal(minimum, '149')
+  assert.equal(versionStep?.includes('google-chrome --version'), true)
+  assert.equal(versionStep?.includes(`-lt ${minimum}`), true)
+  assert.equal(versionStep?.includes('::error::'), true)
+  assert.equal(versionStep?.includes('exit 1'), true)
+  assert.equal(stepPosition > 0 && stepPosition < testRunPosition, true)
 })
 
 // Value: protects=the coverage report of a pull request, which Codecov posts only once every shard has uploaded; fails_when=a shard is added to the Test workflow and one of Codecov's two counts stays behind (the report then comes after the first shards and changes with every later upload), or a count is raised without its shard (the report never comes); why_new=the shard count went from twelve to fourteen in Cycle 0045 and nothing compared the three places; seam=none

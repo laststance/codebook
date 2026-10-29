@@ -28,11 +28,13 @@ import { bookIdSchema } from './identitySchemas'
 import { repositoryHashSchema, repositoryPathSchema } from './sourceSchemas'
 import { missingValueInspectionMessage } from './utils/missingValueInspectionMessage'
 
-const selectorSchema = z
+/** A CSS selector as every profile declares one: 1 to the selector limit, no control characters. */
+export const selectorSchema = z
   .string()
   .min(1)
   .max(REPOSITORY_SELECTOR_LIMIT_CHARS)
   .regex(/^[^\x00-\x1f\x7f]+$/)
+/** A literal text value (an input's text, an expected value) up to the literal limit. */
 const literalSchema = z.string().max(REPOSITORY_LITERAL_LIMIT_CHARS)
 export const repositoryEntryPathSchema = z
   .string()
@@ -214,6 +216,16 @@ export const repositorySourceStopSchema = z.strictObject({
   column: z.number().int().positive(),
 })
 
+/** Text inserted into elements before an action: up to the input limit, each selector once. Shared by repository-browser's `initialInputs` and a chrome-extension click's `inputs`. */
+export const repositoryInputsSchema = z
+  .array(z.strictObject({ selector: selectorSchema, text: literalSchema }))
+  .max(REPOSITORY_INPUT_LIMIT)
+  .refine(
+    (inputs) =>
+      new Set(inputs.map((input) => input.selector)).size === inputs.length,
+    'Input selectors must be distinct.',
+  )
+
 const repositoryConfigurationShape = z.strictObject({
   version: z.literal(REPOSITORY_CONFIG_VERSION),
   adapter: z.literal('next-dev-webpack'),
@@ -237,15 +249,7 @@ const repositoryConfigurationShape = z.strictObject({
     .max(CONFIGURED_OBSERVATION_LIMIT - 1)
     .optional(),
   entryPath: repositoryEntryPathSchema.optional(),
-  initialInputs: z
-    .array(z.strictObject({ selector: selectorSchema, text: literalSchema }))
-    .max(REPOSITORY_INPUT_LIMIT)
-    .refine(
-      (inputs) =>
-        new Set(inputs.map((input) => input.selector)).size === inputs.length,
-      'Input selectors must be distinct.',
-    )
-    .optional(),
+  initialInputs: repositoryInputsSchema.optional(),
   initialStorage: storageSchema.optional(),
 })
 

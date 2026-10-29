@@ -27,7 +27,6 @@ import {
   OwnedRepositoryBreakpoint,
 } from './ownedRepositoryBreakpoint'
 import { codebookStopLedger } from './runtimeSupport/codebookStopLedger'
-import { RESUME_COMMANDS } from './runtimeSupport/constants'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
@@ -37,7 +36,10 @@ import { boundElsewhereRefusalText } from './utils/boundElsewhereRefusalText'
 import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
 import { inspectNodeTestVariables } from './utils/inspectNodeTestVariables'
 import { isDebugSessionOfRun } from './utils/isDebugSessionOfRun'
+import { PendingResumeRequests } from './utils/pendingResumeRequests'
+import { SharedAttempt } from './utils/sharedAttempt'
 import { sourceImportBindings } from './utils/sourceImportBindings'
+import { stopRunDebugSessions } from './utils/stopRunDebugSessions'
 
 type StackBody = DebugProtocol.StackTraceResponse['body']
 
@@ -69,11 +71,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   private readonly sessionStops: NativeStop[] = []
   /** The bound session's stops queued for the run that it has not been told about yet, by token. */
   private readonly unreportedStops = new Map<number, NativeStop>()
-  /** The resume requests waiting for the adapter's answer, by session and request sequence. */
-  private readonly pendingResumes = new Map<
-    string,
-    { command: string; threadId?: number; singleThread: boolean }
-  >()
+  /** The resume requests waiting for the adapter's answer. */
+  private readonly pendingResumes = new PendingResumeRequests()
   /** The pauses the run knows, by token, with the stack read when they were classified. */
   private readonly livePauses = new Map<
     number,
@@ -87,7 +86,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   private nextToken = 0
   private classification: Promise<void> = Promise.resolve()
   private releaseBegun = false
-  private releasing?: Promise<void>
+  private readonly releaser = new SharedAttempt(() => this.releaseOwned())
   private readonly tracker: vscode.Disposable
   private readonly termination: vscode.Disposable
 
@@ -162,14 +161,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     if (request.command === 'pause')
       codebookStopLedger.closeWindow([session.id])
     // Whether the thread runs on is the adapter's answer: a rejected resume leaves it paused.
-    if (RESUME_COMMANDS.has(request.command)) {
-      const threadId: unknown = request.arguments?.threadId
-      this.pendingResumes.set(`${session.id}:${request.seq}`, {
-        command: request.command,
-        threadId: typeof threadId === 'number' ? threadId : undefined,
-        singleThread: request.arguments?.singleThread === true,
-      })
-    }
+    this.pendingResumes.noteRequest(session.id, request)
   }
 
   /** A message the adapter sends: replies and news for the breakpoints, a `continued` and a `stopped`. */
@@ -261,17 +253,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     sessionId: string,
     response: DebugProtocol.Response,
   ): void {
-    const key = `${sessionId}:${response.request_seq}`
-    const pending = this.pendingResumes.get(key)
-    if (!pending) return
-    this.pendingResumes.delete(key)
-    if (!response.success) return
-    // A continue says whether every thread ran on; a step resumes every thread unless it asked for its own only.
-    const everyThread =
-      pending.command === 'continue'
-        ? response.body?.allThreadsContinued !== false
-        : !pending.singleThread
-    this.resumeThreads(sessionId, everyThread ? undefined : pending.threadId)
+    const ranOn = this.pendingResumes.takeAnswered(sessionId, response)
+    if (ranOn) this.resumeThreads(sessionId, ranOn.threadId)
   }
 
   /**
@@ -309,6 +292,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     for (const [token, stop] of this.unreportedStops)
       if (stop.sessionId === session.id) this.unreportedStops.delete(token)
     codebookStopLedger.forget(session.id)
+    this.pendingResumes.forgetSession(session.id)
     if (!this.active.delete(session.id)) return
     this.input.record('node-server.session-terminated', {
       sessionId: session.id,
@@ -707,12 +691,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   // ---------------------------------------------------------------- release
 
   release(): Promise<void> {
-    const attempt = (this.releasing ??= this.releaseOwned())
-    return attempt.catch((error: unknown) => {
-      // A failed release is dropped, so the next stop runs it again.
-      if (this.releasing === attempt) this.releasing = undefined
-      throw error
-    })
+    // A failed release is dropped, so the next stop runs it again.
+    return this.releaser.run()
   }
 
   /** Removes the breakpoints, ends the sessions this run started and stops listening; run again after a failure, so each step can repeat. */
@@ -721,13 +701,9 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
     this.abort.abort()
     this.bound?.cdp.close()
     for (const { breakpoint } of this.armed) breakpoint.remove()
-    const sessions = [...this.active.values()]
-    const results = await Promise.allSettled(
-      sessions.map((session) => vscode.debug.stopDebugging(session)),
+    await stopRunDebugSessions([...this.active.values()], (session) =>
+      vscode.debug.stopDebugging(session),
     )
-    for (const session of sessions) codebookStopLedger.forget(session.id)
-    const failure = results.find((result) => result.status === 'rejected')
-    if (failure?.status === 'rejected') throw failure.reason
     // Only a release that succeeded stops hearing of sessions.
     this.tracker.dispose()
     this.termination.dispose()

@@ -56,6 +56,18 @@ jobs:
         working-directory: extension
         run: node scripts/build-fast.mjs
 
+      # The chrome-extension integration test drives the runner's Google Chrome and fails on CI without version 149 or
+      # later (`CHROME_EXTENSION_MIN_VERSION`); this step records the version and fails early with a clear message.
+      - name: Check the runner's Google Chrome version
+        run: |
+          version="$(google-chrome --version)"
+          echo "$version"
+          major="$(echo "$version" | grep -oE '[0-9]+' | head -n 1)"
+          if [ -z "$major" ] || [ "$major" -lt 149 ]; then
+            echo "::error::Google Chrome 149 or later is required by the chrome-extension tests; the runner has: $version"
+            exit 1
+          fi
+
       # Two lanes match the runner's two processors; most of the suite waits on real deadlines.
       - name: Run this shard's tests with coverage
         working-directory: extension

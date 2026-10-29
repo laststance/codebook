@@ -63,6 +63,26 @@
     "checkNodeTestFiles.test.js": {
       "totalMs": 11
     },
+    "chromeExtensionActionExecutor.test.js": {
+      "totalMs": 441
+    },
+    "chromeExtensionConfigSchemas.test.js": {
+      "totalMs": 10
+    },
+    "chromeExtensionId.test.js": {
+      "totalMs": 7
+    },
+    "chromeExtensionRealChrome.test.js": {
+      "totalMs": 16866,
+      "tests": {
+        "real Chrome: a page surface opens, startWorker starts only this extension’s worker and stopWorkers removes it again": 3001,
+        "real Chrome: an expected id that differs from the one Chrome derives fails with EXTENSION_ID_MISMATCH and leaves no folder": 583,
+        "real Chrome: an extension whose worker has a syntax error installs and starts no worker target": 2459,
+        "real Chrome: close ends every process that names the profile and removes the folder": 3693,
+        "real Chrome: seeded nested bookmark folders and a Unicode title are what chrome.bookmarks reads": 1689,
+        "real Chrome: the fixture installs under its path’s id, the seed survives the extension’s late default, the popup opens and no worker runs": 5441
+      }
+    },
     "citationProgress.test.js": {
       "totalMs": 80
     },
@@ -583,6 +603,9 @@
     "detectWikiPublishConflicts.test.js": {
       "totalMs": 184
     },
+    "discoverStaticLoads.test.js": {
+      "totalMs": 91
+    },
     "dropSecondNameOfMovedFile.test.js": {
       "totalMs": 30
     },
@@ -651,6 +674,9 @@
     },
     "findWikiUpdateStartBlock.test.js": {
       "totalMs": 3619
+    },
+    "flatCdpConnection.test.js": {
+      "totalMs": 20
     },
     "focusEditorGroupCommand.test.js": {
       "totalMs": 1
@@ -1269,6 +1295,9 @@
     "openWithoutFollowing.test.js": {
       "totalMs": 9
     },
+    "ownedExtensionBrowser.test.js": {
+      "totalMs": 80
+    },
     "ownedNodeTestRun.test.js": {
       "totalMs": 2665
     },
@@ -1298,6 +1327,9 @@
     },
     "pendingRepositoryBreakpoint.test.js": {
       "totalMs": 639
+    },
+    "pendingResumeRequests.test.js": {
+      "totalMs": 1
     },
     "placeAfterDeclaringLine.test.js": {
       "totalMs": 1
@@ -1381,6 +1413,9 @@
     "readBootIdentity.test.js": {
       "totalMs": 7
     },
+    "readExtensionManifest.test.js": {
+      "totalMs": 32
+    },
     "readLiveWikiUpdateMarker.test.js": {
       "totalMs": 43
     },
@@ -1449,6 +1484,9 @@
     },
     "removeAbandonedProfiles.test.js": {
       "totalMs": 731
+    },
+    "removeOrphanBrowser.test.js": {
+      "totalMs": 500
     },
     "removeStaleStorageClaims.test.js": {
       "totalMs": 25
@@ -1769,6 +1807,9 @@
     "resolveChromeExecutable.test.js": {
       "totalMs": 1
     },
+    "resolveChromeExtensionRun.test.js": {
+      "totalMs": 365
+    },
     "resolveExternalNodeExecutable.test.js": {
       "totalMs": 28
     },
@@ -1951,6 +1992,9 @@
     },
     "settledWithin.test.js": {
       "totalMs": 3
+    },
+    "sharedAttempt.test.js": {
+      "totalMs": 1
     },
     "showWikiChatWatchStatus.test.js": {
       "totalMs": 1
@@ -3833,6 +3877,9 @@
     },
     "verifyVitestTestResult.test.js": {
       "totalMs": 16
+    },
+    "vscodeChromeExtensionDebugger.test.js": {
+      "totalMs": 1820
     },
     "waitForWikiChatAnswer.test.js": {
       "totalMs": 4
