@@ -814,6 +814,128 @@ test('a worker session that ends while paused fails the run with SERVICE_WORKER_
   await run.editor.dispose()
 })
 
+// protects=a page session that ends under a declared pause closes the pause and clears its hold, and the ended surface is no failure of the debugger (pt2 reports SURFACE_LOST); fails_when=the pause stays listed or its hold timer later fails the run with PAUSE_HOLD_EXPIRED; no_claim=the SURFACE_LOST report of the lifecycle
+test('a page session that ends under a declared pause closes the pause and its hold never fails the run', async (context) => {
+  // Arrange
+  const run = await readyRun([PAGE_STOP])
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  run.editor.adapter.stop(
+    run.page,
+    'breakpoint',
+    [run.editor.adapterIdAt(run.page, 'popup.js', 2)],
+    { file: run.editor.path('popup.js'), line: 2 },
+  )
+  await flush()
+  assert.equal(run.debug.pauses().length, 1)
+  // Act
+  run.editor.adapter.end(run.page)
+  context.mock.timers.tick(600_000)
+  // Assert
+  assert.equal(run.debug.pauses().length, 0)
+  assert.deepEqual(run.failures, [])
+  context.mock.timers.reset()
+  await run.debug.release()
+  await run.editor.dispose()
+})
+
+// protects=a worker that ends while the learner has it paused (reason pause) is a lost worker and run state; fails_when=the run is not failed with SERVICE_WORKER_LOST or the learner pause stays listed; no_claim=declared worker pauses (own test)
+test('a worker session that ends under a learner pause fails the run with SERVICE_WORKER_LOST and leaves no pause', async () => {
+  // Arrange
+  const run = await readyRun([WORKER_STOP])
+  run.editor.adapter.stop(run.worker, 'pause')
+  await until(() => run.debug.pauses().length === 1)
+  // Act
+  run.editor.adapter.end(run.worker)
+  // Assert
+  assert.deepEqual(
+    run.failures.map((error) => error.code),
+    ['SERVICE_WORKER_LOST'],
+  )
+  assert.equal(run.debug.pauses().length, 0)
+  await run.debug.release()
+  await run.editor.dispose()
+})
+
+// protects=a pause in a worker proven foreign (its URL is known and under another extension) is continued and journaled; fails_when=the foreign worker stays paused or nothing is journaled; no_claim=pages of other tabs (own test)
+test('a pause in another extension’s worker is continued and journaled as resume-foreign-pause', async () => {
+  // Arrange
+  const editor = await extensionEditorHarness()
+  const created = editor.createDebugger([PAGE_STOP], {
+    targetUrls: {
+      [WORKER_TARGET]: WORKER_URL,
+      'foreign-worker':
+        'chrome-extension://zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz/service-worker.js',
+    },
+  })
+  const attaching = created.debug.attach(SIGNAL())
+  await until(() => editor.started.length > 0)
+  await editor.addChild({
+    kind: 'page',
+    targetId: SURFACE_TARGET,
+    id: 'page-session',
+  })
+  await attaching
+  const foreign = await editor.addChild({
+    kind: 'service_worker',
+    targetId: 'foreign-worker',
+    id: 'foreign-worker-session',
+  })
+  // Act
+  editor.adapter.stop(foreign, 'pause', undefined, undefined, 6)
+  await until(() =>
+    editor.requests.some(
+      (request) =>
+        request.sessionId === 'foreign-worker-session' &&
+        request.command === 'continue',
+    ),
+  )
+  // Assert
+  assert.deepEqual(plain(created.debug.interventions().map((e) => e.kind)), [
+    'resume-foreign-pause',
+  ])
+  await created.debug.release()
+  await editor.dispose()
+})
+
+// protects=a pause in a worker session whose classification failed (URL lookup never answers) is kept, never continued, and journaled as unclassified-pause-kept; fails_when=Codebook continues the pause or says nothing; no_claim=that the session is the run's worker
+test('a pause in a worker session whose URL lookup failed is kept and journaled as unclassified-pause-kept', async () => {
+  // Arrange
+  const editor = await extensionEditorHarness({
+    constants: { EXTENSION_WAKE_BOUND_MS: 30 },
+  })
+  const created = editor.createDebugger([WORKER_STOP], {
+    targetUrlOf: async () => {
+      throw new Error('target not known')
+    },
+  })
+  const attaching = created.debug.attach(SIGNAL())
+  await until(() => editor.started.length > 0)
+  await editor.addChild({
+    kind: 'page',
+    targetId: SURFACE_TARGET,
+    id: 'page-session',
+  })
+  await attaching
+  const worker = await editor.addChild({
+    kind: 'service_worker',
+    targetId: WORKER_TARGET,
+    id: 'worker-session',
+  })
+  // Act
+  editor.adapter.stop(worker, 'pause', undefined, undefined, 8)
+  await until(() => created.debug.interventions().length === 1)
+  // Assert
+  assert.deepEqual(plain(created.debug.interventions().map((e) => e.kind)), [
+    'unclassified-pause-kept',
+  ])
+  assert.deepEqual(
+    editor.requests.filter((request) => request.command === 'continue'),
+    [],
+  )
+  await created.debug.release()
+  await editor.dispose()
+})
+
 // protects=a worker that ends while no pause is open fails nothing; fails_when=an idle worker expiry ends the run; no_claim=the restart before the next click
 test('a worker session that ends without a pause does not fail the run', async () => {
   // Arrange

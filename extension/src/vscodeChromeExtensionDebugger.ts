@@ -61,8 +61,9 @@ const breakpointNewsSchema = z.object({
   breakpoint: z.object({ id: z.number().int(), verified: z.boolean() }),
 })
 
-/** What a run-owned session turned out to be: the attach itself, the surface's page, the extension's worker, or a target the run ignores (other tabs, other extensions' workers). */
-type SessionKind = 'pending' | 'root' | 'page' | 'worker' | 'other'
+/** What a run-owned session turned out to be: the attach itself, the surface's page, the extension's worker, a target proven foreign (other tabs, other extensions' workers), or a worker target whose URL lookup failed (`unclassified`: it may be the run's own). */
+type SessionKind =
+  'pending' | 'root' | 'page' | 'worker' | 'other' | 'unclassified'
 
 type SessionEntry = {
   session: vscode.DebugSession
@@ -193,17 +194,35 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
         EXTENSION_WAKE_BOUND_MS,
         this.abort.signal,
       ).catch(() => undefined)
-      const isOwnWorker = Boolean(
-        url?.startsWith(`chrome-extension://${this.input.run.extensionId}/`),
-      )
-      entry.kind = isOwnWorker ? 'worker' : 'other'
-      if (isOwnWorker) {
-        entry.targetUrl = url
-        // A replacement worker verifies its stops through `setBreakpoints`, not a `breakpoint` event: earlier losses are superseded.
-        this.unverifiedWorkerStops.clear()
-        this.bumpGeneration()
-      }
+      this.applyWorkerUrl(entry, url)
     } else entry.kind = 'other'
+  }
+
+  /** Sets a worker session's kind from its target URL: own worker, proven foreign (URL known, not this extension's), or unclassified (no URL). */
+  private applyWorkerUrl(entry: SessionEntry, url: string | undefined): void {
+    if (url === undefined) {
+      entry.kind = 'unclassified'
+      return
+    }
+    const isOwnWorker = url.startsWith(
+      `chrome-extension://${this.input.run.extensionId}/`,
+    )
+    entry.kind = isOwnWorker ? 'worker' : 'other'
+    if (!isOwnWorker) return
+    entry.targetUrl = url
+    // A replacement worker verifies its stops through `setBreakpoints`, not a `breakpoint` event: earlier losses are superseded.
+    this.unverifiedWorkerStops.clear()
+    this.bumpGeneration()
+  }
+
+  /** Looks the target URL of an unclassified worker session up once more, so a stop is not judged on a lookup that failed earlier. */
+  private async reclassify(entry: SessionEntry): Promise<void> {
+    const targetId: unknown = entry.session.configuration.__pendingTargetId
+    if (typeof targetId !== 'string') return
+    const url = await this.input.targetUrlOf(targetId).catch(() => undefined)
+    // The session may have ended or the run been released while the lookup was pending.
+    if (this.releaseBegun || !this.entries.has(entry.session.id)) return
+    this.applyWorkerUrl(entry, url)
   }
 
   private entriesOf(kind: 'page' | 'worker'): SessionEntry[] {
@@ -374,8 +393,14 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
       ? this.resumeEpochOf(entry.session.id, body.threadId!)
       : 0
     await entry.classified
+    if (entry.kind === 'unclassified') await this.reclassify(entry)
     if (this.releaseBegun || !Number.isInteger(body.threadId)) return
-    // A target the run ignores (another tab or extension) that pauses would hang for good: continue it.
+    // A target whose classification failed may be the run's own worker: its pause stays, never continued silently.
+    if (entry.kind === 'unclassified') {
+      this.recordIntervention('unclassified-pause-kept')
+      return
+    }
+    // A target proven foreign (another tab or extension) that pauses would hang for good: continue it.
     if (entry.kind === 'other')
       return this.resumeForeignPause(entry, body.threadId!, epochAtStop)
     if (entry.kind !== 'page' && entry.kind !== 'worker') return
