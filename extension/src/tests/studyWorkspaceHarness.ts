@@ -2408,6 +2408,27 @@ export async function workspaceHarness(
     }
   }
   /**
+   * Opens a text tab in front of a group without giving it the keyboard and announces the new tab to the reader's tab listeners; the step of `openPausedFileInLockedGroup` and `openAnnouncedTextTab`.
+   * @param filename - The file.
+   * @param column - The group, locked or not.
+   * @param state - The tab's preview and unsaved-change flags.
+   * @returns The tab.
+   * @example openAnnouncedTextTab('settings.js', 1, { isPreview: true, isDirty: false })
+   */
+  function openAnnouncedTextTab(
+    filename: string,
+    column: number,
+    state: { isPreview: boolean; isDirty: boolean },
+  ): Tab {
+    const { tab } = openDraftTab(filename, column, true)
+    tab.isPreview = state.isPreview
+    tab.isDirty = state.isDirty
+    for (const listener of tabChangeListeners)
+      listener({ opened: [tab], closed: [], changed: [] })
+    activeTextEditorChanged(focusedSourceEditor())
+    return tab
+  }
+  /**
    * Gives the text editor of a draft's tab the keyboard, whoever had it before: the tab is in front of its group, the group is the active one, and the editor is reported as the active text editor; called by `focusMutableDraft` for a learner's click and by `pauseDebugger` for the debugger's own opening of the paused file.
    * The group is the one that holds the tab now: Cursor's model replaces every group object at a tab change (`replaceGroupObjects`), so the object the draft was opened in may be retired (Cycle 0046 row 703).
    * @param opened - What `openDraftTab` returned for that draft.
@@ -6495,11 +6516,25 @@ export async function workspaceHarness(
      * @example harness.openPausedFileInLockedGroup('settings.js', 1)
      */
     openPausedFileInLockedGroup(filename: string, column: number): Tab {
-      const { tab } = openDraftTab(filename, column, true)
-      for (const listener of tabChangeListeners)
-        listener({ opened: [tab], closed: [], changed: [] })
-      activeTextEditorChanged(focusedSourceEditor())
-      return tab
+      return openAnnouncedTextTab(filename, column, {
+        isPreview: true,
+        isDirty: false,
+      })
+    },
+    /**
+     * Opens a text tab in front of a group, even a locked one, without giving it the keyboard, and announces it: a file the learner dragged there (kept) or an edited preview, beside the paused file of `openPausedFileInLockedGroup`.
+     * @param filename - The file.
+     * @param column - The group.
+     * @param state - Whether the tab is a preview and whether it has unsaved changes.
+     * @returns The tab.
+     * @example harness.openAnnouncedTextTab('notes.js', 1, { isPreview: false, isDirty: false })
+     */
+    openAnnouncedTextTab(
+      filename: string,
+      column: number,
+      state: { isPreview: boolean; isDirty: boolean },
+    ): Tab {
+      return openAnnouncedTextTab(filename, column, state)
     },
     /**
      * Shows a stop the way both editors' own stop handling does under `debug.focusEditorOnBreak: false` (`focusStackFrame(…, { preserveFocus: true })` in VS Code 1.140 and Cursor 3.23): the paused file comes to the front of its group preserving the focus, and then the stop's frame is reported. When the text editor in front of the active group had the keyboard, it is hidden and the keyboard falls to the page body (Cycle 0046 finding 589, C54 rounds 9f and step1). A test sends the adapter's `stopped` event first (`pauseDebugger` with `staysInBackground`).

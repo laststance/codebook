@@ -2185,6 +2185,8 @@ export const EXTENSION_OBSERVED_VALUE_LIMIT_CHARS = 4_096
 export const EXTENSION_PIN_CAPTURE_TIMEOUT_MS = 2_000
 /** How long a chrome-extension run's stop waits for a preparation step still in flight, from the stop's admission; a step that ignores its abort cannot hold the stop past it. Shares the node-server stop bound ({@link NODE_SERVER_STOP_DEADLINE_MS}). */
 export const CHROME_EXTENSION_STOP_DEADLINE_MS = NODE_SERVER_STOP_DEADLINE_MS
+/** How many moves in a row of a paused file out of an extension run's Application group may fail before the lease stops trying; a show the editor keeps refusing then leaves the file where it is instead of looping (Cycle 0062 task 2). */
+export const PAUSED_SOURCE_MOVE_ATTEMPTS = 2
 
 // Lane F (Cycle 0061 pt2, MCP surface and help)
 /**

@@ -27,6 +27,27 @@ async function openView(
   return view
 }
 
+/** Writes a file into the harness's repository, so the fake editor can show it; a paused file exists on disk. */
+async function writeRepositoryFile(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+  filename: string,
+): Promise<void> {
+  await writeFile(
+    join(harness.directory, filename),
+    `// ${filename}\nawait chrome.storage.local.set({ theme: 'dark' })\n`,
+  )
+}
+
+/** Names the group whose tabs include one with this label, if any. */
+function groupShowing(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+  label: string,
+) {
+  return harness.groups.find((group) =>
+    group.tabs.some((tab) => tab.label === label),
+  )
+}
+
 // protects=ER22: the view of an ended extension run stays on screen with its last frame and result line, in the same pane, until a next run or the learner replaces it; fails_when=the lease release closes the pane of an ended extension run; no_claim=native keyboard behaviour in a real editor
 test('the Application view of an ended extension run stays open after its lease is released', async () => {
   // Arrange
@@ -159,6 +180,215 @@ test('a paused file Cursor opens in front of the extension view moves to the sou
     assert.ok(sourceGroup)
     assert.notEqual(sourceGroup.viewColumn, applicationColumn)
     assert.equal(sourceGroup.activeTab?.label, 'settings.js')
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=OCR-M3 (Cycle 0062 review): a file the learner keeps in front of the extension view (a tab that is no preview) stays in the Application group, while the paused file the editor opens there next still moves out; fails_when=the watch moves any text tab of the Application group, the learner's own kept tab first; no_claim=how the learner put the tab there
+test('a file the learner keeps in the Application group stays there while the next paused file moves out', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'notes.js')
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const view = await openView(harness, 'kept-tab-run-1')
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    // Act
+    harness.openAnnouncedTextTab('notes.js', applicationColumn, {
+      isPreview: false,
+      isDirty: false,
+    })
+    harness.openPausedFileInLockedGroup('settings.js', applicationColumn)
+    // Assert
+    await waitUntil(
+      () =>
+        groupShowing(harness, 'settings.js') !== undefined &&
+        groupShowing(harness, 'settings.js')?.viewColumn !== applicationColumn,
+      'the paused file moves out of the Application group',
+      5_000,
+    )
+    assert.equal(
+      groupShowing(harness, 'notes.js')?.viewColumn,
+      applicationColumn,
+    )
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=OCR-H1 (Cycle 0062 review): a preview with unsaved changes in front of the extension view is never moved, so its changes are never put at risk by a close, while the next paused file still moves out; fails_when=the watch closes an edited tab, which asks to save or loses the edits; no_claim=the editor's own save prompt
+test('an edited preview in the Application group stays there while the next paused file moves out', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'draft.js')
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const view = await openView(harness, 'edited-tab-run-1')
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    // Act
+    harness.openAnnouncedTextTab('draft.js', applicationColumn, {
+      isPreview: true,
+      isDirty: true,
+    })
+    harness.openPausedFileInLockedGroup('settings.js', applicationColumn)
+    // Assert
+    await waitUntil(
+      () =>
+        groupShowing(harness, 'settings.js') !== undefined &&
+        groupShowing(harness, 'settings.js')?.viewColumn !== applicationColumn,
+      'the paused file moves out of the Application group',
+      5_000,
+    )
+    assert.equal(
+      groupShowing(harness, 'draft.js')?.viewColumn,
+      applicationColumn,
+    )
+    assert.deepEqual(
+      harness
+        .tabCloseRequests()
+        .flat()
+        .map((tab) => tab.label),
+      ['settings.js'],
+    )
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=OCR-H2 (Cycle 0062 review): a paused file the editor cannot show in the source group stays open in front of the view instead of being closed and lost, and the next stop's file still moves out; fails_when=the move closes the tab before the show and the show fails, so the learner's paused file disappears; no_claim=why the editor refuses the show
+test('a paused file the editor cannot show elsewhere stays open while the next paused file moves out', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const view = await openView(harness, 'failed-show-run-1')
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    // Act: the first paused file is gone from disk, so the fake editor refuses to show it.
+    harness.openPausedFileInLockedGroup('deleted.js', applicationColumn)
+    harness.openPausedFileInLockedGroup('settings.js', applicationColumn)
+    // Assert
+    await waitUntil(
+      () =>
+        groupShowing(harness, 'settings.js') !== undefined &&
+        groupShowing(harness, 'settings.js')?.viewColumn !== applicationColumn,
+      'the next paused file moves out of the Application group',
+      5_000,
+    )
+    assert.equal(
+      groupShowing(harness, 'deleted.js')?.viewColumn,
+      applicationColumn,
+    )
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=CR6 (Cycle 0062 review, local CodeRabbit CLI): when the editor refuses to close the paused file's copy in front of the view, the watch tries again only up to its limit and then leaves it, instead of showing and closing it without end; fails_when=a refused close counts as a finished move, so the watch looks again, finds the copy and repeats forever; no_claim=why the editor refuses the close
+test('a paused file whose close the editor refuses is moved only up to the attempt limit', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const view = await openView(harness, 'refused-close-run-1')
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    const showsOfPausedFile = () =>
+      harness.textDocumentShows().filter((show) => show.name === 'settings.js')
+    // Act: the editor refuses to close the paused file's tab in front of the view.
+    harness.openPausedFileInLockedGroup('settings.js', applicationColumn)
+    harness.refuseCloseOfTabsShowing('settings.js')
+    await waitUntil(
+      () => showsOfPausedFile().length >= 2,
+      'the watch tries the move twice',
+      5_000,
+    )
+    // gstack-timing-ok: a negative check; a looping watch shows the file again within a few fake-editor file reads, so this settle is enough to see a third show.
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    // Assert
+    assert.equal(showsOfPausedFile().length, 2)
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=OCR-M2 (Cycle 0062 review): a second paused file that opens in front of the view while the first is being moved moves out too; fails_when=the watch drops the events that come during a move and never looks again, so the second file covers the view; no_claim=how fast two stops come natively
+test('a second paused file opened during a move also leaves the Application group', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    await writeRepositoryFile(harness, 'service-worker.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const view = await openView(harness, 'two-stops-run-1')
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    const firstShow = harness.holdNextTextDocumentShow({
+      uri: harness.editor.Uri.file(
+        join(harness.directory, 'settings.js'),
+      ).toString(),
+    })
+    harness.openPausedFileInLockedGroup('settings.js', applicationColumn)
+    await firstShow.started
+    // Act
+    harness.openPausedFileInLockedGroup('service-worker.js', applicationColumn)
+    firstShow.release()
+    // Assert
+    await waitUntil(
+      () =>
+        harness.groups
+          .find((group) => group.viewColumn === applicationColumn)
+          ?.tabs.every(
+            (tab) =>
+              tab.label !== 'settings.js' && tab.label !== 'service-worker.js',
+          ) ?? false,
+      'both paused files leave the Application group',
+      5_000,
+    )
+    assert.notEqual(groupShowing(harness, 'service-worker.js'), undefined)
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=OCR-M1 (Cycle 0062 review): once the learner closes the extension view during the run, the watch ends, so a preview in what is then the learner's first group is never moved; fails_when=the watch outlives the disposed pane and moves the learner's files between their own groups; no_claim=the editor's own group removal
+test('a paused file opened after the learner closed the extension view stays where the editor opened it', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const view = await openView(harness, 'closed-view-run-1')
+    const pane = harness.reader['app']
+    assert.ok(pane)
+    pane.dispose()
+    const showsBefore = harness.textDocumentShows().length
+    // Act
+    harness.openPausedFileInLockedGroup('settings.js', 1)
+    // gstack-timing-ok: a negative check; a move would start its show at once, so one settle of the fake editor's file read is enough to see none.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    // Assert
+    assert.equal(harness.textDocumentShows().length, showsBefore)
+    assert.equal(groupShowing(harness, 'settings.js')?.viewColumn, 1)
     view.close()
   } finally {
     await harness.close()

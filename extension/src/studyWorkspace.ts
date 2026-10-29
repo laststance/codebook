@@ -52,6 +52,7 @@ import {
   EDITOR_FOCUS_PASS_DELAY_MS,
   STOP_OWN_FOCUS_BOUND_MS,
   PRESENTATION_PREFERENCE_KEY,
+  PAUSED_SOURCE_MOVE_ATTEMPTS,
   PRESENTATION_PREFERENCE_VERSION,
   PRESENTATION_READY_TIMEOUT_MS,
   PRESENTATION_SETTLE_CEILING_MS,
@@ -10085,8 +10086,9 @@ export class StudyWorkspace {
   }
 
   /**
-   * Moves a text tab that opens in front of a live extension run's Application pane to the source group beside it, so the stopped source and the extension view stay visible in separate groups (DR6); called by {@link leaseApplicationViewport} for an extension run's lease.
-   * Cursor 3.27.22 opens a stop's paused file in the Application group although that group is locked, in front of the view (Cycle 0062 task 2, dry run of 2026-10-30); VS Code opens it in another group. An extension run has no captured source of its own: the paused file is where the learner reads the stop.
+   * Moves the paused file that opens in front of a live extension run's Application pane to the source group below it, so the stopped source and the extension view stay visible in separate groups (DR6); called by {@link leaseApplicationViewport} for an extension run's lease.
+   * Cursor 3.27.22 opens a stop's paused file in the Application group although that group is locked, as a preview tab in front of the view (Cycle 0062 task 2, dry run of 2026-10-30); VS Code opens it in another group. An extension run has no captured source of its own: the paused file is where the learner reads the stop.
+   * The watch ends with the lease's release or the pane's disposal. It looks again after each move, for a stop that came meanwhile, and gives a file up after {@link PAUSED_SOURCE_MOVE_ATTEMPTS} failed moves in a row, so a show the editor keeps refusing never loops while the next stop's file still moves.
    * @param panel - The lease's Application pane.
    * @param isCurrent - Whether the lease is still the workspace's current one.
    * @returns The watch, which the lease's release disposes.
@@ -10096,16 +10098,32 @@ export class StudyWorkspace {
     panel: vscode.WebviewPanel,
     isCurrent: () => boolean,
   ): vscode.Disposable {
-    let isMoving = false
+    let isMoving = false,
+      isDisposed = false
+    const failedMoves = new Map<string, number>()
+    const isWatching = (): boolean => !isDisposed && isCurrent()
+    const isGivenUp = (uri: vscode.Uri): boolean =>
+      (failedMoves.get(uri.toString()) ?? 0) >= PAUSED_SOURCE_MOVE_ATTEMPTS
     const moveCoveringSource = (): void => {
-      const move =
-        isMoving || !isCurrent() ? undefined : this.coveringSourceMove(panel)
+      if (isMoving || !isWatching()) return
+      const move = this.coveringSourceMove(panel, isGivenUp)
       if (!move) return
       isMoving = true
-      void this.movePausedSource(move)
-        .catch((error: unknown) => this.report('layout', error))
+      const key = move.uri.toString()
+      void this.movePausedSource(move, isWatching)
+        .then(
+          () => {
+            failedMoves.delete(key)
+          },
+          (error: unknown) => {
+            failedMoves.set(key, (failedMoves.get(key) ?? 0) + 1)
+            this.report('layout', error)
+          },
+        )
         .finally(() => {
           isMoving = false
+          // A stop that opened its file during this move announced it while the move ran.
+          moveCoveringSource()
         })
     }
     const watches = [
@@ -10113,80 +10131,112 @@ export class StudyWorkspace {
       vscode.window.onDidChangeActiveTextEditor(moveCoveringSource),
       panel.onDidChangeViewState(moveCoveringSource),
     ]
-    return {
-      dispose: (): void => {
-        for (const watch of watches) watch.dispose()
-      },
+    const dispose = (): void => {
+      isDisposed = true
+      for (const watch of watches) watch.dispose()
     }
+    // A pane the learner closes while the run goes on ends the watch: a disposed pane has no group to keep clear.
+    watches.push(panel.onDidDispose(dispose))
+    return { dispose }
   }
 
   /**
-   * Finds a text tab in the Application pane's group and the group it moves to; read by {@link keepPausedSourceOutOfApplication} at each tab, editor or pane change of the lease.
-   * The destination is the first other main group that holds an editor or nothing: never a chat part, whose tabs are no editors, and never a group of a Codebook pane.
+   * Finds the paused file in front of the Application pane and the group it moves to; read by {@link keepPausedSourceOutOfApplication} at each tab, editor or pane change of the lease.
+   * Only an unedited preview tab of a text document is taken: the editor opens a stop's file that way, while a tab the learner dragged there is kept and an edited one never risks its changes. The destination is the group right after the Application's, the learner's group it was inserted above, unless that group is a chat part or a Codebook pane's.
    * @param panel - The lease's Application pane.
-   * @returns The tab, its document, the Application group's column and the destination; `undefined` when no text tab is in that group or no destination exists.
-   * @example this.coveringSourceMove(panel) // => { tab: settings.js, uri, from: 1, to: group 2 } after Cursor opened the paused file in the Application group
+   * @param isGivenUp - Whether the watch gave up moving a document after its failed moves.
+   * @returns The document, the Application group's column and the destination; `undefined` when no such tab is in that group, the destination is unfit, or the pane was disposed meanwhile.
+   * @example this.coveringSourceMove(panel, () => false) // => { uri: settings.js, from: 1, to: group 2 } after Cursor opened the paused file in the Application group
    */
-  private coveringSourceMove(panel: vscode.WebviewPanel):
+  private coveringSourceMove(
+    panel: vscode.WebviewPanel,
+    isGivenUp: (uri: vscode.Uri) => boolean,
+  ):
     | {
-        tab: vscode.Tab
         uri: vscode.Uri
         from: vscode.ViewColumn
         to: vscode.TabGroup
       }
     | undefined {
-    const from = panel.viewColumn,
-      groups = vscode.window.tabGroups.all,
-      applicationGroup = groups.find((group) => group.viewColumn === from)
-    const tab = applicationGroup?.tabs.find(
-      (candidate) => candidate.input instanceof vscode.TabInputText,
+    const from = this.viewColumnOf(panel),
+      groups = vscode.window.tabGroups.all
+    const input = groups
+      .find((group) => group.viewColumn === from)
+      ?.tabs.find(
+        (tab) =>
+          tab.input instanceof vscode.TabInputText &&
+          tab.isPreview &&
+          !tab.isDirty &&
+          !isGivenUp(tab.input.uri),
+      )?.input
+    const to = groups.find(
+      (group) => from !== undefined && group.viewColumn === from + 1,
     )
     if (
       from === undefined ||
-      !tab ||
-      !(tab.input instanceof vscode.TabInputText)
+      !(input instanceof vscode.TabInputText) ||
+      !to ||
+      !(
+        to.tabs.length === 0 || holdsEditorTab(to, editorTabInputKinds(vscode))
+      ) ||
+      to.tabs.some((tab) => this.isCodebookPaneInput(tab.input))
     )
       return undefined
-    const editorKinds = editorTabInputKinds(vscode)
-    const to = groups
-      .filter(
-        (group) =>
-          group.viewColumn !== from &&
-          (group.tabs.length === 0 || holdsEditorTab(group, editorKinds)) &&
-          !group.tabs.some((candidate) =>
-            this.isCodebookPaneInput(candidate.input),
-          ),
-      )
-      .toSorted((left, right) => left.viewColumn - right.viewColumn)[0]
-    return to && { tab, uri: tab.input.uri, from, to }
+    return { uri: input.uri, from, to }
   }
 
   /**
-   * Closes a text tab in the Application pane's group and shows its document in the destination group without taking the keyboard, at the selection its editor had; called by {@link keepPausedSourceOutOfApplication}.
-   * It opens as a preview only when it was one and the destination holds no preview tab, which it would replace.
-   * @param move - What {@link coveringSourceMove} found.
-   * @returns Once the tab is closed and the document shown.
-   * @example await this.movePausedSource(this.coveringSourceMove(panel)!)
+   * Reads a pane's view column, which the editor refuses for a disposed pane; used by {@link coveringSourceMove}, whose watch can hear an event of the pane's own disposal first.
+   * @param panel - The pane.
+   * @returns Its column; `undefined` when it has none or is disposed.
+   * @example this.viewColumnOf(panel) // => 1
    */
-  private async movePausedSource(move: {
-    tab: vscode.Tab
-    uri: vscode.Uri
-    from: vscode.ViewColumn
-    to: vscode.TabGroup
-  }): Promise<void> {
+  private viewColumnOf(
+    panel: vscode.WebviewPanel,
+  ): vscode.ViewColumn | undefined {
+    try {
+      return panel.viewColumn
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * Shows the paused file in the destination group without taking the keyboard, at the selection its editor had, and then closes its tab in front of the Application pane; called by {@link keepPausedSourceOutOfApplication}.
+   * The show comes first, so the document is never left without a tab and its close asks nothing. It opens as a preview unless the destination holds a preview tab, which it would replace. The tab is found again by its document for the close: Cursor builds every tab object anew at a tab change.
+   * @param move - What {@link coveringSourceMove} found.
+   * @param isWatching - Whether the lease's watch still runs; a lease released during the show closes nothing.
+   * @returns Once the document is shown and the copy closed.
+   * @throws What the show or the close threw, and an error when the editor refuses the close; the watch reports it and counts a failed move.
+   * @example await this.movePausedSource(move, isWatching)
+   */
+  private async movePausedSource(
+    move: { uri: vscode.Uri; from: vscode.ViewColumn; to: vscode.TabGroup },
+    isWatching: () => boolean,
+  ): Promise<void> {
+    const isPausedFile = (tab: vscode.Tab): boolean =>
+      tab.input instanceof vscode.TabInputText &&
+      tab.input.uri.toString() === move.uri.toString()
     const selection = vscode.window.visibleTextEditors.find(
-        (editor) =>
-          editor.viewColumn === move.from &&
-          editor.document.uri.toString() === move.uri.toString(),
-      )?.selection,
-      preview = move.tab.isPreview && !move.to.tabs.some((tab) => tab.isPreview)
-    await vscode.window.tabGroups.close([move.tab], true)
+      (editor) =>
+        editor.viewColumn === move.from &&
+        editor.document.uri.toString() === move.uri.toString(),
+    )?.selection
     await this.showTextDocumentNoted(move.uri, {
       viewColumn: move.to.viewColumn,
       preserveFocus: true,
-      preview,
+      preview: !move.to.tabs.some((tab) => tab.isPreview && !isPausedFile(tab)),
       ...(selection && { selection }),
     })
+    if (!isWatching()) return
+    const copy = vscode.window.tabGroups.all
+      .find((group) => group.viewColumn === move.from)
+      ?.tabs.find(isPausedFile)
+    // A close the editor refuses leaves the copy in front of the view: a failed move, which the watch counts so it never loops.
+    if (copy && !(await vscode.window.tabGroups.close([copy], true)))
+      throw new Error(
+        `The editor kept "${copy.label}" in front of the Application view.`,
+      )
   }
 
   /**
