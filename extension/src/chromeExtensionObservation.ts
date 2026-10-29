@@ -146,16 +146,27 @@ export function createExtensionObservationReader(
       )
       return readField(answer, 'data')
     }
-    // Storage commands answer only on an extension-origin page session (TZ2): open one for the read and close it again.
-    const created = await cdp.request('Target.createTarget', {
-      url: `chrome-extension://${input.extensionId}/manifest.json`,
-    })
+    // Storage commands answer only on an extension-origin page session (TZ2): open one for the read and close it again, each step within the read timeout.
+    const created = await withinReadTimeout(
+      cdp.request(
+        'Target.createTarget',
+        { url: `chrome-extension://${input.extensionId}/manifest.json` },
+        undefined,
+        timeoutMs,
+      ),
+      timeoutMs,
+    )
     const targetId = readCdpString(created, 'targetId')
     try {
-      const attached = await cdp.request('Target.attachToTarget', {
-        targetId,
-        flatten: true,
-      })
+      const attached = await withinReadTimeout(
+        cdp.request(
+          'Target.attachToTarget',
+          { targetId, flatten: true },
+          undefined,
+          timeoutMs,
+        ),
+        timeoutMs,
+      )
       const answer = await withinReadTimeout(
         cdp.request(
           'Extensions.getStorageItems',
@@ -167,9 +178,10 @@ export function createExtensionObservationReader(
       )
       return readField(answer, 'data')
     } finally {
-      await cdp
-        .request('Target.closeTarget', { targetId })
-        .catch(() => undefined)
+      await withinReadTimeout(
+        cdp.request('Target.closeTarget', { targetId }, undefined, timeoutMs),
+        timeoutMs,
+      ).catch(() => undefined)
     }
   }
 

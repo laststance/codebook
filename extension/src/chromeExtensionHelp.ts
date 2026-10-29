@@ -387,7 +387,13 @@ const FAILURE_EXAMPLES = [
     },
     corrected:
       'Point the stop at the unbundled source the extension is built from only when that source is the file the manifest and the popup load; otherwise choose another file the extension loads unbundled, or explain that part from source in the chat.',
-    correctedStops: [{ path: 'popup.js', line: 2, context: 'page' }],
+    correctedStops: [
+      {
+        path: 'popup.js',
+        line: markedLine('popup.js', 'STOP page'),
+        context: 'page',
+      },
+    ],
   },
   {
     name: 'A worker stop on startup code',

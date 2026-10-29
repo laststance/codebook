@@ -168,6 +168,28 @@ test('a read that never answers fails at its timeout instead of waiting', async 
   })
 })
 
+// Value: protects=ER9 after a lost surface: the storage read's own extension page (Target.createTarget) that never answers is cut at the read timeout, so SURFACE_LOST is not held back until the run deadline (CodeRabbit pt2 round 4); fails_when=the fallback read waits forever on a browser that does not answer; no_claim=a real Chrome's answer times
+test('a storage read after the surface is lost fails at its timeout when its extension page never opens', async () => {
+  // Arrange
+  const surface = fakeExtensionSurface({
+    'Target.createTarget': () => new Promise<never>(() => undefined),
+  })
+  const reader = createExtensionObservationReader({
+    cdp: surface.connection,
+    extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+    observe: { kind: 'storage', key: 'seeded' },
+    surfaceSessionId: () => undefined,
+    readTimeoutMs: 40,
+  })
+  // Act
+  const read = await reader.read()
+  // Assert
+  assert.deepEqual(read, {
+    unavailable: true,
+    cause: 'the read did not answer within 40 ms',
+  })
+})
+
 // Value: protects=CR9: a value that never holds still for two reads within the bound reads unavailable instead of an arbitrary last value; fails_when=the last changing value is reported as the result; no_claim=the 5 s bound
 test('a result that keeps changing within the bound reads unavailable', async () => {
   // Arrange

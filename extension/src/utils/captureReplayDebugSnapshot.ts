@@ -222,6 +222,14 @@ export async function captureReplayDebugSnapshot(
   }> => {
     const variables: number[] = [],
       pending: PendingExpansion[] = []
+    // As captureVariables: a scope without a handle is empty, and a spent budget sends no request.
+    if (handle === 0) return { variables, pending }
+    if (snapshot.variables.length >= maxVariables)
+      return {
+        variables,
+        pending,
+        unavailable: 'Historical variable count limit reached.',
+      }
     try {
       const response = variableResponse.parse(
         await read('variables', {

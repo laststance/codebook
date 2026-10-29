@@ -119,3 +119,70 @@ test('the default capture still expands each value before the next scope, as the
     'Historical variable count limit reached.',
   )
 })
+
+// protects=a top-level-first capture spends no adapter request on a scope without a handle or after the variable budget is spent, as the default capture does (CodeRabbit pt2 round 4); fails_when=it asks the adapter for variablesReference 0 (and saves the refusal text as the scope's cause) or reads a scope after the budget; no_claim=js-debug's own answer to a zero handle
+test('a top-level-first capture sends no variables request for a scope without a handle or after the budget is spent', async () => {
+  // Arrange
+  const requests: { command: string; handle?: number }[] = []
+  const answer = (
+    command: 'scopes' | 'variables',
+    arguments_: Record<string, number>,
+  ): Promise<unknown> => {
+    requests.push({ command, handle: arguments_.variablesReference })
+    if (command === 'scopes')
+      return Promise.resolve({
+        scopes: [
+          {
+            name: 'Closure',
+            presentationHint: 'locals',
+            variablesReference: 0,
+          },
+          {
+            name: 'Local',
+            presentationHint: 'locals',
+            variablesReference: 200,
+          },
+          {
+            name: 'Block',
+            presentationHint: 'locals',
+            variablesReference: 300,
+          },
+        ],
+      })
+    if (arguments_.variablesReference === 0)
+      return Promise.reject(new Error('Invalid variablesReference 0'))
+    return Promise.resolve({
+      variables: [
+        { name: 'title', value: "'Codebook Folder'", variablesReference: 0 },
+        { name: 'parentId', value: "'1'", variablesReference: 0 },
+      ],
+    })
+  }
+  // Act
+  const snapshot = await captureReplayDebugSnapshot({
+    stack: STACK,
+    verifiedSource: SOURCE,
+    assertCurrent() {},
+    request: answer,
+    limits: {
+      timeoutMs: 1_500,
+      maxFrames: 8,
+      maxVariables: 2,
+      maxDepth: 2,
+      topLevelFirst: true,
+    },
+  })
+  // Assert
+  assert.deepEqual(
+    requests.filter((request) => request.command === 'variables'),
+    [{ command: 'variables', handle: 200 }],
+  )
+  assert.deepEqual(snapshot.frames[0]?.scopes[0], {
+    name: 'Closure',
+    variables: [],
+  })
+  assert.equal(
+    snapshot.frames[0]?.scopes[2]?.unavailable,
+    'Historical variable count limit reached.',
+  )
+})

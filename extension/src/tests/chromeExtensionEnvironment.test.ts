@@ -51,7 +51,10 @@ test('the environment refuses a run on Chrome 148 with CHROME_VERSION_UNSUPPORTE
     gaps: [],
     chromeVersionText: 'Google Chrome 148.0.7778.96',
   })
-  if (process.platform === 'win32') return
+  if (process.platform === 'win32') {
+    context.skip('The chrome-extension profile is not available on Windows.')
+    return
+  }
   // Act
   const refusal = await environment
     .createChromeExtensionRun?.({} as never)
@@ -76,7 +79,10 @@ test('the environment reports chrome-extension not ready when js-debug is disabl
     chromeVersionText: 'Google Chrome 156.0.8078.74',
     jsDebugEnabled: false,
   })
-  if (process.platform === 'win32') return
+  if (process.platform === 'win32') {
+    context.skip('The chrome-extension profile is not available on Windows.')
+    return
+  }
   // Act
   const profile = (await environment.prerequisites()).profiles?.[
     'chrome-extension'
