@@ -163,6 +163,8 @@ export function projectChromeExtensionState(
         declared: view.stopsDeclared,
         captured: view.captures.map((capture) => ({
           stopIndex: capture.stopIndex,
+          path: capture.path,
+          line: capture.line,
           context: capture.context,
           workerGeneration: capture.workerGeneration,
           targetUrl: capture.targetUrl,

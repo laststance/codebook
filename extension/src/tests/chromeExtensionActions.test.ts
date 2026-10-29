@@ -370,3 +370,25 @@ test('codebook_stop routes to the extension run and releases the run', async (co
   assert.equal(started.record.stopped, true)
   assert.deepEqual(started.run.calls, ['prepare', 'click', 'stop'])
 })
+
+// protects=DR11: each captured stop in the run resource names its declared file and line, so the chat cites where the run paused instead of a line it inferred; fails_when=a captured stop lists no file or line (the Cycle 0061 pt2 dry run's chat cited line 193 for a stop captured at 199); no_claim=the frames inside the snapshot
+test('a captured stop in the run resource names its declared file and line', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const started = await startFakeChromeExtensionRun(harness)
+  // Act
+  started.run.pauseAt(1)
+  const state = await readState(started)
+  // Assert
+  assert.deepEqual(
+    state.chromeExtension.stops.captured.map(
+      (capture: { stopIndex: number; path: string; line: number }) => [
+        capture.stopIndex,
+        capture.path,
+        capture.line,
+      ],
+    ),
+    [[1, 'popup.js', 2]],
+  )
+})

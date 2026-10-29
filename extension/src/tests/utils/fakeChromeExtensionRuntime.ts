@@ -193,6 +193,8 @@ export class FakeChromeExtensionRuntime implements ChromeExtensionRuntime {
     const generation = ++this.generation
     const capture: CapturedExtensionStop = {
       stopIndex,
+      path: context === 'service-worker' ? 'worker.js' : 'popup.js',
+      line: 2,
       context,
       workerGeneration: context === 'service-worker' ? 1 : 0,
       targetUrl:

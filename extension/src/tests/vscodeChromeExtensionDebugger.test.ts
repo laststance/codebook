@@ -470,7 +470,7 @@ test('a repeated hit of a retired stop on a shared line is resumed and journaled
   await run.editor.dispose()
 })
 
-// protects=a page stop is captured with its context, generation 0, target URL and pinned hash, continued once, then no longer reached; fails_when=a capture field is missing or the continue is not sent; no_claim=real variables
+// protects=a page stop is captured with its declared file and line (cited by the chat's explanation, DR11), context, generation 0, target URL and pinned hash, continued once, then no longer reached; fails_when=a capture field is missing (the Cycle 0061 pt2 dry run's captures had no file or line, and the chat cited another line) or the continue is not sent; no_claim=real variables
 test('a page stop is captured with context, URL and pinned hash and continues once', async () => {
   // Arrange
   const run = await readyRun([PAGE_STOP])
@@ -489,6 +489,8 @@ test('a page stop is captured with context, URL and pinned hash and continues on
   await run.debug.resume(pause!.continueArguments!, SIGNAL())
   // Assert
   assert.equal(pause?.captured?.stopIndex, 1)
+  assert.equal(pause?.captured?.path, 'popup.js')
+  assert.equal(pause?.captured?.line, 2)
   assert.equal(pause?.captured?.context, 'page')
   assert.equal(pause?.captured?.workerGeneration, 0)
   assert.equal(pause?.captured?.targetUrl, SURFACE_URL)

@@ -140,6 +140,10 @@ export interface OwnedExtensionBrowser {
 /** One captured stop, ready for the run resource and the later save cycle (CR11). */
 export interface CapturedExtensionStop {
   stopIndex: number
+  /** The declared stop's file, relative to the extension root, so an explanation cites where it paused without guessing. */
+  path: string
+  /** The declared stop's 1-based line. */
+  line: number
   context: ExtensionStopContext
   /** Incremented for each new worker child session; 0 for page stops. */
   workerGeneration: number

@@ -612,6 +612,8 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     assertCurrent()
     return {
       stopIndex: stop.index,
+      path: stop.path,
+      line: stop.line,
       context: pause.context,
       workerGeneration:
         pause.context === 'service-worker' ? this.generation : 0,
