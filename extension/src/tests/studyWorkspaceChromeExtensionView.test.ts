@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import type { ExtensionViewportIdentity } from '../chromeExtensionContracts'
+import { APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE } from '../constants'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { readerSeams, workspaceHarness } from './studyWorkspaceHarness'
@@ -701,6 +702,65 @@ test('a paused file opened after the learner closed the extension view stays whe
     // Assert
     assert.equal(harness.textDocumentShows().length, showsBefore)
     assert.equal(groupShowing(harness, 'settings.js')?.viewColumn, 1)
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=N62 attempt 1 (Cycle 0062 task 3, Cursor 3.27.22): an extension run started from the Agent chat while the first main group is empty gives the chat its keyboard back after the Application view opens; fails_when=the preparation leaves the keyboard in the new Application group and tells "Click where you want to type", because Cursor 3.27.22 keeps naming the main editor's group while its chat input has the keyboard (probe of 2026-10-30: activeTabGroup the empty main group, the chat part's group inactive, no active text editor); no_claim=Cursor's native focus events (N62)
+test('an extension run started from Cursor 3.27’s Agent chat, which names the empty main group, gives the chat its keyboard back', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.groups[0]!.tabs = []
+    harness.groups[0]!.activeTab = undefined
+    const chat = harness.addSeparateEditorPart()
+    chat.focus()
+    // Act
+    const view = await openView(harness, 'cursor-3-27-agent-run-1')
+    // Assert
+    assert.ok(harness.reader['app'])
+    assert.equal(chat.focused(), true)
+    assert.equal(
+      harness.informationMessages.some(
+        ({ message }) => message === APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE,
+      ),
+      false,
+    )
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=N62 attempt 1 (Cycle 0062 task 3, Cursor 3.27.22): an extension run started from the Agent chat while a preview text tab is in front of the first group (N62's manifest.json) gives the chat its keyboard back after the Application view opens; fails_when=the preview counts as no place to return to and the keyboard stays in the new Application group, as N62 attempt 1 showed (three keys typed without a click reached nothing); no_claim=Cursor's native focus events (N62)
+test('an extension run started from Cursor 3.27’s Agent chat beside a preview file in the first group gives the chat its keyboard back', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    const preview = harness.openAnnouncedTextTab('manifest.json', 1, {
+      isPreview: true,
+      isDirty: false,
+    })
+    const chat = harness.addSeparateEditorPart()
+    chat.focus()
+    // Act
+    const view = await openView(harness, 'cursor-3-27-agent-run-2')
+    // Assert
+    assert.ok(harness.reader['app'])
+    assert.equal(chat.focused(), true)
+    assert.equal(preview.isPreview, true)
+    assert.equal(
+      harness.informationMessages.some(
+        ({ message }) => message === APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE,
+      ),
+      false,
+    )
     view.close()
   } finally {
     await harness.close()

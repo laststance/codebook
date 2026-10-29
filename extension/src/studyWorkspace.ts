@@ -16836,6 +16836,9 @@ export class StudyWorkspace {
           ? undefined
           : this.capturePresentationFocus(undefined, false),
       knowsLearnersPlace: this.knowsLearnersPlace(focusedPanel),
+      // Cursor 3.27.22 names a group of the main editor while its Agent chat input has the keyboard (N62 probe), so no foreign tab is remembered for that chat.
+      chatPartHadKeyboard:
+        !focusedPanel && !chatReturn && this.chatPartHasKeyboard(),
       // VS Code's chat opened as an editor tab is a chat, whose group's focus gives its input the keyboard (row 625).
       toChatEditorTab: isChatEditorTabInput(
         vscode.window.tabGroups.activeTabGroup.activeTab?.input,
@@ -16890,6 +16893,7 @@ export class StudyWorkspace {
       restoreFocus:
         ReturnType<StudyWorkspace['capturePresentationFocus']> | undefined
       knowsLearnersPlace: boolean
+      chatPartHadKeyboard: boolean
       toChatEditorTab: boolean
       toldCause: ChatKeyboardReturnCause | undefined
     },
@@ -16921,6 +16925,15 @@ export class StudyWorkspace {
       this.owePreparationNotice(placed.preparation, captured.knowsLearnersPlace)
       return
     }
+    // An agent's run started from Cursor's Agent chat, which Cursor 3.27.22 does not name as the active group, gives that chat its keyboard back through the chat's own command (N62).
+    if (
+      !giveBack &&
+      forAgentRun &&
+      captured.chatPartHadKeyboard &&
+      !captured.knowsLearnersPlace &&
+      (await this.returnKeyboardToChatPart(placed.stillCurrent))
+    )
+      return
     if (
       this.settleKeyboardBesideChatView(
         placed.preparation,
@@ -16935,6 +16948,42 @@ export class StudyWorkspace {
     if (focusedPanel)
       await this.focusPresentationPanel(focusedPanel, placed.signal)
     else await restoreFocus?.(placed.signal, placed.assertPlaced)
+  }
+
+  /**
+   * Says whether another editor part's chat input has the keyboard while the editor names a group of the main editor: the window is focused, no text editor and no Study pane is active, the named group shows no tab without an editor's input, and another group does, Cursor's Agent chat tab ({@link namesAnotherEditorPartsTab}). Cursor 3.27.22 reports so with its Agent chat input focused beside an empty group or a preview file (N62 probe, 2026-10-30), where Cursor 3.23.12 named the chat's group; read by {@link captureApplicationPreparationReturn} before any effect.
+   * A text editor the learner works in stays the active one while a view or the terminal has the keyboard, so this never reads a learner's file as the chat's place; a host input-less editor the learner focused (VS Code's Settings) is the named group's front tab and reads `false`.
+   * @returns `true` in that state; `false` otherwise.
+   * @example this.chatPartHasKeyboard() // => true while Cursor 3.27.22's Agent chat input has the keyboard beside an empty main group
+   */
+  private chatPartHasKeyboard(): boolean {
+    const active = vscode.window.tabGroups.activeTabGroup
+    return (
+      vscode.window.state.focused &&
+      vscode.window.activeTextEditor === undefined &&
+      !this.hasActiveStudyPane() &&
+      !this.namesAnotherEditorPartsTab(active) &&
+      vscode.window.tabGroups.all.some(
+        (group) => group !== active && this.namesAnotherEditorPartsTab(group),
+      )
+    )
+  }
+
+  /**
+   * Gives Cursor's Agent chat its keyboard back after an agent's run's Application preparation took it, when {@link chatPartHasKeyboard} read the chat's place before the preparation and no foreign tab was remembered; called by {@link returnPreparationFocus}. The learner is told once, with the arrangement's sentence ({@link CHAT_KEYBOARD_RETURNED_MESSAGES}).
+   * @param stillCurrent - The preparation's guard for the current input; a newer learner choice gets nothing.
+   * @returns `true` once the chat's command ran; `false` where the host registers no chat command, the guard revoked the return, or the command was refused.
+   * @example await this.returnKeyboardToChatPart(stillCurrent) // => true after composer.focusComposer in Cursor
+   */
+  private async returnKeyboardToChatPart(
+    stillCurrent: () => boolean,
+  ): Promise<boolean> {
+    const command = await this.chatFocusCommand()
+    // A newer pause, replay or learner choice can revoke the return while native command discovery waits.
+    if (!command || !stillCurrent()) return false
+    return this.runFocusReturnCommand(command, 'arrangement', false).catch(
+      () => false,
+    )
   }
 
   /**
