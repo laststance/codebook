@@ -147,6 +147,38 @@ for (const gesture of ['navigation-command', 'click'] as const)
     }
   })
 
+// protects=OCR-M5 (Cycle 0062 review): a repository run's Application preparation beside a focused preview that is no text editor (an image opened by one click) places the pane in its own group and leaves the preview open as a preview, as an extension run's does (task 1); fails_when=the preparation refuses with the foreign-preview sentence, or the pane replaces the preview; no_claim=the editor's own preview replacement
+test('a repository run’s App preparation beside a focused image preview places the pane in its own group and keeps the preview', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  await harness.reader.attach(harness.service)
+  readerSeams(harness).stopOwnTimer()
+  try {
+    harness.focusMutableDraft('first-notes.txt', 1)
+    const image = harness.addOpaqueTab('diagram.png', 1)
+    image.isPreview = true
+    harness.focusOpaqueTab(image)
+    // Act
+    const viewport = await harness.reader.presentation.createViewport(
+      'image-preview-repository-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+    // Assert
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+    assert.equal(image.isPreview, true)
+    assert.equal(
+      harness.groups.find((group) => group.tabs.includes(image))?.viewColumn,
+      2,
+    )
+    assert.deepEqual(harness.tabCloseRequests(), [])
+    viewport.close()
+  } finally {
+    await harness.close()
+  }
+})
+
 test('an existing App lease is reusable while an unrelated native layout read remains pending', async () => {
   // Arrange
   const harness = await workspaceHarness(false)
