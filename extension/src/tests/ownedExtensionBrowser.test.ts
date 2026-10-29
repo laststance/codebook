@@ -965,3 +965,66 @@ test('CHROME_COMMAND_UNAVAILABLE names the minimum Chrome version', async (conte
   // Assert
   assert.match(error.message, /Chrome for Testing 149 or later\.$/)
 })
+
+// Value: protects=the pid proof of the orphan sweep (one transient write failure must not fail a launch); fails_when=the first failed pid write fails the launch or is never retried; no_claim=real file errors
+test('launch proceeds when the first write of the browser pid fails and the retry succeeds', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(healthy())
+  const writtenPids: (number | undefined)[] = []
+  let attempts = 0
+  const dependencies = {
+    ...chrome.dependencies,
+    writeBrowserMarker: async (
+      _folder: string,
+      marker: { executable: string; pid?: number },
+    ): Promise<void> => {
+      attempts += 1
+      if (attempts === 1) throw new Error('EIO: transient')
+      writtenPids.push(marker.pid)
+    },
+  }
+  // Act
+  const browser = await launchOwnedExtensionBrowser(
+    launchOptions(root),
+    dependencies,
+  )
+  // Assert
+  assert.equal(attempts, 2)
+  assert.deepEqual(writtenPids, [987_654])
+  assert.deepEqual(await browser.close(), {
+    profileLeft: false,
+    exitConfirmed: true,
+  })
+})
+
+// Value: protects=the pid proof of the orphan sweep (a browser whose pid is not recorded must not run on); fails_when=two failed pid writes are swallowed, or the browser or profile is left behind, or the profile path shows in the cause; no_claim=real file errors
+test('launch fails with RUNTIME_FAILED, closes the browser and removes the profile when the browser pid cannot be recorded twice', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(healthy())
+  let attempts = 0
+  const dependencies = {
+    ...chrome.dependencies,
+    writeBrowserMarker: async (folder: string): Promise<void> => {
+      attempts += 1
+      throw new Error(`EACCES: permission denied, open '${folder}/marker'`)
+    },
+  }
+  // Act
+  const error = await launchOwnedExtensionBrowser(
+    launchOptions(root),
+    dependencies,
+  ).then(
+    () => undefined,
+    (thrown: unknown) => thrown,
+  )
+  // Assert
+  assert.ok(error instanceof StudyError)
+  assert.equal(error.code, 'RUNTIME_FAILED')
+  assert.equal(error.message, "The run's test profile could not be prepared.")
+  assert.equal(error.causeDetail.includes(root), false)
+  assert.equal(attempts, 2)
+  assert.equal(chrome.signals.includes('SIGTERM'), true)
+  assert.deepEqual(await readdir(root), [])
+})

@@ -988,6 +988,14 @@ test('a journal failure while answering a dialog is recorded as a masked debugge
       SURFACE_SESSION,
     )
     await waitUntil(() => recorded.length > 0, 'the debugger error is recorded')
+    // The declared answer is still sent although the journal threw.
+    await waitUntil(
+      () =>
+        surface.sent.some(
+          (request) => request.method === 'Page.handleJavaScriptDialog',
+        ),
+      'the declared dialog answer is sent',
+    )
     gate.resolve({})
     await (
       await call
@@ -999,6 +1007,12 @@ test('a journal failure while answering a dialog is recorded as a masked debugge
     const { message } = recorded[0]?.detail as { message: string }
     assert.equal(message.includes('/Users/ada/secret-repo'), false)
     assert.equal(message.includes('abcdefghijklmnop1234567890'), false)
+    assert.deepEqual(
+      surface.sent
+        .filter((request) => request.method === 'Page.handleJavaScriptDialog')
+        .map((request) => request.params),
+      [{ accept: true }],
+    )
     assert.deepEqual(unhandled, [])
   } finally {
     process.off('unhandledRejection', onUnhandled)

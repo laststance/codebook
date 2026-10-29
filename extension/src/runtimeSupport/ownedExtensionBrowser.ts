@@ -75,6 +75,8 @@ export interface OwnedBrowserDependencies {
   stopper: ProcessStopper
   /** Starts the sweep of abandoned profile folders beside the launch; never rejects. */
   startSweep(root: string, owner: StorageOwnerIdentity): void
+  /** Records the spawned browser's pid in the profile's owned marker; defaults to {@link writeOwnedBrowserMarker}. A test injects failures. */
+  writeBrowserMarker?: typeof writeOwnedBrowserMarker
 }
 
 /** Everything one owned launch needs from the pre-launch checks and the environment. */
@@ -725,6 +727,45 @@ async function asLaunchFailure(
 }
 
 /**
+ * Writes the spawned browser's pid into the profile's owned marker, retrying once.
+ * Called by {@link launchOwnedExtensionBrowser} right after the spawn, because the orphan sweep stops the main browser only by this recorded pid.
+ * @param write - The marker writer.
+ * @param profile - The profile folder.
+ * @param executable - The spawned executable.
+ * @param pid - The spawned browser's pid.
+ * @throws {@link StudyError} `RUNTIME_FAILED` when both writes fail; the write failure is the masked cause.
+ * @example
+ * await recordBrowserPid(writeOwnedBrowserMarker, '/tmp/codebook-browser-a', '/opt/chrome/chrome', 4242)
+ */
+async function recordBrowserPid(
+  write: typeof writeOwnedBrowserMarker,
+  profile: string,
+  executable: string,
+  pid: number,
+): Promise<void> {
+  const marker = { executable, pid }
+  try {
+    await write(profile, marker)
+    return
+  } catch {
+    // One retry: a transient file error should not fail the launch.
+  }
+  try {
+    await write(profile, marker)
+  } catch (error) {
+    const cause = await maskLaunchDetail(String(error), {
+      runRoot: '',
+      storage: [profile],
+    })
+    throw new StudyError(
+      'RUNTIME_FAILED',
+      "The run's test profile could not be prepared.",
+      cause,
+    )
+  }
+}
+
+/**
  * Launches the browser a chrome-extension run owns, installs the extension, applies the seed and opens the surface, leaving every worker stopped for the debugger's attach (TZ1–TZ4).
  * Called when a chrome-extension run passes its pre-launch checks, in the phases `launching` to `attaching`; any failure closes what was started and removes the profile before it is thrown (CR12), and a stop accepted through `options.signal` ends the sequence before the next step (CR14).
  * @param options - The resolved run, the Chrome path, the profile root, the owner identity and an optional abort signal.
@@ -770,12 +811,14 @@ export async function launchOwnedExtensionBrowser(
       options.chromeExecutable,
       browserArguments(profile),
     )
-    // Record the pid beside the executable: the sweep's proof of which browser is this run's. The executable alone already proves it, so a failed write changes nothing.
+    // Record the pid beside the executable: the orphan sweep proves the main browser only by this pid, so a write that fails twice fails the launch.
     if (started.browser.pid !== undefined)
-      await writeOwnedBrowserMarker(profile, {
-        executable: options.chromeExecutable,
-        pid: started.browser.pid,
-      }).catch(() => undefined)
+      await recordBrowserPid(
+        dependencies.writeBrowserMarker ?? writeOwnedBrowserMarker,
+        profile,
+        options.chromeExecutable,
+        started.browser.pid,
+      )
     const endpoint = await waitForEndpoint(
       profile,
       started.browser,

@@ -660,12 +660,17 @@ class DialogResponder {
     answer: string,
     message: string,
   ): void {
-    this.input.record('chrome-extension.dialog', {
-      clickIndex: execution.clickIndex,
-      type,
-      answer,
-      message,
-    })
+    // A journal that throws must not leave the declared dialog unanswered (the page stays blocked): report it once and carry on.
+    try {
+      this.input.record('chrome-extension.dialog', {
+        clickIndex: execution.clickIndex,
+        type,
+        answer,
+        message,
+      })
+    } catch (error) {
+      this.recordAnswerFailure(error)
+    }
   }
 }
 
