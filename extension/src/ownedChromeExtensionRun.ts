@@ -500,6 +500,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       manifestName: resolved.manifestName,
       surface: resolved.surface,
       clickTitles: resolved.clicks.map((click) => click.title),
+      stopFiles: resolved.stops.map((stop) => stop.absolutePath),
     })
     this.changed()
     const launchStartedAtMs = performance.now()

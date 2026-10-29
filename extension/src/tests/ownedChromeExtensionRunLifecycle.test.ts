@@ -62,6 +62,23 @@ test('journals every phase from starting to ready in order', async () => {
   await harness.run.stop()
 })
 
+// protects=CXS2 (Cycle 0062 ship review, Codex; CR4): the run hands the viewport its declared stops' files as absolute paths with the identity, so the lease moves only those paused files; fails_when=the identity lacks the stop files, or names a file the run does not stop in; no_claim=the editor's routing of the paused file
+test('the run names its declared stop files in the viewport identity', async () => {
+  // Arrange
+  const harness = createRunHarness()
+  // Act
+  await harness.run.prepare()
+  // Assert
+  const identity = harness.viewportCalls.find(
+    ([name]) => name === 'setIdentity',
+  )?.[1]
+  assert.deepEqual(Reflect.get(identity as object, 'stopFiles'), [
+    '/repo/extension/popup.js',
+    '/repo/extension/worker.js',
+  ])
+  await harness.run.stop()
+})
+
 // Value: protects=CR15, acceptance 5: a failure while waiting for the worker is journaled up to that phase and the run cleans up in the fixed order; fails_when=the phase before the failure is not journaled, the run stays open, or the browser closes before the debugger is released; no_claim=the debugger's own error text (pt1)
 test('a failure in waking journals the phases up to it, fails the run and cleans up in order', async () => {
   // Arrange

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, normalize } from 'node:path'
 
 import * as vscode from 'vscode'
 import { z } from 'zod'
@@ -8063,6 +8063,8 @@ export class StudyWorkspace {
     },
     createChromeExtensionViewport: async (runId, signal) => {
       let isFinal = false
+      // The run's stop files, known once its configuration resolves (before that nothing moves).
+      let stopFilePaths = new Set<string>()
       const viewport = await this.leaseApplicationViewport({
         runId,
         // The extension run journals its own events; the pane's delivery detail has no reader.
@@ -8071,11 +8073,14 @@ export class StudyWorkspace {
         scenario: 'normal',
         signal,
         keepsEndedPane: () => isFinal,
-        movesPausedSourceOut: true,
+        movesPausedSourceOut: (fsPath) => stopFilePaths.has(normalize(fsPath)),
       })
       return new ChromeExtensionViewportView(viewport, {
         onFinal: () => {
           isFinal = true
+        },
+        onStopFiles: (stopFiles) => {
+          stopFilePaths = new Set(stopFiles.map((file) => normalize(file)))
         },
       })
     },
@@ -10003,7 +10008,7 @@ export class StudyWorkspace {
   /**
    * Prepares the Application pane for one run and wraps it in a leased {@link BrowserViewport}; called by {@link presentation}'s `createViewport` (repository, server and test runs) and `createChromeExtensionViewport`.
    * The lease's release closes the pane of an ended run, except when `keepsEndedPane` says the run reached its last content: an ended extension run keeps its pane and last frame, without the keyboard, until a next run's view replaces it or the learner closes the tab (ER22). A retired lease never touches a newer one's pane.
-   * @param input - The run's identity, its journal and failure hooks, and optionally the recording observer, the keep-at-end question and `movesPausedSourceOut` ({@link keepPausedSourceOutOfApplication}, an extension run's lease).
+   * @param input - The run's identity, its journal and failure hooks, and optionally the recording observer, the keep-at-end question and `movesPausedSourceOut` ({@link keepPausedSourceOutOfApplication}, an extension run's lease): whether a document's file is one of the run's stop files.
    * @returns The viewport, already registered as the workspace's live one.
    * @throws What {@link prepareApplicationGroup} throws when no safe pane can be prepared.
    * @example const viewport = await this.leaseApplicationViewport({ runId, record, fail, scenario, signal })
@@ -10016,7 +10021,7 @@ export class StudyWorkspace {
     signal?: AbortSignal
     observer?: ViewportRecordingObserver
     keepsEndedPane?: () => boolean
-    movesPausedSourceOut?: boolean
+    movesPausedSourceOut?: (fsPath: string) => boolean
   }): Promise<BrowserViewport> {
     const { runId, keepsEndedPane } = input
     // A new run may replace a closed reader, but an open recording keeps its independently selected film.
@@ -10035,6 +10040,7 @@ export class StudyWorkspace {
       ? this.keepPausedSourceOutOfApplication(
           panel,
           () => this.leaseId === leaseId,
+          input.movesPausedSourceOut,
         )
       : undefined
     const viewport = new BrowserViewport(
@@ -10091,12 +10097,14 @@ export class StudyWorkspace {
    * The watch ends with the lease's release or the pane's disposal. It looks again after each move, for a stop that came meanwhile, and gives a file up after {@link PAUSED_SOURCE_MOVE_ATTEMPTS} failed moves in a row, so a show the editor keeps refusing never loops while the next stop's file still moves.
    * @param panel - The lease's Application pane.
    * @param isCurrent - Whether the lease is still the workspace's current one.
+   * @param isStopFile - Whether a file (its `fsPath`) is one of this run's declared stop files; only such a file moves, so a file the learner opens there as a preview during the run stays, and nothing moves before the run's stops are known.
    * @returns The watch, which the lease's release disposes.
-   * @example const watch = this.keepPausedSourceOutOfApplication(panel, () => this.leaseId === leaseId)
+   * @example const watch = this.keepPausedSourceOutOfApplication(panel, () => this.leaseId === leaseId, (fsPath) => stopFiles.has(fsPath))
    */
   private keepPausedSourceOutOfApplication(
     panel: vscode.WebviewPanel,
     isCurrent: () => boolean,
+    isStopFile: (fsPath: string) => boolean,
   ): vscode.Disposable {
     let isMoving = false,
       isDisposed = false
@@ -10106,7 +10114,7 @@ export class StudyWorkspace {
       (failedMoves.get(uri.toString()) ?? 0) >= PAUSED_SOURCE_MOVE_ATTEMPTS
     const moveCoveringSource = (): void => {
       if (isMoving || !isWatching()) return
-      const move = this.coveringSourceMove(panel, isGivenUp)
+      const move = this.coveringSourceMove(panel, isGivenUp, isStopFile)
       if (!move) return
       isMoving = true
       const key = move.uri.toString()
@@ -10142,15 +10150,17 @@ export class StudyWorkspace {
 
   /**
    * Finds the paused file in front of the Application pane and the group it moves to; read by {@link keepPausedSourceOutOfApplication} at each tab, editor or pane change of the lease.
-   * Only an unedited preview tab of a text document is taken: the editor opens a stop's file that way, while a tab the learner dragged there is kept and an edited one never risks its changes. The destination is the group right after the Application's, the learner's group it was inserted above, unless that group is a chat part or a Codebook pane's.
+   * Only an unedited preview tab of one of the run's stop files is taken: the editor opens a stop's file that way, while a tab the learner dragged there is kept and an edited one never risks its changes. The destination is the group right after the Application's, the learner's group it was inserted above, unless that group is a chat part or a Codebook pane's.
    * @param panel - The lease's Application pane.
    * @param isGivenUp - Whether the watch gave up moving a document after its failed moves.
+   * @param isStopFile - Whether a file is one of the run's stop files; a preview of any other file is the learner's and stays.
    * @returns The document, the Application group's column and the destination; `undefined` when no such tab is in that group, the destination is unfit, or the pane was disposed meanwhile.
-   * @example this.coveringSourceMove(panel, () => false) // => { uri: settings.js, from: 1, to: group 2 } after Cursor opened the paused file in the Application group
+   * @example this.coveringSourceMove(panel, () => false, () => true) // => { uri: settings.js, from: 1, to: group 2 } after Cursor opened the paused file in the Application group
    */
   private coveringSourceMove(
     panel: vscode.WebviewPanel,
     isGivenUp: (uri: vscode.Uri) => boolean,
+    isStopFile: (fsPath: string) => boolean,
   ):
     | {
         uri: vscode.Uri
@@ -10167,6 +10177,7 @@ export class StudyWorkspace {
           tab.input instanceof vscode.TabInputText &&
           tab.isPreview &&
           !tab.isDirty &&
+          isStopFile(tab.input.uri.fsPath) &&
           !isGivenUp(tab.input.uri),
       )?.input
     const to = groups.find(

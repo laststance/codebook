@@ -171,6 +171,8 @@ export type ExtensionViewportIdentity = {
   surface: { kind: ExtensionSurfaceKind; path: string }
   /** The declared click titles, in order (DR8's hidden text). */
   clickTitles: readonly string[]
+  /** The declared stops' files as canonical absolute paths: the only files the Application group's lease moves out when the editor opens them in front of the view. */
+  stopFiles: readonly string[]
 }
 
 /**

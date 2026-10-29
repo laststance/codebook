@@ -17,11 +17,13 @@ const POPUP: ExtensionViewportIdentity = {
   manifestName: 'Bookmark Notes',
   surface: { kind: 'popup', path: 'popup.html' },
   clickTitles: ['Add note', 'Clear notes'],
+  stopFiles: [],
 }
 const PAGE: ExtensionViewportIdentity = {
   manifestName: 'Bookmark Notes',
   surface: { kind: 'page', path: 'options.html' },
   clickTitles: [],
+  stopFiles: [],
 }
 const PROVENANCE =
   'Operated by chat · Test profile · seeded data · Live only · replay unavailable'

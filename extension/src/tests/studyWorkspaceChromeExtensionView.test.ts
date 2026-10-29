@@ -13,17 +13,26 @@ const POPUP_IDENTITY: ExtensionViewportIdentity = {
   manifestName: 'Bookmark Notes',
   surface: { kind: 'popup', path: 'popup.html' },
   clickTitles: ['Add note'],
+  stopFiles: [],
 }
 
 /** Opens the Application view of one extension run on the harness's workspace, as the run's start does. */
 async function openView(
   harness: Awaited<ReturnType<typeof workspaceHarness>>,
   runId: string,
+  stopFileNames: readonly string[] = [
+    'settings.js',
+    'service-worker.js',
+    'deleted.js',
+  ],
 ) {
   const create = harness.reader.presentation.createChromeExtensionViewport
   assert.ok(create)
   const view = await create(runId)
-  view.setIdentity(POPUP_IDENTITY)
+  view.setIdentity({
+    ...POPUP_IDENTITY,
+    stopFiles: stopFileNames.map((name) => join(harness.directory, name)),
+  })
   return view
 }
 
@@ -465,6 +474,44 @@ test('a paused file opened after an extension run ended stays in the kept viewâ€
       groupShowing(harness, 'settings.js')?.viewColumn,
       applicationColumn,
     )
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=CXS2 (Cycle 0062 ship review, Codex; CR4): a preview of a file that is not one of the run's stop files, opened in the Application group during the run, stays there; fails_when=the watch moves any unedited preview text tab of the Application group, closing the tab the learner opened; no_claim=how the learner opened the file
+test('a preview of a file that is no stop file stays in the Application group while a stop file moves out', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'notes.js')
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const view = await openView(harness, 'other-preview-run-1')
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    // Act
+    const other = harness.openPausedFileInLockedGroup(
+      'notes.js',
+      applicationColumn,
+    )
+    harness.openPausedFileInLockedGroup('settings.js', applicationColumn)
+    // Assert
+    await waitUntil(
+      () =>
+        groupShowing(harness, 'settings.js') !== undefined &&
+        groupShowing(harness, 'settings.js')?.viewColumn !== applicationColumn,
+      'the stop file moves out of the Application group',
+      5_000,
+    )
+    assert.equal(
+      harness.groups
+        .find((group) => group.viewColumn === applicationColumn)
+        ?.tabs.includes(other),
+      true,
+    )
+    view.close()
   } finally {
     await harness.close()
   }
