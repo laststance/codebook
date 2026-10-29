@@ -788,6 +788,20 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     // `waking` exists only for a declared service-worker stop.
     if (this.input.run.stops.some((stop) => stop.context === 'service-worker'))
       this.reportPhase('waking')
+    await this.wakeWorker(signal)
+  }
+
+  /**
+   * Starts the extension's worker when no worker session of the surface is attached, then waits for its child session; called by {@link waitForWorker} at `waking` and by {@link ensureWorkerReady} before each click.
+   * Why: the launch stops every worker so js-debug can attach (TZ3), and an idle worker stops by itself later (SR1); either way nothing starts it but this, and the start is journaled as an intervention (CR10).
+   * @param signal - The run's abort signal.
+   * @throws {@link StudyError} `SERVICE_WORKER_NOT_ATTACHED` when no worker session appears within the wake bound.
+   */
+  private async wakeWorker(signal: AbortSignal): Promise<void> {
+    if (this.entriesOf('worker').length === 0) {
+      this.recordIntervention('start-worker')
+      await this.input.startWorker()
+    }
     await this.waitOr(
       async () => {
         return this.entriesOf('worker')[0]
@@ -852,12 +866,8 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
 
   async ensureWorkerReady(signal: AbortSignal): Promise<void> {
     if (!this.input.run.workerPath) return
-    if (this.entriesOf('worker').length === 0) {
-      // The worker went idle: Codebook starts it again before the click (SR1).
-      this.recordIntervention('start-worker')
-      await this.input.startWorker()
-      await this.waitForWorker(signal)
-    }
+    // The worker went idle: Codebook starts it again before the click (SR1).
+    await this.wakeWorker(signal)
     await this.waitOr(
       () => this.workerStopsBound(),
       'the worker stops to be verified',

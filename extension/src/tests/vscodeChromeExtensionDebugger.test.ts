@@ -1445,6 +1445,39 @@ test('an attach whose surface page never appears is refused with SURFACE_NOT_ATT
   await editor.dispose()
 })
 
+// protects=TZ3 and the waking phase: the launch stopped every worker so js-debug could attach, so waking starts the extension's worker before it waits for its child session, and journals that intervention (CR10); fails_when=waking only waits, as in the Cycle 0061 pt2 native dry run where every start with a worker stop failed with SERVICE_WORKER_NOT_ATTACHED; no_claim=real Chrome starting the worker (real-Chrome tests, N61)
+test('waking starts the extension worker once when no worker session is attached, then adopts its child session', async () => {
+  // Arrange
+  const editor = await extensionEditorHarness({})
+  const created = editor.createDebugger([WORKER_STOP])
+  const attaching = created.debug.attach(SIGNAL())
+  await until(() => editor.started.length > 0)
+  await editor.addChild({ kind: 'page', id: 'page-session', title: 'Popup' })
+  await attaching
+  // Act
+  const waking = created.debug.waitForWorker(SIGNAL())
+  await until(() => created.startWorkerCalls.length > 0)
+  await editor.addChild({
+    kind: 'service_worker',
+    id: 'worker-session',
+    title: 'service-worker.js',
+  })
+  await waking
+  // Assert
+  assert.deepEqual(created.startWorkerCalls, [1])
+  // The debugger runs in the harness's module realm: its arrays are copied into this one before comparing.
+  assert.deepEqual(
+    Array.from(
+      created.debug.interventions(),
+      (intervention) => intervention.kind,
+    ),
+    ['start-worker'],
+  )
+  assert.equal(created.debug.workerGeneration(), 1)
+  await created.debug.release()
+  await editor.dispose()
+})
+
 // protects=a worker that never starts is refused with SERVICE_WORKER_NOT_ATTACHED; fails_when=the wait ends with another code; no_claim=the real 5 s bound
 test('a worker session that never appears is refused with SERVICE_WORKER_NOT_ATTACHED', async () => {
   // Arrange
