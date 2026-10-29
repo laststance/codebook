@@ -2183,6 +2183,8 @@ export const EXTENSION_SCREENCAST_STOP_TIMEOUT_MS = 1_000
 export const EXTENSION_OBSERVED_VALUE_LIMIT_CHARS = 4_096
 /** How long the run waits for the surface screenshot it pins at a pause; a paused page may never answer it. */
 export const EXTENSION_PIN_CAPTURE_TIMEOUT_MS = 2_000
+/** How long a chrome-extension run's stop waits for a preparation step still in flight, from the stop's admission; a step that ignores its abort cannot hold the stop past it. Shares the node-server stop bound ({@link NODE_SERVER_STOP_DEADLINE_MS}). */
+export const CHROME_EXTENSION_STOP_DEADLINE_MS = NODE_SERVER_STOP_DEADLINE_MS
 
 // Lane F (Cycle 0061 pt2, MCP surface and help)
 /**

@@ -5,7 +5,10 @@ import { StudyError } from '../errors'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { describeChromeExtensionViewStatus } from '../utils/describeChromeExtensionStatus'
 
-import { createRunHarness } from './utils/chromeExtensionRunHarness'
+import {
+  createRunHarness,
+  manualClock,
+} from './utils/chromeExtensionRunHarness'
 import { defer } from './utils/defer'
 
 /** The names of the journaled phases, in order. */
@@ -624,4 +627,114 @@ test('a launch-time unsupported Chrome version shows the same next-step line in 
     statusItem,
     'This Chrome version cannot run the extension. The chat can explain this part from source.',
   )
+})
+
+// protects=ER18 (Cycle 0062 task 14): a stop settles within the 10 s stop bound while a preparation step ignores its abort and never settles, and the browser is closed once; fails_when=the cleanup awaits the stuck step forever and stop() never answers; no_claim=the 10 s value (CHROME_EXTENSION_STOP_DEADLINE_MS)
+test('a stop settles at the stop bound while a preparation step never settles and closes the browser once', async () => {
+  // Arrange
+  const neverSettles = defer<void>()
+  const timers = manualClock()
+  const harness = createRunHarness({
+    attachGate: neverSettles.promise,
+    clock: timers.clock,
+  })
+  const preparing = harness.run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await waitUntil(() => harness.log.includes('debugger.attach'), 'the attach')
+  // Act
+  const stopping = harness.run.stop()
+  await waitUntil(
+    () => timers.pendingDelays().includes(10_000),
+    'the stop bound to be armed',
+  )
+  timers.fire(10_000)
+  await stopping
+  // Assert
+  assert.equal(harness.run.view().phase, 'failed')
+  assert.equal(
+    harness.log.filter((entry) => entry === 'browser.close').length,
+    1,
+  )
+  neverSettles.resolve()
+  await preparing
+  assert.equal(
+    harness.log.filter((entry) => entry === 'browser.close').length,
+    1,
+  )
+})
+
+// protects=CR14 (Cycle 0062 task 17): a cleanup whose browser close throws never leaves an unhandled rejection from the fire-and-forget ending, and the run still reaches its ended phase; fails_when=the ending's rejection escapes unhandled or the run stays open; no_claim=the profile folder state
+test('a browser close that throws ends the run without an unhandled rejection', async () => {
+  // Arrange
+  const unhandled: unknown[] = []
+  const onUnhandled = (reason: unknown): void => void unhandled.push(reason)
+  process.on('unhandledRejection', onUnhandled)
+  const harness = createRunHarness()
+  harness.browser.close = () => {
+    throw new Error('close threw synchronously')
+  }
+  await harness.run.prepare()
+  try {
+    // Act
+    harness.loseBrowser()
+    await waitUntil(() => harness.run.view().phase === 'failed', 'the end')
+    // gstack-timing-ok: lets a would-be unhandled rejection surface
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    // Assert
+    assert.deepEqual(unhandled, [])
+    assert.deepEqual(harness.run.view().cleanup, {
+      profileLeft: true,
+      exitConfirmed: false,
+    })
+  } finally {
+    process.off('unhandledRejection', onUnhandled)
+  }
+})
+
+// protects=SR2 (Cycle 0062 task 17): a click called while the cleanup of an accepted stop is still running is refused and starts nothing; fails_when=the click dispatches, or clickInFlight is set, during cleanup; no_claim=the error wording
+test('a click during the cleanup of a stop is refused and never reaches the executor', async () => {
+  // Arrange
+  const closeGate = defer<{ profileLeft: boolean; exitConfirmed: boolean }>()
+  const harness = createRunHarness()
+  harness.browser.close = () => closeGate.promise
+  await harness.run.prepare()
+  const stopping = harness.run.stop()
+  await waitUntil(
+    () => harness.log.includes('executor.dispose'),
+    'the cleanup to reach the browser close',
+  )
+  // Act
+  const refusal = await harness.run.click().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.equal((refusal as StudyError).code, 'RUN_NOT_READY')
+  assert.equal(harness.run.view().procedure.clickInFlight, undefined)
+  assert.equal(harness.log.includes('executor.run:1'), false)
+  closeGate.resolve({ profileLeft: false, exitConfirmed: true })
+  await stopping
+})
+
+// protects=DR3 (Cycle 0062 task 17): the pause pin's 2 s capture timer is cleared when the run ends, so none outlives a stopped run; fails_when=a timer for the pin stays pending after the run ended; no_claim=the pin's frame
+test('the pause pin leaves no capture timer pending once the run has ended', async () => {
+  // Arrange
+  const neverAnswers = defer<Record<string, unknown>>()
+  const timers = manualClock()
+  const harness = createRunHarness({
+    clock: timers.clock,
+    surfaceAnswers: { 'Page.captureScreenshot': () => neverAnswers.promise },
+  })
+  await harness.run.prepare()
+  harness.openDeclaredPause(1, 'service-worker')
+  await waitUntil(
+    () => timers.pendingDelays().includes(2_000),
+    'the pin capture timer to be armed',
+  )
+  // Act
+  await harness.run.stop()
+  // Assert
+  assert.deepEqual(timers.pendingDelays(), [])
 })
