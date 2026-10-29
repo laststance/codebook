@@ -8,7 +8,7 @@ Cycle 0062 ([Issue #157](https://github.com/laststance/codebook/issues/157)), th
 
 - **The Application view opens when you start the run from Cursor's Agent chat** while the first editor group is empty or shows a preview, and the chat gets the keyboard back as soon as the view stands, also in Cursor 3.27, which does not report the chat as the active group while its input has the keyboard.
 - **A preview tab you have in front, such as an image opened by one click, no longer keeps the view from opening**: the view opens in its own group and the tab stays a preview.
-- **At a stop, the stop's file that Cursor opens in front of the view moves to the editor group beside it**, at the stop's line, so the view and the stopped source stay visible together. A tab of it you kept open or edited there stays where it is, and no other file is moved.
+- **At a stop, the stop's file that Cursor opens in front of the view moves to the editor group beside it**, at the stop's line, so the view and the stopped source stay visible together. Cursor 3.27 keeps that tab a moment after it opens it, and a kept tab moves too, kept; a tab of it you edited there stays where it is, and no other file is moved.
 - **When the view still cannot open, the chat tells you why**, with the reason the run gives in `chromeExtension.viewUnavailable` and the step that reason names.
 
 **Runs that end cleanly and say so.**

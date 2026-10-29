@@ -196,6 +196,46 @@ test('a paused file Cursor opens in front of the extension view moves to the sou
   }
 })
 
+// protects=N62 attempt 2 (Cycle 0062 task 2, Cursor 3.27.22): a stop's paused file that Cursor opens kept (no preview) in the locked Application group moves out too, and stays kept in the group beside the view; fails_when=only a preview moves, so the kept paused file covers the extension view for the rest of the run, as N62 attempt 2 recorded (preview at 265.0 s, kept at 265.5 s); no_claim=why Cursor keeps the tab
+test('a paused file Cursor keeps in front of the extension view moves to the source group as a kept tab', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const view = await openView(harness, 'kept-paused-file-run-1')
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    // Act
+    harness.openAnnouncedTextTab('settings.js', applicationColumn, {
+      isPreview: false,
+      isDirty: false,
+    })
+    // Assert
+    await waitUntil(
+      () =>
+        groupShowing(harness, 'settings.js') !== undefined &&
+        groupShowing(harness, 'settings.js')?.viewColumn !== applicationColumn,
+      'the kept paused file moves out of the Application group',
+      5_000,
+    )
+    const moved = groupShowing(harness, 'settings.js')?.tabs.find(
+      (tab) => tab.label === 'settings.js',
+    )
+    assert.equal(moved?.isPreview, false)
+    assert.equal(
+      harness.groups
+        .find((group) => group.viewColumn === applicationColumn)
+        ?.tabs.some((tab) => tab.label === 'settings.js'),
+      false,
+    )
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
 // protects=OCR-M3 (Cycle 0062 review): a file the learner keeps in front of the extension view (a tab that is no preview) stays in the Application group, while the paused file the editor opens there next still moves out; fails_when=the watch moves any text tab of the Application group, the learner's own kept tab first; no_claim=how the learner put the tab there
 test('a file the learner keeps in the Application group stays there while the next paused file moves out', async () => {
   // Arrange
@@ -592,15 +632,15 @@ test('a paused file the editor shows in the Application group again is not left 
   }
 })
 
-// protects=CX1 (Cycle 0062 ship review, Codex): a paused file the learner keeps open (double-click) while its move is under way stays in front of the extension view, since the close checks the tab again; fails_when=the move closes the tab by its document alone, closing a tab the learner kept or edited during the show; no_claim=the editor's own keep gesture
-test('a paused file the learner keeps during its move stays where the learner kept it', async () => {
+// protects=CX1 (Cycle 0062 ship review, Codex; revised by N62 attempt 2): a paused file the learner edits while its move is under way stays in front of the extension view with its changes, since the close checks the tab again; fails_when=the move closes the tab by its document alone, closing a tab the learner edited during the show; no_claim=the editor's own save prompt
+test('a paused file the learner edits during its move stays where the learner edited it', async () => {
   // Arrange
   const harness = await workspaceHarness()
   try {
     readerSeams(harness).stopOwnTimer()
     await writeRepositoryFile(harness, 'settings.js')
     harness.focusMutableDraft('popup.js', 1)
-    const view = await openView(harness, 'kept-during-move-run-1')
+    const view = await openView(harness, 'edited-during-move-run-1')
     const applicationColumn = harness.reader['app']?.viewColumn
     assert.ok(applicationColumn)
     const show = harness.holdNextTextDocumentShow({
@@ -613,8 +653,8 @@ test('a paused file the learner keeps during its move stays where the learner ke
       applicationColumn,
     )
     await show.started
-    // Act: the learner keeps the tab open while the move waits for its show.
-    paused.isPreview = false
+    // Act: the learner edits the tab while the move waits for its show.
+    paused.isDirty = true
     show.release()
     await waitUntil(
       () =>

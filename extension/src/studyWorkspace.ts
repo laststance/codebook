@@ -10154,12 +10154,12 @@ export class StudyWorkspace {
 
   /**
    * Finds the paused file in front of the Application pane and the group it moves to; read by {@link keepPausedSourceOutOfApplication} at each tab, editor or pane change of the lease.
-   * Only an unedited preview tab of one of the run's stop files is taken: the editor opens a stop's file that way, while a tab the learner dragged there is kept and an edited one never risks its changes. The destination is the group right after the Application's, the learner's group it was inserted above, unless that group is a chat part or a Codebook pane's.
+   * Only an unedited tab of one of the run's stop files is taken, a preview or a kept one: Cursor 3.27.22 opens a stop's file in the locked group as a preview and keeps it a moment later, while an edited tab never risks its changes and a file that is no stop file stays. The destination is the group right after the Application's, the learner's group it was inserted above, unless that group is a chat part or a Codebook pane's.
    * @param panel - The lease's Application pane.
    * @param isGivenUp - Whether the watch gave up moving a document after its failed moves.
    * @param isStopFile - Whether a file is one of the run's stop files; a preview of any other file is the learner's and stays.
-   * @returns The document, the Application group's column and the destination; `undefined` when no such tab is in that group, the destination is unfit, or the pane was disposed meanwhile.
-   * @example this.coveringSourceMove(panel, () => false, () => true) // => { uri: settings.js, from: 1, to: group 2 } after Cursor opened the paused file in the Application group
+   * @returns The document, the Application group's column, the destination and whether the tab in front of the view is a preview; `undefined` when no such tab is in that group, the destination is unfit, or the pane was disposed meanwhile.
+   * @example this.coveringSourceMove(panel, () => false, () => true) // => { uri: settings.js, from: 1, to: group 2, isPreview: false } after Cursor opened and kept the paused file in the Application group
    */
   private coveringSourceMove(
     panel: vscode.WebviewPanel,
@@ -10170,20 +10170,22 @@ export class StudyWorkspace {
         uri: vscode.Uri
         from: vscode.ViewColumn
         to: vscode.TabGroup
+        isPreview: boolean
       }
     | undefined {
     const from = this.viewColumnOf(panel),
       groups = vscode.window.tabGroups.all
-    const input = groups
+    // Cursor 3.27.22 keeps the paused file it opens in the locked Application group (a preview a moment, then a kept tab; N62 attempt 2), so a kept tab moves too.
+    const paused = groups
       .find((group) => group.viewColumn === from)
       ?.tabs.find(
         (tab) =>
           tab.input instanceof vscode.TabInputText &&
-          tab.isPreview &&
           !tab.isDirty &&
           isStopFile(tab.input.uri.fsPath) &&
           !isGivenUp(tab.input.uri),
-      )?.input
+      )
+    const input = paused?.input
     const to = groups.find(
       (group) => from !== undefined && group.viewColumn === from + 1,
     )
@@ -10197,7 +10199,7 @@ export class StudyWorkspace {
       to.tabs.some((tab) => this.isCodebookPaneInput(tab.input))
     )
       return undefined
-    return { uri: input.uri, from, to }
+    return { uri: input.uri, from, to, isPreview: Boolean(paused?.isPreview) }
   }
 
   /**
@@ -10218,7 +10220,7 @@ export class StudyWorkspace {
 
   /**
    * Shows the paused file in the destination group without taking the keyboard, at the selection its editor had, and then closes its tab in front of the Application pane; called by {@link keepPausedSourceOutOfApplication}.
-   * The show comes first, so the document is never left without a tab and its close asks nothing; the copy is closed only after the current tab groups show the document in a group other than the Application's. It opens as a preview unless the destination holds a preview tab, which it would replace. The tab is found again by its document for the close (Cursor builds every tab object anew at a tab change), and only while it is still an unedited preview: one the learner kept or edited during the show stays.
+   * The show comes first, so the document is never left without a tab and its close asks nothing; the copy is closed only after the current tab groups show the document in a group other than the Application's. A preview opens as a preview unless the destination holds a preview tab, which it would replace; a kept tab opens kept. The tab is found again by its document for the close (Cursor builds every tab object anew at a tab change), and only while it is still unedited: one the learner edited during the show stays.
    * @param move - What {@link coveringSourceMove} found.
    * @param isWatching - Whether the lease's watch still runs; a lease released during the show closes nothing.
    * @returns Once the document is shown and the copy closed.
@@ -10226,7 +10228,12 @@ export class StudyWorkspace {
    * @example await this.movePausedSource(move, isWatching)
    */
   private async movePausedSource(
-    move: { uri: vscode.Uri; from: vscode.ViewColumn; to: vscode.TabGroup },
+    move: {
+      uri: vscode.Uri
+      from: vscode.ViewColumn
+      to: vscode.TabGroup
+      isPreview: boolean
+    },
     isWatching: () => boolean,
   ): Promise<void> {
     const isPausedFile = (tab: vscode.Tab): boolean =>
@@ -10241,7 +10248,10 @@ export class StudyWorkspace {
     const shownEditor = await this.showTextDocumentNoted(move.uri, {
       viewColumn: move.to.viewColumn,
       preserveFocus: true,
-      preview: !move.to.tabs.some((tab) => tab.isPreview && !isPausedFile(tab)),
+      // A kept tab stays kept in its new group; a preview stays one unless it would replace the destination's own preview.
+      preview:
+        move.isPreview &&
+        !move.to.tabs.some((tab) => tab.isPreview && !isPausedFile(tab)),
       ...(primary && {
         selection: new vscode.Range(primary.anchor, primary.active),
       }),
@@ -10256,10 +10266,10 @@ export class StudyWorkspace {
       throw new Error(
         `The editor showed "${basename(move.uri.fsPath)}" in column ${shownEditor.viewColumn ?? 'none'}, not outside the Application group, so its copy in front of the view stays.`,
       )
-    // Checked again after the show: a tab the learner kept or edited meanwhile is theirs and stays.
+    // Checked again after the show: a tab the learner edited meanwhile is theirs and stays; the document is shown in the destination either way.
     const copy = vscode.window.tabGroups.all
       .find((group) => group.viewColumn === move.from)
-      ?.tabs.find((tab) => isPausedFile(tab) && tab.isPreview && !tab.isDirty)
+      ?.tabs.find((tab) => isPausedFile(tab) && !tab.isDirty)
     // A close the editor refuses leaves the copy in front of the view: a failed move, which the watch counts so it never loops.
     if (copy && !(await vscode.window.tabGroups.close([copy], true)))
       throw new Error(

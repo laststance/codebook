@@ -402,6 +402,39 @@ test("a popup whose page the extension also opened in a tab is found as the popu
   await browser.close()
 })
 
+// Value: protects=N62-2 (CodeRabbit pass 8): a copy of the surface page whose close fails, as one that closed by itself meanwhile, ends nothing and is not counted as closed; fails_when=the failed close fails the launch with RUNTIME_FAILED, or the run lists a close that did not happen; no_claim=real Chrome, the debugger's tie still refusing a second page
+test('a copy of the surface page whose close fails leaves the launch going and counts no close', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const surfaceUrl = `chrome-extension://${EXTENSION_ID}/fullpage.html`
+  const chrome = fakeOwnedChrome(
+    healthy({
+      extensionOwnPages: [surfaceUrl],
+      rejectMethod: {
+        method: 'Target.closeTarget',
+        error: new FlatCdpCommandError(
+          'Target.closeTarget',
+          -32602,
+          'No target with given id found',
+        ),
+      },
+    }),
+  )
+  // Act
+  const browser = await launchOwnedExtensionBrowser(
+    launchOptions(root, {
+      surface: { kind: 'page', path: 'fullpage.html' },
+      surfaceUrl,
+      seed: { bookmarks: [], storage: {} },
+    }),
+    chrome.dependencies,
+  )
+  // Assert
+  assert.equal(browser.surfaceTargetId, `created-1-${surfaceUrl}`)
+  assert.equal(browser.closedDuplicateSurfacePages, 0)
+  await browser.close()
+})
+
 // Value: protects=N62-2: a launch whose extension opened no copy of the surface closes nothing; fails_when=the launch closes a page without a duplicate; no_claim=real Chrome
 test('a page surface without a copy of the extension closes no page', async (context) => {
   // Arrange

@@ -521,7 +521,7 @@ async function pagesAtUrl(
  * @param cdp - The browser connection.
  * @param surfaceUrl - The surface url.
  * @param surfaceTargetId - The surface the launch opened, which stays.
- * @returns How many pages were closed.
+ * @returns How many pages Chrome closed; a close that failed (the copy closed by itself meanwhile) is not counted.
  * @example await closeDuplicateSurfacePages(cdp, 'chrome-extension://abc/fullpage.html', 'T2') // => 1 after the extension's own tab T1 closed
  */
 async function closeDuplicateSurfacePages(
@@ -532,9 +532,15 @@ async function closeDuplicateSurfacePages(
   const duplicates = (await pagesAtUrl(cdp, surfaceUrl)).filter(
     (page) => page.targetId !== surfaceTargetId,
   )
-  for (const page of duplicates)
-    await cdp.request('Target.closeTarget', { targetId: page.targetId })
-  return duplicates.length
+  let closed = 0
+  // A copy that closed by itself meanwhile, or that Chrome refuses to close, ends nothing here: the debugger's surface tie still refuses a second page it finds.
+  for (const page of duplicates) {
+    const answer = await cdp
+      .request('Target.closeTarget', { targetId: page.targetId })
+      .catch(() => undefined)
+    if (answer !== undefined && answer.success !== false) closed += 1
+  }
+  return closed
 }
 
 /** The fixed sentence of `POPUP_NOT_OPENED`. */
