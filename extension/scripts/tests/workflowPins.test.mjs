@@ -819,6 +819,8 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/scripts/utils/readVsixBytes.mjs',
     'extension/src/runtimeSupport/utils/linuxCommandLineArguments.ts',
     'extension/src/runtimeSupport/utils/listProcesses.ts',
+    'extension/src/runtimeSupport/utils/ownedBrowserMarker.ts',
+    'extension/src/runtimeSupport/utils/ownedBrowserProcesses.ts',
     'extension/src/runtimeSupport/utils/profileProcesses.ts',
     'extension/src/runtimeSupport/utils/removeAbandonedProfiles.ts',
     'extension/src/runtimeSupport/utils/sha256.ts',
