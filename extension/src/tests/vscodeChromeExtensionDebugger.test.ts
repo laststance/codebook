@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { StudyError } from '../errors'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import {
   EXTENSION_ID,
@@ -26,9 +27,7 @@ function plain<Value>(value: Value): Value {
 
 /** Waits until a condition holds; the debugger classifies stops asynchronously. */
 async function until(condition: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 500 && !condition(); attempt += 1)
-    await sleep(2)
-  assert.ok(condition(), 'the condition never held')
+  await waitUntil(condition, 'the condition to hold', 1_000, undefined, 2)
 }
 
 /**
@@ -627,7 +626,7 @@ test('a manual continue during a capture ends the pause and its continue argumen
   // Act
   run.editor.adapter.learnerContinues(run.page)
   gate.resolve()
-  await sleep(20)
+  await until(() => run.debug.pauses().length === 0)
   const refusal = run.debug.resume(args, SIGNAL())
   // Assert
   assert.equal(run.debug.pauses().length, 0)
@@ -736,6 +735,7 @@ test('a worker session that ends without a pause does not fail the run', async (
   const run = await readyRun([WORKER_STOP])
   // Act
   run.editor.adapter.end(run.worker)
+  // gstack-timing-ok: asserts no failure follows a worker end, so a short fixed wait is the contract
   await sleep(10)
   // Assert
   assert.deepEqual(run.failures, [])
@@ -752,6 +752,7 @@ test('a worker restarted before a click turns the stop unverified, then verified
   run.editor.adapter.breakpointNews(run.worker, id, false)
   const generationAfterLoss = run.debug.workerGeneration()
   const ready = run.debug.ensureWorkerReady(SIGNAL())
+  // gstack-timing-ok: the click must keep waiting while the stop is unverified, so holding it unverified for a fixed time is the contract
   await sleep(120)
   run.editor.adapter.breakpointNews(run.worker, id, true)
   await ready
@@ -950,6 +951,7 @@ test('250 console outputs journal 200 events and one dropped count of 50', async
       run.events.filter((event) => event.type === 'chrome-extension.output')
         .length === 200,
   )
+  // gstack-timing-ok: asserts no output beyond the 200th is journaled, so a short fixed wait is the contract
   await sleep(20)
   await run.debug.release()
   // Assert
@@ -1176,6 +1178,7 @@ test('a continue processed right after a stop leaves no pause for the running th
     { file: run.editor.path('popup.js'), line: 2 },
   )
   run.editor.adapter.learnerContinues(run.page)
+  // gstack-timing-ok: asserts no pause appears after the continue, so a short fixed wait is the contract
   await sleep(30)
   // Assert
   assert.deepEqual(plain(run.debug.pauses()), [])
@@ -1223,6 +1226,7 @@ test('console output that arrives after the release began is not journaled', asy
   await run.debug.release()
   // Act
   run.editor.adapter.output(run.page, 'late line\n')
+  // gstack-timing-ok: asserts the late line is never journaled, so a short fixed wait is the contract
   await sleep(20)
   // Assert
   assert.deepEqual(

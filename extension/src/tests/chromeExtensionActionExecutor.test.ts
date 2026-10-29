@@ -6,6 +6,7 @@ import { createChromeExtensionActionExecutor } from '../chromeExtensionActionExe
 import type { ResolvedExtensionClick } from '../chromeExtensionContracts'
 import { ExtensionPauseSet } from '../chromeExtensionPauseSet'
 import { StudyError } from '../errors'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { defer } from './utils/defer'
 import {
@@ -619,7 +620,10 @@ test('a dialog opened by the second click is answered as the second click declar
     { type: 'confirm', message: 'Create the folder?' },
     SURFACE_SESSION,
   )
-  await sleep(10)
+  await waitUntil(
+    () => surface.methods().includes('Page.handleJavaScriptDialog'),
+    'the second click answers the dialog',
+  )
   // Assert
   assert.deepEqual(
     surface.sent
@@ -656,7 +660,10 @@ test('a dialog opened after the click settled is answered as declared and journa
     { type: 'alert', message: 'Saved /Users/ada/secret-repo/notes.md' },
     SURFACE_SESSION,
   )
-  await sleep(10)
+  await waitUntil(
+    () => surface.methods().includes('Page.handleJavaScriptDialog'),
+    'the late dialog is answered',
+  )
   // Assert
   const answered = surface.sent.filter(
     (request) => request.method === 'Page.handleJavaScriptDialog',
@@ -694,6 +701,7 @@ test('a dialog opened after the run ended and the executor was disposed is not a
     { type: 'alert' },
     SURFACE_SESSION,
   )
+  // gstack-timing-ok: asserts a dialog is NOT answered after dispose, so a short fixed wait is the contract
   await sleep(10)
   // Assert
   assert.equal(surface.methods().includes('Page.handleJavaScriptDialog'), false)
@@ -711,7 +719,10 @@ test('an undeclared dialog opened after the click settled is reported by lateDia
     { type: 'confirm' },
     SURFACE_SESSION,
   )
-  await sleep(10)
+  await waitUntil(
+    () => executor.lateDialogRefusal(),
+    'the late undeclared dialog is reported',
+  )
   // Assert
   const refusal = executor.lateDialogRefusal()
   assert.equal(refusal?.code, 'DIALOG_UNDECLARED')

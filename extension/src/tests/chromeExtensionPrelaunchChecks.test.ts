@@ -362,6 +362,7 @@ test('imports with unicode bindings, quoted export names and very long whitespac
   const elapsedMs = performance.now() - startedAt
   // Assert
   assert.deepEqual(found.references, ['./b.js', './c.js', './d.js', './f.js'])
+  // gstack-timing-ok: the bound is the contract, a 50,000-space import must match without quadratic backtracking (1 s is wide headroom)
   assert.ok(elapsedMs < 1000, `matching took ${elapsedMs} ms`)
 })
 

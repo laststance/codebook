@@ -197,6 +197,7 @@ test(
     // Act
     const { browser } = await launch(context, chrome, run)
     // Wait past the fixture's 700 ms late write, which must never have landed.
+    // gstack-timing-ok: asserts the fixture's 700 ms late write never lands, so waiting past it is the contract
     await delay(1_500)
     const targets = await targetsOf(browser)
     const storage = await readStorage(browser)
