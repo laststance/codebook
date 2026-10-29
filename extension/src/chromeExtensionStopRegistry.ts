@@ -36,6 +36,11 @@ export type ExtensionHitVerdict =
 export class ExtensionStopRegistry {
   readonly logical: LogicalExtensionStop[] = []
   private readonly physicals = new Map<string, OwnedRepositoryBreakpoint>()
+  /** The last id each session's adapter acknowledged per physical breakpoint; kept while a replacement `setBreakpoints` of its file is unanswered, so a live stop's hit is not taken for a foreign one. */
+  private readonly lastIds = new Map<
+    OwnedRepositoryBreakpoint,
+    Map<string, number>
+  >()
 
   constructor(private readonly stops: readonly ResolvedExtensionStop[]) {}
 
@@ -72,12 +77,36 @@ export class ExtensionStopRegistry {
   ): void {
     for (const physical of this.physicals.values())
       physical.onResponse(session, response)
+    this.rememberIds(session)
   }
 
   /** Passes an adapter `breakpoint` event to every physical breakpoint. */
   onEvent(session: vscode.DebugSession, event: DebugProtocol.Event): void {
     for (const physical of this.physicals.values())
       physical.onEvent(session, event)
+    this.rememberIds(session)
+  }
+
+  /** Keeps the ids the session's adapter has acknowledged right now, called after each reply and event. */
+  private rememberIds(session: vscode.DebugSession): void {
+    for (const physical of this.physicals.values()) {
+      const id = physical.acknowledgedId(session)
+      if (id === undefined) continue
+      let ids = this.lastIds.get(physical)
+      if (!ids) this.lastIds.set(physical, (ids = new Map()))
+      ids.set(session.id, id)
+    }
+  }
+
+  /** The id of a physical breakpoint in a session: the current acknowledgement, else the last one while a replacement is unanswered. */
+  private idOf(
+    physical: OwnedRepositoryBreakpoint,
+    session: vscode.DebugSession,
+  ): number | undefined {
+    return (
+      physical.acknowledgedId(session) ??
+      this.lastIds.get(physical)?.get(session.id)
+    )
   }
 
   /**
@@ -115,7 +144,7 @@ export class ExtensionStopRegistry {
     hitBreakpointIds: readonly number[],
   ): ExtensionHitVerdict | undefined {
     const hit = this.logical.find((entry) => {
-      const id = entry.physical.acknowledgedId(session)
+      const id = this.idOf(entry.physical, session)
       return id !== undefined && hitBreakpointIds.includes(id)
     })
     if (!hit) return undefined
@@ -140,8 +169,7 @@ export class ExtensionStopRegistry {
   ): LogicalExtensionStop | undefined {
     return this.logical.find(
       (entry) =>
-        !entry.retired &&
-        entry.physical.acknowledgedId(session) === breakpointId,
+        !entry.retired && this.idOf(entry.physical, session) === breakpointId,
     )
   }
 
@@ -152,7 +180,7 @@ export class ExtensionStopRegistry {
   ): boolean {
     const owned = new Set(
       this.logical.flatMap((entry) => {
-        const id = entry.physical.acknowledgedId(session)
+        const id = this.idOf(entry.physical, session)
         return id === undefined ? [] : [id]
       }),
     )
@@ -165,7 +193,11 @@ export class ExtensionStopRegistry {
     const stillNeeded = this.logical.some(
       (entry) => entry.physical === logical.physical && !entry.retired,
     )
-    if (!stillNeeded) logical.physical.remove()
+    if (!stillNeeded) {
+      logical.physical.remove()
+      // A removed breakpoint has no live id any more.
+      this.lastIds.delete(logical.physical)
+    }
   }
 
   /** 1-based indexes of stops not yet retired. */

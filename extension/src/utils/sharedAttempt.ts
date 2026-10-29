@@ -1,6 +1,6 @@
 /**
  * Shares one in-flight attempt of a repeatable operation among its callers and forgets it once it fails, so the next call tries again.
- * Exists for releases and cleanups that several endings may request at once and that must stay retryable after a failure; used by the chrome-extension debugger's release.
+ * Exists for releases and cleanups that several endings may request at once and that must stay retryable after a failure; used by the chrome-extension and node-server debuggers' releases.
  * @example
  * const release = new SharedAttempt(() => removeEverything())
  * await Promise.all([release.run(), release.run()]) // removeEverything runs once

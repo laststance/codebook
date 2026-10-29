@@ -47,6 +47,7 @@ import { sha256 } from './runtimeSupport/utils/sha256'
 import { WaitTimeoutError } from './runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
+import { CHROME_EXTENSION_RECOVERY } from './utils/chromeExtensionRecovery'
 import { isDebugSessionOfRun } from './utils/isDebugSessionOfRun'
 import { PendingResumeRequests } from './utils/pendingResumeRequests'
 import { SharedAttempt } from './utils/sharedAttempt'
@@ -91,6 +92,8 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
   private readonly output: ExtensionOutputJournal
   private readonly holdTimers = new Map<number, ReturnType<typeof setTimeout>>()
   private readonly pendingResumes = new PendingResumeRequests()
+  /** How often each thread (or every thread, `*`) of a session ran on, so a stop whose classification awaited can tell it was resumed meanwhile. */
+  private readonly resumeEpochs = new Map<string, number>()
   private readonly actionWatches = new Set<ActionWatch>()
   private readonly interventionList: ExtensionIntervention[] = []
   private handlers?: ExtensionDebuggerHandlers
@@ -175,13 +178,21 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     else if (targetType === 'page')
       entry.kind = targetId === this.input.surfaceTargetId ? 'page' : 'other'
     else if (targetType === 'service_worker' && typeof targetId === 'string') {
-      const url = await this.input.targetUrlOf(targetId).catch(() => undefined)
+      // One failed or empty lookup must not make the run's own worker `other` for good: retry within the wake bound.
+      const url = await waitUntil(
+        () => this.input.targetUrlOf(targetId).catch(() => undefined),
+        'the worker target URL',
+        EXTENSION_WAKE_BOUND_MS,
+        this.abort.signal,
+      ).catch(() => undefined)
       const isOwnWorker = Boolean(
         url?.startsWith(`chrome-extension://${this.input.run.extensionId}/`),
       )
       entry.kind = isOwnWorker ? 'worker' : 'other'
       if (isOwnWorker) {
         entry.targetUrl = url
+        // A replacement worker verifies its stops through `setBreakpoints`, not a `breakpoint` event: earlier losses are superseded.
+        this.unverifiedWorkerStops.clear()
         this.bumpGeneration()
       }
     } else entry.kind = 'other'
@@ -214,6 +225,9 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     const entry = this.entries.get(session.id)
     if (!entry) return
     this.entries.delete(session.id)
+    // The last worker session is gone: its lost stops wait for no event any more.
+    if (entry.kind === 'worker' && this.entriesOf('worker').length === 0)
+      this.unverifiedWorkerStops.clear()
     codebookStopLedger.forget(session.id)
     const ended = this.pauseSet.close(session.id)
     for (const pause of ended) this.clearHold(pause)
@@ -289,14 +303,16 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
       !news.data.breakpoint.verified &&
       !this.unverifiedWorkerStops.has(index)
     ) {
-      // The adapter lost the stop in the worker: the worker restarted, so a new generation begins.
+      // The adapter lost the stop in the worker: one restart, however many worker stops it lost.
+      const isNewRestart = this.unverifiedWorkerStops.size === 0
       this.unverifiedWorkerStops.add(index)
-      this.bumpGeneration()
+      if (isNewRestart) this.bumpGeneration()
     } else if (
       news.data.breakpoint.verified &&
-      this.unverifiedWorkerStops.delete(index)
+      this.unverifiedWorkerStops.delete(index) &&
+      this.unverifiedWorkerStops.size === 0
     ) {
-      // The adapter set the stop again in the restarted worker.
+      // The adapter set every lost stop again in the restarted worker.
       this.recordIntervention('re-arm')
     }
   }
@@ -316,8 +332,18 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
       )
   }
 
+  /** The number of resumes that touched one thread so far. */
+  private resumeEpochOf(sessionId: string, threadId: number): number {
+    return (
+      (this.resumeEpochs.get(`${sessionId}:${threadId}`) ?? 0) +
+      (this.resumeEpochs.get(`${sessionId}:*`) ?? 0)
+    )
+  }
+
   /** Threads ran on (Codebook's continue, the learner's, the adapter's own): their pauses end and their captures and continue arguments go stale. */
   private resumeThreads(sessionId: string, threadId?: number): void {
+    const epochKey = `${sessionId}:${threadId ?? '*'}`
+    this.resumeEpochs.set(epochKey, (this.resumeEpochs.get(epochKey) ?? 0) + 1)
     for (const pause of this.pauseSet.close(sessionId, threadId))
       this.clearHold(pause)
   }
@@ -329,11 +355,16 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     entry: SessionEntry,
     body: DebugProtocol.StoppedEvent['body'],
   ): Promise<void> {
+    const epochAtStop = Number.isInteger(body.threadId)
+      ? this.resumeEpochOf(entry.session.id, body.threadId!)
+      : 0
     await entry.classified
     if (this.releaseBegun || !Number.isInteger(body.threadId)) return
     if (entry.kind !== 'page' && entry.kind !== 'worker') return
     const context = CONTEXT_OF_KIND[entry.kind]
     const threadId = body.threadId!
+    // A `continued` processed while the classification awaited: the thread runs, so no pause is opened for it.
+    if (this.resumeEpochOf(entry.session.id, threadId) !== epochAtStop) return
     const ids = body.hitBreakpointIds ?? []
     // A learner breakpoint beside the owned one, or any reason but a breakpoint, stays the learner's.
     const verdict =
@@ -451,6 +482,8 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
           new StudyError(
             'PAUSE_HOLD_EXPIRED',
             `A stop was held longer than ${holdMs / MILLISECONDS_PER_SECOND} s.`,
+            undefined,
+            CHROME_EXTENSION_RECOVERY.pauseHoldExpired(holdMs),
           ),
         ),
       holdMs,
@@ -470,6 +503,7 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     body: DebugProtocol.OutputEvent['body'],
   ): Promise<void> {
     await entry.classified
+    if (this.releaseBegun) return
     if (entry.kind !== 'page' && entry.kind !== 'worker') return
     if (body.category === 'telemetry') return
     this.output.add(CONTEXT_OF_KIND[entry.kind], body.output)
@@ -572,6 +606,8 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
       throw new StudyError(
         'SOURCE_CHANGED',
         `${logical.stop.path} changed after the run started.`,
+        undefined,
+        CHROME_EXTENSION_RECOVERY.sourceChanged,
       )
     return bytes.toString('utf8')
   }
@@ -594,6 +630,8 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
       throw new StudyError(
         'LEARNER_PAUSED',
         "The learner paused the extension; the learner continues it in the editor's debugger.",
+        undefined,
+        CHROME_EXTENSION_RECOVERY.learnerPaused,
       )
     // Claimed before any await, so a second continue of the same pause is stale.
     pause.resuming = true
@@ -761,8 +799,10 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     const logical = this.registry.logical.find(
       (entry) =>
         !entry.retired &&
-        this.registry.bindingOf(entry, this.sessionsOf(entry.stop.context)) !==
-          'bound',
+        (this.registry.bindingOf(entry, this.sessionsOf(entry.stop.context)) !==
+          'bound' ||
+          // A restarted worker whose stop was not verified again still reads `bound`.
+          this.unverifiedWorkerStops.has(entry.stop.index)),
     )
     if (!logical) return this.workerNotAttached()
     const hasWorker = this.entriesOf('worker').length > 0

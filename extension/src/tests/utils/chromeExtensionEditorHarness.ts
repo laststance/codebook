@@ -11,6 +11,7 @@ import type {
   ChromeExtensionDebugger,
   ExtensionDebuggerHandlers,
 } from '../../chromeExtensionDebugger'
+import * as realConstants from '../../constants'
 import type { StudyError } from '../../errors'
 import type * as DebuggerModule from '../../vscodeChromeExtensionDebugger'
 
@@ -23,6 +24,15 @@ export const SURFACE_TARGET = 'surface-target'
 export const WORKER_TARGET = 'worker-target'
 export const SURFACE_URL = `chrome-extension://${EXTENSION_ID}/popup.html`
 export const WORKER_URL = `chrome-extension://${EXTENSION_ID}/service-worker.js`
+
+/** Replacements for named limits of the constants module; a numeric limit takes any number, so a test can shorten a bound. */
+export type ConstantOverrides = {
+  [
+    Key in keyof typeof realConstants
+  ]?: (typeof realConstants)[Key] extends number
+    ? number
+    : (typeof realConstants)[Key]
+}
 
 /** One declared stop of a test, by its file and line. */
 export type TestStop = {
@@ -40,12 +50,16 @@ type FrameAt = { file: string; line: number }
 /**
  * A fake editor with js-debug attach sessions behind it: a root session, page and service-worker child sessions with their own adapters, `setBreakpoints` requests and replies per session, stops, continues and output, through the real {@link OwnedRepositoryBreakpoint}, stop registry and debugger.
  * @param options.captureGate - Holds every snapshot capture until it settles.
+ * @param options.constants - Replaces named limits of {@link realConstants} for the debugger under test only (short bounds and holds).
  * @example
  * const editor = await extensionEditorHarness()
  * const { debug } = editor.createDebugger([{ file: 'popup.js', line: 3, context: 'page' }])
  */
 export async function extensionEditorHarness(
-  options: { captureGate?: Promise<void> } = {},
+  options: {
+    captureGate?: Promise<void>
+    constants?: ConstantOverrides
+  } = {},
 ) {
   const folder = await mkdtemp(join(tmpdir(), 'codebook-ext-debugger-'))
   const contents: Record<string, string> = {
@@ -290,6 +304,7 @@ export async function extensionEditorHarness(
     resolve(__dirname, '../../vscodeChromeExtensionDebugger.js'),
     {
       vscode: editor,
+      './constants': { ...realConstants, ...options.constants },
       './chromeExtensionStopRegistry': registryModule,
       './utils/captureReplayDebugSnapshot': {
         captureReplayDebugSnapshot: async () => {
@@ -388,6 +403,23 @@ export async function extensionEditorHarness(
         },
       })
     },
+    /** The editor replaces the file's breakpoints, and the adapter has not answered yet. */
+    replacementUnanswered(session: FakeSession, file: string): void {
+      const inFile = editorBreakpoints.filter(
+        (entry) => entry.location.uri.fsPath === join(folder, file),
+      )
+      trackers.get(session.id)?.onWillReceiveMessage?.({
+        type: 'request',
+        seq: ++requestSequence,
+        command: 'setBreakpoints',
+        arguments: {
+          source: { path: join(folder, file) },
+          breakpoints: inFile.map((entry) =>
+            sourceBreakpointRequest(entry.location.range.start),
+          ),
+        },
+      })
+    },
     output(session: FakeSession, text: string, category = 'console'): void {
       trackers.get(session.id)?.onDidSendMessage?.({
         type: 'event',
@@ -438,6 +470,7 @@ export async function extensionEditorHarness(
       stops: TestStop[],
       overrides: {
         targetUrls?: Record<string, string>
+        targetUrlOf?: (targetId: string) => Promise<string | undefined>
         startWorker?: () => Promise<void>
         assertSourcesUnchanged?: () => void
         workerPath?: string
@@ -477,7 +510,8 @@ export async function extensionEditorHarness(
           },
           port: 9333,
           surfaceTargetId: SURFACE_TARGET,
-          targetUrlOf: async (targetId) => targetUrls[targetId],
+          targetUrlOf:
+            overrides.targetUrlOf ?? (async (targetId) => targetUrls[targetId]),
           startWorker:
             overrides.startWorker ??
             (async (): Promise<void> => {

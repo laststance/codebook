@@ -37,6 +37,7 @@ import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
 import { inspectNodeTestVariables } from './utils/inspectNodeTestVariables'
 import { isDebugSessionOfRun } from './utils/isDebugSessionOfRun'
 import { PendingResumeRequests } from './utils/pendingResumeRequests'
+import { SharedAttempt } from './utils/sharedAttempt'
 import { sourceImportBindings } from './utils/sourceImportBindings'
 import { stopRunDebugSessions } from './utils/stopRunDebugSessions'
 
@@ -85,7 +86,7 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   private nextToken = 0
   private classification: Promise<void> = Promise.resolve()
   private releaseBegun = false
-  private releasing?: Promise<void>
+  private readonly releaser = new SharedAttempt(() => this.releaseOwned())
   private readonly tracker: vscode.Disposable
   private readonly termination: vscode.Disposable
 
@@ -689,12 +690,8 @@ class VscodeNodeServerDebugger implements NodeServerDebugger {
   // ---------------------------------------------------------------- release
 
   release(): Promise<void> {
-    const attempt = (this.releasing ??= this.releaseOwned())
-    return attempt.catch((error: unknown) => {
-      // A failed release is dropped, so the next stop runs it again.
-      if (this.releasing === attempt) this.releasing = undefined
-      throw error
-    })
+    // A failed release is dropped, so the next stop runs it again.
+    return this.releaser.run()
   }
 
   /** Removes the breakpoints, ends the sessions this run started and stops listening; run again after a failure, so each step can repeat. */

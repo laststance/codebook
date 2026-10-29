@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { writeFile } from 'node:fs/promises'
 import { test } from 'node:test'
 import { setTimeout as sleep } from 'node:timers/promises'
 
@@ -6,6 +7,7 @@ import { StudyError } from '../errors'
 
 import {
   EXTENSION_ID,
+  type ConstantOverrides,
   extensionEditorHarness,
   SURFACE_TARGET,
   SURFACE_URL,
@@ -36,10 +38,15 @@ async function until(condition: () => boolean): Promise<void> {
  */
 async function readyRun(
   stops: TestStop[],
-  options: { withWorker?: boolean; captureGate?: Promise<void> } = {},
+  options: {
+    withWorker?: boolean
+    captureGate?: Promise<void>
+    constants?: ConstantOverrides
+  } = {},
 ) {
   const editor = await extensionEditorHarness({
     captureGate: options.captureGate,
+    constants: options.constants,
   })
   const created = editor.createDebugger(stops)
   const attaching = created.debug.attach(SIGNAL())
@@ -71,6 +78,14 @@ const WORKER_STOP: TestStop = {
   file: 'service-worker.js',
   line: 3,
   context: 'service-worker',
+}
+const SECOND_WORKER_STOP: TestStop = { ...WORKER_STOP, line: 4 }
+const SECOND_PAGE_STOP: TestStop = { ...PAGE_STOP, line: 3 }
+
+/** Lets the debugger's promise chains settle without a clock, so a test with faked timers can wait. */
+async function flush(): Promise<void> {
+  for (let turn = 0; turn < 5; turn += 1)
+    await new Promise((resolve) => setImmediate(resolve))
 }
 
 // protects=the attach carries the owned browser's port, the surface filter and the id-to-folder mapping, and the surface child is found by target type whatever its name; fails_when=a wrong request kind, a missing urlFilter or pathMapping, a save of the learner's files or attribution by name; no_claim=real js-debug
@@ -967,5 +982,389 @@ test('releasing removes the owned breakpoints and stops every session of the run
     'root-session',
     'worker-session',
   ])
+  await run.editor.dispose()
+})
+
+// protects=a worker restart that loses two declared worker stops is one restart: one generation, one failure of the click, one re-arm; fails_when=the generation grows or the click fails once per stop; no_claim=real js-debug restart news
+test('a restart that loses two worker stops bumps the generation once, fails the click once and journals one re-arm', async () => {
+  // Arrange
+  const run = await readyRun([WORKER_STOP, SECOND_WORKER_STOP])
+  const first = run.editor.adapterIdAt(run.worker, 'service-worker.js', 3)
+  const second = run.editor.adapterIdAt(run.worker, 'service-worker.js', 4)
+  const guard = run.debug.beginAction()
+  // Act
+  run.editor.adapter.breakpointNews(run.worker, first, false, 3)
+  run.editor.adapter.breakpointNews(run.worker, second, false, 4)
+  const generationAfterLoss = run.debug.workerGeneration()
+  guard.end()
+  run.editor.adapter.breakpointNews(run.worker, first, true, 3)
+  run.editor.adapter.breakpointNews(run.worker, second, true, 4)
+  // Assert
+  assert.equal(generationAfterLoss, 2)
+  assert.deepEqual(
+    run.failures.map((failure) => failure.code),
+    ['SERVICE_WORKER_RESTARTED'],
+  )
+  assert.deepEqual(
+    plain(run.debug.interventions().map((entry) => entry.kind)),
+    ['re-arm'],
+  )
+  await run.debug.release()
+  await run.editor.dispose()
+})
+
+// protects=a restarted worker whose stop is never verified again refuses the click with STOP_NOT_BOUND; fails_when=SERVICE_WORKER_NOT_ATTACHED is reported although the worker runs; no_claim=the real bound of 5 s
+test('a restarted worker stop that is not verified again in time is refused with STOP_NOT_BOUND', async () => {
+  // Arrange
+  const run = await readyRun([WORKER_STOP], {
+    constants: { EXTENSION_WAKE_BOUND_MS: 80 },
+  })
+  const id = run.editor.adapterIdAt(run.worker, 'service-worker.js', 3)
+  run.editor.adapter.breakpointNews(run.worker, id, false)
+  // Act
+  const ready = run.debug.ensureWorkerReady(SIGNAL())
+  // Assert
+  await assert.rejects(
+    ready,
+    (error: unknown) =>
+      error instanceof StudyError &&
+      error.code === 'STOP_NOT_BOUND' &&
+      error.message === 'Stop 1 could not be set in the service worker.',
+  )
+  await run.debug.release()
+  await run.editor.dispose()
+})
+
+// protects=a worker replaced by a new session is ready without a breakpoint event; fails_when=the lost-stop note of the ended worker holds the click until its bound; no_claim=js-debug's worker replacement order
+test('a replacement worker session that verifies its stops through setBreakpoints makes the click ready', async () => {
+  // Arrange
+  const run = await readyRun([WORKER_STOP], {
+    constants: { EXTENSION_WAKE_BOUND_MS: 400 },
+  })
+  const id = run.editor.adapterIdAt(run.worker, 'service-worker.js', 3)
+  run.editor.adapter.breakpointNews(run.worker, id, false)
+  run.editor.adapter.end(run.worker)
+  await run.editor.addChild({
+    kind: 'service_worker',
+    targetId: WORKER_TARGET,
+    id: 'worker-session-2',
+  })
+  // Act
+  await run.debug.ensureWorkerReady(SIGNAL())
+  // Assert
+  assert.deepEqual(run.failures, [])
+  await run.debug.release()
+  await run.editor.dispose()
+})
+
+// protects=the page hold is 300 s and the worker hold 280 s and each expiry fails with the extension's recovery text; fails_when=the node-server recovery (server, node-server anchor) is shown for an extension run; no_claim=the real clock
+test('a page stop held for 300 s fails the run with PAUSE_HOLD_EXPIRED and the extension recovery', async (context) => {
+  // Arrange
+  const run = await readyRun([PAGE_STOP])
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  // Act
+  run.editor.adapter.stop(
+    run.page,
+    'breakpoint',
+    [run.editor.adapterIdAt(run.page, 'popup.js', 2)],
+    { file: run.editor.path('popup.js'), line: 2 },
+  )
+  await flush()
+  context.mock.timers.tick(299_999)
+  const failuresBefore = run.failures.length
+  context.mock.timers.tick(1)
+  // Assert
+  assert.equal(failuresBefore, 0)
+  assert.equal(run.failures[0]?.code, 'PAUSE_HOLD_EXPIRED')
+  assert.equal(
+    run.failures[0]?.describe().recovery,
+    "Tell the learner the extension stayed paused longer than 300 s, so Codebook ended the run without resuming the paused code. Recovery: learner decision, at most one new run. The run is stopped and its owned browser closed; whether the click changed the extension's data is unknown, so have the learner check it. Start one new run with a new key only if the learner asks, and continue each stop within the hold. See codebook://help/chrome-extension#PAUSE_HOLD_EXPIRED.",
+  )
+  context.mock.timers.reset()
+  await run.debug.release()
+  await run.editor.dispose()
+})
+
+test('a worker stop held for 280 s fails the run with PAUSE_HOLD_EXPIRED naming 280 s', async (context) => {
+  // Arrange
+  const run = await readyRun([WORKER_STOP])
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  // Act
+  run.editor.adapter.stop(
+    run.worker,
+    'breakpoint',
+    [run.editor.adapterIdAt(run.worker, 'service-worker.js', 3)],
+    { file: run.editor.path('service-worker.js'), line: 3 },
+  )
+  await flush()
+  context.mock.timers.tick(279_999)
+  const failuresBefore = run.failures.length
+  context.mock.timers.tick(1)
+  // Assert
+  assert.equal(failuresBefore, 0)
+  assert.equal(run.failures[0]?.code, 'PAUSE_HOLD_EXPIRED')
+  assert.match(
+    run.failures[0]?.describe().recovery ?? '',
+    /^Tell the learner the extension stayed paused longer than 280 s,/,
+  )
+  context.mock.timers.reset()
+  await run.debug.release()
+  await run.editor.dispose()
+})
+
+// protects=a learner pause is refused with the extension's recovery, not the server's; fails_when=the continue refusal says server; no_claim=the learner's UI
+test('continuing a learner pause answers LEARNER_PAUSED with the extension recovery', async () => {
+  // Arrange
+  const run = await readyRun([PAGE_STOP])
+  run.editor.adapter.stop(run.page, 'pause', undefined, undefined, 7)
+  await until(() => run.debug.pauses().length === 1)
+  // Act
+  const resuming = run.debug.resume(
+    {
+      participant: 'extension',
+      sessionId: 'page-session',
+      threadId: 7,
+      generation: run.debug.pauses()[0]!.generation,
+    },
+    SIGNAL(),
+  )
+  // Assert
+  await assert.rejects(
+    resuming,
+    (error: unknown) =>
+      error instanceof StudyError &&
+      error.code === 'LEARNER_PAUSED' &&
+      error.describe().recovery ===
+        "Let the learner continue the extension in the editor's debugger: the learner paused it, and Codebook never resumes such a pause. Recovery: learner action. Nothing changed. Read the run again after the learner continues; stop the run only if the learner asks. See codebook://help/chrome-extension#LEARNER_PAUSED.",
+  )
+  await run.debug.release()
+  await run.editor.dispose()
+})
+
+// protects=a source changed on disk after the run started ends the run with the extension's SOURCE_CHANGED recovery; fails_when=the repository-browser or node-test wording is shown; no_claim=the editor document comparison
+test('a stop file changed on disk fails the run with SOURCE_CHANGED and the extension recovery', async () => {
+  // Arrange
+  const run = await readyRun([PAGE_STOP])
+  await writeFile(run.editor.path('popup.js'), 'changed after the start\n')
+  // Act
+  run.editor.adapter.stop(
+    run.page,
+    'breakpoint',
+    [run.editor.adapterIdAt(run.page, 'popup.js', 2)],
+    { file: run.editor.path('popup.js'), line: 2 },
+  )
+  await until(() => run.failures.length === 1)
+  // Assert
+  assert.equal(run.failures[0]?.code, 'SOURCE_CHANGED')
+  assert.equal(
+    run.failures[0]?.describe().recovery,
+    'A source file of the extension changed after the run started, so the run ends and no resume was sent. Earlier observations and their captured source stay readable. Ask the learner to save or revert the file the message names, then start a new deliberate run. Never retry the click automatically. See codebook://help/chrome-extension#SOURCE_CHANGED.',
+  )
+  await run.debug.release()
+  await run.editor.dispose()
+})
+
+// protects=a stop whose thread the learner continued while the classification awaited is no pause; fails_when=a pause stays open for a running thread; no_claim=js-debug event order
+test('a continue processed right after a stop leaves no pause for the running thread', async () => {
+  // Arrange
+  const run = await readyRun([PAGE_STOP])
+  // Act
+  run.editor.adapter.stop(
+    run.page,
+    'breakpoint',
+    [run.editor.adapterIdAt(run.page, 'popup.js', 2)],
+    { file: run.editor.path('popup.js'), line: 2 },
+  )
+  run.editor.adapter.learnerContinues(run.page)
+  await sleep(30)
+  // Assert
+  assert.deepEqual(plain(run.debug.pauses()), [])
+  await run.debug.release()
+  await run.editor.dispose()
+})
+
+// protects=a failed target-URL lookup does not make the run's own worker foreign for good; fails_when=the worker is never adopted; no_claim=the CDP lookup
+test('a worker whose first target URL lookup fails is still adopted after a retry', async () => {
+  // Arrange
+  const editor = await extensionEditorHarness()
+  let lookups = 0
+  const created = editor.createDebugger([WORKER_STOP], {
+    targetUrlOf: async () => {
+      lookups += 1
+      if (lookups === 1) throw new Error('target not known yet')
+      return WORKER_URL
+    },
+  })
+  const attaching = created.debug.attach(SIGNAL())
+  await until(() => editor.started.length > 0)
+  await editor.addChild({
+    kind: 'page',
+    targetId: SURFACE_TARGET,
+    id: 'page-session',
+  })
+  await attaching
+  await editor.addChild({
+    kind: 'service_worker',
+    targetId: WORKER_TARGET,
+    id: 'worker-session',
+  })
+  // Act
+  await created.debug.waitForWorker(SIGNAL())
+  // Assert
+  assert.equal(lookups, 2)
+  await created.debug.release()
+  await editor.dispose()
+})
+
+// protects=output arriving after the release began is not journaled; fails_when=a late console line reaches the journal; no_claim=output order
+test('console output that arrives after the release began is not journaled', async () => {
+  // Arrange
+  const run = await readyRun([PAGE_STOP])
+  await run.debug.release()
+  // Act
+  run.editor.adapter.output(run.page, 'late line\n')
+  await sleep(20)
+  // Assert
+  assert.deepEqual(
+    run.events.filter((event) => event.type === 'chrome-extension.output'),
+    [],
+  )
+  await run.editor.dispose()
+})
+
+// protects=a live stop keeps its adapter id while its file's breakpoints are being replaced; fails_when=the hit reads as a learner breakpoint; no_claim=js-debug's replacement timing
+test('a hit of a live stop while a replacement of its file is unanswered is still the declared stop', async () => {
+  // Arrange
+  const run = await readyRun([PAGE_STOP, SECOND_PAGE_STOP])
+  const secondId = run.editor.adapterIdAt(run.page, 'popup.js', 3)
+  run.editor.adapter.stop(
+    run.page,
+    'breakpoint',
+    [run.editor.adapterIdAt(run.page, 'popup.js', 2)],
+    { file: run.editor.path('popup.js'), line: 2 },
+  )
+  await until(() => run.debug.pauses().length === 1)
+  await sleep(20)
+  // Act
+  run.editor.adapter.replacementUnanswered(run.page, 'popup.js')
+  run.editor.adapter.stop(
+    run.page,
+    'breakpoint',
+    [secondId],
+    { file: run.editor.path('popup.js'), line: 3 },
+    2,
+  )
+  await until(() => run.debug.pauses().length === 2)
+  // Assert
+  assert.deepEqual(
+    run.debug.pauses().map((pause) => pause.kind),
+    ['declared', 'declared'],
+  )
+  await run.debug.release()
+  await run.editor.dispose()
+})
+
+// protects=SR14 attribution: with three workers only the run's own is armed and paused; fails_when=either foreign worker pauses or arms a stop; no_claim=js-debug's session creation
+test('with two foreign workers and the run’s own, only the own worker’s hit opens a pause', async () => {
+  // Arrange
+  const editor = await extensionEditorHarness()
+  const created = editor.createDebugger([WORKER_STOP], {
+    targetUrls: {
+      'foreign-one': 'chrome-extension://zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz/a.js',
+      [WORKER_TARGET]: WORKER_URL,
+      'foreign-two': 'chrome-extension://yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy/b.js',
+    },
+  })
+  const attaching = created.debug.attach(SIGNAL())
+  await until(() => editor.started.length > 0)
+  await editor.addChild({
+    kind: 'page',
+    targetId: SURFACE_TARGET,
+    id: 'page-session',
+  })
+  await attaching
+  const foreignOne = await editor.addChild({
+    kind: 'service_worker',
+    targetId: 'foreign-one',
+    id: 'foreign-one-session',
+  })
+  const own = await editor.addChild({
+    kind: 'service_worker',
+    targetId: WORKER_TARGET,
+    id: 'worker-session',
+  })
+  const foreignTwo = await editor.addChild({
+    kind: 'service_worker',
+    targetId: 'foreign-two',
+    id: 'foreign-two-session',
+  })
+  await created.debug.waitForWorker(SIGNAL())
+  await created.debug.armStops(SIGNAL())
+  created.debug.markReady()
+  const frame = { file: editor.path('service-worker.js'), line: 3 }
+  // Act
+  for (const foreign of [foreignOne, foreignTwo])
+    editor.adapter.stop(
+      foreign,
+      'breakpoint',
+      [editor.adapterIdAt(foreign, 'service-worker.js', 3)],
+      frame,
+    )
+  await sleep(20)
+  const pausesAfterForeign = created.debug.pauses().length
+  editor.adapter.stop(
+    own,
+    'breakpoint',
+    [editor.adapterIdAt(own, 'service-worker.js', 3)],
+    frame,
+  )
+  await until(() => created.debug.pauses().length === 1)
+  // Assert
+  assert.equal(pausesAfterForeign, 0)
+  assert.equal(created.debug.pauses()[0]?.sessionId, 'worker-session')
+  await created.debug.release()
+  await editor.dispose()
+})
+
+// protects=a surface that never appears is refused with SURFACE_NOT_ATTACHED; fails_when=the attach waits past its bound or reports another code; no_claim=the real 20 s bound
+test('an attach whose surface page never appears is refused with SURFACE_NOT_ATTACHED', async () => {
+  // Arrange
+  const editor = await extensionEditorHarness({
+    constants: { EXTENSION_OPEN_BOUND_MS: 80 },
+  })
+  const { debug } = editor.createDebugger([PAGE_STOP])
+  // Act
+  const attaching = debug.attach(SIGNAL())
+  // Assert
+  await assert.rejects(
+    attaching,
+    (error: unknown) =>
+      error instanceof StudyError &&
+      error.code === 'SURFACE_NOT_ATTACHED' &&
+      error.message === 'The debugger could not attach to the extension popup.',
+  )
+  await debug.release()
+  await editor.dispose()
+})
+
+// protects=a worker that never starts is refused with SERVICE_WORKER_NOT_ATTACHED; fails_when=the wait ends with another code; no_claim=the real 5 s bound
+test('a worker session that never appears is refused with SERVICE_WORKER_NOT_ATTACHED', async () => {
+  // Arrange
+  const run = await readyRun([PAGE_STOP], {
+    withWorker: false,
+    constants: { EXTENSION_WAKE_BOUND_MS: 80 },
+  })
+  // Act
+  const waiting = run.debug.waitForWorker(SIGNAL())
+  // Assert
+  await assert.rejects(
+    waiting,
+    (error: unknown) =>
+      error instanceof StudyError &&
+      error.code === 'SERVICE_WORKER_NOT_ATTACHED' &&
+      error.message ===
+        "The extension's service worker did not start while popup was open.",
+  )
+  await run.debug.release()
   await run.editor.dispose()
 })
