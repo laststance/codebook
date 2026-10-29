@@ -779,3 +779,50 @@ test('a pause pin whose page never answers settles when the run ends', async () 
     Promise.race = originalRace
   }
 })
+
+// protects=ER18 (Cycle 0062 review CR1): a browser a stuck step publishes after the stop bound is closed, and a failed late close shows in the run resource's cleanup; fails_when=the late close result is dropped and the resource keeps reporting a clean cleanup; no_claim=the 10 s value
+test('a late browser whose close fails is reported in the run resource cleanup', async () => {
+  // Arrange
+  const launchGate = defer<void>()
+  const timers = manualClock()
+  const harness = createRunHarness({
+    launchGate: launchGate.promise,
+    clock: timers.clock,
+  })
+  harness.browser.close = async () => {
+    harness.log.push('browser.close')
+    return { profileLeft: true, exitConfirmed: false }
+  }
+  const preparing = harness.run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await waitUntil(() => harness.log.includes('launch'), 'the launch')
+  const stopping = harness.run.stop()
+  await waitUntil(
+    () => timers.pendingDelays().includes(10_000),
+    'the stop bound to be armed',
+  )
+  timers.fire(10_000)
+  await stopping
+  assert.deepEqual(harness.run.view().cleanup, {
+    profileLeft: false,
+    exitConfirmed: true,
+  })
+  // Act
+  launchGate.resolve()
+  await preparing
+  await waitUntil(
+    () => harness.log.includes('browser.close'),
+    'the late browser to be closed',
+  )
+  // Assert
+  await waitUntil(
+    () => harness.run.view().cleanup?.profileLeft === true,
+    'the failed late close to reach the cleanup state',
+  )
+  assert.deepEqual(harness.run.view().cleanup, {
+    profileLeft: true,
+    exitConfirmed: false,
+  })
+})

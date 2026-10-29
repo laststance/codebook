@@ -1159,8 +1159,18 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   }
 
   private closeIfNew(closedBrowser: OwnedExtensionBrowser | undefined): void {
-    if (this.browser !== undefined && this.browser !== closedBrowser)
-      void this.closeBrowser(this.browser)
+    const lateBrowser = this.browser
+    if (lateBrowser === undefined || lateBrowser === closedBrowser) return
+    void this.closeBrowser(lateBrowser).then((lateResult) => {
+      // The cleanup result already settled: a failed late close must reach the run resource, never leaving a clean claim.
+      const settled = this.cleanupResult
+      this.cleanupResult = {
+        profileLeft: (settled?.profileLeft ?? false) || lateResult.profileLeft,
+        exitConfirmed:
+          (settled?.exitConfirmed ?? true) && lateResult.exitConfirmed,
+      }
+      this.changed()
+    })
   }
 
   /** Hands the last frame and the result line to the viewport (DR4, DR5, DR10, ER22). */
