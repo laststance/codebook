@@ -21,6 +21,8 @@ export async function createEnvironmentWith(
     modalChoice?: string | undefined
     /** What the Chrome executable prints for `--version`; an old, unsupported Chrome by default. */
     chromeVersionText?: string
+    /** Whether the bundled JavaScript Debugger is enabled in the fake editor; enabled by default. */
+    jsDebugEnabled?: boolean
   },
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-server-env-'))
@@ -82,7 +84,10 @@ export async function createEnvironmentWith(
           remoteName: 'wsl',
         },
         version: '1.140.0',
-        extensions: { getExtension: () => ({}) },
+        extensions: {
+          getExtension: () =>
+            options.jsDebugEnabled === false ? undefined : {},
+        },
         debug: {
           registerDebugAdapterTrackerFactory: () => disposable,
           onDidTerminateDebugSession: () => disposable,

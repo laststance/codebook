@@ -169,6 +169,51 @@ test('the tools drive a chrome-extension run through their schemas and answer a 
   assert.equal(failed.structuredContent.state?.chromeExtension.phase, 'failed')
 })
 
+// protects=D5, DXR6: a click that fails with RUNTIME_FAILED (an ended debug session, a time limit) answers the error with the run state beside it like the other failed-state codes; fails_when=the answer is a plain error without the state; no_claim=which failure produced the code
+test('a click that fails with RUNTIME_FAILED answers the run state beside the error', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const run = new FakeChromeExtensionRuntime()
+  harness.service.environment.createChromeExtensionRun = async () => run
+  const client = await connectMcpClient(context, harness.service)
+  const instanceId = harness.service.instanceId
+  const started = toolResultSchema.parse(
+    await client.callTool({
+      name: 'codebook_start',
+      arguments: {
+        instanceId,
+        profile: 'chrome-extension',
+        key: 'start',
+        configuration: chromeExtensionConfigurationOf(harness),
+      },
+    }),
+  )
+  const runId = z
+    .object({ runId: z.string() })
+    .parse(started.structuredContent.data).runId
+  run.clickFailure = new StudyError(
+    'RUNTIME_FAILED',
+    'The debug session ended.',
+  )
+  // Act
+  const failed = toolResultSchema.parse(
+    await client.callTool({
+      name: 'codebook_action',
+      arguments: {
+        instanceId,
+        runId,
+        key: 'click-1',
+        action: 'extension-click',
+      },
+    }),
+  )
+  // Assert
+  assert.equal(failed.isError, true)
+  assert.equal(failed.structuredContent.error?.code, 'RUNTIME_FAILED')
+  assert.equal(failed.structuredContent.state?.chromeExtension.phase, 'failed')
+})
+
 // protects=the server instructions and the help resource announce the chrome-extension profile at API 1.10; fails_when=the instructions omit the profile or the help URI is not served; no_claim=the help's content, tested apart
 test('the server announces chrome-extension in its instructions and serves its help', async (context) => {
   // Arrange

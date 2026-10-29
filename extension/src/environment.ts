@@ -31,6 +31,7 @@ import type {
 } from './runtime'
 import type { BrowserViewportFactory } from './runtimeSupport/browserViewport'
 import type { HostConfiguration } from './runtimeSupport/hostBrowser'
+import { assertSupportedChromeVersion } from './runtimeSupport/utils/assertSupportedChromeVersion'
 import { managedProfileRoot } from './runtimeSupport/utils/managedProfileRoot'
 import { createStateChangingRequestAsker } from './utils/askToSendStateChangingRequest'
 import { assertConfiguredSourceDocuments } from './utils/assertConfiguredSourceDocuments'
@@ -223,7 +224,8 @@ export async function createEnvironment(
     )
   // What a node-test run needs of the editor and the machine: the workspace, the bundled debugger and the external Node, without Chrome.
   const resolveNodePrerequisites = async () => {
-    const nodeMissing = editorPrerequisiteGaps(workspace)
+    const editorMissing = editorPrerequisiteGaps(workspace)
+    const nodeMissing = [...editorMissing]
     let nodeExecutable: string | undefined
     try {
       nodeExecutable = await configuredNodeExecutable()
@@ -232,7 +234,7 @@ export async function createEnvironment(
         'codebook.nodeExecutable: configure an executable external Node.js >=24.',
       )
     }
-    return { nodeMissing, nodeExecutable }
+    return { nodeMissing, nodeExecutable, editorMissing }
   }
   /**
    * Refuses a Node run whose editor prerequisites or external Node are missing, or whose window's workspace changed, before anything is created; called by the node-test and node-server run factories.
@@ -257,9 +259,14 @@ export async function createEnvironment(
       )
     return prerequisites.nodeExecutable
   }
-  const resolvePrerequisites = async () => {
-    const { nodeMissing, nodeExecutable } = await resolveNodePrerequisites()
-    const missing = [...nodeMissing]
+  /**
+   * Looks Chrome up on this machine apart from Node, so a chrome-extension start never waits on the Node lookup.
+   * Called by {@link resolvePrerequisites} and the chrome-extension run factory and start hook.
+   * @returns The Chrome executable with its `--version` text when found, and the gaps the lookup itself found.
+   * @example await resolveChrome() // => { chromeMissing: [], chrome: { binary: '/usr/bin/google-chrome', version: 'Google Chrome 156.0.8078.74' } }
+   */
+  const resolveChrome = async () => {
+    const chromeMissing: string[] = []
     let chrome: HostConfiguration['chrome']
     const configuration = vscode.workspace.getConfiguration('codebook')
     const binary = await lookUpChromeExecutable(
@@ -272,7 +279,7 @@ export async function createEnvironment(
           () => false,
         ),
     )
-    if (!binary) missing.push(missingChromeText(process.platform))
+    if (!binary) chromeMissing.push(missingChromeText(process.platform))
     else
       try {
         await access(binary, filesystemConstants.X_OK)
@@ -285,14 +292,42 @@ export async function createEnvironment(
         )
         chrome = { binary, version }
       } catch {
-        missing.push(
+        chromeMissing.push(
           'codebook.chromeExecutable: configure an installed executable Chrome.',
         )
       }
+    return { chromeMissing, chrome }
+  }
+  /**
+   * Joins the editor's gaps with the chrome-extension profile's own (system, Chrome, version) for status and for the start's wait.
+   * @param editorMissing - The editor gaps (js-debug, workspace identity).
+   * @param chromeMissing - What the Chrome lookup found missing.
+   * @param chrome - The found Chrome, when any.
+   * @returns Every sentence that keeps the profile from running; empty when it can.
+   */
+  const chromeExtensionGaps = (
+    editorMissing: readonly string[],
+    chromeMissing: readonly string[],
+    chrome: HostConfiguration['chrome'],
+  ) => [
+    ...editorMissing,
+    ...chromeExtensionPrerequisiteGaps({
+      platform: process.platform,
+      chromeMissing,
+      chromeVersion: chrome?.version,
+    }),
+  ]
+  const resolvePrerequisites = async () => {
+    const { nodeMissing, nodeExecutable, editorMissing } =
+      await resolveNodePrerequisites()
+    const { chromeMissing, chrome } = await resolveChrome()
+    const missing = [...nodeMissing, ...chromeMissing]
     return {
       ready: missing.length === 0,
       missing,
       nodeMissing,
+      editorMissing,
+      chromeMissing,
       nodeExecutable,
       chrome,
     }
@@ -332,7 +367,7 @@ export async function createEnvironment(
         if (ownedConfiguredLock) break
       }
       const [
-        { ready, missing, nodeMissing, chrome },
+        { ready, missing, nodeMissing, editorMissing, chromeMissing, chrome },
         checkedConfigured,
         vitestSearch,
         machineMissing,
@@ -396,14 +431,12 @@ export async function createEnvironment(
             missing: [...nodeMissing, ...machineMissing],
           },
           'chrome-extension': (() => {
-            const gaps = chromeExtensionPrerequisiteGaps({
-              platform: process.platform,
-              // Node is no part of this profile: only the Chrome lookup's own findings count.
-              chromeMissing: missing.filter(
-                (gap) => !nodeMissing.includes(gap),
-              ),
-              chromeVersion: chrome?.version,
-            })
+            // The editor's gaps (a disabled js-debug, a workspace mismatch) count; the Node executable does not.
+            const gaps = chromeExtensionGaps(
+              editorMissing,
+              chromeMissing,
+              chrome,
+            )
             return { ready: gaps.length === 0, missing: gaps }
           })(),
         },
@@ -566,18 +599,29 @@ export async function createEnvironment(
         }),
       })
     },
+    async chromeExtensionStartPrerequisites() {
+      const { chromeMissing, chrome } = await resolveChrome()
+      const missing = chromeExtensionGaps(
+        editorPrerequisiteGaps(workspace),
+        chromeMissing,
+        chrome,
+      )
+      return { ready: missing.length === 0, missing }
+    },
     async createChromeExtensionRun(input: ChromeExtensionRunInput) {
-      const { chrome } = await resolvePrerequisites()
+      const { chrome, chromeMissing } = await resolveChrome()
       const gaps = chromeExtensionPrerequisiteGaps({
         platform: process.platform,
-        chromeMissing: chrome === undefined ? ['Chrome is not installed.'] : [],
+        chromeMissing,
         chromeVersion: chrome?.version,
       })
-      if (chrome === undefined || gaps.length > 0)
+      // An unsupported system or a missing Chrome stays PREREQUISITE_MISSING; a found but too old Chrome has its own code and sentence.
+      if (chrome === undefined || process.platform === 'win32')
         throw new StudyError(
           'PREREQUISITE_MISSING',
           gaps.join('; ') || 'Chrome is not installed.',
         )
+      assertSupportedChromeVersion(chrome.version)
       if (requireWorkspace() !== workspace)
         throw new StudyError(
           'STALE_INSTANCE',

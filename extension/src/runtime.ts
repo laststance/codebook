@@ -488,6 +488,13 @@ export interface StudyEnvironment {
     ready: boolean
     missing: string[]
   }>
+  /**
+   * The prerequisites a chrome-extension start waits on: the editor's own, the platform and the Chrome lookup, never the other profiles' checks (Vitest search, node-server gaps, Node lookup). Environments without it make the start wait on {@link StudyEnvironment.prerequisites}.
+   */
+  chromeExtensionStartPrerequisites?(): Promise<{
+    ready: boolean
+    missing: string[]
+  }>
   createRuntime(
     directory: string,
     definition: RuntimeDefinition,

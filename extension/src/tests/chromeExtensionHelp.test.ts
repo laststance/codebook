@@ -7,6 +7,7 @@ import {
   CHROME_EXTENSION_HELP_EVENTS,
   chromeExtensionHelp,
 } from '../chromeExtensionHelp'
+import { CHROME_EXTENSION_SAVE_REFUSAL } from '../constants'
 import { ERROR_RECOVERY, StudyError } from '../errors'
 import { readResource } from '../resources'
 import { CHROME_EXTENSION_EVENT_TYPES } from '../utils/chromeExtensionEventDetail'
@@ -273,4 +274,16 @@ test('codebook://help/chrome-extension reads as the help JSON', async (context) 
   assert.equal(help.profile, 'chrome-extension')
   assert.equal(resource.mimeType, 'application/json')
   assert.equal(help.quickStart.callOrder.length, 8)
+})
+
+// protects=B1: the help's limits line quotes the save refusal from its constant; fails_when=the help retypes a sentence that drifts from the answer the tools give; no_claim=the rest of the limits
+test('the help limits quote the save refusal sentence exactly', () => {
+  // Arrange, Act
+  const help = JSON.stringify(chromeExtensionHelp())
+  // Assert
+  assert.equal(help.includes(CHROME_EXTENSION_SAVE_REFUSAL), true)
+  assert.equal(
+    CHROME_EXTENSION_SAVE_REFUSAL,
+    'Saving an extension run is not available in this version; the live explanation stays in the chat.',
+  )
 })

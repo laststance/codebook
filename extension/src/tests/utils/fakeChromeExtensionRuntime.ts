@@ -178,10 +178,10 @@ export class FakeChromeExtensionRuntime implements ChromeExtensionRuntime {
     // A stop before the last click leaves a partial result and no observation (SR22).
     if (this.current.phase !== 'completed' && this.current.phase !== 'failed')
       this.change({
-        phase: 'failed',
+        phase: 'completed',
         result: 'partial',
         observed: null,
-        runFailure: new StudyError('RUNTIME_FAILED', 'Stopped.'),
+        pauses: [],
       })
   }
 

@@ -411,3 +411,43 @@ test('reading an image of an extension run answers that extension runs have no s
         'Extension runs have no stored images: the Application view shows the live surface; read the run resource for the stops, the observation and the failure.',
   )
 })
+
+// protects=CR2: a chrome-extension start waits on the environment's own start prerequisites, not on every profile's checks; fails_when=the start calls the full prerequisites(); no_claim=what the checks are
+test('a chrome-extension start uses the start prerequisites and never the full prerequisites', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const calls: string[] = []
+  harness.service.environment.prerequisites = async () => {
+    calls.push('prerequisites')
+    return { ready: true, missing: [] }
+  }
+  harness.service.environment.chromeExtensionStartPrerequisites = async () => {
+    calls.push('chromeExtensionStartPrerequisites')
+    return { ready: true, missing: [] }
+  }
+  // Act
+  await startFakeChromeExtensionRun(harness)
+  // Assert
+  assert.deepEqual(calls, ['chromeExtensionStartPrerequisites'])
+})
+
+// protects=B2, SR22: a stop before the last click ends the run completed with a partial result, no observation, nothing claimable and no error; fails_when=the run reads failed or carries RUNTIME_FAILED; no_claim=the real run's stop path
+test('a stop before the last click reads completed with a partial result, no observation and no error', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { record } = await startFakeChromeExtensionRun(harness)
+  // Act
+  await harness.service.stop({
+    instanceId: harness.service.instanceId,
+    runId: record.id,
+  })
+  const state = await readRunResource(harness, record.id)
+  // Assert
+  assert.equal(state.chromeExtension.phase, 'completed')
+  assert.equal(state.chromeExtension.result, 'partial')
+  assert.equal(state.chromeExtension.observed, null)
+  assert.equal(state.claimable, false)
+  assert.equal(state.error, undefined)
+})

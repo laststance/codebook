@@ -5393,11 +5393,15 @@ export class StudyService {
       configurationHash: sha256(JSON.stringify(configuration)),
       acknowledgedPermissions: configuration.acknowledgedPermissions ?? [],
     }
-    const prerequisites = await this.environment
-      .prerequisites()
-      .then(
-        (reported) => reported.profiles?.[CHROME_EXTENSION_PROFILE] ?? reported,
-      )
+    // A start waits only on the chrome-extension gaps, not on every profile's checks.
+    const prerequisites = this.environment.chromeExtensionStartPrerequisites
+      ? await this.environment.chromeExtensionStartPrerequisites()
+      : await this.environment
+          .prerequisites()
+          .then(
+            (reported) =>
+              reported.profiles?.[CHROME_EXTENSION_PROFILE] ?? reported,
+          )
     if (!prerequisites.ready)
       throw new StudyError(
         'PREREQUISITE_MISSING',

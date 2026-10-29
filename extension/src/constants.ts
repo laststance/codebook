@@ -2202,4 +2202,6 @@ export const CHROME_EXTENSION_FAILED_STATE_CODES: readonly string[] = [
   'SURFACE_LOST',
   'BROWSER_LOST',
   'OBSERVATION_UNAVAILABLE',
+  // A debug session that ended, a run or setup time limit and a wrapped error also leave the run failed (DXR6).
+  'RUNTIME_FAILED',
 ]
