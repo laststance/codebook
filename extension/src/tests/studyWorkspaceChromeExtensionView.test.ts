@@ -1,0 +1,146 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
+import type { ExtensionViewportIdentity } from '../chromeExtensionContracts'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+
+import { readerSeams, workspaceHarness } from './studyWorkspaceHarness'
+
+const POPUP_IDENTITY: ExtensionViewportIdentity = {
+  manifestName: 'Bookmark Notes',
+  surface: { kind: 'popup', path: 'popup.html' },
+  clickTitles: ['Add note'],
+}
+
+/** Opens the Application view of one extension run on the harness's workspace, as the run's start does. */
+async function openView(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+  runId: string,
+) {
+  const create = harness.reader.presentation.createChromeExtensionViewport
+  assert.ok(create)
+  const view = await create(runId)
+  view.setIdentity(POPUP_IDENTITY)
+  return view
+}
+
+// protects=ER22: the view of an ended extension run stays on screen with its last frame and result line, in the same pane, until a next run or the learner replaces it; fails_when=the lease release closes the pane of an ended extension run; no_claim=native keyboard behaviour in a real editor
+test('the Application view of an ended extension run stays open after its lease is released', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    const view = await openView(harness, 'ended-run-1')
+    const pane = harness.reader['app']
+    const panelsBefore = harness.counts().panels
+    // Act
+    view.end('Clicked Add note; the saved title read "Bookmark Notes".')
+    view.close()
+    // Assert
+    assert.equal(harness.reader['app'], pane)
+    assert.equal(harness.counts().panels, panelsBefore)
+    assert.equal(harness.reader['keptEndedPane'], pane)
+    assert.equal(harness.reader['viewport'], undefined)
+    const lastPane = harness.viewportInstances[0]!.extensionPanes.at(-1)
+    assert.equal(lastPane?.phase, 'Run ended · no view was captured')
+    assert.equal(
+      lastPane?.message,
+      'Clicked Add note; the saved title read "Bookmark Notes".',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=a run that ends before its view reached a last content (a lease released without end or failure) closes its pane like every other profile; fails_when=the keep rule keeps the pane of any extension lease; no_claim=the ended view's content
+test('the Application pane of an extension run released without a last view is closed', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    const view = await openView(harness, 'unfinished-run-1')
+    // Act
+    view.close()
+    // Assert
+    await waitUntil(
+      () => harness.counts().panels === 0,
+      'the unfinished extension run closes its Application pane',
+      5_000,
+    )
+    assert.equal(harness.reader['keptEndedPane'], undefined)
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=ER22: a late cleanup of an older run never closes or replaces a newer run's view; fails_when=the older lease's release clears the newer lease, closes its pane or keeps the older pane as the kept view; no_claim=which pane object the editor reuses
+test('a late cleanup of an older extension run leaves the newer run view open', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    const older = await openView(harness, 'older-run-1')
+    older.end('The older run ended.')
+    const newer = await openView(harness, 'newer-run-1')
+    const panelsBefore = harness.counts().panels
+    const newerViewport = harness.viewportInstances[1]
+    // Act
+    older.close()
+    // Assert
+    assert.equal(harness.reader['viewport'], newerViewport)
+    assert.equal(harness.counts().panels, panelsBefore)
+    assert.equal(harness.reader['keptEndedPane'], undefined)
+    assert.notEqual(harness.reader['leaseId'], undefined)
+    newer.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=ER22: the learner closing the tab drops the kept view of an ended run; fails_when=the workspace keeps pointing at a disposed pane; no_claim=the tab model of a real editor
+test('closing the tab of an ended extension run drops its kept view', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    const view = await openView(harness, 'ended-run-2')
+    view.end('The run ended.')
+    view.close()
+    const pane = harness.reader['app']
+    assert.equal(harness.reader['keptEndedPane'], pane)
+    // Act
+    pane?.dispose()
+    // Assert
+    assert.equal(harness.reader['keptEndedPane'], undefined)
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=SR13 and DR9: the editor's Save learning replay command refuses an extension run with its sentence, offers no Save item and changes no stored study; fails_when=the command stops the run, writes progress or answers another sentence; no_claim=the MCP surface's own refusal
+test('Save learning replay of an extension run refuses and stores nothing', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    const storage = await harness.reader.learningStorage()
+    const progressBefore = await storage.readProgress()
+    harness.reader['currentRecord'] = () =>
+      // The record of the profile; lane E's start creates the real one.
+      ({ profile: 'chrome-extension', id: 'extension-run-1' }) as never
+    // Act
+    const saving = harness.reader.saveLearningReplay()
+    // Assert
+    await assert.rejects(
+      saving,
+      new Error(
+        'Saving an extension run is not available in this version; the live explanation stays in the chat.',
+      ),
+    )
+    assert.deepEqual(await storage.readProgress(), progressBefore)
+    await readerSeams(harness).refresh()
+    assert.equal(harness.saveStatus.visible, false)
+  } finally {
+    await harness.close()
+  }
+})
