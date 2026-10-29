@@ -602,38 +602,44 @@ test('a preview of a file that is no stop file stays in the Application group wh
 })
 
 // protects=LR-W1 (Cycle 0062 ship last round): a stop file the run names through a symlinked folder still moves when the editor opens it by its real path; fails_when=the stop files and the tab's path are compared as plain strings, so the paused file stays in front of the view; no_claim=case folding (unit test)
-test('a paused file moves although the run names its stop file through a symlinked folder', async () => {
-  // Arrange
-  const harness = await workspaceHarness()
-  try {
-    readerSeams(harness).stopOwnTimer()
-    await writeRepositoryFile(harness, 'settings.js')
-    await symlink(harness.directory, join(harness.directory, 'link'))
-    harness.focusMutableDraft('popup.js', 1)
-    const create = harness.reader.presentation.createChromeExtensionViewport
-    assert.ok(create)
-    const view = await create('symlink-run-1')
-    view.setIdentity({
-      ...POPUP_IDENTITY,
-      stopFiles: [join(harness.directory, 'link', 'settings.js')],
-    })
-    const applicationColumn = harness.reader['app']?.viewColumn
-    assert.ok(applicationColumn)
-    // Act
-    harness.openPausedFileInLockedGroup('settings.js', applicationColumn)
-    // Assert
-    await waitUntil(
-      () =>
-        groupShowing(harness, 'settings.js') !== undefined &&
-        groupShowing(harness, 'settings.js')?.viewColumn !== applicationColumn,
-      'the paused file moves out of the Application group',
-      5_000,
-    )
-    view.close()
-  } finally {
-    await harness.close()
-  }
-})
+test(
+  'a paused file moves although the run names its stop file through a symlinked folder',
+  // A folder symlink needs a privilege Windows grants only to administrators or in developer mode.
+  { skip: process.platform === 'win32' },
+  async () => {
+    // Arrange
+    const harness = await workspaceHarness()
+    try {
+      readerSeams(harness).stopOwnTimer()
+      await writeRepositoryFile(harness, 'settings.js')
+      await symlink(harness.directory, join(harness.directory, 'link'))
+      harness.focusMutableDraft('popup.js', 1)
+      const create = harness.reader.presentation.createChromeExtensionViewport
+      assert.ok(create)
+      const view = await create('symlink-run-1')
+      view.setIdentity({
+        ...POPUP_IDENTITY,
+        stopFiles: [join(harness.directory, 'link', 'settings.js')],
+      })
+      const applicationColumn = harness.reader['app']?.viewColumn
+      assert.ok(applicationColumn)
+      // Act
+      harness.openPausedFileInLockedGroup('settings.js', applicationColumn)
+      // Assert
+      await waitUntil(
+        () =>
+          groupShowing(harness, 'settings.js') !== undefined &&
+          groupShowing(harness, 'settings.js')?.viewColumn !==
+            applicationColumn,
+        'the paused file moves out of the Application group',
+        5_000,
+      )
+      view.close()
+    } finally {
+      await harness.close()
+    }
+  },
+)
 
 // protects=CXA4 (Cycle 0062 ship review, Codex adversarial challenge): when the editor shows the paused file in the Application group itself instead of the destination, the copy in front of the view is not closed, so the file keeps a tab; fails_when=the move closes the Application group's copy after any resolved show, leaving the paused file with no tab; no_claim=which native condition makes the editor show it there
 test('a paused file the editor shows in the Application group again is not left without a tab', async () => {

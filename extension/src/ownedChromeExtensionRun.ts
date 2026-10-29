@@ -184,6 +184,9 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   private observed: ChromeExtensionObserved | null | undefined
   private result: 'complete' | 'partial' | undefined
   private runFailure: StudyError | undefined
+  /** What the close of a browser a late step brought up reported ({@link closeIfNew}); merged into a late close of the run's own browser. */
+  private lateBrowserCloseResult:
+    NonNullable<ChromeExtensionView['cleanup']> | undefined
   private cleanupResult: ChromeExtensionView['cleanup']
   private outputsDropped = 0
   private ending: RunEnding | undefined
@@ -1123,7 +1126,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
 
   /**
    * The cleanup's waits and closes, each wait bounded by the stop bound; called once by {@link OwnedChromeExtensionRun.cleanup}.
-   * A step still in flight finishes (it was aborted) before anything is closed, so a browser that appears late is closed too; one that ignores the abort is left behind at the bound. A debugger release that does not answer within the bound is journaled and the test browser is closed without it.
+   * A step still in flight finishes (it was aborted) before anything is closed, so a browser that appears late is closed too; one that ignores the abort is left behind at the bound. A debugger release that does not answer within the bound is journaled and the test browser is closed without it; a browser close that does not answer within the bound reads as unconfirmed until it does.
    * @param ending - How the run ends.
    * @param boundPassed - Settles when the stop bound passes.
    * @example await this.cleanupWithin(ending, stopBound.passed)
@@ -1153,7 +1156,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       })
     this.safely(() => executor?.dispose())
     this.cleanupResult = browser
-      ? await this.closeBrowser(browser)
+      ? await this.closeBrowserWithin(browser, boundPassed)
       : didStepsSettle
         ? { profileLeft: false, exitConfirmed: true }
         : // A launch still under way may have made its profile and started Chrome before it hands back a browser: nothing is confirmed until it settles.
@@ -1166,6 +1169,34 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       this.closeLateResources({ browser, viewport: closedViewport })
       this.resolveStepsLeftBehind()
     }
+  }
+
+  /**
+   * Closes the test browser, but waits for it only until the stop bound passes; called by {@link cleanupWithin}.
+   * A close that answers late reads as unconfirmed meanwhile, and its own result replaces that once it answers, merged with what a late browser's close reported in between ({@link closeIfNew}).
+   * @param browser - The run's browser.
+   * @param boundPassed - Settles when the stop bound passes.
+   * @returns The close's result, or `{ profileLeft: true, exitConfirmed: false }` when the bound passed first.
+   * @example this.cleanupResult = await this.closeBrowserWithin(browser, stopBound.passed)
+   */
+  private async closeBrowserWithin(
+    browser: OwnedExtensionBrowser,
+    boundPassed: Promise<false>,
+  ): Promise<NonNullable<ChromeExtensionView['cleanup']>> {
+    const closing = this.closeBrowser(browser)
+    const settled = await Promise.race([closing, boundPassed])
+    if (settled !== false) return settled
+    void closing.then((lateResult) => {
+      const otherLate = this.lateBrowserCloseResult
+      this.cleanupResult = otherLate
+        ? {
+            profileLeft: lateResult.profileLeft || otherLate.profileLeft,
+            exitConfirmed: lateResult.exitConfirmed && otherLate.exitConfirmed,
+          }
+        : lateResult
+      this.changed()
+    })
+    return { profileLeft: true, exitConfirmed: false }
   }
 
   /** Closes the browser; a close that throws or rejects reads as a profile left behind. */
@@ -1239,6 +1270,8 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     }
     if (lateBrowser === undefined) return
     void this.closeBrowser(lateBrowser).then((lateResult) => {
+      // Kept for a close of the run's own browser that answers after this one ({@link closeBrowserWithin}).
+      this.lateBrowserCloseResult = lateResult
       // Without a browser the cleanup was left unconfirmed, so the late close's own result replaces it; after a closed browser a failed late close still reaches the run resource, never leaving a clean claim.
       const settled = this.cleanupResult
       this.cleanupResult =

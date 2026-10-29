@@ -713,6 +713,39 @@ test('a stop settles at the stop bound while a preparation step never settles an
   )
 })
 
+// protects=CodeRabbit CLI pass 12 (Cycle 0062): a stop settles at the stop bound also when the test browser's close does not answer, reports the cleanup as unconfirmed meanwhile, and the close's own result replaces that once it answers; fails_when=the stop waits on the close past the bound, holding the run's slot, or the late close never reaches the run resource; no_claim=the close's own timing (ownedExtensionBrowser tests)
+test('a stop settles at the stop bound while the browser close does not answer, and the late close result replaces the unconfirmed cleanup', async () => {
+  // Arrange
+  const closeAnswers = defer<{ profileLeft: boolean; exitConfirmed: boolean }>()
+  const timers = manualClock()
+  const harness = createRunHarness({ clock: timers.clock })
+  await harness.run.prepare()
+  harness.browser.close = () => closeAnswers.promise
+  // Act
+  const stopping = harness.run.stop()
+  await waitUntil(
+    () => timers.pendingDelays().includes(10_000),
+    'the stop bound to be armed',
+  )
+  timers.fire(10_000)
+  await stopping
+  const cleanupAtTheBound = harness.run.view().cleanup
+  closeAnswers.resolve({ profileLeft: false, exitConfirmed: true })
+  await waitUntil(
+    () => harness.run.view().cleanup?.exitConfirmed === true,
+    'the late close result',
+  )
+  // Assert
+  assert.deepEqual(cleanupAtTheBound, {
+    profileLeft: true,
+    exitConfirmed: false,
+  })
+  assert.deepEqual(harness.run.view().cleanup, {
+    profileLeft: false,
+    exitConfirmed: true,
+  })
+})
+
 // protects=CR14 (Cycle 0062 task 17): a cleanup whose browser close throws never leaves an unhandled rejection from the fire-and-forget ending, and the run still reaches its ended phase; fails_when=the ending's rejection escapes unhandled or the run stays open; no_claim=the profile folder state
 test('a browser close that throws ends the run without an unhandled rejection', async () => {
   // Arrange
