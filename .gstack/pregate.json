@@ -152,5 +152,25 @@
   "strays": {
     "allow": [".gstack"]
   },
-  "warn": ["literals"]
+  "warn": ["literals"],
+  "allowlist": [
+    {
+      "finding": "auth.bearer",
+      "paths": ["extension/src/tests/chromeExtension*.test.ts"],
+      "pattern": "abcdefghijklmnop1234567890",
+      "reason": "the dummy bearer token the chrome-extension masking tests feed in; never a credential"
+    },
+    {
+      "finding": "env.kv",
+      "paths": ["extension/src/tests/chromeExtensionObservation.test.ts"],
+      "pattern": "\\[masked\\]",
+      "reason": "the mask placeholder an observed-value masking test expects; no secret value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": ["extension/src/tests/chromeExtensionService.test.ts"],
+      "pattern": "extension-run",
+      "reason": "a codebook_start idempotency key named key in a test; no secret value"
+    }
+  ]
 }
