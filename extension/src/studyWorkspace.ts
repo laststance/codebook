@@ -10118,6 +10118,8 @@ export class StudyWorkspace {
       (failedMoves.get(uri.toString()) ?? 0) >= PAUSED_SOURCE_MOVE_ATTEMPTS
     const moveCoveringSource = (): void => {
       if (isMoving || !isWatching()) return
+      // A copy that left the Application group ends its file's failed moves, so a later stop of the same file can move again.
+      this.forgetMovesOfLeftCopies(panel, failedMoves)
       const move = this.coveringSourceMove(panel, isGivenUp, isStopFile)
       if (!move) return
       isMoving = true
@@ -10150,6 +10152,31 @@ export class StudyWorkspace {
     // A pane the learner closes while the run goes on ends the watch: a disposed pane has no group to keep clear.
     watches.push(panel.onDidDispose(dispose))
     return { dispose }
+  }
+
+  /**
+   * Drops the failed-move count of every file that no longer has a tab in the Application group; called by {@link keepPausedSourceOutOfApplication} at each event of its watch, before it looks for a file to move.
+   * A file the watch gave up on stays given up only while its copy stays in front of the view: once the learner closed that copy, the next stop that opens the file there again moves it, instead of leaving it over the view for the rest of the run.
+   * @param panel - The lease's Application pane.
+   * @param failedMoves - The watch's failed moves by document URI; changed in place.
+   * @example this.forgetMovesOfLeftCopies(panel, failedMoves) // failedMoves loses settings.js once its copy closed
+   */
+  private forgetMovesOfLeftCopies(
+    panel: vscode.WebviewPanel,
+    failedMoves: Map<string, number>,
+  ): void {
+    const column = this.viewColumnOf(panel)
+    const shownUris = new Set(
+      vscode.window.tabGroups.all
+        .find((group) => group.viewColumn === column)
+        ?.tabs.flatMap((tab) =>
+          tab.input instanceof vscode.TabInputText
+            ? [tab.input.uri.toString()]
+            : [],
+        ),
+    )
+    for (const uri of [...failedMoves.keys()])
+      if (!shownUris.has(uri)) failedMoves.delete(uri)
   }
 
   /**

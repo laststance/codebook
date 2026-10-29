@@ -315,6 +315,49 @@ test('an edited preview in the Application group stays there while the next paus
   }
 })
 
+// protects=CodeRabbit CLI pass 11 (Cycle 0062): a paused file the watch gave up moving moves again at a later stop once its copy in front of the view has closed; fails_when=the failure count of that file outlives its closed copy, so every later stop of the same file covers the extension view for the rest of the run; no_claim=why the editor refused the first close
+test('a paused file given up after refused closes moves again once its copy closed and a later stop opens it', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const view = await openView(harness, 'given-up-then-closed-run-1')
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    const showsOfPausedFile = () =>
+      harness.textDocumentShows().filter((show) => show.name === 'settings.js')
+    const copy = harness.openPausedFileInLockedGroup(
+      'settings.js',
+      applicationColumn,
+    )
+    const accept = harness.refuseCloseOfTabsShowing('settings.js')
+    await waitUntil(
+      () => showsOfPausedFile().length >= 2,
+      'the watch gives the move up after its attempts',
+      5_000,
+    )
+    accept()
+    // Act: the learner closes the copy, and a later stop opens the same file in front of the view again.
+    harness.closeTabByHand(copy)
+    harness.openPausedFileInLockedGroup('settings.js', applicationColumn)
+    // Assert
+    await waitUntil(
+      () =>
+        !harness.groups
+          .find((group) => group.viewColumn === applicationColumn)
+          ?.tabs.some((tab) => tab.label === 'settings.js'),
+      'the later paused file leaves the Application group',
+      5_000,
+    )
+    assert.notEqual(groupShowing(harness, 'settings.js'), undefined)
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
 // protects=OCR-H2 (Cycle 0062 review): a paused file the editor cannot show in the source group stays open in front of the view instead of being closed and lost, and the next stop's file still moves out; fails_when=the move closes the tab before the show and the show fails, so the learner's paused file disappears; no_claim=why the editor refuses the show
 test('a paused file the editor cannot show elsewhere stays open while the next paused file moves out', async () => {
   // Arrange
