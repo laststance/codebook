@@ -604,6 +604,8 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
         maxFrames: NODE_REPLAY_DEBUG_MAX_FRAMES,
         maxVariables: NODE_REPLAY_DEBUG_MAX_VARIABLES,
         maxDepth: NODE_REPLAY_DEBUG_MAX_DEPTH,
+        // A page's or worker's `this` is a host object with many members: the locals are kept before any value is expanded.
+        topLevelFirst: true,
       },
     })
     // The pinned bytes and the editor's documents are checked again after the read.
