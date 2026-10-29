@@ -806,9 +806,10 @@ test('a late browser whose close fails is reported in the run resource cleanup',
     launchGate: launchGate.promise,
     clock: timers.clock,
   })
+  // The failed close names a result the unconfirmed state never reads (profile removed, exit unconfirmed), so the assertion sees the late result itself.
   harness.browser.close = async () => {
     harness.log.push('browser.close')
-    return { profileLeft: true, exitConfirmed: false }
+    return { profileLeft: false, exitConfirmed: false }
   }
   const preparing = harness.run.prepare().then(
     () => undefined,
@@ -836,11 +837,11 @@ test('a late browser whose close fails is reported in the run resource cleanup',
   )
   // Assert
   await waitUntil(
-    () => harness.run.view().cleanup?.profileLeft === true,
+    () => harness.run.view().cleanup?.profileLeft === false,
     'the failed late close to reach the cleanup state',
   )
   assert.deepEqual(harness.run.view().cleanup, {
-    profileLeft: true,
+    profileLeft: false,
     exitConfirmed: false,
   })
 })

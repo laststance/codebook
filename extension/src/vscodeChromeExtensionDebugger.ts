@@ -1072,10 +1072,14 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
 
   /** Bounds how long the listeners wait for an attach that never settles after the release began; at the bound the known sessions are stopped once more and the listeners go. */
   private armLateWatchBound(): void {
+    // A repeated release re-arms the one bound; the earlier timer never fires on its own.
+    clearTimeout(this.lateWatchTimer)
     this.lateWatchTimer = setTimeout(
       () => void this.endLateWatch(),
       CHROME_EXTENSION_STOP_DEADLINE_MS,
     )
+    // The bound alone never keeps the editor process alive.
+    this.lateWatchTimer.unref?.()
   }
 
   /** Stops the sessions the pending attach started after the release began, journals a failed stop (a later release retries it), and disposes the listeners the release left for it. */
