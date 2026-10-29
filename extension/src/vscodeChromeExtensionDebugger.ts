@@ -107,9 +107,9 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
   private attachPending = false
   /** Ids of the sessions the editor confirmed stopped; an id joins only after its stop succeeded, so a failed stop is retried. */
   private readonly stoppedSessionIds = new Set<string>()
-  /** Every session of this run the editor announced as started, whether or not its tracker registered it (a session starting after the release began may skip the tracker). */
   /** The stop of each session the editor is still carrying out, by session id (see {@link stopOnce}). */
   private readonly stopsInFlight = new Map<string, Promise<void>>()
+  /** Every session of this run the editor announced as started, whether or not its tracker registered it (a session starting after the release began may skip the tracker). */
   private readonly startedSessions = new Map<string, vscode.DebugSession>()
   /** Ends the late-session watch when a pending attach never settles; see {@link armLateWatchBound}. */
   private lateWatchTimer?: ReturnType<typeof setTimeout>
@@ -822,7 +822,7 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
   }
 
   /**
-   * Ties the adopted page child to the surface: it is kept only while the surface is the single page target with exactly the surface URL (a page of the same file with a query or fragment is another page), because js-debug's child session names no target id and a second matching tab could have attached first.
+   * Ties the adopted page child to the surface: it is kept only while the surface is the single page target at the surface URL, compared without its fragment (a hash route keeps the page; a page of the same file with another query is another page), because js-debug's child session names no target id and a second matching tab could have attached first.
    * Called by {@link attach} once the page child exists; the attach is refused (and the child demoted to `other`) when the match is not unique or the surface target is gone.
    * @param entry - The page child adopted as the surface.
    * @param refusal - Builds the attach's refusal.
@@ -1018,7 +1018,13 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
    */
   async release(): Promise<void> {
     await this.releaser.run()
-    await this.stopKnownSessions()
+    try {
+      await this.stopKnownSessions()
+    } catch (error) {
+      // A retried stop that fails again is journaled like the first, then still reaches the caller.
+      this.recordStopFailure(error)
+      throw error
+    }
   }
 
   /** Removes the breakpoints, ends the sessions this run started and stops listening; a session that would not stop is journaled as a debugger error and rethrown after the listeners are disposed; repeatable after a failure. */

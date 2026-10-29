@@ -1207,6 +1207,44 @@ test('a later release stops a late session whose first stop failed', async () =>
   await editor.dispose()
 })
 
+// protects=a retried stop that fails again is journaled (Cycle 0062 final-range CodeRabbit CLI): a late session whose stop fails once in the late watch and again in a later release leaves both failures in the run's journal; fails_when=the release's retry rethrows its failure without journaling it, so the second failure reaches only the caller; no_claim=real editor stop failures
+test('a late session whose stop fails twice journals both failures', async () => {
+  // Arrange
+  const editor = await extensionEditorHarness({})
+  const startGate = defer<void>()
+  editor.holdStartDebugging(startGate.promise)
+  const run = new AbortController()
+  const created = editor.createDebugger([PAGE_STOP])
+  const rejected = assert.rejects(created.debug.attach(run.signal))
+  await until(() => editor.started.length > 0)
+  await created.debug.release()
+  editor.failStopDebugging(new Error('the editor could not stop it'), 2)
+  run.abort()
+  startGate.resolve()
+  await rejected
+  // Act
+  await assert.rejects(created.debug.release())
+  // Assert
+  assert.deepEqual(
+    plain(
+      created.events.filter(
+        (event) => event.type === 'chrome-extension.debugger-error',
+      ),
+    ),
+    [
+      {
+        type: 'chrome-extension.debugger-error',
+        detail: { message: 'Error: the editor could not stop it' },
+      },
+      {
+        type: 'chrome-extension.debugger-error',
+        detail: { message: 'Error: the editor could not stop it' },
+      },
+    ],
+  )
+  await editor.dispose()
+})
+
 // protects=overlapping stop paths ask the editor once per session (Cycle 0062 final-range CodeRabbit CLI); fails_when=a second release or the late watch stops a session whose stop is still in flight, so the editor is asked twice and a rejected repeat journals a spurious debugger error; no_claim=real editor stop timing
 test('overlapping stop paths stop one late session once and journal nothing', async () => {
   // Arrange
