@@ -98,6 +98,7 @@ export async function extensionEditorHarness(
   let nextEditorBreakpointId = 0
   let captureCalls = 0
   let refuseContinues = false
+  let stopDebuggingFailure: Error | undefined
 
   class Position {
     constructor(
@@ -300,6 +301,7 @@ export async function extensionEditorHarness(
       },
       async stopDebugging(session: FakeSession): Promise<void> {
         stopped.push(session.id)
+        if (stopDebuggingFailure) throw stopDebuggingFailure
       },
     },
   }
@@ -479,6 +481,15 @@ export async function extensionEditorHarness(
     started,
     stopped,
     editorBreakpoints,
+    /** Makes the editor's `stopDebugging` reject with this error from now on. */
+    failStopDebugging(error: Error): void {
+      stopDebuggingFailure = error
+    },
+    /** Whether the debugger's tracker factory and termination listener are still registered. */
+    listeners: () => ({
+      tracker: trackerFactory !== undefined,
+      termination: terminate !== undefined,
+    }),
     captureCalls: () => captureCalls,
     session: (id: string) => sessions.get(id)!,
     /** The adapter id the session gave the editor breakpoint at a place. */
@@ -507,6 +518,8 @@ export async function extensionEditorHarness(
       stops: TestStop[],
       overrides: {
         startWorker?: () => Promise<void>
+        /** The browser's targets; defaults to the surface page and the extension's worker. */
+        targets?: Array<{ targetId: string; type: string; url: string }>
         assertSourcesUnchanged?: () => void
         workerPath?: string
         onPhase?: ExtensionPhaseReporter
@@ -543,6 +556,15 @@ export async function extensionEditorHarness(
           },
           port: 9333,
           surfaceTargetId: SURFACE_TARGET,
+          readTargets: async () =>
+            overrides.targets ?? [
+              { targetId: SURFACE_TARGET, type: 'page', url: SURFACE_URL },
+              {
+                targetId: 'worker-target',
+                type: 'service_worker',
+                url: WORKER_URL,
+              },
+            ],
           startWorker:
             overrides.startWorker ??
             (async (): Promise<void> => {

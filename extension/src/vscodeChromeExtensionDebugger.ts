@@ -779,7 +779,7 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     )
     signal.throwIfAborted()
     if (!started) throw refusal()
-    await this.waitOr(
+    const surface = await this.waitOr(
       async () => {
         return this.entriesOf('page')[0]
       },
@@ -788,6 +788,40 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
       signal,
       refusal,
     )
+    await this.verifySurface(surface, refusal)
+  }
+
+  /**
+   * Ties the adopted page child to the surface: it is kept only while the surface is the single page target matching the surface URL, because js-debug's child session names no target id and a second matching tab could have attached first.
+   * Called by {@link attach} once the page child exists; the attach is refused (and the child demoted to `other`) when the match is not unique or the surface target is gone.
+   * @param entry - The page child adopted as the surface.
+   * @param refusal - Builds the attach's refusal.
+   * @throws The refusal from `refusal` when the surface cannot be proven to be the adopted child.
+   */
+  private async verifySurface(
+    entry: SessionEntry,
+    refusal: () => StudyError,
+  ): Promise<void> {
+    const targets = await this.input.readTargets()
+    const matchingPageIds = targets
+      .filter(
+        (target) =>
+          target.type === 'page' &&
+          target.url.startsWith(this.input.run.surfaceUrl),
+      )
+      .map((target) => target.targetId)
+    // Exactly the surface: nothing else could have attached first.
+    if (
+      matchingPageIds.length === 1 &&
+      matchingPageIds[0] === this.input.surfaceTargetId
+    )
+      return
+    entry.kind = 'other'
+    this.input.record('chrome-extension.debugger-error', {
+      message:
+        'The attached page could not be tied to the surface target; another page matches the surface URL.',
+    })
+    throw refusal()
   }
 
   private workerNotAttached(): StudyError {
@@ -815,7 +849,7 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
       this.recordIntervention('start-worker')
       await this.input.startWorker()
     }
-    await this.waitOr(
+    const worker = await this.waitOr(
       async () => {
         return this.entriesOf('worker')[0]
       },
@@ -824,6 +858,28 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
       signal,
       () => this.workerNotAttached(),
     )
+    await this.verifyWorker(worker)
+  }
+
+  /**
+   * Ties the adopted worker child to the extension's own service worker: it is kept only while the owned browser lists a service-worker target at the extension's worker URL.
+   * Called by {@link wakeWorker} after a worker child appears; a worker child while no such target exists is another extension's and is demoted to `other`.
+   * @param entry - The worker child adopted as the extension's worker.
+   * @throws {@link StudyError} `SERVICE_WORKER_NOT_ATTACHED` when the extension's worker target is not listed.
+   */
+  private async verifyWorker(entry: SessionEntry): Promise<void> {
+    const targets = await this.input.readTargets()
+    const isOwnWorkerListed = targets.some(
+      (target) =>
+        target.type === 'service_worker' && target.url === entry.targetUrl,
+    )
+    if (isOwnWorkerListed) return
+    entry.kind = 'other'
+    this.input.record('chrome-extension.debugger-error', {
+      message:
+        "A worker child of the surface is not the extension's service worker and is ignored.",
+    })
+    throw this.workerNotAttached()
   }
 
   async armStops(signal: AbortSignal): Promise<void> {
@@ -906,7 +962,7 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     return this.releaser.run()
   }
 
-  /** Removes the breakpoints, ends the sessions this run started and stops listening; repeatable after a failure. */
+  /** Removes the breakpoints, ends the sessions this run started and stops listening; a session that would not stop is journaled as a debugger error and rethrown after the listeners are disposed; repeatable after a failure. */
   private async releaseOwned(): Promise<void> {
     this.releaseBegun = true
     this.abort.abort()
@@ -914,12 +970,22 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
     this.holdTimers.clear()
     this.output.finish()
     this.registry.removeAll()
-    await stopRunDebugSessions(
-      [...this.entries.values()].map((entry) => entry.session),
-      (session) => vscode.debug.stopDebugging(session),
-    )
-    this.tracker.dispose()
-    this.termination.dispose()
+    try {
+      await stopRunDebugSessions(
+        [...this.entries.values()].map((entry) => entry.session),
+        (session) => vscode.debug.stopDebugging(session),
+      )
+    } catch (error) {
+      // The failure is journaled where the run's other debugger failures go, then still reaches the caller; a repeat release runs again.
+      this.input.record('chrome-extension.debugger-error', {
+        message: error instanceof Error ? error.message : String(error),
+      })
+      throw error
+    } finally {
+      // Listeners go in every case: a failed stop never leaves the tracker or termination listener alive.
+      this.tracker.dispose()
+      this.termination.dispose()
+    }
   }
 }
 
@@ -929,7 +995,7 @@ class VscodeChromeExtensionDebugger implements ChromeExtensionDebugger {
  * @param input - The run id, the resolved run, the owned browser's port and surface, and the journal.
  * @returns The debugger, listening to the editor's debug sessions of this run only.
  * @example
- * const debug = createVscodeChromeExtensionDebugger({ runId, workspace, run, port, surfaceTargetId, startWorker, assertSourcesUnchanged, roots, record })
+ * const debug = createVscodeChromeExtensionDebugger({ runId, workspace, run, port, surfaceTargetId, readTargets, startWorker, assertSourcesUnchanged, roots, record })
  * await debug.attach(signal)
  */
 export function createVscodeChromeExtensionDebugger(

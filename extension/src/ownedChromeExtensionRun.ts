@@ -44,7 +44,10 @@ import type {
   ChromeExtensionView,
 } from './runtime'
 import type { OwnedBrowserLaunchOptions } from './runtimeSupport/ownedExtensionBrowser'
-import { readCdpString } from './runtimeSupport/utils/cdpFieldReaders'
+import {
+  readCdpString,
+  readCdpTargets,
+} from './runtimeSupport/utils/cdpFieldReaders'
 import { causeRootsFor } from './utils/causeRootsFor'
 import { classifyChromeExtensionFailure } from './utils/classifyChromeExtensionFailure'
 import {
@@ -535,6 +538,8 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       run: resolved,
       port: browser.port,
       surfaceTargetId: browser.surfaceTargetId,
+      readTargets: async () =>
+        readCdpTargets(await browser.cdp.request('Target.getTargets', {})),
       startWorker: () => browser.startWorker(),
       assertSourcesUnchanged: () => this.sourceCheck?.(),
       roots: this.roots,
