@@ -4,7 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { ownedBrowserProcesses } from '../runtimeSupport/utils/ownedBrowserProcesses'
+import {
+  ownedBrowserProcessSet,
+  ownedBrowserProcesses,
+} from '../runtimeSupport/utils/ownedBrowserProcesses'
 
 // A real folder, so the proof resolves it as the sweep does (macOS /var resolves to /private/var).
 const root = mkdtempSync(join(tmpdir(), 'codebook-owned-browser-proof-'))
@@ -100,5 +103,83 @@ test('Windows proof accepts a case-different executable path and rejects another
   assert.deepEqual(
     proven.map(({ pid }) => pid),
     [31],
+  )
+})
+
+// protects=the main browser is proven by the recorded pid, executable and folder, and its helpers by ancestry (macOS rows); fails_when=a helper row makes the set refuse, or a `<P> backup` process is taken for a helper or main; why_new=the sweep used to prove every named process as a main; seam=none; no_claim=real ps output
+test('macOS process set accepts helper rows below the recorded main and calls a same-text process of another pid foreign', async () => {
+  // Arrange
+  const marker = { executable: EXECUTABLE, pid: 100 }
+  const helperCommand = `/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/156.0.8078.74/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper --type=gpu-process --user-data-dir=${PROFILE}`
+  const listing = [
+    {
+      pid: 100,
+      parentPid: 1,
+      command: `${EXECUTABLE} --user-data-dir=${PROFILE} about:blank`,
+    },
+    { pid: 101, parentPid: 100, command: helperCommand },
+    { pid: 102, parentPid: 101, command: helperCommand },
+    {
+      pid: 200,
+      parentPid: 1,
+      command: `${EXECUTABLE} --user-data-dir=${PROFILE} backup`,
+    },
+  ]
+
+  // Act
+  const set = await ownedBrowserProcessSet(PROFILE, marker, listing, listing, {
+    platform: 'darwin',
+  })
+
+  // Assert
+  assert.equal(set.main?.pid, 100)
+  assert.deepEqual(
+    set.helpers.map(({ pid }) => pid),
+    [101, 102],
+  )
+  assert.deepEqual(
+    set.foreign.map(({ pid }) => pid),
+    [200],
+  )
+})
+
+// protects=a main whose pid differs from the marker's is not proven, and without a recorded pid nothing is; fails_when=text alone proves a main; why_new=the pid proof is new; seam=none; no_claim=real ps output
+test('process set proves no main when the pid differs from the marker or none was recorded', async () => {
+  // Arrange
+  const listing = [
+    {
+      pid: 300,
+      parentPid: 1,
+      command: `${EXECUTABLE} --user-data-dir=${PROFILE}`,
+    },
+  ]
+  const inputs = { platform: 'darwin' } as const
+
+  // Act
+  const otherPid = await ownedBrowserProcessSet(
+    PROFILE,
+    { executable: EXECUTABLE, pid: 301 },
+    listing,
+    listing,
+    inputs,
+  )
+  const noPid = await ownedBrowserProcessSet(
+    PROFILE,
+    { executable: EXECUTABLE },
+    listing,
+    listing,
+    inputs,
+  )
+
+  // Assert
+  assert.equal(otherPid.main, undefined)
+  assert.deepEqual(
+    otherPid.foreign.map(({ pid }) => pid),
+    [300],
+  )
+  assert.equal(noPid.main, undefined)
+  assert.deepEqual(
+    noPid.foreign.map(({ pid }) => pid),
+    [300],
   )
 })

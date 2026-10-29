@@ -54,6 +54,7 @@ export function fakeExtensionSurface(answers: SurfaceAnswers = {}) {
       listeners.set(method, set)
       return () => set.delete(listener)
     },
+    onClose: () => () => undefined,
     close(): void {},
   }
   return {

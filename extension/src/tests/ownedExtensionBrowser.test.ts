@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict'
 import {
   chmod,
+  mkdir,
   mkdtemp,
   readFile,
   readdir,
   realpath,
   rm,
   stat,
+  symlink,
 } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -54,6 +56,7 @@ function launchOptions(
       extensionId: EXTENSION_ID,
       surface: { kind: 'popup', path: 'popup.html' },
       surfaceUrl: `chrome-extension://${EXTENSION_ID}/popup.html`,
+      workerPath: 'worker.js',
       seed: {
         bookmarks: [
           {
@@ -233,9 +236,11 @@ test('launch fails with EXTENSION_LOAD_FAILED carrying Chrome’s message withou
   const error = await failureOf(launchOptions(root), chrome)
   // Assert
   assert.equal(error.code, 'EXTENSION_LOAD_FAILED')
+  // The message is the fixed sentence; Chrome's text, with the root hidden, is the cause.
+  assert.equal(error.message, 'Chrome did not load the extension.')
   assert.equal(
-    error.message,
-    'Chrome did not load the extension: Manifest file is missing: …/project/extension/manifest.json.',
+    error.causeDetail,
+    'Manifest file is missing: <workspace>/manifest.json',
   )
   assert.deepEqual(await readdir(root), [])
 })
@@ -355,7 +360,10 @@ test('a profile that cannot be prepared fails the start with no browser started 
   )
   // Assert
   assert.equal(error.code, 'RUNTIME_FAILED')
-  assert.match(error.message, /^The run's test profile could not be prepared: /)
+  assert.equal(error.message, "The run's test profile could not be prepared.")
+  // The system's detail stays in the cause, with the profile root hidden.
+  assert.match(error.causeDetail, /ENOENT/)
+  assert.equal(error.causeDetail.includes(root), false)
   assert.deepEqual(chrome.spawned, [])
 })
 
@@ -808,4 +816,152 @@ test('a throwing onPhase callback does not break the launch', async (context) =>
   // Assert
   assert.equal(browser.surfaceTargetId, 'popup-1')
   await browser.close()
+})
+
+// Value: protects=a popup-only extension (no background.service_worker): the launch opens its popup; fails_when=ServiceWorker.startWorker is sent for an extension without a worker, so the command fails and the launch with it; no_claim=real Chrome's answer to startWorker for a popup-only extension
+test('a popup-only extension without a service worker opens its popup and is sent no startWorker', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(healthy())
+  const options = launchOptions(root)
+  delete options.run.workerPath
+  // Act
+  const browser = await launchOwnedExtensionBrowser(
+    options,
+    chrome.dependencies,
+  )
+  // Assert
+  const methods = chrome.commands.map(({ method }) => method)
+  assert.equal(browser.surfaceTargetId, 'popup-1')
+  assert.equal(methods.includes('ServiceWorker.startWorker'), false)
+  assert.equal(methods.includes('Extensions.triggerAction'), true)
+  await browser.close()
+})
+
+// Value: protects=the unmasked-detail finding: a Windows-style root, a real-path spelling of a linked root and a home path never reach Chrome's refusal message or cause, and a bearer token in Chrome's text is masked; fails_when=only the exact run.root string is replaced, or the detail is placed in the message; no_claim=real Chrome's wording
+test('a load refusal never shows a Windows-style root, a real-path spelling or a home path, and masks a bearer token', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const realFolder = join(root, 'real-extension')
+  await mkdir(realFolder)
+  const linkedFolder = join(root, 'linked-extension')
+  await symlink(realFolder, linkedFolder)
+  const home = homedir()
+  const detailOf = async (runRoot: string, text: string) => {
+    const chrome = fakeOwnedChrome(healthy({ loadRejection: text }))
+    return failureOf(launchOptions(root, { root: runRoot }), chrome)
+  }
+  // Act
+  const windows = await detailOf(
+    'C:\\Users\\ada\\project\\ext',
+    'Cannot load C:\\Users\\ada\\project\\ext\\manifest.json with Bearer abcdefgh12345678',
+  )
+  const realPath = await detailOf(
+    linkedFolder,
+    `Cannot read ${realFolder}/manifest.json`,
+  )
+  const homePath = await detailOf(
+    EXTENSION_ROOT,
+    `Cannot read ${home}/secret/notes.txt`,
+  )
+  // Assert
+  assert.equal(windows.message, 'Chrome did not load the extension.')
+  assert.equal(windows.causeDetail.includes('ada'), false)
+  assert.equal(windows.causeDetail.includes('abcdefgh12345678'), false)
+  assert.match(windows.causeDetail, /Bearer \[masked\]/)
+  assert.equal(realPath.causeDetail.includes(realFolder), false)
+  assert.equal(realPath.message.includes(root), false)
+  assert.equal(homePath.causeDetail, 'Cannot read ~/secret/notes.txt')
+})
+
+// Value: protects=the bound on Chrome's text in a cause; fails_when=a very long Chrome message is kept whole; no_claim=where the text is cut
+test('a very long Chrome refusal is cut to 4096 characters in the cause', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(healthy({ loadRejection: 'x'.repeat(10_000) }))
+  // Act
+  const error = await failureOf(launchOptions(root), chrome)
+  // Assert
+  assert.equal(error.causeDetail.length, 4096)
+})
+
+// Value: protects=the browser-lost contract (red team): the run is told once when the CDP socket closes or the process exits after the launch; fails_when=a loss is not announced, is announced twice or is announced after close() began; no_claim=real sockets (flatCdpConnection tests) or real exits
+test('onLost fires once when the connection drops, once when the process exits, and never after close began', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const dropped = fakeOwnedChrome(healthy())
+  const crashed = fakeOwnedChrome(healthy())
+  const closed = fakeOwnedChrome(healthy())
+  const droppedBrowser = await launchOwnedExtensionBrowser(
+    launchOptions(root),
+    dropped.dependencies,
+  )
+  const crashedBrowser = await launchOwnedExtensionBrowser(
+    launchOptions(root),
+    crashed.dependencies,
+  )
+  const closedBrowser = await launchOwnedExtensionBrowser(
+    launchOptions(root),
+    closed.dependencies,
+  )
+  const told = { dropped: 0, crashed: 0, closed: 0 }
+  droppedBrowser.onLost(() => (told.dropped += 1))
+  crashedBrowser.onLost(() => (told.crashed += 1))
+  closedBrowser.onLost(() => (told.closed += 1))
+  // Act
+  dropped.dropConnection()
+  dropped.crashProcess()
+  crashed.crashProcess()
+  await closedBrowser.close()
+  closed.crashProcess()
+  // Assert
+  assert.deepEqual(told, { dropped: 1, crashed: 1, closed: 0 })
+  await droppedBrowser.close()
+  await crashedBrowser.close()
+})
+
+// Value: protects=the surface-session contract (red team): the executor gets a flat session on the surface target with Page and Runtime enabled; fails_when=nothing attaches to the surface or a domain is left disabled; no_claim=real Chrome (real-Chrome test)
+test('attachSurface attaches a flat session to the surface and enables Page and Runtime on it', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(healthy())
+  const browser = await launchOwnedExtensionBrowser(
+    launchOptions(root),
+    chrome.dependencies,
+  )
+  chrome.commands.length = 0
+  // Act
+  const sessionId = await browser.attachSurface()
+  // Assert
+  assert.equal(sessionId, 'session-popup-1')
+  assert.deepEqual(
+    chrome.commands.map(({ method, params, sessionId: session }) => ({
+      method,
+      params,
+      session,
+    })),
+    [
+      {
+        method: 'Target.attachToTarget',
+        params: { targetId: 'popup-1', flatten: true },
+        session: undefined,
+      },
+      { method: 'Page.enable', params: {}, session: 'session-popup-1' },
+      { method: 'Runtime.enable', params: {}, session: 'session-popup-1' },
+    ],
+  )
+  await browser.close()
+})
+
+// Value: protects=the CHROME_COMMAND_UNAVAILABLE sentence names the minimum Chrome version from its constant; fails_when=the sentence carries a literal that drifts from the constant; no_claim=the recovery text (errors tests)
+test('CHROME_COMMAND_UNAVAILABLE names the minimum Chrome version', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const chrome = fakeOwnedChrome(
+    healthy({ missingMethod: 'ServiceWorker.stopAllWorkers' }),
+  )
+  // Act
+  const error = await failureOf(launchOptions(root), chrome)
+  // Assert
+  assert.match(error.message, /Chrome for Testing 149 or later\.$/)
 })

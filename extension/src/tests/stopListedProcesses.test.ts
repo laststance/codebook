@@ -110,3 +110,36 @@ test('a poll budget counts the time of measured requests and the nominal pauses'
   assert.equal(budget.remainingMs(), 0)
   assert.equal(budget.isSpent(), true)
 })
+
+// Value: protects=a group whose leader exits on SIGTERM while members survive is still ended; fails_when=success is reported after the leader alone is gone and the members keep running (no SIGKILL to the group); no_claim=real process groups
+test('a group whose leader exits on SIGTERM but whose members survive gets SIGKILL through its group', async () => {
+  // Arrange
+  const signalled: [number, NodeJS.Signals | 0][] = []
+  let isLeaderGone = false
+  let isGroupGone = false
+  const stopper: ProcessStopper = {
+    platform: 'linux',
+    signal: (pid, signal): void => {
+      signalled.push([pid, signal])
+      if (signal === 'SIGTERM') isLeaderGone = true
+      if (signal === 'SIGKILL' && pid === -4242) isGroupGone = true
+      if (signal === 0 && pid === 4242 && isLeaderGone) throw new Error('ESRCH')
+      if (signal === 0 && pid === -4242 && isGroupGone) throw new Error('ESRCH')
+    },
+    taskkill: async () => undefined,
+    sleep: async () => undefined,
+  }
+  // Act
+  const stopped = await stopListedProcesses([4242], stopper, {
+    groupLeaders: [4242],
+  })
+  // Assert
+  assert.equal(stopped, true)
+  assert.deepEqual(
+    signalled.filter(([, signal]) => signal !== 0),
+    [
+      [-4242, 'SIGTERM'],
+      [-4242, 'SIGKILL'],
+    ],
+  )
+})

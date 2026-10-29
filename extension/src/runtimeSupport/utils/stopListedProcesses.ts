@@ -42,7 +42,20 @@ export const REAL_PROCESS_STOPPER: ProcessStopper = {
  * @example
  * isStillRunning(4242, REAL_PROCESS_STOPPER) // => false for a gone process
  */
-function isStillRunning(pid: number, stopper: ProcessStopper): boolean {
+function isStillRunning(
+  pid: number,
+  stopper: ProcessStopper,
+  isGroupLeader = false,
+): boolean {
+  // A group leader that exited can leave members behind: its group still exists while any of them runs.
+  if (isGroupLeader) {
+    try {
+      stopper.signal(-pid, 0)
+      return true
+    } catch {
+      // No such group: the process itself is looked at below.
+    }
+  }
   try {
     stopper.signal(pid, 0)
     return true
@@ -64,8 +77,11 @@ async function stillRunningAfter(
   pids: number[],
   waitMs: number,
   stopper: ProcessStopper,
+  groupLeaders: readonly number[] = [],
 ): Promise<number[]> {
-  let remaining = pids.filter((pid) => isStillRunning(pid, stopper))
+  const isRunning = (pid: number): boolean =>
+    isStillRunning(pid, stopper, groupLeaders.includes(pid))
+  let remaining = pids.filter(isRunning)
   // Poll until nothing runs or the wait is spent.
   for (
     let waited = 0;
@@ -73,7 +89,7 @@ async function stillRunningAfter(
     waited += EXTENSION_BROWSER_POLL_MS
   ) {
     await stopper.sleep(EXTENSION_BROWSER_POLL_MS)
-    remaining = remaining.filter((pid) => isStillRunning(pid, stopper))
+    remaining = remaining.filter(isRunning)
   }
   return remaining
 }
@@ -139,10 +155,13 @@ export async function stopListedProcesses(
   const leads = (pid: number): boolean =>
     options.groupLeaders?.includes(pid) ?? false
   for (const pid of pids) signalProcess(pid, 'SIGTERM', leads(pid), stopper)
+  const leaders = options.groupLeaders ?? []
+  // A leader counts as running while any member of its group does.
   const survivors = await stillRunningAfter(
     pids,
     EXTENSION_BROWSER_KILL_GRACE_MS,
     stopper,
+    leaders,
   )
   for (const pid of survivors)
     signalProcess(pid, 'SIGKILL', leads(pid), stopper)
@@ -152,6 +171,7 @@ export async function stopListedProcesses(
         survivors,
         EXTENSION_BROWSER_KILL_GRACE_MS,
         stopper,
+        leaders,
       )
     ).length === 0
   )

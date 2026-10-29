@@ -163,3 +163,22 @@ for (const frame of ['null', '7', '[1,2]', '"text"']) {
     await assert.rejects(pending, /CDP disconnected/)
   })
 }
+
+// Value: protects=the close notification the owned browser's loss detection stands on; fails_when=a socket that closes by itself, or close(), tells no listener, tells it twice, or a listener added after the end is not told; no_claim=a real socket
+test('onClose tells each listener once when the socket closes or close is called, and at once for a listener added later', () => {
+  // Arrange
+  const closedBySocket = fakeTransport()
+  const bySocket = new WebSocketFlatCdp(closedBySocket.transport)
+  const closedByCaller = new WebSocketFlatCdp(fakeTransport().transport)
+  const told = { socket: 0, caller: 0, late: 0 }
+  bySocket.onClose(() => (told.socket += 1))
+  closedByCaller.onClose(() => (told.caller += 1))
+  // Act
+  closedBySocket.transport.close()
+  closedBySocket.transport.close()
+  closedByCaller.close()
+  closedByCaller.close()
+  closedByCaller.onClose(() => (told.late += 1))
+  // Assert
+  assert.deepEqual(told, { socket: 1, caller: 1, late: 1 })
+})

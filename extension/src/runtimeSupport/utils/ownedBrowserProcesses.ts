@@ -133,3 +133,83 @@ export async function ownedBrowserProcesses(
   )
   return processes.filter((_, index) => proven[index])
 }
+
+/** The processes that name an owned profile folder, told apart by what the orphan sweep may do with them. */
+export type OwnedBrowserProcessSet = {
+  /** The browser's main process: its pid is the marker's recorded pid, its program the recorded executable, and it names the folder. `undefined` when no listed process is proven so. */
+  main: ListedProcess | undefined
+  /** Processes that name the folder and descend from {@link OwnedBrowserProcessSet.main} (Chrome's helpers); never signalled by themselves, they end with their parent's group. */
+  helpers: ListedProcess[]
+  /** Processes that name the folder and are neither: the folder stays and nothing is signalled while one exists. */
+  foreign: ListedProcess[]
+}
+
+/**
+ * Walks a process's parents through the listing and says whether one of them is the given process; called by {@link ownedBrowserProcessSet} for each process naming the folder.
+ * @param listed - The process whose ancestry is read.
+ * @param ancestorPid - The pid looked for.
+ * @param parentOf - The parent of each listed pid.
+ * @returns `true` when `ancestorPid` is among the process's ancestors; a cycle or a missing parent ends the walk with `false`.
+ * @example
+ * descendsFrom({ pid: 12, parentPid: 11, command: '' }, 10, new Map([[11, 10]])) // => true
+ */
+function descendsFrom(
+  listed: ListedProcess,
+  ancestorPid: number,
+  parentOf: ReadonlyMap<number, number | undefined>,
+): boolean {
+  const seen = new Set<number>([listed.pid])
+  let parent = listed.parentPid
+  // Climb until the ancestor is met, the chain ends or it loops.
+  while (parent !== undefined && !seen.has(parent)) {
+    if (parent === ancestorPid) return true
+    seen.add(parent)
+    parent = parentOf.get(parent)
+  }
+  return false
+}
+
+/**
+ * Sorts the processes that name an owned profile folder into the browser's main process, its helpers and strangers; the proof the orphan sweep needs before it signals anything (ER18).
+ * Called by the orphan sweep ({@link removeAbandonedProfiles}). The main process is proven only when its pid equals the pid the launch recorded AND its program is the recorded executable AND it names the folder exactly ({@link ownedBrowserProcesses}); on macOS the text `ps` prints cannot tell `--user-data-dir=<P>` from `--user-data-dir=<P> backup`, so the pid is what ties the process to this folder. A helper is a process that names the folder and has the main process among its ancestors in the listing.
+ * @param profile - The profile folder.
+ * @param marker - The executable and pid recorded in the owned-browser marker.
+ * @param listing - The whole fresh listing, with parent ids, for the ancestry.
+ * @param named - The processes of `listing` that name the folder.
+ * @param inputs - The system and the Linux argument reader ({@link ProfileProcessInputs}).
+ * @returns The sorted processes.
+ * @throws When the folder cannot be resolved.
+ * @example
+ * await ownedBrowserProcessSet(profile, { executable: '/opt/chrome/chrome', pid: 4242 }, listing, named) // => { main: { pid: 4242, … }, helpers: [{ pid: 4250, … }], foreign: [] }
+ */
+export async function ownedBrowserProcessSet(
+  profile: string,
+  marker: { executable: string; pid?: number },
+  listing: ListedProcess[],
+  named: ListedProcess[],
+  inputs: ProfileProcessInputs = {},
+): Promise<OwnedBrowserProcessSet> {
+  // Without a recorded pid no process is the proven main: everything that names the folder is a stranger.
+  const candidates =
+    marker.pid === undefined
+      ? []
+      : named.filter(({ pid }) => pid === marker.pid)
+  const [main] = await ownedBrowserProcesses(
+    profile,
+    marker.executable,
+    candidates,
+    inputs,
+  )
+  const parentOf = new Map(
+    listing.map(({ pid, parentPid }) => [pid, parentPid]),
+  )
+  const others = named.filter((listed) => listed !== main)
+  const helpers = others.filter(
+    (listed) => main !== undefined && descendsFrom(listed, main.pid, parentOf),
+  )
+  return {
+    main,
+    helpers,
+    foreign: others.filter((listed) => !helpers.includes(listed)),
+  }
+}

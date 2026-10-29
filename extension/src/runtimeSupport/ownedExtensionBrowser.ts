@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { isDeepStrictEqual } from 'node:util'
@@ -12,6 +11,7 @@ import type {
   ResolvedExtensionRun,
 } from '../chromeExtensionContracts'
 import {
+  CHROME_EXTENSION_MIN_VERSION,
   EXTENSION_BROWSER_POLL_MS,
   EXTENSION_BROWSER_START_BOUND_MS,
   EXTENSION_CDP_COMMAND_TIMEOUT_MS,
@@ -27,10 +27,8 @@ import {
 } from '../constants'
 import { StudyError } from '../errors'
 import type { StorageOwnerIdentity } from '../utils/readRecordedOwner'
-import { redactSecretText } from '../utils/redactSecretText'
 import { removeWithoutFollowing } from '../utils/removeWithoutFollowing'
 import { retryWhileBusy } from '../utils/retryWhileBusy'
-import { hidePrivateRoots } from '../utils/sanitizeCause'
 
 import {
   connectFlatCdp,
@@ -44,6 +42,7 @@ import {
   type CdpTargetInfo,
 } from './utils/cdpFieldReaders'
 import { createPhaseReporter } from './utils/createPhaseReporter'
+import { maskLaunchDetail } from './utils/maskLaunchDetail'
 import { ownedBrowserBookmarks } from './utils/ownedBrowserBookmarks'
 import { writeOwnedBrowserMarker } from './utils/ownedBrowserMarker'
 import { PollBudget } from './utils/pollBudget'
@@ -62,6 +61,8 @@ export interface BrowserProcess {
   pid: number | undefined
   /** `true` once the process ended or could not be started. */
   hasExited(): boolean
+  /** Calls the listener once when the process ends or could not be started; at once when it already has. */
+  onExit(listener: () => void): void
 }
 
 /** What the launch acts through; each is the real one unless a test names its own. */
@@ -82,7 +83,7 @@ export interface OwnedBrowserLaunchOptions {
   chromeExecutable: string
   run: Pick<
     ResolvedExtensionRun,
-    'root' | 'extensionId' | 'surface' | 'surfaceUrl' | 'seed'
+    'root' | 'extensionId' | 'surface' | 'surfaceUrl' | 'seed' | 'workerPath'
   >
   /** The directory that holds the profile folder ({@link managedProfileRoot}); a test names its own. */
   profileRoot: string
@@ -104,13 +105,22 @@ const REAL_OWNED_BROWSER_DEPENDENCIES: OwnedBrowserDependencies = {
       detached: process.platform !== 'win32',
     })
     let exited = false
-    child.once('exit', () => {
+    const exitListeners: (() => void)[] = []
+    const markExited = (): void => {
+      if (exited) return
       exited = true
-    })
-    child.once('error', () => {
-      exited = true
-    })
-    return { pid: child.pid, hasExited: () => exited }
+      for (const listener of exitListeners.splice(0)) listener()
+    }
+    child.once('exit', markExited)
+    child.once('error', markExited)
+    return {
+      pid: child.pid,
+      hasExited: () => exited,
+      onExit: (listener): void => {
+        if (exited) listener()
+        else exitListeners.push(listener)
+      },
+    }
   },
   connect: connectFlatCdp,
   sleep: (ms) => delay(ms),
@@ -183,9 +193,14 @@ async function prepareProfile(
       await removeWithoutFollowing(made, {
         lastEntry: MANAGED_PROFILE_OWNER_FILE,
       }).catch(() => undefined)
+    // The sentence is fixed; the system's detail (private paths) stays masked in the cause.
     throw new StudyError(
       'RUNTIME_FAILED',
-      `The run's test profile could not be prepared: ${String(error)}.`,
+      "The run's test profile could not be prepared.",
+      await maskLaunchDetail(String(error), {
+        runRoot: options.run.root,
+        storage: [options.profileRoot, ...(made === undefined ? [] : [made])],
+      }),
     )
   }
 }
@@ -232,7 +247,7 @@ async function extensionCommand(
     if (isMethodNotFound(error))
       throw new StudyError(
         'CHROME_COMMAND_UNAVAILABLE',
-        `This Chrome (${chromeVersion}) does not offer the extension commands Codebook uses; set codebook.chromeExecutable to Google Chrome or Chrome for Testing 149 or later.`,
+        `This Chrome (${chromeVersion}) does not offer the extension commands Codebook uses; set codebook.chromeExecutable to Google Chrome or Chrome for Testing ${CHROME_EXTENSION_MIN_VERSION} or later.`,
       )
     throw error
   }
@@ -291,6 +306,8 @@ type Session = {
   chromeVersion: string
   extensionId: string
   controlSessionId: string
+  /** Whether the extension declares a service worker (`background.service_worker`); a popup-only extension has none to start or wait for. */
+  hasWorker: boolean
   dependencies: OwnedBrowserDependencies
   signal: AbortSignal | undefined
 }
@@ -426,15 +443,18 @@ async function openPopup(
   session: Session,
   surfaceUrl: string,
 ): Promise<string> {
-  await extensionCommand(
-    session.cdp,
-    session.chromeVersion,
-    'ServiceWorker.startWorker',
-    { scopeURL: `chrome-extension://${session.extensionId}/` },
-    session.controlSessionId,
-  )
-  // The worker applies the extension's own state first (task 0).
-  await session.dependencies.sleep(EXTENSION_POPUP_WORKER_SETTLE_MS)
+  // A popup-only extension has no worker: starting one would fail the command, so the action is triggered directly.
+  if (session.hasWorker) {
+    await extensionCommand(
+      session.cdp,
+      session.chromeVersion,
+      'ServiceWorker.startWorker',
+      { scopeURL: `chrome-extension://${session.extensionId}/` },
+      session.controlSessionId,
+    )
+    // The worker applies the extension's own state first (task 0).
+    await session.dependencies.sleep(EXTENSION_POPUP_WORKER_SETTLE_MS)
+  }
   const tabs = readCdpTargets(
     await session.cdp.request('Target.getTargets', {
       filter: [{ type: 'tab' }],
@@ -473,6 +493,7 @@ async function installExtension(
   cdp: FlatCdpConnection,
   chromeVersion: string,
   run: OwnedBrowserLaunchOptions['run'],
+  profile: string,
 ): Promise<void> {
   let returnedId: string
   try {
@@ -485,12 +506,14 @@ async function installExtension(
     returnedId = readCdpString(loaded, 'id')
   } catch (error) {
     if (error instanceof StudyError) throw error
-    const chromeMessage = (
-      error instanceof FlatCdpCommandError ? error.detail : String(error)
-    ).replaceAll(run.root, rootWithoutPrivatePart(run.root))
+    // The sentence is fixed; Chrome's text is masked and bounded in the cause, so no path spelling or secret reaches the message.
     throw new StudyError(
       'EXTENSION_LOAD_FAILED',
-      `Chrome did not load the extension: ${chromeMessage}.`,
+      'Chrome did not load the extension.',
+      await maskLaunchDetail(
+        error instanceof FlatCdpCommandError ? error.detail : String(error),
+        { runRoot: run.root, storage: [profile] },
+      ),
     )
   }
   if (returnedId !== run.extensionId)
@@ -530,6 +553,93 @@ async function attachControlSession(
     await budget.pause(dependencies.sleep, EXTENSION_BROWSER_POLL_MS)
   }
   throw new StudyError('RUNTIME_FAILED', 'Chrome opened no blank page.')
+}
+
+/**
+ * Says whether a failed command means the connection itself is gone; called by {@link asLaunchFailure} and {@link attachSurface}.
+ * @param error - What a command threw.
+ * @returns `true` for a closed connection or a failed send.
+ * @example
+ * isConnectionLost(new FlatCdpCommandError('Target.getTargets', undefined, 'CDP disconnected')) // => true
+ */
+function isConnectionLost(error: unknown): boolean {
+  return (
+    error instanceof FlatCdpCommandError &&
+    error.code === undefined &&
+    (error.detail === 'CDP disconnected' || error.detail === 'send failed')
+  )
+}
+
+/**
+ * Attaches a flat session to the surface target and enables `Page` and `Runtime` on it; the body of {@link OwnedExtensionBrowser.attachSurface}.
+ * @param cdp - The connection.
+ * @param surfaceTargetId - The surface's target id.
+ * @returns The session id.
+ * @throws {@link StudyError} `BROWSER_LOST` when the connection is gone.
+ */
+async function attachSurface(
+  cdp: FlatCdpConnection,
+  surfaceTargetId: string,
+): Promise<string> {
+  try {
+    const attached = await cdp.request('Target.attachToTarget', {
+      targetId: surfaceTargetId,
+      flatten: true,
+    })
+    const sessionId = readCdpString(attached, 'sessionId')
+    await cdp.request('Page.enable', {}, sessionId)
+    await cdp.request('Runtime.enable', {}, sessionId)
+    return sessionId
+  } catch (error) {
+    if (isConnectionLost(error))
+      throw new StudyError(
+        'BROWSER_LOST',
+        'Chrome was lost before the surface could be attached.',
+      )
+    throw error
+  }
+}
+
+/**
+ * Builds the one-shot loss notification of a launched browser: it fires once when the CDP socket closes or the process exits, unless the run's own close began.
+ * Called by {@link launchOwnedExtensionBrowser} when the launch succeeded; its result is {@link OwnedExtensionBrowser.onLost}.
+ * @param cdp - The connection.
+ * @param browser - The browser process.
+ * @param hasCloseBegan - Says whether the run's close began.
+ * @returns The `onLost` registration; a listener added after the loss is called at once.
+ */
+function watchForLoss(
+  cdp: FlatCdpConnection,
+  browser: BrowserProcess,
+  hasCloseBegan: () => boolean,
+): OwnedExtensionBrowser['onLost'] {
+  const listeners = new Set<() => void>()
+  let wasLost = false
+  const announce = (): void => {
+    // A close the run asked for is no loss, and a loss is told once.
+    if (wasLost || hasCloseBegan()) return
+    wasLost = true
+    for (const listener of [...listeners]) {
+      listeners.delete(listener)
+      try {
+        listener()
+      } catch {
+        // A faulty observer is the observer's defect.
+      }
+    }
+  }
+  cdp.onClose(announce)
+  browser.onExit(announce)
+  return (listener) => {
+    if (wasLost) {
+      listener()
+      return () => undefined
+    }
+    listeners.add(listener)
+    return (): void => {
+      listeners.delete(listener)
+    }
+  }
 }
 
 /** Reads the browser's version text from `Browser.getVersion`, for example `Chrome/156.0.8078.74`. */
@@ -586,27 +696,22 @@ async function closeOwnedBrowser(
  * @param profile - The profile folder, when one was made; hidden in the cause.
  * @returns The error to throw.
  * @example
- * asLaunchFailure(new FlatCdpCommandError('Browser.getVersion', undefined, 'CDP disconnected'), false, '/work/ext', undefined).code // => 'BROWSER_LOST'
+ * (await asLaunchFailure(new FlatCdpCommandError('Browser.getVersion', undefined, 'CDP disconnected'), false, '/work/ext', undefined)).code // => 'BROWSER_LOST'
  */
-function asLaunchFailure(
+async function asLaunchFailure(
   error: unknown,
   browserHadExited: boolean,
   extensionRoot: string,
   profile: string | undefined,
-): StudyError {
+): Promise<StudyError> {
   if (error instanceof StudyError) return error
   const detail =
     error instanceof FlatCdpCommandError ? error.detail : String(error)
-  const isConnectionLost =
-    error instanceof FlatCdpCommandError &&
-    error.code === undefined &&
-    (error.detail === 'CDP disconnected' || error.detail === 'send failed')
-  const cause = hidePrivateRoots(redactSecretText(detail), {
+  const cause = await maskLaunchDetail(detail, {
+    runRoot: extensionRoot,
     storage: profile === undefined ? [] : [profile],
-    workspace: extensionRoot,
-    home: homedir(),
   })
-  if (browserHadExited || isConnectionLost)
+  if (browserHadExited || isConnectionLost(error))
     return new StudyError(
       'BROWSER_LOST',
       'Chrome ended during the start.',
@@ -642,7 +747,12 @@ export async function launchOwnedExtensionBrowser(
   } = {}
   let closing:
     Promise<{ profileLeft: boolean; exitConfirmed: boolean }> | undefined
-  const close = () => (closing ??= closeOwnedBrowser(started, dependencies))
+  // Set before anything is ended, so a close the run asked for is never reported as a loss.
+  let closeBegan = false
+  const close = () => {
+    closeBegan = true
+    return (closing ??= closeOwnedBrowser(started, dependencies))
+  }
   const reportPhase = createPhaseReporter(options.onPhase)
   try {
     reportPhase('launching')
@@ -691,12 +801,13 @@ export async function launchOwnedExtensionBrowser(
       chromeVersion,
       extensionId,
       controlSessionId,
+      hasWorker: options.run.workerPath !== undefined,
       dependencies,
       signal: options.signal,
     }
     assertNotStopped(options.signal)
     reportPhase('installing')
-    await installExtension(cdp, chromeVersion, options.run)
+    await installExtension(cdp, chromeVersion, options.run, profile)
     await extensionCommand(
       cdp,
       chromeVersion,
@@ -722,6 +833,7 @@ export async function launchOwnedExtensionBrowser(
     // The debugger attaches to a surface whose worker is stopped (TZ3).
     await stopExtensionWorkers(session, EXTENSION_STOP_WORKERS_BOUND_MS)
     assertNotStopped(options.signal)
+    const lost = watchForLoss(cdp, started.browser, () => closeBegan)
     return {
       port: Number(new URL(endpoint).port),
       extensionId,
@@ -740,6 +852,8 @@ export async function launchOwnedExtensionBrowser(
       },
       stopWorkers: (boundMs): Promise<void> =>
         stopExtensionWorkers(session, boundMs),
+      attachSurface: () => attachSurface(cdp, surfaceTargetId),
+      onLost: lost,
       close,
     }
   } catch (error) {
@@ -747,6 +861,6 @@ export async function launchOwnedExtensionBrowser(
     const hadExited = Boolean(started.browser?.hasExited())
     const { profile } = started
     await close()
-    throw asLaunchFailure(error, hadExited, options.run.root, profile)
+    throw await asLaunchFailure(error, hadExited, options.run.root, profile)
   }
 }

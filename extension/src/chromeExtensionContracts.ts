@@ -95,6 +95,8 @@ export interface FlatCdpConnection {
     method: string,
     listener: (params: Record<string, unknown>, sessionId?: string) => void,
   ): () => void
+  /** Tells once when the connection ended, whether the socket closed by itself or {@link FlatCdpConnection.close} was called; returns the unsubscribe. A listener added after the end is called at once. */
+  onClose(listener: () => void): () => void
   close(): void
 }
 
@@ -118,7 +120,18 @@ export interface OwnedExtensionBrowser {
   /** Stops every service worker and waits until none of the extension's remains, at most `boundMs`. */
   stopWorkers(boundMs: number): Promise<void>
   /**
-   * Ends the browser and removes the profile; the run releases the debugger (the debugger's `release`) and calls `browserClosing` before it calls this.
+   * Attaches a flat session to the surface target and enables `Page` and `Runtime` on it, for the executor's input and observation.
+   * The run calls it after the debugger attached and before the first click.
+   * @returns The surface's CDP session id.
+   * @throws {@link StudyError} `BROWSER_LOST` when the connection is gone; the command's own error otherwise.
+   */
+  attachSurface(): Promise<string>
+  /**
+   * Registers a one-shot listener that fires once when the browser was lost after the launch: the CDP socket closed or the process exited without {@link OwnedExtensionBrowser.close} having begun. It never fires after `close()` began; the returned function removes the listener.
+   */
+  onLost(listener: () => void): () => void
+  /**
+   * Ends the browser and removes the profile; the run releases the debugger (the debugger's `release`) and calls `browserClosing` before it calls this, so the debugger never sees the browser vanish under an open pause.
    * Reports what could not be confirmed instead of throwing (ER18).
    */
   close(): Promise<{ profileLeft: boolean; exitConfirmed: boolean }>

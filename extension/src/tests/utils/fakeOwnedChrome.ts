@@ -57,6 +57,10 @@ export type FakeOwnedChrome = {
   closed: () => boolean
   /** The pids and group ids (negative) the browser was signalled through, in order. */
   signalledIds: number[]
+  /** Ends the CDP connection from the browser's side, as a crashed or killed Chrome does. */
+  dropConnection: () => void
+  /** Ends the browser process without a signal from the launch, as a crash does. */
+  crashProcess: () => void
 }
 
 /** Copies a JSON value with the keys of every object in sorted order, as Chrome returns storage. */
@@ -195,6 +199,18 @@ export function fakeOwnedChrome(
     return targets
   }
 
+  const closeListeners = new Set<() => void>()
+  const exitListeners = new Set<() => void>()
+  const endConnection = (): void => {
+    connectionClosed = true
+    for (const listener of [...closeListeners]) listener()
+    closeListeners.clear()
+  }
+  const endProcess = (): void => {
+    alive = false
+    for (const listener of [...exitListeners]) listener()
+    exitListeners.clear()
+  }
   const connection: FlatCdpConnection = {
     request: async (method, params, sessionId) => {
       const command: RecordedCommand = {
@@ -207,14 +223,19 @@ export function fakeOwnedChrome(
       return answer(command)
     },
     on: () => () => undefined,
-    close: () => {
-      connectionClosed = true
+    onClose: (listener) => {
+      closeListeners.add(listener)
+      return () => closeListeners.delete(listener)
     },
+    close: endConnection,
   }
 
   const browser: BrowserProcess = {
     pid: 987_654,
     hasExited: () => !alive,
+    onExit: (listener) => {
+      exitListeners.add(listener)
+    },
   }
 
   return {
@@ -224,6 +245,8 @@ export function fakeOwnedChrome(
     signals,
     signalledIds,
     closed: () => connectionClosed,
+    dropConnection: endConnection,
+    crashProcess: endProcess,
     dependencies: {
       readExecutableVersion: async (executable) => {
         versionReads.push(executable)

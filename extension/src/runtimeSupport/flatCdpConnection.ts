@@ -95,6 +95,7 @@ export class WebSocketFlatCdp implements FlatCdpConnection {
   private closed = false
   private readonly pending = new Map<number, PendingCommand>()
   private readonly listeners = new Map<string, Set<Listener>>()
+  private readonly closeListeners = new Set<() => void>()
 
   constructor(private readonly socket: FlatCdpTransport) {
     socket.addEventListener('message', (event) => {
@@ -149,6 +150,18 @@ export class WebSocketFlatCdp implements FlatCdpConnection {
     this.listeners.set(method, registered)
     return (): void => {
       registered.delete(listener)
+    }
+  }
+
+  onClose(listener: () => void): () => void {
+    // A connection that already ended tells at once.
+    if (this.closed) {
+      listener()
+      return () => undefined
+    }
+    this.closeListeners.add(listener)
+    return (): void => {
+      this.closeListeners.delete(listener)
     }
   }
 
@@ -210,6 +223,15 @@ export class WebSocketFlatCdp implements FlatCdpConnection {
       command.reject(new FlatCdpCommandError(command.method, undefined, detail))
     }
     this.pending.clear()
+    // Tell each close listener once, each on its own: one that throws must not starve the rest.
+    for (const listener of [...this.closeListeners]) {
+      try {
+        listener()
+      } catch {
+        // A faulty observer is the observer's defect, not the connection's.
+      }
+    }
+    this.closeListeners.clear()
   }
 }
 

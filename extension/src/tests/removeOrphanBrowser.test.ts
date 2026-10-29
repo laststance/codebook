@@ -37,6 +37,18 @@ async function profileFolder(
     )
 }
 
+/** Records the pid of the stand-in browser in the folder's owned-browser marker, as the launch does right after the spawn. */
+async function recordBrowserPid(
+  folder: string,
+  browser: ChildProcess,
+  executable: string = process.execPath,
+): Promise<void> {
+  await writeFile(
+    join(folder, 'codebook-owned-browser'),
+    JSON.stringify({ executable, pid: browser.pid }),
+  )
+}
+
 /** Starts a stand-in browser whose command line names `profile` as Chrome's user data directory. */
 async function startBrowser(
   context: TestContext,
@@ -92,6 +104,7 @@ test('the sweep stops the live browser that names an owned profile of a dead edi
   const folder = join(root, 'codebook-browser-owned')
   await profileFolder(folder, true)
   const browser = await startBrowser(context, folder)
+  await recordBrowserPid(folder, browser)
   const exited = once(browser, 'exit')
   // Act
   const removed = await removeAbandonedProfiles(root, {
@@ -237,6 +250,7 @@ test('the sweep signals no process whose executable is not the one recorded for 
   const folder = join(root, 'codebook-browser-owned')
   await profileFolder(folder, true, '/opt/google/chrome/chrome')
   const impostor = await startBrowser(context, folder)
+  await recordBrowserPid(folder, impostor, '/opt/google/chrome/chrome')
   const signalling = recordingStopper()
   // Act
   const removed = await removeAbandonedProfiles(
@@ -261,6 +275,7 @@ test('the sweep signals no process that names the folder only after a switch ter
   const folder = join(root, 'codebook-browser-owned')
   await profileFolder(folder, true)
   const loose = await startBrowser(context, folder, true)
+  await recordBrowserPid(folder, loose)
   const signalling = recordingStopper()
   // Act
   const removed = await removeAbandonedProfiles(
@@ -299,3 +314,134 @@ test('the sweep signals nothing for an owned profile whose marker records no exe
   assert.deepEqual(removed, [])
   assert.deepEqual(signalling.pids, [])
 })
+
+// Value: protects=ER18 on macOS and Linux: only the process whose pid the marker recorded is the main browser; a process that merely names the folder (here: another pid with the same executable and switch) is never signalled and keeps the folder; fails_when=a process with another pid than the recorded one is proven or signalled because its text matches; no_claim=a real Chrome (real-Chrome test)
+test('the sweep signals no process whose pid differs from the marker’s recorded pid, even with the recorded executable and the exact switch, and keeps the folder', async (context) => {
+  // Arrange
+  const root = await profileRoot(context)
+  const folder = join(root, 'codebook-browser-owned')
+  await profileFolder(folder, true)
+  const lookalike = await startBrowser(context, folder)
+  await writeFile(
+    join(folder, 'codebook-owned-browser'),
+    JSON.stringify({ executable: process.execPath, pid: ID_OF_NO_PROCESS }),
+  )
+  const signalling = recordingStopper()
+  // Act
+  const removed = await removeAbandonedProfiles(
+    root,
+    { hostname: 'workstation' },
+    undefined,
+    undefined,
+    undefined,
+    signalling.stopper,
+  )
+  // Assert
+  assert.deepEqual(removed, [])
+  assert.deepEqual(signalling.pids, [])
+  assert.equal(lookalike.exitCode, null)
+  assert.equal(await exists(folder), true)
+})
+
+// Value: protects=ER18 on a macOS Chrome with helpers: the helpers carry the folder with the main as their parent, and the sweep signals only the main's group, then removes the folder once a fresh listing is empty; fails_when=helper rows make the sweep refuse (as before), or a helper is signalled by its own pid; no_claim=real macOS rows (hand-written like ps prints them)
+test(
+  'the sweep stops a browser whose listed helpers carry the folder, by the main process’s group alone, and removes the folder',
+  { skip: process.platform !== 'darwin' },
+  async (context) => {
+    // Arrange
+    const root = await profileRoot(context)
+    const folder = join(root, 'codebook-browser-owned')
+    await profileFolder(folder, true)
+    const executable =
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+    await writeFile(
+      join(folder, 'codebook-owned-browser'),
+      JSON.stringify({ executable, pid: 4242 }),
+    )
+    const helper = (pid: number) => ({
+      pid,
+      parentPid: 4242,
+      command: `/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/156.0.8078.74/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper --type=renderer --user-data-dir=${folder}`,
+    })
+    const before = [
+      {
+        pid: 4242,
+        parentPid: 1,
+        command: `${executable} --remote-debugging-port=0 --user-data-dir=${folder} about:blank`,
+      },
+      helper(4250),
+      helper(4251),
+    ]
+    let listings = 0
+    const signalled: [number, string | number][] = []
+    let stopped = false
+    // Act
+    const removed = await removeAbandonedProfiles(
+      root,
+      { hostname: 'workstation' },
+      async () => (++listings <= 2 || !stopped ? before : []),
+      undefined,
+      undefined,
+      {
+        platform: 'darwin',
+        signal: (pid, signal) => {
+          signalled.push([pid, signal])
+          if (signal === 'SIGTERM') stopped = true
+          if (signal === 0 && stopped) throw new Error('ESRCH')
+        },
+        taskkill: async () => undefined,
+        sleep: async () => undefined,
+      },
+    )
+    // Assert
+    assert.deepEqual(removed, [folder])
+    assert.deepEqual(
+      signalled.filter(([, signal]) => signal !== 0),
+      [[-4242, 'SIGTERM']],
+    )
+  },
+)
+
+// Value: protects=ER18 on macOS where the text of `ps` cannot tell a folder from another that adds a suffix: a process with another pid that names the folder is never signalled, and the folder stays even though the real main is proven; fails_when=such a stranger is signalled with the main or is ignored so the folder is removed under it; no_claim=real macOS rows
+test(
+  'the sweep signals nothing and keeps the folder while a process of another pid that names it runs next to the proven main',
+  { skip: process.platform !== 'darwin' },
+  async (context) => {
+    // Arrange
+    const root = await profileRoot(context)
+    const folder = join(root, 'codebook-browser-owned')
+    await profileFolder(folder, true)
+    const executable =
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+    await writeFile(
+      join(folder, 'codebook-owned-browser'),
+      JSON.stringify({ executable, pid: 4242 }),
+    )
+    const listing = [
+      {
+        pid: 4242,
+        parentPid: 1,
+        command: `${executable} --user-data-dir=${folder} about:blank`,
+      },
+      {
+        pid: 7777,
+        parentPid: 1,
+        command: `${executable} --user-data-dir=${folder} backup`,
+      },
+    ]
+    const signalling = recordingStopper()
+    // Act
+    const removed = await removeAbandonedProfiles(
+      root,
+      { hostname: 'workstation' },
+      async () => listing,
+      undefined,
+      undefined,
+      signalling.stopper,
+    )
+    // Assert
+    assert.deepEqual(removed, [])
+    assert.deepEqual(signalling.pids, [])
+    assert.equal(await exists(folder), true)
+  },
+)

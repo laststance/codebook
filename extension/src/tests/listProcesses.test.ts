@@ -579,3 +579,55 @@ test('a process listing that prints more than its output limit says so, and a li
     missingCommand: 'Error: spawn ps ENOENT',
   })
 })
+
+// Value: protects=the orphan sweep's parent ids: with withParentPids the macOS and Linux listing asks ps for ppid and the Windows listing prints `<pid>/<parent pid>`, and each listed process carries parentPid; fails_when=the parent column is read as the user id (another user's process is then listed) or a Windows line with a parent is dropped; no_claim=a real ps or PowerShell
+test('a listing asked for parent ids reads each process with its parent on macOS, Linux and Windows', async () => {
+  // Arrange
+  const unix = answeringListing({
+    stdout:
+      ' 4242     1   501 /opt/chrome/chrome --user-data-dir=/tmp/x\n 4250  4242   501 /opt/chrome/helper --type=gpu\n 5150     1   502 /usr/bin/sleep 600\n',
+  })
+  const windows = answeringListing({
+    stdout:
+      'editor 1 S-1-5-21-1000-1001\r\n4242/100 1 ? %22c%3A%5Cchrome.exe%22%20--user-data-dir%3DC%3A%5Cp\r\n',
+  })
+  // Act
+  const onMac = await listProcesses({
+    platform: 'darwin',
+    run: unix.run,
+    userId: 501,
+    withParentPids: true,
+    isProgramFile: async (path) => path === '/bin/ps',
+  })
+  const onWindows = await listProcesses({
+    platform: 'win32',
+    run: windows.run,
+    environment: { SystemRoot: 'C:\\Windows' },
+    withParentPids: true,
+  })
+  // Assert
+  assert.deepEqual(unix.calls[0]?.listingArguments, [
+    '-axww',
+    '-o',
+    'pid=,ppid=,uid=,command=',
+  ])
+  assert.deepEqual(onMac, [
+    {
+      pid: 4242,
+      parentPid: 1,
+      command: '/opt/chrome/chrome --user-data-dir=/tmp/x',
+    },
+    { pid: 4250, parentPid: 4242, command: '/opt/chrome/helper --type=gpu' },
+  ])
+  assert.deepEqual(onWindows, [
+    {
+      pid: 4242,
+      parentPid: 100,
+      command: '"c:\\chrome.exe" --user-data-dir=C:\\p',
+    },
+  ])
+  assert.match(
+    String(windows.calls[0]?.listingArguments.at(-1)),
+    /ParentProcessId/,
+  )
+})
