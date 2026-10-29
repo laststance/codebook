@@ -9,6 +9,7 @@ import {
 } from '../chromeExtensionHelp'
 import { ERROR_RECOVERY, StudyError } from '../errors'
 import { readResource } from '../resources'
+import { CHROME_EXTENSION_EVENT_TYPES } from '../utils/chromeExtensionEventDetail'
 
 import { createHarness } from './helpers'
 
@@ -223,24 +224,34 @@ test('the help shows three failure examples with the refusal and the correction'
   )
 })
 
-// protects=ER24: every journal event the help lists is one of the SR32 events, and the help lists them all; fails_when=an event is missing from the help; no_claim=the run's whitelist, which the integration step switches to
-test('the help lists every chrome-extension journal event', () => {
+// protects=ER24: the help's event list is the run's journal whitelist, each type with the fields it publishes and when it is written; fails_when=an event reaches the journal without a help line, the help lists an event the journal never writes, or a row's fields drift from what the journal publishes; no_claim=the wording of each line
+test('the help lists every journal event the run writes, with its published fields and when it is written', () => {
   // Arrange, Act
   const { events } = chromeExtensionHelp()
   // Assert
   assert.deepEqual(
-    events.map((event) => event.type),
+    events.map((event) => [event.type, event.fields]),
     [
-      'chrome-extension.phase',
-      'chrome-extension.click',
-      'chrome-extension.dialog',
-      'chrome-extension.output',
-      'chrome-extension.prepare-pause',
-      'chrome-extension.repeat-hit',
-      'chrome-extension.context-mismatch',
-      'chrome-extension.surface-lost',
-      'chrome-extension.intervention',
+      ['chrome-extension.click', 'clickIndex, selector'],
+      ['chrome-extension.output', 'context, text'],
+      ['chrome-extension.output-dropped', 'count'],
+      ['chrome-extension.prepare-pause', 'path, line, context'],
+      ['chrome-extension.repeat-hit', 'stopIndex, path, line'],
+      ['chrome-extension.surface-lost', 'surface'],
+      ['chrome-extension.context-mismatch', 'stopIndex, context'],
+      ['chrome-extension.intervention', 'kind, time'],
+      ['chrome-extension.phase', 'name, elapsedMs'],
+      ['chrome-extension.dialog', 'type, answer, message'],
+      ['chrome-extension.debugger-error', 'message'],
     ],
+  )
+  assert.deepEqual(
+    events.map((event) => event.type),
+    CHROME_EXTENSION_EVENT_TYPES,
+  )
+  assert.deepEqual(
+    events.filter((event) => event.when === '').map((event) => event.type),
+    [],
   )
   assert.equal(events, CHROME_EXTENSION_HELP_EVENTS)
 })

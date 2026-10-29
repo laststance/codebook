@@ -26,65 +26,50 @@ import {
   REPOSITORY_RUN_TIMEOUT_MS,
 } from './constants'
 import { ERROR_RECOVERY } from './errors'
+import {
+  CHROME_EXTENSION_EVENT_TYPES,
+  chromeExtensionEventFieldNames,
+} from './utils/chromeExtensionEventDetail'
 
 /** The prefix of every anchor of this help's refusal table. */
 const HELP_URI = 'codebook://help/chrome-extension'
 
+/** When each journaled `chrome-extension.*` event is written; one entry per type of the run's whitelist ({@link CHROME_EXTENSION_EVENT_TYPES}), which a test checks, so a new event cannot reach the journal without a line here. */
+const CHROME_EXTENSION_EVENT_WHEN: Record<string, string> = {
+  'chrome-extension.click': 'each declared click that was dispatched',
+  'chrome-extension.output': `console output of the page or the service worker, at most ${EXTENSION_OUTPUT_EVENT_LIMIT} per run`,
+  'chrome-extension.output-dropped':
+    'once, with how many output lines the run dropped after its output limit',
+  'chrome-extension.prepare-pause':
+    'a declared line paused before the run was ready; Codebook resumed it and never offers it as a stop',
+  'chrome-extension.repeat-hit':
+    'a declared stop that was already captured ran again; it is resumed',
+  'chrome-extension.surface-lost':
+    'the popup or page closed or left the extension',
+  'chrome-extension.context-mismatch':
+    'a declared line paused in the other context than the stop declares; it is resumed',
+  'chrome-extension.intervention':
+    'Codebook stopped or started the service worker, resumed a prepare-pause or re-armed a stop after a worker restart',
+  'chrome-extension.phase':
+    'every phase transition of the preparation, so a slow or failed start shows where it stopped',
+  'chrome-extension.dialog':
+    'a JavaScript dialog opened on the surface: answered as the owning click declares, or refused (answer none); clickIndex names the owning click when there is one',
+  'chrome-extension.debugger-error':
+    'a failure inside the run’s own debugger or dialog handling that it reported instead of failing silently',
+}
+
 /**
- * The journal events a chrome-extension run writes (SR32), each with its fields; the help lists them so a reader of `events/<cursor>` knows what it sees.
- * This list is the Cycle 0061 pt2 lane F copy of the whitelist (the `chrome-extension.dialog` event of TZ11 included); the integration step switches it to the run's own whitelist constant.
+ * The journal events a chrome-extension run writes (SR32, ER24), generated from the run's whitelist ({@link CHROME_EXTENSION_EVENT_TYPES}): each type with the fields its row publishes and when it is written; the help lists them so a reader of `events/<cursor>` knows what it sees.
  */
 export const CHROME_EXTENSION_HELP_EVENTS: readonly {
   type: string
   fields: string
   when: string
-}[] = [
-  {
-    type: 'chrome-extension.phase',
-    fields: 'name, elapsedMs',
-    when: 'every phase transition of the preparation, so a slow or failed start shows where it stopped',
-  },
-  {
-    type: 'chrome-extension.click',
-    fields: 'clickIndex, selector',
-    when: 'each declared click that was dispatched',
-  },
-  {
-    type: 'chrome-extension.dialog',
-    fields: 'type, message',
-    when: 'a JavaScript dialog a click opened and the declared `dialog` answered',
-  },
-  {
-    type: 'chrome-extension.output',
-    fields: 'context, text',
-    when: `console output of the page or the service worker, at most ${EXTENSION_OUTPUT_EVENT_LIMIT} per run`,
-  },
-  {
-    type: 'chrome-extension.prepare-pause',
-    fields: 'path, line, context',
-    when: 'a declared line paused before the run was ready; Codebook resumed it and never offers it as a stop',
-  },
-  {
-    type: 'chrome-extension.repeat-hit',
-    fields: 'stopIndex, path, line',
-    when: 'a declared stop that was already captured ran again; it is resumed',
-  },
-  {
-    type: 'chrome-extension.context-mismatch',
-    fields: 'stopIndex, context',
-    when: 'a declared line paused in the other context than the stop declares; it is resumed',
-  },
-  {
-    type: 'chrome-extension.surface-lost',
-    fields: 'surface',
-    when: 'the popup or page closed or left the extension',
-  },
-  {
-    type: 'chrome-extension.intervention',
-    fields: 'kind, time',
-    when: 'Codebook stopped or started the service worker, resumed a prepare-pause or re-armed a stop after a worker restart',
-  },
-]
+}[] = CHROME_EXTENSION_EVENT_TYPES.map((type) => ({
+  type,
+  fields: chromeExtensionEventFieldNames(type).join(', '),
+  when: CHROME_EXTENSION_EVENT_WHEN[type] ?? '',
+}))
 
 /** What each code of the table says when it arises and the sentence the refusal carries; the recovery of each is {@link ERROR_RECOVERY}'s, so the table cannot drift from `codebook://help/errors`. `<…>` marks a value the refusal fills in. */
 const CODE_FACTS: Record<string, { when: string; sentence: string }> = {

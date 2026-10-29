@@ -77,6 +77,20 @@ export const CHROME_EXTENSION_EVENT_TYPES: readonly string[] = Object.keys(
 )
 
 /**
+ * Names the fields one event type publishes, read from its whitelist row, so the help lists them as the journal writes them (ER24).
+ * Called by the chrome-extension help for each of {@link CHROME_EXTENSION_EVENT_TYPES}; a field a row adds only when its input has it (the dialog's `clickIndex`) is not named.
+ * @param type - A `chrome-extension.*` event type.
+ * @returns The row's field names in order; empty for a type without a row.
+ * @example
+ * chromeExtensionEventFieldNames('chrome-extension.click') // => ['clickIndex', 'selector']
+ * chromeExtensionEventFieldNames('chrome-extension.surprise') // => []
+ */
+export function chromeExtensionEventFieldNames(type: string): string[] {
+  const row = CHROME_EXTENSION_EVENT_FIELDS[type]
+  return row ? Object.keys(row({})) : []
+}
+
+/**
  * Publishes only what the learning evidence of a chrome-extension run needs from one of its events, so no host path, private root or secret reaches the run's events resource (SR32).
  * Called by {@link createChromeExtensionJournal} for each event a run records.
  * @param type - The event type, `chrome-extension.<name>`.
