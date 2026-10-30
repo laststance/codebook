@@ -6,6 +6,7 @@ import {
   CONFIGURED_CAPTURE_PHASES,
   CROSS_RUNTIME_CAPTURE_PHASES,
   CROSS_RUNTIME_STUDY_VERSION,
+  VITE_STUDY_VERSION,
   CONFIGURED_OBSERVATION_LIMIT,
   CONFIGURED_STUDY_VERSION,
   KEY_LENGTH_LIMIT,
@@ -139,6 +140,7 @@ export const configuredStudySchema = z.strictObject({
   version: z.union([
     z.literal(CONFIGURED_STUDY_VERSION),
     z.literal(CROSS_RUNTIME_STUDY_VERSION),
+    z.literal(VITE_STUDY_VERSION),
   ]),
   workspaceKey: repositoryHashSchema,
   id: studyIdSchema,

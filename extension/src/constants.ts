@@ -1506,11 +1506,21 @@ export const REPOSITORY_CONFIG_VERSION = 1
 export const CROSS_RUNTIME_CONFIG_VERSION = 2
 export const CONFIGURED_STUDY_VERSION = 3
 export const CROSS_RUNTIME_STUDY_VERSION = 4
+/** The format of a repository-browser study made with the `vite-dev` adapter; an older Codebook lists it as saved by a newer one. */
+export const VITE_STUDY_VERSION = 5
+/** The highest study format this Codebook reads; a saved study above it is listed as saved by a newer Codebook. */
+export const READABLE_STUDY_VERSION = VITE_STUDY_VERSION
 export const CONFIGURED_STUDY_SUFFIX = '.study.v3.json'
 export const CONFIGURED_STUDY_METADATA_SUFFIX = '.study.meta.v3.json'
 // Highest existing version owns a logical study, including when its bytes are corrupt.
 // A change of the saved study format that an older Codebook cannot read takes the next format number and its own `.study.v<n>.json` suffix in this table; an older Codebook then lists such a study as saved by a newer one and keeps it, instead of failing on its schema.
 export const STUDY_STORAGE_FORMATS = [
+  {
+    version: VITE_STUDY_VERSION,
+    format: 'v5',
+    archiveSuffix: '.study.v5.json',
+    metadataSuffix: '.study.meta.v5.json',
+  },
   {
     version: CROSS_RUNTIME_STUDY_VERSION,
     format: 'v4',
