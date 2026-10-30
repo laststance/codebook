@@ -20,6 +20,10 @@ import {
   type VitestListingReleaseFailure,
 } from '../utils/listVitestTestFiles'
 
+import {
+  endProcessesAfter,
+  readProcessIdFiles,
+} from './utils/endProcessesAfter'
 import { keptListingFolderOf } from './utils/keptListingFolderOf'
 import { loadModule } from './utils/loadModule'
 
@@ -550,7 +554,7 @@ test('a retried listing release sends no signal to a group that has ended since 
 })
 
 // Cycle 0045 (AD-12): a helper outside the group that holds the error stream also holds the listing's end, so the listing ends only with its deadline or the run; red while the release that then fails was dropped without a word.
-test('a listing whose helper left the process group and keeps its error stream open is reported as not released and names its folder', async () => {
+test('a listing whose helper left the process group and keeps its error stream open is reported as not released and names its folder', async (context) => {
   // Arrange: the helper starts its own process group, inherits the listing's error stream and outlives the launcher, which writes its list and ends.
   const vitest = await stubVitest(`
 import { spawn } from 'node:child_process';
@@ -559,6 +563,12 @@ helper.unref();
 writeFileSync(output, JSON.stringify([{ file: '/repo/src/a.test.ts' }]));
 writeFileSync('started-helper.json', JSON.stringify({ launcher: process.pid, helper: helper.pid }));
 `)
+  // The helper's id is read from the file it wrote, when the test ends: a wait that times out under load must not leave the detached helper running.
+  endProcessesAfter(
+    context,
+    () => readProcessIdFiles([join(vitest.directory, 'started-helper.json')]),
+    { group: true },
+  )
   const reported: VitestListingReleaseFailure[] = []
   const cancellation = new AbortController()
   let processes: { launcher: number; helper: number } | undefined
@@ -633,7 +643,7 @@ writeFileSync('started-helper.json', JSON.stringify({ launcher: process.pid, hel
 })
 
 // Value: protects=a listing whose helper left the process group and holds the error stream being released by its retry once the group has ended, so the run that owns it can stop and the next start is not BUSY for as long as the helper lives; fails_when=the retry waits again for the stream the helper holds, fails at every stop, and every start answers BUSY until the helper exits or the editor reloads; why_new=Cycle 0053 /ship review pass 5 (red team); seam=a stand-in Vitest whose helper starts its own process group and inherits the error stream; no_claim=the helper itself, which is outside the group and is not Codebook's to end
-test('a retried release of a listing whose helper holds its error stream succeeds once the group has ended and removes the kept folder', async () => {
+test('a retried release of a listing whose helper holds its error stream succeeds once the group has ended and removes the kept folder', async (context) => {
   // Arrange: the helper starts its own process group, inherits the listing's error stream and outlives the launcher, which writes its list and ends.
   const vitest = await stubVitest(`
 import { spawn } from 'node:child_process';
@@ -642,6 +652,12 @@ helper.unref();
 writeFileSync(output, JSON.stringify([{ file: '/repo/src/a.test.ts' }]));
 writeFileSync('started-helper.json', JSON.stringify({ launcher: process.pid, helper: helper.pid }));
 `)
+  // The helper's id is read from the file it wrote, when the test ends: a wait that times out under load must not leave the detached helper running.
+  endProcessesAfter(
+    context,
+    () => readProcessIdFiles([join(vitest.directory, 'started-helper.json')]),
+    { group: true },
+  )
   const retries: RetryVitestListingRelease[] = []
   const cancellation = new AbortController()
   let processes: { launcher: number; helper: number } | undefined

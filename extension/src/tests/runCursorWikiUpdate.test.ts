@@ -15,6 +15,7 @@ import {
 import { thrownMessage } from '../utils/thrownMessage'
 import { WikiUpdateTimeoutError } from '../utils/wikiUpdateTimeoutError'
 
+import { endProcesses, readProcessIdFiles } from './utils/endProcessesAfter'
 import { loadModule } from './utils/loadModule'
 
 /** Installs a stand-in `cursor-agent` in a private home and makes it the one the run finds, until `restore()`. */
@@ -39,6 +40,13 @@ async function installAgent(agentScript: string): Promise<{
     async restore(): Promise<void> {
       if (previousHome === undefined) delete process.env.HOME
       else process.env.HOME = previousHome
+      // A stand-in that noted its pid (and its child's) is ended before its folder goes, also when the run's own bound has not ended it yet.
+      await endProcesses(
+        await readProcessIdFiles([
+          join(projectRoot, 'agent.pid'),
+          join(projectRoot, 'child.pid'),
+        ]),
+      )
       await rm(privateHome, { recursive: true, force: true })
     },
   }

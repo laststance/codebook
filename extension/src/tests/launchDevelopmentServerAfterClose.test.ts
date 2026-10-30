@@ -4,6 +4,8 @@ import { test } from 'node:test'
 import { launchDevelopmentServer } from '../utils/launchDevelopmentServer'
 import * as signalProcessGroupModule from '../utils/signalProcessGroup'
 
+import { endProcessesAfter } from './utils/endProcessesAfter'
+
 /** Launches a Node process that only waits, with an `afterClose` the test observes. */
 function launchWaiting(afterClose: () => Promise<void>) {
   return launchDevelopmentServer(
@@ -28,6 +30,10 @@ test('a failed stop still removes the files the server left behind and reports t
     afterCloseCalls += 1
     throw new Error('cleanup failed too')
   })
+  // The server leads a group of its own: it is ended with the test, also when the close or an assertion below fails.
+  endProcessesAfter(context, () => (app.pid === undefined ? [] : [app.pid]), {
+    group: true,
+  })
   const realSignal = signalProcessGroupModule.signalProcessGroup
   const signalMock = context.mock.method(
     signalProcessGroupModule,
@@ -42,7 +48,7 @@ test('a failed stop still removes the files the server left behind and reports t
     (cause: unknown) => cause,
   )
   signalMock.mock.restore()
-  // The process is still owned: release it for real so the test leaves nothing behind.
+  // The process is still owned: release it for real, so the stop the test mocked away does happen.
   realSignal(app.pid!, 'SIGKILL')
   // Assert
   assert.ok(outcome instanceof Error)

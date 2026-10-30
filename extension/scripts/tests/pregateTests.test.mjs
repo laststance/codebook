@@ -36,6 +36,12 @@ import {
 } from '../utils/testShardConstants.mjs'
 import { writeProgressWhileRunning } from '../utils/writeProgressWhileRunning.mjs'
 
+import {
+  endProcesses,
+  endProcessesAfter,
+  readNotedPids,
+} from './utils/endProcessesAfter.mjs'
+
 // Value: protects=the pre-gate's local lane when it selects product tests together with the package tests, which rebuild extension/dist while they run; fails_when=both are passed to one node --test call, so product tests fail to load their modules from dist (906 of 5,725 failed on Cycle 0048's branch), or the script tests run with more than four at a time; why_new=Cycle 0048 task 32 (found while the pre-gate ran on PR #106); seam=none; no_claim=the run itself, which run-pregate-tests.mjs makes from this plan
 test('the pre-gate runs the selected product tests first, then the script tests four at a time, in two calls', () => {
   // Arrange
@@ -1939,10 +1945,16 @@ function killTreeAfter(context) {
   const timer = setInterval(() => {
     for (const pid of listProcessIdsUnder(process.pid)) found.add(pid)
   }, 200)
-  context.after(() => {
+  context.after(async () => {
     clearInterval(timer)
     for (const pid of listProcessIdsUnder(process.pid)) found.add(pid)
     killProcessIds([...found])
+    // What was found must be gone, or the test left a process behind.
+    assert.deepEqual(
+      await endProcesses([...found]),
+      [],
+      'processes of the test outlived it',
+    )
   })
 }
 
@@ -1958,6 +1970,8 @@ test(
       buildThatStartsAProcess({ ignoresSigterm: true }),
     )
     const pidFile = join(root, 'grandchild.pid')
+    // Registered before any wait that can fail, so a process the fixture started is ended whatever way the test ends.
+    endProcessesAfter(context, () => readNotedPids(pidFile))
 
     // Act
     const result = await runPregateRunner(
@@ -2023,6 +2037,8 @@ test(
       buildThatStartsAProcess(),
     )
     const pidFile = join(root, 'grandchild.pid')
+    // Registered before any wait that can fail, so a process the fixture started is ended whatever way the test ends.
+    endProcessesAfter(context, () => readNotedPids(pidFile))
     const groupFile = join(root, 'build.pgid')
     const { runner } = startPregateRunner(
       context,
@@ -2066,6 +2082,8 @@ for (const [signal, exitCode] of SIGNALS_WITH_EXIT_CODES) {
         buildThatStartsAProcess({ ignoresSigterm: true }),
       )
       const pidFile = join(root, 'grandchild.pid')
+      // Registered before any wait that can fail, so a process the fixture started is ended whatever way the test ends.
+      endProcessesAfter(context, () => readNotedPids(pidFile))
       const { runner, ended } = startPregateRunner(
         context,
         root,
@@ -2116,6 +2134,8 @@ test(
       'product.test.js': hangingTestNotingItsPid(),
     })
     const pidFile = join(root, 'file.pid')
+    // Registered before any wait that can fail, so a process the fixture started is ended whatever way the test ends.
+    endProcessesAfter(context, () => readNotedPids(pidFile))
     const { runner, ended } = startPregateRunner(
       context,
       root,
@@ -2178,6 +2198,8 @@ test(
       ].join('\n'),
     )
     const pidFile = join(root, 'file.pid')
+    // Registered before any wait that can fail, so a process the fixture started is ended whatever way the test ends.
+    endProcessesAfter(context, () => readNotedPids(pidFile))
     const { runner, ended } = startPregateRunner(
       context,
       root,
@@ -2247,6 +2269,8 @@ test(
       'product.test.js': hangingTestNotingItsPid(),
     })
     const pidFile = join(root, 'file.pid')
+    // Registered before any wait that can fail, so a process the fixture started is ended whatever way the test ends.
+    endProcessesAfter(context, () => readNotedPids(pidFile))
 
     // Act
     // gstack-timing-ok: the 3 s limit is the contract that ends the run (the file has to start and note its pid inside it, which a slow start-up still does in 3 s); the 60 s bound only ends a runner that is never ended.
@@ -2325,6 +2349,7 @@ test(
         hangs: taskkillHangs,
       })
       const buildPidFile = join(scriptDirectory, `build-${taskkillHangs}.pid`)
+      endProcessesAfter(context, () => readNotedPids(buildPidFile))
       const helper = spawn(
         process.execPath,
         [
@@ -2420,6 +2445,7 @@ test(
     context.after(() => rm(scriptDirectory, { recursive: true, force: true }))
     const systemRoot = await writeFailingTaskkill(context, { hangs: false })
     const buildPidFile = join(scriptDirectory, 'build.pid')
+    endProcessesAfter(context, () => readNotedPids(buildPidFile))
     const scriptPath = join(scriptDirectory, 'runner.mjs')
     await writeFile(
       scriptPath,
@@ -2467,6 +2493,7 @@ test(
         hangs: taskkillHangs,
       })
       const buildPidFile = join(systemRoot, 'build.pid')
+      endProcessesAfter(context, () => readNotedPids(buildPidFile))
       const result = await runBuildWithLimit({
         command: process.execPath,
         args: ['-e', SIGTERM_IGNORING_BUILD_SOURCE, buildPidFile],
