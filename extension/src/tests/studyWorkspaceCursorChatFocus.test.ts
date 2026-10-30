@@ -225,6 +225,80 @@ test("a recording opened from Cursor 3.27.22's Agent chat does not reveal the pa
   }
 })
 
+// Value: protects=a learner's click into an existing file of another group while the borrow waits for the first-group focus command's effect keeps the keyboard in that file instead of the Codebook pane taking it; fails_when=the expired probe reveals the pane with the keyboard because neither the first group's front tab nor the layout changed, so the learner's file loses the keyboard; why_new=Cycle 0064 pt2 /ship last review round; seam=ignoresFirstGroupFocusCommandBesideChat (the command does nothing), focusMutableDraft of the second group's file 100 ms into the probe, a spy on the reader's pane reveals; no_claim=the real Cursor's answer (native Cursor trial)
+test("a recording opened from Cursor 3.27.22's Agent chat leaves the keyboard in the file the learner clicked in another group during the probe", async (context) => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  harness.ignoresFirstGroupFocusCommandBesideChat()
+  const keyboardReveals: unknown[][] = []
+  const revealPane = harness.reader['revealPane'].bind(harness.reader)
+  harness.reader['revealPane'] = (panel, column, preserveFocus): void => {
+    if (column === 1 && !preserveFocus)
+      keyboardReveals.push([column, preserveFocus])
+    revealPane(panel, column, preserveFocus)
+  }
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    harness.focusMutableDraft('auth.ts', 2)
+    chat.focusTab()
+    await harness.reader.readPresentationState()
+    keyboardReveals.length = 0
+    enableFakeClock(context)
+    const executeEditorCommand = harness.reader['executeEditorCommand'].bind(
+      harness.reader,
+    )
+    // The learner clicks into the existing file of the second group 100 ms after the focus command was sent, inside the probe.
+    harness.reader['executeEditorCommand'] = (async (
+      name: string,
+      ...args: unknown[]
+    ) => {
+      const answer = await executeEditorCommand(name, ...args)
+      if (name === 'workbench.action.focusFirstEditorGroup')
+        setTimeout(() => harness.focusMutableDraft('auth.ts', 2), 100)
+      return answer
+    }) as (typeof harness.reader)['executeEditorCommand']
+
+    // Act
+    harness.controller.command({
+      studyId: harness.studyId,
+      action: 'open',
+      expectedRevision: harness.controller.state().revision,
+    })
+    await advanceClockUntil(
+      context,
+      () => harness.controller.state().readiness !== 'loading',
+      6_000,
+    )
+    resetFakeClock(context)
+    await harness.controller.settle()
+
+    // Assert
+    assert.deepEqual(keyboardReveals, [])
+    assert.deepEqual(
+      {
+        name: harness.editor.window.activeTextEditor?.document.uri.path
+          .split('/')
+          .at(-1),
+        column: harness.editor.window.activeTextEditor?.viewColumn,
+      },
+      { name: 'auth.ts', column: 2 },
+    )
+    assert.equal(
+      harness.controller.state().reason,
+      'Error: The primary editor selection changed during scope measurement; the newer learner focus was preserved.',
+    )
+  } finally {
+    resetFakeClock(context)
+    await harness.close()
+  }
+})
+
 // Value: protects=a learner's close of the source file that held another group while the borrow waits for the first-group focus command's effect is not answered by the Codebook pane taking the keyboard; fails_when=the expired probe reveals the pane with the keyboard before the guards look at the learner's change; why_new=Cycle 0064 pt2 local CodeRabbit round 3; seam=ignoresFirstGroupFocusCommandBesideChat (the command does nothing), closeTabByHand of the third group's only file 100 ms into the probe, a spy on the reader's pane reveals; no_claim=the real Cursor's answer (native Cursor trial)
 test("a recording opened from Cursor 3.27.22's Agent chat does not reveal the pane in the first group when the learner closed another group's source file during the probe", async (context) => {
   // Arrange

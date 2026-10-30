@@ -21976,19 +21976,36 @@ export class StudyWorkspace {
           // Cursor 3.27.22 answers the command from the Agent chat with no event at all: when no report of the main editor's focus follows shortly, the pane in front of the first group is revealed with the focus, which does move the keyboard there.
           if (paneInFirstGroup) {
             const probeStartedMs = performance.now()
+            // A learner's click into a file of another group moves neither the first group's front tab nor the layout; the active text editor event is the only trace, so it is latched for the probe's length.
+            let didLearnerFocusOtherGroup = false
+            const learnerFocusWatch = vscode.window.onDidChangeActiveTextEditor(
+              (editor) => {
+                if (editor && editor.viewColumn !== vscode.ViewColumn.One)
+                  didLearnerFocusOtherGroup = true
+              },
+            )
             const didProbeSucceed = await waitUntil(
               hasMainEditorFocusProof,
               'the first group focus command effect',
               PRESENTATION_FOCUS_COMMAND_PROBE_MS,
               signal,
-            ).then(
-              () => true,
-              (probeError: unknown) => {
-                // Only the expired probe is answered here; a cancellation or a failed read keeps its own error.
-                if (probeError instanceof WaitTimeoutError) return false
-                throw probeError
-              },
             )
+              .then(
+                () => true,
+                (probeError: unknown) => {
+                  // Only the expired probe is answered here; a cancellation or a failed read keeps its own error.
+                  if (probeError instanceof WaitTimeoutError) return false
+                  throw probeError
+                },
+              )
+              .finally(() => learnerFocusWatch.dispose())
+            // The learner's newer focus keeps the keyboard: nothing is revealed and the borrow ends with the learner-change refusal.
+            if (didLearnerFocusOtherGroup) {
+              this.yieldFocusToLearner()
+              throw new Error(
+                'The primary editor selection changed during scope measurement; the newer learner focus was preserved.',
+              )
+            }
             // Set whether the probe passed or expired.
             probeElapsedMs = performance.now() - probeStartedMs
             // The learner may have brought another tab to the front of the first group during the probe; then nothing is revealed, and the wait below refuses for the learner's newer choice.

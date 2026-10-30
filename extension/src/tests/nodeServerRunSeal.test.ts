@@ -242,6 +242,7 @@ test('a published seal lists by its seal status in this window while the tempora
   // The cleanup of the seal's temporary file begins only after sealed.json was published, and stalls until the test releases it.
   let releaseCleanup = (): void => {}
   let markCleanupStarted = (): void => {}
+  let didCleanupStart = false
   const cleanupStarted = new Promise<void>((resolve) => {
     markCleanupStarted = resolve
   })
@@ -251,6 +252,7 @@ test('a published seal lists by its seal status in this window while the tempora
     (...removal: Parameters<typeof fileSystem.unlink>) => {
       if (!String(removal[0]).includes('sealed.json'))
         return originalUnlink(...removal)
+      didCleanupStart = true
       markCleanupStarted()
       return new Promise<void>((resolve) => {
         releaseCleanup = resolve
@@ -264,12 +266,20 @@ test('a published seal lists by its seal status in this window while the tempora
     instanceId: service.instanceId,
     runId: record.id,
   })
-  await cleanupStarted
-  const listed = await repository.serverHistories.list()
-  releaseCleanup()
+  // A stop that ends before reaching the cleanup must not leave this wait hanging.
+  await Promise.race([cleanupStarted, stopping])
+  const listed = await (async () => {
+    try {
+      return await repository.serverHistories.list()
+    } finally {
+      // Always release the stalled cleanup so the stop can end, also when the listing throws.
+      releaseCleanup()
+    }
+  })()
   await stopping
 
   // Assert
+  assert.equal(didCleanupStart, true)
   // The run sent its request and recorded no stop or response, so its seal reads partial; recording would mean the active writer hid the seal.
   assert.equal(
     listed.find((history) => history.studyId === studyId)?.status,
