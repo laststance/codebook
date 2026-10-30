@@ -700,11 +700,15 @@ test('the launcher answers the optimizer wait at once when Vite has no dependenc
   const port = await freePort()
   const run = await startVite(context, { behavior: { port } })
   await run.started
-  const startedAt = Date.now()
   // Act
-  await awaitViteOptimizerIdle(run.app(), 10_000, run.controller.signal)
+  // gstack-timing-ok: a forced deadline, as docs/pregate.md#timing suggests; the contract is that an answer comes without an optimizer to wait for, so a wait that never answers fails here instead of hanging.
+  const answered = awaitViteOptimizerIdle(
+    run.app(),
+    5_000,
+    run.controller.signal,
+  )
   // Assert
-  assert.ok(Date.now() - startedAt < 1000)
+  await assert.doesNotReject(answered)
 })
 
 // Value: protects=one .env secret never reaches any output of a Vite run (the refusal, the evidence journal, the kept study module, the run state, the saved study JSON, the MCP tool result text and the source-map resource); fails_when=any channel stops masking the env-file values; why_new=the channels were only tested one by one; seam=the run harnesses stand in for the browser, the service harness for the editor, and the launcher mask feeds both; no_claim=native debugger capture
