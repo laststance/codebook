@@ -2265,6 +2265,23 @@ export const VITE_VERSION_MAX_CHARS = 64
 /** The longest a Vite config's thrown error line is carried in a refusal. */
 export const VITE_ERROR_LINE_LIMIT_CHARS = 200
 
+/** The file names Vite looks up as the project config when the dev script names none, in Vite's own order. */
+export const VITE_DEFAULT_CONFIG_FILE_NAMES: readonly string[] = [
+  'vite.config.js',
+  'vite.config.mjs',
+  'vite.config.ts',
+  'vite.config.cjs',
+  'vite.config.mts',
+  'vite.config.cts',
+]
+
+/** The most bytes of a Vite config file the launcher reads to learn whether it sets `envDir`; a larger file is treated as mentioning it. */
+export const VITE_CONFIG_SOURCE_LIMIT_BYTES = 1_048_576
+
+/** Replaces the quoted error line of a Vite config that failed before it resolved while its source sets `envDir`: the folder's values cannot be known yet, so the line could print one. */
+export const VITE_ERROR_LINE_WITHHELD_SENTENCE =
+  "the error text is withheld: the config sets envDir, and Codebook cannot read that folder's values before the config loads, so it does not quote the error"
+
 /** The extensions of a source file the Vite dev server serves as JavaScript with an inline map; `.vue` and `.svelte` need a framework plugin's own map and are refused. */
 export const VITE_STOP_EXTENSIONS: readonly string[] = [
   '.ts',

@@ -424,6 +424,60 @@ test('a launcher that exits in the config masks .env values in the refusal', asy
   assert.equal(error.message.includes('plainsecretvalue1'), false)
 })
 
+// Value: protects=a refusal stays readable: only env-file values are masked, never the launcher's process.env (HOME, PATH); fails_when=the launcher masks everything loadEnv returns with the empty prefix; why_new=loadEnv with prefix '' also returns process.env; seam=none; no_claim=secret shapes
+test('a config error keeps a process.env value readable while masking the .env value in the same line', async (context) => {
+  // Arrange
+  const home = process.env.HOME ?? ''
+  assert.ok(home.length >= 6, 'the test needs a HOME of at least 6 characters')
+  const port = await freePort()
+  const run = await startVite(context, {
+    files: { '.env': 'DB_PASSWORD=plainsecret1\n' },
+    behavior: { port, throws: `home ${home} secret plainsecret1` },
+  })
+  // Act
+  const error = await refusalOf(run.started)
+  // Assert
+  assert.equal(error.code, 'VITE_LAUNCHER_FAILED')
+  assert.ok(error.message.includes(`home ${home} secret [masked]`))
+  assert.equal(error.message.includes('plainsecret1'), false)
+})
+
+// Value: protects=a config that fails before it resolves never prints a value from its custom envDir; fails_when=the launcher quotes the error line after loading only the package root's env files; why_new=the line is withheld when the config source sets envDir; seam=none; no_claim=a config that sets envDir in a file it imports
+test('a config that sets envDir and throws before resolving withholds its error line so a custom envDir value never prints', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const run = await startVite(context, {
+    files: {
+      'vite.config.ts': "export default { envDir: 'envs' }\n",
+      'envs/.env': 'DB_PASSWORD=customdirsecret99\n',
+    },
+    behavior: { port, throws: 'cannot connect with customdirsecret99' },
+  })
+  // Act
+  const error = await refusalOf(run.started)
+  // Assert
+  assert.equal(error.code, 'VITE_LAUNCHER_FAILED')
+  assert.equal(error.message.includes('customdirsecret99'), false)
+  assert.match(
+    error.message,
+    /the error text is withheld: the config sets envDir, and Codebook cannot read that folder's values before the config loads, so it does not quote the error/,
+  )
+})
+
+// Value: protects=a config without envDir keeps its readable error line; fails_when=the line is withheld for every failed config; why_new=withholding is limited to a config source that names envDir; seam=none; no_claim=none
+test('a config that does not mention envDir keeps its error line in the refusal', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const run = await startVite(context, {
+    files: { 'vite.config.ts': 'export default {}\n' },
+    behavior: { port, throws: 'unknown option foo' },
+  })
+  // Act
+  const error = await refusalOf(run.started)
+  // Assert
+  assert.match(error.message, /: unknown option foo$/)
+})
+
 // Value: protects=a listen-phase failure masks values of the config's envDir; fails_when=the failure path reads only the package root's env files; why_new=failure uses the resolved config envDir; seam=none; no_claim=a failure before the config resolved
 test('a listen failure cut across a secret that only the resolved envDir holds leaves no fragment', async (context) => {
   // Arrange

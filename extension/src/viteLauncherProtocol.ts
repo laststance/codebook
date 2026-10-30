@@ -34,7 +34,7 @@ export type ViteLauncherReport =
       type: 'vite-failed'
       phase: ViteLauncherPhase
       errorName: string
-      /** The first line of the error message, still unmasked: the extension masks it. */
+      /** The first line of the error message, still unmasked: the extension masks it; the sentence that says why the line is withheld when the config failed before it resolved and its source sets `envDir`. */
       firstLine: string
       configFile?: string
       /** Values of the env files, read best-effort, for masking the first line by value. */

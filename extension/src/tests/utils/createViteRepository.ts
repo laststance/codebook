@@ -52,14 +52,18 @@ import { readFileSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 export const version = '8.3.5'
-export function loadEnv(mode, directory) {
+export function loadEnv(mode, directory, prefix) {
+  // Like Vite: the env files first, then every process.env entry with the prefix wins (an empty prefix matches all of them).
+  let fileValues = {}
   try {
-    return Object.fromEntries(
+    fileValues = Object.fromEntries(
       readFileSync(join(directory, '.env'), 'utf8').split('\\n').filter(Boolean).map((line) => line.split('=')),
     )
-  } catch {
-    return {}
-  }
+  } catch {}
+  const processValues = Object.fromEntries(
+    Object.entries(globalThis.process.env).filter(([name]) => name.startsWith(prefix)),
+  )
+  return { ...fileValues, ...processValues }
 }
 export async function createServer(inline) {
   const cwd = globalThis.process.cwd()

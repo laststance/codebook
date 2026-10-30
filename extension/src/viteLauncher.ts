@@ -5,16 +5,19 @@ import {
   VITE_DEFAULT_PORT,
   VITE_LOOPBACK_HOST,
   VITE_ERROR_LINE_LIMIT_CHARS,
+  VITE_ERROR_LINE_WITHHELD_SENTENCE,
   VITE_LAUNCHER_MESSAGES,
   VITE_MASKED_VALUE_MIN_CHARS,
 } from './constants'
 import { hasOwnHmrListener } from './utils/hasOwnHmrListener'
 import { isViteLauncherCommand } from './utils/isViteLauncherCommand'
 import { maskKnownValues } from './utils/maskKnownValues'
+import { viteConfigMentionsEnvDir } from './utils/viteConfigMentionsEnvDir'
 import {
   waitForViteOptimizerIdle,
   type ViteDependencyOptimizer,
 } from './utils/waitForViteOptimizerIdle'
+import { withoutProcessEnvironment } from './utils/withoutProcessEnvironment'
 import type {
   ViteLauncherCommand,
   ViteLauncherOptions,
@@ -67,7 +70,8 @@ type ViteModule = {
  * @param options - The launcher's options (root and mode).
  * @param config - The resolved config, once there is one: its `envDir` and `mode` are the ones Vite really loaded.
  * @returns The values of at least {@link VITE_MASKED_VALUE_MIN_CHARS} characters; empty when Vite is not loaded or cannot read them.
- * Limit: before the config resolved (an import failure, a config that throws or exits) the values come from the package root and the dev script's mode; values of a custom `envDir` are masked only once the config resolved.
+ * Only values the env files hold are returned: `process.env` is emptied for the read ({@link withoutProcessEnvironment}), so `HOME` or `PATH` stay readable in a refusal.
+ * Limit: before the config resolved (an import failure, a config that throws or exits) the values come from the package root and the dev script's mode; values of a custom `envDir` are masked only once the config resolved, which is why {@link run} withholds the error line of a failed config whose source sets `envDir`.
  * @example
  * loadedEnvValues(vite, options) // => ['plainsecretvalue']
  */
@@ -80,11 +84,47 @@ function loadedEnvValues(
     const envDir =
       config && typeof config.envDir === 'string' ? config.envDir : options.root
     const mode = config?.mode ?? options.mode ?? 'development'
-    return Object.values(vite?.loadEnv(mode, envDir, '') ?? {}).filter(
+    const fileValues = withoutProcessEnvironment(
+      () => vite?.loadEnv(mode, envDir, '') ?? {},
+    )
+    return Object.values(fileValues).filter(
       (value) => value.length >= VITE_MASKED_VALUE_MIN_CHARS,
     )
   } catch {
     return []
+  }
+}
+
+/**
+ * Chooses the error line a failure report carries: the masked first line, or none when the config failed before it resolved and its source sets `envDir`.
+ *
+ * Why it exists: values of a custom `envDir` are unknown before the config resolves, so quoting the line could print one. Called by {@link run} when it reports a failure.
+ *
+ * @param failure - The error that ended the launch.
+ * @param envValues - The env-file values loaded so far.
+ * @param configUnresolved - Whether the config had not resolved when the failure happened.
+ * @param options - The launcher's options (root and config file).
+ * @returns The `firstLine` field of the report: the masked line, or the sentence that says why it is withheld.
+ * @example
+ * quotedErrorLine(new Error('boom'), [], false, options) // => { firstLine: 'boom' }
+ */
+function quotedErrorLine(
+  failure: Error,
+  envValues: readonly string[],
+  configUnresolved: boolean,
+  options: ViteLauncherOptions,
+): { firstLine: string } {
+  if (
+    configUnresolved &&
+    viteConfigMentionsEnvDir(options.root, options.configFile)
+  )
+    return { firstLine: VITE_ERROR_LINE_WITHHELD_SENTENCE }
+  // The line is masked before it is cut: a value that crosses the cut would leave a fragment the extension's exact-value mask cannot match.
+  return {
+    firstLine: maskKnownValues(
+      failure.message.split(/\r?\n/)[0] ?? '',
+      envValues,
+    ).slice(0, VITE_ERROR_LINE_LIMIT_CHARS),
   }
 }
 
@@ -210,15 +250,17 @@ async function run(): Promise<void> {
   } catch (error) {
     const failure = error instanceof Error ? error : new Error(String(error))
     const envValues = loadedEnvValues(viteModule, options, server?.config)
+    const quoted = quotedErrorLine(
+      failure,
+      envValues,
+      phase === 'config' && !server,
+      options,
+    )
     await send({
       type: VITE_LAUNCHER_MESSAGES.failed,
       phase,
       errorName: failure.name,
-      // The line is masked before it is cut: a value that crosses the cut would leave a fragment the extension's exact-value mask cannot match.
-      firstLine: maskKnownValues(
-        failure.message.split(/\r?\n/)[0] ?? '',
-        envValues,
-      ).slice(0, VITE_ERROR_LINE_LIMIT_CHARS),
+      ...quoted,
       configFile,
       envValues,
     })
