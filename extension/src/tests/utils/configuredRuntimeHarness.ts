@@ -175,6 +175,9 @@ export async function configuredRuntimeHarness(
   // How many times the run read a stop module from the Vite stand-in.
   let sealReads = 0
   let optimizerHold: Promise<void> | undefined
+  // The wait bounds the run passed to the stand-in, and the way to end a wait as the launcher's own wait does at its bound.
+  const settledTimeoutsMs: number[] = []
+  let expireOptimizerWait = (): void => {}
   let emitInputPause = true,
     emitPreparationResume = false,
     stopAtStartupBreakpoint = false,
@@ -827,9 +830,21 @@ export async function configuredRuntimeHarness(
                 : {}),
             }
           },
-          waitForServerSettled: async () => {
+          waitForServerSettled: async (_app: unknown, timeoutMs: number) => {
             settledQuestions += 1
-            await optimizerHold
+            settledTimeoutsMs.push(timeoutMs)
+            await Promise.race([
+              optimizerHold,
+              // The launcher's wait ends with the uncoded wait timeout when its bound passes.
+              new Promise<never>((_resolve, reject) => {
+                expireOptimizerWait = (): void =>
+                  reject(
+                    new WaitTimeoutError(
+                      'Timed out waiting for a message of the owned launcher',
+                    ),
+                  )
+              }),
+            ])
           },
           readBundle: async (request: { signal: AbortSignal }) => {
             sealReads += 1
@@ -989,6 +1004,14 @@ export async function configuredRuntimeHarness(
         release = resolve
       })
       return release
+    },
+    /** The bounds (milliseconds) the run gave each wait for the optimizer to be idle. */
+    settledTimeoutsMs(): readonly number[] {
+      return settledTimeoutsMs
+    },
+    /** Ends the pending optimizer wait as the launcher's own wait does when its bound passes: with the uncoded wait timeout. @example harness.expireOptimizerWait() */
+    expireOptimizerWait(): void {
+      expireOptimizerWait()
     },
     /** How many times the run read a stop module from the Vite stand-in. */
     sealReadCount(): number {

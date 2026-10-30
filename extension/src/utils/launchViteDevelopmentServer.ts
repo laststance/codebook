@@ -2,6 +2,7 @@ import {
   REPOSITORY_SETUP_TIMEOUT_MS,
   VITE_LAUNCHER_FACTS_TIMEOUT_MS,
   VITE_LAUNCHER_MESSAGES,
+  VITE_SETUP_STEPS,
 } from '../constants'
 import type {
   DevelopmentApp,
@@ -162,7 +163,7 @@ export async function launchViteDevelopmentServer(
     configFile: script.configFile,
     port: script.port,
   }
-  request.onStep('resolving the Vite config')
+  request.onStep(VITE_SETUP_STEPS.resolvingConfig)
   const app = launchDevelopmentServer(
     request.workspace,
     request.node,
@@ -251,7 +252,7 @@ export async function launchViteDevelopmentServer(
   }
   request.alive()
   app.declarePort(facts.port)
-  request.onStep('starting Vite')
+  request.onStep(VITE_SETUP_STEPS.startingVite)
   app.send({ type: VITE_LAUNCHER_MESSAGES.listen })
   const listening = await receive(REPOSITORY_SETUP_TIMEOUT_MS)
   if (listening.type === VITE_LAUNCHER_MESSAGES.failed) {

@@ -2301,8 +2301,25 @@ export const VITE_STOP_EXTENSIONS: readonly string[] = [
 /** How long the Vite page must stay loaded, with no further reload, before the initial inputs are written. */
 export const VITE_PAGE_QUIET_MS = 500
 
-/** The shortest wait for the optimizer-idle report: a nearly spent setup budget never becomes a zero-length wait. */
-export const VITE_OPTIMIZER_WAIT_MIN_MS = 1_000
+/**
+ * The setup steps of a Vite run, named once for the setters in the configured browser run, the adapter's launcher and the setup-deadline sentence.
+ * A deadline names the step the run had reached, so a renamed step cannot fall through to the wrong sentence.
+ */
+export const VITE_SETUP_STEPS = {
+  validatingProject: 'validating the project',
+  resolvingConfig: 'resolving the Vite config',
+  startingVite: 'starting Vite',
+  waitingForServer: 'waiting for the server to answer the entry page',
+  sealingStops: 'sealing the declared stops',
+  openingBrowser: 'opening the browser',
+  loadingEntryPage: 'loading the entry page',
+  settlingPage: 'waiting for the page to settle',
+  writingInputs: 'writing the initial inputs and arming the first stop',
+} as const
+
+/** One setup step of {@link VITE_SETUP_STEPS}. */
+export type ViteSetupStep =
+  (typeof VITE_SETUP_STEPS)[keyof typeof VITE_SETUP_STEPS]
 
 /** The most reloads before the inputs the run tolerates (a dependency optimizer reloads once or twice). */
 export const VITE_PAGE_GENERATION_LIMIT = 4

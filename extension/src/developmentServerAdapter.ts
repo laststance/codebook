@@ -1,3 +1,4 @@
+import type { ViteSetupStep } from './constants'
 import type { BundleSource } from './repositoryBundle'
 import type { RepositoryConfiguration } from './repositoryConfigSchemas'
 import type { PortCheckOptions } from './utils/assertDevelopmentPortFree'
@@ -31,7 +32,7 @@ export type DevelopmentServerStart = {
     refuse?: PortCheckOptions['refuse'],
   ) => Promise<void>
   /** Names the setup step reached (`resolving the Vite config`, `starting Vite`), so a setup-deadline refusal can say where it stopped. */
-  onStep: (step: string) => void
+  onStep: (step: ViteSetupStep) => void
   /** Reports where the port was declared, once known, for the run resource. */
   onDeclaredPort: (declared: DeclaredDevelopmentPort) => void
   /** Hands the started server to the run the moment it exists, so cleanup closes it even when a later step fails. */

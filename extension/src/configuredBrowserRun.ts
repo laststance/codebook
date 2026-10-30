@@ -12,7 +12,7 @@ import {
   configuredDefinitionSchema,
   type ConfiguredDefinition,
 } from './configuredStudySchemas'
-import type { CONFIGURED_CAPTURE_PHASES } from './constants'
+import type { CONFIGURED_CAPTURE_PHASES, ViteSetupStep } from './constants'
 import {
   ACTIVE_TIMEOUT_MS,
   ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION,
@@ -36,7 +36,7 @@ import {
   REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT,
   REPOSITORY_SETUP_TIMEOUT_MS,
   VITE_PAGE_GENERATION_LIMIT,
-  VITE_OPTIMIZER_WAIT_MIN_MS,
+  VITE_SETUP_STEPS,
   VITE_PAGE_QUIET_MS,
   REPOSITORY_STACK_FRAME_LIMIT,
   REPOSITORY_UNOWNED_PAGE_PAUSE_LIMIT_MS,
@@ -448,12 +448,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private ownedDevelopmentLock?: DevelopmentLockIdentity
   /** The adapter of the configuration, chosen at the start of preparation. */
   private adapter?: DevelopmentServerAdapter
-  /** The origin the owned server reported (`http://127.0.0.1:<port>`), which a served-module sealer fetches from. */
-  private ownedOrigin?: string
   /** The setup step reached, named when the setup deadline expires. */
-  private setupStep = 'validating the project'
+  private setupStep: ViteSetupStep = VITE_SETUP_STEPS.validatingProject
   /** When the setup budget ends (epoch milliseconds); bounds the wait for the Vite dependency optimizer. */
   private preparationDeadlineAt = 0
+  /** The length of the setup budget (milliseconds), named by the setup-deadline refusal. */
+  private preparationBudgetMs = 0
   /** Whether the run asked its browser to open the entry page; only then is a page load a reload. */
   private navigationRequested = false
   /** Whether the first load of the entry page was seen. */
@@ -634,6 +634,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (now >= preparationDeadlineAt || now >= deadlineAt)
       throw new Error('Repository preparation deadline already expired')
     this.preparationDeadlineAt = preparationDeadlineAt
+    this.preparationBudgetMs = preparationDeadlineAt - now
     this.progressDeadline(
       preparationDeadlineAt - now,
       this.definition.configuration.adapter === 'vite-dev'
@@ -699,12 +700,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.maskText = started.maskText
     const declaredPort = { port: started.port }
     // The server binds 127.0.0.1; the browser opens `localhost` at its port, the name the project's own origin settings use (D65).
-    this.setupStep = 'waiting for the server to answer the entry page'
-    this.ownedOrigin = await this.app!.ready(
+    this.setupStep = VITE_SETUP_STEPS.waitingForServer
+    const ownedOrigin = await this.app!.ready(
       this.abort.signal,
       this.definition.configuration.entryPath,
     )
-    this.origin = browserOriginOf(this.ownedOrigin)
+    this.origin = browserOriginOf(ownedOrigin)
     // `localhost` may resolve to ::1: Codebook owns that endpoint for the whole run, or the host has none (D66).
     this.ipv6Forwarder = await startIpv6LoopbackForwarder(declaredPort.port)
     this.ownsIpv6Loopback = this.ipv6Forwarder !== undefined
@@ -712,15 +713,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.ownedDevelopmentLock = await adapter.readOwnedLock(
       this.options.workspace,
     )
-    this.setupStep = 'sealing the declared stops'
+    this.setupStep = VITE_SETUP_STEPS.sealingStops
     for (const [index, stop] of configuredStops(
       this.definition.configuration,
     ).entries())
-      this.stops.push(await this.sealDeclaredStop(stop, index))
+      this.stops.push(
+        await this.sealDeclaredStop(stop, index, adapter, ownedOrigin),
+      )
     this.freezeSealedStops()
     if (needsServer) await this.selectServer()
     this.alive()
-    this.setupStep = 'opening the browser'
+    this.setupStep = VITE_SETUP_STEPS.openingBrowser
     await this.browser.launch(
       {
         name: `codebook repository ${this.id}`,
@@ -748,7 +751,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       })
       this.alive()
     }
-    this.setupStep = 'loading the entry page'
+    this.setupStep = VITE_SETUP_STEPS.loadingEntryPage
     this.navigationRequested = true
     await cdp.request('Page.navigate', {
       url: `${this.origin}${this.definition.configuration.entryPath ?? '/'}`,
@@ -758,10 +761,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.alive()
     // Vite's dependency optimizer may reload the page once after the first load; each reload before the inputs starts a new page generation.
     if (adapter.name === 'vite-dev') {
-      this.setupStep = 'waiting for the page to settle'
-      await this.waitForStablePage()
+      this.setupStep = VITE_SETUP_STEPS.settlingPage
+      await this.waitForStablePage(adapter, ownedOrigin)
     }
-    this.setupStep = 'writing the initial inputs and arming the first stop'
+    this.setupStep = VITE_SETUP_STEPS.writingInputs
     const inputs = this.definition.configuration.initialInputs ?? []
     // A page load after this point is a reload the run did not make: the inputs may already be in the page.
     this.inputsPrepared = true
@@ -795,26 +798,30 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Why it exists: the first seal happens once in {@link prepareOwned}; a Vite run seals again for each new page generation before the inputs ({@link resealStopsForGeneration}), because the dev server serves new `?v=` import hashes after a dependency-optimizer reload. Both go through the adapter's `readBundle`.
    * @param stop - The configured stop, as {@link configuredStops} gives it.
    * @param index - Its zero-based place among the declared stops.
-   * @param generation - The page generation a renewal belongs to; absent for the first seal.
+   * @param adapter - The run's development-server adapter, whose `readBundle` reads the served module.
+   * @param ownedOrigin - The origin the owned server reported, which the module is fetched from.
+   * @param generation - The page generation a renewal belongs to; absent for the first seal. Only the first seal journals the position decisions of the stop (`breakpoint.column-on-blank-line`, `breakpoint.armed-after-self-declaring-line`), because a renewal reaches the same decisions again.
    * @returns The prepared stop for the freshly sealed bytes; its sealed files and journal entry are written.
    * @throws When the module cannot be sealed or the run is no longer alive.
    * @example
    * ```ts
-   * this.stops.push(await this.sealDeclaredStop(stop, 0))
+   * this.stops.push(await this.sealDeclaredStop(stop, 0, adapter, ownedOrigin))
    * ```
    */
   private async sealDeclaredStop(
     stop: ReturnType<typeof configuredStops>[number],
     index: number,
+    adapter: DevelopmentServerAdapter,
+    ownedOrigin: string,
     generation?: number,
   ): Promise<PreparedStop> {
-    const acquired = await this.adapter!.readBundle({
+    const acquired = await adapter.readBundle({
       workspace: this.options.workspace,
       source: stop.source,
       signal: this.abort.signal,
       entryPath: this.definition.configuration.entryPath ?? '/',
       execution: stop.participant === 'server' ? 'server-action' : 'browser',
-      ownedOrigin: this.ownedOrigin!,
+      ownedOrigin,
       record: (type, detail) => this.evidence.record(type, detail),
     })
     this.alive()
@@ -822,12 +829,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       citation = this.definition.descriptor.anchors[stop.anchorIndex]!
     // The sealed map is scanned once per stop, from its declared line to the end of its citation; the place, the rule and the refusal below read that scan, and the pause handler only compares lines.
     const scan = verifier.mappedPositions(stop.source.line, citation.endLine),
-      taken = this.takeDeclaredPosition(stop, index),
+      // A renewal reaches the decisions of the first seal again, so only the first seal journals them.
+      isFirstSeal = generation === undefined,
+      taken = this.takeDeclaredPosition(stop, index, isFirstSeal),
       afterDeclaration = this.requestAfterSelfDeclaringLine(
         stop,
         acquired.bundle.source.split(/\r\n|\r|\n/),
         scan,
         citation.endLine,
+        isFirstSeal,
       ),
       // A stop whose own line declares a binding it requires is requested after that declaration's statement; otherwise the debugger verifies no breakpoint on a line without a mapped position, so such a stop is requested at the first mapped position after it. The rule is measured from there.
       armed = afterDeclaration.armed ?? resolveArmedPlace(taken, scan)
@@ -932,16 +942,28 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Why it exists: after Vite's dependency optimizer reloads the page, the dev server serves the stop modules with new `?v=` import hashes, so the bytes the new page executes differ from the first seal. Replacing the seals here lets the executed-bytes check guard the latest seal; once the inputs are written nothing is sealed again and a reload still refuses with `VITE_PAGE_RELOADED`.
    * Called by {@link waitForStablePage} for each generation it sees. The prepared stops are updated in place so a script the new page already announced stays bound.
    * @param generation - The page generation the renewal belongs to; journaled with each renewal.
+   * @param adapter - The run's development-server adapter.
+   * @param ownedOrigin - The origin the owned server reported.
    * @example
    * ```ts
-   * await this.resealStopsForGeneration(this.pageGeneration)
+   * await this.resealStopsForGeneration(this.pageGeneration, adapter, ownedOrigin)
    * ```
    */
-  private async resealStopsForGeneration(generation: number): Promise<void> {
+  private async resealStopsForGeneration(
+    generation: number,
+    adapter: DevelopmentServerAdapter,
+    ownedOrigin: string,
+  ): Promise<void> {
     for (const [index, stop] of configuredStops(
       this.definition.configuration,
     ).entries()) {
-      const renewed = await this.sealDeclaredStop(stop, index, generation)
+      const renewed = await this.sealDeclaredStop(
+        stop,
+        index,
+        adapter,
+        ownedOrigin,
+        generation,
+      )
       Object.assign(this.stops[index]!, renewed)
     }
     this.freezeSealedStops()
@@ -979,24 +1001,23 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /**
    * Waits until the page has stayed loaded for a quiet window with no further reload, called by {@link prepareOwned} for a Vite run before the inputs are written.
    * Before each quiet window it waits for the server's dependency optimizer to be idle ({@link DevelopmentServerAdapter.waitForServerSettled}), and after each reload it seals the stops again ({@link resealStopsForGeneration}).
-   * @throws `VITE_PAGE_UNSTABLE` when the page reloads more often than {@link VITE_PAGE_GENERATION_LIMIT} before the inputs.
+   * The optimizer wait is bounded by what is left of the setup budget, with no floor, so a never-settling optimizer ends as the coded setup deadline naming the step, never as the uncoded wait timeout.
+   * @param adapter - The run's development-server adapter, asked whether the server is settled.
+   * @param ownedOrigin - The origin the owned server reported, which the stops are sealed from again.
+   * @throws `VITE_PAGE_UNSTABLE` when the page reloads more often than {@link VITE_PAGE_GENERATION_LIMIT} before the inputs; `VITE_SETUP_DEADLINE` when the setup budget is spent while waiting for the optimizer.
    * @example
    * ```ts
-   * await this.waitForStablePage()
+   * await this.waitForStablePage(adapter, ownedOrigin)
    * ```
    */
-  private async waitForStablePage(): Promise<void> {
+  private async waitForStablePage(
+    adapter: DevelopmentServerAdapter,
+    ownedOrigin: string,
+  ): Promise<void> {
     for (;;) {
       const generation = this.pageGeneration
       // The optimizer's own run decides when its reload comes, so the quiet window starts only after it is idle.
-      await this.adapter!.waitForServerSettled(
-        this.app!,
-        Math.max(
-          VITE_OPTIMIZER_WAIT_MIN_MS,
-          this.preparationDeadlineAt - Date.now(),
-        ),
-        this.abort.signal,
-      )
+      await this.waitForOptimizerWithinBudget(adapter)
       this.alive()
       await sleep(VITE_PAGE_QUIET_MS, undefined, { signal: this.abort.signal })
       this.alive()
@@ -1017,8 +1038,45 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       await this.waitForDom('before')
       this.alive()
       // The page executes the modules the server serves now: seal them again, then confirm the page stays stable.
-      await this.resealStopsForGeneration(generation)
+      await this.resealStopsForGeneration(generation, adapter, ownedOrigin)
       this.sealedGeneration = generation
+    }
+  }
+
+  /**
+   * Waits for the server's dependency optimizer to be idle, bounded by what is left of the setup budget.
+   *
+   * Why it exists: the setup-deadline timer and the launcher's own wait both end at the deadline; bounding the wait by the remaining budget and turning its timeout into the coded refusal keeps the deadline from surfacing as the uncoded wait timeout. Called by {@link waitForStablePage} before each quiet window.
+   * @param adapter - The run's development-server adapter.
+   * @throws `VITE_SETUP_DEADLINE` naming the current step when the budget is spent or the wait times out; any other failure of the wait unchanged.
+   * @example
+   * ```ts
+   * await this.waitForOptimizerWithinBudget(adapter)
+   * ```
+   */
+  private async waitForOptimizerWithinBudget(
+    adapter: DevelopmentServerAdapter,
+  ): Promise<void> {
+    const remainingMs = this.preparationDeadlineAt - Date.now()
+    const deadlineRefusal = (): StudyError =>
+      viteRefusal(
+        'VITE_SETUP_DEADLINE',
+        viteSetupDeadlineText(this.setupStep, this.preparationBudgetMs).slice(
+          'VITE_SETUP_DEADLINE: '.length,
+        ),
+      )
+    // No floor: a spent budget is a deadline, not a one-second grace wait.
+    if (remainingMs <= 0) throw deadlineRefusal()
+    try {
+      await adapter.waitForServerSettled(
+        this.app!,
+        remainingMs,
+        this.abort.signal,
+      )
+    } catch (error) {
+      // The launcher's wait timed out at the budget's end: report the deadline, not the wait.
+      if (error instanceof WaitTimeoutError) throw deadlineRefusal()
+      throw error
     }
   }
 
@@ -1026,6 +1084,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Takes a declared stop at the position Codebook uses for it and journals the difference, for the preparation of each stop in {@link prepareOwned}: a column declared on a blank line means that line, so the stop is taken at the line's start ({@link takenStopPosition}) and its breakpoint is requested from there.
    * @param stop - The declared stop, as {@link configuredStops} gives it.
    * @param stopIndex - Its zero-based place among the declared stops, which names its configuration field.
+   * @param journalDecision - Whether to journal the decision; false for a renewal, which reaches the first seal's decision again.
    * @returns
    * - A stop declared past column 1 of a blank line: its line at column 1, after the journal entry `breakpoint.column-on-blank-line` with the field, the declared and the taken position
    * - Any other stop: its declared position, and nothing is journaled
@@ -1037,13 +1096,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private takeDeclaredPosition(
     stop: ReturnType<typeof configuredStops>[number],
     stopIndex: number,
+    journalDecision: boolean,
   ): ReturnType<typeof configuredStops>[number]['source'] {
     const taken = takenStopPosition(
       stop.source,
       this.definition.descriptor.sources,
     )
     // Only a column the run set aside is journaled, so the journal says what Codebook did with the declaration.
-    if (taken.column !== stop.source.column)
+    if (journalDecision && taken.column !== stop.source.column)
       this.evidence.record('breakpoint.column-on-blank-line', {
         participant: stop.participant,
         field: `${configuredStopFields(this.definition.configuration.version, stopIndex).source}.column`,
@@ -1059,6 +1119,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @param lines - The lines of the stop's sealed source.
    * @param scan - The stop's one scan of its sealed map, from the declared line to the end of its citation.
    * @param citationEndLine - The last line of the stop's citation.
+   * @param journalDecision - Whether to journal the decision; false for a renewal, which reaches the first seal's decision again.
    * @returns `armed` and `earliestLine`:
    * - `armed`: the first mapped position after the declaring statement's last line within the citation ({@link declarationStatementEndLine}, {@link placeAfterDeclaringLine}), after the journal entry `breakpoint.armed-after-self-declaring-line` with the participant, the declared and the armed place and the bindings; `undefined` when the declared line declares no required binding of the stop, the statement does not end within the citation (or the text cannot tell where it ends), or the scan finds no later line of the citation to request (a partial scan may have missed it): the stop is then placed by {@link resolveArmedPlace}, and nothing is journaled; a server stop so placed by a partial scan is refused at its arming when its module is not loaded yet ({@link confirmRequestedPlace})
    * - `earliestLine`: the line after the declaring statement when the statement's end is known, otherwise the declared line; {@link confirmRequestedPlace} searches the debugger's break locations from it when the scan was partial
@@ -1072,6 +1133,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     lines: readonly string[],
     scan: MappedPositionsScan,
     citationEndLine: number,
+    journalDecision: boolean,
   ): { armed?: { line: number; column: number }; earliestLine: number } {
     const bindings = requiredBindingsDeclaredOn(stop, lines)
     // Only a required binding of the declared line itself moves the stop; a stop whose values exist before its line stays where it was declared.
@@ -1084,7 +1146,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // A statement that does not end within the citation, or whose end the text cannot tell, leaves the stop where it was declared.
     if (statementEnd === undefined) return { earliestLine: stop.source.line }
     const armed = placeAfterDeclaringLine(statementEnd, scan)
-    if (armed)
+    if (armed && journalDecision)
       this.evidence.record('breakpoint.armed-after-self-declaring-line', {
         participant: stop.participant,
         declared: { line: stop.source.line, column: stop.source.column },

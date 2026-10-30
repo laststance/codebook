@@ -4,7 +4,11 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { setTimeout as sleep } from 'node:timers/promises'
 
-import { REPOSITORY_SETUP_TIMEOUT_MS, VITE_PAGE_QUIET_MS } from '../constants'
+import {
+  REPOSITORY_SETUP_TIMEOUT_MS,
+  VITE_PAGE_QUIET_MS,
+  VITE_SETUP_STEPS,
+} from '../constants'
 import { StudyError } from '../errors'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
@@ -198,7 +202,7 @@ test('a seal failure ends the run with the server released and no browser opened
 
 test('the setup deadline failure names the step reached, its limit and its code', () => {
   // Act
-  const text = viteSetupDeadlineText('sealing the declared stops', 90_000)
+  const text = viteSetupDeadlineText(VITE_SETUP_STEPS.sealingStops, 90_000)
   // Assert
   assert.equal(
     text,
@@ -358,14 +362,117 @@ test('the setup budget expiring while the stops are sealed fails with the coded 
   )
 })
 
+test('every setup step has its own deadline sentence naming that step and its browser state', () => {
+  // Arrange
+  const expectedBrowserStateByStep = {
+    'validating the project': 'the browser was not opened',
+    'resolving the Vite config': 'the browser was not opened',
+    'starting Vite': 'the browser was not opened',
+    'waiting for the server to answer the entry page':
+      'the browser was not opened',
+    'sealing the declared stops': 'the browser was not opened',
+    'opening the browser':
+      'the browser Codebook was opening was closed and no click was sent',
+    'loading the entry page':
+      'the browser Codebook opened was closed and no click was sent',
+    'waiting for the page to settle':
+      'the browser Codebook opened was closed and no click was sent',
+    'writing the initial inputs and arming the first stop':
+      'the browser Codebook opened was closed and no click was sent',
+  }
+  // Act
+  const stepsWithText = Object.values(VITE_SETUP_STEPS).map((step) => ({
+    step,
+    text: viteSetupDeadlineText(step, 90_000),
+  }))
+  // Assert
+  assert.deepEqual(
+    stepsWithText.map(({ step }) => step),
+    Object.keys(expectedBrowserStateByStep),
+  )
+  for (const { step, text } of stepsWithText) {
+    assert.ok(text.includes(`exceeded while ${step}. `), step)
+    assert.ok(
+      text.includes(
+        `stopped and ${expectedBrowserStateByStep[step]}, so start again`,
+      ),
+      step,
+    )
+  }
+})
+
+test('an optimizer that never settles ends the run with the coded setup deadline naming the settling step, bounded by the setup budget', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    adapter: 'vite-dev',
+  })
+  harness.holdOptimizer()
+  const preparing = harness.run.prepare()
+  const outcome = preparing.then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await waitUntil(
+    () => harness.settledQuestionCount() === 1,
+    'the optimizer question',
+  )
+  // Act
+  harness.expireOptimizerWait()
+  const error = await outcome
+  // Assert
+  assert.ok(error instanceof StudyError, String(error))
+  assert.equal(error.code, 'VITE_SETUP_DEADLINE')
+  assert.match(error.message, /exceeded while waiting for the page to settle/)
+  const [waitBoundMs] = harness.settledTimeoutsMs()
+  assert.ok(
+    waitBoundMs! <= REPOSITORY_SETUP_TIMEOUT_MS &&
+      waitBoundMs! > REPOSITORY_SETUP_TIMEOUT_MS - 10_000,
+    `the wait bound ${waitBoundMs} is the remaining budget`,
+  )
+})
+
+test('a page reload does not repeat the blank-line column decision in the journal', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    adapter: 'vite-dev',
+    mappings: 'AAAA;;AAEA',
+    fixture: {
+      source: 'const nextTheme = "dark";\n\nexport const theme = nextTheme;\n',
+      citationEndLine: 3,
+      declaredLine: 2,
+      declaredColumn: 9,
+    },
+  })
+  const preparing = harness.run.prepare()
+  await waitUntil(() => harness.navigations.length === 1, 'first navigation')
+  // Act
+  harness.serveChangedModule(
+    'const nextTheme = "dark";\n\nexport const theme = nextTheme;\n// ?v=2',
+  )
+  harness.reloadPage()
+  harness.announceSealedModule('second')
+  await preparing
+  // Assert
+  const eventTypes = harness.run.view().events.map((event) => event.type)
+  assert.equal(
+    eventTypes.filter((type) => type === 'source.resealed').length,
+    1,
+  )
+  assert.equal(
+    eventTypes.filter((type) => type === 'breakpoint.column-on-blank-line')
+      .length,
+    1,
+  )
+})
+
 test('the setup deadline text says the browser was not opened for every step before the browser launches', () => {
   // Arrange
   const stepsBeforeBrowser = [
-    'validating the project',
-    'resolving the Vite config',
-    'starting Vite',
-    'waiting for the server to answer the entry page',
-    'sealing the declared stops',
+    VITE_SETUP_STEPS.validatingProject,
+    VITE_SETUP_STEPS.resolvingConfig,
+    VITE_SETUP_STEPS.startingVite,
+    VITE_SETUP_STEPS.waitingForServer,
+    VITE_SETUP_STEPS.sealingStops,
   ]
   // Act
   const tails = stepsBeforeBrowser.map((step) =>
@@ -386,7 +493,7 @@ test('the setup deadline text says the browser was not opened for every step bef
 
 test('the setup deadline text says the browser being opened was closed for the opening step', () => {
   // Act
-  const text = viteSetupDeadlineText('opening the browser', 90_000)
+  const text = viteSetupDeadlineText(VITE_SETUP_STEPS.openingBrowser, 90_000)
   // Assert
   assert.equal(
     text,
@@ -397,9 +504,9 @@ test('the setup deadline text says the browser being opened was closed for the o
 test('the setup deadline text says the opened browser was closed for every step after the browser launched', () => {
   // Arrange
   const stepsAfterBrowser = [
-    'loading the entry page',
-    'waiting for the page to settle',
-    'writing the initial inputs and arming the first stop',
+    VITE_SETUP_STEPS.loadingEntryPage,
+    VITE_SETUP_STEPS.settlingPage,
+    VITE_SETUP_STEPS.writingInputs,
   ]
   // Act
   const texts = stepsAfterBrowser.map((step) =>
