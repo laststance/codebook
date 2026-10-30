@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.65.0] - 2026-10-31 (development candidate)
+
+Cycle 0064 ([Issue #162](https://github.com/laststance/codebook/issues/162)), the third and last pull request of a bug-fix cycle: the replay Call Stack names every recorded frame, and a repository run in Cursor 3.27 keeps its Application at every stop. No new feature.
+
+**The replay Call Stack names the frames below the top one.** Each lower frame shows the file the debugger reported for it and its line, in a muted entry marked `Executed text not recorded`, instead of "Unknown Source". Selecting one opens a short read-only text that begins `Not recorded at this moment`, says that the executed text of that frame was not recorded and names the recorded file and line; your current file is never shown in its place. A path is kept only inside your workspace; a home, storage or URL location keeps its file name alone. A frame the debugger gave no file for still shows "Unknown Source", and the Call Stack still selects the top frame.
+
+**A repository run in Cursor 3.27 keeps its Application at every stop.**
+
+- **Before the first stop, the run's own stop files open beside the Application**, as kept tabs in the editor group next to it and without taking your keyboard, so the debugger shows each stop there instead of replacing the Application. The tab that was in front of that group comes back to the front, unless you chose another tab meanwhile, and a stop file already open in another group is left where it is. The first run after the Agent chat opens the Study no longer fails with "Owned viewport closed before cleanup".
+- **A stop file that Cursor still opens in front of the Application moves to its own group at the pause**, as it already did for a Chrome extension run, so the run no longer fails with "Application ownership changed".
+
+**Saved formats.** New studies are saved in study format 6, and new Node test and Node server replays with history header 2, because their lower frames keep the file they ran in. This version reads every earlier study and replay. An earlier Codebook lists a format 6 study as saved by a newer one and does not list a header 2 replay, and keeps all their files; update every editor that opens the same learning folder.
+
+**Known limits.** The executed text of a lower frame is not recorded, so its file cannot be opened at the recorded version.
+
+**Compatibility.** MCP API 1.11 and the bundled skill 1.0.57 are unchanged. To update, install this VSIX and reopen the work window.
+
 ## [0.2.64.0] - 2026-10-31 (development candidate)
 
 Cycle 0064 ([Issue #162](https://github.com/laststance/codebook/issues/162)), the second pull request of a bug-fix cycle: Cursor's Agent chat opens the Study itself, a run keeps its Application open through its stops, and a run's own stop preview no longer blocks the next Study. No new feature.
