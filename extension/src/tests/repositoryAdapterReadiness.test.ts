@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
+import { readNodeVersion } from '../utils/readNodeVersion'
 import { readRepositoryAdapterReadiness } from '../utils/readRepositoryAdapterReadiness'
 
 import { createViteRepository } from './utils/createViteRepository'
@@ -167,4 +168,69 @@ test('the environment reports both adapters under the repository-browser profile
     'vite-dev',
   ])
   assert.equal(profile?.adapters?.['vite-dev'].installed, false)
+})
+
+// Value: protects=a broken package.json is reported as unreadable, not as a missing dev script, without its contents; fails_when=the sentence says no dev script or echoes the file; why_new=parse errors were swallowed; seam=none; no_claim=other fields
+test('a malformed package.json reports the parse failure and not a missing dev script', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context, {})
+  await writeFile(
+    join(repository.root, 'package.json'),
+    '{ "secret-token-xyz": ',
+  )
+  // Act
+  const readiness = (
+    await readRepositoryAdapterReadiness(
+      repository.root,
+      process.execPath,
+      SIGNAL,
+    )
+  )['vite-dev']
+  // Assert
+  assert.equal(readiness.ready, false)
+  assert.equal(readiness.missing.length, 2)
+  assert.equal(
+    readiness.missing[1],
+    'package.json could not be read: it is not valid JSON. Fix it so Codebook can read the dev script.',
+  )
+  assert.equal(JSON.stringify(readiness).includes('secret-token-xyz'), false)
+})
+
+// Value: protects=a corrupt next/package.json fails only the Next report; fails_when=the whole status rejects or Vite loses its result; why_new=only readFile failures were contained; seam=none; no_claim=Next lock checks
+test('a corrupt next/package.json makes only Next not ready and keeps the Vite result', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context, {})
+  await mkdir(join(repository.root, 'node_modules/next/dist/bin'), {
+    recursive: true,
+  })
+  await writeFile(join(repository.root, 'node_modules/next/dist/bin/next'), '')
+  await writeFile(
+    join(repository.root, 'node_modules/next/package.json'),
+    '{ nope',
+  )
+  // Act
+  const readiness = await readRepositoryAdapterReadiness(
+    repository.root,
+    process.execPath,
+    SIGNAL,
+  )
+  // Assert
+  assert.equal(readiness['next-dev-webpack'].ready, false)
+  assert.equal(readiness['vite-dev'].ready, true)
+})
+
+// Value: protects=node --version runs once per executable for the host's life; fails_when=a second read starts the process again; why_new=status spawned it on every call; seam=none; no_claim=version changes of the same path
+test('reads the version of one Node executable once and answers the second read from memory', async (context) => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-node-memo-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const executable = join(directory, 'node')
+  await writeFile(executable, '#!/bin/sh\necho v1.2.3\n', { mode: 0o755 })
+  // Act
+  const first = await readNodeVersion(executable, SIGNAL)
+  await rm(executable)
+  const second = await readNodeVersion(executable, SIGNAL)
+  // Assert
+  assert.equal(first, 'v1.2.3')
+  assert.equal(second, 'v1.2.3')
 })

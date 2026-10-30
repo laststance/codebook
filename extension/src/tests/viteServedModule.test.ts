@@ -397,3 +397,70 @@ test('matches an announced script to its sealed address on any loopback host and
   // Assert
   assert.deepEqual(results, [true, true, true, false, false, false, false])
 })
+
+// Value: protects=a script of a different Vite module (?raw, ?url) is never taken for the sealed stop module; fails_when=any query other than t and v is ignored; why_new=the old comparison dropped the whole query; seam=none; no_claim=which query forms Vite serves
+test('does not match a script whose query names a different module than the sealed one', () => {
+  // Arrange
+  const sealed = 'http://127.0.0.1:3010/src/theme.ts'
+  // Act
+  const results = [
+    isViteScriptOfModule(sealed, 'http://localhost:3010/src/theme.ts?raw'),
+    isViteScriptOfModule(sealed, 'http://localhost:3010/src/theme.ts?url'),
+    isViteScriptOfModule(
+      sealed,
+      'http://localhost:3010/src/theme.ts?t=1730&raw',
+    ),
+    isViteScriptOfModule(sealed, 'http://localhost:3010/src/theme.ts?v=abc123'),
+    isViteScriptOfModule(
+      sealed,
+      'http://localhost:3010/src/theme.ts?v=abc&t=1730',
+    ),
+  ]
+  // Assert
+  assert.deepEqual(results, [false, false, false, true, true])
+})
+
+// Value: protects=the seal binds the JavaScript only to text the map proves; fails_when=a map without sourcesContent seals with the disk text substituted; why_new=absent retained text used to skip the check; seam=none; no_claim=maps with several sources
+test('refuses a map that retains no source text instead of substituting the file text', async (context) => {
+  // Arrange
+  const { sourcesContent: _omitted, ...withoutText } = GOOD_MAP
+  const absent = await startFixture(context, {
+    '/src/theme.ts': {
+      status: 200,
+      type: 'text/javascript',
+      body: servedModule(withoutText),
+    },
+  })
+  const nulled = await startFixture(context, {
+    '/src/theme.ts': {
+      status: 200,
+      type: 'text/javascript',
+      body: servedModule({ ...GOOD_MAP, sourcesContent: [null] }),
+    },
+  })
+  // Act
+  const absentRefusal = await refusalOf(
+    readViteServedModule(
+      absent.root,
+      absent.origin,
+      absent.stop,
+      new AbortController().signal,
+    ),
+  )
+  const nullRefusal = await refusalOf(
+    readViteServedModule(
+      nulled.root,
+      nulled.origin,
+      nulled.stop,
+      new AbortController().signal,
+    ),
+  )
+  // Assert
+  assert.equal(absentRefusal.code, 'VITE_SEAL_FAILED')
+  assert.equal(nullRefusal.code, 'VITE_SEAL_FAILED')
+  assert.match(
+    absentRefusal.message,
+    /carries no source text for the stop's file/,
+  )
+  assert.match(nullRefusal.message, /src\/theme\.ts/)
+})

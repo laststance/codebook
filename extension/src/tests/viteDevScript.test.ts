@@ -161,3 +161,58 @@ test('lists every refused element of a script at once without any assignment val
   assert.equal(JSON.stringify(reading).includes('plainsecret'), false)
   assert.equal(JSON.stringify(reading).includes('hunter2'), false)
 })
+
+// Value: protects=a --config outside the package root is refused so cleanup never leaves the workspace; fails_when=../ or absolute config paths are accepted; why_new=the grammar had no root rule; seam=none; no_claim=symlinked config paths
+test('refuses a --config that resolves outside the package root without echoing it', () => {
+  // Arrange
+  const root = '/repo/app'
+  // Act
+  const outside = parseViteDevScript(
+    'vite --config ../other/vite.config.ts',
+    root,
+  )
+  const absolute = parseViteDevScript('vite --config=/etc/vite.config.ts', root)
+  const inside = parseViteDevScript(
+    'vite --config config/custom.config.ts',
+    root,
+  )
+  // Assert
+  assert.deepEqual(outside, {
+    accepted: false,
+    refused: ['the option --config outside the package root'],
+  })
+  assert.deepEqual(absolute, outside)
+  assert.equal(inside.accepted, true)
+})
+
+// Value: protects=tilde and Windows cmd expansion are refused as shell syntax; fails_when=~/x or %VAR% values are accepted; why_new=the syntax set lacked ~ and %; seam=none; no_claim=other expansions
+test('refuses a leading tilde and a percent sign as shell syntax', () => {
+  // Arrange
+  const scripts = [
+    'vite --config ~/x.ts',
+    'vite --config=~/x.ts',
+    'NAME=~/x vite',
+    'vite --mode %MODE%',
+  ]
+  // Act
+  const readings = scripts.map((script) => parseViteDevScript(script))
+  // Assert
+  assert.deepEqual(readings, [
+    {
+      accepted: false,
+      refused: [
+        'the option --config without a plain value',
+        'a word with shell syntax (~)',
+      ],
+    },
+    { accepted: false, refused: ['a word with shell syntax (~)'] },
+    { accepted: false, refused: ['an assignment value with shell syntax (~)'] },
+    {
+      accepted: false,
+      refused: [
+        'the option --mode without a plain value',
+        'a word with shell syntax (%)',
+      ],
+    },
+  ])
+})

@@ -2247,6 +2247,9 @@ export const VITE_MASKED_VALUE_MIN_CHARS = 6
 /** The most messages an owned development server's IPC channel keeps unread; project code that floods the channel loses the newest messages instead of growing memory. */
 export const DEVELOPMENT_SERVER_MESSAGE_QUEUE_LIMIT = 32
 
+/** The longest a `vite/package.json` version may be (the study schema's `viteVersion` limit). */
+export const VITE_VERSION_MAX_CHARS = 64
+
 /** The longest a Vite config's thrown error line is carried in a refusal. */
 export const VITE_ERROR_LINE_LIMIT_CHARS = 200
 

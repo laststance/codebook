@@ -95,3 +95,24 @@ test('a Vite package with no importable entry or a manifest without a version th
   )
   await assert.rejects(resolveViteInstallation(broken))
 })
+
+// Value: protects=a Vite version the study schema would reject is refused at the start; fails_when=a non-semver or over-64-character version resolves; why_new=the version was unchecked; seam=none; no_claim=prerelease ordering
+test('refuses a vite version that is not semver-like or longer than 64 characters', async (context) => {
+  // Arrange
+  const text = await workspaceWithVite(context, { version: 'latest' })
+  const long = await workspaceWithVite(context, {
+    version: `8.3.5-${'a'.repeat(64)}`,
+  })
+  const prerelease = await workspaceWithVite(context, {
+    version: '8.0.0-beta.1',
+    main: 'index.js',
+  })
+  // Act
+  const textError = await resolveViteInstallation(text).catch((e: unknown) => e)
+  const longError = await resolveViteInstallation(long).catch((e: unknown) => e)
+  const accepted = await resolveViteInstallation(prerelease)
+  // Assert
+  assert.equal((textError as { code?: string }).code, 'VITE_UNSUPPORTED')
+  assert.equal((longError as { code?: string }).code, 'VITE_UNSUPPORTED')
+  assert.equal(accepted.found, true)
+})

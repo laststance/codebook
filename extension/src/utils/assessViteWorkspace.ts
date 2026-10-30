@@ -67,7 +67,7 @@ export const VITE_PREDEV_MESSAGE =
  * viteScriptMessage(['the operator &&']) // => 'The dev script is outside what Codebook starts: the operator &&. Accepted: …'
  */
 export function viteScriptMessage(refused: readonly string[]): string {
-  return `The dev script is outside what Codebook starts: ${refused.join('; ')}. Accepted: [NAME=value ...] vite [dev|serve] [--host] [--open] [--port N] [--mode M] [--config F].`
+  return `The dev script is outside what Codebook starts: ${refused.join('; ')}. Accepted: [NAME=value ...] vite [dev|serve] [--host] [--open] [--port N] [--mode M] [--config F] (--config a file inside the package root).`
 }
 
 /** What a workspace that can run on `vite-dev` provides. */
@@ -165,7 +165,7 @@ export async function assessViteWorkspace(
     throw viteRefusal('VITE_UNSUPPORTED', VITE_NO_DEV_SCRIPT_MESSAGE)
   if (scripts.predev !== undefined)
     throw viteRefusal('VITE_UNSUPPORTED', VITE_PREDEV_MESSAGE)
-  const reading = parseViteDevScript(devScript)
+  const reading = parseViteDevScript(devScript, workspace)
   if (!reading.accepted)
     throw viteRefusal('VITE_UNSUPPORTED', viteScriptMessage(reading.refused))
   return { installation, script: reading.script }

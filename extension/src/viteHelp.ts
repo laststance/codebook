@@ -4,8 +4,11 @@ import {
   VITE_STOP_EXTENSIONS,
   VITE_SUPPORTED_MAJOR,
 } from './constants'
-import { ERROR_RECOVERY } from './errors'
-import { VITE_REFUSAL_CODES, viteHelpAnchor } from './viteRefusals'
+import {
+  VITE_REFUSAL_CODES,
+  viteHelpAnchor,
+  viteRecoveryOf,
+} from './viteRefusals'
 
 /**
  * A minimal valid `vite-dev` configuration, generic on purpose: every identity and hash is a placeholder the agent replaces with the value the step named in {@link VITE_QUICK_START_COPY_FROM} returned.
@@ -88,7 +91,7 @@ export function viteHelp() {
       supported: [
         `Vite major ${VITE_SUPPORTED_MAJOR}; its own engines.node range must include the Node that Codebook runs (Codebook: Node Executable). A .nvmrc or .node-version of the project is not honored.`,
         'A root app: the workspace root is the package root (a Vite app in a sub-folder, a packageRoot, is not supported yet).',
-        'A dev script of the form [NAME=value ...] vite [dev|serve] [--host] [--open] [--port N] [--mode M] [--config F]; --port, --mode and --config (also written --port=N) are forwarded to Vite as the script would, --host and --open are ignored (Codebook binds 127.0.0.1 and opens no browser of its own). Codebook never runs the dev script itself.',
+        'A dev script of the form [NAME=value ...] vite [dev|serve] [--host] [--open] [--port N] [--mode M] [--config F] with --config naming a file inside the package root; --port, --mode and --config (also written --port=N) are forwarded to Vite as the script would, --host and --open are ignored (Codebook binds 127.0.0.1 and opens no browser of its own). Codebook never runs the dev script itself.',
         `Stops in JavaScript or TypeScript files under the package root (${VITE_STOP_EXTENSIONS.join(', ')}) that the entry page loads.`,
         'Browser stops only.',
       ],
@@ -101,11 +104,11 @@ export function viteHelp() {
         'A page that reloads after the declared inputs were written: the run ends and the click is not resent.',
       ],
     },
-    viteFirstRun: `The first run of a project can be slower than later ones while Vite pre-bundles dependencies; preparation has ${setupSeconds} s in all. A run writes Vite's dependency cache (the resolved cacheDir, node_modules/.vite by default) and a transient vite.config.*.timestamp-*.mjs file that Vite removes (Codebook removes one left by a forced stop). Codebook writes nothing else into the repository.`,
+    viteFirstRun: `The first run of a project can be slower than later ones while Vite pre-bundles dependencies; preparation has ${setupSeconds} s in all. A run writes Vite's dependency cache (the resolved cacheDir, node_modules/.vite by default) and a transient vite.config.*.timestamp-*.mjs file that Vite removes (Codebook removes one left by a forced stop, also in the nearest node_modules/.vite-temp folder where Vite 8 writes it). Codebook writes nothing else into the repository.`,
     viteRefusals: Object.fromEntries(
       VITE_REFUSAL_CODES.map((code) => [
         code,
-        { anchor: viteHelpAnchor(code), recovery: ERROR_RECOVERY[code] },
+        { anchor: viteHelpAnchor(code), recovery: viteRecoveryOf(code) },
       ]),
     ),
   }

@@ -187,7 +187,12 @@ async function normalizeServedMap(
       `the inline map of ${address.url} does not name the stop's file exactly once`,
     )
   const retained = map.sourcesContent?.[matches[0]!]
-  if (retained !== null && retained !== undefined && retained !== sourceText)
+  // Without retained text nothing proves the JavaScript came from the file on disk
+  if (retained === null || retained === undefined)
+    refuse(
+      `the inline map of ${address.url} carries no source text for the stop's file`,
+    )
+  if (retained !== sourceText)
     refuse(
       `the inline map of ${address.url} carries source text that differs from the file`,
     )

@@ -1,3 +1,5 @@
+import { isAbsolute, relative, resolve, sep } from 'node:path'
+
 /** What an accepted `dev` script asks of Vite, as {@link parseViteDevScript} reads it. */
 export type ViteDevScript = {
   /** Leading `NAME=value` assignments, passed to the launcher as an environment object and never through a shell. */
@@ -33,7 +35,15 @@ const KNOWN_RUNNER_WORDS = new Set([
 ])
 
 /** Characters that mean shell syntax: expansion, quoting, globbing, redirection, grouping or escape. */
-const SHELL_SYNTAX_CHARACTERS = /[$`'"*?[\]{}<>&;|()\\!#]/
+const SHELL_SYNTAX_CHARACTERS = /[$`'"*?[\]{}<>&;|()\\!#%]/
+
+/** A `~` the shell expands: at the start of a word or right after `=` or `:` (an assignment or `--option=` value). */
+const TILDE_EXPANSION = /(^|[=:])~/
+
+/** Whether a word or value holds shell syntax: a syntax character (`%` is Windows `cmd` expansion) or a tilde the shell would expand. */
+function hasShellSyntax(text: string): boolean {
+  return SHELL_SYNTAX_CHARACTERS.test(text) || TILDE_EXPANSION.test(text)
+}
 
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/
 
@@ -54,7 +64,11 @@ type Reading = {
 function describeSyntax(word: string, role: string): string {
   const characters = [
     ...new Set(
-      [...word].filter((character) => SHELL_SYNTAX_CHARACTERS.test(character)),
+      [...word].filter(
+        (character) =>
+          SHELL_SYNTAX_CHARACTERS.test(character) ||
+          (character === '~' && TILDE_EXPANSION.test(word)),
+      ),
     ),
   ].join(' ')
   return `${role} with shell syntax (${characters})`
@@ -65,7 +79,7 @@ function syntaxRefusalOf(word: string | undefined): string | undefined {
   if (word === undefined) return undefined
   if (OPERATOR_WORDS.has(word)) return `the operator ${word}`
   if (word === '--') return 'the argument separator --'
-  if (SHELL_SYNTAX_CHARACTERS.test(word)) return describeSyntax(word, 'a word')
+  if (hasShellSyntax(word)) return describeSyntax(word, 'a word')
   return undefined
 }
 
@@ -91,7 +105,7 @@ function readAssignments(
     const word = words[index]!
     const equals = word.indexOf('=')
     const value = word.slice(equals + 1)
-    if (SHELL_SYNTAX_CHARACTERS.test(value))
+    if (hasShellSyntax(value) || value.startsWith('~'))
       refused.push(describeSyntax(value, 'an assignment value'))
     else assignments[word.slice(0, equals)] = value
     index += 1
@@ -101,7 +115,7 @@ function readAssignments(
 
 /** Stores a forwarded option's plain value, or refuses it. */
 function storeForwarded(reading: Reading, name: string, value: string): void {
-  if (!value || SHELL_SYNTAX_CHARACTERS.test(value)) {
+  if (!value || hasShellSyntax(value) || value.startsWith('~')) {
     reading.refused.push(`the option ${name} without a plain value`)
     return
   }
@@ -155,6 +169,7 @@ function readOptions(reading: Reading): void {
  * A refusal lists every refused element at once and never contains an assignment value, an operand or an unknown option's value.
  *
  * @param script - The text of `scripts.dev`.
+ * @param packageRoot - The package root; when given, a `--config` that resolves outside it is refused, so the transient-file cleanup never reaches outside the workspace.
  * @returns
  * - `accepted: true` with the assignments, subcommand and forwarded options
  * - `accepted: false` with each refused element: grammar words, option names and character classes only
@@ -162,7 +177,10 @@ function readOptions(reading: Reading): void {
  * parseViteDevScript('VITE_X=1 vite dev --port 3010') // => { accepted: true, script: { assignments: { VITE_X: '1' }, subcommand: 'dev', port: 3010, … } }
  * parseViteDevScript('cross-env A=b vite && echo') // => { accepted: false, refused: ['the command word cross-env', 'the operator &&'] }
  */
-export function parseViteDevScript(script: string): ViteDevScriptReading {
+export function parseViteDevScript(
+  script: string,
+  packageRoot?: string,
+): ViteDevScriptReading {
   const words = script.split(/\s+/).filter(Boolean)
   const assignments: Record<string, string> = {}
   const reading: Reading = { words, index: 0, refused: [], forwarded: {} }
@@ -182,12 +200,21 @@ export function parseViteDevScript(script: string): ViteDevScriptReading {
     written === 'dev' || written === 'serve' ? written : undefined
   if (subcommand) reading.index += 1
   readOptions(reading)
+  const { configFile } = reading.forwarded
+  if (packageRoot && configFile && isOutsideRoot(packageRoot, configFile))
+    reading.refused.push('the option --config outside the package root')
   if (reading.refused.length)
     return { accepted: false, refused: [...new Set(reading.refused)] }
   return {
     accepted: true,
     script: { assignments, subcommand, ...spreadForwarded(reading.forwarded) },
   }
+}
+
+/** Whether a `--config` path resolves outside the package root (an absolute path elsewhere or a `..` climb). */
+function isOutsideRoot(packageRoot: string, configFile: string): boolean {
+  const path = relative(packageRoot, resolve(packageRoot, configFile))
+  return path === '..' || path.startsWith(`..${sep}`) || isAbsolute(path)
 }
 
 /** Gives every forwarded option a key, absent ones as `undefined`. */

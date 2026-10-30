@@ -81,32 +81,65 @@ async function readNextReadiness(
         'Install the selected workspace dependencies, including Next, before using next-dev-webpack.',
       ],
     }
-  const version = await readFile(
+  const text = await readFile(
     join(workspace, 'node_modules/next/package.json'),
     'utf8',
-  ).then(
-    (text) => nextPackageSchema.parse(JSON.parse(text)).version,
+  ).catch(() => undefined)
+  if (text === undefined) return { ready: true, missing: [] }
+  // A manifest that does not parse is Next's failure alone: it never rejects the whole report
+  const manifest = (() => {
+    try {
+      return nextPackageSchema.parse(JSON.parse(text))
+    } catch {
+      return undefined
+    }
+  })()
+  if (!manifest)
+    return {
+      ready: false,
+      missing: [
+        'node_modules/next/package.json is not a valid package manifest. Reinstall the workspace dependencies before using next-dev-webpack.',
+      ],
+    }
+  return { ready: true, missing: [], version: manifest.version }
+}
+
+/** Reads the scripts of the workspace's package.json: the scripts, or the sentence for a file that is unreadable JSON (never its contents); no file reads as no scripts. */
+async function readPackageScripts(
+  workspace: string,
+): Promise<{ scripts: Record<string, unknown> } | { problem: string }> {
+  const text = await readFile(join(workspace, 'package.json'), 'utf8').catch(
     () => undefined,
   )
-  return { ready: true, missing: [], ...(version ? { version } : {}) }
+  if (text === undefined) return { scripts: {} }
+  try {
+    return { scripts: scriptsSchema.parse(JSON.parse(text)).scripts ?? {} }
+  } catch (error) {
+    const reason =
+      error instanceof SyntaxError
+        ? 'is not valid JSON'
+        : 'has no valid scripts'
+    return {
+      problem: `package.json could not be read: it ${reason}. Fix it so Codebook can read the dev script.`,
+    }
+  }
 }
 
 /** Reads the `dev` script state and the sentences it adds to `missing`. */
 async function readViteScript(
   workspace: string,
 ): Promise<{ devScript: ViteDevScriptReadiness; missing: string[] }> {
-  const scripts = await readFile(join(workspace, 'package.json'), 'utf8').then(
-    (text): Record<string, unknown> =>
-      scriptsSchema.parse(JSON.parse(text)).scripts ?? {},
-    (): Record<string, unknown> => ({}),
-  )
   const missing: string[] = []
+  const read = await readPackageScripts(workspace)
+  if ('problem' in read)
+    return { devScript: { form: 'absent' }, missing: [read.problem] }
+  const { scripts } = read
   if (scripts.predev !== undefined) missing.push(VITE_PREDEV_MESSAGE)
   if (typeof scripts.dev !== 'string') {
     missing.push(VITE_NO_DEV_SCRIPT_MESSAGE)
     return { devScript: { form: 'absent' }, missing }
   }
-  const reading = parseViteDevScript(scripts.dev)
+  const reading = parseViteDevScript(scripts.dev, workspace)
   if (reading.accepted) return { devScript: { form: 'accepted' }, missing }
   missing.push(viteScriptMessage(reading.refused))
   return {
@@ -122,7 +155,9 @@ async function readViteReadiness(
   signal: AbortSignal,
 ): Promise<ViteAdapterReadiness> {
   const lookup = await resolveViteInstallation(workspace)
-  if (!lookup.found)
+  if (!lookup.found) {
+    // A malformed package.json also stops Node's resolution, so name it beside the install sentence
+    const read = await readPackageScripts(workspace)
     return {
       ready: false,
       installed: false,
@@ -132,8 +167,10 @@ async function readViteReadiness(
         lookup.reason === 'yarn-pnp'
           ? VITE_PNP_MESSAGE
           : 'Install the workspace dependencies, including vite, before using vite-dev (the vite package does not resolve from the package root).',
+        ...('problem' in read ? [read.problem] : []),
       ],
     }
+  }
   const { installation } = lookup
   const missing: string[] = []
   const supported = installation.major === VITE_SUPPORTED_MAJOR

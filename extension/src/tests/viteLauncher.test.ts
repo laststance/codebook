@@ -11,6 +11,10 @@ import type {
 import { StudyError } from '../errors'
 import { assessViteWorkspace } from '../utils/assessViteWorkspace'
 import { launchViteDevelopmentServer } from '../utils/launchViteDevelopmentServer'
+import {
+  listViteTimestampFiles,
+  removeNewViteTimestampFiles,
+} from '../utils/viteConfigTimestampFiles'
 import { vitePortRefusal } from '../utils/vitePortRefusal'
 
 import {
@@ -459,4 +463,25 @@ test('a config that calls process.send does not break the launcher handshake', a
   const result = await run.started
   // Assert
   assert.equal(result.port, port)
+})
+
+// Value: protects=the Vite 8 transient config in node_modules/.vite-temp is snapshotted and cleaned; fails_when=only the folder beside the config is checked; why_new=Vite 8 writes the bundle into the nearest node_modules; seam=none; no_claim=a real Vite 8 run
+test('removes only the transient config files that appeared in node_modules/.vite-temp', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context, {})
+  const temp = join(repository.root, 'node_modules/.vite-temp')
+  await mkdir(temp, { recursive: true })
+  const old = join(temp, 'vite.config.ts.timestamp-1-aa.mjs')
+  const fresh = join(temp, 'vite.config.ts.timestamp-1730000000-abc.mjs')
+  const other = join(temp, 'unrelated.mjs')
+  await writeFile(old, '')
+  await writeFile(other, '')
+  const before = await listViteTimestampFiles(repository.root)
+  await writeFile(fresh, '')
+  // Act
+  await removeNewViteTimestampFiles(repository.root, before)
+  // Assert
+  await assert.rejects(access(fresh))
+  await access(old)
+  await access(other)
 })

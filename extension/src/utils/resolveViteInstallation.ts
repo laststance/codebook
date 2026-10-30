@@ -4,6 +4,9 @@ import { dirname, join, resolve } from 'node:path'
 
 import { z } from 'zod'
 
+import { VITE_VERSION_MAX_CHARS } from '../constants'
+import { viteRefusal } from '../viteRefusals'
+
 const vitePackageSchema = z.object({
   version: z.string(),
   engines: z.object({ node: z.string().optional() }).optional(),
@@ -11,6 +14,9 @@ const vitePackageSchema = z.object({
   module: z.string().optional(),
   main: z.string().optional(),
 })
+
+/** A semver-like version: three numeric parts with an optional prerelease or build suffix. */
+const SEMVER_LIKE = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?$/
 
 /** What the app's own `vite` package says about itself. */
 export type ViteInstallation = {
@@ -48,7 +54,7 @@ function importEntryOf(exported: unknown): string | undefined {
  *
  * @param workspace - The package root.
  * @returns The installation, or `yarn-pnp` / `not-installed` as the reason there is none.
- * @throws When `vite/package.json` lacks a version or names no importable entry (the message names it); a manifest Node's resolution cannot parse fails that resolution first and reads as `not-installed`.
+ * @throws `VITE_UNSUPPORTED` when the `vite/package.json` version is not semver-like or is longer than {@link VITE_VERSION_MAX_CHARS} (the study records it, so it must fit the study schema); an error when it lacks a version or names no importable entry (the message names it); a manifest Node's resolution cannot parse fails that resolution first and reads as `not-installed`.
  * @example
  * await resolveViteInstallation('/repo') // => { found: true, installation: { version: '8.3.5', major: 8, … } }
  */
@@ -71,6 +77,14 @@ export async function resolveViteInstallation(
   const manifest = vitePackageSchema.parse(
     JSON.parse(await readFile(packagePath, 'utf8')),
   )
+  if (
+    manifest.version.length > VITE_VERSION_MAX_CHARS ||
+    !SEMVER_LIKE.test(manifest.version)
+  )
+    throw viteRefusal(
+      'VITE_UNSUPPORTED',
+      `The installed vite/package.json version is not a semantic version of at most ${VITE_VERSION_MAX_CHARS} characters; reinstall the workspace dependencies so vite reports a real version.`,
+    )
   const directory = dirname(packagePath)
   const exported =
     typeof manifest.exports === 'object' && manifest.exports !== null
