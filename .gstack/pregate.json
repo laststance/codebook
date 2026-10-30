@@ -191,10 +191,11 @@
       "finding": "creds.basic_auth_url",
       "paths": [
         "extension/src/tests/viteLauncher.test.ts",
-        "extension/src/tests/viteWorkspace.test.ts"
+        "extension/src/tests/viteWorkspace.test.ts",
+        ".gstack-redact-allowlist"
       ],
       "pattern": "https[:]//u(?:ser)?:(?:plainsecretpw|pw|\\[masked\\])@[a-z.]+",
-      "reason": "dummy basic-auth URLs the Vite settings and masking tests feed in or expect masked; never a credential"
+      "reason": "dummy basic-auth URLs the Vite settings and masking tests feed in or expect masked, and the pre-push guard's allowlist that names them; never a credential"
     }
   ]
 }
