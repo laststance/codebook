@@ -17,6 +17,7 @@ import {
   VITE_ADAPTER_MISROUTE_MESSAGE,
   VITE_NODE_NOT_CONFIGURED_MESSAGE,
   VITE_NO_DEV_SCRIPT_MESSAGE,
+  VITE_NOT_AVAILABLE_FOR_NEXT_MESSAGE,
   VITE_NOT_INSTALLED_MESSAGE,
   VITE_PNP_MESSAGE,
   VITE_PREDEV_MESSAGE,
@@ -44,6 +45,8 @@ export type ViteWorkspaceGap = {
     'ADAPTER_MISROUTE' | 'VITE_UNSUPPORTED' | 'PREREQUISITE_MISSING'
   >
   message: string
+  /** The sentence `codebook_status` reports instead of {@link ViteWorkspaceGap.message}, when the start's wording presumes a choice nobody made at status time. */
+  statusMessage?: string
 }
 
 /** What looking at a workspace for `vite-dev` found. */
@@ -101,6 +104,7 @@ async function unresolvedGapsOf(
     gaps.push({
       code: 'ADAPTER_MISROUTE',
       message: VITE_ADAPTER_MISROUTE_MESSAGE,
+      statusMessage: VITE_NOT_AVAILABLE_FOR_NEXT_MESSAGE,
     })
   else
     gaps.push({

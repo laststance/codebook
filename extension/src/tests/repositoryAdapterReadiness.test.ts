@@ -77,7 +77,7 @@ test('a Next workspace reports next-dev-webpack ready and vite-dev missing the v
   assert.equal(readiness['vite-dev'].ready, false)
   assert.equal(readiness['vite-dev'].installed, false)
   assert.deepEqual(readiness['vite-dev'].missing, [
-    'vite-dev was chosen, but this workspace has Next and no vite package: use adapter "next-dev-webpack".',
+    'This workspace has Next and no vite package, so vite-dev is not available here; use next-dev-webpack.',
   ])
 })
 

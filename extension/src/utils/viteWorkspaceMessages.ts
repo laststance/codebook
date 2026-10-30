@@ -12,6 +12,10 @@ export const VITE_NOT_INSTALLED_MESSAGE =
 export const VITE_ADAPTER_MISROUTE_MESSAGE =
   'vite-dev was chosen, but this workspace has Next and no vite package: use adapter "next-dev-webpack".'
 
+/** The sentence `codebook_status` gives for a Next-only workspace: at status time nobody chose `vite-dev`, so it says what is available instead of what was chosen. */
+export const VITE_NOT_AVAILABLE_FOR_NEXT_MESSAGE =
+  'This workspace has Next and no vite package, so vite-dev is not available here; use next-dev-webpack.'
+
 /** The sentence for an `engines.node` check that needs the configured Node executable and has none. */
 export const VITE_NODE_NOT_CONFIGURED_MESSAGE =
   'The Vite engines.node check needs the configured Node executable (codebook.nodeExecutable).'

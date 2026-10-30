@@ -99,7 +99,7 @@ async function readViteReadiness(
     false,
   )
   const { installation } = reading
-  const missing = reading.gaps.map((gap) => gap.message)
+  const missing = reading.gaps.map((gap) => gap.statusMessage ?? gap.message)
   return {
     ready: missing.length === 0,
     installed: installation !== undefined,
