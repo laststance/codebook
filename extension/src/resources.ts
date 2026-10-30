@@ -52,6 +52,7 @@ import { readServerHistoryResource } from './utils/readServerHistoryResource'
 import { secondsText } from './utils/secondsText'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
 import { withKnownNodeHistory } from './utils/withKnownNodeHistory'
+import { viteHelp } from './viteHelp'
 
 /** The active-progress deadline in the whole seconds the repository-browser help names, so the help follows {@link ACTIVE_TIMEOUT_MS}. */
 const ACTIVE_TIMEOUT_SECONDS = ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND
@@ -223,6 +224,8 @@ export async function readResource(
   }
   if (uri === 'codebook://help/repository-browser')
     return json({
+      // The Vite quick start, support table and refusal anchors come first (API 1.11).
+      ...viteHelp(),
       profile: CONFIGURED_PROFILE,
       configurationSchema: z.toJSONSchema(retainedRepositoryConfigSchema, {
         io: 'input',

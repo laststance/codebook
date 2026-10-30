@@ -96,8 +96,9 @@ async function readViteScript(
   workspace: string,
 ): Promise<{ devScript: ViteDevScriptReadiness; missing: string[] }> {
   const scripts = await readFile(join(workspace, 'package.json'), 'utf8').then(
-    (text) => scriptsSchema.parse(JSON.parse(text)).scripts ?? {},
-    () => ({}),
+    (text): Record<string, unknown> =>
+      scriptsSchema.parse(JSON.parse(text)).scripts ?? {},
+    (): Record<string, unknown> => ({}),
   )
   const missing: string[] = []
   if (scripts.predev !== undefined) missing.push(VITE_PREDEV_MESSAGE)
