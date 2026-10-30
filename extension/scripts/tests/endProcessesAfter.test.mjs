@@ -11,6 +11,7 @@ import {
   endProcessesAfter,
   processRuns,
   readNotedPids,
+  readProcess,
 } from './utils/endProcessesAfter.mjs'
 
 /** Starts a Node process that waits until it is killed, and answers it once it runs. */
@@ -135,3 +136,23 @@ test(
     assert.match(String(failure), /EACCES/)
   },
 )
+
+// Value: protects=a leaked process from counting as ended when `ps` fails to run (EAGAIN, EMFILE, ENOMEM); fails_when=every `ps` failure but ENOENT reads as "no such process"; why_new=Cycle 0064 pt3 review (CodeRabbit minor); seam=readProcess with an injected exec that throws; no_claim=a real `ps` failure
+test('a ps failure other than exit status 1 is unreadable, so a live process is not taken for gone', () => {
+  // Arrange
+  const failWith = (properties) => () => {
+    throw Object.assign(new Error('ps failed'), properties)
+  }
+
+  // Act
+  const noProcess = readProcess(4242, failWith({ status: 1 }))
+  const noPs = readProcess(4242, failWith({ code: 'ENOENT' }))
+  const outOfProcesses = readProcess(4242, failWith({ code: 'EAGAIN' }))
+  const crashed = readProcess(4242, failWith({ status: 2 }))
+
+  // Assert
+  assert.equal(noProcess, undefined)
+  assert.equal(noPs, 'unreadable')
+  assert.equal(outOfProcesses, 'unreadable')
+  assert.equal(crashed, 'unreadable')
+})

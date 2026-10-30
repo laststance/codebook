@@ -11,23 +11,20 @@ const MAX_PARENT_HOPS = 64
 /**
  * Reads the state, the parent id and the age of one process from `ps`.
  * @param pid - The process id.
- * @returns `{ state, parentPid, ageSeconds }`; `undefined` when no process has this id; `'unreadable'` where `ps` cannot answer (Windows).
+ * @param exec - Runs `ps` ({@link execFileSync} by default); tests of this helper replace it to make `ps` fail.
+ * @returns `{ state, parentPid, ageSeconds }`; `undefined` when `ps` exits with status 1 (no process has this id); `'unreadable'` where `ps` cannot answer (no `ps`, or it fails to run).
  * @example readProcess(process.pid) // => { state: 'S+', parentPid: 4100, ageSeconds: 3 }
  */
-function readProcess(pid) {
+export function readProcess(pid, exec = execFileSync) {
   let printed
   try {
-    printed = execFileSync(
-      'ps',
-      ['-o', 'stat=,ppid=,etime=', '-p', String(pid)],
-      {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-      },
-    )
+    printed = exec('ps', ['-o', 'stat=,ppid=,etime=', '-p', String(pid)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
   } catch (error) {
-    // `ps` exits with 1 when no process has this id; a system without `ps` cannot say.
-    return error.code === 'ENOENT' ? 'unreadable' : undefined
+    // `ps` exits with status 1 only when no process has this id; any other failure (no `ps`, EAGAIN, EMFILE, ENOMEM...) cannot say, and must not read as "gone".
+    return error?.status === 1 ? undefined : 'unreadable'
   }
   const [state, parentText, elapsed] = printed.trim().split(/\s+/)
   if (!state || !elapsed) return undefined

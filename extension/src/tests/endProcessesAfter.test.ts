@@ -12,6 +12,7 @@ import { isProcessGone } from '../utils/isProcessGone'
 import {
   endProcesses,
   endProcessesAfter,
+  readProcess,
   readProcessIdFiles,
 } from './utils/endProcessesAfter'
 
@@ -105,13 +106,20 @@ test(
 test(
   'a running process that is not a descendant of the test is not signalled',
   { skip: process.platform === 'win32' },
-  async () => {
-    // Arrange: the test runner's parent runs and is no descendant of this process.
+  async (context) => {
+    // Arrange: a real child whose reported parent is an unrelated process, started long before the test.
+    const child = await startWaitingProcess()
+    context.after(() => child.kill('SIGKILL'))
     const signalled: number[] = []
 
     // Act
-    const survivors = await endProcesses([process.ppid], {
+    const survivors = await endProcesses([child.pid!], {
       group: true,
+      readProcessInfo: () => ({
+        state: 'S',
+        parentPid: 424242,
+        ageSeconds: 86_400,
+      }),
       signalProcess: (pid) => {
         signalled.push(pid)
       },
@@ -243,3 +251,22 @@ test(
     assert.match(String(failure), /EACCES/)
   },
 )
+
+test('a ps failure other than exit status 1 is unreadable, so a live process is not taken for gone', () => {
+  // Arrange
+  const failWith = (properties: object) => () => {
+    throw Object.assign(new Error('ps failed'), properties)
+  }
+
+  // Act
+  const noProcess = readProcess(4242, failWith({ status: 1 }))
+  const noPs = readProcess(4242, failWith({ code: 'ENOENT' }))
+  const outOfProcesses = readProcess(4242, failWith({ code: 'EAGAIN' }))
+  const crashed = readProcess(4242, failWith({ status: 2 }))
+
+  // Assert
+  assert.equal(noProcess, undefined)
+  assert.equal(noPs, 'unreadable')
+  assert.equal(outOfProcesses, 'unreadable')
+  assert.equal(crashed, 'unreadable')
+})

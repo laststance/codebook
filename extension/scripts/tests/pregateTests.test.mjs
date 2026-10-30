@@ -1934,17 +1934,16 @@ function killTreeAfter(context) {
   const timer = setInterval(() => {
     for (const pid of listProcessIdsUnder(process.pid)) found.add(pid)
   }, 200)
-  context.after(async () => {
-    clearInterval(timer)
-    for (const pid of listProcessIdsUnder(process.pid)) found.add(pid)
-    killProcessIds([...found])
-    // What was found must be gone, or the test left a process behind.
-    assert.deepEqual(
-      await endProcesses([...found]),
-      [],
-      'processes of the test outlived it',
-    )
-  })
+  // Only ids confirmed as the test's are killed: a sampled id may have been recycled since.
+  endProcessesAfter(
+    context,
+    async () => {
+      clearInterval(timer)
+      for (const pid of listProcessIdsUnder(process.pid)) found.add(pid)
+      return [...found]
+    },
+    killProcessIds,
+  )
 }
 
 // Value: protects=the pre-gate from a build that leaves a process behind: the build is ended at its limit together with everything it started, also a process that ignores SIGTERM, so no process of the build holds the checkout or the CPU after the lane has failed; fails_when=only the build's own process is killed (`spawnSync`'s `killSignal` ends one process), or the tree gets a SIGTERM that a process ignores, so the process the build started runs on; why_new=Cycle 0048 task 134 (Codex adversarial, native adversarial: the build's SIGKILL ended build-fast.mjs and not what it started), extended by task 150 (the build no longer has a group of its own, so its tree is read from the process table); seam=run-pregate-tests.mjs started as a process in a fixture repository whose stand-in build starts a second process that ignores SIGTERM and never ends; no_claim=Windows (the Windows path is covered below), and what the real build starts (it starts nothing today)
@@ -2764,17 +2763,28 @@ test(
   },
 )
 
-// Value: protects=a test's clean-up from killing an unrelated process whose id the test once noted (a recycled id, or with a process group the whole group); fails_when=endProcesses signals every running id it is given; why_new=Cycle 0064 pt3 review (OCR low); seam=endProcesses with a running process that is neither a descendant of the test process nor an orphan started after the test began (its own parent process); no_claim=an orphan that started after the test began, which is taken for the test's
+// Value: protects=a test's clean-up from killing an unrelated process whose id the test once noted (a recycled id, or with a process group the whole group); fails_when=endProcesses signals every running id it is given; why_new=Cycle 0064 pt3 review (OCR low, CodeRabbit trivial); seam=endProcesses with a real running process whose injected facts say it has an unrelated, old parent (neither a descendant of the test process nor an orphan started after the test began); no_claim=an orphan that started after the test began, which is taken for the test's
 test(
   'a running process that is not a descendant of the test is not signalled',
   { skip: process.platform === 'win32' },
-  async () => {
-    // Arrange: the test runner's parent runs and is no descendant of this process.
+  async (context) => {
+    // Arrange: a real child whose reported parent is an unrelated process, started long before the test.
+    const child = spawn(
+      process.execPath,
+      ['-e', 'setInterval(() => {}, 1_000)'],
+      { stdio: 'ignore' },
+    )
+    context.after(() => child.kill('SIGKILL'))
     const signalled = []
 
     // Act
-    const survivors = await endProcesses([process.ppid], {
+    const survivors = await endProcesses([child.pid], {
       kill: (pid) => signalled.push(pid),
+      readProcessInfo: () => ({
+        state: 'S',
+        parentPid: 424242,
+        ageSeconds: 86_400,
+      }),
       waitMs: 100,
     })
 

@@ -35,7 +35,7 @@ import { readTestTimings } from '../utils/readTestTimings.mjs'
 import { runTestInvocation } from '../utils/runTestInvocation.mjs'
 import { takeEndStep } from '../utils/takeEndStep.mjs'
 
-import { endProcesses, endProcessesAfter } from './utils/endProcessesAfter.mjs'
+import { endProcessesAfter } from './utils/endProcessesAfter.mjs'
 
 /** Tells whether `node --test` would run a test of this name in the given planned call, following its documented name and skip pattern rules. @example runsTest({ files: ['a.test.js'], skipPattern: '/^(?:x)$/' }, 'y') // => true */
 function runsTest(invocation, name) {
@@ -1978,17 +1978,16 @@ function killNotedProcessesAfter(context, pidsPath) {
   }
   // gstack-timing-ok: a sampling interval of the clean-up, not a wait of the test; a process that starts and ends between two samples has ended by itself.
   const timer = setInterval(() => look().catch(() => {}), 200)
-  context.after(async () => {
-    clearInterval(timer)
-    await look().catch(() => {})
-    killProcessIds([...found])
-    // What was found must be gone, or the test left a process behind.
-    assert.deepEqual(
-      await endProcesses([...found]),
-      [],
-      'processes of the test outlived it',
-    )
-  })
+  // Only ids confirmed as the test's are killed: a sampled id may have been recycled since.
+  endProcessesAfter(
+    context,
+    async () => {
+      clearInterval(timer)
+      await look().catch(() => {})
+      return [...found]
+    },
+    killProcessIds,
+  )
 }
 
 /** Starts a process that starts a grandchild, both waiting, and answers their ids; both are ended when the test ends. @example const { childPid, grandchildPid } = await startTwoProcesses(context) */

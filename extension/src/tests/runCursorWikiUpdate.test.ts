@@ -41,13 +41,19 @@ async function installAgent(agentScript: string): Promise<{
       if (previousHome === undefined) delete process.env.HOME
       else process.env.HOME = previousHome
       // A stand-in that noted its pid (and its child's) is ended before its folder goes, also when the run's own bound has not ended it yet.
-      await endProcesses(
-        await readProcessIdFiles([
-          join(projectRoot, 'agent.pid'),
-          join(projectRoot, 'child.pid'),
-        ]),
-      )
-      await rm(privateHome, { recursive: true, force: true })
+      try {
+        const survivors = await endProcesses(
+          await readProcessIdFiles([
+            join(projectRoot, 'agent.pid'),
+            join(projectRoot, 'child.pid'),
+          ]),
+        )
+        // A stand-in that outlives the test (or whose ownership is unconfirmed) must fail it.
+        assert.deepEqual(survivors, [], 'the stand-in agent outlived the test')
+      } finally {
+        // The folder goes even when the pid files cannot be read.
+        await rm(privateHome, { recursive: true, force: true })
+      }
     },
   }
 }

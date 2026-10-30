@@ -10275,7 +10275,7 @@ export class StudyWorkspace {
    * @param runId - The run whose lease this is; only its own stop files are opened.
    * @returns Once every stop file is open outside the Application's group, or skipped.
    * @throws The signal's reason when the run was cancelled.
-   * @example await this.openRunStopFilesBesideApplication(panel, signal) // src/index.tsx is a kept tab in column 2
+   * @example await this.openRunStopFilesBesideApplication(panel, signal, runId) // src/index.tsx is a kept tab in column 2
    */
   private async openRunStopFilesBesideApplication(
     panel: vscode.WebviewPanel,
