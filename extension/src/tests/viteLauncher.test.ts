@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { access, mkdir, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -9,6 +9,7 @@ import type {
   DevelopmentServerStart,
 } from '../developmentServerAdapter'
 import { StudyError } from '../errors'
+import { readResource } from '../resources'
 import { assessViteWorkspace } from '../utils/assessViteWorkspace'
 import { awaitViteOptimizerIdle } from '../utils/awaitViteOptimizerIdle'
 import {
@@ -21,6 +22,8 @@ import {
 } from '../utils/viteConfigTimestampFiles'
 import { vitePortRefusal } from '../utils/vitePortRefusal'
 
+import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
+import { configuredServiceHarness } from './utils/configuredServiceHarness'
 import {
   createViteRepository,
   freePort,
@@ -51,11 +54,14 @@ async function startVite(
   const controller = new AbortController()
   const steps: string[] = []
   const declared: { port: number; source: string }[] = []
+  const records: { type: string; detail?: unknown }[] = []
   let app: DevelopmentApp | undefined
   const request: DevelopmentServerStart = {
     workspace: repository.root,
     node: process.execPath,
-    record: () => undefined,
+    record: (type, detail) => {
+      records.push({ type, detail })
+    },
     inspectServer: false,
     signal: controller.signal,
     alive: () => controller.signal.throwIfAborted(),
@@ -88,6 +94,7 @@ async function startVite(
     controller,
     steps,
     declared,
+    records,
     started,
     app: () => app!,
   }
@@ -666,4 +673,61 @@ test('the launcher answers the optimizer wait at once when Vite has no dependenc
   await awaitViteOptimizerIdle(run.app(), 10_000, run.controller.signal)
   // Assert
   assert.ok(Date.now() - startedAt < 1000)
+})
+
+// Value: protects=one .env secret never reaches any output of a Vite run (the refusal, the evidence journal, the kept study module, the run state and the MCP run resource text); fails_when=any channel stops masking the env-file values; why_new=the channels were only tested one by one; seam=the run harness stands in for the browser, the service harness for the editor, and the launcher mask feeds both; no_claim=debugger snapshot values of a variable that holds the secret
+test('a .env secret is masked in the refusal, the evidence journal, the kept study module, the run state and the MCP run resource text', async (context) => {
+  // Arrange
+  const secret = 'plainsecret1'
+  const runHarness = await configuredRuntimeHarness(context, undefined, [], {
+    adapter: 'vite-dev',
+    moduleJavascript: `const apiKey = "${secret}";`,
+    maskedValues: [secret],
+  })
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const port = await freePort()
+  const launch = await startVite(context, {
+    behavior: {
+      port,
+      logLines: [`leaked ${secret} here`],
+      exits: 3,
+    },
+    files: { '.env': `VITE_API_KEY=${secret}\n` },
+  })
+  // Act
+  const refusal = await refusalOf(launch.started)
+  // Closing the launcher journals its masked output tail as `application.closed`.
+  await launch.app().close()
+  await runHarness.run.prepare()
+  await runHarness.run.evidence.flush()
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'vite-secret',
+    configuration,
+  })
+  await service.record(receipt).preparation
+  runtimes[0]!.failures.push(refusal.message)
+  runtimes[0]!.status = 'failed'
+  const resource = await readResource(service, receipt.runUri)
+  // Assert
+  const keptModule = await readFile(
+    join(runHarness.run.evidence.directory, 'sealed-0-module.js'),
+    'utf8',
+  )
+  assert.ok('text' in resource)
+  const channels = {
+    refusal: refusal.message,
+    evidenceJournal: JSON.stringify(launch.records),
+    keptStudyModule: keptModule,
+    runState: JSON.stringify(runHarness.run.view()),
+    mcpRunResourceText: resource.text,
+  }
+  for (const [channel, text] of Object.entries(channels))
+    assert.equal(text.includes(secret), false, `${channel} shows the secret`)
+  assert.ok(refusal.message.includes('[masked]'))
+  assert.ok(channels.evidenceJournal.includes('[masked]'))
+  assert.ok(keptModule.includes('[masked]'))
+  assert.ok(resource.text.includes('[masked]'))
 })
