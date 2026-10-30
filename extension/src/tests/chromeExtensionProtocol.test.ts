@@ -227,7 +227,7 @@ test('the server announces chrome-extension in its instructions and serves its h
   })
   // Assert
   assert.equal(
-    instructions.startsWith('API 1.10. Call codebook_status first.'),
+    instructions.startsWith('API 1.11. Call codebook_status first.'),
     true,
   )
   assert.equal(instructions.includes('codebook://help/chrome-extension'), true)

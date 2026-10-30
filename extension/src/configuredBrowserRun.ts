@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { lstat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
 
 import type { DebugProtocol } from '@vscode/debugprotocol'
 import type { Protocol } from 'devtools-protocol'
@@ -34,10 +35,16 @@ import {
   REPOSITORY_RUN_TIMEOUT_MS,
   REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT,
   REPOSITORY_SETUP_TIMEOUT_MS,
+  VITE_PAGE_GENERATION_LIMIT,
+  VITE_PAGE_QUIET_MS,
   REPOSITORY_STACK_FRAME_LIMIT,
   REPOSITORY_UNOWNED_PAGE_PAUSE_LIMIT_MS,
   SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION,
 } from './constants'
+import type {
+  DevelopmentServerAdapter,
+  DevelopmentServerAdapterName,
+} from './developmentServerAdapter'
 import { StudyError } from './errors'
 import {
   OwnedBreakpointMovedError,
@@ -86,6 +93,7 @@ import {
   assertDevelopmentWorkspace,
   type DevelopmentLockIdentity,
 } from './utils/assertDevelopmentWorkspace'
+import { refuseViteMisroute } from './utils/assessViteWorkspace'
 import { boundColumnOfInstance } from './utils/boundColumnOfInstance'
 import {
   breakLocationLinesOnTheWay,
@@ -157,6 +165,94 @@ import {
   withUnannouncedPauses,
   type UnannouncedPausePlace,
 } from './utils/withUnannouncedPauses'
+import { VITE_DEV_ADAPTER } from './viteDevAdapter'
+import {
+  viteRefusal,
+  viteReloadText,
+  viteSetupDeadlineText,
+} from './viteRefusals'
+
+/**
+ * The Next webpack development server behind {@link DevelopmentServerAdapter}: today's workspace check, port reading, launch, `.next/dev` bundle sealing and webpack source-map paths, unchanged.
+ * Selected by {@link developmentServerAdapterOf} for `adapter: "next-dev-webpack"`.
+ */
+const NEXT_DEV_WEBPACK_ADAPTER: DevelopmentServerAdapter = {
+  name: 'next-dev-webpack',
+  async assertWorkspace(workspace, _node, signal) {
+    try {
+      await assertDevelopmentWorkspace(workspace, signal)
+    } catch (error) {
+      // A Vite app without Next is told which adapter to use instead of "install Next".
+      await refuseViteMisroute(workspace)
+      throw error
+    }
+  },
+  async start(request) {
+    const declaredPort = await readDeclaredDevelopmentPort(request.workspace)
+    request.onDeclaredPort(declaredPort)
+    await request.assertPortFree(declaredPort)
+    request.alive()
+    const app = launchDevelopmentServer(
+      request.workspace,
+      request.node,
+      request.record,
+      request.inspectServer,
+      declaredPort.port,
+    )
+    request.onApp(app)
+    return { app, port: declaredPort.port }
+  },
+  async readOwnedLock(workspace) {
+    // The lock's identity is read with exact numbers: a file id can be larger than a number holds exactly.
+    const developmentLock = await lstat(join(workspace, '.next/dev/lock'), {
+      bigint: true,
+    }).catch((error) => {
+      if (error.code === 'ENOENT') return undefined
+      throw error
+    })
+    if (developmentLock?.isFile() && !developmentLock.isSymbolicLink())
+      return { dev: developmentLock.dev, ino: developmentLock.ino }
+    return undefined
+  },
+  readBundle: (request) =>
+    readDevelopmentBundle(
+      request.workspace,
+      request.source,
+      request.signal,
+      request.entryPath,
+      request.execution,
+    ),
+  browserDebugFields: (workspace) => ({
+    webRoot: workspace,
+    sourceMaps: true,
+    sourceMapPathOverrides: { 'webpack://_N_E/./*': `${workspace}/*` },
+  }),
+  isScriptOfModule: (sealedUrl, announcedUrl) =>
+    sameScriptUrl(sealedUrl, announcedUrl),
+}
+
+/**
+ * Chooses the adapter record a configuration's `adapter` names, for {@link ConfiguredBrowserRun.prepareOwned}.
+ * @param name - The configuration's `adapter`.
+ * @returns The adapter record.
+ * @example
+ * ```ts
+ * developmentServerAdapterOf('next-dev-webpack').name // 'next-dev-webpack'
+ * ```
+ */
+function developmentServerAdapterOf(
+  name: DevelopmentServerAdapterName,
+): DevelopmentServerAdapter {
+  return DEVELOPMENT_SERVER_ADAPTERS[name]
+}
+
+const DEVELOPMENT_SERVER_ADAPTERS: Record<
+  DevelopmentServerAdapterName,
+  DevelopmentServerAdapter
+> = {
+  'next-dev-webpack': NEXT_DEV_WEBPACK_ADAPTER,
+  'vite-dev': VITE_DEV_ADAPTER,
+}
 
 interface ConfiguredBrowserOptions {
   directory: string
@@ -346,6 +442,20 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   >
   private app?: ReturnType<typeof launchDevelopmentServer>
   private ownedDevelopmentLock?: DevelopmentLockIdentity
+  /** The adapter of the configuration, chosen at the start of preparation. */
+  private adapter?: DevelopmentServerAdapter
+  /** The origin the owned server reported (`http://127.0.0.1:<port>`), which a served-module sealer fetches from. */
+  private ownedOrigin?: string
+  /** The setup step reached, named when the setup deadline expires. */
+  private setupStep = 'validating the project'
+  /** Whether the run asked its browser to open the entry page; only then is a page load a reload. */
+  private navigationRequested = false
+  /** Whether the first load of the entry page was seen. */
+  private firstNavigationSeen = false
+  /** Whether the initial inputs are being or were written, after which a page load ends the run. */
+  private inputsPrepared = false
+  /** How many reloads before the inputs started a new page generation (a Vite dependency-optimizer reload). */
+  private pageGeneration = 0
   private preparation?: Promise<void>
   private cleanupPromise?: Promise<void>
   private manifest?: ConfiguredRuntimeView['manifest']
@@ -413,6 +523,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private origin?: string
   /** Where the app's port was declared, reported beside the origin so a default is visible. */
   private portSource?: string
+  /** The Vite version the launcher reported, for a `vite-dev` run. */
+  private viteVersion?: string
   /** Codebook's listener on `[::1]:<port>` (D66), closed with the run. */
   private ipv6Forwarder?: Ipv6LoopbackForwarder
   /** Whether `[::1]` at the port is the run's own, so the origin checks accept it. */
@@ -513,7 +625,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       throw new Error('Repository preparation deadline already expired')
     this.progressDeadline(
       preparationDeadlineAt - now,
-      'Repository setup deadline exceeded',
+      this.definition.configuration.adapter === 'vite-dev'
+        ? () =>
+            viteSetupDeadlineText(this.setupStep, preparationDeadlineAt - now)
+        : 'Repository setup deadline exceeded',
     )
     this.runTimer = setTimeout(
       () =>
@@ -533,61 +648,71 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
     this.alive()
     await this.verifySources()
-    await assertDevelopmentWorkspace(this.options.workspace, this.abort.signal)
+    const adapter = developmentServerAdapterOf(
+      this.definition.configuration.adapter,
+    )
+    this.adapter = adapter
+    await adapter.assertWorkspace(
+      this.options.workspace,
+      this.options.node,
+      this.abort.signal,
+    )
     this.alive()
     const needsServer = configuredStops(this.definition.configuration).some(
       (stop) => stop.participant === 'server',
     )
     // The app runs on the port the project declares (its auth origin points there); a busy port refuses the start instead of moving the app.
-    const declaredPort = await readDeclaredDevelopmentPort(
-      this.options.workspace,
-    )
-    this.portSource = declaredPort.source
-    await assertDevelopmentPortFree(declaredPort, {
+    const started = await adapter.start({
+      workspace: this.options.workspace,
+      node: this.options.node,
+      record: (type, detail) => this.evidence.record(type, detail),
+      inspectServer: needsServer,
       signal: this.abort.signal,
+      alive: () => this.alive(),
+      assertPortFree: (declared, refuse) =>
+        assertDevelopmentPortFree(declared, {
+          signal: this.abort.signal,
+          ...(refuse ? { refuse } : {}),
+        }),
+      onStep: (step) => {
+        this.setupStep = step
+      },
+      onDeclaredPort: (declared) => {
+        this.portSource = declared.source
+      },
+      onApp: (app) => {
+        this.app = app
+      },
     })
-    this.alive()
-    this.app = launchDevelopmentServer(
-      this.options.workspace,
-      this.options.node,
-      (type, detail) => this.evidence.record(type, detail),
-      needsServer,
-      declaredPort.port,
-    )
+    this.viteVersion = started.viteVersion
+    const declaredPort = { port: started.port }
     // The server binds 127.0.0.1; the browser opens `localhost` at its port, the name the project's own origin settings use (D65).
-    this.origin = browserOriginOf(
-      await this.app.ready(
-        this.abort.signal,
-        this.definition.configuration.entryPath,
-      ),
+    this.setupStep = 'waiting for the server to answer the entry page'
+    this.ownedOrigin = await this.app!.ready(
+      this.abort.signal,
+      this.definition.configuration.entryPath,
     )
+    this.origin = browserOriginOf(this.ownedOrigin)
     // `localhost` may resolve to ::1: Codebook owns that endpoint for the whole run, or the host has none (D66).
     this.ipv6Forwarder = await startIpv6LoopbackForwarder(declaredPort.port)
     this.ownsIpv6Loopback = this.ipv6Forwarder !== undefined
     this.alive()
-    // The lock's identity is read with exact numbers: a file id can be larger than a number holds exactly.
-    const developmentLock = await lstat(
-      join(this.options.workspace, '.next/dev/lock'),
-      { bigint: true },
-    ).catch((error) => {
-      if (error.code === 'ENOENT') return undefined
-      throw error
-    })
-    if (developmentLock?.isFile() && !developmentLock.isSymbolicLink())
-      this.ownedDevelopmentLock = {
-        dev: developmentLock.dev,
-        ino: developmentLock.ino,
-      }
+    this.ownedDevelopmentLock = await adapter.readOwnedLock(
+      this.options.workspace,
+    )
+    this.setupStep = 'sealing the declared stops'
     for (const [index, stop] of configuredStops(
       this.definition.configuration,
     ).entries()) {
-      const acquired = await readDevelopmentBundle(
-        this.options.workspace,
-        stop.source,
-        this.abort.signal,
-        this.definition.configuration.entryPath,
-        stop.participant === 'server' ? 'server-action' : 'browser',
-      )
+      const acquired = await adapter.readBundle({
+        workspace: this.options.workspace,
+        source: stop.source,
+        signal: this.abort.signal,
+        entryPath: this.definition.configuration.entryPath ?? '/',
+        execution: stop.participant === 'server' ? 'server-action' : 'browser',
+        ownedOrigin: this.ownedOrigin,
+        record: (type, detail) => this.evidence.record(type, detail),
+      })
       this.alive()
       const verifier = createBundleVerifier(acquired.bundle),
         citation = this.definition.descriptor.anchors[stop.anchorIndex]!
@@ -655,6 +780,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       sourceHash: first.verifier.hashes.typescript,
       javascriptHash: first.verifier.hashes.javascript,
       mapHash: first.verifier.hashes.sourceMap,
+      // Only a Vite run names its version, so a Next manifest and its hash are what they were.
+      ...(this.viteVersion ? { viteVersion: this.viteVersion } : {}),
     }
     this.manifest = { ...bound, hash: sha256(JSON.stringify(bound)) }
     // Later stops are armed only in their turn, so a line that can never bind is refused here, before any application effect.
@@ -677,17 +804,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
     if (needsServer) await this.selectServer()
     this.alive()
+    this.setupStep = 'opening the browser'
     await this.browser.launch(
       {
         name: `codebook repository ${this.id}`,
         type: 'pwa-chrome',
         request: 'launch',
         url: 'about:blank',
-        webRoot: this.options.workspace,
-        sourceMaps: true,
-        sourceMapPathOverrides: {
-          'webpack://_N_E/./*': `${this.options.workspace}/*`,
-        },
+        ...adapter.browserDebugFields(this.options.workspace),
         timeout: ACTIVE_TIMEOUT_MS,
       },
       this.abort.signal,
@@ -708,13 +832,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       })
       this.alive()
     }
+    this.navigationRequested = true
     await cdp.request('Page.navigate', {
       url: `${this.origin}${this.definition.configuration.entryPath ?? '/'}`,
     })
     this.alive()
     await this.waitForDom('before')
     this.alive()
+    // Vite's dependency optimizer may reload the page once after the first load; each reload before the inputs starts a new page generation.
+    if (adapter.name === 'vite-dev') await this.waitForStablePage()
     const inputs = this.definition.configuration.initialInputs ?? []
+    // A page load after this point is a reload the run did not make: the inputs may already be in the page.
+    this.inputsPrepared = true
     await prepareRepositoryInputs(
       cdp,
       inputs,
@@ -737,6 +866,59 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     clearTimeout(this.progressTimer)
     this.status = 'ready'
     await this.persist()
+  }
+
+  /**
+   * Treats a main-frame page load of a Vite run: a reload before the inputs starts a new page generation, a load after them ends the run.
+   * Why: Vite's dependency optimizer can reload the page once after its first load. The stops' earlier script bindings belong to the old page, so they are discarded and bound again from the new parse (which is compared with the sealed bytes again before arming); once inputs may be in the page, a load makes the click's outcome unknown.
+   * Called by the `Page.frameNavigated` observer of {@link observeParticipant}.
+   * @param event - The navigation the page committed.
+   * @example
+   * ```ts
+   * this.onPageNavigated(event) // the second load before inputs: pageGeneration becomes 1
+   * ```
+   */
+  private onPageNavigated(event: Protocol.Page.FrameNavigatedEvent): void {
+    // Only the run's own main frame, after the run asked for the entry page.
+    if (this.cleaning || event.frame.parentId || !this.navigationRequested)
+      return
+    if (!this.firstNavigationSeen) {
+      this.firstNavigationSeen = true
+      return
+    }
+    if (this.inputsPrepared) {
+      this.fail(viteReloadText(this.operation?.inputDispatched ?? false))
+      return
+    }
+    this.pageGeneration += 1
+    for (const stop of this.stops) stop.script = undefined
+    this.evidence.record('page.generation-started', {
+      generation: this.pageGeneration,
+    })
+  }
+
+  /**
+   * Waits until the page has stayed loaded for a quiet window with no further reload, called by {@link prepareOwned} for a Vite run before the inputs are written.
+   * @throws When the page reloads more often than {@link VITE_PAGE_GENERATION_LIMIT} before the inputs.
+   * @example
+   * ```ts
+   * await this.waitForStablePage()
+   * ```
+   */
+  private async waitForStablePage(): Promise<void> {
+    for (;;) {
+      const generation = this.pageGeneration
+      await sleep(VITE_PAGE_QUIET_MS, undefined, { signal: this.abort.signal })
+      this.alive()
+      if (generation === this.pageGeneration) return
+      if (this.pageGeneration > VITE_PAGE_GENERATION_LIMIT)
+        throw viteRefusal(
+          'VITE_PAGE_RELOADED',
+          `The page reloaded ${this.pageGeneration} times before the inputs were written; Codebook stops after ${VITE_PAGE_GENERATION_LIMIT}.`,
+        )
+      await this.waitForDom('before')
+      this.alive()
+    }
   }
 
   /**
@@ -2774,7 +2956,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     event: Protocol.Debugger.ScriptParsedEvent,
   ): boolean {
     if (stop.participant !== name || !event.url) return false
-    return sameScriptUrl(stop.bundle.scriptUrl, event.url)
+    return this.adapter
+      ? this.adapter.isScriptOfModule(stop.bundle.scriptUrl, event.url)
+      : sameScriptUrl(stop.bundle.scriptUrl, event.url)
   }
 
   /**
@@ -3175,11 +3359,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     })
     cdp.on('Debugger.paused', (event) => this.onCdpPaused(name, event))
     cdp.on('Debugger.resumed', () => this.onCdpResumed(name))
-    await cdp.subscribe([
+    const events = [
       'Debugger.scriptParsed',
       'Debugger.paused',
       'Debugger.resumed',
-    ])
+    ]
+    if (name === 'browser' && this.adapter?.name === 'vite-dev') {
+      cdp.on('Page.frameNavigated', (event) => this.onPageNavigated(event))
+      events.push('Page.frameNavigated')
+    }
+    await cdp.subscribe(events)
     this.alive()
   }
 
@@ -6224,6 +6413,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       manifest: this.manifest,
       applicationOrigin: this.origin,
       applicationPortSource: this.portSource,
+      viteVersion: this.viteVersion,
       status: this.status,
       cleaned: this.cleaned,
       resourcesReleased: this.resourcesReleased,

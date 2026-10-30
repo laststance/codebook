@@ -631,6 +631,25 @@ test('package inspection rejects a VS Code import in the Wiki page worker', asyn
   )
 })
 
+test('package inspection rejects a VS Code import in the Vite launcher', async (context) => {
+  // Arrange
+  const fixture = await sourceFixture(context)
+  const metafile = {
+    inputs: {},
+    outputs: {
+      'dist/extension.js': { imports: [{ path: 'vscode', external: true }] },
+      'dist/viteLauncher.js': {
+        imports: [{ path: 'vscode', external: true }],
+      },
+    },
+  }
+  // Act / Assert
+  await assert.rejects(
+    inspectBundle(metafile, fixture.repository, new Map()),
+    /Vite launcher contains an editor-only import/,
+  )
+})
+
 test('a bundled dependency without its license text prevents package staging', async (context) => {
   // Arrange
   const fixture = await sourceFixture(context),

@@ -5,6 +5,7 @@ import { StringDecoder } from 'node:string_decoder'
 import {
   REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS,
   REPOSITORY_APPLICATION_LOG_LIMIT_BYTES,
+  DEVELOPMENT_SERVER_MESSAGE_QUEUE_LIMIT,
   REPOSITORY_SETUP_TIMEOUT_MS,
 } from '../constants'
 import { repositoryEntryPathSchema } from '../repositoryConfigSchemas'
@@ -26,6 +27,26 @@ import { readNodeInspectorEndpoint } from './readNodeInspectorEndpoint'
 import { signalProcessGroup } from './signalProcessGroup'
 import { verifyServerInspectorOwnership } from './verifyServerInspectorOwnership'
 
+/** What differs between the development servers one launch serves: the process to run, and how its messages and output are handled. Next uses none of it; the Vite launcher uses all of it. */
+export type DevelopmentLaunchSpec = {
+  /** The Node arguments: the entry module path first. */
+  arguments: string[]
+  /** The complete environment of the process. */
+  environment: NodeJS.ProcessEnv
+  /** Opens a Node IPC channel beside stdout and stderr. */
+  ipc?: boolean
+  /** Masks values the process was given or loaded before the published text leaves this module. */
+  mask?: (text: string) => string
+  /** How many characters the longest masked value has (read at call time): output of that length stays unpublished until a value split over chunks can be matched whole. Required with `mask`. */
+  maskHoldback?: () => number
+  /** Tells a message of the process's own protocol from anything project code sends over the same channel; other messages are dropped. */
+  acceptMessage?: (message: unknown) => boolean
+  /** Names the server in timeout and exit sentences: `owned <name> listener`. */
+  name?: string
+  /** Runs once the owned process group is gone, for cleanup of files the server leaves behind. */
+  afterClose?: () => Promise<void>
+}
+
 /** Acquires one owned process group synchronously for {@link ConfiguredBrowserRun}, exposing cancellable readiness and bounded shutdown. @param inspectServer - Whether to open the native server inspector. @param port - The project's own port ({@link readDeclaredDevelopmentPort}); required, so no caller can skip the lookup and the app is never started on another port. @example const app = launchDevelopmentServer(target, node, record, false, 3165); await app.ready(signal) */
 export function launchDevelopmentServer(
   target: string,
@@ -33,9 +54,10 @@ export function launchDevelopmentServer(
   record: (type: string, detail?: unknown) => unknown,
   inspectServer: boolean,
   port: number,
+  spec?: DevelopmentLaunchSpec,
 ) {
-  const environment = buildDevelopmentServerEnvironment()
-  const arguments_ = [
+  const environment = spec?.environment ?? buildDevelopmentServerEnvironment()
+  const arguments_ = spec?.arguments ?? [
     join(target, 'node_modules/next/dist/bin/next'),
     'dev',
     '--webpack',
@@ -44,16 +66,31 @@ export function launchDevelopmentServer(
     '--port',
     String(port),
   ]
-  if (inspectServer) arguments_.push('--inspect', '127.0.0.1:0')
+  if (inspectServer && !spec) arguments_.push('--inspect', '127.0.0.1:0')
+  const serverName = spec?.name ?? 'Next'
   const child = spawn(node, arguments_, {
     cwd: target,
     env: environment,
     detached: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: spec?.ipc
+      ? ['ignore', 'pipe', 'pipe', 'ipc']
+      : ['ignore', 'pipe', 'pipe'],
+  })
+  const { stdout, stderr } = child
+  if (!stdout || !stderr)
+    throw new Error('The owned server has no output pipes')
+  // Messages the process sends over the IPC channel wait here until a caller asks for the next one.
+  const messages: unknown[] = []
+  // Project code may call `process.send` too: only protocol messages are kept, and no more than the queue limit.
+  child.on('message', (message) => {
+    if (spec?.acceptMessage && !spec.acceptMessage(message)) return
+    if (messages.length < DEVELOPMENT_SERVER_MESSAGE_QUEUE_LIMIT)
+      messages.push(message)
   })
   // The raw tail serves origin detection only and is never published; `publishedLog` is its redacted counterpart, the one the journal and failure messages carry.
   let log = Buffer.alloc(0),
     publishedLog = '',
+    pendingLog = '',
     inspectorLog = Buffer.alloc(0),
     inspectorCandidate: string | undefined,
     inspectorError: Error | undefined
@@ -72,10 +109,20 @@ export function launchDevelopmentServer(
       -REPOSITORY_APPLICATION_LOG_LIMIT_BYTES,
     )
   }
-  // The published tail is cut back to its byte limit only once it has doubled, so a chatty server pays no copy of the whole tail per chunk.
+  // Output is masked by value before any cut: `publishedLog` holds only settled text that is already masked, `pendingLog` the newest output that is not yet, because a known value may still continue in the next chunk.
+  // The settled text is cut back to its byte limit only once it has doubled, so a chatty server pays no copy of the whole tail per chunk.
   const publish = (text: string): void => {
     if (!text) return
-    publishedLog += text
+    if (!spec?.mask) {
+      publishedLog += text
+    } else {
+      // Masking the whole pending text matches every value inside it; its last characters stay pending so a value that crosses this chunk's end is matched with the next chunk.
+      const masked = spec.mask(pendingLog + text)
+      const holdback = Math.max(0, (spec.maskHoldback?.() ?? 0) - 1)
+      const settledEnd = Math.max(0, masked.length - holdback)
+      publishedLog += masked.slice(0, settledEnd)
+      pendingLog = masked.slice(settledEnd)
+    }
     if (publishedLog.length > 2 * REPOSITORY_APPLICATION_LOG_LIMIT_BYTES)
       publishedLog = keepUtf8Tail(
         publishedLog,
@@ -83,11 +130,14 @@ export function launchDevelopmentServer(
       )
   }
   const publishedTail = (): string =>
-    keepUtf8Tail(publishedLog, REPOSITORY_APPLICATION_LOG_LIMIT_BYTES)
+    keepUtf8Tail(
+      publishedLog + (spec?.mask ? spec.mask(pendingLog) : pendingLog),
+      REPOSITORY_APPLICATION_LOG_LIMIT_BYTES,
+    )
   // Each channel is redacted statefully, so a credential the server prints across chunks is masked before it is kept for publication.
   // A channel's held text is flushed once: at its stream's end, or when the closed journal is written first (the process can exit before its streams end).
   const flushes: (() => void)[] = []
-  for (const stream of [child.stdout, child.stderr]) {
+  for (const stream of [stdout, stderr]) {
     const decoder = new StringDecoder('utf8')
     const redactor = createOutputRedactor()
     let flushed = false
@@ -103,7 +153,7 @@ export function launchDevelopmentServer(
     stream.on('end', flush)
     flushes.push(flush)
   }
-  child.stderr.on('data', (chunk: Buffer) => {
+  stderr.on('data', (chunk: Buffer) => {
     if (!inspectServer || inspectorError) return
     inspectorLog = Buffer.concat([inspectorLog, chunk]).subarray(
       -REPOSITORY_APPLICATION_LOG_LIMIT_BYTES,
@@ -117,7 +167,9 @@ export function launchDevelopmentServer(
       inspectorError = cause instanceof Error ? cause : new Error(String(cause))
     }
   })
-  const claim = claimOwnedDevelopmentPort(port)
+  // A launcher with an IPC channel learns its port from the config it resolves, so it claims the port later ({@link declarePort}).
+  let declaredPort: number | undefined = spec?.ipc ? undefined : port
+  let claim = spec?.ipc ? undefined : claimOwnedDevelopmentPort(port)
   record('application.acquired', {
     pid: child.pid,
     node,
@@ -133,6 +185,46 @@ export function launchDevelopmentServer(
       child.signalCode === null &&
       error === undefined &&
       closing === undefined,
+    /**
+     * Waits for the next message the process sent over its IPC channel, for the Vite launcher handshake.
+     * @param timeoutMs - How long the message may take.
+     * @param signal - Ends the wait when the run is cancelled.
+     * @returns The message as the process sent it.
+     * @throws When the process exits first (the message carries the redacted output tail) or the wait times out.
+     */
+    async nextMessage(
+      timeoutMs: number,
+      signal: AbortSignal,
+    ): Promise<unknown> {
+      return waitUntil(
+        () => {
+          if (messages.length) return { message: messages.shift() }
+          if (error || child.exitCode !== null || child.signalCode !== null)
+            throw (
+              error ??
+              new Error(
+                `Application exited: ${child.exitCode ?? child.signalCode}: ${publishedTail()}`,
+              )
+            )
+          return undefined
+        },
+        'a message of the owned launcher',
+        timeoutMs,
+        signal,
+      ).then((received) => received.message)
+    },
+    /** Sends one message to the process over its IPC channel. @example app.send({ type: 'vite-listen' }) */
+    send(message: unknown): void {
+      if (!child.connected) throw new Error('The launcher is not connected')
+      child.send(message as never)
+    },
+    /** The output tail a refusal may quote: redacted and masked. @example app.outputTail() */
+    outputTail: publishedTail,
+    /** Claims the port a launcher resolved, so no other run starts on it and the readiness check looks for it. @example app.declarePort(3010) */
+    declarePort(resolved: number): void {
+      declaredPort = resolved
+      claim ??= claimOwnedDevelopmentPort(resolved)
+    },
     /** Checks the selected native inspector against this launch before granting server control. @example await app.verifyInspector(cdp, signal) */
     async verifyInspector(
       inspector: Pick<Cdp, 'request'>,
@@ -191,6 +283,8 @@ export function launchDevelopmentServer(
     /** Waits for the listener on the declared port, then proves readiness through the configured entry page (the root page only when entryPath is "/"); called during preparation. @param entryPath - Configured first page; a non-root entry must answer 200 without a redirect. @example await app.ready(signal, '/login') */
     async ready(signal: AbortSignal, entryPath = '/') {
       repositoryEntryPathSchema.parse(entryPath)
+      if (declaredPort === undefined)
+        throw new Error('The launcher declared no port')
       origin = await waitUntil(
         () => {
           if (error || child.exitCode !== null)
@@ -200,12 +294,14 @@ export function launchDevelopmentServer(
                 `Application exited: ${child.exitCode}: ${publishedTail()}`,
               )
             )
+          // A launcher with an IPC channel reports its verified listening port before `ready` is called, so its origin never depends on printed URLs (a project's logLevel can silence them).
+          if (spec?.ipc) return `http://127.0.0.1:${declaredPort}`
           // Process chunks may split a port; only a received delimiter proves its complete value. Only the declared port counts: another local URL in the log (an API, a proxy) is not the app's origin (F552).
-          return new RegExp(`http://127\\.0\\.0\\.1:${port}(?=\\D)`).exec(
-            log.toString('utf8'),
-          )?.[0]
+          return new RegExp(
+            `http://127\\.0\\.0\\.1:${declaredPort}(?=\\D)`,
+          ).exec(log.toString('utf8'))?.[0]
         },
-        'owned Next listener',
+        `owned ${serverName} listener`,
         REPOSITORY_SETUP_TIMEOUT_MS,
         signal,
       )
@@ -241,8 +337,8 @@ export function launchDevelopmentServer(
     },
     /** Stops only the acquired process group and verifies its listener; cleanup calls this even after failed readiness. @example await app.close() */
     async close(): Promise<void> {
-      const attempt = (closing ??= (async () => {
-        beginReleaseOfOwnedDevelopmentPort(claim)
+      const stopAndRelease = async (): Promise<void> => {
+        if (claim) beginReleaseOfOwnedDevelopmentPort(claim)
         if (child.pid) {
           const processGroup = child.pid
           // A group whose exited members macOS has not reaped yet answers EPERM; both utilities wait for it instead of failing the release.
@@ -250,13 +346,13 @@ export function launchDevelopmentServer(
           const waitForExit = async (): Promise<void> => {
             await awaitResponse(
               exited,
-              'owned Next exit',
+              `owned ${serverName} exit`,
               undefined,
               REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS,
             )
             await waitUntil(
               () => isProcessGroupGone(processGroup),
-              'owned Next process group exit',
+              `owned ${serverName} process group exit`,
               REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS,
             )
           }
@@ -271,10 +367,25 @@ export function launchDevelopmentServer(
         if (origin)
           await waitUntil(
             () => isEndpointClosed(origin!),
-            'owned Next listener exit',
+            `owned ${serverName} listener exit`,
             REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS,
           )
-        releaseOwnedDevelopmentPort(claim)
+        if (claim) releaseOwnedDevelopmentPort(claim)
+      }
+      const attempt = (closing ??= (async () => {
+        let failure: { cause: unknown } | undefined
+        try {
+          await stopAndRelease()
+        } catch (cause) {
+          failure = { cause }
+        }
+        // Transient files are removed whether or not the stop succeeded; an earlier failure wins over a cleanup failure.
+        try {
+          await spec?.afterClose?.()
+        } catch (cause) {
+          failure ??= { cause }
+        }
+        if (failure) throw failure.cause
         for (const flush of flushes) flush()
         record('application.closed', {
           pid: child.pid,

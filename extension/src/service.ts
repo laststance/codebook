@@ -181,7 +181,9 @@ import {
   type NodeTestHistoryState,
 } from './utils/projectNodeTestOutcome'
 import { readerNotFollowingRunRefusal } from './utils/readerNotFollowingRunRefusal'
+import type { RepositoryAdapterReadiness } from './utils/readRepositoryAdapterReadiness'
 import { releaseVitestListings } from './utils/releaseVitestListings'
+import { repositoryBrowserStartPrerequisites } from './utils/repositoryBrowserStartPrerequisites'
 import { resolveCapturedFactPaths } from './utils/resolveCapturedFactPaths'
 import {
   createRootHider,
@@ -201,6 +203,7 @@ import { vitestSearchField } from './utils/vitestSearchField'
 import { waitForNextRunState } from './utils/waitForNextRunState'
 import { waitWithin } from './utils/waitWithin'
 import { withKnownNodeHistory } from './utils/withKnownNodeHistory'
+import { viteFailureOf } from './viteRefusals'
 
 /** What the run resource tells an agent after the result while no explanation of the run carries a learning summary; `codebook://help/studies` describes the step in the last entry of its sequence. */
 const SAVE_LEARNING_SUMMARY_ADVICE =
@@ -744,11 +747,31 @@ export class StudyService {
     const sanitized = (prerequisite: {
       ready: boolean
       missing: string[]
+      adapters?: RepositoryAdapterReadiness
     }) => ({
       ...prerequisite,
       missing: prerequisite.missing.map((sentence) =>
         this.sanitizedCause(sentence),
       ),
+      // Each adapter's gaps are sentences too (they can quote a file error), so they pass the same sanitizer.
+      ...(prerequisite.adapters
+        ? {
+            adapters: {
+              'next-dev-webpack': {
+                ...prerequisite.adapters['next-dev-webpack'],
+                missing: prerequisite.adapters['next-dev-webpack'].missing.map(
+                  (sentence) => this.sanitizedCause(sentence),
+                ),
+              },
+              'vite-dev': {
+                ...prerequisite.adapters['vite-dev'],
+                missing: prerequisite.adapters['vite-dev'].missing.map(
+                  (sentence) => this.sanitizedCause(sentence),
+                ),
+              },
+            },
+          }
+        : {}),
     })
     return {
       ...sanitized(reported),
@@ -3006,6 +3029,27 @@ export class StudyService {
   }
 
   /**
+   * Makes the run resource's error object for a failure the runtime recorded after its preparation.
+   *
+   * A Vite run's timer failures (the reload after the click, the setup deadline) lead with their refusal code, so the agent reads the stable code, its recovery and help anchor and not only a text prefix. Called by {@link StudyService.state}.
+   *
+   * @param runtimeFailure - The runtime's first failure text, sanitized.
+   * @returns The Vite refusal for a failure led by its code; any other failure as `RUNTIME_FAILED` with the text as its cause.
+   * @example
+   * this.runtimeFailureError('VITE_PAGE_RELOADED: The page reloaded …').code // => 'VITE_PAGE_RELOADED'
+   */
+  private runtimeFailureError(runtimeFailure: string): StudyError {
+    const viteFailure = viteFailureOf(runtimeFailure)
+    if (viteFailure)
+      return new StudyError(viteFailure.code, viteFailure.message)
+    return new StudyError(
+      'RUNTIME_FAILED',
+      'The run failed in its runtime.',
+      runtimeFailure,
+    )
+  }
+
+  /**
    * Gives the runtime's own first failure for {@link StudyService.state}'s terminal reason, read when the run has no error of its own and no evidence failure of the run: a runtime that failed itself on a failed evidence write (a snapshot's save into the gone directory of a removed study) gives its raw error, and when the run was stopped before a maintenance turn made that the run's error, nothing words it again once the removal is known ({@link StudyService.wordFailuresByRemoval}). For a removed study such a failure names the internal storage path, so it is worded as a failed evidence write with the removal's sentence ({@link StudyService.writeFailureError}), as the run's error is (Cycle 0046 rows 667, 700 and 707); every other failure stays as the runtime gave it.
    * @param record - The run.
    * @param runtime - Its runtime's view read for this state; `undefined` without a runtime.
@@ -3340,6 +3384,7 @@ export class StudyService {
           : undefined,
       applicationOrigin: runtime?.applicationOrigin,
       applicationPortSource: runtime?.applicationPortSource,
+      viteVersion: runtime?.viteVersion,
       manifestUri:
         runtime?.manifest || record.nodePrepared
           ? this.uri(record.id, 'manifest')
@@ -3391,11 +3436,7 @@ export class StudyService {
       error:
         record.error?.describe() ??
         (runtimeFailure
-          ? new StudyError(
-              'RUNTIME_FAILED',
-              'The run failed in its runtime.',
-              runtimeFailure,
-            ).describe()
+          ? this.runtimeFailureError(runtimeFailure).describe()
           : undefined),
       cleanupError: record.cleanupError?.describe(),
       cleaned: record.stopped,
@@ -3974,7 +4015,13 @@ export class StudyService {
           : await this.environment.prerequisites().then(
               // Shared Node/Chrome availability alone cannot authorize an unsupported selected profile.
               (prerequisites) =>
-                prerequisites.profiles?.[record.profile] ?? prerequisites,
+                repositoryBrowserStartPrerequisites(
+                  prerequisites,
+                  record.profile,
+                  record.configuration,
+                ) ??
+                prerequisites.profiles?.[record.profile] ??
+                prerequisites,
             )
       if (!selectedPrerequisites.ready)
         throw new StudyError(
@@ -4350,6 +4397,11 @@ export class StudyService {
   private preparationError(record: StudyRecord, error: unknown): StudyError {
     const runtime = record.runtime?.view(),
       runtimeFailure = runtime?.failures[0]
+    // A Vite run's timer failures (setup deadline) lead with their refusal code, so the agent reads the code, recovery and anchor.
+    const viteFailure =
+      runtimeFailure === undefined ? undefined : viteFailureOf(runtimeFailure)
+    if (viteFailure && !(error instanceof StudyError))
+      return new StudyError(viteFailure.code, viteFailure.message)
     if (!runtime || !runtimeFailure || error instanceof StudyError)
       return studyErrorNamingCause(domainError(error))
     // A failure naming the run's evidence directory is a failed evidence write's raw failure, which a removal of the study words by its own sentence (row 724).

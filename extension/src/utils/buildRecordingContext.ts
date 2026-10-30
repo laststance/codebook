@@ -5,7 +5,6 @@ import { z } from 'zod'
 import {
   CONFIGURED_RECORDING_VERSION,
   CROSS_RUNTIME_RECORDING_VERSION,
-  CROSS_RUNTIME_STUDY_VERSION,
   RECORDING_REASON_LIMIT_CHARS,
 } from '../constants'
 import {
@@ -19,6 +18,7 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 
 import { decodeRetainedStudy } from './decodeRetainedStudy'
 import { describeStudy } from './describeStudy'
+import { isCrossRuntimeStudy } from './isCrossRuntimeStudy'
 import { pausedIntervalBoundary } from './pausedIntervalBoundary'
 
 const phaseDetailSchema = z.object({
@@ -127,10 +127,9 @@ export function buildRecordingContext(
       : []
   })
   return retainedRecordingContextSchema.parse({
-    version:
-      study.version === CROSS_RUNTIME_STUDY_VERSION
-        ? CROSS_RUNTIME_RECORDING_VERSION
-        : CONFIGURED_RECORDING_VERSION,
+    version: isCrossRuntimeStudy(study)
+      ? CROSS_RUNTIME_RECORDING_VERSION
+      : CONFIGURED_RECORDING_VERSION,
     workspaceKey: study.workspaceKey,
     studyId: study.id,
     historyRevision,

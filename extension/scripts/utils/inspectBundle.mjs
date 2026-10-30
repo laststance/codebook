@@ -8,7 +8,8 @@ import { COMPILED_DIRECTORIES } from './packageConstants.mjs'
 /** Inventories actual emitted inputs, bundled dependency notices and native externals before a VSIX can be staged. @example await inspectBundle(metafile, repository, capturedInputs) */
 export async function inspectBundle(metafile, repository, capturedInputs) {
   const outputs = Object.values(metafile.outputs)
-  if (outputs.length < 1 || outputs.length > 3)
+  // Four entries: the extension host bundle, the Cursor MCP bridge, the Wiki page worker and the Vite launcher.
+  if (outputs.length < 1 || outputs.length > 4)
     throw new Error('Unexpected JavaScript bundle count.')
   const imports = outputs.flatMap((output) => output.imports)
   const externals = [...new Set(imports.map((value) => value.path))].sort()
@@ -33,6 +34,13 @@ export async function inspectBundle(metafile, repository, capturedInputs) {
       output.imports.some((value) => !isBuiltin(value.path))
     )
       throw new Error('Wiki page worker contains an editor-only import.')
+  // The Vite launcher runs as its own Node process under the run's Node, with no editor module either.
+  for (const [path, output] of Object.entries(metafile.outputs))
+    if (
+      basename(path) === 'viteLauncher.js' &&
+      output.imports.some((value) => !isBuiltin(value.path))
+    )
+      throw new Error('Vite launcher contains an editor-only import.')
   const root = await realpath(repository),
     packages = new Map(),
     inputs = [],

@@ -1,15 +1,13 @@
 import type { ConfiguredStudy } from '../configuredStudySchemas'
-import {
-  CONFIGURED_STUDY_VERSION,
-  CROSS_RUNTIME_STUDY_VERSION,
-  REPOSITORY_CAPTURED_TYPES,
-} from '../constants'
+import { REPOSITORY_CAPTURED_TYPES } from '../constants'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
 import { assertConfiguredDescriptor } from './assertConfiguredDescriptor'
 import { configuredStops } from './configuredStops'
+import { isCrossRuntimeStudy } from './isCrossRuntimeStudy'
 import { isSavedBindingReceiptAtStop } from './isSavedBindingReceiptAtStop'
 import { isSavedSourceAtStop } from './isSavedSourceAtStop'
+import { studyFormatOfConfiguration } from './studyFormatOfConfiguration'
 
 /** Validates sealed configured facts for archive and recording readers without requiring current files or granting runtime authority. @example validateConfiguredStudyEvidence(study, workspaceKey) // rejects altered source or pause */
 export function validateConfiguredStudyEvidence(
@@ -17,12 +15,7 @@ export function validateConfiguredStudyEvidence(
   workspaceKey: string,
 ): void {
   const configuration = study.configuration
-  if (
-    study.version !==
-    (configuration.version === 1
-      ? CONFIGURED_STUDY_VERSION
-      : CROSS_RUNTIME_STUDY_VERSION)
-  )
+  if (study.version !== studyFormatOfConfiguration(configuration))
     throw new Error('Configured archive and intent versions disagree.')
   if (
     study.workspaceKey !== workspaceKey ||
@@ -131,7 +124,7 @@ export function validateConfiguredStudyEvidence(
         'Configured observation binding receipt is missing or differs from its declared and observed lines.',
       )
     if (
-      study.version === CROSS_RUNTIME_STUDY_VERSION &&
+      isCrossRuntimeStudy(study) &&
       study.finalOutcome === 'demonstrated' &&
       !observation.debugger
     )

@@ -81,6 +81,127 @@ test('dispatch and acknowledgement each invalidate a saved configured checkpoint
   assert.equal(acknowledged.operationProgress?.inputAcknowledged, true)
 })
 
+test('a vite-dev start in a Vite app without Next waits on Vite readiness, not on the missing Next runtime', async (context) => {
+  // Arrange
+  const { service, configuration, environment, runtimes } =
+    await configuredServiceHarness(context)
+  environment.prerequisites = async () => ({
+    ready: true,
+    missing: [],
+    profiles: {
+      'repository-browser': {
+        ready: false,
+        missing: [
+          'Install the selected workspace dependencies, including Next, before using next-dev-webpack.',
+        ],
+        adapters: {
+          'next-dev-webpack': {
+            ready: false,
+            missing: [
+              'Install the selected workspace dependencies, including Next, before using next-dev-webpack.',
+            ],
+          },
+          'vite-dev': {
+            ready: true,
+            installed: true,
+            version: '8.3.5',
+            supported: true,
+            supportedMajor: 8,
+            yarnPnp: false,
+            missing: [],
+          },
+        },
+      },
+    },
+  })
+  // Act
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'vite-without-next',
+    configuration: { ...configuration, adapter: 'vite-dev' },
+  })
+  const record = service.record(receipt)
+  await record.preparation
+  await service.stop(receipt)
+  // Assert
+  assert.notEqual(record.error?.code, 'PREREQUISITE_MISSING')
+  assert.equal(runtimes.length, 1)
+})
+
+test('a vite-dev start is refused with the Vite gate sentence when Vite itself is not ready', async (context) => {
+  // Arrange
+  const { service, configuration, environment, runtimes } =
+    await configuredServiceHarness(context)
+  environment.prerequisites = async () => ({
+    ready: true,
+    missing: [],
+    profiles: {
+      'repository-browser': {
+        ready: true,
+        missing: [],
+        adapters: {
+          'next-dev-webpack': { ready: true, missing: [] },
+          'vite-dev': {
+            ready: false,
+            installed: false,
+            supportedMajor: 8,
+            yarnPnp: false,
+            missing: ['vite does not resolve from the workspace root.'],
+          },
+        },
+      },
+    },
+  })
+  // Act
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'vite-not-ready',
+    configuration: { ...configuration, adapter: 'vite-dev' },
+  })
+  const record = service.record(receipt)
+  await record.preparation
+  await service.stop(receipt)
+  // Assert
+  assert.equal(record.error?.code, 'PREREQUISITE_MISSING')
+  assert.equal(
+    record.error?.message,
+    'vite does not resolve from the workspace root.',
+  )
+  assert.equal(runtimes.length, 0)
+})
+
+test('a vite-dev start is refused, not judged by Next readiness, when the window reports no Vite readiness', async (context) => {
+  // Arrange
+  const { service, configuration, environment, runtimes } =
+    await configuredServiceHarness(context)
+  environment.prerequisites = async () => ({
+    ready: true,
+    missing: [],
+    profiles: {
+      'repository-browser': { ready: true, missing: [] },
+    },
+  })
+  // Act
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'vite-readiness-unreported',
+    configuration: { ...configuration, adapter: 'vite-dev' },
+  })
+  const record = service.record(receipt)
+  await record.preparation
+  await service.stop(receipt)
+  // Assert
+  assert.equal(record.error?.code, 'PREREQUISITE_MISSING')
+  assert.equal(
+    record.error?.message,
+    "Codebook could not read the Vite adapter's readiness for this window. Call codebook_status again, or reload the window, and retry.",
+  )
+  assert.equal(runtimes.length, 0)
+})
+
 test('missing repository runtime support prevents acquisition while source authoring remains available', async (context) => {
   // Arrange
   const { service, configuration, environment, runtimes, books } =
@@ -2616,7 +2737,7 @@ test('configured help names the declared, the requested and the bound place, say
     .parse(JSON.parse(help.text))
   assert.equal(
     contract.entry,
-    'API 1.10, extension 0.2.0 or later. Read actual workspace source and publish an immutable source-only article first. Use its default repository/<bookId>/<nodeId> identity, exact revision, selected citation, path/hash and one-based source line/column. Leave learningItemId absent to preserve the article identity.',
+    'API 1.11, extension 0.2.0 or later. Read actual workspace source and publish an immutable source-only article first. Use its default repository/<bookId>/<nodeId> identity, exact revision, selected citation, path/hash and one-based source line/column. Leave learningItemId absent to preserve the article identity.',
   )
   assert.equal(
     (contract.sequence[2] ?? '').includes(
@@ -3905,7 +4026,11 @@ test('the input schema of codebook_start states the inspection rule for the firs
   // Assert
   const variantSchema = z.object({
     properties: z.object({
-      adapter: z.object({ const: z.string() }),
+      // A repository variant lists the supported servers as an enum (the first, Next, names it); the node-test variant has one constant.
+      adapter: z.object({
+        const: z.string().optional(),
+        enum: z.array(z.string()).optional(),
+      }),
       version: z.object({ const: z.number() }),
       inspections: z.object({ description: z.string() }),
       additionalStops: z.object({
@@ -3935,7 +4060,7 @@ test('the input schema of codebook_start states the inspection rule for the firs
     ).properties.configuration.anyOf
   const described = [...repositoryVariants.anyOf, nodeTestVariant].map(
     (variant) => [
-      `${variant.properties.adapter.const} ${variant.properties.version.const}`,
+      `${variant.properties.adapter.const ?? variant.properties.adapter.enum?.[0]} ${variant.properties.version.const}`,
       variant.properties.inspections.description,
       variant.properties.additionalStops.items.properties.inspections
         .description,
@@ -3964,7 +4089,11 @@ test("the input schema of codebook_start says that a required value is read befo
   // Assert
   const variantSchema = z.object({
     properties: z.object({
-      adapter: z.object({ const: z.string() }),
+      // A repository variant lists the supported servers as an enum (the first, Next, names it); the node-test variant has one constant.
+      adapter: z.object({
+        const: z.string().optional(),
+        enum: z.array(z.string()).optional(),
+      }),
       version: z.object({ const: z.number() }),
       inspections: z.object({ description: z.string() }),
       additionalStops: z.object({
@@ -3998,7 +4127,7 @@ test("the input schema of codebook_start says that a required value is read befo
       "A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; require a value that already exists before that line, or declare the stop on a later line."
   const saysIt = [...repositoryVariants.anyOf, nodeTestVariant].map(
     (variant) => [
-      `${variant.properties.adapter.const} ${variant.properties.version.const}`,
+      `${variant.properties.adapter.const ?? variant.properties.adapter.enum?.[0]} ${variant.properties.version.const}`,
       variant.properties.inspections.description.includes(movedSentence),
       variant.properties.additionalStops.items.properties.inspections.description.includes(
         movedSentence,
@@ -4655,7 +4784,7 @@ test('API 1.8 discovery exposes the bounded configured profile and its executabl
     ),
     help = await readResource(service, 'codebook://help/repository-browser')
   // Assert
-  assert.equal(status.apiVersion, '1.10')
+  assert.equal(status.apiVersion, '1.11')
   assert.ok(profile && 'requiresConfiguration' in profile)
   assert.equal(profile.requiresConfiguration, true)
   assert.equal(profile.minimumExtensionVersion, '0.2.0')

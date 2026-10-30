@@ -5,12 +5,13 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.11 is additive: the `vite-dev` adapter of the `repository-browser` profile (the adapter enum of the configuration, `codebook_status` adapter readiness under `profiles[].prerequisites.adapters`, the optional `viteVersion` of a Vite run manifest and resource, the `ADAPTER_MISROUTE` and `VITE_*` refusal codes, the Vite quick start and refusal anchors of `codebook://help/repository-browser`); a Vite study is saved in study format 5.
  * 1.10 is additive: the `chrome-extension` profile (the `extension-click` action, the `extension` participant of `codebook_continue`, the `chromeExtension` block and `claimable` of the run resource, `codebook://help/chrome-extension`); a chrome-extension run is not saved in this version.
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.10'
-export const EXTENSION_VERSION = '0.2.61'
+export const API_VERSION = '1.11'
+export const EXTENSION_VERSION = '0.2.62'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -1506,11 +1507,21 @@ export const REPOSITORY_CONFIG_VERSION = 1
 export const CROSS_RUNTIME_CONFIG_VERSION = 2
 export const CONFIGURED_STUDY_VERSION = 3
 export const CROSS_RUNTIME_STUDY_VERSION = 4
+/** The format of a repository-browser study made with the `vite-dev` adapter; an older Codebook lists it as saved by a newer one. */
+export const VITE_STUDY_VERSION = 5
+/** The highest study format this Codebook reads; a saved study above it is listed as saved by a newer Codebook. */
+export const READABLE_STUDY_VERSION = VITE_STUDY_VERSION
 export const CONFIGURED_STUDY_SUFFIX = '.study.v3.json'
 export const CONFIGURED_STUDY_METADATA_SUFFIX = '.study.meta.v3.json'
 // Highest existing version owns a logical study, including when its bytes are corrupt.
 // A change of the saved study format that an older Codebook cannot read takes the next format number and its own `.study.v<n>.json` suffix in this table; an older Codebook then lists such a study as saved by a newer one and keeps it, instead of failing on its schema.
 export const STUDY_STORAGE_FORMATS = [
+  {
+    version: VITE_STUDY_VERSION,
+    format: 'v5',
+    archiveSuffix: '.study.v5.json',
+    metadataSuffix: '.study.meta.v5.json',
+  },
   {
     version: CROSS_RUNTIME_STUDY_VERSION,
     format: 'v4',
@@ -2214,3 +2225,61 @@ export const CHROME_EXTENSION_FAILED_STATE_CODES: readonly string[] = [
   // A debug session that ended, a run or setup time limit and a wrapped error also leave the run failed (DXR6).
   'RUNTIME_FAILED',
 ]
+
+/** The one Vite major the `vite-dev` adapter supports, the major verified natively (Cycle 0063); widening needs a native run on that major. */
+export const VITE_SUPPORTED_MAJOR = 8
+
+/** Vite's own default dev-server port, used when neither the project's config nor its `dev` script names one. */
+export const VITE_DEFAULT_PORT = 5173
+
+/** The one host Codebook owns for a Vite dev server; the launcher passes it inline and the parent refuses a resolved `server.host` that differs (a plugin can widen it to every interface). */
+export const VITE_LOOPBACK_HOST = '127.0.0.1'
+
+/** How long the owned Vite launcher may take from its spawn to the facts of the resolved config, before the setup budget for readiness starts. */
+export const VITE_LAUNCHER_FACTS_TIMEOUT_MS = 30_000
+
+/** How long one request for a module the Vite dev server serves may take while a stop is sealed. */
+export const VITE_MODULE_FETCH_TIMEOUT_MS = 15_000
+
+/** The longest `node --version` may take when a run's Node executable is checked. */
+export const NODE_VERSION_TIMEOUT_MS = 10_000
+
+/** The shortest environment value (characters) the launcher diagnostics mask by value, so a short common word is not blanked everywhere. */
+export const VITE_MASKED_VALUE_MIN_CHARS = 6
+
+/** The most messages an owned development server's IPC channel keeps unread; project code that floods the channel loses the newest messages instead of growing memory. */
+export const DEVELOPMENT_SERVER_MESSAGE_QUEUE_LIMIT = 32
+
+/** The longest a `vite/package.json` version may be (the study schema's `viteVersion` limit). */
+export const VITE_VERSION_MAX_CHARS = 64
+
+/** The longest a Vite config's thrown error line is carried in a refusal. */
+export const VITE_ERROR_LINE_LIMIT_CHARS = 200
+
+/** The extensions of a source file the Vite dev server serves as JavaScript with an inline map; `.vue` and `.svelte` need a framework plugin's own map and are refused. */
+export const VITE_STOP_EXTENSIONS: readonly string[] = [
+  '.ts',
+  '.tsx',
+  '.js',
+  '.jsx',
+  '.mts',
+  '.cts',
+  '.mjs',
+  '.cjs',
+]
+
+/** How long the Vite page must stay loaded, with no further reload, before the initial inputs are written. */
+export const VITE_PAGE_QUIET_MS = 500
+
+/** The most reloads before the inputs the run tolerates (a dependency optimizer reloads once or twice). */
+export const VITE_PAGE_GENERATION_LIMIT = 4
+
+/** The message types of the IPC channel between the extension and the owned Vite launcher. */
+export const VITE_LAUNCHER_MESSAGES = {
+  env: 'vite-env',
+  facts: 'vite-facts',
+  failed: 'vite-failed',
+  listen: 'vite-listen',
+  refuse: 'vite-refuse',
+  listening: 'vite-listening',
+} as const

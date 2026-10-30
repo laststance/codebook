@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.62.0] - 2026-10-30 (development candidate)
+
+Cycle 0063 ([Issue #160](https://github.com/laststance/codebook/issues/160)), a feature cycle: the chat now explains a real Vite web app live, on the repository's own Vite development server, in VS Code (Copilot Chat) and Cursor (Agent), and the run saves as a learning replay as a Next run does.
+
+**Explaining a Vite web app (skill 1.0.57).**
+
+- **Ask about a Vite 8 app the way you ask about a Next app**: with `adapter: "vite-dev"` Codebook starts the app's own Vite development server on `127.0.0.1`, performs the declared click and pauses in the app's own source in the editor's debugger, with the live values in the Variables view. The run saves as a learning replay that reopens with the recorded app, executed source and debugger history.
+- **`codebook_status` tells the chat which adapter is ready** for the opened repository (Vite's version and supported major, its `engines.node` against the Node Codebook runs, the `dev` script form and Yarn Plug-n-Play), and a configuration that names the wrong adapter is refused with `ADAPTER_MISROUTE`, naming the one to use.
+- **Every refusal of a Vite run is a coded error** with its own section in `codebook://help/repository-browser`, which says what was started and whether to retry: settings Codebook does not own, all at once (`VITE_UNSUPPORTED`, including a `server.host` other than `127.0.0.1` and an own `hmr` or `server.ws` listener), a busy port, a launcher failure, the 90 s setup deadline, a seal failure and a page reload after the inputs.
+- **Each stop is sealed from the module Vite serves**, with its inline source map, before the browser opens; a module that cannot be tied to the file you see is refused before any click.
+- **Values of the project's `.env` files and of the `dev` script's assignments are masked** in every refusal and saved output; values of a custom `envDir` are masked once the Vite config has resolved.
+- **A Vite run names its Vite version** in the run manifest, the run resource and the saved study.
+
+**Saved studies.** A Vite study is saved in study format 5, and Next studies keep formats 3 and 4, so an earlier Codebook lists a Vite replay as saved by a newer Codebook and keeps it.
+
+**Known limits.** Vite 8 only, the app at the workspace root, and JavaScript or TypeScript stops (`.vue` and `.svelte` are refused); a stop in a file that a plugin rewrites without a source map is refused at sealing. In Cursor 3.27, when the Study does not open from the Agent chat, run **Codebook: Open Study Workspace** from the editor and ask the chat to continue.
+
+**Compatibility.** MCP API 1.11 adds the `vite-dev` adapter and the adapter readiness in `codebook_status`; it is additive, so 1.10 clients keep working. The bundled skill moves to 1.0.57. To update, install this VSIX, reopen the work window and run **Codebook: Set Up AI Chat**.
+
 ## [0.2.61.0] - 2026-10-30 (development candidate)
 
 Cycle 0062 ([Issue #157](https://github.com/laststance/codebook/issues/157)), the second and last pull request of a bug-fix cycle. It changes only the repository's checks, at the owner's request: the extension, its MCP API 1.10 and the bundled skill 1.0.56 are the same as in 0.2.60.0, so there is nothing to reinstall.

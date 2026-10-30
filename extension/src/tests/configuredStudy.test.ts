@@ -40,14 +40,14 @@ test('configured offline history retains exact source, complete citations and ac
 test('a study saved in a newer format is refused as saved by a newer Codebook, not with a schema error', () => {
   // Arrange: a valid study whose format number is one above the highest this Codebook reads.
   const study = createConfiguredStudy(),
-    savedByNewerCodebook = { ...study, version: 5 }
+    savedByNewerCodebook = { ...study, version: 6 }
   // Act
   const decode = (): unknown =>
     decodeConfiguredStudy(savedByNewerCodebook, study.workspaceKey)
   // Assert
   assert.throws(decode, {
     message:
-      'This study was saved in format 5 by a newer Codebook; this Codebook reads formats up to 4. Update the extension to open it. The study is kept as it is.',
+      'This study was saved in format 6 by a newer Codebook; this Codebook reads formats up to 5. Update the extension to open it. The study is kept as it is.',
   })
 })
 

@@ -1,0 +1,6 @@
+# Exact matched spans the pre-push credential guard accepts as benign, one per line.
+# Dummy basic-auth URLs the Vite settings and masking tests feed in or expect masked (Cycle 0063); never credentials.
+https://user:plainsecretpw@host.example'
+https://user:plainsecretpw@cdn.example
+https://u:pw@h
+https://u:[masked]@h

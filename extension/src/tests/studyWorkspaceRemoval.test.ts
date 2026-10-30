@@ -4717,16 +4717,16 @@ test('after a removal refused because nothing was left of the study, a run refus
 
 // Value: protects=a study a newer Codebook saved is shown with the sentence that says what to do, is no storage failure, and is not half deleted by a Codebook that does not know its files; fails_when=its note counts as an error Retry storage should answer, or a delete request opens the Trash dialog for it (RT-1, DX-15, PC-4.1); why_new=the reader never listed a newer format; seam=the library directory, into which the test writes a file as a newer Codebook would name it
 test('a saved study in a newer format is listed with its note, adds no storage error and is refused when the learner asks to delete it', async () => {
-  // Arrange: one saved study, saved again in format 5 by a newer Codebook.
+  // Arrange: one saved study, saved again in format 6 by a newer Codebook.
   const harness = await workspaceHarness()
   try {
     const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
     await writeFile(
       join(
         harness.reader.inspect().libraryDirectory!,
-        `${study.id}.study.v5.json`,
+        `${study.id}.study.v6.json`,
       ),
-      JSON.stringify({ ...study, version: 5 }),
+      JSON.stringify({ ...study, version: 6 }),
     )
     await harness.reader.action('retry')
     // Act
@@ -4743,7 +4743,7 @@ test('a saved study in a newer format is listed with its note, adds no storage e
         [
           study.id,
           'newer',
-          'This study was saved in format 5 by a newer Codebook; this Codebook reads formats up to 4. Update the extension to open it. The study is kept as it is.',
+          'This study was saved in format 6 by a newer Codebook; this Codebook reads formats up to 5. Update the extension to open it. The study is kept as it is.',
         ],
       ],
     )
@@ -4765,7 +4765,7 @@ test('a saved study in a newer format is listed with its note, adds no storage e
 
 // Value: protects=after a rollback the reader still opens on a study it can read; fails_when=the reader tries to open the newest entry although a newer Codebook saved it, shows no study and reports its note as a storage failure (RT-1, PC-4.1); why_new=a newer format was never the first entry of the list; seam=the library directory, into which the test writes a file as a newer Codebook would name it, and a second reader over the same storage
 test('a reader that starts with a study of a newer Codebook as its newest entry shows the newest study it can read, without a storage line', async () => {
-  // Arrange: two saved studies and no saved selection; the newer of them was saved again in format 5, so the list shows it first.
+  // Arrange: two saved studies and no saved selection; the newer of them was saved again in format 6, so the list shows it first.
   const harness = await workspaceHarness()
   try {
     const readable = await saveEarlierStudy(
@@ -4779,9 +4779,9 @@ test('a reader that starts with a study of a newer Codebook as its newest entry 
     await writeFile(
       join(
         harness.reader.inspect().libraryDirectory!,
-        `${savedAgainByNewer.id}.study.v5.json`,
+        `${savedAgainByNewer.id}.study.v6.json`,
       ),
-      JSON.stringify({ ...savedAgainByNewer, version: 5 }),
+      JSON.stringify({ ...savedAgainByNewer, version: 6 }),
     )
     const restarted = harness.createReader()
     try {

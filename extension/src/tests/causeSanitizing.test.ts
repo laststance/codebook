@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID } from '../constants'
 import { StudyError } from '../errors'
 import type { RecordingStore } from '../recordingStore'
+import type { RepositoryAdapterReadiness } from '../utils/readRepositoryAdapterReadiness'
 import { sanitizeCause } from '../utils/sanitizeCause'
 
 import { createHarness } from './helpers'
@@ -92,6 +93,60 @@ test('codebook_status words the missing prerequisites of a working read without 
           'The bundled JavaScript Debugger is unavailable.',
         ],
         ["EACCES: permission denied, lstat '<storage>/.next'"],
+      ],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=codebook_status naming no private path in the per-adapter gaps (Vite's config or package.json errors quote the repository) while the other adapter's gaps stay as they were; fails_when=the adapters of a profile skip the sanitizer, or one adapter's sentences are dropped; why_new=Cycle 0063 added profile adapters, and the F257 test covers only the profile's own missing sentences; seam=none; no_claim=which gaps an adapter reports
+test('codebook_status words the missing sentences of each repository adapter without a private path', async () => {
+  // Arrange
+  const harness = await createHarness(),
+    { service } = harness
+  const ready = { ready: true, missing: [] }
+  service.environment.prerequisites = async () =>
+    ({
+      ready: true,
+      missing: [],
+      profiles: {
+        [PROFILE_ID]: {
+          ready: true,
+          missing: [],
+          adapters: {
+            'next-dev-webpack': {
+              ...ready,
+              ready: false,
+              missing: ['Next is not installed.'],
+            },
+            'vite-dev': {
+              ...ready,
+              ready: false,
+              missing: [
+                `EACCES: permission denied, open '${harness.directory}/vite.config.ts'`,
+              ],
+            },
+          },
+        },
+      },
+    }) as unknown as Awaited<
+      ReturnType<typeof service.environment.prerequisites>
+    >
+  try {
+    // Act
+    const status = await service.status()
+
+    // Assert
+    const adapters = (
+      status.profiles[0]?.prerequisites as
+        { adapters?: RepositoryAdapterReadiness } | undefined
+    )?.adapters
+    assert.deepEqual(
+      [adapters?.['next-dev-webpack'].missing, adapters?.['vite-dev'].missing],
+      [
+        ['Next is not installed.'],
+        ["EACCES: permission denied, open '<storage>/vite.config.ts'"],
       ],
     )
   } finally {

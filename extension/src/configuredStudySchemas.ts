@@ -6,6 +6,7 @@ import {
   CONFIGURED_CAPTURE_PHASES,
   CROSS_RUNTIME_CAPTURE_PHASES,
   CROSS_RUNTIME_STUDY_VERSION,
+  VITE_STUDY_VERSION,
   CONFIGURED_OBSERVATION_LIMIT,
   CONFIGURED_STUDY_VERSION,
   KEY_LENGTH_LIMIT,
@@ -139,6 +140,7 @@ export const configuredStudySchema = z.strictObject({
   version: z.union([
     z.literal(CONFIGURED_STUDY_VERSION),
     z.literal(CROSS_RUNTIME_STUDY_VERSION),
+    z.literal(VITE_STUDY_VERSION),
   ]),
   workspaceKey: repositoryHashSchema,
   id: studyIdSchema,
@@ -160,6 +162,8 @@ export const configuredStudySchema = z.strictObject({
   configuration: retainedRepositoryConfigSchema,
   configurationHash: repositoryHashSchema,
   descriptor: configuredDescriptorSchema.optional(),
+  // The Vite version a `vite-dev` run started on (read from the resolved `vite/package.json`); a Next study has none.
+  viteVersion: z.string().min(1).max(64).optional(),
   operation: z
     .strictObject({
       id: z.uuid(),

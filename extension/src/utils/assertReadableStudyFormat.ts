@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { CROSS_RUNTIME_STUDY_VERSION } from '../constants'
+import { READABLE_STUDY_VERSION } from '../constants'
 import { NewerStudyFormatError } from '../errors'
 
 /** Only the format number of an archive; every other field is left to the archive's own decoder. */
@@ -12,11 +12,11 @@ const numberedFormatSchema = z.object({ version: z.number() })
  * @param value - The parsed archive, not yet validated.
  * @throws A {@link NewerStudyFormatError} that names the saved format and the highest readable one.
  * @example
- * assertReadableStudyFormat({ version: 4 }) // passes
- * assertReadableStudyFormat({ version: 5 }) // throws 'This study was saved in format 5 by a newer Codebook; …'
+ * assertReadableStudyFormat({ version: 5 }) // passes
+ * assertReadableStudyFormat({ version: 6 }) // throws 'This study was saved in format 6 by a newer Codebook; …'
  */
 export function assertReadableStudyFormat(value: unknown): void {
   const format = numberedFormatSchema.safeParse(value)
-  if (format.success && format.data.version > CROSS_RUNTIME_STUDY_VERSION)
+  if (format.success && format.data.version > READABLE_STUDY_VERSION)
     throw new NewerStudyFormatError(format.data.version)
 }
