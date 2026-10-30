@@ -869,19 +869,20 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       instances: new Map(),
       unusableInstances: new Map(),
     }
-    await this.evidence.save(
-      `sealed-${index}-source.ts`,
-      prepared.bundle.source,
-    )
+    // A renewal keeps the first seal's files, so each journal entry names the bytes of its own files.
+    const fileStem = isFirstSeal
+      ? `sealed-${index}`
+      : `sealed-${index}-generation-${generation}`
+    await this.evidence.save(`${fileStem}-source.ts`, prepared.bundle.source)
     this.alive()
     const archivedModule = this.archivedModuleText(prepared.bundle)
     await this.evidence.save(
-      `sealed-${index}-module.js`,
+      `${fileStem}-module.js`,
       archivedModule.evidenceJavascript,
     )
     this.alive()
     await this.evidence.save(
-      `sealed-${index}-module.map.json`,
+      `${fileStem}-module.map.json`,
       archivedModule.sourceMap,
     )
     this.alive()

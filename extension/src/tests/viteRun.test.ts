@@ -260,6 +260,33 @@ test('a reload before the inputs that changes the served stop module seals it ag
   )
 })
 
+// Value: protects=a re-seal keeps the first seal's evidence files and saves the new bytes beside them under the page generation, so each journal entry still names the bytes of its own files; fails_when=the re-seal writes over sealed-<index>-* and the source.sealed hashes no longer match the files; why_new=Cycle 0064 local CodeRabbit CLI on the final range (minor); seam=none; no_claim=the replay resources, which read the bundle in memory
+test('a re-seal after a reload keeps the first seal evidence files and saves the new module beside them under its page generation', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    adapter: 'vite-dev',
+  })
+  const preparing = harness.run.prepare()
+  await waitUntil(() => harness.navigations.length === 1, 'first navigation')
+  // Act
+  harness.serveChangedModule('const nextTheme = "dark";\n// ?v=57ee5d84')
+  harness.reloadPage()
+  harness.announceSealedModule('second')
+  await preparing
+  await harness.run.evidence.flush()
+  // Assert
+  const firstModule = await readFile(
+    join(harness.run.evidence.directory, 'sealed-0-module.js'),
+    'utf8',
+  )
+  const renewedModule = await readFile(
+    join(harness.run.evidence.directory, 'sealed-0-generation-1-module.js'),
+    'utf8',
+  )
+  assert.equal(firstModule, 'const nextTheme = "dark";')
+  assert.equal(renewedModule, 'const nextTheme = "dark";\n// ?v=57ee5d84')
+})
+
 test('a reload that lands while the entry page is still loading seals the stops again before the inputs', async (context) => {
   // Arrange
   const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
