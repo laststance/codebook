@@ -708,8 +708,14 @@ export async function readResource(
         : source.redacted && sourceMatch[2] === 'map'
           ? source.executedHashes?.sourceMap
           : undefined
+    // The limit applies to the exact text returned, the label line of a redacted module included.
+    // The label stays after the last line, so no line number moves.
+    const returnedText =
+      source.redacted && sourceMatch[2] === 'javascript'
+        ? `${selection.text}\n${REDACTED_MODULE_LABEL}\n`
+        : selection.text
     if (
-      Buffer.byteLength(selection.text) > limit ||
+      Buffer.byteLength(returnedText) > limit ||
       (executedHash ?? sha256(selection.text)) !== selection.hash
     )
       throw new EvidenceIntegrityError(
@@ -718,11 +724,7 @@ export async function readResource(
     return {
       uri,
       mimeType: selection.mimeType,
-      // The label stays after the last line, so no line number moves.
-      text:
-        source.redacted && sourceMatch[2] === 'javascript'
-          ? `${selection.text}\n${REDACTED_MODULE_LABEL}\n`
-          : selection.text,
+      text: returnedText,
     }
   }
   throw new StudyError('NOT_FOUND', 'Unknown resource kind.')

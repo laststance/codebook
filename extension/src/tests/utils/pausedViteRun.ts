@@ -12,11 +12,16 @@ import { configuredRuntimeHarness } from './configuredRuntimeHarness'
  * Runs a Vite stop on the controlled runtime until its first pause is committed, with an env-file value as the debugger's captured value and as the inlined text of the executed module.
  * @param context - The test context, which shuts the service down when the test ends.
  * @param secret - The env-file value the debugger reports, the executed module inlines and the source map lists.
+ * @param moduleJavascript - The executed module's text; defaults to a module that inlines the secret. A text without the secret leaves the value only in the source map.
  * @returns The service, the run's record and receipt, the library and the controlled run.
  * @example
  * const { service, record, library } = await pausedViteRun(context, 'plainsecret1')
  */
-export async function pausedViteRun(context: TestContext, secret: string) {
+export async function pausedViteRun(
+  context: TestContext,
+  secret: string,
+  moduleJavascript: string = `const nextTheme = "${secret}";`,
+) {
   let service: StudyService | undefined, books: RepositoryBookStore | undefined
   context.after(async () => {
     await service?.shutdown()
@@ -25,7 +30,7 @@ export async function pausedViteRun(context: TestContext, secret: string) {
   const harness = await configuredRuntimeHarness(context, undefined, [], {
     adapter: 'vite-dev',
     capturedValue: secret,
-    moduleJavascript: `const nextTheme = "${secret}";`,
+    moduleJavascript,
     maskedValues: [secret],
     sourceMapNames: [secret],
   })

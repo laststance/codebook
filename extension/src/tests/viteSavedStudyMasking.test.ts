@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { REDACTED_MODULE_LABEL } from '../constants'
+import {
+  REDACTED_MODULE_LABEL,
+  REPOSITORY_JAVASCRIPT_LIMIT_BYTES,
+} from '../constants'
 import { EvidenceIntegrityError } from '../errors'
 import { readResource } from '../resources'
 import { sha256 } from '../runtimeSupport/utils/sha256'
@@ -110,6 +113,45 @@ test('the source map resource of a redacted Vite module is refused when the reta
   bundle.sourceMap += ' '
   // Act
   const reading = readResource(service, `${snapshot.snapshotUri}/source/map`)
+  // Assert
+  await assert.rejects(reading, EvidenceIntegrityError)
+})
+
+// Value: protects=a .env value that only the source map holds (not the module JavaScript) is masked in the served map, which stays valid JSON; fails_when=the redaction flag looks at the JavaScript alone, so the map is served as retained; why_new=Cycle 0064 ship pass 1; seam=the controlled runtime seals a module whose JavaScript has no secret and whose map names it; no_claim=the JavaScript resource
+test('the source map resource masks a .env value that appears only in the source map and stays valid JSON', async (context) => {
+  // Arrange
+  const { service, record } = await pausedViteRun(
+    context,
+    SECRET,
+    'const nextTheme = "dark";',
+  )
+  const snapshotUri = service.state(record).observations[0]!.snapshotUri
+  // Act
+  const resource = await readResource(service, `${snapshotUri}/source/map`)
+  // Assert
+  assert.ok('text' in resource)
+  const parsed: { names: string[] } = JSON.parse(resource.text)
+  assert.equal(resource.text.includes(SECRET), false)
+  assert.deepEqual(parsed.names, ['[masked]'])
+  assert.ok(resource.text.includes('[masked]'))
+})
+
+// Value: protects=the JavaScript resource limit covers the label line a redacted module gets, so a module within the limit that would exceed it with the label is refused; fails_when=the limit is checked on the masked module text alone; why_new=Cycle 0064 ship pass 1 (Red Team); seam=the controlled runtime seals a module whose masked text is 10 bytes under the limit; no_claim=the TypeScript and map limits
+test('the JavaScript resource of a redacted Vite module is refused when its masked text fits the limit but the label line pushes it over', async (context) => {
+  // Arrange
+  const head = `const nextTheme = "${SECRET}";\n// `
+  const maskedHeadBytes = Buffer.byteLength(head.replace(SECRET, '[masked]'))
+  const padding = 'x'.repeat(
+    REPOSITORY_JAVASCRIPT_LIMIT_BYTES - 10 - maskedHeadBytes,
+  )
+  const { service, record } = await pausedViteRun(
+    context,
+    SECRET,
+    head + padding,
+  )
+  const snapshotUri = service.state(record).observations[0]!.snapshotUri
+  // Act
+  const reading = readResource(service, `${snapshotUri}/source/javascript`)
   // Assert
   await assert.rejects(reading, EvidenceIntegrityError)
 })
