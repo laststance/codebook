@@ -267,6 +267,33 @@ test('a pid file that cannot be read fails the clean-up, and the held child is e
   assert.equal(processRuns(child.pid), false)
 })
 
+// Value: protects=the processes of a test from outliving it when its tree end throws; fails_when=a throwing killTree skips the final kill, so the held child runs on; why_new=Cycle 0064 pt3 local CodeRabbit CLI r8; seam=endProcessesAfter with a stand-in context and a killTree that throws before it ends anything; no_claim=Windows (the held child is ended there too, by its handle)
+test('a tree end that throws still lets the final kill end the test process, and the failure is reported', async (context) => {
+  // Arrange
+  const child = await startWaitingProcess()
+  context.after(() => child.kill('SIGKILL'))
+  const hooks = []
+  const fakeContext = { after: (hook) => hooks.push(hook) }
+  endProcessesAfter(
+    fakeContext,
+    () => [child.pid],
+    () => {
+      throw new Error('tree end refused')
+    },
+    { held: () => [child.pid] },
+  )
+
+  // Act
+  const error = await hooks[0]().then(
+    () => undefined,
+    (failure) => failure,
+  )
+
+  // Assert: the final kill waited until the child was gone (an unreaped child counts as gone).
+  assert.match(String(error), /tree end refused/)
+  assert.equal(processRuns(child.pid), false)
+})
+
 // Value: protects=the clean-up from taking an unreadable pid file for "no pids"; fails_when=every read failure answers no ids; why_new=Cycle 0064 pt3 review (CodeRabbit major); seam=readNotedPids with a real file made unreadable; no_claim=Windows, where chmod does not deny a read
 test(
   'a pid file the test cannot read fails the read instead of answering no ids, and a missing file answers none',

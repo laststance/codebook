@@ -255,11 +255,21 @@ export function endProcessesAfter(context, readPids, killTree, options = {}) {
       const ancestors = ancestorsOf(read)
       /** Classifies the ids, runs the tree end on the owned ones, then classifies again before the final kill: an id recycled in between must not be signalled on the strength of the first answer. */
       const endIds = async (ids) => {
-        killTree?.(classifyRunning(ids, sinceMs, read, held, ancestors).owned)
-        return endClassified(
+        let treeFailure
+        try {
+          await killTree?.(
+            classifyRunning(ids, sinceMs, read, held, ancestors).owned,
+          )
+        } catch (error) {
+          // The failure is kept, and every id that is surely the test's is still ended before it is thrown.
+          treeFailure = error
+        }
+        const survivors = await endClassified(
           classifyRunning(ids, sinceMs, read, held, ancestors),
           {},
         )
+        if (treeFailure) throw treeFailure
+        return survivors
       }
       let noted
       try {
