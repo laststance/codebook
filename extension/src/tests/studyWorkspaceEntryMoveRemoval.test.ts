@@ -415,8 +415,8 @@ test("in Cursor, a run's attach resolves when the editor rejects the Keep Open c
   }
 })
 
-// Value: protects=the Application pane staying open at the debugger's stop when Cursor 3.27.22 names the Agent chat's group as the active group while the pane holds the keyboard; fails_when=attach waits for the editor to name the Application's group, so Keep Open never runs and the stop file's preview replaces the Application; why_new=Cycle 0064 pt2 /ship Step 11 adversarial review; seam=nameChatGroupWhilePaneHoldsKeyboard (the chat's group stays named, the pane reports itself active), replacesPreviewTabOnTextPreview, openPausedFileInLockedGroup, BrowserViewport.attach; no_claim=the real Cursor's answer (native Cursor trial)
-test("in Cursor, a run's Application stays open when the editor keeps naming the chat's group while the Application pane holds the keyboard", async () => {
+// Value: protects=Keep Open not acting on the chat part's editor while Cursor 3.27.22 names the Agent chat's group as the active group although the Application pane reports itself active, and the Application staying open once the editor names its group; fails_when=attach trusts the pane's own active flag, so Keep Open runs while the chat's group is active, or never runs after the editor names the Application's group; why_new=Cycle 0064 pt2 /ship Step 11 round 2; seam=nameChatGroupWhilePaneHoldsKeyboard (the chat's group stays named, the pane reports itself active), activatePaneGroupByGroupEventOnly, replacesPreviewTabOnTextPreview, openPausedFileInLockedGroup, BrowserViewport.attach; no_claim=the real Cursor's answer (native Cursor trial)
+test("in Cursor, a run's Application is kept only once the editor names its group, not while the chat's group is named and the pane reports itself active", async () => {
   // Arrange
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({
@@ -455,11 +455,25 @@ test("in Cursor, a run's Application stays open when the editor keeps naming the
     }
     harness.nameChatGroupWhilePaneHoldsKeyboard('codebook.scopedBrowser')
 
+    const commandsBeforeAttach = harness.commands.length
+    const keepsSince = (from: number): number =>
+      harness.commands
+        .slice(from)
+        .filter((command) => command === 'workbench.action.keepEditor').length
+
     // Act
     await viewport.attach(attachCdp, new AbortController().signal)
+    const keepsAtAttach = keepsSince(commandsBeforeAttach)
+    harness.activatePaneGroupByGroupEventOnly('codebook.scopedBrowser')
+    await waitUntil(
+      () => keepsSince(commandsBeforeAttach) > 0,
+      'the Keep Open command after the editor named the Application group',
+    )
     harness.openPausedFileInLockedGroup('index.tsx', 1)
 
     // Assert
+    assert.equal(keepsAtAttach, 0)
+    assert.equal(keepsSince(commandsBeforeAttach), 1)
     assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
     assert.deepEqual(
       harness.groups
@@ -527,6 +541,78 @@ test("in Cursor, a run's Application is kept once the learner moves to it, not a
       'the Keep Open command after the pane became active',
     )
     harness.activatePaneByHand('codebook.scopedBrowser')
+    // An asynchronous duplicate Keep Open command would be issued by now.
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    harness.openPausedFileInLockedGroup('index.tsx', 1)
+
+    // Assert
+    assert.equal(keepsAtAttach, 0)
+    assert.equal(keepsSince(commandsBeforeAttach), 1)
+    assert.deepEqual(
+      harness.groups
+        .find((group) => group.viewColumn === 1)!
+        .tabs.map((tab) => tab.label),
+      ['codebook · Application stop-run', 'index.tsx'],
+    )
+  } finally {
+    viewport?.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=the Application pane staying open when the editor names the Application's group active by a tab-group event alone, with no view-state event of the pane, while its tab is still a preview; fails_when=the deferred watch listens to the pane's view state only, so Keep Open never runs and the stop file's preview replaces the Application; why_new=Cycle 0064 pt2 /ship Step 11 round 2; seam=focusMutableDraft in another group at attach, activatePaneGroupByGroupEventOnly (tab-group events only), replacesPreviewTabOnTextPreview, BrowserViewport.attach; no_claim=the real Cursor's answer (native Cursor trial)
+test("in Cursor, a run's Application is kept once the editor names its group by a tab-group event alone", async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.rebuildTabObjectsAtGroupRemoval()
+  harness.closeEmptyGroupsAfterPanelMove()
+  harness.removeGroupLeftByPanelMoveLater()
+  harness.reportsPaneMoveAsOpenThenClose()
+  harness.replacesPreviewTabOnTextPreview()
+  let viewport:
+    | Awaited<
+        ReturnType<
+          NonNullable<typeof harness.reader.presentation.createViewport>
+        >
+      >
+    | undefined
+  try {
+    harness.focusMutableDraft('auth.ts', 3)
+    harness.focusMutableDraft('actions.ts', 2)
+    await harness.reader.open()
+    chat.focusTab()
+    viewport = await harness.reader.presentation.createViewport(
+      'stop-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+    const attachCdp = {
+      on: () => undefined,
+      request: async () => ({}),
+      subscribe: async () => undefined,
+    }
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    const commandsBeforeAttach = harness.commands.length
+    const keepsSince = (from: number): number =>
+      harness.commands
+        .slice(from)
+        .filter((command) => command === 'workbench.action.keepEditor').length
+
+    // Act
+    await viewport.attach(attachCdp, new AbortController().signal)
+    const keepsAtAttach = keepsSince(commandsBeforeAttach)
+    harness.activatePaneGroupByGroupEventOnly('codebook.scopedBrowser')
+    await waitUntil(
+      () => keepsSince(commandsBeforeAttach) > 0,
+      'the Keep Open command after a tab-group event named the Application group',
+    )
     // An asynchronous duplicate Keep Open command would be issued by now.
     await new Promise<void>((resolve) => setImmediate(resolve))
     harness.openPausedFileInLockedGroup('index.tsx', 1)
@@ -789,18 +875,31 @@ test("in Cursor, a run attached with an already cancelled signal arms no Keep Op
       'keepMovedApplicationTab'
     ].bind(harness.reader)
     // The run is cancelled after the move, before the watch is armed.
+    let wrapperCalled = false
     harness.reader['keepMovedApplicationTab'] = async (
       panel,
       signal,
     ): Promise<void> => {
+      wrapperCalled = true
       cancelled.abort()
       await keepMovedApplicationTab(panel, signal)
     }
-    await viewport.attach(attachCdp, cancelled.signal).catch(() => undefined)
+    let attachError: unknown
+    await viewport
+      .attach(attachCdp, cancelled.signal)
+      .catch((error: unknown) => {
+        attachError = error
+      })
     harness.activatePaneByHand('codebook.scopedBrowser')
     await new Promise((resolve) => setImmediate(resolve))
 
     // Assert
+    assert.equal(wrapperCalled, true)
+    // The attach ends either quietly or with the run's abort, never with another failure.
+    assert.equal(
+      attachError === undefined || (attachError as Error).name === 'AbortError',
+      true,
+    )
     assert.equal(keepsSince(commandsBeforeAttach), 0)
   } finally {
     viewport?.close()

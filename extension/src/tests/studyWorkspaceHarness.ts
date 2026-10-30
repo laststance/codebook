@@ -3293,7 +3293,7 @@ export async function workspaceHarness(
             if (group.activeTab === nativeTab)
               group.activeTab = group.tabs.at(-1)
           }
-          const group = destinationGroup
+          let group = destinationGroup
           revealIntoHiddenEditorArea(
             group.viewColumn,
             !wasInFront || !preserveFocus,
@@ -3325,6 +3325,8 @@ export async function workspaceHarness(
           if (closesAfterOpen && homeGroup) {
             // The open is reported with every group an object anew, then the old group's tab closes.
             replaceGroupObjects()
+            // The rebuild gave the destination a new object too; the later activation and echoes follow it.
+            group = currentGroupOf(group) ?? group
             const standingHome = currentGroupOf(homeGroup) ?? homeGroup
             standingHome.tabs = standingHome.tabs.filter(
               (tab) => tab !== nativeTab,
@@ -6018,6 +6020,24 @@ export async function workspaceHarness(
       innerFocusedPanel = kind
       for (const listener of tabChangeListeners) listener()
       for (const panel of panels) panel.notifyViewState()
+    },
+    /**
+     * Makes the editor name a Codebook pane's group the active one by a tab-group event alone: the pane's tab is the one its group shows and the group is the active one, but no pane reports a view state and no tab event fires.
+     * @param kind - The view type of the pane whose group becomes the active one.
+     * @example harness.activatePaneGroupByGroupEventOnly('codebook.scopedBrowser') // the learner focuses the Application's group, e.g. by its column
+     */
+    activatePaneGroupByGroupEventOnly(kind: string): void {
+      const pane = [...panels].find((candidate) => candidate.kind === kind)
+      assert.ok(pane)
+      const group = groups.find((candidate) =>
+        candidate.tabs.includes(pane.nativeTab),
+      )
+      assert.ok(group)
+      group.activeTab = pane.nativeTab
+      activeTabGroup = group
+      leaveChatForMainEditor()
+      // The group event names the active group again, ending any stale name.
+      changedGroups({ opened: [], closed: [], changed: [group] })
     },
     /**
      * Models Cursor 3.27.22 naming the Agent chat's group as the active tab group while a Codebook pane holds the keyboard: the pane's group is the one the editor's commands act on and the pane reports itself active, but `tabGroups.activeTabGroup` keeps naming the chat's group. Needs {@link addSeparateEditorPart}.
