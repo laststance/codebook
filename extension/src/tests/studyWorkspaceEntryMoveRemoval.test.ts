@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { setTimeout as sleep } from 'node:timers/promises'
 
-import { PRESENTATION_READY_TIMEOUT_MS } from '../constants'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 
@@ -528,6 +527,8 @@ test("in Cursor, a run's Application is kept once the learner moves to it, not a
       'the Keep Open command after the pane became active',
     )
     harness.activatePaneByHand('codebook.scopedBrowser')
+    // An asynchronous duplicate Keep Open command would be issued by now.
+    await new Promise<void>((resolve) => setImmediate(resolve))
     harness.openPausedFileInLockedGroup('index.tsx', 1)
 
     // Assert
@@ -539,6 +540,268 @@ test("in Cursor, a run's Application is kept once the learner moves to it, not a
         .tabs.map((tab) => tab.label),
       ['codebook · Application stop-run', 'index.tsx'],
     )
+  } finally {
+    viewport?.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=a cancelled run not taking the keyboard-bound Keep Open command later; fails_when=the deferred watch outlives the run's cancellation, so the learner who comes to the Application after the run ended triggers a Keep Open on a tab the run no longer owns; why_new=Cycle 0064 pt2 /ship review pass 2; seam=focusMutableDraft in another group at attach, an aborted attach signal, activatePaneByHand, BrowserViewport.attach; no_claim=the real Cursor's answer (native Cursor trial)
+test("in Cursor, a run's Application is not kept at activation after the run was cancelled while the learner worked elsewhere", async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.rebuildTabObjectsAtGroupRemoval()
+  harness.closeEmptyGroupsAfterPanelMove()
+  harness.removeGroupLeftByPanelMoveLater()
+  harness.reportsPaneMoveAsOpenThenClose()
+  harness.replacesPreviewTabOnTextPreview()
+  let viewport:
+    | Awaited<
+        ReturnType<
+          NonNullable<typeof harness.reader.presentation.createViewport>
+        >
+      >
+    | undefined
+  try {
+    harness.focusMutableDraft('auth.ts', 3)
+    harness.focusMutableDraft('actions.ts', 2)
+    await harness.reader.open()
+    chat.focusTab()
+    viewport = await harness.reader.presentation.createViewport(
+      'stop-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+    const attachCdp = {
+      on: () => undefined,
+      request: async () => ({}),
+      subscribe: async () => undefined,
+    }
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    const commandsBeforeAttach = harness.commands.length
+    const keepsSince = (from: number): number =>
+      harness.commands
+        .slice(from)
+        .filter((command) => command === 'workbench.action.keepEditor').length
+
+    // Act
+    const controller = new AbortController()
+    await viewport.attach(attachCdp, controller.signal)
+    controller.abort()
+    harness.activatePaneByHand('codebook.scopedBrowser')
+    await new Promise((resolve) => setImmediate(resolve))
+
+    // Assert
+    assert.equal(keepsSince(commandsBeforeAttach), 0)
+  } finally {
+    viewport?.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=closing the Application pane with the Keep Open watch armed ending the watch quietly; fails_when=the watch of a disposed pane still runs the keep or throws from its listener when the editor later reports a tab change; why_new=Cycle 0064 pt2 /ship review pass 2; seam=focusMutableDraft in another group at attach, the Application panel disposed, announceTabChange, BrowserViewport.attach; no_claim=the real Cursor's answer (native Cursor trial)
+test('in Cursor, closing the Application pane while the learner worked elsewhere leaves no Keep Open command and no error behind', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.rebuildTabObjectsAtGroupRemoval()
+  harness.closeEmptyGroupsAfterPanelMove()
+  harness.removeGroupLeftByPanelMoveLater()
+  harness.reportsPaneMoveAsOpenThenClose()
+  harness.replacesPreviewTabOnTextPreview()
+  let viewport:
+    | Awaited<
+        ReturnType<
+          NonNullable<typeof harness.reader.presentation.createViewport>
+        >
+      >
+    | undefined
+  try {
+    harness.focusMutableDraft('auth.ts', 3)
+    harness.focusMutableDraft('actions.ts', 2)
+    await harness.reader.open()
+    chat.focusTab()
+    viewport = await harness.reader.presentation.createViewport(
+      'stop-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+    const attachCdp = {
+      on: () => undefined,
+      request: async () => ({}),
+      subscribe: async () => undefined,
+    }
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    const commandsBeforeAttach = harness.commands.length
+    const keepsSince = (from: number): number =>
+      harness.commands
+        .slice(from)
+        .filter((command) => command === 'workbench.action.keepEditor').length
+
+    // Act
+    await viewport.attach(attachCdp, new AbortController().signal)
+    const reported: unknown[] = []
+    const onUncaught = (error: unknown): void => {
+      reported.push(error)
+    }
+    process.on('uncaughtException', onUncaught)
+    try {
+      harness.reader['app']?.dispose()
+      harness.announceTabChange()
+      await new Promise((resolve) => setImmediate(resolve))
+    } finally {
+      process.off('uncaughtException', onUncaught)
+    }
+
+    // Assert
+    assert.equal(keepsSince(commandsBeforeAttach), 0)
+    assert.deepEqual(reported, [])
+  } finally {
+    viewport?.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=no second Keep Open command for an Application tab that is no preview any more when the pane becomes active; fails_when=the deferred watch runs the keep for a tab kept by other means, which takes the keyboard command for nothing; why_new=Cycle 0064 pt2 /ship review pass 2; seam=focusMutableDraft in another group at attach, the Application tab set to a kept tab, activatePaneByHand, BrowserViewport.attach; no_claim=the real Cursor's answer (native Cursor trial)
+test("in Cursor, a run's Application the learner already kept is not kept again when the learner comes to it", async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.rebuildTabObjectsAtGroupRemoval()
+  harness.closeEmptyGroupsAfterPanelMove()
+  harness.removeGroupLeftByPanelMoveLater()
+  harness.reportsPaneMoveAsOpenThenClose()
+  harness.replacesPreviewTabOnTextPreview()
+  let viewport:
+    | Awaited<
+        ReturnType<
+          NonNullable<typeof harness.reader.presentation.createViewport>
+        >
+      >
+    | undefined
+  try {
+    harness.focusMutableDraft('auth.ts', 3)
+    harness.focusMutableDraft('actions.ts', 2)
+    await harness.reader.open()
+    chat.focusTab()
+    viewport = await harness.reader.presentation.createViewport(
+      'stop-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+    const attachCdp = {
+      on: () => undefined,
+      request: async () => ({}),
+      subscribe: async () => undefined,
+    }
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    const commandsBeforeAttach = harness.commands.length
+    const keepsSince = (from: number): number =>
+      harness.commands
+        .slice(from)
+        .filter((command) => command === 'workbench.action.keepEditor').length
+
+    // Act
+    await viewport.attach(attachCdp, new AbortController().signal)
+    const applicationTab = harness.groups
+      .flatMap((group) => group.tabs)
+      .find((tab) => tab.label === 'codebook · Application stop-run')
+    assert.ok(applicationTab)
+    applicationTab.isPreview = false
+    harness.activatePaneByHand('codebook.scopedBrowser')
+    await new Promise((resolve) => setImmediate(resolve))
+
+    // Assert
+    assert.equal(keepsSince(commandsBeforeAttach), 0)
+  } finally {
+    viewport?.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=an attach whose signal was aborted before the watch could be armed leaving nothing armed; fails_when=the abort listener is added to a signal that never fires again, so the watches stay armed and the learner's later visit to the Application runs Keep Open; why_new=Cycle 0064 pt2 /ship review pass 2; seam=focusMutableDraft in another group at attach, a signal aborted just before the watch is armed (keepMovedApplicationTab wrapper), activatePaneByHand; no_claim=the real Cursor's answer (native Cursor trial)
+test("in Cursor, a run attached with an already cancelled signal arms no Keep Open watch for the learner's later visit", async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.rebuildTabObjectsAtGroupRemoval()
+  harness.closeEmptyGroupsAfterPanelMove()
+  harness.removeGroupLeftByPanelMoveLater()
+  harness.reportsPaneMoveAsOpenThenClose()
+  harness.replacesPreviewTabOnTextPreview()
+  let viewport:
+    | Awaited<
+        ReturnType<
+          NonNullable<typeof harness.reader.presentation.createViewport>
+        >
+      >
+    | undefined
+  try {
+    harness.focusMutableDraft('auth.ts', 3)
+    harness.focusMutableDraft('actions.ts', 2)
+    await harness.reader.open()
+    chat.focusTab()
+    viewport = await harness.reader.presentation.createViewport(
+      'stop-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+    const attachCdp = {
+      on: () => undefined,
+      request: async () => ({}),
+      subscribe: async () => undefined,
+    }
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    const commandsBeforeAttach = harness.commands.length
+    const keepsSince = (from: number): number =>
+      harness.commands
+        .slice(from)
+        .filter((command) => command === 'workbench.action.keepEditor').length
+
+    // Act
+    const cancelled = new AbortController()
+    const keepMovedApplicationTab = harness.reader[
+      'keepMovedApplicationTab'
+    ].bind(harness.reader)
+    // The run is cancelled after the move, before the watch is armed.
+    harness.reader['keepMovedApplicationTab'] = async (
+      panel,
+      signal,
+    ): Promise<void> => {
+      cancelled.abort()
+      await keepMovedApplicationTab(panel, signal)
+    }
+    await viewport.attach(attachCdp, cancelled.signal).catch(() => undefined)
+    harness.activatePaneByHand('codebook.scopedBrowser')
+    await new Promise((resolve) => setImmediate(resolve))
+
+    // Assert
+    assert.equal(keepsSince(commandsBeforeAttach), 0)
   } finally {
     viewport?.close()
     await harness.close()
@@ -591,10 +854,11 @@ test("in Cursor, a run start is not stalled when Keep Open leaves the run's Appl
 
     // Act
     // gstack-timing-ok: the bound itself is the contract; attach must end well before the five-second presentation bound.
+    const timerCancel = new AbortController()
     const winner = await Promise.race([
       attached,
-      sleep(PRESENTATION_READY_TIMEOUT_MS / 2).then(() => 'timer'),
-    ])
+      sleep(2_500, 'timer', { signal: timerCancel.signal }),
+    ]).finally(() => timerCancel.abort())
 
     // Assert
     assert.equal(winner, 'attached')

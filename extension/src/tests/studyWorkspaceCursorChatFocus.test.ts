@@ -51,6 +51,57 @@ test("a recording opened from Cursor 3.27.22's Agent chat, where the first-group
   }
 })
 
+// Value: protects=the probe-and-reveal path of the Agent-chat focus borrow also runs in an editor that lists webview tabs under the main-thread view type; fails_when=the pane lookup or the still-in-front check compares the tab's view type with the pane's by raw equality, so the expired probe reveals nothing and the wait ends in the unreported-focus refusal; why_new=Cycle 0064 pt2 /ship review pass 2; seam=reportsMainThreadWebviewViewTypes with ignoresFirstGroupFocusCommandBesideChat and a spy on the reader's pane reveals; no_claim=the real Cursor's answer (native Cursor trial)
+test("a recording opened from Cursor's Agent chat is arranged by revealing the pane in the first group when the editor reports webview tabs under the main-thread view type", async (context) => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  harness.reportsMainThreadWebviewViewTypes()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  harness.ignoresFirstGroupFocusCommandBesideChat()
+  const keyboardReveals: unknown[][] = []
+  const revealPane = harness.reader['revealPane'].bind(harness.reader)
+  harness.reader['revealPane'] = (panel, column, preserveFocus): void => {
+    if (column === 1 && !preserveFocus)
+      keyboardReveals.push([column, preserveFocus])
+    revealPane(panel, column, preserveFocus)
+  }
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    harness.focusMutableDraft('auth.ts', 2)
+    chat.focusTab()
+    await harness.reader.readPresentationState()
+    keyboardReveals.length = 0
+
+    // Act
+    harness.controller.command({
+      studyId: harness.studyId,
+      action: 'open',
+      expectedRevision: harness.controller.state().revision,
+    })
+    enableFakeClock(context)
+    await advanceClockUntil(
+      context,
+      () => harness.controller.state().readiness !== 'loading',
+      6_000,
+    )
+    resetFakeClock(context)
+    await harness.controller.settle()
+
+    // Assert
+    assert.equal(harness.controller.state().reason, undefined)
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(keyboardReveals.length >= 1, true)
+  } finally {
+    resetFakeClock(context)
+    await harness.close()
+  }
+})
+
 // Value: protects=a recording opened from Cursor 3.27.22's Agent chat, where the first-group focus command does work and the main editor reports its focus at once, is not revealed in the first group a second time with the keyboard; fails_when=the probe reveals the pane although the main editor's focus was proven within the probe window, which takes the keyboard from the editor the command just focused; why_new=Cycle 0064 pt2 /ship coverage audit; seam=the default fake editor, where the first-group focus command works, with a spy on the reader's pane reveals; no_claim=the real Cursor's answer (native Cursor trial)
 test("a recording opened from Cursor's Agent chat, where the first-group focus command works, does not reveal the pane in the first group with the keyboard again", async (context) => {
   // Arrange
@@ -167,6 +218,78 @@ test("a recording opened from Cursor 3.27.22's Agent chat does not reveal the pa
     assert.equal(
       harness.controller.state().reason,
       'Error: The primary editor selection changed during scope measurement; the newer learner focus was preserved.',
+    )
+  } finally {
+    resetFakeClock(context)
+    await harness.close()
+  }
+})
+
+// Value: protects=a learner's close of the source file that held another group while the borrow waits for the first-group focus command's effect is not answered by the Codebook pane taking the keyboard; fails_when=the expired probe reveals the pane with the keyboard before the guards look at the learner's change; why_new=Cycle 0064 pt2 local CodeRabbit round 3; seam=ignoresFirstGroupFocusCommandBesideChat (the command does nothing), closeTabByHand of the third group's only file 100 ms into the probe, a spy on the reader's pane reveals; no_claim=the real Cursor's answer (native Cursor trial)
+test("a recording opened from Cursor 3.27.22's Agent chat does not reveal the pane in the first group when the learner closed another group's source file during the probe", async (context) => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  harness.ignoresFirstGroupFocusCommandBesideChat()
+  const keyboardReveals: unknown[][] = []
+  const revealPane = harness.reader['revealPane'].bind(harness.reader)
+  harness.reader['revealPane'] = (panel, column, preserveFocus): void => {
+    if (column === 1 && !preserveFocus)
+      keyboardReveals.push([column, preserveFocus])
+    revealPane(panel, column, preserveFocus)
+  }
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    harness.focusMutableDraft('auth.ts', 2)
+    chat.focusTab()
+    await harness.reader.readPresentationState()
+    keyboardReveals.length = 0
+    enableFakeClock(context)
+    const executeEditorCommand = harness.reader['executeEditorCommand'].bind(
+      harness.reader,
+    )
+    // The learner closes the only file of the third group, which removes that group 100 ms after the focus command was sent, inside the probe.
+    harness.reader['executeEditorCommand'] = (async (
+      name: string,
+      ...args: unknown[]
+    ) => {
+      const answer = await executeEditorCommand(name, ...args)
+      if (name === 'workbench.action.focusFirstEditorGroup')
+        setTimeout(() => {
+          // Read from the current groups: the editor builds its tab objects anew.
+          const draftTab = harness.groups
+            .flatMap((group) => group.tabs)
+            .find((tab) => tab.label === 'Captured-theme.ts')
+          assert.ok(draftTab)
+          harness.closeTabByHand(draftTab)
+        }, 100)
+      return answer
+    }) as (typeof harness.reader)['executeEditorCommand']
+
+    // Act
+    harness.controller.command({
+      studyId: harness.studyId,
+      action: 'open',
+      expectedRevision: harness.controller.state().revision,
+    })
+    await advanceClockUntil(
+      context,
+      () => harness.controller.state().readiness !== 'loading',
+      6_000,
+    )
+    resetFakeClock(context)
+    await harness.controller.settle()
+
+    // Assert
+    assert.deepEqual(keyboardReveals, [])
+    assert.equal(
+      harness.controller.state().reason,
+      'Error: Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.',
     )
   } finally {
     resetFakeClock(context)

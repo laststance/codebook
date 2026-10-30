@@ -1392,6 +1392,8 @@ export async function workspaceHarness(
   let chatRetakesKeyboardFromFirstGroup = false
   // Cursor 3.27.22: while the Agent chat part has the keyboard `workbench.action.focusFirstEditorGroup` does nothing, and a pane revealed with the focus takes the keyboard (it reports itself active) while the editor goes on naming the chat's group; see `ignoresFirstGroupFocusCommandBesideChat`.
   let ignoresFirstGroupFocusCommandBesideChatFlag = false
+  // An editor that lists every webview tab under the main-thread view type (`mainThreadWebview-<viewType>`), Codebook's own panes included; see `reportsMainThreadWebviewViewTypes`.
+  let reportsMainThreadWebviewViewTypesFlag = false
   // Cursor 3.23.12: "Navigate Down Call Stack" gives the frame's file the keyboard while the editor keeps naming the group it named before; see `keepNamingGroupAfterFrameNavigation`.
   let keepsNamingGroupAfterFrameNavigation = false
   // Cursor 3.23.12: the learner's click into a file of the main editor keeps the chat part's group named; see `keepChatPartNameAtLearnersFileClick`.
@@ -2958,7 +2960,11 @@ export async function workspaceHarness(
     }
     // The tab of a webview panel is labelled with the panel's title, as both editors' tab models name it.
     let nativeTab: Tab = {
-      input: new TabInputWebview(kind),
+      input: new TabInputWebview(
+        reportsMainThreadWebviewViewTypesFlag
+          ? `mainThreadWebview-${kind}`
+          : kind,
+      ),
       label: title,
       isPreview: false,
     }
@@ -6005,6 +6011,11 @@ export async function workspaceHarness(
       assert.ok(group)
       group.activeTab = pane.nativeTab
       activeTabGroup = group
+      // The learner's click ends the chat's keyboard ownership and puts the keyboard in the pane's document, as the reveal path does.
+      leaveChatForMainEditor()
+      keyboardOnBody = false
+      keyboardInView = false
+      innerFocusedPanel = kind
       for (const listener of tabChangeListeners) listener()
       for (const panel of panels) panel.notifyViewState()
     },
@@ -6025,6 +6036,8 @@ export async function workspaceHarness(
       activeTabGroup = group
       staleNamedGroup = separateEditorPart.group
       heldActivePane = kind
+      // The pane holds the keyboard, so the chat no longer does.
+      leaveChatForMainEditor()
       for (const panel of panels) panel.notifyViewState()
     },
     /** Gives every tab of the fake tab model a new Tab object now, as Cursor's extension host does when the editor sends a whole new tab model (the model of `rebuildTabObjectsAtGroupRemoval`, without a group removal); the tab listeners hear nothing, as at a removed group's rebuild. @example harness.rebuildTabObjectsNow() */
@@ -7176,6 +7189,15 @@ export async function workspaceHarness(
       leavesPaneFocusUnreportedBesideChat = true
       // This is Cursor, which also replaces every tab group object with each tab change; that rebuild is what corrects the stale name.
       replacesGroupObjectsOnTabChanges = true
+    },
+    /**
+     * Makes the fake editor list the tabs of the panes created from now on under the main-thread view type (`mainThreadWebview-<viewType>`), as an editor does that reports its webview tabs that way.
+     * @example
+     * harness.reportsMainThreadWebviewViewTypes()
+     * await harness.reader.open() // the Application tab's view type reads 'mainThreadWebview-codebook.scopedBrowser'
+     */
+    reportsMainThreadWebviewViewTypes(): void {
+      reportsMainThreadWebviewViewTypesFlag = true
     },
     /**
      * Makes the fake editor behave as Cursor 3.27.22 was measured to while its Agent chat has the keyboard (Cycle 0064 task 4): `workbench.action.focusFirstEditorGroup` resolves with no event at all, and a pane revealed with the focus in the first group takes the keyboard and reports itself active while the editor goes on naming the chat's group, with no group event.
