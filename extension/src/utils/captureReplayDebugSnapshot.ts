@@ -100,11 +100,16 @@ function namesALocationOutsideTheWorkspace(name: string): boolean {
  * Called by {@link recordedLocationOf}.
  *
  * @param name - A name {@link namesALocationOutsideTheWorkspace} accepted.
- * @returns The last non-empty segment, split at `/` and `\\`.
- * @example lastSegmentOf('C:\\Users\\me\\x.js') // => 'x.js'
+ * @returns The last non-empty segment, split at `/` and `\\`; only a URL loses its `?` query and `#` fragment first, since a file path may hold `?` or `#` in a folder name.
+ * @example
+ * lastSegmentOf('C:\\Users\\me\\x.js') // => 'x.js'
+ * lastSegmentOf('/home/me/c#/x.js') // => 'x.js'
+ * lastSegmentOf('http://localhost/x.js?v=2') // => 'x.js'
  */
 function lastSegmentOf(name: string): string {
-  const withoutQuery = name.split(/[?#]/, 1)[0] ?? name
+  // A URL scheme has two characters or more; a one-letter `C:` is a drive path.
+  const isUrl = /^[a-z][a-z0-9+.-]+:/i.test(name)
+  const withoutQuery = isUrl ? (name.split(/[?#]/, 1)[0] ?? name) : name
   const segments = withoutQuery.split(/[/\\]/).filter(Boolean)
   return segments.at(-1) ?? name
 }

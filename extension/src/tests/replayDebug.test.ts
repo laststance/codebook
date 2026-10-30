@@ -1804,6 +1804,47 @@ test('capture keeps only the last segment of a URL or drive-path caller name and
   assert.equal(JSON.stringify(snapshot).includes('7421'), false)
 })
 
+// Value: protects=the replay Call Stack names the right file for a caller whose path holds `#` or `?` in a folder name; fails_when=a query and fragment are cut from every place, not only from a URL, so `/home/learner/c#/lib/x.js` is named `c`; why_new=Cycle 0064 pt3 review (OCR delegate low); seam=none
+test('capture names the file of a caller whose absolute or drive path holds a hash or question mark in a folder name', async () => {
+  // Arrange
+  const stackFrames = [
+    { id: 1, name: 'top', line: 1, column: 1 },
+    {
+      id: 2,
+      name: 'hashFolder',
+      line: 5,
+      column: 1,
+      source: { name: '/home/learner/c#/lib/x.js' },
+    },
+    {
+      id: 3,
+      name: 'questionFolder',
+      line: 6,
+      column: 1,
+      source: { name: 'C:\\Users\\learner\\what?\\y.js' },
+    },
+  ]
+
+  // Act
+  const snapshot = await captureReplayDebugSnapshot({
+    stack: { stackFrames, totalFrames: 3 },
+    verifiedSource: source,
+    workspaceRoot: process.cwd(),
+    assertCurrent() {},
+    request(command) {
+      return Promise.resolve(
+        command === 'scopes' ? { scopes: [] } : { variables: [] },
+      )
+    },
+  })
+
+  // Assert
+  assert.deepEqual(
+    snapshot.frames.map((frame) => frame.recordedLocation),
+    [undefined, { name: 'x.js' }, { name: 'y.js' }],
+  )
+})
+
 // Value: protects=a saved replay never holds a path when the capture is given no workspace folder; fails_when=a caller's absolute path is kept without a root to make it relative; why_new=the other capture tests all pass a workspaceRoot; seam=none; no_claim=that each capture call site passes its workspace (checked at their runs)
 test('capture without a workspace root keeps only the name of a caller frame', async () => {
   // Arrange
