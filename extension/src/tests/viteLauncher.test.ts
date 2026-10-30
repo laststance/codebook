@@ -497,6 +497,29 @@ test('a secret the config loads into the environment while it runs is masked in 
   assert.equal(error.message.includes('configloadedsecret1'), false)
 })
 
+// Value: protects=a secret the config writes over a variable the launcher already held (here one the dev script assigns) is masked in a refusal; fails_when=the launch snapshot compares names only, so an overwritten value of a known name stays readable; why_new=Cycle 0064 ship round 3 (Codex adversarial, P1); seam=none; no_claim=a variable the config leaves unchanged
+test('a secret the config writes over a variable the dev script assigns is masked in a refusal', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const run = await startVite(context, {
+    dev: 'DB_PASSWORD=scriptvalue1 vite',
+    behavior: {
+      port,
+      setsEnv: { DB_PASSWORD: 'configloadedsecret2' },
+      listenThrows: 'cannot connect with configloadedsecret2 now',
+    },
+  })
+  // Act
+  const error = await refusalOf(run.started)
+  // Assert
+  assert.equal(error.code, 'VITE_LAUNCHER_FAILED')
+  assert.ok(
+    error.message.includes('cannot connect with [masked] now'),
+    error.message,
+  )
+  assert.equal(error.message.includes('configloadedsecret2'), false)
+})
+
 /**
  * Starts the compiled launcher directly on a stub Vite repository with its own environment and returns the env values it reports for masking.
  *
