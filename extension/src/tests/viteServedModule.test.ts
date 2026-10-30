@@ -259,6 +259,15 @@ test('a stop in a plugin-rewritten module is refused naming the plugin cause and
     refusal.message,
     /turn the plugin off with its own development switch/,
   )
+  assert.match(
+    refusal.message,
+    /a file edited after the dev server transformed it gives the same result/,
+  )
+  assert.match(refusal.message, /save it unchanged and start again/)
+  assert.doesNotMatch(
+    refusal.message,
+    /Move the stop to a JavaScript or TypeScript file/,
+  )
 })
 
 test('refuses a body over the JavaScript byte limit', async (context) => {

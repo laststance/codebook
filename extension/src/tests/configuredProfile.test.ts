@@ -13,4 +13,10 @@ test('the public repository-browser catalog names the vite-dev adapter and its s
   assert.deepEqual(adapters, expectedAdapters)
   assert.match(scope, /vite-dev \(Vite 8, since API 1\.11\)/)
   assert.match(scope, /no SSR, no server participant/)
+  assert.match(scope, /up to eight ordered verified pauses/)
+  assert.doesNotMatch(scope, /eight ordered verified browser pauses/)
+  assert.match(
+    scope,
+    /version 2 takes browser stops and uses the owned Next worker for server-action stops/,
+  )
 })
