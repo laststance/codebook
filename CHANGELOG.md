@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.2.63.0] - 2026-10-30 (development candidate)
+
+Cycle 0064 ([Issue #162](https://github.com/laststance/codebook/issues/162)), the first pull request of a bug-fix cycle: it fixes the Vite run and masking defects Cycle 0063 carried. No new feature.
+
+**Vite runs pause on the code the browser really runs.**
+
+- **A page that Vite's dependency optimizer reloads before the click still pauses**: Codebook waits until the optimizer is idle (the launcher reports it, so a slow optimizer is not guessed at), waits out each reload and seals the stops again on every new page load, because Vite serves them with new import hashes; the run's evidence keeps the first seal and each renewal side by side. A renewal that fails is refused as `VITE_SEAL_FAILED` naming the page load, and one new start may pass. A page that keeps reloading past four reloads before the inputs ends with the new code `VITE_PAGE_UNSTABLE` (nothing was sent; start again once with a new key).
+- **The 90 s preparation deadline names the step it reached** and says truthfully whether a browser was opened; the optimizer wait counts against that deadline.
+- **A port that another process takes after Codebook found it free** is refused as `VITE_PORT_UNAVAILABLE`, naming the port, like a port that was already busy.
+
+**Your secrets stay masked, and nothing else is.**
+
+- **Only the values your project loads are masked**: the values of its `.env` files (in `NAME=value` and `NAME: value` form, `${VAR}` expanded as Vite does), the environment values whose name starts with the env prefix (`VITE_` or the config's `envPrefix`) and the values the Vite config puts into the environment while it loads. `HOME`, `PATH` and other process values stay readable in a refusal, and so does a mode name the `dev` script assigns (`NODE_ENV=development`).
+- **A Vite config that fails before it resolves never has its error line quoted**: the refusal names the error, the phase and the config file, and tells you to run the `dev` script in a terminal to read it.
+- **The kept copy of a sealed module, its source map, the recorded debugger values and the saved study are masked** and marked redacted; the seal's hash still names the executed bytes, and a masked value that would grow past the 1,024 characters a saved value holds is reported unavailable so the study still saves.
+
+**Clearer workspace checks.**
+
+- **A workspace opened through a symlinked path is accepted** as its real path, an unreadable `package.json` is refused as `VITE_UNSUPPORTED` naming the file, and an `engines.node` range is read as semver reads it (x-ranges, partial and hyphen ranges, prerelease Node versions); a form Codebook does not read is refused by name.
+- **`codebook_status` and the start agree**: both read one shared check, and the Next adapter's readiness includes the shared prerequisites and the managed-run state. A set Node executable that cannot run is named as such in both, never as a Node that is not set.
+- **Codebook's Vite launcher runs on any Node that Vite 8 accepts**: it is built for Node 20.19, the oldest one.
+
+**LLM Wiki.** The message above the Wiki view's tree stays while Codebook turns a stopped watch's marker into its reservation, also when a slow read of the marker overlaps that change, so it is never empty in between.
+
+**Known limits (the next pull request of this cycle).** In Cursor 3.27, when the Study does not open from the Agent chat, run **Codebook: Open Study Workspace** from the editor and ask the chat to continue; a stop in a file that a plugin rewrites without a source map is refused at sealing; the replay Call Stack shows "Unknown Source" for recorded frames below the top one.
+
+**Compatibility.** MCP API 1.11 and the bundled skill 1.0.57 are unchanged; `VITE_PAGE_UNSTABLE` is a new refusal code. To update, install this VSIX and reopen the work window.
+
 ## [0.2.62.0] - 2026-10-30 (development candidate)
 
 Cycle 0063 ([Issue #160](https://github.com/laststance/codebook/issues/160)), a feature cycle: the chat now explains a real Vite web app live, on the repository's own Vite development server, in VS Code (Copilot Chat) and Cursor (Agent), and the run saves as a learning replay as a Next run does.
