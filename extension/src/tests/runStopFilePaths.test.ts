@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { runStopFilePaths } from '../utils/runStopFilePaths'
@@ -15,7 +16,11 @@ test('a version 2 configuration lists the file of every stop, the additional sto
   // Assert
   assert.deepEqual(
     [...paths],
-    ['/codebook-test-repo/src/theme.ts', '/codebook-test-repo/src/mode.ts'],
+    [
+      // Built with the platform's separator, as the code under test joins its paths.
+      join('/codebook-test-repo', 'src', 'theme.ts'),
+      join('/codebook-test-repo', 'src', 'mode.ts'),
+    ],
   )
 })
 
@@ -26,5 +31,5 @@ test('a version 1 configuration lists its one stop file once', () => {
   // Act
   const paths = runStopFilePaths([configuration], '/codebook-test-repo')
   // Assert
-  assert.deepEqual([...paths], ['/codebook-test-repo/src/theme.ts'])
+  assert.deepEqual([...paths], [join('/codebook-test-repo', 'src', 'theme.ts')])
 })
