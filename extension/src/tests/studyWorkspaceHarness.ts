@@ -1086,6 +1086,8 @@ export async function workspaceHarness(
   /** The view column of the group the editor's maximize command maximized, read while `maximizedEditorGroup` is set: the group that was the active one when the command ran. */
   let maximizedColumn: number | undefined
   let closeEmptyGroupsOnMove = false
+  /** Whether the editor's Keep Open command leaves a webview tab a preview, as a host that reports the kept webview late or never; see `keepEditorLeavesWebviewPreviews`. */
+  let keepEditorLeavesWebviewPreviewsFlag = false
   /** Whether the group a pane's move left empty goes {@link MOVED_PANE_GROUP_REMOVAL_DELAY_MS} after the move instead of with it; see `removeGroupLeftByPanelMoveLater`. */
   let removesGroupLeftByMoveLater = false
   /** Whether a pane's move is reported as its tab opening in the new group first and closing in the old group after that; see `reportsPaneMoveAsOpenThenClose`. */
@@ -4322,7 +4324,11 @@ export async function workspaceHarness(
           }
           if (
             name === 'workbench.action.keepEditor' &&
-            activeTabGroup.activeTab
+            activeTabGroup.activeTab &&
+            !(
+              keepEditorLeavesWebviewPreviewsFlag &&
+              activeTabGroup.activeTab.input instanceof TabInputWebview
+            )
           )
             activeTabGroup.activeTab.isPreview = false
           // The learner's Close Editor closes the tab the focused group shows, as a close request for that tab does.
@@ -5084,7 +5090,12 @@ export async function workspaceHarness(
             keyboardOnBody = false
             keyboardInView = false
           }
-          if (options?.preview !== undefined) tab.isPreview = options.preview
+          if (options?.preview !== undefined) {
+            const wasPreview = tab.isPreview
+            tab.isPreview = options.preview
+            // Cursor rebuilds every group object when a tab stops being a preview (a tab change event).
+            if (wasPreview && !tab.isPreview) replaceGroupObjects()
+          }
           const editor = sourceEditor(
             sourceDocument,
             group,
@@ -6182,6 +6193,13 @@ export async function workspaceHarness(
     },
     closeEmptyGroupsAfterPanelMove(): void {
       closeEmptyGroupsOnMove = true
+    },
+    /**
+     * Makes the editor's Keep Open command leave a webview tab a preview, as a host that never reports the kept webview tab; text and other tabs are kept as before.
+     * @example harness.keepEditorLeavesWebviewPreviews()
+     */
+    keepEditorLeavesWebviewPreviews(): void {
+      keepEditorLeavesWebviewPreviewsFlag = true
     },
     /**
      * Makes the fake editor remove the group a pane's move left empty after the move, which is reported at once, instead of with the move: while the next layout read is pending, or by itself {@link MOVED_PANE_GROUP_REMOVAL_DELAY_MS} after the move when no read comes, as VS Code 1.140.0 did with the earlier window's leftover after the Application's move into its own group in C58 round 1d (the group events at +571 ms of the Return, during the layout read issued at +564 and answered at +611; Cycle 0046 row 658). Only in the model of `closeEmptyGroupsAfterPanelMove`.
@@ -7892,14 +7910,30 @@ export async function workspaceHarness(
         listener({ opened: [tab], closed: [], changed: [] })
       return tab
     },
-    addTextPreview(path: string, column: number, dirty = false) {
+    /**
+     * Opens a preview tab of a text file in a group, as the editor opens a file at one click or the debugger opens a stop's file.
+     * @param path - The file's absolute path.
+     * @param column - The view column of the group.
+     * @param dirty - Whether the tab holds unsaved text.
+     * @param isFront - Whether the tab is the one the group shows (the debugger's stop file is); left out, the tab stands behind the group's shown tab and the group's `activeTab` is unchanged.
+     * @returns The tab.
+     * @example const stopFile = harness.addTextPreview('/repo/src/theme.ts', 1, false, true)
+     */
+    addTextPreview(
+      path: string,
+      column: number,
+      dirty = false,
+      isFront = false,
+    ) {
       const tab = {
         input: new TabInputText(Uri.file(path)),
         label: textTabLabel(Uri.file(path)),
         isPreview: true,
         isDirty: dirty,
       }
-      groups.find((group) => group.viewColumn === column)!.tabs.push(tab)
+      const group = groups.find((group) => group.viewColumn === column)!
+      group.tabs.push(tab)
+      if (isFront) group.activeTab = tab
       return tab
     },
     /**

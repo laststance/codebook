@@ -275,6 +275,8 @@ test('Open replay beside the source preview the run own debugger opened keeps th
     const runPreview = harness.addTextPreview(
       join(harness.directory, 'src', 'theme.ts'),
       1,
+      false,
+      true,
     )
     agentChat.focus()
     const hasMainEditorFocus = harness.reader['hasMainEditorFocus'].bind(
@@ -290,10 +292,7 @@ test('Open replay beside the source preview the run own debugger opened keeps th
     await harness.controller.settle()
 
     // Assert
-    assert.notEqual(
-      harness.controller.state().reason,
-      'Error: A destination group contains a foreign preview: "theme.ts" in editor group 1. Close that tab, or keep it open (double-click its tab), then try again.',
-    )
+    assert.equal(harness.controller.state().reason, undefined)
     assert.equal(runPreview.isPreview, false)
   } finally {
     await harness.close()
@@ -314,6 +313,7 @@ test('Open replay beside a dirty preview of the run stop file leaves that tab a 
       join(harness.directory, 'src', 'theme.ts'),
       1,
       true,
+      true,
     )
     agentChat.focus()
     const hasMainEditorFocus = harness.reader['hasMainEditorFocus'].bind(
@@ -331,6 +331,99 @@ test('Open replay beside a dirty preview of the run stop file leaves that tab a 
     // Assert
     assert.equal(dirtyPreview.isPreview, true)
     assert.equal(dirtyPreview.isDirty, true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a clean preview of a run's stop file standing behind the learner's tab is not pinned, because pinning shows it and would bring it in front of the tab the learner works in; fails_when=the next Study placement shows the background run preview, so it becomes the group's front tab or loses its preview state; why_new=Cycle 0064 pt2 /ship review pass 1; seam=addTextPreview behind focusMutableDraft's front tab, the main editor never reporting focus beside a preview (hasMainEditorFocus); no_claim=the real Cursor's answer (native Cursor trial), what the foreign-preview refusal then asks
+test("Open replay leaves a run's stop-file preview behind the learner's tab a preview and the learner's tab in front", async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  try {
+    await harness.reader.close()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    const agentChat = harness.addSeparateEditorPart()
+    await mkdir(join(harness.directory, 'src'), { recursive: true })
+    await writeFile(join(harness.directory, 'src', 'theme.ts'), 'export {}\n')
+    harness.focusMutableDraft('notes.ts', 1)
+    const backgroundRunPreview = harness.addTextPreview(
+      join(harness.directory, 'src', 'theme.ts'),
+      1,
+    )
+    const group = harness.groups.find(
+      (candidate) => candidate.viewColumn === 1,
+    )!
+    agentChat.focus()
+    const hasMainEditorFocus = harness.reader['hasMainEditorFocus'].bind(
+      harness.reader,
+    )
+    harness.reader['hasMainEditorFocus'] = (groupCount: number): boolean =>
+      groupCount === 1 && backgroundRunPreview.isPreview
+        ? false
+        : hasMainEditorFocus(groupCount)
+
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert
+    assert.equal(backgroundRunPreview.isPreview, true)
+    assert.equal(group.activeTab?.label, 'notes.ts')
+    assert.notEqual(group.activeTab, backgroundRunPreview)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=changing the presentation of an open Study in Cursor while the debugger's stop-file preview of the run is the front tab of a group: the preview is pinned and the selection succeeds; fails_when=the preview is collected before the pin replaces Cursor's group and tab objects, so the change ends with "The prepared preview changed before it could be retained."; why_new=Cycle 0064 pt2 /ship review pass 1 (Codex structured review); seam=addTextPreview as the front tab, replaceGroupObjectsOnTabChanges (Cursor rebuilds group and tab objects at a tab change), leavePaneFocusUnreportedBesideChat; no_claim=the real Cursor's answer (native Cursor trial)
+test("a presentation change made from the chat while the run's stop-file preview is in front pins that preview and changes the presentation", async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  try {
+    harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+    harness.groups.at(-1)!.tabs = []
+    harness.groups.at(-1)!.activeTab = undefined
+    harness.replaceGroupObjectsOnTabChanges()
+    await harness.reader.open()
+    await mkdir(join(harness.directory, 'src'), { recursive: true })
+    await writeFile(join(harness.directory, 'src', 'theme.ts'), 'export {}\n')
+    harness.addTextPreview(
+      join(harness.directory, 'src', 'theme.ts'),
+      1,
+      false,
+      true,
+    )
+    // Cursor reports no primary focus in the main editor beside a preview.
+    const hasMainEditorFocus = harness.reader['hasMainEditorFocus'].bind(
+      harness.reader,
+    )
+    // Cursor rebuilds tab objects at a tab change, so the preview is looked up anew each time.
+    const runPreviewTabs = () =>
+      harness.groups
+        .flatMap((group) => group.tabs)
+        .filter((tab) => tab.label === 'theme.ts')
+    harness.reader['hasMainEditorFocus'] = (groupCount: number): boolean =>
+      runPreviewTabs().some((tab) => tab.isPreview)
+        ? false
+        : hasMainEditorFocus(groupCount)
+    const state = harness.reader.presentationState()
+
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'living-book',
+      action: 'select',
+    })
+
+    // Assert
+    assert.equal(selected.reason, undefined)
+    assert.equal(selected.state, 'open')
+    assert.deepEqual(
+      runPreviewTabs().map((tab) => tab.isPreview),
+      [false],
+    )
   } finally {
     await harness.close()
   }

@@ -55,6 +55,7 @@ import {
   PAUSED_SOURCE_MOVE_ATTEMPTS,
   PRESENTATION_FOCUS_COMMAND_PROBE_MS,
   PRESENTATION_PREFERENCE_VERSION,
+  APPLICATION_TAB_KEEP_PROBE_MS,
   PRESENTATION_READY_TIMEOUT_MS,
   PRESENTATION_SETTLE_CEILING_MS,
   READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE,
@@ -7288,6 +7289,8 @@ export class StudyWorkspace {
         this.yieldFocusToLearner()
         throw refusePreview(foreignPreview.tab, foreignPreview.group, true)
       }
+      // Pinning replaces Cursor's group and tab objects, so a run's stop-file preview is pinned before any tab or group reference is kept below.
+      await this.keepRunOwnedPreviews(signal)
       // A debugger stop opens a cited workspace file as a clean preview and a learner's single click opens any file as one; both are kept by pinning instead of refusing the selection.
       const preparedPreviews: {
         uri: vscode.Uri
@@ -17699,7 +17702,7 @@ export class StudyWorkspace {
     await waitUntil(
       () => !isOwnPreview(),
       'kept application main pane',
-      PRESENTATION_READY_TIMEOUT_MS,
+      APPLICATION_TAB_KEEP_PROBE_MS,
       signal,
     ).catch((error: unknown) => {
       if (signal?.aborted) throw error
@@ -21523,9 +21526,9 @@ export class StudyWorkspace {
   /**
    * Pins the clean source previews that this window's own runs made the native debugger open, so Cursor's main editor can report focus again before a layout read borrows it.
    *
-   * Why it exists: a debugger stop opens the run's cited file as a preview tab, and Cursor reports no primary focus beside a preview, so the next Study placement ended in a foreign-preview refusal for a tab the learner never opened. Called at the start of {@link readMainEditorGrid}. A preview of any other file is the learner's and stays untouched (it still refuses), and so does an edited one.
+   * Why it exists: a debugger stop opens the run's cited file as a preview tab, and Cursor reports no primary focus beside a preview, so the next Study placement ended in a foreign-preview refusal for a tab the learner never opened. Called at the start of {@link readMainEditorGrid}. A preview of any other file is the learner's and stays untouched (it still refuses), and so does an edited one. Only a preview that is already the front tab of its group is pinned: showing a document also makes it the group's active tab, so pinning a run preview that stands behind a learner's tab would bring it in front of what the learner sees; that one is left as it is and the later foreign-preview refusal names it.
    * @param signal - The placement's cancellation.
-   * @returns Once every such preview is a kept tab; a tab the editor cannot pin stays a preview and the later foreign-preview refusal names it.
+   * @returns Once every such front preview is a kept tab; a tab the editor cannot pin stays a preview and the later foreign-preview refusal names it.
    * @example await this.keepRunOwnedPreviews(signal) // login-form.tsx, opened by the run's stop, is no longer a preview
    */
   private async keepRunOwnedPreviews(
@@ -21549,7 +21552,9 @@ export class StudyWorkspace {
     const ownedPreviews = vscode.window.tabGroups.all
       .flatMap((group) => group.tabs.map((tab) => ({ group, tab })))
       .filter(
-        ({ tab }) =>
+        ({ group, tab }) =>
+          // Same read of the groups: a background preview would be brought to the front by showing it.
+          group.activeTab === tab &&
           tab.isPreview &&
           !tab.isDirty &&
           tab.input instanceof vscode.TabInputText &&

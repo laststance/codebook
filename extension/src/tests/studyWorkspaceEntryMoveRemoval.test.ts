@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { setTimeout as sleep } from 'node:timers/promises'
 
+import { PRESENTATION_READY_TIMEOUT_MS } from '../constants'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 
@@ -351,6 +353,66 @@ test("in Cursor, a run's Application stays open when the debugger opens the run'
       applicationGroup.tabs.map((tab) => tab.label),
       ['codebook · Application stop-run', 'index.tsx'],
     )
+  } finally {
+    viewport?.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=a run start staying prompt on a host where Keep Open leaves the Application's webview tab a preview: the wait for the kept state is bounded by APPLICATION_TAB_KEEP_PROBE_MS, not the five-second presentation bound; fails_when=BrowserViewport.attach waits PRESENTATION_READY_TIMEOUT_MS for a tab that stays a preview, stalling every run start; why_new=Cycle 0064 pt2 /ship review pass 1; seam=keepEditorLeavesWebviewPreviews, BrowserViewport.attach, createViewport, addSeparateEditorPart; no_claim=the real Cursor's timing
+test("in Cursor, a run start is not stalled when Keep Open leaves the run's Application tab a preview", async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.rebuildTabObjectsAtGroupRemoval()
+  harness.closeEmptyGroupsAfterPanelMove()
+  harness.removeGroupLeftByPanelMoveLater()
+  harness.reportsPaneMoveAsOpenThenClose()
+  harness.keepEditorLeavesWebviewPreviews()
+  let viewport:
+    | Awaited<
+        ReturnType<
+          NonNullable<typeof harness.reader.presentation.createViewport>
+        >
+      >
+    | undefined
+  try {
+    harness.focusMutableDraft('auth.ts', 3)
+    harness.focusMutableDraft('actions.ts', 2)
+    await harness.reader.open()
+    chat.focusTab()
+    viewport = await harness.reader.presentation.createViewport(
+      'stop-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+    const attached = viewport
+      .attach(
+        {
+          on: () => undefined,
+          request: async () => ({}),
+          subscribe: async () => undefined,
+        },
+        new AbortController().signal,
+      )
+      .then(() => 'attached')
+
+    // Act
+    // gstack-timing-ok: the bound itself is the contract; attach must end well before the five-second presentation bound.
+    const winner = await Promise.race([
+      attached,
+      sleep(PRESENTATION_READY_TIMEOUT_MS / 2).then(() => 'timer'),
+    ])
+
+    // Assert
+    assert.equal(winner, 'attached')
+    assert.equal(harness.commands.includes('workbench.action.keepEditor'), true)
   } finally {
     viewport?.close()
     await harness.close()
