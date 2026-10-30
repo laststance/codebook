@@ -10068,8 +10068,10 @@ export class StudyWorkspace {
           this.assertApplicationReveal(current)
         },
         // The run's stop file opens as a preview in this group; a preview Application would be replaced by it (N64p2-F2).
-        keepsPaneOpen: (attachSignal) =>
-          this.keepMovedApplicationTab(panel, attachSignal),
+        keepsPaneOpen: async (attachSignal) => {
+          await this.keepMovedApplicationTab(panel, attachSignal)
+          await this.openRunStopFilesBesideApplication(panel, attachSignal)
+        },
         // Before the pane covers the paused file, the chat that had the keyboard before the pause gets it back, and a file the learner's selected frame opened keeps the pane from the keyboard; a pane that had to take it tells the learner once where it is.
         comesWithoutKeyboard: () => this.keepsKeyboardFromPane(),
         tookKeyboardFromEditor: () => this.tellPaneTookKeyboard(),
@@ -10226,20 +10228,83 @@ export class StudyWorkspace {
           !isGivenUp(tab.input.uri),
       )
     const input = paused?.input
-    const to = groups.find(
-      (group) => from !== undefined && group.viewColumn === from + 1,
-    )
-    if (
-      from === undefined ||
-      !(input instanceof vscode.TabInputText) ||
-      !to ||
-      !(
-        to.tabs.length === 0 || holdsEditorTab(to, editorTabInputKinds(vscode))
-      ) ||
-      to.tabs.some((tab) => this.isCodebookPaneInput(tab.input))
-    )
+    const to = this.sourceGroupAfterApplication(from)
+    if (from === undefined || !(input instanceof vscode.TabInputText) || !to)
       return undefined
     return { uri: input.uri, from, to, isPreview: Boolean(paused?.isPreview) }
+  }
+
+  /**
+   * Finds the learner's group right after the Application's, where a run's stop file is shown outside the Application's group; read by {@link coveringSourceMove} and {@link openRunStopFilesBesideApplication}.
+   * @param applicationColumn - The Application pane's column; `undefined` when it has none.
+   * @returns The group; `undefined` when there is none, or it is a chat part or holds a Codebook pane.
+   * @example this.sourceGroupAfterApplication(1)?.viewColumn // => 2
+   */
+  private sourceGroupAfterApplication(
+    applicationColumn: vscode.ViewColumn | undefined,
+  ): vscode.TabGroup | undefined {
+    const group = vscode.window.tabGroups.all.find(
+      (candidate) =>
+        applicationColumn !== undefined &&
+        candidate.viewColumn === applicationColumn + 1,
+    )
+    if (
+      !group ||
+      !(
+        group.tabs.length === 0 ||
+        holdsEditorTab(group, editorTabInputKinds(vscode))
+      ) ||
+      group.tabs.some((tab) => this.isCodebookPaneInput(tab.input))
+    )
+      return undefined
+    return group
+  }
+
+  /**
+   * Opens the run's declared stop files as kept tabs in the learner's group beside the Application, without the keyboard, so the debugger reveals those editors at the first pause instead of opening a preview in the Application's group (N64p3-F2, task 97, D14); called through the lease's `keepsPaneOpen` of {@link leaseApplicationViewport} when the run attaches its browser.
+   * Verified against VS Code's source (`debugSource.ts`, `Source.openInEditor`): the debugger opens a stop's file with `revealIfOpened: true` and no group of its own (`ACTIVE_GROUP`, or `SIDE_GROUP` for the side-by-side gesture), and the editor's group finder then picks the group that already holds the file. Cursor 3.27.22 opens a stop file that is open nowhere as a preview in the Application's group (a preview Application is replaced), and pt2's native run with the file already open in the source group revealed that editor and replaced nothing. So a file open outside the Application's group is the cure, and the learner's keyboard is not needed (D10).
+   * A file already open in a group other than the Application's is skipped, as is one the learner has open in the Application's own group; no tab of the learner's is closed, moved or edited. A file that cannot be opened (missing, binary, refused) is no error: the run goes on and reports it on the layout line.
+   * @param panel - The run's Application pane.
+   * @param signal - The run's cancellation.
+   * @returns Once every stop file is open outside the Application's group, or skipped.
+   * @throws The signal's reason when the run was cancelled.
+   * @example await this.openRunStopFilesBesideApplication(panel, signal) // src/index.tsx is a kept tab in column 2
+   */
+  private async openRunStopFilesBesideApplication(
+    panel: vscode.WebviewPanel,
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    // Written as the run resolved them: the canonical form is lowercased on macOS and Windows and is for comparing only.
+    for (const stopFile of this.declaredRunStopFiles((path) => path)) {
+      signal?.throwIfAborted()
+      const canonicalStopFile = canonicalFsPath(stopFile)
+      const applicationColumn = this.viewColumnOf(panel)
+      const isOpenOutsideApplication = vscode.window.tabGroups.all.some(
+        (group) =>
+          group.viewColumn !== applicationColumn &&
+          group.tabs.some(
+            (tab) =>
+              tab.input instanceof vscode.TabInputText &&
+              canonicalFsPath(tab.input.uri.fsPath) === canonicalStopFile,
+          ),
+      )
+      if (isOpenOutsideApplication) continue
+      // Read anew for each file: a show can change the groups.
+      const destination = this.sourceGroupAfterApplication(applicationColumn)
+      if (!destination) continue
+      try {
+        await this.showTextDocumentNoted(vscode.Uri.file(stopFile), {
+          viewColumn: destination.viewColumn,
+          preserveFocus: true,
+          // A kept tab replaces no preview of the learner's.
+          preview: false,
+        })
+      } catch (error) {
+        // A file the editor cannot open leaves the run as it was; only a cancelled run ends here.
+        if (signal?.aborted) throw error
+        this.report('layout', error)
+      }
+    }
   }
 
   /**
@@ -17680,7 +17745,7 @@ export class StudyWorkspace {
    *
    * Why it exists: Cursor 3.27.22 lists the tab of a pane moved into a new group as a preview, and the native debugger opens a run's stop file as a preview in that group; the new preview replaced the Application's webview and the run failed with "Owned viewport closed before cleanup" (N64p2-F2, task 67). Called through the lease of {@link leaseApplicationViewport} when the run attaches its browser ({@link BrowserViewport.attach}), not for a Study entry: a learner's own Study pane stays as the editor shows it.
    * The extension API cannot pin a webview's tab, so the editor's Keep Open command runs, which acts on the focused editor; it runs only when that editor is the Application's own tab, so a learner's tab is never kept by it. The command acts on the workbench's active group, and the extension's active group mirrors it, so the keep runs only when the editor names the Application's group the active one (a pane that reports itself active while the editor keeps naming the Agent chat's group, as Cursor 3.27.22 does, see {@link readMainEditorGrid}, would make the command act on the chat part's editor). When the Application's tab is a preview but another group is the active one, no command runs and the keyboard is not taken: a one-shot watch of the pane's view state and of the tab groups' changes runs the same keep once the editor names the Application's group active while its tab is still a preview in front of its group. A preview that stands behind another tab of its group (a file of the learner's opened there) keeps the watch armed, or arms it, until the learner brings it to the front. The watch ends after the keep, when the tab is no preview any more, when it left its group, when the pane is disposed, and when the run's signal aborts; a signal already aborted before the watch is armed arms nothing and returns without error. A tab that stays a preview, or a command the editor rejects, is left as it is: the move itself has succeeded.
-   * Remaining limit: a stop file that the debugger opens in the Application's group before the editor ever names that group active can still replace the preview Application in Cursor 3.27; Codebook does not take the learner's keyboard to prevent that.
+   * A stop file that is open nowhere would still open as a preview in the Application's group; {@link openRunStopFilesBesideApplication} opens the run's stop files outside it before the first pause (task 97), so this keep is the second line of defense.
    * @param panel - The run's Application pane.
    * @param signal - The run's cancellation.
    * @returns Once the tab is no preview, the editor left it one after the command, or the watch is armed.
@@ -21585,10 +21650,13 @@ export class StudyWorkspace {
   /**
    * Lists the canonical paths of the files of every stop the window's runs declared; read by {@link keepRunOwnedPreviews} and by the paused-file watch of a repository run's lease ({@link presentation}).
    * The set is read anew at each call, because a run declares its stops when its configuration resolves, after its lease exists.
+   * @param toPath - How each path is written; canonical by default, `(path) => path` to open the files.
    * @returns The stop files; empty when the window has no single workspace folder or no run declared a stop.
    * @example this.declaredRunStopFiles().has(canonicalFsPath(fsPath)) // => true for src/index.tsx of a run that stops there
    */
-  private declaredRunStopFiles(): ReadonlySet<string> {
+  private declaredRunStopFiles(
+    toPath?: (joinedPath: string) => string,
+  ): ReadonlySet<string> {
     let workspaceRoot: string
     try {
       workspaceRoot = requireWorkspace()
@@ -21601,6 +21669,7 @@ export class StudyWorkspace {
         record.definition ? [record.definition.configuration] : [],
       ),
       workspaceRoot,
+      toPath,
     )
   }
 
