@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -371,6 +371,88 @@ test("Open replay leaves a run's stop-file preview behind the learner's tab a pr
     assert.equal(backgroundRunPreview.isPreview, true)
     assert.equal(group.activeTab?.label, 'notes.ts')
     assert.notEqual(group.activeTab, backgroundRunPreview)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the next Study placement when the editor refuses to pin a run's stop-file preview (the file was deleted after the stop): the open does not end with the editor's rejection; fails_when=the rejected show escapes the pin and Open replay ends with the file-read error instead of the foreign-preview handling; why_new=Cycle 0064 pt2 /ship Step 11 adversarial review; seam=addTextPreview for a file that no longer exists (the harness show rejects reading it), the main editor never reporting focus beside a preview (hasMainEditorFocus); no_claim=the real Cursor's answer (native Cursor trial)
+test('Open replay beside a run stop-file preview the editor cannot pin goes on and leaves that tab a preview', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  try {
+    await harness.reader.close()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    const agentChat = harness.addSeparateEditorPart()
+    const stopFile = join(harness.directory, 'src', 'theme.ts')
+    const runPreview = harness.addTextPreview(stopFile, 1, false, true)
+    // The run's stop file is no file any more: the editor's show of it rejects.
+    await rm(stopFile, { force: true })
+    agentChat.focus()
+    const hasMainEditorFocus = harness.reader['hasMainEditorFocus'].bind(
+      harness.reader,
+    )
+    harness.reader['hasMainEditorFocus'] = (groupCount: number): boolean =>
+      groupCount === 1 && runPreview.isPreview
+        ? false
+        : hasMainEditorFocus(groupCount)
+
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert
+    assert.equal(
+      harness.controller.state().reason,
+      'Error: The primary text editor could not be retained safely before scope measurement. Focus it explicitly and try again.',
+    )
+    assert.equal(runPreview.isPreview, true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a learner's choice made while the next Study placement pins the run's stop-file previews one after the other: a group whose front tab the learner changed meanwhile is not shown again; fails_when=the pin shows the stale preview of the second group over the learner's tab, which loses the front and the learner's work stands behind a preview; why_new=Cycle 0064 pt2 /ship Step 11 adversarial review; seam=addTextPreview in two groups, holdNextTextDocumentShow (the first pin in flight), focusMutableDraft (the learner's tab to the front of the second group), the main editor never reporting focus beside a preview (hasMainEditorFocus); no_claim=the real Cursor's answer (native Cursor trial), the placement's outcome after the pins
+test("Open replay does not pin a run's stop-file preview in a group whose front tab the learner changed while the first pin was in flight", async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  try {
+    await harness.reader.close()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    const agentChat = harness.addSeparateEditorPart()
+    await mkdir(join(harness.directory, 'src'), { recursive: true })
+    const stopFile = join(harness.directory, 'src', 'theme.ts')
+    await writeFile(stopFile, 'export {}\n')
+    const firstPreview = harness.addTextPreview(stopFile, 1, false, true)
+    const secondPreview = harness.addTextPreview(stopFile, 2, false, true)
+    agentChat.focus()
+    const hasMainEditorFocus = harness.reader['hasMainEditorFocus'].bind(
+      harness.reader,
+    )
+    harness.reader['hasMainEditorFocus'] = (groupCount: number): boolean =>
+      firstPreview.isPreview || secondPreview.isPreview
+        ? false
+        : hasMainEditorFocus(groupCount)
+    // The first show of the placement is the first group's pin.
+    const firstPin = harness.holdNextTextDocumentShow()
+
+    // Act
+    const opening = harness.reader
+      .openRecording(harness.studyId)
+      .catch(() => undefined)
+    await firstPin.started
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    firstPin.release()
+    await opening
+    await harness.controller.settle()
+
+    // Assert
+    const secondGroup = harness.groups.find((group) =>
+      group.tabs.includes(secondPreview),
+    )!
+    assert.equal(firstPreview.isPreview, false)
+    assert.equal(secondPreview.isPreview, true)
+    assert.equal(secondGroup.activeTab?.label, 'learner-notes.ts')
   } finally {
     await harness.close()
   }

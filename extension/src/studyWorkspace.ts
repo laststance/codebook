@@ -17674,10 +17674,11 @@ export class StudyWorkspace {
    * Keeps the Application's tab open after its move, so a text preview that the editor opens later in the Application's group cannot replace it.
    *
    * Why it exists: Cursor 3.27.22 lists the tab of a pane moved into a new group as a preview, and the native debugger opens a run's stop file as a preview in that group; the new preview replaced the Application's webview and the run failed with "Owned viewport closed before cleanup" (N64p2-F2, task 67). Called through the lease of {@link leaseApplicationViewport} when the run attaches its browser ({@link BrowserViewport.attach}), not for a Study entry: a learner's own Study pane stays as the editor shows it.
-   * The extension API cannot pin a webview's tab, so the editor's Keep Open command runs, which acts on the active tab of the active group; it runs only when that tab is the Application's own, so a learner's tab is never kept by it. A tab that stays a preview is left as it is: the move itself has succeeded.
+   * The extension API cannot pin a webview's tab, so the editor's Keep Open command runs, which acts on the focused editor; it runs only when that editor is the Application's own tab, so a learner's tab is never kept by it. The Application holds the focus when the editor names its group the active one, or when the pane reports itself active while the editor keeps naming another group (Cursor 3.27.22 keeps naming the Agent chat's group, see {@link readMainEditorGrid}). When the Application's tab is a preview but the learner works elsewhere, no command runs and the keyboard is not taken: a one-shot watch of the pane's view state runs the same keep once the pane becomes active while its tab is still a preview, and ends after that, when the tab is kept by other means, when the pane is disposed, and when the run's signal aborts. A tab that stays a preview, or a command the editor rejects, is left as it is: the move itself has succeeded.
    * @param panel - The run's Application pane.
    * @param signal - The run's cancellation.
-   * @returns Once the tab is no preview, or the editor left it one after the command.
+   * @returns Once the tab is no preview, the editor left it one after the command, or the watch is armed.
+   * @throws The signal's reason when the run was cancelled during the command.
    * @example await this.keepMovedApplicationTab(panel, signal)
    */
   private async keepMovedApplicationTab(
@@ -17686,27 +17687,58 @@ export class StudyWorkspace {
   ): Promise<void> {
     // Read from the current groups each time: Cursor builds every tab object anew at a tab change.
     const isOwnPreview = (): boolean => {
-      const group = vscode.window.tabGroups.activeTabGroup
-      const tab = group.activeTab
+      const tab = vscode.window.tabGroups.all.find(
+        (group) => group.viewColumn === this.viewColumnOf(panel),
+      )?.activeTab
       return Boolean(
         tab?.isPreview &&
-        group.viewColumn === this.viewColumnOf(panel) &&
         this.isCodebookPaneInput(tab.input, 'codebook.scopedBrowser'),
       )
     }
-    // Only the Application's own preview in the active group is kept; any other state needs no command.
+    const holdsKeyboard = (): boolean =>
+      panel.active ||
+      vscode.window.tabGroups.activeTabGroup.viewColumn ===
+        this.viewColumnOf(panel)
+    const keep = async (): Promise<void> => {
+      try {
+        await this.executeEditorCommand('workbench.action.keepEditor')
+      } catch (error) {
+        // A pane the editor cannot keep is no error; only a cancelled run ends here.
+        if (signal?.aborted) throw error
+        return
+      }
+      signal?.throwIfAborted()
+      // The editor reports the tab's new state after the command answered; a tab that stays a preview is not an error.
+      await waitUntil(
+        () => !isOwnPreview(),
+        'kept application main pane',
+        APPLICATION_TAB_KEEP_PROBE_MS,
+        signal,
+      ).catch((error: unknown) => {
+        if (signal?.aborted) throw error
+      })
+    }
+    // Only the Application's own preview is kept; any other state needs no command.
     if (!isOwnPreview()) return
-    await this.executeEditorCommand('workbench.action.keepEditor')
-    signal?.throwIfAborted()
-    // The editor reports the tab's new state after the command answered; a tab that stays a preview is not an error.
-    await waitUntil(
-      () => !isOwnPreview(),
-      'kept application main pane',
-      APPLICATION_TAB_KEEP_PROBE_MS,
-      signal,
-    ).catch((error: unknown) => {
-      if (signal?.aborted) throw error
-    })
+    if (holdsKeyboard()) return keep()
+    // The learner works elsewhere: wait for the pane to become active instead of taking the keyboard.
+    const watches: vscode.Disposable[] = []
+    const stopWatching = (): void => {
+      signal?.removeEventListener('abort', stopWatching)
+      for (const watch of watches.splice(0)) watch.dispose()
+    }
+    watches.push(
+      panel.onDidChangeViewState(() => {
+        if (!isOwnPreview()) return stopWatching()
+        if (!holdsKeyboard()) return
+        stopWatching()
+        void keep().catch((error: unknown) => {
+          if (!signal?.aborted) this.report('layout', error)
+        })
+      }),
+      panel.onDidDispose(stopWatching),
+    )
+    signal?.addEventListener('abort', stopWatching, { once: true })
   }
 
   /**
@@ -21526,9 +21558,10 @@ export class StudyWorkspace {
   /**
    * Pins the clean source previews that this window's own runs made the native debugger open, so Cursor's main editor can report focus again before a layout read borrows it.
    *
-   * Why it exists: a debugger stop opens the run's cited file as a preview tab, and Cursor reports no primary focus beside a preview, so the next Study placement ended in a foreign-preview refusal for a tab the learner never opened. Called at the start of {@link readMainEditorGrid}. A preview of any other file is the learner's and stays untouched (it still refuses), and so does an edited one. Only a preview that is already the front tab of its group is pinned: showing a document also makes it the group's active tab, so pinning a run preview that stands behind a learner's tab would bring it in front of what the learner sees; that one is left as it is and the later foreign-preview refusal names it.
+   * Why it exists: a debugger stop opens the run's cited file as a preview tab, and Cursor reports no primary focus beside a preview, so the next Study placement ended in a foreign-preview refusal for a tab the learner never opened. Called at the start of {@link readMainEditorGrid}. A preview of any other file is the learner's and stays untouched (it still refuses), and so does an edited one. Only a preview that is already the front tab of its group is pinned: showing a document also makes it the group's active tab, so pinning a run preview that stands behind a learner's tab would bring it in front of what the learner sees; that one is left as it is and the later foreign-preview refusal names it. The pins are awaited one after the other, so right before each one the group (found again by its column) is read anew and the pin is skipped unless that group still shows the same clean preview in front: a learner who switched or closed the tab, or moved it away, meanwhile keeps their choice.
    * @param signal - The placement's cancellation.
-   * @returns Once every such front preview is a kept tab; a tab the editor cannot pin stays a preview and the later foreign-preview refusal names it.
+   * @returns Once every such front preview is a kept tab; a tab the editor cannot pin (its show was refused) or that the learner changed meanwhile stays as it is and the later foreign-preview refusal names a remaining preview.
+   * @throws The signal's reason or the editor's error when the placement was cancelled during a pin; a refused pin is no error.
    * @example await this.keepRunOwnedPreviews(signal) // login-form.tsx, opened by the run's stop, is no longer a preview
    */
   private async keepRunOwnedPreviews(
@@ -21564,11 +21597,27 @@ export class StudyWorkspace {
       signal?.throwIfAborted()
       if (!(tab.input instanceof vscode.TabInputText)) continue
       const uri = tab.input.uri
-      await this.showTextDocumentNoted(uri, {
-        viewColumn: group.viewColumn,
-        preserveFocus: true,
-        preview: false,
-      })
+      // An earlier pin was awaited: the learner may have changed this group meanwhile, and Cursor builds every group and tab object anew at a tab change, so the group is read again by its column.
+      const standing = vscode.window.tabGroups.all.find(
+        (candidate) => candidate.viewColumn === group.viewColumn,
+      )?.activeTab
+      if (!(
+        standing?.input instanceof vscode.TabInputText &&
+        standing.isPreview &&
+        !standing.isDirty &&
+        standing.input.uri.toString() === uri.toString()
+      ))
+        continue
+      try {
+        await this.showTextDocumentNoted(uri, {
+          viewColumn: group.viewColumn,
+          preserveFocus: true,
+          preview: false,
+        })
+      } catch (error) {
+        // A cancelled placement ends here; any other refusal leaves this tab a preview, which the foreign-preview refusal names later.
+        if (signal?.aborted) throw error
+      }
     }
   }
 
@@ -21892,7 +21941,8 @@ export class StudyWorkspace {
         paneFocusedBesideChat() ||
         this.isSoleMainGroupBesideChat(count ?? 0)
       this.mainEditorFocusBorrows++
-      const borrowStartedMs = performance.now()
+      // How long the probe after the focus command waited; the only time of the borrow that counts against the primary-focus wait.
+      let probeElapsedMs = 0
       this.firstGroupFrontAtBorrow = undefined
       try {
         if (useCitation) {
@@ -21915,9 +21965,9 @@ export class StudyWorkspace {
           assertCurrent()
           assertGroups()
           // Cursor 3.27.22 answers the command from the Agent chat with no event at all: when no report of the main editor's focus follows shortly, the pane in front of the first group is revealed with the focus, which does move the keyboard there.
-          if (
-            paneInFirstGroup &&
-            !(await waitUntil(
+          if (paneInFirstGroup) {
+            const probeStartedMs = performance.now()
+            const didProbeSucceed = await waitUntil(
               hasMainEditorFocusProof,
               'the first group focus command effect',
               PRESENTATION_FOCUS_COMMAND_PROBE_MS,
@@ -21929,11 +21979,22 @@ export class StudyWorkspace {
                 if (probeError instanceof WaitTimeoutError) return false
                 throw probeError
               },
-            ))
-          ) {
-            this.revealPane(paneInFirstGroup, vscode.ViewColumn.One, false)
-            assertCurrent()
-            assertGroups()
+            )
+            // Set whether the probe passed or expired.
+            probeElapsedMs = performance.now() - probeStartedMs
+            // The learner may have brought another tab to the front of the first group during the probe; then nothing is revealed, and the wait below refuses for the learner's newer choice.
+            const firstGroupFront = vscode.window.tabGroups.all.find(
+              (group) => group.viewColumn === vscode.ViewColumn.One,
+            )?.activeTab?.input
+            const paneStillInFront =
+              this.viewColumnOf(paneInFirstGroup) === vscode.ViewColumn.One &&
+              firstGroupFront instanceof vscode.TabInputWebview &&
+              firstGroupFront.viewType === paneInFirstGroup.viewType
+            if (!didProbeSucceed && paneStillInFront) {
+              this.revealPane(paneInFirstGroup, vscode.ViewColumn.One, false)
+              assertCurrent()
+              assertGroups()
+            }
           }
         }
       } catch (error) {
@@ -21966,11 +22027,8 @@ export class StudyWorkspace {
           return hasMainEditorFocusProof()
         },
         'identifiable primary editor focus',
-        // The probe after the focus command belongs to the same bound, so a refusal still comes after PRESENTATION_READY_TIMEOUT_MS in all.
-        Math.max(
-          0,
-          PRESENTATION_READY_TIMEOUT_MS - (performance.now() - borrowStartedMs),
-        ),
+        // Only the probe after the focus command belongs to the same bound, so a refusal still comes after PRESENTATION_READY_TIMEOUT_MS in all; the time the command, the source show or the citation focus took stays outside it.
+        Math.max(0, PRESENTATION_READY_TIMEOUT_MS - probeElapsedMs),
         signal,
       )
         .finally(() => {

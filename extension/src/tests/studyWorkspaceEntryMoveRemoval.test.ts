@@ -359,6 +359,192 @@ test("in Cursor, a run's Application stays open when the debugger opens the run'
   }
 })
 
+// Value: protects=a run starting although the editor refuses Keep Open for the Application's tab; fails_when=BrowserViewport.attach rejects with the command's error, so the run fails at its start for a tab the move itself left usable; why_new=Cycle 0064 pt2 /ship Step 11 adversarial review; seam=rejectsKeepEditor, BrowserViewport.attach, createViewport, addSeparateEditorPart; no_claim=the real Cursor's answer (native Cursor trial)
+test("in Cursor, a run's attach resolves when the editor rejects the Keep Open command", async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.rebuildTabObjectsAtGroupRemoval()
+  harness.closeEmptyGroupsAfterPanelMove()
+  harness.removeGroupLeftByPanelMoveLater()
+  harness.reportsPaneMoveAsOpenThenClose()
+  harness.replacesPreviewTabOnTextPreview()
+  harness.rejectsKeepEditor()
+  let viewport:
+    | Awaited<
+        ReturnType<
+          NonNullable<typeof harness.reader.presentation.createViewport>
+        >
+      >
+    | undefined
+  try {
+    harness.focusMutableDraft('auth.ts', 3)
+    harness.focusMutableDraft('actions.ts', 2)
+    await harness.reader.open()
+    chat.focusTab()
+    viewport = await harness.reader.presentation.createViewport(
+      'stop-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+    const attachCdp = {
+      on: () => undefined,
+      request: async () => ({}),
+      subscribe: async () => undefined,
+    }
+
+    // Act
+    const outcome = await viewport
+      .attach(attachCdp, new AbortController().signal)
+      .then(
+        () => 'attached',
+        (error: unknown) => String(error),
+      )
+
+    // Assert
+    assert.equal(outcome, 'attached')
+    assert.equal(harness.commands.includes('workbench.action.keepEditor'), true)
+  } finally {
+    viewport?.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=the Application pane staying open at the debugger's stop when Cursor 3.27.22 names the Agent chat's group as the active group while the pane holds the keyboard; fails_when=attach waits for the editor to name the Application's group, so Keep Open never runs and the stop file's preview replaces the Application; why_new=Cycle 0064 pt2 /ship Step 11 adversarial review; seam=nameChatGroupWhilePaneHoldsKeyboard (the chat's group stays named, the pane reports itself active), replacesPreviewTabOnTextPreview, openPausedFileInLockedGroup, BrowserViewport.attach; no_claim=the real Cursor's answer (native Cursor trial)
+test("in Cursor, a run's Application stays open when the editor keeps naming the chat's group while the Application pane holds the keyboard", async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.rebuildTabObjectsAtGroupRemoval()
+  harness.closeEmptyGroupsAfterPanelMove()
+  harness.removeGroupLeftByPanelMoveLater()
+  harness.reportsPaneMoveAsOpenThenClose()
+  harness.replacesPreviewTabOnTextPreview()
+  let viewport:
+    | Awaited<
+        ReturnType<
+          NonNullable<typeof harness.reader.presentation.createViewport>
+        >
+      >
+    | undefined
+  try {
+    harness.focusMutableDraft('auth.ts', 3)
+    harness.focusMutableDraft('actions.ts', 2)
+    await harness.reader.open()
+    chat.focusTab()
+    viewport = await harness.reader.presentation.createViewport(
+      'stop-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+    const attachCdp = {
+      on: () => undefined,
+      request: async () => ({}),
+      subscribe: async () => undefined,
+    }
+    harness.nameChatGroupWhilePaneHoldsKeyboard('codebook.scopedBrowser')
+
+    // Act
+    await viewport.attach(attachCdp, new AbortController().signal)
+    harness.openPausedFileInLockedGroup('index.tsx', 1)
+
+    // Assert
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+    assert.deepEqual(
+      harness.groups
+        .find((group) => group.viewColumn === 1)!
+        .tabs.map((tab) => tab.label),
+      ['codebook · Application stop-run', 'index.tsx'],
+    )
+  } finally {
+    viewport?.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=the Application pane staying open at a stop when the learner worked in another group at attach and came to the Application later, without the run taking the keyboard at attach; fails_when=attach runs no Keep Open at all in that state (the later stop file replaces the Application) or runs it at attach (the keyboard is taken from the learner's group), or the keep runs more than once; why_new=Cycle 0064 pt2 /ship Step 11 adversarial review; seam=focusMutableDraft in another group at attach, activatePaneByHand (the pane becomes active), replacesPreviewTabOnTextPreview, BrowserViewport.attach; no_claim=the real Cursor's answer (native Cursor trial)
+test("in Cursor, a run's Application is kept once the learner moves to it, not at attach while another group is active", async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.rebuildTabObjectsAtGroupRemoval()
+  harness.closeEmptyGroupsAfterPanelMove()
+  harness.removeGroupLeftByPanelMoveLater()
+  harness.reportsPaneMoveAsOpenThenClose()
+  harness.replacesPreviewTabOnTextPreview()
+  let viewport:
+    | Awaited<
+        ReturnType<
+          NonNullable<typeof harness.reader.presentation.createViewport>
+        >
+      >
+    | undefined
+  try {
+    harness.focusMutableDraft('auth.ts', 3)
+    harness.focusMutableDraft('actions.ts', 2)
+    await harness.reader.open()
+    chat.focusTab()
+    viewport = await harness.reader.presentation.createViewport(
+      'stop-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+    const attachCdp = {
+      on: () => undefined,
+      request: async () => ({}),
+      subscribe: async () => undefined,
+    }
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    const commandsBeforeAttach = harness.commands.length
+    const keepsSince = (from: number): number =>
+      harness.commands
+        .slice(from)
+        .filter((command) => command === 'workbench.action.keepEditor').length
+
+    // Act
+    await viewport.attach(attachCdp, new AbortController().signal)
+    const keepsAtAttach = keepsSince(commandsBeforeAttach)
+    harness.activatePaneByHand('codebook.scopedBrowser')
+    await waitUntil(
+      () => keepsSince(commandsBeforeAttach) > 0,
+      'the Keep Open command after the pane became active',
+    )
+    harness.activatePaneByHand('codebook.scopedBrowser')
+    harness.openPausedFileInLockedGroup('index.tsx', 1)
+
+    // Assert
+    assert.equal(keepsAtAttach, 0)
+    assert.equal(keepsSince(commandsBeforeAttach), 1)
+    assert.deepEqual(
+      harness.groups
+        .find((group) => group.viewColumn === 1)!
+        .tabs.map((tab) => tab.label),
+      ['codebook · Application stop-run', 'index.tsx'],
+    )
+  } finally {
+    viewport?.close()
+    await harness.close()
+  }
+})
+
 // Value: protects=a run start staying prompt on a host where Keep Open leaves the Application's webview tab a preview: the wait for the kept state is bounded by APPLICATION_TAB_KEEP_PROBE_MS, not the five-second presentation bound; fails_when=BrowserViewport.attach waits PRESENTATION_READY_TIMEOUT_MS for a tab that stays a preview, stalling every run start; why_new=Cycle 0064 pt2 /ship review pass 1; seam=keepEditorLeavesWebviewPreviews, BrowserViewport.attach, createViewport, addSeparateEditorPart; no_claim=the real Cursor's timing
 test("in Cursor, a run start is not stalled when Keep Open leaves the run's Application tab a preview", async () => {
   // Arrange
