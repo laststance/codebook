@@ -4,14 +4,19 @@ import { createServer } from 'node:net'
 import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+
 import type {
   DevelopmentApp,
   DevelopmentServerStart,
 } from '../developmentServerAdapter'
 import { StudyError } from '../errors'
+import { createProtocol } from '../protocol'
 import { readResource } from '../resources'
 import { assessViteWorkspace } from '../utils/assessViteWorkspace'
 import { awaitViteOptimizerIdle } from '../utils/awaitViteOptimizerIdle'
+import { captureStudy } from '../utils/captureStudy'
 import {
   buildViteEnvironment,
   launchViteDevelopmentServer,
@@ -29,6 +34,7 @@ import {
   freePort,
   type StubViteBehavior,
 } from './utils/createViteRepository'
+import { pausedViteRun } from './utils/pausedViteRun'
 
 /** The compiled launcher beside the compiled tests' parent folder. */
 const LAUNCHER = join(__dirname, '..', 'viteLauncher.js')
@@ -224,7 +230,7 @@ test('a busy port refuses with its own code and nothing listens', async (context
   await assert.rejects(fetch(`http://127.0.0.1:${port}/`))
 })
 
-test('a config that throws is refused with the error name, the phase and a masked first line', async (context) => {
+test('a failure of the listen phase is refused with the error name and a masked first line', async (context) => {
   // Arrange
   const port = await freePort()
   const run = await startVite(context, {
@@ -232,15 +238,14 @@ test('a config that throws is refused with the error name, the phase and a maske
     files: { '.env': 'DB_PASSWORD=envsecretvalue\n' },
     behavior: {
       port,
-      throws: 'cannot connect with assignedsecret1 and envsecretvalue',
+      listenThrows: 'cannot connect with assignedsecret1 and envsecretvalue',
     },
   })
   // Act
   const error = await refusalOf(run.started)
   // Assert
   assert.equal(error.code, 'VITE_LAUNCHER_FAILED')
-  assert.match(error.message, /Error while resolving the config/)
-  assert.match(error.message, /Vite 8\.3\.5, mode development/)
+  assert.match(error.message, /Vite could not start listening \(Error\)/)
   assert.match(error.message, /cannot connect with \[masked\] and \[masked\]/)
   assert.equal(error.message.includes('assignedsecret1'), false)
   assert.equal(error.message.includes('envsecretvalue'), false)
@@ -439,7 +444,7 @@ test('a config error keeps a process.env value readable while masking the .env v
   const port = await freePort()
   const run = await startVite(context, {
     files: { '.env': 'DB_PASSWORD=plainsecret1\n' },
-    behavior: { port, throws: `home ${home} secret plainsecret1` },
+    behavior: { port, listenThrows: `home ${home} secret plainsecret1` },
   })
   // Act
   const error = await refusalOf(run.started)
@@ -449,13 +454,15 @@ test('a config error keeps a process.env value readable while masking the .env v
   assert.equal(error.message.includes('plainsecret1'), false)
 })
 
-// Value: protects=a config that fails before it resolves never prints a value from its custom envDir; fails_when=the launcher quotes the error line after loading only the package root's env files; why_new=the line is withheld when the config source sets envDir; seam=none; no_claim=a config that sets envDir in a file it imports
-test('a config that sets envDir and throws before resolving withholds its error line so a custom envDir value never prints', async (context) => {
+// Value: protects=a config that fails before it resolves never prints a value from its custom envDir, whatever file sets it; fails_when=the launcher quotes the error line of a failed config; why_new=Codebook cannot learn envDir without evaluating the failed config, so the line is never quoted (owner decision D7); seam=none; no_claim=a failure after the config resolved
+test('a config that fails before resolving never quotes its error line, so a value of an envDir set in an imported base config never prints', async (context) => {
   // Arrange
   const port = await freePort()
   const run = await startVite(context, {
     files: {
-      'vite.config.ts': "export default { envDir: 'envs' }\n",
+      'vite.config.ts':
+        "import base from './vite.base.config'\nexport default base\n",
+      'vite.base.config.ts': "export default { envDir: 'envs' }\n",
       'envs/.env': 'DB_PASSWORD=customdirsecret99\n',
     },
     behavior: { port, throws: 'cannot connect with customdirsecret99' },
@@ -465,24 +472,49 @@ test('a config that sets envDir and throws before resolving withholds its error 
   // Assert
   assert.equal(error.code, 'VITE_LAUNCHER_FAILED')
   assert.equal(error.message.includes('customdirsecret99'), false)
-  assert.match(
+  assert.equal(error.message.includes('cannot connect'), false)
+  assert.equal(
     error.message,
-    /the error text is withheld: the config sets envDir, and Codebook cannot read that folder's values before the config loads, so it does not quote the error/,
+    "The project's Vite config could not be loaded (Error while resolving the config, vite.config.ts; Vite 8.3.5, mode development): the error text is not quoted, because Codebook cannot read the values of the config's envDir before the config resolves; run the project's dev script in a terminal to read the error",
   )
 })
 
-// Value: protects=a config without envDir keeps its readable error line; fails_when=the line is withheld for every failed config; why_new=withholding is limited to a config source that names envDir; seam=none; no_claim=none
-test('a config that does not mention envDir keeps its error line in the refusal', async (context) => {
+// Value: protects=a refusal that withholds the error line still names the config file the learner must open; fails_when=the file name is dropped for a config that never resolved; why_new=Cycle 0064 round 1 B1; seam=none; no_claim=the file of a config chosen by the project's own lookup order beyond the default names
+test('a failed config named by the dev script is named in the refusal without its error line', async (context) => {
   // Arrange
   const port = await freePort()
   const run = await startVite(context, {
-    files: { 'vite.config.ts': 'export default {}\n' },
+    dev: 'vite --config configs/app.config.ts',
+    files: { 'configs/app.config.ts': 'export default {}\n' },
     behavior: { port, throws: 'unknown option foo' },
   })
   // Act
   const error = await refusalOf(run.started)
   // Assert
-  assert.match(error.message, /: unknown option foo$/)
+  assert.match(
+    error.message,
+    /while resolving the config, configs\/app\.config\.ts;/,
+  )
+  assert.equal(error.message.includes('unknown option foo'), false)
+})
+
+// Value: protects=the masked value equals the value Vite inlines when an env file expands a variable; fails_when=loadEnv reads an emptied environment so ${VAR} expands to nothing; why_new=Cycle 0064 round 1 B4; seam=the dev script assignment stands in for a variable of the real environment; no_claim=other dotenv-expand forms
+test('a .env value that expands a variable of the real environment is masked as the expanded text', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const run = await startVite(context, {
+    dev: 'HOSTNAME_FOR_TEST=expandedhost99 vite',
+    files: { '.env': 'VITE_URL=https://${HOSTNAME_FOR_TEST}/x\n' },
+    behavior: {
+      port,
+      listenThrows: 'cannot reach https://expandedhost99/x now',
+    },
+  })
+  // Act
+  const error = await refusalOf(run.started)
+  // Assert
+  assert.equal(error.code, 'VITE_LAUNCHER_FAILED')
+  assert.ok(error.message.includes('cannot reach [masked] now'), error.message)
 })
 
 // Value: protects=a listen-phase failure masks values of the config's envDir; fails_when=the failure path reads only the package root's env files; why_new=failure uses the resolved config envDir; seam=none; no_claim=a failure before the config resolved
@@ -675,8 +707,8 @@ test('the launcher answers the optimizer wait at once when Vite has no dependenc
   assert.ok(Date.now() - startedAt < 1000)
 })
 
-// Value: protects=one .env secret never reaches any output of a Vite run (the refusal, the evidence journal, the kept study module, the run state and the MCP run resource text); fails_when=any channel stops masking the env-file values; why_new=the channels were only tested one by one; seam=the run harness stands in for the browser, the service harness for the editor, and the launcher mask feeds both; no_claim=debugger snapshot values of a variable that holds the secret
-test('a .env secret is masked in the refusal, the evidence journal, the kept study module, the run state and the MCP run resource text', async (context) => {
+// Value: protects=one .env secret never reaches any output of a Vite run (the refusal, the evidence journal, the kept study module, the run state, the saved study JSON, the MCP tool result text and the source-map resource); fails_when=any channel stops masking the env-file values; why_new=the channels were only tested one by one; seam=the run harnesses stand in for the browser, the service harness for the editor, and the launcher mask feeds both; no_claim=native debugger capture
+test('a .env secret is masked in the refusal, the evidence journal, the kept study module, the run state, the saved study JSON, the MCP tool result text and the source-map resource', async (context) => {
   // Arrange
   const secret = 'plainsecret1'
   const runHarness = await configuredRuntimeHarness(context, undefined, [], {
@@ -686,6 +718,7 @@ test('a .env secret is masked in the refusal, the evidence journal, the kept stu
   })
   const { service, configuration, runtimes } =
     await configuredServiceHarness(context)
+  const paused = await pausedViteRun(context, secret)
   const port = await freePort()
   const launch = await startVite(context, {
     behavior: {
@@ -694,6 +727,14 @@ test('a .env secret is masked in the refusal, the evidence journal, the kept stu
       exits: 3,
     },
     files: { '.env': `VITE_API_KEY=${secret}\n` },
+  })
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair()
+  const client = new Client({ name: 'masking-test', version: '1.0.0' })
+  await createProtocol(service).connect(serverTransport)
+  await client.connect(clientTransport)
+  context.after(async () => {
+    await client.close()
   })
   // Act
   const refusal = await refusalOf(launch.started)
@@ -711,23 +752,53 @@ test('a .env secret is masked in the refusal, the evidence journal, the kept stu
   runtimes[0]!.failures.push(refusal.message)
   runtimes[0]!.status = 'failed'
   const resource = await readResource(service, receipt.runUri)
+  const toolResult = await client.callTool({
+    name: 'codebook_read_resource',
+    arguments: { uri: receipt.runUri },
+  })
+  const archive = await captureStudy(
+    paused.service,
+    paused.record,
+    paused.library.workspaceKey,
+  )
+  const snapshotUri = paused.service.state(paused.record).observations[0]!
+    .snapshotUri
+  const mapResource = await readResource(
+    paused.service,
+    `${snapshotUri}/source/map`,
+  )
   // Assert
   const keptModule = await readFile(
     join(runHarness.run.evidence.directory, 'sealed-0-module.js'),
     'utf8',
   )
   assert.ok('text' in resource)
+  assert.ok('text' in mapResource)
+  assert.ok(archive)
   const channels = {
     refusal: refusal.message,
     evidenceJournal: JSON.stringify(launch.records),
     keptStudyModule: keptModule,
     runState: JSON.stringify(runHarness.run.view()),
     mcpRunResourceText: resource.text,
+    mcpToolResultText: JSON.stringify(toolResult.content),
+    savedStudyJson: JSON.stringify(archive),
+    sourceMapResource: mapResource.text,
   }
   for (const [channel, text] of Object.entries(channels))
     assert.equal(text.includes(secret), false, `${channel} shows the secret`)
-  assert.ok(refusal.message.includes('[masked]'))
-  assert.ok(channels.evidenceJournal.includes('[masked]'))
-  assert.ok(keptModule.includes('[masked]'))
-  assert.ok(resource.text.includes('[masked]'))
+  // The run state and the refusal carry no module text, so only the other channels show the marker.
+  for (const channel of [
+    'refusal',
+    'evidenceJournal',
+    'keptStudyModule',
+    'mcpRunResourceText',
+    'mcpToolResultText',
+    'savedStudyJson',
+    'sourceMapResource',
+  ] as const)
+    assert.ok(
+      channels[channel].includes('[masked]'),
+      `${channel} lacks [masked]`,
+    )
 })

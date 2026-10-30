@@ -56,8 +56,12 @@ export function loadEnv(mode, directory, prefix) {
   // Like Vite: the env files first, then every process.env entry with the prefix wins (an empty prefix matches all of them).
   let fileValues = {}
   try {
+    // Like Vite's dotenv-expand: \${NAME} reads the real environment.
     fileValues = Object.fromEntries(
-      readFileSync(join(directory, '.env'), 'utf8').split('\\n').filter(Boolean).map((line) => line.split('=')),
+      readFileSync(join(directory, '.env'), 'utf8').split('\\n').filter(Boolean).map((line) => {
+        const [name, ...rest] = line.split('=')
+        return [name, rest.join('=').replace(/\\$\\{(\\w+)\\}/g, (_match, variable) => globalThis.process.env[variable] ?? '')]
+      }),
     )
   } catch {}
   const processValues = Object.fromEntries(

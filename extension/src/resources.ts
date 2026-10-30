@@ -700,10 +700,13 @@ export async function readResource(
           : sourceMatch[2] === 'javascript'
             ? REPOSITORY_JAVASCRIPT_LIMIT_BYTES
             : REPOSITORY_MAP_LIMIT_BYTES
-    // A masked copy cannot hash to the executed bytes' hash; the seal identity stays the executed bytes' hash.
+    // A masked copy cannot hash to the executed bytes' hash; the seal identity stays the executed bytes' hash. Only the generated JavaScript and its map are masked: the TypeScript source is still checked.
+    const maskedKind =
+      source.redacted &&
+      (sourceMatch[2] === 'javascript' || sourceMatch[2] === 'map')
     if (
       Buffer.byteLength(selection.text) > limit ||
-      (!source.redacted && sha256(selection.text) !== selection.hash)
+      (!maskedKind && sha256(selection.text) !== selection.hash)
     )
       throw new EvidenceIntegrityError(
         'Captured source exceeds limits or its sealed hash changed.',

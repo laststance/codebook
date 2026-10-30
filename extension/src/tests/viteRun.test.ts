@@ -5,6 +5,7 @@ import { test } from 'node:test'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import {
+  REDACTED_MODULE_LABEL,
   REPOSITORY_SETUP_TIMEOUT_MS,
   VITE_PAGE_QUIET_MS,
   VITE_SETUP_STEPS,
@@ -537,7 +538,10 @@ test('the kept copy of a sealed Vite module masks an inlined env value and marks
     join(harness.run.evidence.directory, 'sealed-0-module.js'),
     'utf8',
   )
-  assert.equal(keptModule, 'const apiKey = "[masked]";')
+  assert.equal(
+    keptModule,
+    `const apiKey = "[masked]";\n${REDACTED_MODULE_LABEL}\n`,
+  )
   const sealedEvent = harness.run.evidence.events.find(
     (event) => event.type === 'source.sealed',
   )
@@ -552,4 +556,71 @@ test('the kept copy of a sealed Vite module masks an inlined env value and marks
   const served = harness.run.source(harness.definition.descriptor.itemId)
   assert.equal(served?.javascript, 'const apiKey = "[masked]";')
   assert.equal(served?.redacted, true)
+})
+
+// Value: protects=project code that holds a credential-shaped literal which is no env value stays as the server served it (and stays unmarked), so a replay shows the executed code; fails_when=the kept-module mask also applies secret-shape redaction; why_new=Cycle 0064 round 1 B2; seam=maskedValues stands in for the launcher's env-file values; no_claim=env values inside the same module
+test('the kept copy of a Vite module with a Bearer literal and an unterminated PEM literal but no env value is kept unchanged and not marked redacted', async (context) => {
+  // Arrange
+  const executedJavascript =
+    'const header = "Bearer abcdefghijklmnopqrstuvwxyz0123";\nconst pem = "-----BEGIN PRIVATE KEY-----\\nMIIEvQIBADANBg'
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    adapter: 'vite-dev',
+    moduleJavascript: executedJavascript,
+    maskedValues: ['unrelatedenvvalue1'],
+  })
+  // Act
+  await harness.run.prepare()
+  await harness.run.evidence.flush()
+  // Assert
+  const keptModule = await readFile(
+    join(harness.run.evidence.directory, 'sealed-0-module.js'),
+    'utf8',
+  )
+  assert.equal(keptModule, executedJavascript)
+  const sealedEvent = harness.run.evidence.events.find(
+    (event) => event.type === 'source.sealed',
+  )
+  assert.equal(
+    JSON.stringify(sealedEvent?.detail).includes('"redacted":false'),
+    true,
+  )
+  const served = harness.run.source(harness.definition.descriptor.itemId)
+  assert.equal(served?.javascript, executedJavascript)
+  assert.equal(served?.redacted, undefined)
+})
+
+// Value: protects=the kept source map stays valid JSON after an env value in it is masked; fails_when=the map is masked as raw text so a shape redaction or an escape cut breaks the JSON; why_new=Cycle 0064 round 1 B2; seam=maskedValues stands in for the launcher's env-file values; no_claim=the module text
+test('the kept source map of a Vite module with an env value in it is masked and still parses as JSON', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    adapter: 'vite-dev',
+    moduleJavascript: 'const apiKey = "plainsecret1";',
+    maskedValues: ['plainsecret1'],
+    sourceMapNames: ['plainsecret1', 'Bearer abcdefghijklmnopqrstuvwxyz0123'],
+  })
+  // Act
+  await harness.run.prepare()
+  await harness.run.evidence.flush()
+  // Assert
+  const keptMap: { names: string[] } = JSON.parse(
+    await readFile(
+      join(harness.run.evidence.directory, 'sealed-0-module.map.json'),
+      'utf8',
+    ),
+  )
+  assert.deepEqual(keptMap.names, [
+    '[masked]',
+    'Bearer abcdefghijklmnopqrstuvwxyz0123',
+  ])
+})
+
+// Value: protects=a reader of the kept module is told that columns on lines with a masked value differ from the executed bytes, so recorded pause columns are not misread; fails_when=the label only mentions the masking; why_new=Cycle 0064 round 1 B5; seam=none; no_claim=where the label is appended
+test('the label of a masked Vite module says that columns on lines with a masked value differ from the executed bytes', () => {
+  // Arrange
+  const expectedSentence =
+    '// [masked] Codebook masked env-file values in this module; columns on lines with a masked value differ from the executed bytes, and its sealed hash names the executed bytes.'
+  // Act
+  const label = REDACTED_MODULE_LABEL
+  // Assert
+  assert.equal(label, expectedSentence)
 })

@@ -26,6 +26,7 @@ import {
   REPOSITORY_BINDING_HINT_EDGE_LINES,
   REPOSITORY_BINDING_HINT_NEAR_LINES,
   REPOSITORY_BROWSER_ACTION,
+  REDACTED_MODULE_LABEL,
   REPOSITORY_BROWSER_PROFILE,
   REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
   REPOSITORY_PATH_LIMIT_CHARS,
@@ -137,6 +138,7 @@ import { isPauseInScript } from './utils/isPauseInScript'
 import { isRefreshedFrameAtStop } from './utils/isRefreshedFrameAtStop'
 import { isSameGeneratedPosition } from './utils/isSameGeneratedPosition'
 import { launchDevelopmentServer } from './utils/launchDevelopmentServer'
+import { maskSourceMapText } from './utils/maskSourceMapText'
 import {
   browserOriginOf,
   isOwnedApplicationOrigin,
@@ -533,8 +535,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private portSource?: string
   /** The Vite version the launcher reported, for a `vite-dev` run. */
   private viteVersion?: string
-  /** Masks env-file and script values in the module text a Vite run keeps ({@link archivedModuleText}); absent for a Next run. */
+  /** Masks env-file and script values, and secret shapes, in captured values ({@link inspectConfiguredValues}); absent for a Next run. */
   private maskText?: (text: string) => string
+  /** Masks only env-file and script values in the module text a Vite run keeps ({@link archivedModuleText}); absent for a Next run. */
+  private maskModuleText?: (text: string) => string
   /** Codebook's listener on `[::1]:<port>` (D66), closed with the run. */
   private ipv6Forwarder?: Ipv6LoopbackForwarder
   /** Whether `[::1]` at the port is the run's own, so the origin checks accept it. */
@@ -698,6 +702,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     })
     this.viteVersion = started.viteVersion
     this.maskText = started.maskText
+    this.maskModuleText = started.maskModuleText
     const declaredPort = { port: started.port }
     // The server binds 127.0.0.1; the browser opens `localhost` at its port, the name the project's own origin settings use (D65).
     this.setupStep = VITE_SETUP_STEPS.waitingForServer
@@ -867,7 +872,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const archivedModule = this.archivedModuleText(prepared.bundle)
     await this.evidence.save(
       `sealed-${index}-module.js`,
-      archivedModule.javascript,
+      archivedModule.evidenceJavascript,
     )
     this.alive()
     await this.evidence.save(
@@ -5952,7 +5957,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         const archivedModule = this.archivedModuleText(executedModule.bundle)
         await this.evidence.save(
           `snapshot-${stop.participant}-${pause.generation}-module.js`,
-          archivedModule.javascript,
+          archivedModule.evidenceJavascript,
         )
         await this.evidence.save(
           `snapshot-${stop.participant}-${pause.generation}-module.map.json`,
@@ -6555,38 +6560,52 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         : this.snapshotBundles.get(snapshotId)
     if (!bundle) return undefined
     const archivedModule = this.archivedModuleText(bundle)
-    return archivedModule.redacted ? { ...bundle, ...archivedModule } : bundle
+    return archivedModule.redacted
+      ? {
+          ...bundle,
+          javascript: archivedModule.javascript,
+          sourceMap: archivedModule.sourceMap,
+          redacted: true,
+        }
+      : bundle
   }
   /**
    * Masks the env-file and script values in the module text a Vite run keeps, and says whether anything was masked.
    *
    * Why it exists: Vite inlines `import.meta.env` values (the `VITE_` ones from the `.env` files) into the modules it serves, and the sealed module is written to the run's evidence and served by the source resources. Called by the sealing loop, the snapshot save and {@link source}.
-   * The seal's hashes keep naming the executed bytes; only the kept copy is masked.
+   * Only those values are masked, never secret shapes: project code may hold credential-shaped literals that are not env values. The source map is masked through its parsed strings, so it stays valid JSON. The seal's hashes keep naming the executed bytes; only the kept copy is masked.
    *
    * @param bundle - The sealed or executed module.
-   * @returns The JavaScript and map text to keep, and `redacted` when either changed.
+   * @returns The JavaScript and map text to keep, `redacted` when either changed, and `evidenceJavascript`: the JavaScript with the label line appended when redacted (the evidence file; the source resource appends the same label itself).
    * @example
-   * this.archivedModuleText(bundle) // => { javascript: 'const k = "[masked]"', sourceMap: '{…}', redacted: true }
+   * this.archivedModuleText(bundle) // => { javascript: 'const k = "[masked]"', sourceMap: '{…}', redacted: true, evidenceJavascript: 'const k = "[masked]"\n// [masked] …\n' }
    */
   private archivedModuleText(bundle: BundleSource): {
     javascript: string
     sourceMap: string
     redacted: boolean
+    evidenceJavascript: string
   } {
-    const mask = this.maskText
+    const mask = this.maskModuleText
     if (!mask)
       return {
         javascript: bundle.javascript,
         sourceMap: bundle.sourceMap,
         redacted: false,
+        evidenceJavascript: bundle.javascript,
       }
     const javascript = mask(bundle.javascript)
-    const sourceMap = mask(bundle.sourceMap)
+    const sourceMap = maskSourceMapText(bundle.sourceMap, mask)
+    const redacted =
+      javascript !== bundle.javascript || sourceMap !== bundle.sourceMap
     return {
       javascript,
       sourceMap,
-      redacted:
-        javascript !== bundle.javascript || sourceMap !== bundle.sourceMap,
+      redacted,
+      // The label comes after the last line, so no line number moves.
+      evidenceJavascript: redacted
+        ? `${javascript}\n${REDACTED_MODULE_LABEL}\n`
+        : javascript,
     }
   }
   /** Exposes bounded descriptors and immutable references; service signatures never serialize full modules or maps. @example run.view().participants.browser.pause */

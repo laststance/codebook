@@ -20,7 +20,11 @@ import type { ViteWorkspace } from './assessViteWorkspace'
 import { buildDevelopmentServerEnvironment } from './developmentServerEnvironment'
 import { isPortInUseFailure } from './isPortInUseFailure'
 import { launchDevelopmentServer } from './launchDevelopmentServer'
-import { longestMaskedLength, maskKnownValues } from './maskKnownValues'
+import {
+  longestMaskedLength,
+  maskEnvValues,
+  maskKnownValues,
+} from './maskKnownValues'
 import { parseViteLauncherReport } from './parseViteLauncherReport'
 import {
   listViteTimestampFiles,
@@ -132,7 +136,7 @@ function listenFailureRefusal(
  * @param workspaceInfo - The Vite installation and accepted `dev` script ({@link assessViteWorkspace}).
  * @param launcherPath - The absolute path of the compiled launcher module.
  * @param factsTimeoutMs - How long the launcher may take to report its facts; production keeps {@link VITE_LAUNCHER_FACTS_TIMEOUT_MS}, a test passes a short one.
- * @returns The ready-to-wait server, the port it listens on, the Vite version the launcher reported and the value mask for text the run keeps (a sealed module whose inlined `VITE_` values come from the env files).
+ * @returns The ready-to-wait server, the port it listens on, the Vite version the launcher reported and the value mask for text the run keeps and the env-values-only mask for a sealed module (its inlined `VITE_` values come from the env files; credential-shaped literals of the project's code stay).
  * @throws `VITE_LAUNCHER_FAILED` (config error, crash, no report in time), `VITE_UNSUPPORTED` (settings), `VITE_PORT_UNAVAILABLE`; each message is masked by value and redacted.
  * @example
  * const { app, port } = await launchViteDevelopmentServer(request, workspaceInfo, join(__dirname, 'viteLauncher.js'))
@@ -147,6 +151,7 @@ export async function launchViteDevelopmentServer(
   port: number
   viteVersion: string
   maskText: (text: string) => string
+  maskModuleText: (text: string) => string
 }> {
   const { script, installation } = workspaceInfo
   // Every value the launcher is given or loads is masked by value in what leaves this module.
@@ -272,5 +277,6 @@ export async function launchViteDevelopmentServer(
     port: facts.port,
     viteVersion: mask(facts.viteVersion),
     maskText: mask,
+    maskModuleText: (text) => maskEnvValues(text, maskedValues),
   }
 }

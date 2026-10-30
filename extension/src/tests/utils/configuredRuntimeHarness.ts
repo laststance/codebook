@@ -20,7 +20,7 @@ import { WaitTimeoutError } from '../../runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
 import { configuredDomExpression } from '../../utils/configuredDomExpression'
 import { createBundleVerifier } from '../../utils/createBundleVerifier'
-import { maskKnownValues } from '../../utils/maskKnownValues'
+import { maskEnvValues, maskKnownValues } from '../../utils/maskKnownValues'
 import * as viteDevAdapter from '../../viteDevAdapter'
 
 import {
@@ -90,6 +90,8 @@ export async function configuredRuntimeHarness(
     moduleJavascript?: string
     /** Makes the Vite stand-in report these values as the ones it masks in kept module text, as the launcher's env-file values are. */
     maskedValues?: string[]
+    /** Names the executed module's source map lists (its `names`), such as an env value an inlined constant carries. */
+    sourceMapNames?: string[]
     /** The text the debugger reports for `nextTheme` (its variable and the declared inspection) instead of `dark`. */
     capturedValue?: string
     /** Makes the Vite stand-in reload the page, serving changed module bytes, right after the entry page was requested and before the run waits for the page to settle. */
@@ -147,7 +149,7 @@ export async function configuredRuntimeHarness(
       version: 3,
       sources: [sourcePath],
       sourcesContent: [source],
-      names: [],
+      names: options.sourceMapNames ?? [],
       mappings:
         options.mappings ?? (additionalStops.length ? 'AAAA,MAAM' : 'AAAA'),
     }),
@@ -826,6 +828,8 @@ export async function configuredRuntimeHarness(
                 ? {
                     maskText: (text: string) =>
                       maskKnownValues(text, options.maskedValues ?? []),
+                    maskModuleText: (text: string) =>
+                      maskEnvValues(text, options.maskedValues ?? []),
                   }
                 : {}),
             }

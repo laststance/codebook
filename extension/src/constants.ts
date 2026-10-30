@@ -2265,9 +2265,9 @@ export const VITE_VERSION_MAX_CHARS = 64
 /** The longest a Vite config's thrown error line is carried in a refusal. */
 export const VITE_ERROR_LINE_LIMIT_CHARS = 200
 
-/** The comment a replay appends to a Vite module whose env-file values are masked, so the redaction stays explicit; the module's sealed hash still names the executed bytes. */
+/** The comment appended to the kept copy of a Vite module whose env-file values are masked (the run's evidence file and the replay's JavaScript resource), so the redaction stays explicit; the module's sealed hash still names the executed bytes, while columns on lines with a masked value differ from them. */
 export const REDACTED_MODULE_LABEL =
-  '// [masked] Codebook masked env-file values in this module; its sealed hash names the executed bytes.'
+  '// [masked] Codebook masked env-file values in this module; columns on lines with a masked value differ from the executed bytes, and its sealed hash names the executed bytes.'
 
 /** The file names Vite looks up as the project config when the dev script names none, in Vite's own order. */
 export const VITE_DEFAULT_CONFIG_FILE_NAMES: readonly string[] = [
@@ -2279,12 +2279,9 @@ export const VITE_DEFAULT_CONFIG_FILE_NAMES: readonly string[] = [
   'vite.config.cts',
 ]
 
-/** The most bytes of a Vite config file the launcher reads to learn whether it sets `envDir`; a larger file is treated as mentioning it. */
-export const VITE_CONFIG_SOURCE_LIMIT_BYTES = 1_048_576
-
-/** Replaces the quoted error line of a Vite config that failed before it resolved while its source sets `envDir`: the folder's values cannot be known yet, so the line could print one. */
+/** Replaces the quoted error line of a Vite config that failed before it resolved: its `envDir` (also one set by an imported base config or a plugin) is unknown until the config resolves, so the line could print a value of that folder. */
 export const VITE_ERROR_LINE_WITHHELD_SENTENCE =
-  "the error text is withheld: the config sets envDir, and Codebook cannot read that folder's values before the config loads, so it does not quote the error"
+  "the error text is not quoted, because Codebook cannot read the values of the config's envDir before the config resolves; run the project's dev script in a terminal to read the error"
 
 /** The extensions of a source file the Vite dev server serves as JavaScript with an inline map; `.vue` and `.svelte` need a framework plugin's own map and are refused. */
 export const VITE_STOP_EXTENSIONS: readonly string[] = [

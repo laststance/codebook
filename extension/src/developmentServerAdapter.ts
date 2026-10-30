@@ -89,6 +89,8 @@ export interface DevelopmentServerAdapter {
     viteVersion?: string
     /** Masks the values the start learned (dev-script assignments and env-file values) in text the run keeps, such as a sealed module; the mask reads its values at call time. Vite only. */
     maskText?: (text: string) => string
+    /** Masks only the env-file and script values, with no secret-shape redaction, in the sealed module text and map a run keeps: project code can hold credential-shaped literals that are not env values. Vite only. */
+    maskModuleText?: (text: string) => string
   }>
   /** Reads the identity of the dev lock the started server owns; only Next has one. */
   readOwnedLock(workspace: string): Promise<DevelopmentLockIdentity | undefined>

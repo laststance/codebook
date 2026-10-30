@@ -9,15 +9,15 @@ import {
   VITE_LAUNCHER_MESSAGES,
   VITE_MASKED_VALUE_MIN_CHARS,
 } from './constants'
+import { findViteConfigFileName } from './utils/findViteConfigFileName'
 import { hasOwnHmrListener } from './utils/hasOwnHmrListener'
 import { isViteLauncherCommand } from './utils/isViteLauncherCommand'
 import { maskKnownValues } from './utils/maskKnownValues'
-import { viteConfigMentionsEnvDir } from './utils/viteConfigMentionsEnvDir'
+import { readEnvFileKeys } from './utils/readEnvFileKeys'
 import {
   waitForViteOptimizerIdle,
   type ViteDependencyOptimizer,
 } from './utils/waitForViteOptimizerIdle'
-import { withoutProcessEnvironment } from './utils/withoutProcessEnvironment'
 import type {
   ViteLauncherCommand,
   ViteLauncherOptions,
@@ -70,8 +70,8 @@ type ViteModule = {
  * @param options - The launcher's options (root and mode).
  * @param config - The resolved config, once there is one: its `envDir` and `mode` are the ones Vite really loaded.
  * @returns The values of at least {@link VITE_MASKED_VALUE_MIN_CHARS} characters; empty when Vite is not loaded or cannot read them.
- * Only values the env files hold are returned: `process.env` is emptied for the read ({@link withoutProcessEnvironment}), so `HOME` or `PATH` stay readable in a refusal.
- * Limit: before the config resolved (an import failure, a config that throws or exits) the values come from the package root and the dev script's mode; values of a custom `envDir` are masked only once the config resolved, which is why {@link run} withholds the error line of a failed config whose source sets `envDir`.
+ * Only values of variables an env file defines are returned, as `loadEnv` expands them against the real environment (so `${VAR}` in a file reads as Vite inlines it); `HOME` or `PATH` stay readable in a refusal. `process.env` is never swapped.
+ * Limit: before the config resolved (an import failure, a config that throws or exits) the values come from the package root and the dev script's mode; values of a custom `envDir` are masked only once the config resolved, which is why {@link run} never quotes the error line of a config that failed before it resolved.
  * @example
  * loadedEnvValues(vite, options) // => ['plainsecretvalue']
  */
@@ -84,41 +84,34 @@ function loadedEnvValues(
     const envDir =
       config && typeof config.envDir === 'string' ? config.envDir : options.root
     const mode = config?.mode ?? options.mode ?? 'development'
-    const fileValues = withoutProcessEnvironment(
-      () => vite?.loadEnv(mode, envDir, '') ?? {},
-    )
-    return Object.values(fileValues).filter(
-      (value) => value.length >= VITE_MASKED_VALUE_MIN_CHARS,
-    )
+    const loaded = vite?.loadEnv(mode, envDir, '') ?? {}
+    // The names come from the env files; the values from loadEnv, which expands them like Vite does.
+    return readEnvFileKeys(envDir, mode)
+      .map((name) => loaded[name] ?? '')
+      .filter((value) => value.length >= VITE_MASKED_VALUE_MIN_CHARS)
   } catch {
     return []
   }
 }
 
 /**
- * Chooses the error line a failure report carries: the masked first line, or none when the config failed before it resolved and its source sets `envDir`.
+ * Chooses the error line a failure report carries: the masked first line, or none when the config failed before it resolved.
  *
- * Why it exists: values of a custom `envDir` are unknown before the config resolves, so quoting the line could print one. Called by {@link run} when it reports a failure.
+ * Why it exists: the config's `envDir` (also one set by an imported base config or a plugin) is unknown before the config resolves, and learning it would mean evaluating the failed config, so quoting the line could print a value of that folder. Called by {@link run} when it reports a failure.
  *
  * @param failure - The error that ended the launch.
  * @param envValues - The env-file values loaded so far.
  * @param configUnresolved - Whether the config had not resolved when the failure happened.
- * @param options - The launcher's options (root and config file).
  * @returns The `firstLine` field of the report: the masked line, or the sentence that says why it is withheld.
  * @example
- * quotedErrorLine(new Error('boom'), [], false, options) // => { firstLine: 'boom' }
+ * quotedErrorLine(new Error('boom'), [], false) // => { firstLine: 'boom' }
  */
 function quotedErrorLine(
   failure: Error,
   envValues: readonly string[],
   configUnresolved: boolean,
-  options: ViteLauncherOptions,
 ): { firstLine: string } {
-  if (
-    configUnresolved &&
-    viteConfigMentionsEnvDir(options.root, options.configFile)
-  )
-    return { firstLine: VITE_ERROR_LINE_WITHHELD_SENTENCE }
+  if (configUnresolved) return { firstLine: VITE_ERROR_LINE_WITHHELD_SENTENCE }
   // The line is masked before it is cut: a value that crosses the cut would leave a fragment the extension's exact-value mask cannot match.
   return {
     firstLine: maskKnownValues(
@@ -126,6 +119,27 @@ function quotedErrorLine(
       envValues,
     ).slice(0, VITE_ERROR_LINE_LIMIT_CHARS),
   }
+}
+
+/**
+ * Names the config file a failure report carries: the resolved config's path, or, for a config that never resolved, the file the learner must open.
+ *
+ * Why it exists: a config that fails before it resolves reports no path, yet the refusal names the file. Called by {@link run} when it reports a failure.
+ *
+ * @param resolvedFile - The resolved config's path relative to the root, once there is one.
+ * @param configUnresolved - Whether the config had not resolved when the failure happened.
+ * @param options - The launcher's options (root and config file).
+ * @returns The file name, or `undefined` when the project has no config file.
+ * @example
+ * failedConfigFile(undefined, true, options) // => 'vite.config.ts'
+ */
+function failedConfigFile(
+  resolvedFile: string | undefined,
+  configUnresolved: boolean,
+  options: ViteLauncherOptions,
+): string | undefined {
+  if (resolvedFile || !configUnresolved) return resolvedFile
+  return findViteConfigFileName(options.root, options.configFile)
 }
 
 /**
@@ -250,18 +264,14 @@ async function run(): Promise<void> {
   } catch (error) {
     const failure = error instanceof Error ? error : new Error(String(error))
     const envValues = loadedEnvValues(viteModule, options, server?.config)
-    const quoted = quotedErrorLine(
-      failure,
-      envValues,
-      phase === 'config' && !server,
-      options,
-    )
+    const configUnresolved = phase === 'config' && !server
+    const quoted = quotedErrorLine(failure, envValues, configUnresolved)
     await send({
       type: VITE_LAUNCHER_MESSAGES.failed,
       phase,
       errorName: failure.name,
       ...quoted,
-      configFile,
+      configFile: failedConfigFile(configFile, configUnresolved, options),
       envValues,
     })
     await server?.close().catch(() => undefined)
