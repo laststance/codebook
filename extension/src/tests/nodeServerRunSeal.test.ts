@@ -237,22 +237,37 @@ test('a published seal lists by its seal status in this window while the tempora
     harness,
     context,
   )
-  service.nodeServerHistorySealBoundMs = 250
   await run.sendRequest('k1')
   const originalUnlink = fileSystem.unlink
+  // The cleanup of the seal's temporary file begins only after sealed.json was published, and stalls until the test releases it.
+  let releaseCleanup = (): void => {}
+  let markCleanupStarted = (): void => {}
+  const cleanupStarted = new Promise<void>((resolve) => {
+    markCleanupStarted = resolve
+  })
   context.mock.method(
     fileSystem,
     'unlink',
-    (...removal: Parameters<typeof fileSystem.unlink>) =>
-      String(removal[0]).includes('sealed.json')
-        ? new Promise<never>(() => undefined)
-        : originalUnlink(...removal),
+    (...removal: Parameters<typeof fileSystem.unlink>) => {
+      if (!String(removal[0]).includes('sealed.json'))
+        return originalUnlink(...removal)
+      markCleanupStarted()
+      return new Promise<void>((resolve) => {
+        releaseCleanup = resolve
+      })
+    },
   )
   const studyId = `${service.instanceId}_${record.id}`
 
-  // Act
-  await service.stop({ instanceId: service.instanceId, runId: record.id })
+  // Act: the folder is listed while the stop still waits on the stalled cleanup.
+  const stopping = service.stop({
+    instanceId: service.instanceId,
+    runId: record.id,
+  })
+  await cleanupStarted
   const listed = await repository.serverHistories.list()
+  releaseCleanup()
+  await stopping
 
   // Assert
   // The run sent its request and recorded no stop or response, so its seal reads partial; recording would mean the active writer hid the seal.
