@@ -33,10 +33,7 @@ const servedMapSchema = z.object({
   sourceRoot: z.literal('').optional(),
 })
 
-/** Ends a seal with the refusal that names the stop, the reason and the fix. */
-/**
- * Throws `VITE_SEAL_FAILED` for one reason; the optional way out replaces the generic advice for a refusal that has its own.
- */
+/** Ends a seal with the `VITE_SEAL_FAILED` refusal that names the stop, the reason and the fix; the optional way out replaces the generic advice for a refusal that has its own. */
 type Refuse = (reason: string, wayOut?: string) => never
 
 /** Reads a response body whole, ending the read as soon as it passes the byte cap. */
