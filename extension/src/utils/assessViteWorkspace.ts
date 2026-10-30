@@ -60,15 +60,12 @@ export async function assessViteWorkspace(
     () => readNodeVersion(node, signal),
     true,
   )
-  const [gap] = reading.gaps
-  if (gap) {
+  // A blocked reading has a first gap; a ready one carries the installation and the script.
+  if (!reading.ready) {
+    const [gap] = reading.gaps
     if (gap.code === 'PREREQUISITE_MISSING')
       throw new StudyError(gap.code, gap.message)
     throw viteRefusal(gap.code, gap.message)
   }
-  const { installation, script } = reading
-  // No gap means the installation and the accepted script were read.
-  if (!installation || !script)
-    throw viteRefusal('VITE_UNSUPPORTED', 'The Vite workspace was not read.')
-  return { installation, script }
+  return { installation: reading.installation, script: reading.script }
 }

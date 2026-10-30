@@ -20,6 +20,7 @@ import {
 import { maskKnownValues } from '../utils/maskKnownValues'
 import { parseViteLauncherReport } from '../utils/parseViteLauncherReport'
 import { readRepositoryAdapterReadiness } from '../utils/readRepositoryAdapterReadiness'
+import { readViteWorkspaceGaps } from '../utils/readViteWorkspaceGaps'
 import { satisfiesNodeRange } from '../utils/satisfiesNodeRange'
 import {
   VITE_REFUSAL_CODES,
@@ -324,6 +325,57 @@ test('reads x-ranges, partial versions and hyphen ranges the way semver does', (
   assert.deepEqual(
     results,
     cases.map(([, , expected]) => expected),
+  )
+})
+
+// Value: protects=npm range forms with a space after the operator or a prerelease comparator, and prerelease Node versions, are judged as semver judges them; fails_when=">= 20.19.0" is refused as unknown syntax or a prerelease Node reads as unparseable; why_new=Cycle 0064 round 1 findings on valid npm forms; seam=none; expectations checked against the semver package
+test('reads operators with a space, prerelease comparators and prerelease Node versions the way semver does', () => {
+  // Arrange
+  const cases: Array<[string, string, boolean]> = [
+    ['>= 20.19.0', 'v24.0.0', true],
+    ['>= 20.19.0', 'v20.18.0', false],
+    ['>=18 < 20', 'v19.5.0', true],
+    ['~ 20.1.0', 'v20.1.5', true],
+    ['>=20.19.0-0', 'v20.19.0', true],
+    ['>=20.19.0-0', 'v20.19.0-rc.1', true],
+    ['>=20.19.0-0', 'v20.18.0', false],
+    ['>=20.19.0-0 <21', 'v20.19.0-rc.2', true],
+    ['>=25', 'v25.0.0-nightly20261030', false],
+    ['>=25.0.0-0', 'v25.0.0-nightly20261030', true],
+    ['>=24', 'v25.0.0-rc.1', false],
+    ['^20.19.0 || >=22.12.0', 'v25.0.0-rc.1', false],
+    ['>=22.12.0', 'v22.12.0-rc.1', false],
+    ['>=22.12.0', 'v22.12.0+build5', true],
+    ['<25', 'v25.0.0-rc.1', false],
+  ]
+  // Act
+  const results = cases.map(([range, version]) =>
+    satisfiesNodeRange(range, version),
+  )
+  // Assert
+  assert.deepEqual(
+    results,
+    cases.map(([, , expected]) => expected),
+  )
+})
+
+// Value: protects=a Node version text Codebook cannot read is named as unreadable, not as excluded by the range; fails_when=the refusal says the range excludes a Node whose version was never placed in it; why_new=an unparseable version used to read as outside every range; seam=readNode injected; no_claim=the text a real Node prints
+test('a Node version text that is not a version is refused as unreadable, not as excluded by the range', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context, {
+    engines: '>=20.19.0',
+  })
+  // Act
+  const reading = await readViteWorkspaceGaps(
+    repository.root,
+    async () => 'node-latest',
+    true,
+  )
+  // Assert
+  assert.equal(reading.gaps[0]?.code, 'VITE_UNSUPPORTED')
+  assert.match(
+    reading.gaps[0]?.message ?? '',
+    /reported "node-latest", which Codebook cannot read as a version/,
   )
 })
 

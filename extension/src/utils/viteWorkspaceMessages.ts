@@ -62,7 +62,24 @@ export function viteEnginesUnknownMessage(
   range: string,
   nodeVersion: string,
 ): string {
-  return `Vite ${version} declares the Node range ${JSON.stringify(range)}, which Codebook does not know how to read, so it cannot confirm that Node ${nodeVersion} (the Node Executable setting) is inside it. Reinstall Vite 8 so its package.json carries a standard engines.node range.`
+  return `Vite ${version} declares the Node range ${JSON.stringify(range)}, which Codebook does not know how to read, so it cannot confirm that Node ${nodeVersion} (the Node Executable setting) is inside it. Reinstall Vite ${VITE_SUPPORTED_MAJOR} so its package.json carries a standard engines.node range.`
+}
+
+/**
+ * The sentence for a run whose Node version text cannot be read as a version, so it cannot be placed in Vite's `engines.node` range.
+ * @param version - The found Vite version.
+ * @param range - Vite's `engines.node` range.
+ * @param nodeVersion - The text the configured Node reported.
+ * @returns The refusal sentence naming the reported text.
+ * @example
+ * viteNodeVersionUnknownMessage('8.3.5', '>=20', 'node-latest') // => 'Vite 8.3.5 requires Node >=20, but the configured Node reported "node-latest" …'
+ */
+export function viteNodeVersionUnknownMessage(
+  version: string,
+  range: string,
+  nodeVersion: string,
+): string {
+  return `Vite ${version} requires Node ${range}, but the configured Node (the Node Executable setting) reported ${JSON.stringify(nodeVersion)}, which Codebook cannot read as a version, so it cannot confirm that Node is inside that range. Set codebook.nodeExecutable to a Node executable that prints a version such as v24.22.1.`
 }
 
 /** The sentence for a missing `dev` script. */
