@@ -11,7 +11,10 @@ import { assertStableCheckout } from './assertStableCheckout.mjs'
 import { cleanPackageOutputs } from './cleanPackageOutputs.mjs'
 import { inspectBundle } from './inspectBundle.mjs'
 import { loadBuiltExtension } from './loadBuiltExtension.mjs'
-import { PACKAGE_MANIFEST_PATH } from './packageConstants.mjs'
+import {
+  BUNDLE_NODE_TARGET,
+  PACKAGE_MANIFEST_PATH,
+} from './packageConstants.mjs'
 import { readBuildIdentity } from './readBuildIdentity.mjs'
 import { readVsixBytes } from './readVsixBytes.mjs'
 import { readVsixEntries } from './readVsixEntries.mjs'
@@ -89,7 +92,7 @@ export async function buildPackage(
         outdir: join(stage, 'dist'),
         bundle: true,
         platform: 'node',
-        target: 'node24',
+        target: BUNDLE_NODE_TARGET,
         format: 'cjs',
         external: ['vscode'],
         metafile: true,
@@ -194,6 +197,7 @@ export async function buildPackage(
           node: process.versions.node,
           pnpm: pnpmVersion.trim(),
           esbuild: esbuildVersion,
+          bundleTarget: BUNDLE_NODE_TARGET,
           vsce: vsceManifest.version,
           typescript: typescriptManifest.version,
         },
