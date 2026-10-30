@@ -51,7 +51,7 @@ test('the JavaScript source resource of a redacted Vite module is served masked 
   )
 })
 
-// Value: protects=the TypeScript source resource of a redacted Vite module is still checked against its sealed hash, so changed bytes are refused; fails_when=a redacted module skips the hash check for all three source resources; why_new=Cycle 0064 round 1 B3; seam=the test edits the retained bundle's TypeScript text in memory, as corrupted retained bytes would; no_claim=the JavaScript and map resources (masked, so exempt)
+// Value: protects=the TypeScript source resource of a redacted Vite module is still checked against its sealed hash, so changed bytes are refused; fails_when=a redacted module skips the hash check for all three source resources; why_new=Cycle 0064 round 1 B3; seam=the test edits the retained bundle's TypeScript text in memory, as corrupted retained bytes would; no_claim=the JavaScript and map resources
 test('the TypeScript source resource of a redacted Vite module is refused when its text no longer matches the sealed hash', async (context) => {
   // Arrange
   const { service, record, harness } = await pausedViteRun(context, SECRET)
@@ -69,6 +69,47 @@ test('the TypeScript source resource of a redacted Vite module is refused when i
     service,
     `${snapshot.snapshotUri}/source/typescript`,
   )
+  // Assert
+  await assert.rejects(reading, EvidenceIntegrityError)
+})
+
+// Value: protects=the JavaScript resource of a redacted Vite module is refused when the retained unmasked bytes changed after sealing, although the served text is masked; fails_when=a redacted module skips the sealed-hash check for its masked kinds; why_new=Cycle 0064 round 2 (CodeRabbit); seam=the test edits the retained bundle's javascript in memory, as corrupted retained bytes would; no_claim=the TypeScript resource
+test('the JavaScript resource of a redacted Vite module is refused when the retained bytes changed after sealing', async (context) => {
+  // Arrange
+  const { service, record, harness } = await pausedViteRun(context, SECRET)
+  const snapshot = service.state(record).observations[0]!
+  const retained = harness.run as unknown as {
+    snapshotBundles: Map<string, { javascript: string }>
+  }
+  const bundle = retained.snapshotBundles.get(
+    harness.run.view().snapshots[0]!.id,
+  )
+  assert.ok(bundle)
+  bundle.javascript += ' '
+  // Act
+  const reading = readResource(
+    service,
+    `${snapshot.snapshotUri}/source/javascript`,
+  )
+  // Assert
+  await assert.rejects(reading, EvidenceIntegrityError)
+})
+
+// Value: protects=the source map resource of a redacted Vite module is refused when the retained unmasked bytes changed after sealing, although the served text is masked; fails_when=a redacted module skips the sealed-hash check for its masked kinds; why_new=Cycle 0064 round 2 (CodeRabbit); seam=the test edits the retained bundle's sourceMap in memory, as corrupted retained bytes would; no_claim=the TypeScript resource
+test('the source map resource of a redacted Vite module is refused when the retained bytes changed after sealing', async (context) => {
+  // Arrange
+  const { service, record, harness } = await pausedViteRun(context, SECRET)
+  const snapshot = service.state(record).observations[0]!
+  const retained = harness.run as unknown as {
+    snapshotBundles: Map<string, { sourceMap: string }>
+  }
+  const bundle = retained.snapshotBundles.get(
+    harness.run.view().snapshots[0]!.id,
+  )
+  assert.ok(bundle)
+  bundle.sourceMap += ' '
+  // Act
+  const reading = readResource(service, `${snapshot.snapshotUri}/source/map`)
   // Assert
   await assert.rejects(reading, EvidenceIntegrityError)
 })

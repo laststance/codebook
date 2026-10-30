@@ -361,6 +361,8 @@ export type RuntimeSource = {
   sourceMap: string
   /** True when `javascript` and `sourceMap` are the masked copy (env-file values replaced by the mask): their text no longer hashes to the seal's hashes, which name the executed bytes. */
   redacted?: boolean
+  /** With `redacted`: the SHA-256 of the unmasked JavaScript and map bytes the run still holds, so a resource read can check them against the seal although the served text is masked. */
+  executedHashes?: { javascript: string; sourceMap: string }
 }
 export type Participant = 'server' | 'browser'
 export type RuntimeParticipant = {

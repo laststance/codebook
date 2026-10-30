@@ -6566,6 +6566,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           javascript: archivedModule.javascript,
           sourceMap: archivedModule.sourceMap,
           redacted: true,
+          executedHashes: {
+            javascript: sha256(bundle.javascript),
+            sourceMap: sha256(bundle.sourceMap),
+          },
         }
       : bundle
   }
