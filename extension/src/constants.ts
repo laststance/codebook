@@ -2350,6 +2350,27 @@ export const VITE_SETUP_STEPS = {
 export type ViteSetupStep =
   (typeof VITE_SETUP_STEPS)[keyof typeof VITE_SETUP_STEPS]
 
+/**
+ * The setup steps of a Next Pages run, named once for the configured browser run's step setter and the `NEXT_SETUP_DEADLINE` sentence.
+ * A deadline names the step the run had reached, and the step chooses the static recovery, so a renamed step cannot fall through to the wrong sentence or the wrong recovery.
+ */
+export const NEXT_SETUP_STEPS = {
+  validatingProject: 'validating the project',
+  startingNext: 'starting Next',
+  waitingForServer: 'waiting for the server to answer the entry page',
+  readingManifests: 'reading the route manifests',
+  sealingStops: 'sealing the declared stops',
+  openingBrowser: 'opening the browser',
+  loadingEntryPage: 'loading the entry page',
+  waitingForRouter:
+    'waiting for the page router to become ready before sending the declared input or click',
+  writingInputs: 'writing the initial inputs and arming the first stop',
+} as const
+
+/** One setup step of {@link NEXT_SETUP_STEPS}. */
+export type NextSetupStep =
+  (typeof NEXT_SETUP_STEPS)[keyof typeof NEXT_SETUP_STEPS]
+
 /** The most reloads before the inputs the run tolerates (a dependency optimizer reloads once or twice). */
 export const VITE_PAGE_GENERATION_LIMIT = 4
 
