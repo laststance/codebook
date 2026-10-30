@@ -7,6 +7,7 @@ import {
   VITE_LAUNCHER_MESSAGES,
   VITE_MASKED_VALUE_MIN_CHARS,
 } from './constants'
+import { hasOwnHmrListener } from './utils/hasOwnHmrListener'
 import type {
   ViteLauncherCommand,
   ViteLauncherOptions,
@@ -133,10 +134,7 @@ async function run(): Promise<void> {
         port: config.server.port ?? VITE_DEFAULT_PORT,
         https: Boolean(config.server.https),
         origin: config.server.origin,
-        hmrOwnListener:
-          typeof hmr === 'object' &&
-          hmr !== null &&
-          ['port', 'host', 'server'].some((key) => key in hmr),
+        hmrOwnListener: hasOwnHmrListener(hmr),
         middlewareMode: Boolean(config.server.middlewareMode),
         appType: config.appType ?? 'spa',
         configFile,
