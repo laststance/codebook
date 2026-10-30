@@ -1150,7 +1150,7 @@ test("in Cursor, a repository run's Application is revealed at a pause after its
       instanceId: harness.service.instanceId,
       profile: 'repository-browser',
       configuration: harness.configuration,
-      key: 'declares-the-stop',
+      key: randomUUID(),
     })
     await harness.service.records.get(receipt.runId)!.preparation
     const runtimeId = harness.service.records.get(receipt.runId)!.runtime!.id
@@ -1226,7 +1226,7 @@ test("in Cursor, a repository run's first pause keeps the Application open while
       instanceId: harness.service.instanceId,
       profile: 'repository-browser',
       configuration: harness.configuration,
-      key: 'declares-the-stop',
+      key: randomUUID(),
     })
     await harness.service.records.get(receipt.runId)!.preparation
     const runtimeId = harness.service.records.get(receipt.runId)!.runtime!.id
@@ -1302,7 +1302,7 @@ test("a repository run's lease opens only its own stop files beside the Applicat
       instanceId: harness.service.instanceId,
       profile: 'repository-browser',
       configuration: harness.configuration,
-      key: 'declares-the-stop',
+      key: randomUUID(),
     })
     const record = harness.service.records.get(receipt.runId)!
     await record.preparation
@@ -1383,7 +1383,7 @@ async function openRunBesideChat() {
     instanceId: harness.service.instanceId,
     profile: 'repository-browser',
     configuration: harness.configuration,
-    key: 'declares-the-stop',
+    key: randomUUID(),
   })
   await harness.service.records.get(receipt.runId)!.preparation
   const runtimeId = harness.service.records.get(receipt.runId)!.runtime!.id
