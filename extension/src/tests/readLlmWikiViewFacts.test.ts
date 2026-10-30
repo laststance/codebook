@@ -426,3 +426,51 @@ test('a marker read while the run ran is settling when the run and its marker ch
     { isRunShown: false, isMarkerSettling: true },
   )
 })
+
+// protects=task 9 (the flaky message test): a marker read while this window's marker change was pending is seen as settling when the change was made during the read, so the view keeps the watching message instead of showing none between the watching and the stopped-watch message; fails_when=the settle is judged only by the change's state at the end of the read, so a slow marker read that holds the marker as it was before the change leaves facts with no run, no reservation and no settling marker; why_new=the other settle tests read the marker while the run ran or keep the change pending to the end; seam=none; no_claim=the view's re-read after the change (the read loop tests)
+test('a marker read while its change was pending is settling when the change was made during the read', async () => {
+  // Arrange
+  let isChangePending = true
+  const endedStatus: WikiUpdateStatus = {
+    state: 'cancelled',
+    site: 'kept',
+    host: 'vscode',
+    finishedAt: new Date(NOW_MS).toISOString(),
+    outputDirectory: '/repo/.codebook/wiki',
+    outputLabel: '.codebook/wiki',
+  }
+
+  // Act
+  const facts = await readLlmWikiViewFacts(
+    dependencies({
+      readMarker: async () => {
+        // The file is read as the run left it; the change is made before the read returns.
+        await new Promise((resolve) => setImmediate(resolve))
+        isChangePending = false
+        return {
+          kind: 'live',
+          heldBy: {
+            pid: 1,
+            windowId: 'this-window',
+            host: 'vscode',
+            startedAtMs: NOW_MS - 60_000,
+            runKind: 'update',
+          },
+        }
+      },
+      runStatus: () => endedStatus,
+      isMarkerChangePending: () => isChangePending,
+    }),
+  )
+
+  // Assert
+  assert.deepEqual(
+    facts.kind === 'ready'
+      ? {
+          isRunShown: facts.run !== undefined,
+          isMarkerSettling: facts.isMarkerSettling,
+        }
+      : 'not ready',
+    { isRunShown: false, isMarkerSettling: true },
+  )
+})
