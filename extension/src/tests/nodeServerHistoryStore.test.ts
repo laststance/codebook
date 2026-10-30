@@ -66,7 +66,7 @@ test('a server header placed in the test folder is refused by the test store', a
   assert.deepEqual(listed, [])
 })
 
-// protects=a node-test header written by the new code has the keys v0.2.53.0 wrote, so an older extension still parses it; fails_when=a new required field or a changed profile appears in a test header; no_claim=other files of the folder
+// protects=a node-test header written by the new code has the same key set as the v0.2.53.0 fixture header (a new key or a missing one is a format change that needs its own version); fails_when=a field is added to or dropped from a test header, or the profile changes; no_claim=that an older extension lists it (the header is version 2 and an older reader does not list it, nodeHistoryHeaderVersion.test.ts), other files of the folder
 test('a test header written by the generalized store has exactly the keys of the v0.2.53.0 fixture header', async (context) => {
   // Arrange
   const { learningDirectory } = await openServerRepository(context)

@@ -203,12 +203,14 @@ export class ReplayDebugAdapter {
   }
 
   /**
-   * The one rule for which frame native Call Stack focuses: VS Code takes the first frame whose source is available and not deemphasized. A frame with recorded text qualifies; a caller frame that only has a placeholder source is answered deemphasized by {@link stackTrace} and never qualifies.
+   * The one rule for which frame native Call Stack focuses: VS Code takes the first frame whose source is available and not deemphasized. A frame with recorded text qualifies; a caller frame that only has a placeholder source is answered deemphasized and never qualifies. The `stackTrace` answer asks this same rule for its normal (not deemphasized) source, so the focus and the hint cannot drift apart.
    * @param frame - A recorded frame of the current selection.
    * @returns Whether the frame answers a normal (not deemphasized) source.
    * @example this.isFocusableFrame({ ...frame, source: undefined, recordedLocation: { name: 'a.ts' } }) // => false
    */
-  private isFocusableFrame(frame: RecordedFrame): boolean {
+  private isFocusableFrame(
+    frame: RecordedFrame,
+  ): frame is RecordedFrame & { source: NonNullable<RecordedFrame['source']> } {
     return Boolean(frame.source)
   }
 
@@ -394,7 +396,7 @@ export class ReplayDebugAdapter {
             name: frame.name,
             line: frame.line,
             column: frame.column,
-            ...(frame.source
+            ...(this.isFocusableFrame(frame)
               ? {
                   source: {
                     name: frame.source.name,
