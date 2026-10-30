@@ -2214,3 +2214,48 @@ export const CHROME_EXTENSION_FAILED_STATE_CODES: readonly string[] = [
   // A debug session that ended, a run or setup time limit and a wrapped error also leave the run failed (DXR6).
   'RUNTIME_FAILED',
 ]
+
+/** The one Vite major the `vite-dev` adapter supports, the major verified natively (Cycle 0063); widening needs a native run on that major. */
+export const VITE_SUPPORTED_MAJOR = 8
+
+/** Vite's own default dev-server port, used when neither the project's config nor its `dev` script names one. */
+export const VITE_DEFAULT_PORT = 5173
+
+/** How long the owned Vite launcher may take from its spawn to the facts of the resolved config, before the setup budget for readiness starts. */
+export const VITE_LAUNCHER_FACTS_TIMEOUT_MS = 30_000
+
+/** How long one request for a module the Vite dev server serves may take while a stop is sealed. */
+export const VITE_MODULE_FETCH_TIMEOUT_MS = 15_000
+
+/** The shortest environment value (characters) the launcher diagnostics mask by value, so a short common word is not blanked everywhere. */
+export const VITE_MASKED_VALUE_MIN_CHARS = 6
+
+/** The longest a Vite config's thrown error line is carried in a refusal. */
+export const VITE_ERROR_LINE_LIMIT_CHARS = 200
+
+/** The extensions of a source file the Vite dev server serves as JavaScript with an inline map; `.vue` and `.svelte` need a framework plugin's own map and are refused. */
+export const VITE_STOP_EXTENSIONS: readonly string[] = [
+  '.ts',
+  '.tsx',
+  '.js',
+  '.jsx',
+  '.mts',
+  '.cts',
+  '.mjs',
+  '.cjs',
+]
+
+/** How long the Vite page must stay loaded, with no further reload, before the initial inputs are written. */
+export const VITE_PAGE_QUIET_MS = 500
+
+/** The most reloads before the inputs the run tolerates (a dependency optimizer reloads once or twice). */
+export const VITE_PAGE_GENERATION_LIMIT = 4
+
+/** The message types of the IPC channel between the extension and the owned Vite launcher. */
+export const VITE_LAUNCHER_MESSAGES = {
+  facts: 'vite-facts',
+  failed: 'vite-failed',
+  listen: 'vite-listen',
+  refuse: 'vite-refuse',
+  listening: 'vite-listening',
+} as const

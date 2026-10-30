@@ -1,0 +1,259 @@
+import assert from 'node:assert/strict'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { test } from 'node:test'
+
+import { ERROR_RECOVERY, StudyError } from '../errors'
+import { assessViteSettings, type ViteFacts } from '../utils/assessViteSettings'
+import {
+  assessViteWorkspace,
+  refuseViteMisroute,
+} from '../utils/assessViteWorkspace'
+import { maskKnownValues } from '../utils/maskKnownValues'
+import { satisfiesNodeRange } from '../utils/satisfiesNodeRange'
+import { VITE_REFUSAL_CODES, viteHelpAnchor } from '../viteRefusals'
+
+import { createViteRepository } from './utils/createViteRepository'
+
+const SIGNAL = new AbortController().signal
+
+/** Awaits a promise that must reject and returns its {@link StudyError}. */
+async function refusalOf(promise: Promise<unknown>): Promise<StudyError> {
+  const error: unknown = await promise.then(
+    () => undefined,
+    (cause: unknown) => cause,
+  )
+  assert.ok(error instanceof StudyError, `expected a StudyError, got ${error}`)
+  return error
+}
+
+test('accepts a Vite 8 workspace whose engines include the running Node and whose dev script is plain', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context, {
+    dev: 'VITE_CJS_IGNORE_WARNING=true vite dev',
+  })
+  // Act
+  const workspace = await assessViteWorkspace(
+    repository.root,
+    process.execPath,
+    SIGNAL,
+  )
+  // Assert
+  assert.equal(workspace.installation.version, '8.3.5')
+  assert.equal(workspace.installation.major, 8)
+  assert.deepEqual(workspace.script.assignments, {
+    VITE_CJS_IGNORE_WARNING: 'true',
+  })
+})
+
+test('refuses a Vite major other than 8 and names the found version', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context, {
+    viteVersion: '7.1.4',
+  })
+  // Act
+  const error = await refusalOf(
+    assessViteWorkspace(repository.root, process.execPath, SIGNAL),
+  )
+  // Assert
+  assert.equal(error.code, 'VITE_UNSUPPORTED')
+  assert.equal(
+    error.message,
+    'Vite 7.1.4 is installed; Codebook supports Vite 8 only.',
+  )
+})
+
+test('refuses a Vite whose engines exclude the running Node and names both', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context, {
+    engines: '^18.0.0',
+  })
+  // Act
+  const error = await refusalOf(
+    assessViteWorkspace(repository.root, process.execPath, SIGNAL),
+  )
+  // Assert
+  assert.equal(error.code, 'VITE_UNSUPPORTED')
+  assert.match(
+    error.message,
+    /requires Node \^18\.0\.0, but Codebook runs Node v\d+/,
+  )
+  assert.match(error.message, /\.nvmrc or \.node-version is not honored/)
+})
+
+test('refuses a dev script outside the grammar and a predev script, naming the refused elements', async (context) => {
+  // Arrange
+  const complex = await createViteRepository(context, {
+    dev: 'cross-env FOO=hunter2hunter2 vite && echo done',
+  })
+  const withPredev = await createViteRepository(context, {
+    predev: 'node prepare.js',
+  })
+  // Act
+  const scriptError = await refusalOf(
+    assessViteWorkspace(complex.root, process.execPath, SIGNAL),
+  )
+  const predevError = await refusalOf(
+    assessViteWorkspace(withPredev.root, process.execPath, SIGNAL),
+  )
+  // Assert
+  assert.equal(scriptError.code, 'VITE_UNSUPPORTED')
+  assert.match(
+    scriptError.message,
+    /the command word cross-env; the operator &&\./,
+  )
+  assert.equal(scriptError.message.includes('hunter2'), false)
+  assert.match(predevError.message, /has a predev script/)
+})
+
+test('refuses Yarn Plug-n-Play without node_modules naming the missing resolution', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context)
+  await writeFile(join(repository.root, '.pnp.cjs'), '')
+  await rm(join(repository.root, 'node_modules'), { recursive: true })
+  // Act
+  const error = await refusalOf(
+    assessViteWorkspace(repository.root, process.execPath, SIGNAL),
+  )
+  // Assert
+  assert.equal(error.code, 'VITE_UNSUPPORTED')
+  assert.match(error.message, /Yarn Plug-n-Play without node_modules/)
+})
+
+test('vite-dev on a Next workspace without vite is told to use next-dev-webpack', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context)
+  await rm(join(repository.root, 'node_modules/vite'), { recursive: true })
+  await mkdir(join(repository.root, 'node_modules/next/dist/bin'), {
+    recursive: true,
+  })
+  await writeFile(join(repository.root, 'node_modules/next/dist/bin/next'), '')
+  // Act
+  const error = await refusalOf(
+    assessViteWorkspace(repository.root, process.execPath, SIGNAL),
+  )
+  // Assert
+  assert.equal(error.code, 'ADAPTER_MISROUTE')
+  assert.match(error.message, /use adapter "next-dev-webpack"/)
+})
+
+test('next-dev-webpack on a Vite workspace is told the found Vite version and to use vite-dev', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context)
+  // Act
+  const error = await refusalOf(refuseViteMisroute(repository.root))
+  // Assert
+  assert.equal(error.code, 'ADAPTER_MISROUTE')
+  assert.equal(
+    error.message,
+    'next-dev-webpack was chosen, but this workspace has Vite 8.3.5 and no Next: use adapter "vite-dev".',
+  )
+})
+
+test('every Vite refusal code has a recovery sentence that cites its own help anchor', () => {
+  // Act
+  const recoveries = VITE_REFUSAL_CODES.map((code) => ({
+    code,
+    recovery: ERROR_RECOVERY[code],
+    anchor: viteHelpAnchor(code),
+  }))
+  // Assert
+  assert.deepEqual(VITE_REFUSAL_CODES, [
+    'ADAPTER_MISROUTE',
+    'VITE_UNSUPPORTED',
+    'VITE_LAUNCHER_FAILED',
+    'VITE_SETUP_DEADLINE',
+    'VITE_SEAL_FAILED',
+    'VITE_PAGE_RELOADED',
+    'VITE_PORT_UNAVAILABLE',
+  ])
+  for (const { code, recovery, anchor } of recoveries) {
+    assert.equal(anchor, `codebook://help/repository-browser#${code}`)
+    assert.ok(recovery.includes(`See ${anchor}.`), code)
+  }
+})
+
+const supported: ViteFacts = {
+  viteVersion: '8.3.5',
+  root: '/repo',
+  base: '/',
+  cacheDir: '/repo/node_modules/.vite',
+  port: 3010,
+  https: false,
+  hmrOwnListener: false,
+  middlewareMode: false,
+  appType: 'spa',
+}
+
+test('a supported config has no unsupported setting', () => {
+  // Act
+  const unsupported = assessViteSettings(supported, '/repo')
+  // Assert
+  assert.deepEqual(unsupported, [])
+})
+
+test('lists every unsupported setting at once with values only for safe scalars', () => {
+  // Arrange
+  const facts: ViteFacts = {
+    ...supported,
+    base: '/app/',
+    root: '/repo/web',
+    https: true,
+    origin: 'https://user:plainsecretpw@cdn.example/assets',
+    hmrOwnListener: true,
+    middlewareMode: true,
+    cacheDir: '/elsewhere/.vite',
+  }
+  // Act
+  const unsupported = assessViteSettings(facts, '/repo')
+  // Assert
+  assert.deepEqual(unsupported, [
+    'base is "/app/"',
+    'root is not the package root',
+    'server.https is set',
+    'server.origin is https://cdn.example/assets',
+    'server.hmr is set (its own port, host or server)',
+    'server.middlewareMode is true',
+    'cacheDir is outside the package root',
+  ])
+})
+
+test('an appType of custom is unsupported without middleware mode', () => {
+  // Act
+  const unsupported = assessViteSettings(
+    { ...supported, appType: 'custom' },
+    '/repo',
+  )
+  // Assert
+  assert.deepEqual(unsupported, ['appType is "custom"'])
+})
+
+test('reads engines.node ranges the way package engines write them', () => {
+  // Arrange
+  const range = '^20.19.0 || >=22.12.0'
+  // Act
+  const results = [
+    satisfiesNodeRange(range, 'v20.19.0'),
+    satisfiesNodeRange(range, 'v20.18.9'),
+    satisfiesNodeRange(range, 'v21.0.0'),
+    satisfiesNodeRange(range, 'v22.12.0'),
+    satisfiesNodeRange(range, 'v24.22.1'),
+    satisfiesNodeRange('>=18 <20', 'v20.1.0'),
+    satisfiesNodeRange('some-new-syntax', 'v24.0.0'),
+  ]
+  // Assert
+  assert.deepEqual(results, [true, false, false, true, true, false, true])
+})
+
+test('masks values by length and by secret shape and leaves short words alone', () => {
+  // Act
+  const masked = maskKnownValues(
+    'url=https://u:pw@h cause=assignedsecret1 short=abc long=assignedsecret1xyz',
+    ['assignedsecret1', 'abc', 'assignedsecret1xyz'],
+  )
+  // Assert
+  assert.equal(
+    masked,
+    'url=https://u:[masked]@h cause=[masked] short=abc long=[masked]',
+  )
+})

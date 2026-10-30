@@ -1,5 +1,6 @@
 import type { BundleSource } from './repositoryBundle'
 import type { RepositoryConfiguration } from './repositoryConfigSchemas'
+import type { PortCheckOptions } from './utils/assertDevelopmentPortFree'
 import type { DevelopmentLockIdentity } from './utils/assertDevelopmentWorkspace'
 import type { launchDevelopmentServer } from './utils/launchDevelopmentServer'
 import type { DeclaredDevelopmentPort } from './utils/readDeclaredDevelopmentPort'
@@ -24,8 +25,13 @@ export type DevelopmentServerStart = {
   signal: AbortSignal
   /** Throws when the run is no longer alive; called between steps, as the run does. */
   alive: () => void
-  /** Refuses the start when the declared port is taken ({@link assertDevelopmentPortFree}). */
-  assertPortFree: (declared: DeclaredDevelopmentPort) => Promise<void>
+  /** Refuses the start when the declared port is taken ({@link assertDevelopmentPortFree}); `refuse` words the refusal for an adapter other than Next. */
+  assertPortFree: (
+    declared: DeclaredDevelopmentPort,
+    refuse?: PortCheckOptions['refuse'],
+  ) => Promise<void>
+  /** Names the setup step reached (`resolving the Vite config`, `starting Vite`), so a setup-deadline refusal can say where it stopped. */
+  onStep: (step: string) => void
   /** Reports where the port was declared, once known, for the run resource. */
   onDeclaredPort: (declared: DeclaredDevelopmentPort) => void
   /** Hands the started server to the run the moment it exists, so cleanup closes it even when a later step fails. */
@@ -69,7 +75,11 @@ export type BrowserDebugFields = {
 export interface DevelopmentServerAdapter {
   readonly name: DevelopmentServerAdapterName
   /** Refuses a workspace that lacks the adapter's prerequisites, before any process starts. */
-  assertWorkspace(workspace: string, signal: AbortSignal): Promise<void>
+  assertWorkspace(
+    workspace: string,
+    node: string,
+    signal: AbortSignal,
+  ): Promise<void>
   /** Starts the owned server on the project's own port and returns it with that port. */
   start(request: DevelopmentServerStart): Promise<{
     app: DevelopmentApp

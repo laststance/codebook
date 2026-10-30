@@ -201,6 +201,7 @@ import { vitestSearchField } from './utils/vitestSearchField'
 import { waitForNextRunState } from './utils/waitForNextRunState'
 import { waitWithin } from './utils/waitWithin'
 import { withKnownNodeHistory } from './utils/withKnownNodeHistory'
+import { viteFailureOf } from './viteRefusals'
 
 /** What the run resource tells an agent after the result while no explanation of the run carries a learning summary; `codebook://help/studies` describes the step in the last entry of its sequence. */
 const SAVE_LEARNING_SUMMARY_ADVICE =
@@ -4350,6 +4351,11 @@ export class StudyService {
   private preparationError(record: StudyRecord, error: unknown): StudyError {
     const runtime = record.runtime?.view(),
       runtimeFailure = runtime?.failures[0]
+    // A Vite run's timer failures (setup deadline) lead with their refusal code, so the agent reads the code, recovery and anchor.
+    const viteFailure =
+      runtimeFailure === undefined ? undefined : viteFailureOf(runtimeFailure)
+    if (viteFailure && !(error instanceof StudyError))
+      return new StudyError(viteFailure.code, viteFailure.message)
     if (!runtime || !runtimeFailure || error instanceof StudyError)
       return studyErrorNamingCause(domainError(error))
     // A failure naming the run's evidence directory is a failed evidence write's raw failure, which a removal of the study words by its own sentence (row 724).

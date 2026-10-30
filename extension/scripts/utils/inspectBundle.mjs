@@ -33,6 +33,13 @@ export async function inspectBundle(metafile, repository, capturedInputs) {
       output.imports.some((value) => !isBuiltin(value.path))
     )
       throw new Error('Wiki page worker contains an editor-only import.')
+  // The Vite launcher runs as its own Node process under the run's Node, with no editor module either.
+  for (const [path, output] of Object.entries(metafile.outputs))
+    if (
+      basename(path) === 'viteLauncher.js' &&
+      output.imports.some((value) => !isBuiltin(value.path))
+    )
+      throw new Error('Vite launcher contains an editor-only import.')
   const root = await realpath(repository),
     packages = new Map(),
     inputs = [],

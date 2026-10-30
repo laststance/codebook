@@ -228,7 +228,7 @@ export const repositoryInputsSchema = z
 
 const repositoryConfigurationShape = z.strictObject({
   version: z.literal(REPOSITORY_CONFIG_VERSION),
-  adapter: z.literal('next-dev-webpack'),
+  adapter: z.enum(['next-dev-webpack', 'vite-dev']),
   book: repositoryBookSelectionSchema,
   source: repositorySourceStopSchema,
   action: z.strictObject({
@@ -269,6 +269,37 @@ const crossRuntimeConfigurationShape = repositoryConfigurationShape.extend({
     .optional(),
 })
 
+/**
+ * Refuses a server participant under `adapter: "vite-dev"`, which seals and debugs browser modules only.
+ * Called by {@link validateInspections} for both configuration versions, so the public schema, not a later start, rejects it.
+ * @param configuration - A parsed configuration of either version.
+ * @param context - The refinement context that receives one issue per server participant.
+ * @example refuseViteServerParticipants({ adapter: 'vite-dev', participant: 'server', … }, context) // adds an issue at ['participant']
+ */
+function refuseViteServerParticipants(
+  configuration:
+    | z.infer<typeof repositoryConfigurationShape>
+    | z.infer<typeof crossRuntimeConfigurationShape>,
+  context: z.RefinementCtx,
+): void {
+  if (configuration.adapter !== 'vite-dev' || !('participant' in configuration))
+    return
+  const declared = [
+    { path: ['participant'], participant: configuration.participant },
+    ...(configuration.additionalStops ?? []).map((stop, index) => ({
+      path: ['additionalStops', index, 'participant'],
+      participant: stop.participant,
+    })),
+  ]
+  for (const { path, participant } of declared)
+    if (participant === 'server')
+      context.addIssue({
+        code: 'custom',
+        path,
+        message: `adapter "vite-dev" supports browser stops only; participant "server" is declared at configuration.${path.join('.')}.`,
+      })
+}
+
 /** Applies shared bounded fact requirements to both retained intent versions without changing their serialized fields. @example validateInspections(configuration, context) */
 function validateInspections(
   configuration:
@@ -276,6 +307,7 @@ function validateInspections(
     | z.infer<typeof crossRuntimeConfigurationShape>,
   context: z.RefinementCtx,
 ): void {
+  refuseViteServerParticipants(configuration, context)
   // Each ordered stop must independently declare useful, unambiguous facts.
   for (const [index, inspections] of [
     configuration.inspections,

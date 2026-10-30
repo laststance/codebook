@@ -5,6 +5,7 @@
     "src/cursorMcpBridgeEntry.ts",
     "src/nativeRepositoryBootstrap.ts",
     "src/nativeNodeTestBootstrap.ts",
+    "src/viteLauncher.ts",
     "src/agentConsole.ts",
     "src/tests/**/*.test.ts",
     "scripts/**/*.mjs"

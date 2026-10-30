@@ -12,6 +12,7 @@ export const REQUIRED_PACKAGE_FILES = [
   'dist/extension.js',
   'dist/cursorMcpBridge.js',
   'dist/wikiPageWorker.js',
+  'dist/viteLauncher.js',
   'dist/build.json',
   'src/assets/book.svg',
   'src/assets/learning.svg',
