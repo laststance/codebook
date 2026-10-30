@@ -3,6 +3,8 @@ import { z } from 'zod'
 
 import {
   REPLAY_DEBUG_NATIVE_STACK_PAGE_FRAMES,
+  REPLAY_FRAME_TEXT_NOT_RECORDED_ORIGIN,
+  REPLAY_FRAME_TEXT_NOT_RECORDED_TEXT,
   REPLAY_DEBUG_THREAD_ID,
   STUDY_SOURCE_SCHEME,
 } from './constants'
@@ -54,6 +56,9 @@ export class ReplayDebugAdapter {
   private sources = new Map<number, NonNullable<RecordedFrame['source']>>()
   private groups = new Map<number, DebugProtocol.Variable[]>()
   private frameSources = new Map<number, number>()
+  /** Session handle of a caller frame's placeholder source, by frame id; its text is in {@link placeholderTexts}. */
+  private placeholderSources = new Map<number, number>()
+  private placeholderTexts = new Map<number, string>()
   private frameScopes = new Map<number, DebugProtocol.Scope[]>()
   private retiredFrameIds = new Set<number>()
   private configured = false
@@ -192,10 +197,43 @@ export class ReplayDebugAdapter {
     for (const [frameId, frame] of this.frames) {
       // A source frame native Call Stack has not loaded yet cannot be focused once its first page is complete.
       if (this.isBeyondLoadedFirstPage(index)) return topFrameId
-      if (frame.source) return frameId
+      if (this.isFocusableFrame(frame)) return frameId
       index++
     }
     return topFrameId
+  }
+
+  /**
+   * The one rule for which frame native Call Stack focuses: VS Code takes the first frame whose source is available and not deemphasized. A frame with recorded text qualifies; a caller frame that only has a placeholder source is answered deemphasized by {@link stackTrace} and never qualifies.
+   * @param frame - A recorded frame of the current selection.
+   * @returns Whether the frame answers a normal (not deemphasized) source.
+   * @example this.isFocusableFrame({ ...frame, source: undefined, recordedLocation: { name: 'a.ts' } }) // => false
+   */
+  private isFocusableFrame(frame: RecordedFrame): boolean {
+    return Boolean(frame.source)
+  }
+
+  /**
+   * Registers what the frame's source request serves: the recorded text for a frame that has it, else a placeholder for a caller frame that kept only its recorded location.
+   * The placeholder is a session handle whose text says the executed text was not recorded and names the recorded file and line, never a disk path. Called by {@link select} for every recorded frame.
+   * @param frameId - The session-local handle of the frame.
+   * @param frame - The recorded frame; without text and without a recorded location nothing is registered and the frame answers no source.
+   * @example this.registerFrameSource(7, { ...frame, source: undefined, recordedLocation: { name: 'a.ts' } }) // serves 'Not recorded at this moment: ...\nRecorded location: a.ts:42'
+   */
+  private registerFrameSource(frameId: number, frame: RecordedFrame): void {
+    if (frame.source) {
+      const sourceId = ++this.nextHandle
+      this.sources.set(sourceId, frame.source)
+      this.frameSources.set(frameId, sourceId)
+      return
+    }
+    if (!frame.recordedLocation) return
+    const placeholderId = ++this.nextHandle
+    this.placeholderSources.set(frameId, placeholderId)
+    this.placeholderTexts.set(
+      placeholderId,
+      `${REPLAY_FRAME_TEXT_NOT_RECORDED_TEXT}\nRecorded location: ${frame.recordedLocation.path ?? frame.recordedLocation.name}:${frame.line}`,
+    )
   }
 
   /**
@@ -254,6 +292,8 @@ export class ReplayDebugAdapter {
     this.sources.clear()
     this.groups.clear()
     this.frameSources.clear()
+    this.placeholderSources.clear()
+    this.placeholderTexts.clear()
     this.frameScopes.clear()
     this.label = 'Not recorded at this moment'
     try {
@@ -276,11 +316,7 @@ export class ReplayDebugAdapter {
         for (const frame of snapshot.frames) {
           const frameId = ++this.nextHandle
           this.frames.set(frameId, frame)
-          if (frame.source) {
-            const sourceId = ++this.nextHandle
-            this.sources.set(sourceId, frame.source)
-            this.frameSources.set(frameId, sourceId)
-          }
+          this.registerFrameSource(frameId, frame)
           const scopes = frame.scopes.map((scope) => ({
             name: scope.name,
             expensive: false,
@@ -374,7 +410,16 @@ export class ReplayDebugAdapter {
                       : { sourceReference: this.frameSources.get(id) }),
                   },
                 }
-              : {}),
+              : frame.recordedLocation
+                ? {
+                    source: {
+                      name: frame.recordedLocation.name,
+                      sourceReference: this.placeholderSources.get(id),
+                      presentationHint: 'deemphasize' as const,
+                      origin: REPLAY_FRAME_TEXT_NOT_RECORDED_ORIGIN,
+                    },
+                  }
+                : {}),
           }))
           const start = arguments_.startFrame ?? 0
           const selectedFrames = frames.slice(
@@ -443,9 +488,12 @@ export class ReplayDebugAdapter {
         }
         case 'source': {
           const { sourceReference } = sourceArguments.parse(request.arguments),
-            source = this.sources.get(sourceReference)
-          if (!source) throw new Error('Recorded source is no longer selected.')
-          respond({ content: source.text, mimeType: 'text/plain' })
+            content =
+              this.sources.get(sourceReference)?.text ??
+              this.placeholderTexts.get(sourceReference)
+          if (content === undefined)
+            throw new Error('Recorded source is no longer selected.')
+          respond({ content, mimeType: 'text/plain' })
           return
         }
         case 'loadedSources':
@@ -499,6 +547,8 @@ export class ReplayDebugAdapter {
     this.sources.clear()
     this.groups.clear()
     this.frameSources.clear()
+    this.placeholderSources.clear()
+    this.placeholderTexts.clear()
     this.frameScopes.clear()
     this.retiredFrameIds.clear()
   }

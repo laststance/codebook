@@ -5893,6 +5893,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         participant.selected!.customRequest(command, arguments_),
       assertCurrent: current,
       signal: this.abort.signal,
+      workspaceRoot: this.options.workspace,
       maskKnownText: this.maskText,
     })
     current()

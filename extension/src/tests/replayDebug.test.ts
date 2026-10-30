@@ -1528,3 +1528,207 @@ test('a Bearer token straddling the cut of a variable type is captured masked', 
   // Assert
   assert.equal(actual.variables[0]!.type, `${padding}Bearer [masked]`)
 })
+
+/** Builds a recorded stop with an unsourced top frame and two caller frames, one of which kept only its recorded location, as a node-server stop whose text was too large to store. @example callerLocationSnapshot().frames.length // => 3 */
+function callerLocationSnapshot(): ReplayDebugSnapshot {
+  const snapshot = recorded()
+  snapshot.frames = [
+    {
+      name: 'createInvoice',
+      line: 1,
+      column: 1,
+      scopes: [{ name: 'Locals', variables: [0] }],
+    },
+    {
+      name: 'handleSubmit',
+      line: 42,
+      column: 7,
+      sourceUnavailable: 'Executed source was not verified for this frame.',
+      recordedLocation: { name: 'form.tsx', path: 'src/form.tsx' },
+      scopes: [],
+    },
+    {
+      name: 'anonymous',
+      line: 3,
+      column: 2,
+      sourceUnavailable: 'Executed source was not verified for this frame.',
+      scopes: [],
+    },
+  ]
+  return snapshot
+}
+
+// Value: protects=the replay Call Stack names the file and line of a caller frame instead of "Unknown Source"; fails_when=the capture drops the caller's reported source or the adapter omits it from the stack frame; why_new=Cycle 0063 N63-F6 showed Unknown Source for caller frames; seam=none; no_claim=opening the caller's executed text
+test('live capture keeps the reported location of a caller frame so the replay Call Stack names it', async () => {
+  // Arrange
+  const { adapter, request } = harness()
+  const snapshot = await captureReplayDebugSnapshot({
+    stack: {
+      stackFrames: [
+        { id: 77, name: 'createInvoice', line: 1, column: 1 },
+        {
+          id: 78,
+          name: 'handleSubmit',
+          line: 42,
+          column: 7,
+          source: { name: 'form.tsx', path: '/repo/src/form.tsx' },
+        },
+        { id: 79, name: 'anonymous', line: 3, column: 2 },
+      ],
+      totalFrames: 3,
+    },
+    verifiedSource: source,
+    workspaceRoot: '/repo',
+    assertCurrent() {},
+    request(command) {
+      return Promise.resolve(
+        command === 'scopes' ? { scopes: [] } : { variables: [] },
+      )
+    },
+  })
+  adapter.select(snapshot, 'Recorded · 00:42')
+
+  // Act
+  const frames = request('stackTrace', { threadId: 1 }).body.stackFrames
+
+  // Assert
+  assert.deepEqual(snapshot.frames[1]!.recordedLocation, {
+    name: 'form.tsx',
+    path: 'src/form.tsx',
+  })
+  assert.equal(snapshot.frames[2]!.recordedLocation, undefined)
+  assert.equal(frames[1].source.name, 'form.tsx')
+  assert.equal(frames[1].line, 42)
+  assert.equal(frames[2].source, undefined)
+})
+
+// Value: protects=selecting a caller frame never shows today's file as the recorded text; fails_when=the stack frame carries a disk path or no placeholder reference; why_new=the first fix answered a bare path that the host opens from the current checkout; seam=none
+test('a caller frame opens a not-recorded placeholder, never a disk path', () => {
+  // Arrange
+  const { adapter, request } = harness()
+  adapter.select(callerLocationSnapshot(), 'Recorded')
+  const callerSource = request('stackTrace', { threadId: 1 }).body
+    .stackFrames[1].source
+
+  // Act
+  const content = request('source', {
+    sourceReference: callerSource.sourceReference,
+  }).body.content
+
+  // Assert
+  assert.equal(callerSource.path, undefined)
+  assert.equal(callerSource.presentationHint, 'deemphasize')
+  assert.equal(callerSource.origin, 'Executed text not recorded')
+  assert.equal(
+    content,
+    'Not recorded at this moment: the executed text of this frame was not captured.\nRecorded location: src/form.tsx:42',
+  )
+})
+
+// Value: protects=Run and Debug stays inspected when the top frame has no stored text and callers only have placeholders; fails_when=a placeholder frame becomes the inspection frame the host never focuses; why_new=Cycle 0064 D7; seam=none
+test('a stop whose top frame has no stored text is inspected through the top frame, not a placeholder caller', () => {
+  // Arrange
+  let reports = 0
+  const { adapter, request } = harness(() => {
+    reports++
+  })
+  adapter.select(callerLocationSnapshot(), 'Recorded')
+  request('configurationDone')
+  const frames = request('stackTrace', { threadId: 1 }).body.stackFrames
+  const scope = request('scopes', { frameId: frames[0].id }).body.scopes[0]
+
+  // Act
+  request('variables', { variablesReference: scope.variablesReference })
+
+  // Assert
+  assert.equal(adapter.inspectionReady, true)
+  assert.equal(reports, 1)
+})
+
+// Value: protects=a page of only caller frames does not claim the stop was inspected; fails_when=paging past the top frame marks the stack retrieved; why_new=Cycle 0064 D7 paging; seam=none
+test('a Call Stack page holding only placeholder callers does not complete the inspection', () => {
+  // Arrange
+  const { adapter, request } = harness()
+  adapter.select(callerLocationSnapshot(), 'Recorded')
+  request('configurationDone')
+
+  // Act
+  const page = request('stackTrace', { threadId: 1, startFrame: 1, levels: 2 })
+
+  // Assert
+  assert.equal(page.body.stackFrames.length, 2)
+  assert.equal(page.body.totalFrames, 3)
+  assert.equal(adapter.inspectionReady, false)
+})
+
+// Value: protects=snapshots saved before caller locations existed answer as before; fails_when=a frame without a location gets a source; why_new=Cycle 0064 compatibility; seam=none
+test('an older snapshot without caller locations answers its callers with no source', () => {
+  // Arrange
+  const { adapter, request } = harness()
+  const snapshot = callerLocationSnapshot()
+  delete snapshot.frames[1]!.recordedLocation
+  adapter.select(snapshot, 'Recorded')
+
+  // Act
+  const frames = request('stackTrace', { threadId: 1 }).body.stackFrames
+
+  // Assert
+  assert.deepEqual(
+    frames.map((frame: DebugProtocol.StackFrame) => frame.source),
+    [undefined, undefined, undefined],
+  )
+})
+
+// Value: protects=a saved replay never holds the learner's home, storage or absolute workspace path through a caller frame's recorded location; fails_when=the capture keeps the debugger's absolute path; why_new=Cycle 0064 D6 privacy; seam=none
+test('capture keeps a workspace-relative caller path and only the name for a path outside the workspace', async () => {
+  // Arrange
+  const stackFrames = [
+    { id: 1, name: 'top', line: 1, column: 1 },
+    {
+      id: 2,
+      name: 'inside',
+      line: 5,
+      column: 1,
+      source: { name: 'a.ts', path: '/home/learner/repo/src/a.ts' },
+    },
+    {
+      id: 3,
+      name: 'outside',
+      line: 6,
+      column: 1,
+      source: { name: 'b.js', path: '/home/learner/cache/b.js' },
+    },
+    {
+      id: 4,
+      name: 'absoluteName',
+      line: 7,
+      column: 1,
+      source: { name: '/home/learner/cache/c.js' },
+    },
+  ]
+
+  // Act
+  const snapshot = await captureReplayDebugSnapshot({
+    stack: { stackFrames, totalFrames: 4 },
+    verifiedSource: source,
+    workspaceRoot: '/home/learner/repo',
+    assertCurrent() {},
+    request(command) {
+      return Promise.resolve(
+        command === 'scopes' ? { scopes: [] } : { variables: [] },
+      )
+    },
+  })
+
+  // Assert
+  assert.deepEqual(
+    snapshot.frames.map((frame) => frame.recordedLocation),
+    [
+      undefined,
+      { name: 'a.ts', path: 'src/a.ts' },
+      { name: 'b.js' },
+      { name: 'c.js' },
+    ],
+  )
+  assert.equal(JSON.stringify(snapshot).includes('/home/learner'), false)
+})

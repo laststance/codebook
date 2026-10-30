@@ -1,3 +1,5 @@
+import * as path from 'node:path'
+
 import type { DebugProtocol } from '@vscode/debugprotocol'
 import { z } from 'zod'
 
@@ -18,6 +20,7 @@ import {
 } from '../replayDebugSchemas'
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 
+import { isInsideFolder } from './isInsideFolder'
 import { isSecretName } from './isSecretName'
 import { redactSecretText } from './redactSecretText'
 import { redactValuePreview } from './redactValuePreview'
@@ -51,6 +54,8 @@ interface CaptureInput {
   ): PromiseLike<unknown>
   assertCurrent(): void
   signal?: AbortSignal
+  /** The opened workspace folder: a caller frame's recorded path inside it is kept relative to it; any other path is dropped and only the name is kept, so no home or storage path is saved. Absent means no path is kept. */
+  workspaceRoot?: string
   /** Masks the values a Vite run learned from its env files in every saved string; absent for a run without such values. */
   maskKnownText?(text: string): string
   limits?: {
@@ -69,6 +74,48 @@ type PendingExpansion = {
   index: number
   variable: z.infer<typeof variableResponse>['variables'][number]
   scopeHandle: number
+}
+
+/**
+ * Keeps the source name and path a live debugger reported for one stack frame, for the replay Call Stack of frames whose executed text was not verified.
+ *
+ * Called by {@link captureReplayDebugSnapshot} for every frame below the top one.
+ *
+ * @param source - The DAP source of the frame, absent when the debugger gave none.
+ * @param shorten - The capture's masking and length cut applied to each text.
+ * @param workspaceRoot - The opened workspace folder; a path outside it (or any path without it) is not kept.
+ * @returns `{ recordedLocation }` with the name (and a workspace-relative path when the source lies inside the workspace), or an empty object when the frame had no named source.
+ * @example
+ * recordedLocationOf({ name: 'app.ts', path: '/repo/src/app.ts' }, (text) => text, '/repo') // => { recordedLocation: { name: 'app.ts', path: 'src/app.ts' } }
+ * recordedLocationOf({ name: 'x.js', path: '/Users/me/x.js' }, (text) => text, '/repo') // => { recordedLocation: { name: 'x.js' } }
+ * recordedLocationOf(undefined, (text) => text) // => {}
+ */
+function recordedLocationOf(
+  source: DebugProtocol.Source | undefined,
+  shorten: (value: string) => string,
+  workspaceRoot?: string,
+): Pick<ReplayDebugSnapshot['frames'][number], 'recordedLocation'> {
+  // A name that is itself an absolute path would carry the home folder, so only its last segment is kept.
+  const reportedName = source?.name ?? source?.path
+  const name =
+    reportedName && path.isAbsolute(reportedName)
+      ? path.basename(reportedName)
+      : reportedName
+  // A frame without any reported name or path has no location to keep
+  if (!source || !name) return {}
+  // Only a path inside the workspace is kept, relative to it; home, storage and URL paths are dropped.
+  const keptPath =
+    workspaceRoot !== undefined &&
+    source.path !== undefined &&
+    isInsideFolder(workspaceRoot, source.path)
+      ? path.relative(workspaceRoot, source.path).split(path.sep).join('/')
+      : undefined
+  return {
+    recordedLocation: {
+      name: shorten(name),
+      ...(keptPath !== undefined && { path: shorten(keptPath) }),
+    },
+  }
 }
 
 /** Called at a verified live pause to persist bounded values, never live DAP handles; stale pauses abort the whole capture. Only the stopped frame's local scopes are copied ({@link shouldCaptureReplayScope}). @example await captureReplayDebugSnapshot({ stack, verifiedSource, request, assertCurrent }) */
@@ -274,6 +321,8 @@ export async function captureReplayDebugSnapshot(
         : {
             sourceUnavailable:
               'Executed source was not verified for this frame.',
+            // The location the debugger itself reported is kept so the replay Call Stack can name the file; nothing is invented when the debugger gave none.
+            ...recordedLocationOf(frame.source, shorten, input.workspaceRoot),
           }),
     }
     snapshot.frames.push(saved)
