@@ -23925,6 +23925,12 @@ export class StudyWorkspace {
           event.opened.includes(group) || event.changed.includes(group),
       ),
     )
+    // Codebook's own removal of a group is under way and the editor reports a tab change that opens and closes no group.
+    const isOwnRemovalReport = this.isOwnRemovalTabReport(
+      event,
+      current,
+      previous,
+    )
     // Opened/closed groups never inherit identity; only changed replacement wrappers may represent survivors.
     const survivors = event
       ? previous.filter(
@@ -23943,15 +23949,19 @@ export class StudyWorkspace {
           )
           .map((group) => ({
             group,
-            matches: survivors.filter(
-              (entry) =>
-                this.retainsEditorTabs(
-                  entry.group,
-                  group,
-                  everyGroupReplaced,
-                ) ||
-                (emptyOutsideMatch?.before === entry &&
-                  emptyOutsideMatch.after === group),
+            matches: this.narrowedToColumnDuringOwnRemoval(
+              survivors.filter(
+                (entry) =>
+                  this.retainsEditorTabs(
+                    entry.group,
+                    group,
+                    everyGroupReplaced,
+                  ) ||
+                  (emptyOutsideMatch?.before === entry &&
+                    emptyOutsideMatch.after === group),
+              ),
+              group,
+              isOwnRemovalReport,
             ),
           }))
       : []
@@ -24064,7 +24074,9 @@ export class StudyWorkspace {
         this.editorGroupIdentities.set(group, createdSourceIdentity)
         continue
       }
-      const emptyMatch = emptySurvivor(group)
+      const emptyMatch =
+        this.groupEmptiedByOwnRemoval(group, previous, isOwnRemovalReport) ??
+        emptySurvivor(group)
       if (emptyMatch) {
         this.editorGroupIdentities.set(
           group,
@@ -24105,6 +24117,76 @@ export class StudyWorkspace {
       group,
       column: group.viewColumn,
     }))
+  }
+
+  /**
+   * Says whether a tab report arrived while Codebook's own removal of a group is marked ({@link applicationGroupChange}), the report opening and closing no group; asked by {@link observeEditorGroups} before it names the groups of such a report.
+   * Cursor 3.27.22 reports the Application pane's move as its tab opening in the new group and closing in the old one, each time with every group an object anew, and removes the emptied group only after that (Cycle 0064 N64p2-F1: tabs closed +9 ms, group closed +15 ms).
+   * @param event - The tab-group event the observer runs for, if any.
+   * @param current - The editor's groups now.
+   * @param previous - The groups the observer recorded last.
+   * @returns `true` while a removal is marked and the report changed tabs only; `false` otherwise.
+   * @example this.isOwnRemovalTabReport(event, current, previous) // => true for the close of the Application's tab in the group the move emptied
+   */
+  private isOwnRemovalTabReport(
+    event: vscode.TabGroupChangeEvent | undefined,
+    current: readonly vscode.TabGroup[],
+    previous: StudyWorkspace['observedEditorGroups'],
+  ): boolean {
+    return Boolean(
+      this.applicationGroupChange?.kind === 'remove' &&
+      event &&
+      !event.opened.length &&
+      !event.closed.length &&
+      current.length === previous.length,
+    )
+  }
+
+  /**
+   * Resolves a content match that two earlier groups share during Codebook's own removal, by the group's column; asked by {@link observeEditorGroups} for each replaced group.
+   * Between the open of the moved Application tab in its new group and its close in the old one, both groups hold that tab, so the tab alone names two survivors for the new group and neither keeps its identity. The move changes no column then, so the survivor in the group's own column is the group.
+   * @param matches - The earlier groups whose tabs the group still holds.
+   * @param group - The group of the editor's current model.
+   * @param isOwnRemovalReport - The answer of {@link isOwnRemovalTabReport}.
+   * @returns The single match in the group's column when several matched and exactly one stands there, else `matches` as they are.
+   * @example this.narrowedToColumnDuringOwnRemoval([atColumn1, atColumn2], groupAtColumn1, true) // => [atColumn1]
+   */
+  private narrowedToColumnDuringOwnRemoval<
+    Entry extends StudyWorkspace['observedEditorGroups'][number],
+  >(
+    matches: readonly Entry[],
+    group: vscode.TabGroup,
+    isOwnRemovalReport: boolean,
+  ): readonly Entry[] {
+    if (!isOwnRemovalReport || matches.length < 2) return matches
+    const sameColumn = matches.filter(
+      (entry) => entry.column === group.viewColumn,
+    )
+    return sameColumn.length === 1 ? sameColumn : matches
+  }
+
+  /**
+   * Finds the earlier group that Codebook's marked removal targets when it now stands empty in its own column; asked by {@link observeEditorGroups} for each group without an identity.
+   * The close of the Application's tab leaves the group the pane moved out of without tabs, and a group that had one has nothing to be recognized by; the marked identity names it, so its later removal is known as Codebook's own ({@link issuedApplicationColumnShift}).
+   * @param group - A group of the editor's current model.
+   * @param previous - The groups the observer recorded last.
+   * @param isOwnRemovalReport - The answer of {@link isOwnRemovalTabReport}.
+   * @returns The earlier entry holding the marked identity in the group's column, when the group has no tabs; `undefined` otherwise.
+   * @example this.groupEmptiedByOwnRemoval(emptyGroupAtColumn2, previous, true) // => the entry of the Application's old group
+   */
+  private groupEmptiedByOwnRemoval(
+    group: vscode.TabGroup,
+    previous: StudyWorkspace['observedEditorGroups'],
+    isOwnRemovalReport: boolean,
+  ): StudyWorkspace['observedEditorGroups'][number] | undefined {
+    const change = this.applicationGroupChange
+    if (!isOwnRemovalReport || change?.kind !== 'remove' || group.tabs.length)
+      return undefined
+    return previous.find(
+      (entry) =>
+        entry.column === group.viewColumn &&
+        this.editorGroupIdentities.get(entry.group) === change.identity,
+    )
   }
 
   /**
