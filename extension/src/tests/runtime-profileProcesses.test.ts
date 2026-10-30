@@ -216,9 +216,10 @@ test('a symlinked profile observes its canonical process and excludes a prefix-s
     `--user-data-dir=${profile}-other`,
   ])
   // Both stand-ins end with the test, also when a spawn or an assertion below fails before the clean-up.
-  endProcessesAfter(context, () =>
-    [owned.pid, unrelated.pid].filter((pid) => pid !== undefined),
-  )
+  const heldPids = (): number[] =>
+    [owned.pid, unrelated.pid].filter((pid) => pid !== undefined)
+  // The handles are held: both are the test's whatever the system's process listing says (Windows has no `ps`).
+  endProcessesAfter(context, heldPids, { held: heldPids })
   try {
     await Promise.all([once(owned, 'spawn'), once(unrelated, 'spawn')])
     // Act

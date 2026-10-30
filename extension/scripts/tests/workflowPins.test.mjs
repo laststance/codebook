@@ -858,6 +858,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/src/tests/utils/answerKernelBootId.ts',
     'extension/src/tests/utils/answeredAtOnce.ts',
     'extension/src/tests/utils/createLinkIfAllowed.ts',
+    'extension/src/tests/utils/endProcessesAfter.ts',
     'extension/src/tests/utils/fileSystemWhoseLinksResistRemoval.ts',
     'extension/src/tests/utils/fileSystemWithLargeFileIds.ts',
     'extension/src/tests/utils/idOfNoProcess.ts',

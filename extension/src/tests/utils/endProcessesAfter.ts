@@ -9,7 +9,7 @@ import { systemErrorCode } from '../../utils/systemErrorCode'
 
 // There are two of these helpers on purpose: this one serves the extension's compiled tests, which cannot import `scripts/tests/utils/endProcessesAfter.mjs`, and that one serves `scripts/tests`, which run on plain Node without a build (the Windows job's `scripts/tests` step among them) and cannot import this file. Keep their process rules (zombie, ownership) in step: a change here is made there too.
 
-/** How many parents {@link isOwnedProcess} follows up from a process before it gives up; a tree of a test is a few levels deep. */
+/** How many parents {@link ownershipOf} follows up from a process before it gives up; a tree of a test is a few levels deep. */
 const MAX_PARENT_HOPS = 64
 
 /** What `ps` says about one process. */
@@ -18,7 +18,7 @@ type ProcessInfo = { state: string; parentPid: number; ageSeconds: number }
 /**
  * Reads the state, the parent id and the age of one process from `ps`.
  *
- * Called by {@link processRuns} and {@link isOwnedProcess}.
+ * Called by {@link processRuns} and {@link ownershipOf}.
  *
  * @param pid - The process id.
  * @returns The process's facts; `undefined` when no process has this id; `'unreadable'` where `ps` cannot answer (Windows).
@@ -77,34 +77,58 @@ function processRuns(pid: number): boolean {
   return info !== undefined && !info.state.startsWith('Z')
 }
 
+/** What the helper can tell of a running process's ownership: the test's, somebody else's, or not confirmable (no `ps`, no held child handle). */
+type Ownership = 'owned' | 'foreign' | 'unconfirmed'
+
+/** Reads one process's facts; tests of the helper replace it to show how the helper acts where `ps` cannot answer. */
+type ReadProcess = (pid: number) => ProcessInfo | 'unreadable' | undefined
+
 /**
  * Says whether a running process can be one this test process started, so a recycled id of an unrelated process is never signalled.
  *
- * Owned: a descendant of this process, or an orphan (its parent is gone, so the system parents it to process 1) that started after `sinceMs`, as a child whose parent the test ended. Where `ps` cannot answer, nothing tells otherwise and the process counts as owned.
+ * Never owned: process 1 and below, this process, and its ancestors (the runner that started it, whose group a `group` end would kill). Owned: an id the test holds a child handle of (`held`), a descendant of this process, or an orphan (its parent is gone, so the system parents it to process 1) that started after `sinceMs`, as a child whose parent the test ended. Where `ps` cannot answer and no handle is held, nothing confirms the id: `'unconfirmed'`, and the caller must not signal it.
  *
  * @param pid - The process id.
  * @param sinceMs - The time from which a process may be the test's: when the test began.
- * @returns Whether the process is the test's.
+ * @param read - Reads one process's facts ({@link readProcess} by default).
+ * @param held - Ids of children the test holds a handle of.
+ * @returns How the process stands to the test.
  * @example
  * ```ts
- * isOwnedProcess(process.ppid, Date.now()) // => false
+ * ownershipOf(process.ppid, Date.now(), readProcess, []) // => 'foreign'
  * ```
  */
-function isOwnedProcess(pid: number, sinceMs: number): boolean {
-  const info = readProcess(pid)
-  if (info === 'unreadable') return true
-  if (info === undefined) return false
+function ownershipOf(
+  pid: number,
+  sinceMs: number,
+  read: ReadProcess,
+  held: readonly number[],
+): Ownership {
+  if (pid <= 1 || pid === process.pid || pid === process.ppid) return 'foreign'
+  // The ancestors of this process are the runner and what started it: never the test's children.
+  let ancestor = process.ppid
+  for (let hop = 0; hop < MAX_PARENT_HOPS && ancestor > 1; hop += 1) {
+    if (ancestor === pid) return 'foreign'
+    const parent = read(ancestor)
+    if (typeof parent !== 'object') break
+    ancestor = parent.parentPid
+  }
+  if (held.includes(pid)) return 'owned'
+  const info = read(pid)
+  if (info === 'unreadable') return 'unconfirmed'
+  if (info === undefined) return 'foreign'
   let parentPid = info.parentPid
   for (let hop = 0; hop < MAX_PARENT_HOPS && parentPid > 1; hop += 1) {
-    if (parentPid === process.pid) return true
-    const parent = readProcess(parentPid)
+    if (parentPid === process.pid) return 'owned'
+    const parent = read(parentPid)
     if (typeof parent !== 'object') break
     parentPid = parent.parentPid
   }
   // An orphan older than the test is somebody else's, with the same id by chance.
-  return (
-    info.parentPid <= 1 && info.ageSeconds <= (Date.now() - sinceMs) / 1000 + 2
-  )
+  return info.parentPid <= 1 &&
+    info.ageSeconds <= (Date.now() - sinceMs) / 1000 + 2
+    ? 'owned'
+    : 'foreign'
 }
 
 /** How long {@link endProcesses} waits for a killed process to be seen gone. */
@@ -121,9 +145,9 @@ type SignalProcess = (pid: number, signal: NodeJS.Signals) => void
  *
  * Called by {@link endProcessesAfter} when a test ends, and by the test of the helper itself with a signal call that kills nothing, to show that a survivor is reported.
  *
- * @param pids - Ids of processes a test started. An id that is gone already, a zombie, or a process that cannot be the test's ({@link isOwnedProcess}: a recycled id of an unrelated process) is not signalled and is no survivor.
- * @param options - `group` also signals the process group each id leads (a child started `detached`); `signalProcess` replaces the signal call, `waitMs` shortens the wait, `sinceMs` is when the test began (when this process started by default).
- * @returns The ids still running once the wait is over; empty when every process is gone.
+ * @param pids - Ids of processes a test started. An id that is gone already or a zombie is not signalled and is no survivor; a process that cannot be the test's ({@link ownershipOf}: a recycled id of an unrelated process, process 1, this process, its ancestors) is not signalled and is no survivor either. A process whose ownership cannot be confirmed (no `ps`, no held handle) is not signalled and is reported as a survivor, so the test fails instead of killing an id it cannot tell.
+ * @param options - `group` also signals the process group each id leads (a child started `detached`); `held` names children the test holds a handle of, which are the test's whatever `ps` says; `signalProcess` replaces the signal call, `readProcessInfo` the `ps` read, `waitMs` shortens the wait, `sinceMs` is when the test began (when this process started by default).
+ * @returns The ids still running once the wait is over, and the ones left unsignalled for unconfirmed ownership; empty when every process is gone or not the test's.
  * @example
  * ```ts
  * const survivors = await endProcesses([child.pid!], { group: true }) // => []
@@ -133,6 +157,8 @@ export async function endProcesses(
   pids: readonly number[],
   options: {
     group?: boolean
+    held?: readonly number[]
+    readProcessInfo?: ReadProcess
     signalProcess?: SignalProcess
     waitMs?: number
     sinceMs?: number
@@ -141,11 +167,19 @@ export async function endProcesses(
   const signalProcess: SignalProcess =
     options.signalProcess ?? ((pid, signal) => process.kill(pid, signal))
   const sinceMs = options.sinceMs ?? Date.now() - process.uptime() * 1000
+  const read = options.readProcessInfo ?? readProcess
+  const held = options.held ?? []
+  const ownership = new Map<number, Ownership>()
   // Only ids that run and can be the test's get a signal: a recycled id of an unrelated process (or of its group) is not this test's.
-  const running = [...new Set(pids)].filter(
-    (pid) => processRuns(pid) && isOwnedProcess(pid, sinceMs),
-  )
-  for (const pid of running) {
+  for (const pid of new Set(pids))
+    if (Number.isInteger(pid) && processRuns(pid))
+      ownership.set(pid, ownershipOf(pid, sinceMs, read, held))
+  const running = [...ownership].filter(([, kind]) => kind === 'owned')
+  // Not signalled, and not silently dropped: the test must fail, so that the id is looked at.
+  const unconfirmed = [...ownership]
+    .filter(([, kind]) => kind === 'unconfirmed')
+    .map(([pid]) => pid)
+  for (const [pid] of running) {
     // A detached child leads a group of its own, whose other members would outlive the leader.
     if (options.group)
       try {
@@ -160,12 +194,12 @@ export async function endProcesses(
     }
   }
   const deadline = Date.now() + (options.waitMs ?? PROCESS_GONE_WAIT_MS)
-  let survivors = running.filter(processRuns)
+  let survivors = running.map(([pid]) => pid).filter(processRuns)
   while (survivors.length > 0 && Date.now() < deadline) {
     await delay(PROCESS_GONE_POLL_MS)
     survivors = survivors.filter(processRuns)
   }
-  return survivors
+  return [...unconfirmed, ...survivors]
 }
 
 /**
@@ -176,7 +210,8 @@ export async function endProcesses(
  *
  * @param context - The running test, at whose end the processes are ended.
  * @param readPids - Answers the ids to end; read once, when the test ends.
- * @param options - `group` also ends the process group each id leads.
+ * @param options - `group` also ends the process group each id leads; `held` names the children the test holds a handle of (their ids are the test's even where `ps` cannot say, and they are ended when `readPids` itself fails).
+ * @throws The failure of `readPids` (for example an unreadable pid file), after the held children were ended.
  * @example
  * ```ts
  * const started: number[] = []
@@ -186,12 +221,26 @@ export async function endProcesses(
 export function endProcessesAfter(
   context: TestContext,
   readPids: () => readonly number[] | Promise<readonly number[]>,
-  options: { group?: boolean } = {},
+  options: { group?: boolean; held?: () => readonly number[] } = {},
 ): void {
   const sinceMs = Date.now()
   context.after(async () => {
-    const survivors = await endProcesses(await readPids(), {
-      ...options,
+    const { held, ...endOptions } = options
+    let pids: readonly number[]
+    try {
+      pids = await readPids()
+    } catch (error) {
+      // The ids cannot be read, so the clean-up fails loudly; the children whose handles the test holds are ended first.
+      await endProcesses(held?.() ?? [], {
+        ...endOptions,
+        held: held?.() ?? [],
+        sinceMs,
+      })
+      throw error
+    }
+    const survivors = await endProcesses(pids, {
+      ...endOptions,
+      held: held?.() ?? [],
       sinceMs,
     })
     // A process that outlives its test would run until the machine restarts.
@@ -206,6 +255,7 @@ export function endProcessesAfter(
  *
  * @param paths - Files that hold one process id each.
  * @returns The ids found.
+ * @throws A read failure other than a missing file (for example `EACCES`): the ids in such a file are unknown, and a clean-up that took them for none would let the processes run on.
  * @example
  * ```ts
  * await readProcessIdFiles(['/tmp/project/agent.pid']) // => [4242]
@@ -215,7 +265,13 @@ export async function readProcessIdFiles(
   paths: readonly string[],
 ): Promise<number[]> {
   const written = await Promise.all(
-    paths.map((path) => readFile(path, 'utf8').catch(() => '')),
+    paths.map((path) =>
+      readFile(path, 'utf8').catch((error: unknown) => {
+        // A file not written (yet) names no process; any other failure is not "no pids".
+        if (systemErrorCode(error) === 'ENOENT') return ''
+        throw error
+      }),
+    ),
   )
   return written.map(Number).filter((pid) => Number.isInteger(pid) && pid > 1)
 }

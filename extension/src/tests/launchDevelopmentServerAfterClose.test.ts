@@ -31,9 +31,8 @@ test('a failed stop still removes the files the server left behind and reports t
     throw new Error('cleanup failed too')
   })
   // The server leads a group of its own: it is ended with the test, also when the close or an assertion below fails.
-  endProcessesAfter(context, () => (app.pid === undefined ? [] : [app.pid]), {
-    group: true,
-  })
+  const heldPids = (): number[] => (app.pid === undefined ? [] : [app.pid])
+  endProcessesAfter(context, heldPids, { group: true, held: heldPids })
   const realSignal = signalProcessGroupModule.signalProcessGroup
   const signalMock = context.mock.method(
     signalProcessGroupModule,
