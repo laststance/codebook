@@ -391,6 +391,7 @@ import {
   type ReplayRefusalKey,
 } from './utils/replayRefusals'
 import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition'
+import { runStopFilePaths } from './utils/runStopFilePaths'
 import { type CauseRoots, sanitizeCause } from './utils/sanitizeCause'
 import { sanitizedStack } from './utils/sanitizedStack'
 import { sanitizeNodeTestHistory } from './utils/sanitizeNodeTestHistory'
@@ -21496,19 +21497,11 @@ export class StudyWorkspace {
       return
     }
     // The files of every stop the window's runs declared; a run's debugger opens only these.
-    const runSourceFiles = new Set(
+    const runSourceFiles = runStopFilePaths(
       [...(this.service?.records.values() ?? [])].flatMap((record) =>
-        record.definition
-          ? [
-              canonicalFsPath(
-                join(
-                  workspaceRoot,
-                  record.definition.configuration.source.path,
-                ),
-              ),
-            ]
-          : [],
+        record.definition ? [record.definition.configuration] : [],
       ),
+      workspaceRoot,
     )
     if (!runSourceFiles.size) return
     const ownedPreviews = vscode.window.tabGroups.all
