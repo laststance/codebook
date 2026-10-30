@@ -53,7 +53,7 @@ type DevelopmentCommand = {
 /**
  * Reads one project file whole; `undefined` when it is absent or unreadable.
  *
- * Called by {@link readDeclaredDevelopmentPort} for `package.json`. The path is `stat`ed first (a `stat` does not block on a FIFO, an `open` does and cannot be cancelled), so a path that is not a regular file or is larger than {@link DEVELOPMENT_PORT_SOURCE_LIMIT_BYTES} is refused instead of read or cut (F556).
+ * Called by {@link readDeclaredDevelopmentPort} and {@link readNextDevPreparation} for `package.json`. The path is `stat`ed first (a `stat` does not block on a FIFO, an `open` does and cannot be cancelled), so a path that is not a regular file or is larger than {@link DEVELOPMENT_PORT_SOURCE_LIMIT_BYTES} is refused instead of read or cut (F556).
  *
  * @returns The text, `undefined` for an absent or unreadable file, or the reason the file is refused.
  *
@@ -62,7 +62,7 @@ type DevelopmentCommand = {
  * await readProjectFile('/repo/package.json') // '{"scripts":{…}}'
  * ```
  */
-async function readProjectFile(
+export async function readProjectFile(
   path: string,
 ): Promise<string | { refused: 'not-regular' | 'too-large' } | undefined> {
   const info = await stat(path).catch(() => undefined)
@@ -100,7 +100,7 @@ async function exists(path: string): Promise<boolean> {
 /**
  * The folders a project-level marker is searched in: the opened folder and the folders above it up to the Git root (the first folder that holds `.git`, a folder or a file), at most {@link DEVELOPMENT_BUN_LOCKFILE_SEARCH_MAX_FOLDERS} folders counted from the opened one; without a Git root in that range only the opened folder (F514).
  *
- * Called by {@link readDeclaredDevelopmentPort} once per read, for {@link isBunProject} and {@link isYarnBerryProject}.
+ * Called by {@link readDeclaredDevelopmentPort} and {@link readNextDevPreparation} once per read, for {@link isBunProject} and {@link isYarnBerryProject}.
  *
  * @param root - The opened folder; resolved to an absolute path, so a relative root climbs the real folders above it.
  * @returns The folders to search, the opened one first; one folder when no Git root is in range.
@@ -110,7 +110,7 @@ async function exists(path: string): Promise<boolean> {
  * await projectMarkerFolders('/repo/apps/web') // ['/repo/apps/web', '/repo/apps', '/repo'] when /repo holds .git
  * ```
  */
-async function projectMarkerFolders(root: string): Promise<string[]> {
+export async function projectMarkerFolders(root: string): Promise<string[]> {
   const folders: string[] = []
   let folder = resolve(root)
   for (
@@ -142,7 +142,7 @@ async function anyFolderHolds(
 /**
  * Whether the project is a Bun project: a Bun lockfile in {@link projectMarkerFolders}, or a `packageManager` of the opened `package.json` that starts with {@link DEVELOPMENT_BUN_PACKAGE_MANAGER_PREFIX} (F514). Only existence is checked for lockfiles; no content is read (F499).
  *
- * Called by {@link readDeclaredDevelopmentPort} once per read.
+ * Called by {@link readDeclaredDevelopmentPort} and {@link readNextDevPreparation} once per read.
  *
  * @param folders - The folders from {@link projectMarkerFolders}.
  * @param packageManager - The `packageManager` field of that `package.json`, if any.
@@ -153,7 +153,7 @@ async function anyFolderHolds(
  * await isBunProject(['/repo'], 'bun@1.2.0') // true
  * ```
  */
-async function isBunProject(
+export async function isBunProject(
   folders: readonly string[],
   packageManager: unknown,
 ): Promise<boolean> {
@@ -168,7 +168,7 @@ async function isBunProject(
 /**
  * Whether the project is a Yarn Berry (Yarn 2 and later) project: a `packageManager` of `yarn@` with a major of {@link DEVELOPMENT_YARN_BERRY_MIN_MAJOR} or more, or, when the `package.json` names no package manager, a `.yarnrc.yml` in {@link projectMarkerFolders} (F515). A `packageManager` that names Yarn 1 or another manager wins over a stray `.yarnrc.yml` (F520). Berry runs scripts in its own portable shell, which has no `export` and rejects a `;;` and a `;` followed by blanks at the end of the line, on every platform.
  *
- * Called by {@link readDeclaredDevelopmentPort} once per read.
+ * Called by {@link readDeclaredDevelopmentPort} and {@link readNextDevPreparation} once per read.
  *
  * @param folders - The folders from {@link projectMarkerFolders}.
  * @param packageManager - The `packageManager` field of the opened `package.json`, if any.
@@ -179,7 +179,7 @@ async function isBunProject(
  * await isYarnBerryProject(['/repo'], 'yarn@1.22.22') // false, even with /repo/.yarnrc.yml
  * ```
  */
-async function isYarnBerryProject(
+export async function isYarnBerryProject(
   folders: readonly string[],
   packageManager: unknown,
 ): Promise<boolean> {
@@ -276,8 +276,23 @@ function readNextDevFlags(words: readonly string[]): number | undefined {
   return port
 }
 
-/** The words after the launcher when the program is `next` reached by an allowed launcher (`next`, `npx next`, `bunx next`, `pnpm exec next`, `yarn next`, a `node_modules/.bin/next` path), else `undefined`. */
-function nextArguments(
+/**
+ * The words after the launcher when the program is `next` reached by an allowed launcher (`next`, `npx next`, `bunx next`, `pnpm exec next`, `yarn next`, a `node_modules/.bin/next` path), else `undefined`.
+ *
+ * Called by {@link readProgram} for the port and by {@link readNextDevPreparation} to find the `next dev` statement, so both readers recognize the same launchers.
+ *
+ * @param program - The words of a command after its assignment prefix.
+ * @param scope - The line's scope: its scripts (for `yarn next`) and whether `cmd` runs it.
+ * @returns The words after the launcher, or `undefined` for any other program.
+ * @throws {@link UnreadScriptError} For a `next` path under `cmd` (F513).
+ *
+ * @example
+ * ```ts
+ * nextArguments(['pnpm', 'exec', 'next', 'dev'], scope) // ['dev']
+ * nextArguments(['prisma', 'generate'], scope) // undefined
+ * ```
+ */
+export function nextArguments(
   program: string[],
   scope: LineScope,
 ): string[] | undefined {
@@ -318,8 +333,18 @@ function readNextDevCommand(
   return {}
 }
 
-/** The script a delegation without arguments names: `npm run x`, `pnpm run x`, `yarn run x`, `bun run x`, and `pnpm x` or `yarn x` only for a name in {@link DEVELOPMENT_SCRIPT_PLAIN_DELEGATION_NAMES} or containing `:` (D76, F510); `undefined` for any other program. */
-function delegatedScriptName(program: string[]): string | undefined {
+/**
+ * The script a delegation without arguments names: `npm run x`, `pnpm run x`, `yarn run x`, `bun run x`, and `pnpm x` or `yarn x` only for a name in {@link DEVELOPMENT_SCRIPT_PLAIN_DELEGATION_NAMES} or containing `:` (D76, F510); `undefined` for any other program.
+ *
+ * Called by {@link readProgram} and by {@link readNextDevPreparation}, so both readers follow the same delegations.
+ *
+ * @example
+ * ```ts
+ * delegatedScriptName(['pnpm', 'run', 'dev:next']) // 'dev:next'
+ * delegatedScriptName(['pnpm', 'deploy']) // undefined
+ * ```
+ */
+export function delegatedScriptName(program: string[]): string | undefined {
   const [manager, first, second] = program
   const viaRun =
     program.length === 3 &&
@@ -336,7 +361,7 @@ function delegatedScriptName(program: string[]): string | undefined {
 }
 
 /** What one line is read with: the project's scripts, how deep the reader already is, and whether Bun runs it (a Bun project, or a script reached by `bun run`), so that its `.env` files may set `PORT` (F499). */
-type LineScope = {
+export type LineScope = {
   scripts: Scripts
   depth: number
   bun: boolean
@@ -359,13 +384,30 @@ function descend(scope: LineScope): LineScope {
   return { ...scope, depth: scope.depth + 1 }
 }
 
-/** Reads a delegation: the script runs with the exported `PORT` of the delegating command, and the script that finally runs `next dev` is named. */
-function readDelegation(
+/**
+ * Enters a delegation: the script it names and the scope that script is read with, one level deeper.
+ *
+ * Called by {@link readDelegation} for the port and by {@link readNextDevPreparation}, so both readers resolve a delegation to the same script under the same shell.
+ *
+ * @param name - The script name from {@link delegatedScriptName}.
+ * @param manager - The program that runs the script: `npm`, `pnpm`, `yarn` or `bun`.
+ * @param scope - The scope of the delegating line.
+ * @returns The named script's text and its scope.
+ * @throws {@link UnreadScriptError} For `bun` on Windows (D75), a name that is no string script of the project, and at {@link DEVELOPMENT_SCRIPT_NESTING_LIMIT}.
+ *
+ * @example
+ * ```ts
+ * enterDelegation('dev:next', 'pnpm', scope) // { script: 'next dev', scope: { …scope, depth: 1 } }
+ * ```
+ */
+export function enterDelegation(
   name: string,
-  env: PortEnv,
-  scope: LineScope,
   manager: string,
-): DevelopmentCommand | undefined {
+  scope: LineScope,
+): { script: string; scope: LineScope } {
+  // On Windows `bun run` uses Bun Shell, or `cmd` with `run.shell = "system"`; the text means different things (D75).
+  if (scope.win32 && manager === 'bun')
+    throw new UnreadScriptError([], 'bun-shell')
   const script = Object.hasOwn(scope.scripts ?? {}, name)
     ? scope.scripts?.[name]
     : undefined
@@ -373,12 +415,26 @@ function readDelegation(
   // A script reached by `bun run` runs with Bun's `.env` loading, whatever starts it further down (F499).
   // The shell is the one of the program that runs the script: Berry's for `yarn` in a Berry project, `cmd` or `sh` for `npm` and `pnpm` (F524).
   const berry = scope.berryProject && manager === 'yarn'
-  const inner = readLine(script, env, {
-    ...descend(scope),
-    bun: scope.bun || manager === 'bun',
-    windows: scope.win32 && !berry,
-    yarnBerry: berry,
-  })
+  return {
+    script,
+    scope: {
+      ...descend(scope),
+      bun: scope.bun || manager === 'bun',
+      windows: scope.win32 && !berry,
+      yarnBerry: berry,
+    },
+  }
+}
+
+/** Reads a delegation: the script runs with the exported `PORT` of the delegating command, and the script that finally runs `next dev` is named. */
+function readDelegation(
+  name: string,
+  env: PortEnv,
+  scope: LineScope,
+  manager: string,
+): DevelopmentCommand | undefined {
+  const delegation = enterDelegation(name, manager, scope)
+  const inner = readLine(delegation.script, env, delegation.scope)
   return inner && { ...inner, delegate: inner.delegate ?? name }
 }
 
@@ -456,9 +512,6 @@ function readProgram(
     return readConcurrently(program.slice(1), env, scope)
   const name = delegatedScriptName(program)
   if (name === undefined) throw new UnreadScriptError()
-  // On Windows `bun run` uses Bun Shell, or `cmd` with `run.shell = "system"`; the text means different things (D75).
-  if (scope.win32 && program[0] === 'bun')
-    throw new UnreadScriptError([], 'bun-shell')
   return readDelegation(name, env, scope, program[0]!)
 }
 
@@ -580,6 +633,41 @@ function describeUnread(
 }
 
 /**
+ * The scope the `dev` line itself is read with: depth 0, a fresh statement budget, and the shell that runs the top line.
+ *
+ * Called by {@link readDevScript} for the port and by {@link readNextDevPreparation}, so both readers start the `dev` line under the same shell and budget.
+ *
+ * @param scripts - The project's `scripts`.
+ * @param bun - Whether the project is a Bun project ({@link isBunProject}).
+ * @param win32 - Whether the platform is `win32`.
+ * @param yarnBerry - Whether the project is a Yarn Berry project ({@link isYarnBerryProject}).
+ * @returns The top scope.
+ *
+ * @example
+ * ```ts
+ * devScriptScope({ dev: 'next dev' }, false, false, false) // { scripts, depth: 0, windows: false, yarnBerry: false, budget: { remaining: 256 }, … }
+ * ```
+ */
+export function devScriptScope(
+  scripts: LineScope['scripts'],
+  bun: boolean,
+  win32: boolean,
+  yarnBerry: boolean,
+): LineScope {
+  return {
+    scripts,
+    depth: 0,
+    bun,
+    // The top line runs in Berry's shell in a Berry project, else in the platform shell (F520, F524).
+    windows: win32 && !yarnBerry,
+    yarnBerry,
+    win32,
+    berryProject: yarnBerry,
+    budget: { remaining: DEVELOPMENT_SCRIPT_STATEMENT_LIMIT },
+  }
+}
+
+/**
  * Reads the `dev` script against the grammar.
  * @returns The command it runs, or the words of the statement that left the grammar.
  */
@@ -592,26 +680,13 @@ function readDevScript(
 ):
   | { command: DevelopmentCommand }
   | { unread: readonly string[]; reason?: UnreadReason } {
-  // The top line runs in Berry's shell in a Berry project, else in the platform shell (F520, F524).
-  const windows = win32 && !yarnBerry
+  const scope = devScriptScope(scripts, bun, win32, yarnBerry)
+  const { windows } = scope
   try {
     // A Bun project runs its scripts with Bun Shell on Windows (or `cmd` by setting), whatever the script says (D75, F514).
     if (win32 && !yarnBerry && bun)
       throw new UnreadScriptError(dev.split(/\s+/).filter(Boolean), 'bun-shell')
-    const command = readLine(
-      dev,
-      {},
-      {
-        scripts,
-        depth: 0,
-        bun,
-        windows,
-        yarnBerry,
-        win32,
-        berryProject: yarnBerry,
-        budget: { remaining: DEVELOPMENT_SCRIPT_STATEMENT_LIMIT },
-      },
-    )
+    const command = readLine(dev, {}, scope)
     // A chain that never runs `next dev` has nothing to read a port from.
     if (!command)
       throw new UnreadScriptError(
