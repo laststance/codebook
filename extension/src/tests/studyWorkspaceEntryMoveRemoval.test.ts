@@ -1466,6 +1466,45 @@ test('a tab the learner selects while the stop file opens beside the Application
   }
 })
 
+// Value: protects=a cancelled run leaving the learner's tabs alone after it opened its stop file beside the Application; fails_when=the lease still brings its remembered front tab back after the run's signal aborted, over whatever the learner does next in that group; why_new=Cycle 0064 pt3 local CodeRabbit CLI r8; seam=createViewport, BrowserViewport.attach with the run's own AbortController, changeAfterNextSourceDisplay (the cancel right after the show); no_claim=the real Cursor's answer
+test('a run cancelled while its stop file opens beside the Application brings no earlier tab back to the front', async () => {
+  // Arrange: actions.ts is in front of group 2; the run is cancelled right after its stop file shows there.
+  const { harness, viewport } = await openRunBesideChat()
+  const run = new AbortController()
+  try {
+    harness.changeAfterNextSourceDisplay(() => run.abort())
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act
+    await viewport
+      .attach(
+        {
+          on: () => undefined,
+          request: async () => ({}),
+          subscribe: async () => undefined,
+        },
+        run.signal,
+      )
+      .catch(() => undefined)
+
+    // Assert: the stop file stays in front of group 2; actions.ts was not shown again.
+    const group = harness.groups.find(
+      (candidate) => candidate.viewColumn === 2,
+    )!
+    assert.equal(group.activeTab?.label, 'theme.ts')
+    assert.deepEqual(
+      harness
+        .textDocumentShows()
+        .slice(showsBefore)
+        .map((show) => show.name),
+      ['theme.ts'],
+    )
+  } finally {
+    viewport.close()
+    await harness.close()
+  }
+})
+
 // Value: protects=the stop file being opened as a file tab beside the Application when only a git (virtual) tab of the same path stands in another group; fails_when=the already-open check compares the path alone, so a git original counts as the file and the debugger's preview replaces the Application; why_new=Cycle 0064 pt3 local CodeRabbit CLI; seam=createViewport, BrowserViewport.attach, addVirtualTextTab; no_claim=the real Cursor's answer
 test('a git tab of the stop file in another group does not keep the run from opening the file beside the Application', async () => {
   // Arrange: group 3 holds the git original of src/theme.ts, not the file.

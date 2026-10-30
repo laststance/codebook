@@ -10284,11 +10284,10 @@ export class StudyWorkspace {
   ): Promise<void> {
     // Written as the run resolved them: the canonical form is lowercased on macOS and Windows and is for comparing only; only this lease's run, never an earlier run's or another study's.
     const stopFiles = this.declaredRunStopFiles((path) => path, runId)
-    const canonicalStopFiles = new Set(
-      [...stopFiles].map((stopFile) => canonicalFsPath(stopFile)),
-    )
     // The learner's front text tab of each destination group before the first stop file opened there, by column.
     const frontTabsBefore = new Map<vscode.ViewColumn, vscode.Uri>()
+    // The canonical path of the stop file this call last put in front of each group, by column: only that front tab is this call's to replace.
+    const lastShownStopFiles = new Map<vscode.ViewColumn, string>()
     try {
       for (const stopFile of stopFiles) {
         signal?.throwIfAborted()
@@ -10322,6 +10321,7 @@ export class StudyWorkspace {
             // A kept tab replaces no preview of the learner's.
             preview: false,
           })
+          lastShownStopFiles.set(destination.viewColumn, canonicalStopFile)
         } catch (error) {
           // A file the editor cannot open leaves the run as it was; only a cancelled run ends here.
           if (signal?.aborted) throw error
@@ -10329,24 +10329,26 @@ export class StudyWorkspace {
         }
       }
     } finally {
-      await this.restoreFrontTabsAfterStopFiles(
-        frontTabsBefore,
-        canonicalStopFiles,
-      )
+      // A cancelled run touches no tab again: the learner may already be working in that group.
+      if (!signal?.aborted)
+        await this.restoreFrontTabsAfterStopFiles(
+          frontTabsBefore,
+          lastShownStopFiles,
+        )
     }
   }
 
   /**
-   * Brings the learner's earlier front tab of a group back to the front after {@link openRunStopFilesBesideApplication} put stop files in front of it, without the keyboard; a tab is never closed or moved.
-   * A group is left alone when its earlier front tab is gone, or when its front tab is not one of the run's stop files (the learner chose another tab meanwhile).
+   * Brings the learner's earlier front tab of a group back to the front after {@link openRunStopFilesBesideApplication} put stop files in front of it, without the keyboard; a tab is never closed or moved. Not called for a cancelled run.
+   * A group is left alone when its earlier front tab is gone, or when its front tab is not the stop file that call last put there (the learner chose another tab meanwhile, a stop file included).
    * @param frontTabsBefore - The earlier front text tab's uri by group column.
-   * @param canonicalStopFiles - The canonical paths of the run's stop files.
+   * @param lastShownStopFiles - The canonical path of the stop file the call last put in front, by group column.
    * @returns Once every group that needed it shows its earlier tab; a refused show is reported, no error.
-   * @example await this.restoreFrontTabsAfterStopFiles(new Map([[2, Uri.file('/repo/auth.ts')]]), new Set(['/repo/src/index.tsx']))
+   * @example await this.restoreFrontTabsAfterStopFiles(new Map([[2, Uri.file('/repo/auth.ts')]]), new Map([[2, '/repo/src/index.tsx']]))
    */
   private async restoreFrontTabsAfterStopFiles(
     frontTabsBefore: ReadonlyMap<vscode.ViewColumn, vscode.Uri>,
-    canonicalStopFiles: ReadonlySet<string>,
+    lastShownStopFiles: ReadonlyMap<vscode.ViewColumn, string>,
   ): Promise<void> {
     for (const [column, previousUri] of frontTabsBefore) {
       // The group is found again by its column: the editor can replace group objects at a show.
@@ -10361,10 +10363,10 @@ export class StudyWorkspace {
         !group ||
         isSameUri(front) ||
         !group.tabs.some((tab) => isSameUri(tab.input)) ||
-        // Only a stop file the run opened in front is replaced; any other front tab is the learner's choice.
+        // Only the stop file this call put in front last is replaced; any other front tab, another stop file included, is the learner's choice.
         !(front instanceof vscode.TabInputText) ||
         front.uri.scheme !== 'file' ||
-        !canonicalStopFiles.has(canonicalFsPath(front.uri.fsPath))
+        canonicalFsPath(front.uri.fsPath) !== lastShownStopFiles.get(column)
       )
         continue
       try {
