@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict'
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -186,19 +194,21 @@ const supported: ViteFacts = {
   cacheDir: '/repo/node_modules/.vite',
   port: 3010,
   https: false,
+  host: '127.0.0.1',
   hmrOwnListener: false,
+  wsOwnListener: false,
   middlewareMode: false,
   appType: 'spa',
 }
 
-test('a supported config has no unsupported setting', () => {
+test('a supported config has no unsupported setting', async () => {
   // Act
-  const unsupported = assessViteSettings(supported, '/repo')
+  const unsupported = await assessViteSettings(supported, '/repo')
   // Assert
   assert.deepEqual(unsupported, [])
 })
 
-test('lists every unsupported setting at once with values only for safe scalars', () => {
+test('lists every unsupported setting at once with values only for safe scalars', async () => {
   // Arrange
   const facts: ViteFacts = {
     ...supported,
@@ -206,25 +216,29 @@ test('lists every unsupported setting at once with values only for safe scalars'
     root: '/repo/web',
     https: true,
     origin: 'https://user:plainsecretpw@cdn.example/assets',
+    host: true,
     hmrOwnListener: true,
+    wsOwnListener: true,
     middlewareMode: true,
     cacheDir: '/elsewhere/.vite',
   }
   // Act
-  const unsupported = assessViteSettings(facts, '/repo')
+  const unsupported = await assessViteSettings(facts, '/repo')
   // Assert
   assert.deepEqual(unsupported, [
     'base is "/app/"',
     'root is not the package root',
+    'server.host is not 127.0.0.1 (Codebook owns only the loopback host)',
     'server.https is set',
     'server.origin is https://cdn.example/assets',
     'server.hmr is set (its own port, host or server)',
+    'server.ws is set (its own port, host or server)',
     'server.middlewareMode is true',
     'cacheDir is outside the package root',
   ])
 })
 
-test('a server.port of 0 reaches the settings policy and is listed as unsupported', () => {
+test('a server.port of 0 reaches the settings policy and is listed as unsupported', async () => {
   // Arrange
   const message = {
     type: 'vite-facts',
@@ -235,7 +249,7 @@ test('a server.port of 0 reaches the settings policy and is listed as unsupporte
   const report = parseViteLauncherReport(message)
   const unsupported =
     report.type === 'vite-facts'
-      ? assessViteSettings(report.facts, '/repo')
+      ? await assessViteSettings(report.facts, '/repo')
       : ['not a facts report']
   // Assert
   assert.deepEqual(unsupported, [
@@ -243,9 +257,9 @@ test('a server.port of 0 reaches the settings policy and is listed as unsupporte
   ])
 })
 
-test('an appType of custom is unsupported without middleware mode', () => {
+test('an appType of custom is unsupported without middleware mode', async () => {
   // Act
-  const unsupported = assessViteSettings(
+  const unsupported = await assessViteSettings(
     { ...supported, appType: 'custom' },
     '/repo',
   )
@@ -308,4 +322,45 @@ test('refuses a dev script whose --config is outside the package root', async (c
   // Assert
   assert.equal(error.code, 'VITE_UNSUPPORTED')
   assert.match(error.message, /the option --config outside the package root/)
+})
+
+// Value: protects=a cacheDir that reaches outside the package root through a symlink is refused; fails_when=containment compares only resolved strings, so a symlinked node_modules passes; why_new=final-round review: lexical resolve/relative missed symlinks; seam=none; no_claim=other symlinked folders
+test('a cacheDir under a node_modules symlinked outside the package root is unsupported', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context)
+  const outside = await realpath(await mkdtemp(join(tmpdir(), 'codebook-out-')))
+  context.after(() => rm(outside, { recursive: true, force: true }))
+  await rm(join(repository.root, 'node_modules'), {
+    recursive: true,
+    force: true,
+  })
+  await symlink(outside, join(repository.root, 'node_modules'))
+  // Act
+  const unsupported = await assessViteSettings(
+    {
+      ...supported,
+      root: repository.root,
+      cacheDir: join(repository.root, 'node_modules/.vite'),
+    },
+    repository.root,
+  )
+  // Assert
+  assert.deepEqual(unsupported, ['cacheDir is outside the package root'])
+})
+
+// Value: protects=a plain not-yet-created cacheDir inside the package root is accepted by the real-path comparison; fails_when=a missing folder is refused; why_new=the real-path check walks to an existing ancestor; seam=none; no_claim=symlinks
+test('a not-yet-created cacheDir inside the package root is supported', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context)
+  // Act
+  const unsupported = await assessViteSettings(
+    {
+      ...supported,
+      root: repository.root,
+      cacheDir: join(repository.root, 'node_modules/.vite/deps/new'),
+    },
+    repository.root,
+  )
+  // Assert
+  assert.deepEqual(unsupported, [])
 })

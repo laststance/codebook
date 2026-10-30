@@ -10,7 +10,10 @@ import type {
 } from '../developmentServerAdapter'
 import { StudyError } from '../errors'
 import { assessViteWorkspace } from '../utils/assessViteWorkspace'
-import { launchViteDevelopmentServer } from '../utils/launchViteDevelopmentServer'
+import {
+  buildViteEnvironment,
+  launchViteDevelopmentServer,
+} from '../utils/launchViteDevelopmentServer'
 import {
   listViteTimestampFiles,
   removeNewViteTimestampFiles,
@@ -484,4 +487,78 @@ test('removes only the transient config files that appeared in node_modules/.vit
   await assert.rejects(access(fresh))
   await access(old)
   await access(other)
+})
+
+// Value: protects=a plugin config hook widening server.host is refused before Vite listens; fails_when=the resolved host is not reported or not judged, so source modules are exposed on the LAN; why_new=final-round review C1; seam=stub Vite reporting server.host true; no_claim=a real plugin
+test('a resolved server.host of true is refused naming server.host and nothing listens', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const run = await startVite(context, {
+    behavior: { port, server: { host: true } },
+  })
+  // Act
+  const error = await refusalOf(run.started)
+  // Assert
+  assert.equal(error.code, 'VITE_UNSUPPORTED')
+  assert.match(error.message, /server\.host is not 127\.0\.0\.1/)
+  await assert.rejects(fetch(`http://127.0.0.1:${port}/`))
+})
+
+// Value: protects=a server.ws listener of its own is refused even with hmr false; fails_when=only server.hmr is judged; why_new=final-round review C2; seam=stub Vite reporting server.ws.port; no_claim=Vite opening the socket
+test('a server.ws with its own port is refused even when hmr is false', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const run = await startVite(context, {
+    behavior: { port, server: { hmr: false, ws: { port: 24679 } } },
+  })
+  // Act
+  const error = await refusalOf(run.started)
+  // Assert
+  assert.equal(error.code, 'VITE_UNSUPPORTED')
+  assert.match(error.message, /server\.ws is set/)
+  assert.doesNotMatch(error.message, /server\.hmr is set/)
+})
+
+// Value: protects=a project config root other than the workspace root reaches the root refusal; fails_when=the launcher passes root inline so the config root is overridden and the wrong directory is served; why_new=final-round review C3; seam=stub Vite where an inline root wins; no_claim=the real Vite root resolution
+test('a project config root of client is refused as not the package root', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const run = await startVite(context, {
+    behavior: { port, projectRoot: 'client' },
+  })
+  // Act
+  const error = await refusalOf(run.started)
+  // Assert
+  assert.equal(error.code, 'VITE_UNSUPPORTED')
+  assert.match(error.message, /root is not the package root/)
+})
+
+// Value: protects=readiness does not need Vite's printed URLs; fails_when=a silent logLevel hides the URL and a healthy server fails at the setup deadline; why_new=final-round review C4; seam=stub Vite whose printUrls prints nothing; no_claim=real logLevel handling
+test('a silent logLevel does not stop a healthy server from being ready', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const run = await startVite(context, { behavior: { port, silent: true } })
+  // Act
+  await run.started
+  const origin = await run.app().ready(run.controller.signal, '/')
+  // Assert
+  assert.equal(origin, `http://127.0.0.1:${port}`)
+})
+
+// Value: protects=BROWSER=none and NO_COLOR=1 win over script assignments and FORCE_COLOR is dropped; fails_when=an assignment sets them last; why_new=final-round review C6; seam=none; no_claim=Vite's color handling
+test('script assignments cannot enable color or a browser in the launcher environment', () => {
+  // Arrange
+  const assignments = {
+    FORCE_COLOR: '1',
+    CLICOLOR_FORCE: '1',
+    BROWSER: 'chrome',
+    NO_COLOR: '0',
+  }
+  // Act
+  const environment = buildViteEnvironment(assignments)
+  // Assert
+  assert.equal(environment.BROWSER, 'none')
+  assert.equal(environment.NO_COLOR, '1')
+  assert.equal(environment.FORCE_COLOR, undefined)
+  assert.equal(environment.CLICOLOR_FORCE, undefined)
 })

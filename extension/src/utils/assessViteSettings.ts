@@ -1,4 +1,7 @@
-import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { realpath } from 'node:fs/promises'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+
+import { VITE_LOOPBACK_HOST } from '../constants'
 
 import { redactSecretText } from './redactSecretText'
 
@@ -13,8 +16,12 @@ export type ViteFacts = {
   port: number
   https: boolean
   origin?: string
+  /** The resolved `server.host`: a string, `true` (every interface) or `undefined`; only {@link VITE_LOOPBACK_HOST} is supported. */
+  host?: string | boolean
   /** Whether `server.hmr` is an object with its own `port`, `host` or `server`: a second listener Codebook does not own. */
   hmrOwnListener: boolean
+  /** Whether `server.ws` (Vite 8) is an object with its own `port`, `host` or `server`: a websocket listener Codebook does not own, even with `hmr: false`. */
+  wsOwnListener: boolean
   middlewareMode: boolean
   appType: string
   /** The config file Vite loaded, workspace-relative; `undefined` when none. */
@@ -33,9 +40,31 @@ function printOrigin(origin: string): string {
   }
 }
 
-/** Whether a folder lies inside the package root or is it. */
-function isInside(packageRoot: string, folder: string): boolean {
-  const path = relative(resolve(packageRoot), resolve(folder))
+/**
+ * Resolves symlinks of a path that may not exist yet, through its nearest existing ancestor.
+ * @param path - The path to resolve, such as a cache folder Vite has not created.
+ * @returns The real path of the nearest existing ancestor joined with the missing rest.
+ * @example
+ * await realPathOfPlanned('/repo/node_modules/.vite') // => '/outside/.vite' when node_modules links outside
+ */
+async function realPathOfPlanned(path: string): Promise<string> {
+  const absolute = resolve(path)
+  try {
+    return await realpath(absolute)
+  } catch {
+    const parent = dirname(absolute)
+    // The filesystem root always exists, so the walk ends there.
+    if (parent === absolute) return absolute
+    return join(await realPathOfPlanned(parent), relative(parent, absolute))
+  }
+}
+
+/** Whether a folder lies inside the package root or is it, comparing real paths so a symlinked folder cannot point outside. */
+async function isInside(packageRoot: string, folder: string): Promise<boolean> {
+  const path = relative(
+    await realPathOfPlanned(packageRoot),
+    await realPathOfPlanned(folder),
+  )
   return (
     path === '' ||
     (!path.startsWith(`..${sep}`) && path !== '..' && !isAbsolute(path))
@@ -49,14 +78,14 @@ function isInside(packageRoot: string, folder: string): boolean {
  *
  * @param facts - The facts the launcher sent.
  * @param packageRoot - The package root (the workspace root this version).
- * @returns One phrase per unsupported setting, empty when the config is supported.
+ * @returns One phrase per unsupported setting, empty when the config is supported. `cacheDir` is judged on real paths, so a symlinked folder that leaves the package root is listed.
  * @example
- * assessViteSettings({ …facts, base: '/app/', https: true }, '/repo') // => ['base is "/app/"', 'server.https is set']
+ * await assessViteSettings({ …facts, base: '/app/', https: true }, '/repo') // => ['base is "/app/"', 'server.https is set']
  */
-export function assessViteSettings(
+export async function assessViteSettings(
   facts: ViteFacts,
   packageRoot: string,
-): string[] {
+): Promise<string[]> {
   const unsupported: string[] = []
   if (facts.base !== '/')
     unsupported.push(`base is ${JSON.stringify(redactSecretText(facts.base))}`)
@@ -64,14 +93,20 @@ export function assessViteSettings(
     unsupported.push('root is not the package root')
   if (facts.port === 0)
     unsupported.push('server.port is 0 (a random port Codebook cannot own)')
+  if (facts.host !== VITE_LOOPBACK_HOST)
+    unsupported.push(
+      `server.host is not ${VITE_LOOPBACK_HOST} (Codebook owns only the loopback host)`,
+    )
   if (facts.https) unsupported.push('server.https is set')
   if (facts.origin !== undefined)
     unsupported.push(`server.origin is ${printOrigin(facts.origin)}`)
   if (facts.hmrOwnListener)
     unsupported.push('server.hmr is set (its own port, host or server)')
+  if (facts.wsOwnListener)
+    unsupported.push('server.ws is set (its own port, host or server)')
   if (facts.middlewareMode) unsupported.push('server.middlewareMode is true')
   else if (facts.appType === 'custom') unsupported.push('appType is "custom"')
-  if (!isInside(packageRoot, facts.cacheDir))
+  if (!(await isInside(packageRoot, facts.cacheDir)))
     unsupported.push('cacheDir is outside the package root')
   return unsupported
 }

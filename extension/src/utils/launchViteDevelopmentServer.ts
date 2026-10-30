@@ -31,8 +31,21 @@ const NEXT_ONLY_ENVIRONMENT = [
   'NEXT_EXIT_TIMEOUT_MS',
 ]
 
-/** Builds the launcher's complete environment: the dev-server allowlist, the script's assignments, no browser and no colors (a colored port would break the readiness check). */
-function buildViteEnvironment(
+/** The color switches a script assignment could set; they are dropped so Vite's output stays plain. */
+const COLOR_FORCING_ENVIRONMENT = ['FORCE_COLOR', 'CLICOLOR_FORCE']
+
+/**
+ * Builds the launcher's complete environment: the dev-server allowlist, the script's assignments, no browser and no colors.
+ *
+ * Why it exists: the launcher must start with an environment Codebook controls. Called by {@link launchViteDevelopmentServer} once per launch.
+ * `BROWSER=none` and `NO_COLOR=1` win over any script assignment, and `FORCE_COLOR` and `CLICOLOR_FORCE` are removed even when the script assigns them, so output stays uncolored for the published tail.
+ *
+ * @param assignments - The `NAME=value` assignments of the accepted `dev` script.
+ * @returns The launcher's environment.
+ * @example
+ * buildViteEnvironment({ FORCE_COLOR: '1', BROWSER: 'chrome' }) // => { …allowlist, BROWSER: 'none', NO_COLOR: '1' }
+ */
+export function buildViteEnvironment(
   assignments: Record<string, string>,
 ): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {
@@ -42,6 +55,7 @@ function buildViteEnvironment(
     NO_COLOR: '1',
   }
   for (const name of NEXT_ONLY_ENVIRONMENT) delete environment[name]
+  for (const name of COLOR_FORCING_ENVIRONMENT) delete environment[name]
   return environment
 }
 
@@ -171,14 +185,14 @@ export async function launchViteDevelopmentServer(
     )
   maskedValues.push(...first.envValues)
   const { facts } = first
-  const unsupported = assessViteSettings(facts, request.workspace)
+  const unsupported = await assessViteSettings(facts, request.workspace)
   if (unsupported.length) {
     refuseLaunch(app)
     throw viteRefusal(
       'VITE_UNSUPPORTED',
       // Settings values and the config path come from the project's config: the whole sentence is masked.
       mask(
-        `The Vite config${facts.configFile ? ` (${facts.configFile})` : ''} has settings Codebook cannot run: ${unsupported.join('; ')}. Codebook supports a root app on 127.0.0.1 with a fixed server.port (not 0), base "/", no HTTPS, no server.origin, no own HMR listener, no middleware mode and a cacheDir inside the package root.`,
+        `The Vite config${facts.configFile ? ` (${facts.configFile})` : ''} has settings Codebook cannot run: ${unsupported.join('; ')}. Codebook supports a root app on 127.0.0.1 (server.host), with a fixed server.port (not 0), base "/", no HTTPS, no server.origin, no own HMR or ws listener, no middleware mode and a cacheDir inside the package root (symlinks resolved).`,
       ),
     )
   }

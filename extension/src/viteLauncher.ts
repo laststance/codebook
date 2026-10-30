@@ -3,11 +3,13 @@ import { pathToFileURL } from 'node:url'
 
 import {
   VITE_DEFAULT_PORT,
+  VITE_LOOPBACK_HOST,
   VITE_ERROR_LINE_LIMIT_CHARS,
   VITE_LAUNCHER_MESSAGES,
   VITE_MASKED_VALUE_MIN_CHARS,
 } from './constants'
 import { hasOwnHmrListener } from './utils/hasOwnHmrListener'
+import { isViteLauncherCommand } from './utils/isViteLauncherCommand'
 import { maskKnownValues } from './utils/maskKnownValues'
 import type {
   ViteLauncherCommand,
@@ -28,6 +30,8 @@ type ViteServer = {
     appType?: string
     server: {
       port?: number
+      host?: string | boolean
+      ws?: unknown
       https?: unknown
       origin?: string
       hmr?: unknown
@@ -84,6 +88,8 @@ function loadedEnvValues(
  * Why it exists: the config is evaluated once, and the policy is judged on the config the server really uses. Spawned by {@link launchViteDevelopmentServer} with a Node IPC channel; this module runs on load and is never imported by the extension.
  * A config that logs to stdout never disturbs the IPC channel, which is separate.
  *
+ * Never passes an inline `root` (the working directory is the package root), so a project config's own `root` reaches the settings policy; the host is passed inline but its resolved value is reported and judged too.
+ *
  * @example
  * // node dist/viteLauncher.js '{"viteEntry":"/repo/node_modules/vite/dist/node/index.js","root":"/repo"}'
  */
@@ -115,13 +121,13 @@ async function run(): Promise<void> {
       envValues: loadedEnvValues(vite, options),
     })
     phase = 'config'
+    // No inline `root`: an inline root would win over a project config's own `root`, hiding it from the settings policy; the launcher's working directory is the package root.
     server = await vite.createServer({
-      root: options.root,
       mode: options.mode,
       configFile: options.configFile,
       clearScreen: false,
       server: {
-        host: '127.0.0.1',
+        host: VITE_LOOPBACK_HOST,
         ...(options.port === undefined ? {} : { port: options.port }),
         strictPort: true,
         open: false,
@@ -144,15 +150,22 @@ async function run(): Promise<void> {
         port: config.server.port ?? VITE_DEFAULT_PORT,
         https: Boolean(config.server.https),
         origin: config.server.origin,
+        host: config.server.host,
         hmrOwnListener: hasOwnHmrListener(hmr),
+        wsOwnListener: hasOwnHmrListener(config.server.ws),
         middlewareMode: Boolean(config.server.middlewareMode),
         appType: config.appType ?? 'spa',
         configFile,
       },
     })
+    // An unknown shape is never trusted to mean "listen": it is treated as a refusal.
     const reply = new Promise<ViteLauncherCommand>((resolve) =>
       process.once('message', (message) =>
-        resolve(message as ViteLauncherCommand),
+        resolve(
+          isViteLauncherCommand(message)
+            ? message
+            : { type: VITE_LAUNCHER_MESSAGES.refuse },
+        ),
       ),
     )
     await factsSent
@@ -163,6 +176,7 @@ async function run(): Promise<void> {
     }
     phase = 'listen'
     await server.listen()
+    // Human output only: readiness comes from the verified `listening` report below, because a project's logLevel can silence the URLs.
     server.printUrls()
     const address = server.httpServer?.address()
     await send({

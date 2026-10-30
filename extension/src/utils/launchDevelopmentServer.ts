@@ -294,6 +294,8 @@ export function launchDevelopmentServer(
                 `Application exited: ${child.exitCode}: ${publishedTail()}`,
               )
             )
+          // A launcher with an IPC channel reports its verified listening port before `ready` is called, so its origin never depends on printed URLs (a project's logLevel can silence them).
+          if (spec?.ipc) return `http://127.0.0.1:${declaredPort}`
           // Process chunks may split a port; only a received delimiter proves its complete value. Only the declared port counts: another local URL in the log (an API, a proxy) is not the app's origin (F552).
           return new RegExp(
             `http://127\\.0\\.0\\.1:${declaredPort}(?=\\D)`,

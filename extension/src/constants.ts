@@ -2232,6 +2232,9 @@ export const VITE_SUPPORTED_MAJOR = 8
 /** Vite's own default dev-server port, used when neither the project's config nor its `dev` script names one. */
 export const VITE_DEFAULT_PORT = 5173
 
+/** The one host Codebook owns for a Vite dev server; the launcher passes it inline and the parent refuses a resolved `server.host` that differs (a plugin can widen it to every interface). */
+export const VITE_LOOPBACK_HOST = '127.0.0.1'
+
 /** How long the owned Vite launcher may take from its spawn to the facts of the resolved config, before the setup budget for readiness starts. */
 export const VITE_LAUNCHER_FACTS_TIMEOUT_MS = 30_000
 

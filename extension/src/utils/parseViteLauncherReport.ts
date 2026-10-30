@@ -12,7 +12,10 @@ const factsSchema = z.object({
   port: z.number().int().min(0).max(65_535),
   https: z.boolean(),
   origin: z.string().optional(),
+  // the resolved server.host: a string, `true` (every interface) or absent
+  host: z.union([z.string(), z.boolean()]).optional(),
   hmrOwnListener: z.boolean(),
+  wsOwnListener: z.boolean(),
   middlewareMode: z.boolean(),
   appType: z.string(),
   configFile: z.string().optional(),

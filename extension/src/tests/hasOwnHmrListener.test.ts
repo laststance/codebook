@@ -55,3 +55,13 @@ test('an hmr that only sets the client port or overlay is not refused', () => {
   // Assert
   assert.equal(ownListener, false)
 })
+
+// Value: protects=a Vite 8 server.ws with its own port, host or server is refused like an own hmr listener, and ws false is accepted; fails_when=the ws value is judged as no listener or false is refused; why_new=final-round review: server.ws opens its own listener even with hmr false; seam=none; no_claim=the real Vite websocket
+test('a server.ws with its own port is an own listener while ws false is not', () => {
+  // Arrange
+  const ownPort = { port: 24679 }
+  // Act
+  const results = [hasOwnHmrListener(ownPort), hasOwnHmrListener(false)]
+  // Assert
+  assert.deepEqual(results, [true, false])
+})

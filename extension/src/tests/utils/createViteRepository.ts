@@ -28,6 +28,10 @@ export type StubViteBehavior = {
   listenThrows?: string
   /** Makes the stub never answer `createServer`. */
   hangs?: boolean
+  /** Makes the stub's `printUrls` print nothing, as a project's `logLevel: 'silent'` does. */
+  silent?: boolean
+  /** A folder (relative to the package root) a project config's own `root` names; an inline `root` wins over it, as in Vite. */
+  projectRoot?: string
   /** Makes the stub's process exit with this code while loading. */
   exits?: number
 }
@@ -56,7 +60,10 @@ export function loadEnv(mode, directory) {
   }
 }
 export async function createServer(inline) {
-  const behavior = JSON.parse(await readFile(join(inline.root, 'stub-vite.json'), 'utf8'))
+  const cwd = globalThis.process.cwd()
+  const behavior = JSON.parse(await readFile(join(cwd, 'stub-vite.json'), 'utf8'))
+  // Vite: an inline root wins over the project config's root, which wins over the working directory.
+  const root = inline.root ?? (behavior.projectRoot ? join(cwd, behavior.projectRoot) : cwd)
   for (const line of behavior.logLines ?? []) console.log(line)
   for (const name of behavior.logEnv ?? []) console.log('ENV ' + name + '=' + (globalThis.process.env[name] ?? ''))
   for (const message of behavior.sendsMessages ?? []) globalThis.process.send(message)
@@ -65,21 +72,21 @@ export async function createServer(inline) {
   if (behavior.throws) throw new Error(behavior.throws)
   let timestamp
   if (behavior.leaveTimestampFile) {
-    const configPath = resolve(inline.root, inline.configFile ?? 'vite.config.ts')
+    const configPath = resolve(cwd, inline.configFile ?? 'vite.config.ts')
     timestamp = join(dirname(configPath), basename(configPath) + '.timestamp-1730000000-abc.mjs')
     await writeFile(timestamp, 'export default {}')
   }
   const port = inline.server.port ?? behavior.port
   const config = {
-    root: inline.root,
+    root,
     base: '/',
-    cacheDir: join(inline.root, 'node_modules/.vite'),
+    cacheDir: join(cwd, 'node_modules/.vite'),
     mode: inline.mode ?? 'development',
     appType: 'spa',
-    configFile: join(inline.root, 'vite.config.ts'),
-    ...(behavior.envDirName ? { envDir: join(inline.root, behavior.envDirName) } : {}),
+    configFile: join(cwd, 'vite.config.ts'),
+    ...(behavior.envDirName ? { envDir: join(cwd, behavior.envDirName) } : {}),
     ...behavior.config,
-    server: { port, ...behavior.server },
+    server: { port, host: inline.server.host, ...behavior.server },
   }
   let http
   return {
@@ -98,6 +105,7 @@ export async function createServer(inline) {
       this.httpServer = http
     },
     printUrls() {
+      if (behavior.silent) return
       console.log('  Local:   http://127.0.0.1:' + port + '/')
     },
     async close() {
