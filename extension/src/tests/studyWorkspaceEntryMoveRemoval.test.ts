@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
+import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { test } from 'node:test'
 import { setTimeout as sleep } from 'node:timers/promises'
 
@@ -1150,12 +1153,13 @@ test("in Cursor, a repository run's Application is revealed at a pause after its
       key: 'declares-the-stop',
     })
     await harness.service.records.get(receipt.runId)!.preparation
+    const runtimeId = harness.service.records.get(receipt.runId)!.runtime!.id
     harness.focusMutableDraft('auth.ts', 3)
     harness.focusMutableDraft('actions.ts', 2)
     await harness.reader.open()
     chat.focusTab()
     viewport = await harness.reader.presentation.createViewport(
-      'stop-run',
+      runtimeId,
       () => {},
       () => {},
       'normal',
@@ -1186,7 +1190,7 @@ test("in Cursor, a repository run's Application is revealed at a pause after its
       harness.groups
         .find((group) => group.viewColumn === 1)!
         .tabs.map((tab) => tab.label),
-      ['codebook · Application stop-run'],
+      [`codebook · Application ${runtimeId.slice(0, 8)}`],
     )
   } finally {
     viewport?.close()
@@ -1225,12 +1229,13 @@ test("in Cursor, a repository run's first pause keeps the Application open while
       key: 'declares-the-stop',
     })
     await harness.service.records.get(receipt.runId)!.preparation
+    const runtimeId = harness.service.records.get(receipt.runId)!.runtime!.id
     harness.focusMutableDraft('auth.ts', 3)
     harness.focusMutableDraft('actions.ts', 2)
     await harness.reader.open()
     chat.focusTab()
     viewport = await harness.reader.presentation.createViewport(
-      'stop-run',
+      runtimeId,
       () => {},
       () => {},
       'normal',
@@ -1261,7 +1266,7 @@ test("in Cursor, a repository run's first pause keeps the Application open while
       harness.groups
         .find((group) => group.viewColumn === 1)!
         .tabs.map((tab) => tab.label),
-      ['codebook · Application stop-run'],
+      [`codebook · Application ${runtimeId.slice(0, 8)}`],
     )
     assert.deepEqual(learnerTabLabels(), learnerTabsBefore)
     assert.equal(chat.focused(), true)
@@ -1270,6 +1275,88 @@ test("in Cursor, a repository run's first pause keeps the Application open while
       false,
     )
   } finally {
+    viewport?.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=a repository run's lease opening only its own stop files beside the Application: an earlier run (or another study) of the window that stops in another file leaves that file closed, so the learner's group gets no tab for a run that is not on screen; fails_when=the lease collects the stop files of every record of the window instead of its own run's; why_new=Cycle 0064 pt3 review (CodeRabbit minor, OCR medium); seam=createViewport, declared run stops of the window's records, BrowserViewport.attach; no_claim=the real Cursor's answer
+test("a repository run's lease opens only its own stop files beside the Application, not an earlier run's", async () => {
+  // Arrange: this run stops in src/theme.ts and an earlier run of the window stopped in src/earlier-run.ts.
+  const harness = await workspaceHarness(true, true)
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  let viewport:
+    | Awaited<
+        ReturnType<
+          NonNullable<typeof harness.reader.presentation.createViewport>
+        >
+      >
+    | undefined
+  const earlierRunId = randomUUID()
+  try {
+    harness.acknowledgeContext()
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: 'declares-the-stop',
+    })
+    const record = harness.service.records.get(receipt.runId)!
+    await record.preparation
+    // The earlier run's stop file exists, so only the lease's scope keeps it closed.
+    await writeFile(
+      join(harness.directory, 'src', 'earlier-run.ts'),
+      'export {}\n',
+    )
+    const earlierConfiguration = {
+      ...record.definition!.configuration,
+      source: {
+        ...record.definition!.configuration.source,
+        path: 'src/earlier-run.ts',
+      },
+    }
+    harness.service.records.set(earlierRunId, {
+      ...record,
+      id: `${harness.service.instanceId}_${earlierRunId}`,
+      // No runtime of its own: it is a run of the window that is not this lease's.
+      runtime: undefined,
+      definition: {
+        ...record.definition!,
+        configuration: earlierConfiguration,
+      },
+    })
+    harness.focusMutableDraft('auth.ts', 3)
+    harness.focusMutableDraft('actions.ts', 2)
+    await harness.reader.open()
+    viewport = await harness.reader.presentation.createViewport(
+      record.runtime!.id,
+      () => {},
+      () => {},
+      'normal',
+    )
+
+    // Act: the run attaches its browser.
+    await viewport.attach(
+      {
+        on: () => undefined,
+        request: async () => ({}),
+        subscribe: async () => undefined,
+      },
+      new AbortController().signal,
+    )
+
+    // Assert: its own stop file is open beside the Application; the earlier run's is open nowhere.
+    const openLabels = harness.groups.flatMap((group) =>
+      group.tabs.map((tab) => tab.label),
+    )
+    assert.equal(openLabels.includes('theme.ts'), true)
+    assert.equal(openLabels.includes('earlier-run.ts'), false)
+  } finally {
+    // The stand-in record has no real runtime to shut down.
+    harness.service.records.delete(earlierRunId)
     viewport?.close()
     await harness.close()
   }

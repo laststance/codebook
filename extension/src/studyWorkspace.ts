@@ -8067,7 +8067,9 @@ export class StudyWorkspace {
         observer: studyRecord && createRecordingObserver(studyRecord),
         // Cursor 3.27.22 opens a stop's file in front of the Application inside the Application's own group for every run, and the reveal at the pause refuses a front tab that is not the Application (N64p3, task 96): the stop file moves out as an extension run's does.
         movesPausedSourceOut: (fsPath) =>
-          this.declaredRunStopFiles().has(canonicalFsPath(fsPath)),
+          this.declaredRunStopFiles(undefined, runId).has(
+            canonicalFsPath(fsPath),
+          ),
       })
     },
     createChromeExtensionViewport: async (runId, signal) => {
@@ -10070,7 +10072,11 @@ export class StudyWorkspace {
         // The run's stop file opens as a preview in this group; a preview Application would be replaced by it (N64p2-F2).
         keepsPaneOpen: async (attachSignal) => {
           await this.keepMovedApplicationTab(panel, attachSignal)
-          await this.openRunStopFilesBesideApplication(panel, attachSignal)
+          await this.openRunStopFilesBesideApplication(
+            panel,
+            attachSignal,
+            runId,
+          )
         },
         // Before the pane covers the paused file, the chat that had the keyboard before the pause gets it back, and a file the learner's selected frame opened keeps the pane from the keyboard; a pane that had to take it tells the learner once where it is.
         comesWithoutKeyboard: () => this.keepsKeyboardFromPane(),
@@ -10266,6 +10272,7 @@ export class StudyWorkspace {
    * A file already open in a group other than the Application's is skipped, as is one the learner has open in the Application's own group; no tab of the learner's is closed, moved or edited. A file that cannot be opened (missing, binary, refused) is no error: the run goes on and reports it on the layout line.
    * @param panel - The run's Application pane.
    * @param signal - The run's cancellation.
+   * @param runId - The run whose lease this is; only its own stop files are opened.
    * @returns Once every stop file is open outside the Application's group, or skipped.
    * @throws The signal's reason when the run was cancelled.
    * @example await this.openRunStopFilesBesideApplication(panel, signal) // src/index.tsx is a kept tab in column 2
@@ -10273,9 +10280,10 @@ export class StudyWorkspace {
   private async openRunStopFilesBesideApplication(
     panel: vscode.WebviewPanel,
     signal: AbortSignal | undefined,
+    runId: string,
   ): Promise<void> {
-    // Written as the run resolved them: the canonical form is lowercased on macOS and Windows and is for comparing only.
-    for (const stopFile of this.declaredRunStopFiles((path) => path)) {
+    // Written as the run resolved them: the canonical form is lowercased on macOS and Windows and is for comparing only; only this lease's run, never an earlier run's or another study's.
+    for (const stopFile of this.declaredRunStopFiles((path) => path, runId)) {
       signal?.throwIfAborted()
       const canonicalStopFile = canonicalFsPath(stopFile)
       const applicationColumn = this.viewColumnOf(panel)
@@ -21651,11 +21659,13 @@ export class StudyWorkspace {
    * Lists the canonical paths of the files of every stop the window's runs declared; read by {@link keepRunOwnedPreviews} and by the paused-file watch of a repository run's lease ({@link presentation}).
    * The set is read anew at each call, because a run declares its stops when its configuration resolves, after its lease exists.
    * @param toPath - How each path is written; canonical by default, `(path) => path` to open the files.
+   * @param runId - Limits the read to the run with this id (a lease's own stops); omitted, every run of the window counts ({@link keepRunOwnedPreviews}).
    * @returns The stop files; empty when the window has no single workspace folder or no run declared a stop.
    * @example this.declaredRunStopFiles().has(canonicalFsPath(fsPath)) // => true for src/index.tsx of a run that stops there
    */
   private declaredRunStopFiles(
     toPath?: (joinedPath: string) => string,
+    runId?: string,
   ): ReadonlySet<string> {
     let workspaceRoot: string
     try {
@@ -21666,7 +21676,11 @@ export class StudyWorkspace {
     }
     return runStopFilePaths(
       [...(this.service?.records.values() ?? [])].flatMap((record) =>
-        record.definition ? [record.definition.configuration] : [],
+        // A lease asks for its own run only.
+        record.definition &&
+        (runId === undefined || record.runtime?.id === runId)
+          ? [record.definition.configuration]
+          : [],
       ),
       workspaceRoot,
       toPath,
