@@ -17,7 +17,7 @@ import { assessViteSettings, type ViteFacts } from './assessViteSettings'
 import type { ViteWorkspace } from './assessViteWorkspace'
 import { buildDevelopmentServerEnvironment } from './developmentServerEnvironment'
 import { launchDevelopmentServer } from './launchDevelopmentServer'
-import { maskKnownValues } from './maskKnownValues'
+import { longestMaskedLength, maskKnownValues } from './maskKnownValues'
 import { parseViteLauncherReport } from './parseViteLauncherReport'
 import {
   listViteTimestampFiles,
@@ -51,6 +51,18 @@ function portSourceOf(facts: ViteFacts, scriptPort: number | undefined) {
   return facts.configFile
     ? `the Vite config (${facts.configFile})`
     : "Vite's default port"
+}
+
+/** Tells a message of the launcher's protocol from anything project code sends over the same IPC channel. */
+function isViteLauncherMessage(message: unknown): boolean {
+  if (typeof message !== 'object' || message === null) return false
+  const type = (message as { type?: unknown }).type
+  return (
+    type === VITE_LAUNCHER_MESSAGES.env ||
+    type === VITE_LAUNCHER_MESSAGES.facts ||
+    type === VITE_LAUNCHER_MESSAGES.failed ||
+    type === VITE_LAUNCHER_MESSAGES.listening
+  )
 }
 
 /** Tells the launcher not to listen; best effort, because a launcher that already exited must not replace the coded refusal with a plain send error (the run's cleanup closes the process either way). */
@@ -108,6 +120,8 @@ export async function launchViteDevelopmentServer(
       environment: buildViteEnvironment(script.assignments),
       ipc: true,
       mask,
+      maskHoldback: () => longestMaskedLength(maskedValues),
+      acceptMessage: isViteLauncherMessage,
       name: 'Vite',
       afterClose: () =>
         removeNewViteTimestampFiles(
@@ -135,12 +149,19 @@ export async function launchViteDevelopmentServer(
       )
     }
   }
-  const first = await receive(VITE_LAUNCHER_FACTS_TIMEOUT_MS)
+  let first = await receive(VITE_LAUNCHER_FACTS_TIMEOUT_MS)
+  // The launcher sends its env values before any project code runs, so a later death still leaves them masked.
+  if (first.type === VITE_LAUNCHER_MESSAGES.env) {
+    maskedValues.push(...first.envValues)
+    first = await receive(VITE_LAUNCHER_FACTS_TIMEOUT_MS)
+  }
   if (first.type === VITE_LAUNCHER_MESSAGES.failed) {
     maskedValues.push(...first.envValues)
     throw viteRefusal(
       'VITE_LAUNCHER_FAILED',
-      `The project's Vite config could not be loaded (${first.errorName} while ${first.phase === 'import' ? 'importing Vite' : 'resolving the config'}${first.configFile ? `, ${first.configFile}` : ''}; ${context}): ${mask(first.firstLine)}`,
+      mask(
+        `The project's Vite config could not be loaded (${first.errorName} while ${first.phase === 'import' ? 'importing Vite' : 'resolving the config'}${first.configFile ? `, ${first.configFile}` : ''}; ${context}): ${first.firstLine}`,
+      ),
     )
   }
   if (first.type !== VITE_LAUNCHER_MESSAGES.facts)
@@ -155,12 +176,15 @@ export async function launchViteDevelopmentServer(
     refuseLaunch(app)
     throw viteRefusal(
       'VITE_UNSUPPORTED',
-      `The Vite config${facts.configFile ? ` (${facts.configFile})` : ''} has settings Codebook cannot run: ${unsupported.join('; ')}. Codebook supports a root app on 127.0.0.1 with a fixed server.port (not 0), base "/", no HTTPS, no server.origin, no own HMR listener, no middleware mode and a cacheDir inside the package root.`,
+      // Settings values and the config path come from the project's config: the whole sentence is masked.
+      mask(
+        `The Vite config${facts.configFile ? ` (${facts.configFile})` : ''} has settings Codebook cannot run: ${unsupported.join('; ')}. Codebook supports a root app on 127.0.0.1 with a fixed server.port (not 0), base "/", no HTTPS, no server.origin, no own HMR listener, no middleware mode and a cacheDir inside the package root.`,
+      ),
     )
   }
   const declared = {
     port: facts.port,
-    source: portSourceOf(facts, script.port),
+    source: mask(portSourceOf(facts, script.port)),
   }
   request.onDeclaredPort(declared)
   try {
@@ -180,7 +204,9 @@ export async function launchViteDevelopmentServer(
     maskedValues.push(...listening.envValues)
     throw viteRefusal(
       'VITE_LAUNCHER_FAILED',
-      `Vite could not start listening (${listening.errorName}): ${mask(listening.firstLine)}`,
+      mask(
+        `Vite could not start listening (${listening.errorName}): ${listening.firstLine}`,
+      ),
     )
   }
   if (
@@ -191,5 +217,5 @@ export async function launchViteDevelopmentServer(
       'VITE_LAUNCHER_FAILED',
       `Vite listens on another port than the one its config resolved (${facts.port}).`,
     )
-  return { app, port: facts.port, viteVersion: facts.viteVersion }
+  return { app, port: facts.port, viteVersion: mask(facts.viteVersion) }
 }

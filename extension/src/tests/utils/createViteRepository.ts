@@ -20,6 +20,12 @@ export type StubViteBehavior = {
   throws?: string
   /** Makes the stub write a transient `<config file>.timestamp-*.mjs` file beside the config it was given (default `vite.config.ts`) and not remove it. */
   leaveTimestampFile?: boolean
+  /** Messages the stub's config sends over the launcher's IPC channel while it loads, as project code calling `process.send` would. */
+  sendsMessages?: unknown[]
+  /** A folder (relative to the root) the stub's resolved config names as its `envDir`. */
+  envDirName?: string
+  /** A message the stub's `listen` rejects with. */
+  listenThrows?: string
   /** Makes the stub never answer `createServer`. */
   hangs?: boolean
   /** Makes the stub's process exit with this code while loading. */
@@ -53,6 +59,7 @@ export async function createServer(inline) {
   const behavior = JSON.parse(await readFile(join(inline.root, 'stub-vite.json'), 'utf8'))
   for (const line of behavior.logLines ?? []) console.log(line)
   for (const name of behavior.logEnv ?? []) console.log('ENV ' + name + '=' + (globalThis.process.env[name] ?? ''))
+  for (const message of behavior.sendsMessages ?? []) globalThis.process.send(message)
   if (behavior.exits !== undefined) globalThis.process.exit(behavior.exits)
   if (behavior.hangs) await new Promise(() => {})
   if (behavior.throws) throw new Error(behavior.throws)
@@ -70,6 +77,7 @@ export async function createServer(inline) {
     mode: inline.mode ?? 'development',
     appType: 'spa',
     configFile: join(inline.root, 'vite.config.ts'),
+    ...(behavior.envDirName ? { envDir: join(inline.root, behavior.envDirName) } : {}),
     ...behavior.config,
     server: { port, ...behavior.server },
   }
@@ -78,6 +86,7 @@ export async function createServer(inline) {
     config,
     httpServer: null,
     async listen() {
+      if (behavior.listenThrows) throw new Error(behavior.listenThrows)
       http = createHttpServer((request, response) => {
         response.setHeader('content-type', 'text/html')
         response.end('<html></html>')

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { access, mkdir, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import type {
@@ -34,8 +34,10 @@ async function startVite(
 ) {
   const repository = await createViteRepository(context, { dev: options.dev })
   await repository.behave(options.behavior)
-  for (const [name, text] of Object.entries(options.files ?? {}))
+  for (const [name, text] of Object.entries(options.files ?? {})) {
+    await mkdir(dirname(join(repository.root, name)), { recursive: true })
     await writeFile(join(repository.root, name), text)
+  }
   const controller = new AbortController()
   const steps: string[] = []
   const declared: { port: number; source: string }[] = []
@@ -392,4 +394,69 @@ test('a port taken after the free-port check refuses as a launcher failure while
     error.message,
     /Vite could not start listening \(Error\): listen EADDRINUSE/,
   )
+})
+
+// Value: protects=a .env secret never leaks when the launcher dies in project code before its facts; fails_when=the parent masks only the dev-script assignments; why_new=the launcher now sends its env values before createServer runs; seam=none; no_claim=values of a custom envDir before the config resolved
+test('a launcher that exits in the config masks .env values in the refusal', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const run = await startVite(context, {
+    behavior: { port, logLines: ['leaked plainsecretvalue1 here'], exits: 3 },
+    files: { '.env': 'API_TOKEN=plainsecretvalue1\n' },
+  })
+  // Act
+  const error = await refusalOf(run.started)
+  // Assert
+  assert.equal(error.code, 'VITE_LAUNCHER_FAILED')
+  assert.match(error.message, /leaked \[masked\] here/)
+  assert.equal(error.message.includes('plainsecretvalue1'), false)
+})
+
+// Value: protects=a listen-phase failure masks values of the config's envDir; fails_when=the failure path reads only the package root's env files; why_new=failure uses the resolved config envDir; seam=none; no_claim=a failure before the config resolved
+test('a listen failure cut across a secret that only the resolved envDir holds leaves no fragment', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const run = await startVite(context, {
+    behavior: {
+      port,
+      envDirName: 'envs',
+      listenThrows: `${'x'.repeat(195)}customdirsecret99`,
+    },
+    files: { 'envs/.env': 'DB_PASSWORD=customdirsecret99\n' },
+  })
+  // Act
+  const error = await refusalOf(run.started)
+  // Assert
+  assert.equal(error.code, 'VITE_LAUNCHER_FAILED')
+  assert.equal(error.message.includes('custo'), false)
+  assert.equal(error.message.includes('secret99'), false)
+})
+
+// Value: protects=a settings refusal never quotes an env value; fails_when=the VITE_UNSUPPORTED sentence is published unmasked; why_new=the sentence is masked after the launcher's values joined; seam=none; no_claim=secret shapes without an env file
+test('an unsupported base that equals a .env value is masked in the refusal', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const run = await startVite(context, {
+    behavior: { port, config: { base: '/plainsecretvalue1/' } },
+    files: { '.env': 'BASE_SECRET=/plainsecretvalue1/\n' },
+  })
+  // Act
+  const error = await refusalOf(run.started)
+  // Assert
+  assert.equal(error.code, 'VITE_UNSUPPORTED')
+  assert.match(error.message, /base is "\[masked\]"/)
+  assert.equal(error.message.includes('plainsecretvalue1'), false)
+})
+
+// Value: protects=project code calling process.send cannot break the launcher handshake; fails_when=the first IPC message is parsed as the handshake; why_new=non-protocol messages are dropped; seam=none; no_claim=a message that imitates a protocol type
+test('a config that calls process.send does not break the launcher handshake', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const run = await startVite(context, {
+    behavior: { port, sendsMessages: ['hello', { type: 'app-ready' }, null] },
+  })
+  // Act
+  const result = await run.started
+  // Assert
+  assert.equal(result.port, port)
 })

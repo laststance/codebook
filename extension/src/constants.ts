@@ -2244,6 +2244,9 @@ export const NODE_VERSION_TIMEOUT_MS = 10_000
 /** The shortest environment value (characters) the launcher diagnostics mask by value, so a short common word is not blanked everywhere. */
 export const VITE_MASKED_VALUE_MIN_CHARS = 6
 
+/** The most messages an owned development server's IPC channel keeps unread; project code that floods the channel loses the newest messages instead of growing memory. */
+export const DEVELOPMENT_SERVER_MESSAGE_QUEUE_LIMIT = 32
+
 /** The longest a Vite config's thrown error line is carried in a refusal. */
 export const VITE_ERROR_LINE_LIMIT_CHARS = 200
 
@@ -2267,6 +2270,7 @@ export const VITE_PAGE_GENERATION_LIMIT = 4
 
 /** The message types of the IPC channel between the extension and the owned Vite launcher. */
 export const VITE_LAUNCHER_MESSAGES = {
+  env: 'vite-env',
   facts: 'vite-facts',
   failed: 'vite-failed',
   listen: 'vite-listen',

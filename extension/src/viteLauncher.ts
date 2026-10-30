@@ -52,21 +52,27 @@ type ViteModule = {
 }
 
 /**
- * Reads the values of the project's env files best-effort, so a failure's message can be masked by value.
+ * Reads the values of the project's env files best-effort, so a launcher message can be masked by value.
  * @param vite - The app's Vite module, when it was imported.
  * @param options - The launcher's options (root and mode).
+ * @param config - The resolved config, once there is one: its `envDir` and `mode` are the ones Vite really loaded.
  * @returns The values of at least {@link VITE_MASKED_VALUE_MIN_CHARS} characters; empty when Vite is not loaded or cannot read them.
+ * Limit: before the config resolved (an import failure, a config that throws or exits) the values come from the package root and the dev script's mode; values of a custom `envDir` are masked only once the config resolved.
  * @example
  * loadedEnvValues(vite, options) // => ['plainsecretvalue']
  */
 function loadedEnvValues(
   vite: ViteModule | undefined,
   options: ViteLauncherOptions,
+  config?: ViteServer['config'],
 ): string[] {
   try {
-    return Object.values(
-      vite?.loadEnv(options.mode ?? 'development', options.root, '') ?? {},
-    ).filter((value) => value.length >= VITE_MASKED_VALUE_MIN_CHARS)
+    const envDir =
+      config && typeof config.envDir === 'string' ? config.envDir : options.root
+    const mode = config?.mode ?? options.mode ?? 'development'
+    return Object.values(vite?.loadEnv(mode, envDir, '') ?? {}).filter(
+      (value) => value.length >= VITE_MASKED_VALUE_MIN_CHARS,
+    )
   } catch {
     return []
   }
@@ -103,6 +109,11 @@ async function run(): Promise<void> {
   try {
     const vite: ViteModule = await import(pathToFileURL(options.viteEntry).href)
     viteModule = vite
+    // Sent before the project's config runs: a launcher that dies in project code still leaves the extension the values to mask.
+    await send({
+      type: VITE_LAUNCHER_MESSAGES.env,
+      envValues: loadedEnvValues(vite, options),
+    })
     phase = 'config'
     server = await vite.createServer({
       root: options.root,
@@ -121,9 +132,7 @@ async function run(): Promise<void> {
       ? relative(options.root, config.configFile)
       : undefined
     const hmr = config.server.hmr
-    const envValues = Object.values(
-      vite.loadEnv(config.mode, config.envDir || options.root, ''),
-    ).filter((value) => value.length >= VITE_MASKED_VALUE_MIN_CHARS)
+    const envValues = loadedEnvValues(vite, options, config)
     const factsSent = send({
       type: VITE_LAUNCHER_MESSAGES.facts,
       envValues,
@@ -165,7 +174,7 @@ async function run(): Promise<void> {
     })
   } catch (error) {
     const failure = error instanceof Error ? error : new Error(String(error))
-    const envValues = loadedEnvValues(viteModule, options)
+    const envValues = loadedEnvValues(viteModule, options, server?.config)
     await send({
       type: VITE_LAUNCHER_MESSAGES.failed,
       phase,

@@ -5,6 +5,7 @@ import { StringDecoder } from 'node:string_decoder'
 import {
   REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS,
   REPOSITORY_APPLICATION_LOG_LIMIT_BYTES,
+  DEVELOPMENT_SERVER_MESSAGE_QUEUE_LIMIT,
   REPOSITORY_SETUP_TIMEOUT_MS,
 } from '../constants'
 import { repositoryEntryPathSchema } from '../repositoryConfigSchemas'
@@ -36,6 +37,10 @@ export type DevelopmentLaunchSpec = {
   ipc?: boolean
   /** Masks values the process was given or loaded before the published text leaves this module. */
   mask?: (text: string) => string
+  /** How many characters the longest masked value has (read at call time): output of that length stays unpublished until a value split over chunks can be matched whole. Required with `mask`. */
+  maskHoldback?: () => number
+  /** Tells a message of the process's own protocol from anything project code sends over the same channel; other messages are dropped. */
+  acceptMessage?: (message: unknown) => boolean
   /** Names the server in timeout and exit sentences: `owned <name> listener`. */
   name?: string
   /** Runs once the owned process group is gone, for cleanup of files the server leaves behind. */
@@ -76,10 +81,16 @@ export function launchDevelopmentServer(
     throw new Error('The owned server has no output pipes')
   // Messages the process sends over the IPC channel wait here until a caller asks for the next one.
   const messages: unknown[] = []
-  child.on('message', (message) => messages.push(message))
+  // Project code may call `process.send` too: only protocol messages are kept, and no more than the queue limit.
+  child.on('message', (message) => {
+    if (spec?.acceptMessage && !spec.acceptMessage(message)) return
+    if (messages.length < DEVELOPMENT_SERVER_MESSAGE_QUEUE_LIMIT)
+      messages.push(message)
+  })
   // The raw tail serves origin detection only and is never published; `publishedLog` is its redacted counterpart, the one the journal and failure messages carry.
   let log = Buffer.alloc(0),
     publishedLog = '',
+    pendingLog = '',
     inspectorLog = Buffer.alloc(0),
     inspectorCandidate: string | undefined,
     inspectorError: Error | undefined
@@ -98,23 +109,31 @@ export function launchDevelopmentServer(
       -REPOSITORY_APPLICATION_LOG_LIMIT_BYTES,
     )
   }
-  // The published tail is cut back to its byte limit only once it has doubled, so a chatty server pays no copy of the whole tail per chunk.
+  // Output is masked by value before any cut: `publishedLog` holds only settled text that is already masked, `pendingLog` the newest output that is not yet, because a known value may still continue in the next chunk.
+  // The settled text is cut back to its byte limit only once it has doubled, so a chatty server pays no copy of the whole tail per chunk.
   const publish = (text: string): void => {
     if (!text) return
-    publishedLog += text
+    if (!spec?.mask) {
+      publishedLog += text
+    } else {
+      // Masking the whole pending text matches every value inside it; its last characters stay pending so a value that crosses this chunk's end is matched with the next chunk.
+      const masked = spec.mask(pendingLog + text)
+      const holdback = Math.max(0, (spec.maskHoldback?.() ?? 0) - 1)
+      const settledEnd = Math.max(0, masked.length - holdback)
+      publishedLog += masked.slice(0, settledEnd)
+      pendingLog = masked.slice(settledEnd)
+    }
     if (publishedLog.length > 2 * REPOSITORY_APPLICATION_LOG_LIMIT_BYTES)
       publishedLog = keepUtf8Tail(
         publishedLog,
         REPOSITORY_APPLICATION_LOG_LIMIT_BYTES,
       )
   }
-  const publishedTail = (): string => {
-    const tail = keepUtf8Tail(
-      publishedLog,
+  const publishedTail = (): string =>
+    keepUtf8Tail(
+      publishedLog + (spec?.mask ? spec.mask(pendingLog) : pendingLog),
       REPOSITORY_APPLICATION_LOG_LIMIT_BYTES,
     )
-    return spec?.mask ? spec.mask(tail) : tail
-  }
   // Each channel is redacted statefully, so a credential the server prints across chunks is masked before it is kept for publication.
   // A channel's held text is flushed once: at its stream's end, or when the closed journal is written first (the process can exit before its streams end).
   const flushes: (() => void)[] = []

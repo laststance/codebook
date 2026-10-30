@@ -20,6 +20,10 @@ const factsSchema = z.object({
 
 const reportSchema = z.discriminatedUnion('type', [
   z.object({
+    type: z.literal(VITE_LAUNCHER_MESSAGES.env),
+    envValues: z.array(z.string()),
+  }),
+  z.object({
     type: z.literal(VITE_LAUNCHER_MESSAGES.facts),
     facts: factsSchema,
     envValues: z.array(z.string()),

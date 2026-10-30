@@ -20,6 +20,11 @@ export type ViteLauncherPhase = 'import' | 'config' | 'listen'
 /** What the launcher tells the extension. */
 export type ViteLauncherReport =
   | {
+      type: 'vite-env'
+      /** Values of the env files, sent right after Vite is imported and before any project code runs, so the extension masks them in every output it publishes even when the launcher dies before its facts. */
+      envValues: string[]
+    }
+  | {
       type: 'vite-facts'
       facts: ViteFacts
       /** Values of the env files Vite loaded (at least the masked minimum length), for masking by value only; never published. */
