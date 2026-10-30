@@ -259,7 +259,7 @@ async function runDirectoriesIn(temporary) {
   )
 }
 
-test('the measured gate keeps the pre-repair budget of revision 944c1342 at the 20/15/30 limits', async () => {
+test('the measured gate keeps the budget retaken on revision 1e9eda4c at the 20/15/30 limits', async () => {
   // Arrange
   const reference = JSON.parse(
     await readFile(join(extension, 'fallow-health-reference.json'), 'utf8'),
@@ -280,17 +280,17 @@ test('the measured gate keeps the pre-repair budget of revision 944c1342 at the 
   // Assert: a baseline taken again from later source, or looser limits, fail here.
   assert.deepEqual(pinned, {
     mode: 'measured-istanbul',
-    sourceRevision: '944c134261e1b3904a97757e652aaf6fabfca2b5',
+    sourceRevision: '1e9eda4c211e4ad1a788bc4d554f8e93f82d99de',
     baseline: {
       file: 'fallow-health-measured-baseline.json',
       sha256:
-        'e74f7142ff36b0e72c2910c70b60ea46891e48d2644610b8b04b6ce86b4c9b00',
+        '5b3801147d47766ef3c3594128d12015d10a2bdf5f4e1a2eedf410953b5dcca7',
     },
     limits: { maxCyclomatic: 20, maxCognitive: 15, maxCrap: 30 },
   })
   assert.equal(
     sha256(baseline.replaceAll('\r\n', '\n')),
-    'e74f7142ff36b0e72c2910c70b60ea46891e48d2644610b8b04b6ce86b4c9b00',
+    '5b3801147d47766ef3c3594128d12015d10a2bdf5f4e1a2eedf410953b5dcca7',
   )
 })
 

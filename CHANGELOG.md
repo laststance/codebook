@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.61.0] - 2026-10-30 (development candidate)
+
+Cycle 0062 ([Issue #157](https://github.com/laststance/codebook/issues/157)), the second and last pull request of a bug-fix cycle. It changes only the repository's checks, at the owner's request: the extension, its MCP API 1.10 and the bundled skill 1.0.56 are the same as in 0.2.60.0, so there is nothing to reinstall.
+
+**Checks for contributors.**
+
+- **The Fallow checks run in four CI jobs** (measured health, duplicates, dead code and import cycles) instead of one, so a failing static check reports in about a minute instead of after the measured health run. The pull request records each job's time and any queueing.
+- **Fallow 3.37.0 adds an import-cycle check** (`pnpm --dir extension architecture`): a new import cycle fails it. The exact-HEAD gate runs it too and now has sixteen checks.
+- **The Fallow baselines are retaken on the current code**, the measured health baseline included (217 findings, down from 278).
+- **Formatting uses `bun fmt`**, with Bun 1.4.4 pinned in `.bun-version`. It gives Prettier 3.9.8's result on this repository, so Prettier is no longer a dependency. Local gstack outputs under `.context/` no longer fail the format check.
+- **The gate refuses before any check** when the Bun on the path is not the pinned one, when there is no Bun, or when a pin file or the pnpm pin cannot be read.
+- **Measured and not adopted:** Bun as the test runner (49 of 8904 tests fail unchanged, and the suite takes about 2.8 times as long) and `bun check` for the type check (it reports three errors that TypeScript 5.9.3 does not).
+
+**For contributors.** Install the Bun version in `.bun-version` before committing or running the gate; AGENTS.md shows how.
+
 ## [0.2.60.0] - 2026-10-30 (development candidate)
 
 Cycle 0062 ([Issue #157](https://github.com/laststance/codebook/issues/157)), the first of the two pull requests of a bug-fix cycle. It fixes every defect Cycle 0061 carried for the Chrome extension runs, and the defects its own reviews found; it adds no feature. A native dry run in Cursor 3.27.22 in the macOS Space showed why the paused source covered the extension view (Cursor opens a stop's file in the view's locked group). The native trial N62 runs on this pull request's head before the merge in VS Code and Cursor, and the Issue records it. The second pull request changes only the checks (Fallow and Bun).

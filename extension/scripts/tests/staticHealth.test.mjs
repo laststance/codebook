@@ -189,12 +189,12 @@ test('a commit formats staged TypeScript and then lints it with ESLint, in one s
 
   // Assert
   assert.deepEqual(typeScriptTasks, [
-    'prettier --ignore-unknown --write --ignore-path ../.gitignore --ignore-path ../.prettierignore',
+    'bun fmt --ignore-unknown --ignore-path ../.gitignore --ignore-path ../.prettierignore',
     'eslint --cache --no-warn-ignored --max-warnings=0',
   ])
   assert.equal(
     tasks['!(*.ts)'],
-    'prettier --ignore-unknown --write --ignore-path ../.gitignore --ignore-path ../.prettierignore',
+    'bun fmt --ignore-unknown --ignore-path ../.gitignore --ignore-path ../.prettierignore',
   )
   assert.equal(tasks['*'], undefined)
 })

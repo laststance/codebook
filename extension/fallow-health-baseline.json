@@ -57,7 +57,7 @@
       }
     },
     "src/nodeTestHistoryStore.ts": {
-      "complexity_high": {
+      "complexity_moderate": {
         "count": 1
       }
     },
@@ -170,7 +170,7 @@
         "count": 1
       },
       "complexity_high": {
-        "count": 2
+        "count": 1
       }
     },
     "src/utils/answerDeepWikiQuestion.ts": {
@@ -179,11 +179,6 @@
       },
       "complexity_moderate": {
         "count": 2
-      }
-    },
-    "src/utils/assertConfiguredDescriptor.ts": {
-      "complexity_moderate": {
-        "count": 1
       }
     },
     "src/utils/assertDevelopmentWorkspace.ts": {
@@ -207,7 +202,7 @@
       }
     },
     "src/utils/capturedAppHtml.ts": {
-      "complexity_high": {
+      "complexity_moderate": {
         "count": 1
       }
     },
@@ -228,7 +223,7 @@
     },
     "src/utils/extractDevelopmentModule.ts": {
       "complexity_moderate": {
-        "count": 2
+        "count": 1
       }
     },
     "src/utils/findWikiUpdateStartBlock.ts": {
@@ -389,7 +384,7 @@
       }
     },
     "src/nodeTestHistoryStore.ts\u0000read": {
-      "complexity_high": {
+      "complexity_moderate": {
         "count": 1
       }
     },
@@ -529,9 +524,6 @@
       },
       "complexity_high": {
         "count": 2
-      },
-      "complexity_moderate": {
-        "count": 1
       }
     },
     "src/studyWorkspace.ts\u0000action": {
@@ -566,6 +558,11 @@
     },
     "src/studyWorkspace.ts\u0000open": {
       "complexity_critical": {
+        "count": 1
+      }
+    },
+    "src/studyWorkspace.ts\u0000openNodeHistoryFromHost": {
+      "complexity_moderate": {
         "count": 1
       }
     },
@@ -654,11 +651,6 @@
         "count": 1
       }
     },
-    "src/ui/studyHtml.ts\u0000<arrow>": {
-      "complexity_high": {
-        "count": 1
-      }
-    },
     "src/ui/studyHtml.ts\u0000document.addEventListener(\"click\")": {
       "complexity_high": {
         "count": 1
@@ -684,11 +676,6 @@
         "count": 1
       }
     },
-    "src/utils/assertConfiguredDescriptor.ts\u0000assertCitedSourceStops": {
-      "complexity_moderate": {
-        "count": 1
-      }
-    },
     "src/utils/assertDevelopmentWorkspace.ts\u0000assertDevelopmentWorkspace": {
       "complexity_moderate": {
         "count": 1
@@ -710,7 +697,7 @@
       }
     },
     "src/utils/capturedAppHtml.ts\u0000capturedAppHtml": {
-      "complexity_high": {
+      "complexity_moderate": {
         "count": 1
       }
     },
@@ -725,11 +712,6 @@
       }
     },
     "src/utils/describeViewportDelivery.ts\u0000describeViewportDelivery": {
-      "complexity_moderate": {
-        "count": 1
-      }
-    },
-    "src/utils/extractDevelopmentModule.ts\u0000extractDevelopmentModule": {
       "complexity_moderate": {
         "count": 1
       }

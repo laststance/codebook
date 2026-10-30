@@ -1,32 +1,25 @@
 {
   "kind": "dupes",
   "clone_groups": [
-    "skills/codebook/render-wiki-diagrams.mjs:426-430|src/utils/browserAttributeText.ts:4-65",
-    "src/studyWorkspace.ts:16700-16718|src/studyWorkspace.ts:6239-6255",
-    "src/ui/studyHtml.ts:2527-2534|src/ui/studyHtml.ts:2788-2795",
-    "src/utils/requestCursorWikiText.ts:148-164|src/utils/runCursorWikiUpdate.ts:150-166",
-    "src/learningSummarySchemas.ts:25-33|src/nodeTestHistorySchemas.ts:151-159",
-    "src/utils/prepareNodeTestStudy.ts:42-54|src/utils/prepareRepositoryStudy.ts:70-82",
-    "src/configuredBrowserRun.ts:3190-3203|src/configuredBrowserRun.ts:3375-3392",
-    "src/studyWorkspace.ts:18199-18204|src/studyWorkspace.ts:6510-6516",
-    "src/utils/prepareNodeTestStudy.ts:58-67|src/utils/prepareRepositoryStudy.ts:89-98",
-    "src/studyWorkspace.ts:13040-13052|src/studyWorkspace.ts:13067-13080",
+    "src/studyWorkspace.ts:20188-20206|src/studyWorkspace.ts:6916-6932",
+    "src/utils/requestCursorWikiText.ts:148-164|src/utils/runCursorWikiUpdate.ts:188-204",
+    "src/utils/pinCitedBookNode.ts:49-61|src/utils/prepareRepositoryStudy.ts:70-82",
+    "src/configuredBrowserRun.ts:3732-3745|src/configuredBrowserRun.ts:3917-3934",
+    "src/studyWorkspace.ts:21826-21831|src/studyWorkspace.ts:7188-7194",
+    "src/utils/pinCitedBookNode.ts:65-74|src/utils/prepareRepositoryStudy.ts:89-98",
+    "src/studyWorkspace.ts:16012-16024|src/studyWorkspace.ts:16039-16052",
     "src/ownedRepositoryBreakpoint.ts:110-114|src/ownedRepositoryBreakpoint.ts:38-42",
-    "src/studyWorkspace.ts:6510-6519|src/studyWorkspace.ts:6601-6603",
-    "src/recordingStore.ts:1036-1043|src/recordingStore.ts:1057-1064",
-    "src/repositorySource.ts:320-329|src/utils/readRepositoryBuildText.ts:45-51",
-    "src/studyWorkspace.ts:5533-5542|src/utils/focusWebview.ts:57-66",
-    "src/studyWorkspace.ts:1911-1919|src/studyWorkspace.ts:1962-1970",
+    "src/studyWorkspace.ts:7188-7197|src/studyWorkspace.ts:7281-7283",
+    "src/recordingStore.ts:1084-1091|src/recordingStore.ts:1105-1112",
+    "src/repositorySource.ts:321-330|src/utils/readRepositoryBuildText.ts:45-51",
+    "src/studyWorkspace.ts:6195-6204|src/utils/focusWebview.ts:57-66",
+    "src/studyWorkspace.ts:2358-2366|src/studyWorkspace.ts:2571-2579",
     "src/replayDebugAdapter.ts:251-258|src/replayDebugAdapter.ts:496-503",
-    "src/configuredBrowserRun.ts:5973-5979|src/runtimeSupport/hostBrowser.ts:598-604",
-    "src/learningSummarySchemas.ts:34-45|src/nodeTestHistorySchemas.ts:160-171"
+    "src/configuredBrowserRun.ts:6654-6660|src/runtimeSupport/hostBrowser.ts:602-608"
   ],
   "clone_fingerprints": [
-    "dup:34614518:2",
     "dup:35ea6ae9:2",
-    "dup:c7dd1b05:2",
     "dup:08e7eb1c:2",
-    "dup:6261066d:2",
     "dup:54327013:2",
     "dup:5031a5b9:2",
     "dup:89d72826:2",
@@ -39,15 +32,11 @@
     "dup:67021b83:2",
     "dup:f8126a7b:2",
     "dup:5aa71335:2",
-    "dup:62d530ae:2",
-    "dup:ddc9b169:2"
+    "dup:62d530ae:2"
   ],
   "normalized_clone_fingerprints": [
-    "dup:782f31b5:2",
     "dup:1194cf34:2",
-    "dup:5cfbfc39:2",
     "dup:735ea1b8:2",
-    "dup:e47a0d10:2",
     "dup:73415e44:2",
     "dup:34e56c1d:2",
     "dup:fae71542:2",
@@ -60,7 +49,6 @@
     "dup:2ef33145:2",
     "dup:5e9090b7:2",
     "dup:4b62d6fa:2",
-    "dup:d556d75f:2",
-    "dup:32b1121f:2"
+    "dup:d556d75f:2"
   ]
 }

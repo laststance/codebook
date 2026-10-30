@@ -103,7 +103,7 @@ function assertMeasuredReference(reference) {
  * @returns The reference: `{ sourceRevision, baseline: { file, sha256 }, limits, producers, settings }` with its provenance.
  * @throws When the file is missing or no JSON, lacks a field, records another mode, or names other baseline bytes.
  * @example
- * await readReference() // => { mode: 'measured-istanbul', sourceRevision: '944c1342…', baseline: { file: 'fallow-health-measured-baseline.json', … }, … }
+ * await readReference() // => { mode: 'measured-istanbul', sourceRevision: '1e9eda4c…', baseline: { file: 'fallow-health-measured-baseline.json', … }, … }
  */
 async function readReference() {
   const reference = await readJson(join(extension, REFERENCE_FILE))
@@ -288,7 +288,7 @@ async function hashCompiled() {
  * @param reference - The reference of {@link readReference}, which names the baseline.
  * @returns One map from an input's name to its identity.
  * @example
- * await readInputs(reference) // => { revision: '944c1342…', '.node-version': '73fb1b61…', 'producer c8': '12.0.0', 'extension/src/extension.ts': '9b1e…', … }
+ * await readInputs(reference) // => { revision: '1e9eda4c…', '.node-version': '73fb1b61…', 'producer c8': '12.0.0', 'extension/src/extension.ts': '9b1e…', … }
  */
 async function readInputs(reference) {
   const { revision, sourceHashes } = await readBuildIdentity(repository)

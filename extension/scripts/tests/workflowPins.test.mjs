@@ -1824,3 +1824,67 @@ test('the Test workflow gives each push its own concurrency group and cancels on
     ].join('\n'),
   )
 })
+
+// Value: protects=the Format workflow's formatter: `bun fmt --check` through the package script, with Bun installed from an action pinned to a full commit at the full version of .bun-version, the pin the exact-HEAD gate also checks, so the check never runs on whatever Bun the runner image ships; fails_when=the workflow runs Bun without installing it, installs an action by a tag or a branch, reads the version from anywhere but .bun-version, or .bun-version leaves the version open (`latest`, `1.x`); why_new=Cycle 0062 task 24, pt2 OCR finding F2; seam=the text of .github/workflows/format.yml, .bun-version and the package scripts; no_claim=that Bun formats like Prettier (the tools' comparison is in the Issue)
+test('the Format workflow checks formatting with a pinned Bun running bun fmt', async () => {
+  // Arrange
+  const workflow = await repositoryText('.github/workflows/format.yml')
+  const manifest = JSON.parse(await repositoryText('extension/package.json'))
+  const bunVersion = await repositoryText('.bun-version')
+
+  // Act
+  const setup =
+    /uses: oven-sh\/setup-bun@([0-9a-f]{40}) # v\d+\.\d+\.\d+\n\s+with:\n\s+bun-version-file: \.bun-version\n/.exec(
+      workflow,
+    )
+
+  // Assert
+  assert.notEqual(setup, null)
+  assert.equal(bunVersion, '1.4.4\n')
+  assert.ok(
+    workflow.indexOf('oven-sh/setup-bun') <
+      workflow.indexOf('run: pnpm --dir extension format:check'),
+  )
+  assert.equal(manifest.scripts['format:check'], 'cd .. && bun fmt --check')
+  assert.equal(manifest.scripts.format, 'cd .. && bun fmt')
+})
+
+// Value: protects=the split of the Fallow workflow: each check (measured health, dupes, dead-code, architecture) runs in a job of its own, so the 10 to 12 minutes of the measured health run never delay the one-minute static checks and a failed check never hides another; fails_when=two checks share a job again, a check's job runs another script, or a job lacks the shared prepare action; why_new=Cycle 0062 task 19; seam=the text of .github/workflows/fallow.yml; no_claim=that the jobs start without queueing behind the plan's 20 concurrent jobs (CI measures that)
+test('the Fallow workflow runs measured health, dupes, dead-code and architecture each in a job of its own', async () => {
+  // Arrange
+  const workflow = await repositoryText('.github/workflows/fallow.yml')
+
+  // Act
+  // A job starts with a two-space key under `jobs:`; the comment lines inside it are no setting.
+  const jobs = Object.fromEntries(
+    [
+      ...workflow
+        .slice(workflow.indexOf('\njobs:\n'))
+        .matchAll(/^ {2}([a-z-]+):\n((?: {4}.*\n|\n)+)/gm),
+    ].map(([, key, body]) => [
+      key,
+      body
+        .split('\n')
+        .filter((line) => !line.trim().startsWith('#'))
+        .join('\n'),
+    ]),
+  )
+  const scriptsOf = (job) =>
+    [...job.matchAll(/run: pnpm --dir extension ([a-z-]+)/g)].map(
+      (match) => match[1],
+    )
+
+  // Assert
+  assert.deepEqual(Object.keys(jobs), [
+    'health',
+    'dupes',
+    'dead-code',
+    'architecture',
+  ])
+  assert.deepEqual(scriptsOf(jobs.health), ['build', 'health'])
+  assert.deepEqual(scriptsOf(jobs.dupes), ['dupes'])
+  assert.deepEqual(scriptsOf(jobs['dead-code']), ['dead-code'])
+  assert.deepEqual(scriptsOf(jobs.architecture), ['architecture'])
+  for (const job of Object.values(jobs))
+    assert.match(job, /uses: \.\/\.github\/actions\/prepare\n/)
+})
