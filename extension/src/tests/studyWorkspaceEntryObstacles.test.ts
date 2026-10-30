@@ -300,6 +300,42 @@ test('Open replay beside the source preview the run own debugger opened keeps th
   }
 })
 
+// Value: protects=a dirty preview of a run's own stop file is the learner's edit and stays a preview when the next Study placement pins the run's previews; fails_when=the pin also takes a preview with unsaved changes, so the learner's edit tab is kept open without the learner's choice; why_new=Cycle 0064 pt2 /ship coverage audit; seam=addTextPreview with dirty, the main editor never reporting focus beside a preview (hasMainEditorFocus); no_claim=the real Cursor's answer (native Cursor trial), what the foreign-preview handling then asks
+test('Open replay beside a dirty preview of the run stop file leaves that tab a preview', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  try {
+    await harness.reader.close()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    const agentChat = harness.addSeparateEditorPart()
+    await mkdir(join(harness.directory, 'src'), { recursive: true })
+    await writeFile(join(harness.directory, 'src', 'theme.ts'), 'export {}\n')
+    const dirtyPreview = harness.addTextPreview(
+      join(harness.directory, 'src', 'theme.ts'),
+      1,
+      true,
+    )
+    agentChat.focus()
+    const hasMainEditorFocus = harness.reader['hasMainEditorFocus'].bind(
+      harness.reader,
+    )
+    harness.reader['hasMainEditorFocus'] = (groupCount: number): boolean =>
+      groupCount === 1 && dirtyPreview.isPreview
+        ? false
+        : hasMainEditorFocus(groupCount)
+
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert
+    assert.equal(dirtyPreview.isPreview, true)
+    assert.equal(dirtyPreview.isDirty, true)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=Open replay refused for a learner's preview tab being answered with a modal warning that names the file and offers Keep Tab Open and Close Tab, each retrying the open, in both hosts (Cursor cuts a toast to one line, so the learner saw neither the file nor the way out); fails_when=the refusal stays a toast, the dialog names no file, a button does not clear the tab, or the open is not retried; why_new=Cycle 0050 F158 and D33 (PR-B2 spike, Cursor 3.26.13); seam=addTextPreview, the main editor never reporting focus beside it (hasMainEditorFocus), answerWarningDialogs
 for (const choice of ['Close Tab', 'Keep Tab Open'] as const)
   test(`Open replay beside a learner's preview tab asks in a modal dialog that names the file, and ${choice} retries the open`, async () => {

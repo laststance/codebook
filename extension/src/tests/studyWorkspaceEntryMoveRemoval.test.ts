@@ -239,6 +239,64 @@ test("in Cursor, a learner's tab brought to the front of their group while the e
   }
 })
 
+// Value: protects=a learner's tab never being kept open by the Application's keep-open step; fails_when=attach runs the editor's Keep Open command although the active tab of the active group is a learner's text tab, which would pin the learner's preview; why_new=Cycle 0064 pt2 /ship coverage audit; seam=BrowserViewport.attach (the run's browser attach), createViewport, addSeparateEditorPart, focusMutableDraft (the learner's tab in front), the harness command log; no_claim=the real Cursor's answer (native Cursor trial)
+test("a run's browser attach runs no Keep Open command while a learner's text tab is the active tab", async () => {
+  // Arrange: the run's Application is in its group and the learner's own file is the active tab of the active group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.rebuildTabObjectsAtGroupRemoval()
+  harness.closeEmptyGroupsAfterPanelMove()
+  harness.removeGroupLeftByPanelMoveLater()
+  harness.reportsPaneMoveAsOpenThenClose()
+  let viewport:
+    | Awaited<
+        ReturnType<
+          NonNullable<typeof harness.reader.presentation.createViewport>
+        >
+      >
+    | undefined
+  try {
+    harness.focusMutableDraft('auth.ts', 3)
+    harness.focusMutableDraft('actions.ts', 2)
+    await harness.reader.open()
+    chat.focusTab()
+    viewport = await harness.reader.presentation.createViewport(
+      'stop-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.focusMutableDraft('learner-notes.ts', 1)
+    const commandsBeforeAttach = harness.commands.length
+
+    // Act
+    await viewport.attach(
+      {
+        on: () => undefined,
+        request: async () => ({}),
+        subscribe: async () => undefined,
+      },
+      new AbortController().signal,
+    )
+
+    // Assert
+    assert.equal(
+      harness.commands
+        .slice(commandsBeforeAttach)
+        .includes('workbench.action.keepEditor'),
+      false,
+    )
+  } finally {
+    viewport?.close()
+    await harness.close()
+  }
+})
+
 // Value: protects=the Application pane staying open when the native debugger opens a run's stop file in the Application's group in Cursor 3.27.22 (N64p2-F2: the Application tab stood as a preview in column 1 after its move, the stop's file opened as a preview in that group replaced it, and the run failed ten seconds later with "Owned viewport closed before cleanup"): the Application is still at column 1 beside the stop file; fails_when=the Application's tab is left a preview after its move, so a text preview opened in its group closes the pane and its webview; why_new=Cycle 0064 N64p2-F2 (task 67); seam=BrowserViewport.attach (the run's browser attach), reader open (the Application's first pane), createViewport (a live run's Application moved into its new group), addSeparateEditorPart (Cursor's chat part), replaceGroupObjectsOnTabChanges, closeEmptyGroupsAfterPanelMove with removeGroupLeftByPanelMoveLater, reportsPaneMoveAsOpenThenClose, replacesPreviewTabOnTextPreview (a text preview replaces the group's preview tab), openPausedFileInLockedGroup; no_claim=the real Cursor's answer (native Cursor trial), the run's journal
 test("in Cursor, a run's Application stays open when the debugger opens the run's stop file as a preview in its group", async () => {
   // Arrange: the Study is open with its Application pane and an agent starts a run from Cursor's Agent chat; the run's Application moves into its new group at column 1, where Cursor lists its tab as a preview.
