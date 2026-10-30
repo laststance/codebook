@@ -8065,6 +8065,9 @@ export class StudyWorkspace {
         scenario,
         signal,
         observer: studyRecord && createRecordingObserver(studyRecord),
+        // Cursor 3.27.22 opens a stop's file in front of the Application inside the Application's own group for every run, and the reveal at the pause refuses a front tab that is not the Application (N64p3, task 96): the stop file moves out as an extension run's does.
+        movesPausedSourceOut: (fsPath) =>
+          this.declaredRunStopFiles().has(canonicalFsPath(fsPath)),
       })
     },
     createChromeExtensionViewport: async (runId, signal) => {
@@ -10216,6 +10219,8 @@ export class StudyWorkspace {
       ?.tabs.find(
         (tab) =>
           tab.input instanceof vscode.TabInputText &&
+          // A captured copy of the stop file (Codebook's own source scheme) is a Study tab, never the debugger's paused file.
+          tab.input.uri.scheme === 'file' &&
           !tab.isDirty &&
           isStopFile(tab.input.uri.fsPath) &&
           !isGivenUp(tab.input.uri),
@@ -21578,6 +21583,28 @@ export class StudyWorkspace {
   }
 
   /**
+   * Lists the canonical paths of the files of every stop the window's runs declared; read by {@link keepRunOwnedPreviews} and by the paused-file watch of a repository run's lease ({@link presentation}).
+   * The set is read anew at each call, because a run declares its stops when its configuration resolves, after its lease exists.
+   * @returns The stop files; empty when the window has no single workspace folder or no run declared a stop.
+   * @example this.declaredRunStopFiles().has(canonicalFsPath(fsPath)) // => true for src/index.tsx of a run that stops there
+   */
+  private declaredRunStopFiles(): ReadonlySet<string> {
+    let workspaceRoot: string
+    try {
+      workspaceRoot = requireWorkspace()
+    } catch {
+      // No single workspace folder: no run can have opened a file here.
+      return new Set()
+    }
+    return runStopFilePaths(
+      [...(this.service?.records.values() ?? [])].flatMap((record) =>
+        record.definition ? [record.definition.configuration] : [],
+      ),
+      workspaceRoot,
+    )
+  }
+
+  /**
    * Pins the clean source previews that this window's own runs made the native debugger open, so Cursor's main editor can report focus again before a layout read borrows it.
    *
    * Why it exists: a debugger stop opens the run's cited file as a preview tab, and Cursor reports no primary focus beside a preview, so the next Study placement ended in a foreign-preview refusal for a tab the learner never opened. Called at the start of {@link readMainEditorGrid} and by {@link placePresentation} before it collects the prepared previews (that call comes first because pinning rebuilds Cursor's group objects, so the collected tabs must be read after it). A preview of any other file is the learner's and stays untouched (it still refuses), and so does an edited one. Only a preview that is already the front tab of its group is pinned: showing a document also makes it the group's active tab, so pinning a run preview that stands behind a learner's tab would bring it in front of what the learner sees; that one is left as it is and the later foreign-preview refusal names it. The pins are awaited one after the other, so right before each one the group (found again by its column) is read anew and the pin is skipped unless that group still shows the same clean preview in front: a learner who switched or closed the tab, or moved it away, meanwhile keeps their choice.
@@ -21589,20 +21616,8 @@ export class StudyWorkspace {
   private async keepRunOwnedPreviews(
     signal: AbortSignal | undefined,
   ): Promise<void> {
-    let workspaceRoot: string
-    try {
-      workspaceRoot = requireWorkspace()
-    } catch {
-      // No single workspace folder: no run can have opened a file here.
-      return
-    }
     // The files of every stop the window's runs declared; a run's debugger opens only these.
-    const runSourceFiles = runStopFilePaths(
-      [...(this.service?.records.values() ?? [])].flatMap((record) =>
-        record.definition ? [record.definition.configuration] : [],
-      ),
-      workspaceRoot,
-    )
+    const runSourceFiles = this.declaredRunStopFiles()
     if (!runSourceFiles.size) return
     const ownedPreviews = vscode.window.tabGroups.all
       .flatMap((group) => group.tabs.map((tab) => ({ group, tab })))
