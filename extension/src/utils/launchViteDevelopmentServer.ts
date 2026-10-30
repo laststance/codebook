@@ -2,6 +2,7 @@ import {
   REPOSITORY_SETUP_TIMEOUT_MS,
   VITE_LAUNCHER_FACTS_TIMEOUT_MS,
   VITE_LAUNCHER_MESSAGES,
+  VITE_MODE_ENV_NAMES,
   VITE_SETUP_STEPS,
 } from '../constants'
 import type {
@@ -154,8 +155,10 @@ export async function launchViteDevelopmentServer(
   maskModuleText: (text: string) => string
 }> {
   const { script, installation } = workspaceInfo
-  // Every value the launcher is given or loads is masked by value in what leaves this module.
-  const maskedValues = Object.values(script.assignments)
+  // Every value the launcher is given or loads is masked by value in what leaves this module; a mode name is no secret, and masking it would blank "development" as the launcher's own list avoids.
+  const maskedValues = Object.entries(script.assignments)
+    .filter(([name]) => !VITE_MODE_ENV_NAMES.includes(name))
+    .map(([, value]) => value)
   const mask = (text: string): string => maskKnownValues(text, maskedValues)
   const timestampFilesBefore = await listViteTimestampFiles(
     request.workspace,

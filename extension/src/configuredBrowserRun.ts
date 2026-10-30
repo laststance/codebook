@@ -173,6 +173,7 @@ import { VITE_DEV_ADAPTER } from './viteDevAdapter'
 import {
   viteRefusal,
   viteReloadText,
+  viteResealFailureSentence,
   viteSetupDeadlineSentence,
   viteSetupDeadlineText,
 } from './viteRefusals'
@@ -975,7 +976,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         adapter,
         ownedOrigin,
         generation,
-      )
+      ).catch((error: unknown) => {
+        // A renewal fails after the browser opened: the refusal says so and that one new start may pass, unlike a first seal.
+        if (!(error instanceof StudyError) || error.code !== 'VITE_SEAL_FAILED')
+          throw error
+        throw viteRefusal(
+          'VITE_SEAL_FAILED',
+          viteResealFailureSentence(generation, error.message),
+        )
+      })
       Object.assign(this.stops[index]!, renewed)
     }
     this.freezeSealedStops()

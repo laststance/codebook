@@ -475,6 +475,27 @@ test('a .env value written as "NAME: value" is masked in a refusal', async (cont
   assert.equal(error.message.includes('coloncsecret1'), false)
 })
 
+// Value: protects=a mode name the dev script assigns (NODE_ENV=development) stays readable in a refusal while a secret it assigns is masked; fails_when=every script assignment is masked, so "development" reads [masked] in refusals, captured values and kept modules; why_new=Cycle 0064 local CodeRabbit CLI r3 (minor); seam=none; no_claim=the launcher's own mode-name list, which its fork tests pin
+test('a mode name the dev script assigns stays readable in a refusal while its secret assignment is masked', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const run = await startVite(context, {
+    dev: 'NODE_ENV=development API_KEY=assignedsecret3 vite',
+    behavior: {
+      port,
+      listenThrows: 'cannot start in development with assignedsecret3',
+    },
+  })
+  // Act
+  const error = await refusalOf(run.started)
+  // Assert
+  assert.equal(error.code, 'VITE_LAUNCHER_FAILED')
+  assert.ok(
+    error.message.includes('cannot start in development with [masked]'),
+    error.message,
+  )
+})
+
 // Value: protects=a .env file with a comment line and an export line still has its values masked, as dotenv reads such a file; fails_when=the stub's loadEnv drops every value of a file that holds a line it does not parse, so a masking test passes or fails on the fixture instead of the product; why_new=Cycle 0064 local CodeRabbit CLI r2 (fixture fidelity); seam=the stub Vite package's loadEnv; no_claim=other dotenv syntax such as quoted multi-line values
 test('a .env file with a comment and an export line keeps its values masked in a refusal', async (context) => {
   // Arrange

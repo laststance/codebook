@@ -287,6 +287,34 @@ test('a re-seal after a reload keeps the first seal evidence files and saves the
   assert.equal(renewedModule, 'const nextTheme = "dark";\n// ?v=57ee5d84')
 })
 
+// Value: protects=a seal renewed after a page load that fails says the browser had opened and that one new start may pass, unlike a first seal; fails_when=the renewal's refusal reads like a first seal's (no browser opened, do not retry); why_new=Cycle 0064 local CodeRabbit CLI r3 (minor); seam=refuseLaterSeals stands in for a module read that fails during the reload; no_claim=the browser cleanup itself, which the run's failure path owns
+test('a seal renewed after a page load that fails names the page load, the opened browser and one new start', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    adapter: 'vite-dev',
+  })
+  const preparing = harness.run.prepare()
+  await waitUntil(() => harness.navigations.length === 1, 'first navigation')
+  // Act
+  harness.refuseLaterSeals(
+    'Declared stop src/theme.ts:1 cannot be sealed: the module has no source map.',
+  )
+  harness.serveChangedModule('const nextTheme = "dark";\n// ?v=57ee5d84')
+  harness.reloadPage()
+  harness.announceSealedModule('second')
+  const failure = await preparing.then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.ok(failure instanceof StudyError, String(failure))
+  assert.equal(failure.code, 'VITE_SEAL_FAILED')
+  assert.equal(
+    failure.message,
+    'Sealing the stops again after page load 1 failed: Declared stop src/theme.ts:1 cannot be sealed: the module has no source map. The browser Codebook opened is closed with the run and no click was sent; start once more with a new key, as the module may have been read during the reload.',
+  )
+})
+
 test('a reload that lands while the entry page is still loading seals the stops again before the inputs', async (context) => {
   // Arrange
   const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {

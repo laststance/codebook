@@ -172,6 +172,8 @@ export async function configuredRuntimeHarness(
   const setupSteps: string[] = []
   // The text of the module the Vite stand-in serves now; {@link serveChangedModule} replaces it, as a dependency-optimizer reload does.
   let servedJavascript = javascript
+  // The seal refusal the Vite stand-in gives from now on; {@link refuseLaterSeals} sets it.
+  let laterSealRefusal: string | undefined
   // How many times the run asked the Vite stand-in whether the server is settled, and the hold on its answer.
   let settledQuestions = 0
   // How many times the run read a stop module from the Vite stand-in.
@@ -853,6 +855,12 @@ export async function configuredRuntimeHarness(
           readBundle: async (request: { signal: AbortSignal }) => {
             sealReads += 1
             if (options.sealFailure) throw new Error(options.sealFailure)
+            if (laterSealRefusal !== undefined)
+              throw new StudyError(
+                'VITE_SEAL_FAILED',
+                laterSealRefusal,
+                laterSealRefusal,
+              )
             // A hung server read ends only when the run is cancelled.
             if (options.sealHangs)
               await new Promise<never>((_resolve, reject) =>
@@ -1000,6 +1008,10 @@ export async function configuredRuntimeHarness(
     /** Makes the Vite stand-in serve this text for the stop module from now on, and the page execute it, as a dependency-optimizer reload does with new import hashes. @example harness.serveChangedModule('const nextTheme = "dark";\n// ?v=2') */
     serveChangedModule(changedJavascript: string): void {
       servedJavascript = changedJavascript
+    },
+    /** Makes every later seal read of the Vite stand-in refuse with `VITE_SEAL_FAILED` and this sentence, as a module read during a reload can. @example harness.refuseLaterSeals('Declared stop src/theme.ts:1 cannot be sealed: no source map.') */
+    refuseLaterSeals(sentence: string): void {
+      laterSealRefusal = sentence
     },
     /** Keeps the Vite stand-in's dependency optimizer busy until the returned function is called. @example const release = harness.holdOptimizer() */
     holdOptimizer(): () => void {

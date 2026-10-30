@@ -139,6 +139,23 @@ export function viteSetupDeadlineSentence(
 }
 
 /**
+ * Words the `VITE_SEAL_FAILED` sentence of a seal renewed after a page reload, which runs after the browser opened.
+ *
+ * Why it exists: a first seal fails before any browser, but a renewal fails with the page open, and a module read just after an optimizer reload can fail once; the sentence says what was opened and that one new start may pass. Called by {@link ConfiguredBrowserRun} when a renewal of the stops' seals fails.
+ * @param generation - The page generation the renewal was for.
+ * @param sealFailure - The refusal sentence of the failed seal.
+ * @returns The refusal sentence.
+ * @example
+ * viteResealFailureSentence(1, 'Declared stop src/main.ts:3 cannot be sealed: …') // => 'Sealing the stops again after page load 1 failed: Declared stop src/main.ts:3 cannot be sealed: … The browser Codebook opened is closed with the run and no click was sent; start once more with a new key, as the module may have been read during the reload.'
+ */
+export function viteResealFailureSentence(
+  generation: number,
+  sealFailure: string,
+): string {
+  return `Sealing the stops again after page load ${generation} failed: ${sealFailure} The browser Codebook opened is closed with the run and no click was sent; start once more with a new key, as the module may have been read during the reload.`
+}
+
+/**
  * Words the failure of a Vite run whose page loaded again after the inputs were written, led by its code.
  * @param clickSent - Whether the declared click had already been sent.
  * @returns The failure text; it says whether the click's result is unknown.
