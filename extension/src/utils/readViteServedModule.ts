@@ -199,7 +199,7 @@ async function normalizeServedMap(
     )
   if (retained !== sourceText)
     refuse(
-      `the inline map of ${address.url} carries source text that differs from the file`,
+      `the inline map of ${address.url} carries source text that differs from the file: a Vite plugin rewrote this file without a source map, so the served map's sourcesContent is the rewritten text and the executed code is not the file on disk (stop in a module the plugin leaves alone, or turn the plugin off with its own development switch, then start again)`,
     )
   return JSON.stringify({
     ...map,

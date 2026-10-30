@@ -231,6 +231,36 @@ test('refuses a map that names another file or carries different source text', a
   assert.match(text.message, /carries source text that differs from the file/)
 })
 
+// Value: protects=a stop in a file a Vite plugin rewrote without a source map is refused with the plugin cause and a way out; fails_when=the refusal names only the text difference; why_new=the older case pins only the difference; seam=none; no_claim=serving such a stop
+test('a stop in a plugin-rewritten module is refused naming the plugin cause and the way out', async (context) => {
+  // Arrange
+  const fixture = await startFixture(context, {
+    '/src/theme.ts': {
+      status: 200,
+      type: 'text/javascript',
+      body: servedModule({ ...GOOD_MAP, sourcesContent: ['export {}\n'] }),
+    },
+  })
+  // Act
+  const refusal = await refusalOf(
+    readViteServedModule(
+      fixture.root,
+      fixture.origin,
+      fixture.stop,
+      new AbortController().signal,
+    ),
+  )
+  // Assert
+  assert.match(
+    refusal.message,
+    /a Vite plugin rewrote this file without a source map/,
+  )
+  assert.match(
+    refusal.message,
+    /turn the plugin off with its own development switch/,
+  )
+})
+
 test('refuses a body over the JavaScript byte limit', async (context) => {
   // Arrange
   const fixture = await startFixture(context, {
