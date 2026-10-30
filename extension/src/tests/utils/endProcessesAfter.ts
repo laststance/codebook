@@ -90,14 +90,39 @@ type Ownership = 'owned' | 'foreign' | 'unconfirmed'
 type ReadProcess = (pid: number) => ProcessInfo | 'unreadable' | undefined
 
 /**
+ * Reads the ancestors of this process once: the runner that started it and what started that, up to (not including) process 1.
+ *
+ * Called by {@link endProcesses}, once per end, so that classifying several ids does not run one `ps` per hop for every id; {@link ownershipOf} reads it itself only when its caller gives no set.
+ *
+ * @param read - Reads one process's facts ({@link readProcess} by default).
+ * @returns The ids of the ancestors; where `ps` cannot answer, the ones reached up to that hop.
+ * @example
+ * ```ts
+ * ancestorsOf() // => Set { 4100, 3990 }
+ * ```
+ */
+export function ancestorsOf(read: ReadProcess = readProcess): Set<number> {
+  const ancestors = new Set<number>()
+  let ancestor = process.ppid
+  for (let hop = 0; hop < MAX_PARENT_HOPS && ancestor > 1; hop += 1) {
+    ancestors.add(ancestor)
+    const parent = read(ancestor)
+    if (typeof parent !== 'object') break
+    ancestor = parent.parentPid
+  }
+  return ancestors
+}
+
+/**
  * Says whether a running process can be one this test process started, so a recycled id of an unrelated process is never signalled.
  *
- * Never owned: process 1 and below, this process, and its ancestors (the runner that started it, whose group a `group` end would kill). Owned: an id the test holds a child handle of (`held`), a descendant of this process, or an orphan (its parent is gone, so the system parents it to process 1) that started after `sinceMs`, as a child whose parent the test ended. Where `ps` cannot answer and no handle is held, nothing confirms the id: `'unconfirmed'`, and the caller must not signal it.
+ * Never owned: process 1 and below, this process, and its ancestors (the runner that started it, whose group a `group` end would kill). Owned: an id the test holds a child handle of (`held`), a descendant of this process, or an orphan that started after `sinceMs`, as a child whose parent the test ended. An orphan's parent is process 0 or 1, or an ancestor of this process: a Linux subreaper (a `systemd --user` manager, a container init that is not process 1) adopts it instead of process 1, and the adopter is always a living ancestor of the chain the orphan came from. Where `ps` cannot answer and no handle is held, nothing confirms the id: `'unconfirmed'`, and the caller must not signal it.
  *
  * @param pid - The process id.
  * @param sinceMs - The time from which a process may be the test's: when the test began.
  * @param read - Reads one process's facts ({@link readProcess} by default).
  * @param held - Ids of children the test holds a handle of.
+ * @param ancestors - The ancestors of this process ({@link ancestorsOf}); read here when not given.
  * @returns How the process stands to the test.
  * @example
  * ```ts
@@ -109,16 +134,11 @@ function ownershipOf(
   sinceMs: number,
   read: ReadProcess,
   held: readonly number[],
+  ancestors: ReadonlySet<number> = ancestorsOf(read),
 ): Ownership {
   if (pid <= 1 || pid === process.pid || pid === process.ppid) return 'foreign'
   // The ancestors of this process are the runner and what started it: never the test's children.
-  let ancestor = process.ppid
-  for (let hop = 0; hop < MAX_PARENT_HOPS && ancestor > 1; hop += 1) {
-    if (ancestor === pid) return 'foreign'
-    const parent = read(ancestor)
-    if (typeof parent !== 'object') break
-    ancestor = parent.parentPid
-  }
+  if (ancestors.has(pid)) return 'foreign'
   if (held.includes(pid)) return 'owned'
   const info = read(pid)
   if (info === 'unreadable') return 'unconfirmed'
@@ -130,9 +150,10 @@ function ownershipOf(
     if (typeof parent !== 'object') break
     parentPid = parent.parentPid
   }
+  // The adopter of an orphan is process 0 or 1, or (Linux subreaper) an ancestor of this process.
+  const isOrphan = info.parentPid <= 1 || ancestors.has(info.parentPid)
   // An orphan older than the test is somebody else's, with the same id by chance.
-  return info.parentPid <= 1 &&
-    info.ageSeconds <= (Date.now() - sinceMs) / 1000 + 2
+  return isOrphan && info.ageSeconds <= (Date.now() - sinceMs) / 1000 + 2
     ? 'owned'
     : 'foreign'
 }
@@ -176,10 +197,12 @@ export async function endProcesses(
   const read = options.readProcessInfo ?? readProcess
   const held = options.held ?? []
   const ownership = new Map<number, Ownership>()
+  // Read once for this end and reused for every id.
+  const ancestors = ancestorsOf(read)
   // Only ids that run and can be the test's get a signal: a recycled id of an unrelated process (or of its group) is not this test's.
   for (const pid of new Set(pids))
     if (Number.isInteger(pid) && processRuns(pid))
-      ownership.set(pid, ownershipOf(pid, sinceMs, read, held))
+      ownership.set(pid, ownershipOf(pid, sinceMs, read, held, ancestors))
   const running = [...ownership].filter(([, kind]) => kind === 'owned')
   // Not signalled, and not silently dropped: the test must fail, so that the id is looked at.
   const unconfirmed = [...ownership]

@@ -2812,7 +2812,10 @@ test('the pid file a test noted is read before its fixture folder is removed, so
   await writeFile(pidFile, String(child.pid))
   // The folder's removal is registered first, as createFixtureRepository does.
   removeAfterProcessEnds(standInContext, folder)
-  endProcessesAfter(standInContext, () => readNotedPids(pidFile))
+  // The handle is held: the child is the test's whatever `ps` says (Windows has none).
+  endProcessesAfter(standInContext, () => readNotedPids(pidFile), undefined, {
+    held: () => [child.pid],
+  })
 
   // Act: the hooks run in the order they were registered.
   for (const hook of hooks) await hook()

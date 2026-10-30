@@ -2007,7 +2007,10 @@ async function startTwoProcesses(context, command = process.execPath) {
   killNotedProcessesAfter(context)
   // A test may end the child alone, which leaves the grandchild with another parent, outside the tree this process is searched for: both ids are named, the grandchild's once it is known.
   let grandchildPid
-  endProcessesAfter(context, () => [child.pid, grandchildPid])
+  // The child is held; the grandchild is the test's by construction (the child started it), whatever `ps` says (Windows has none).
+  endProcessesAfter(context, () => [child.pid, grandchildPid], undefined, {
+    held: () => [child.pid, grandchildPid].filter(Number.isInteger),
+  })
   grandchildPid = await new Promise((resolve) =>
     child.stdout.once('data', (chunk) => resolve(Number(String(chunk)))),
   )

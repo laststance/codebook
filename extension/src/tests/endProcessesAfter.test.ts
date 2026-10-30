@@ -34,11 +34,13 @@ test('a process that a test leaves running is reported as a survivor, and ending
   const pid = child.pid!
 
   // Act
+  // The handle is held: the child is the test's whatever `ps` says (Windows has none).
   const survivorsOfSignalThatKillsNothing = await endProcesses([pid], {
+    held: [pid],
     signalProcess: () => undefined,
     waitMs: 200,
   })
-  const survivorsAfterRealEnd = await endProcesses([pid])
+  const survivorsAfterRealEnd = await endProcesses([pid], { held: [pid] })
   // The killed child is a zombie until this process reaps it, which its exit event tells.
   if (child.exitCode === null && child.signalCode === null)
     await once(child, 'exit')
@@ -192,6 +194,107 @@ test('this process and its parent are never signalled, even when they look like 
 
   // Assert
   assert.deepEqual({ survivors, signalled }, { survivors: [], signalled: [] })
+})
+
+// Value: protects=the leak check from missing a grandchild that a Linux subreaper (a `systemd --user` manager, a container init that is not process 1) adopted when its parent was killed; fails_when=an orphan counts as the test's only when its parent is process 0 or 1, so the adopted grandchild is foreign, never ended and never reported; why_new=Cycle 0064 task 124; seam=endProcesses with a real child and an injected reader that gives it this process's parent as its parent; no_claim=a real subreaper
+test(
+  'an orphan adopted by an ancestor of the test is ended when it is young and left alone when it is old',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const young = await startWaitingProcess()
+    const old = await startWaitingProcess()
+    context.after(() => young.kill('SIGKILL'))
+    context.after(() => old.kill('SIGKILL'))
+    const readAdoptedBy = (ageSeconds: number) => (pid: number) =>
+      pid === process.ppid
+        ? { state: 'S', parentPid: 1, ageSeconds: 86_400 }
+        : { state: 'S', parentPid: process.ppid, ageSeconds }
+    const signalledOfYoung: number[] = []
+    const signalledOfOld: number[] = []
+
+    // Act
+    await endProcesses([young.pid!], {
+      readProcessInfo: readAdoptedBy(0),
+      signalProcess: (pid) => {
+        signalledOfYoung.push(pid)
+      },
+      waitMs: 100,
+    })
+    await endProcesses([old.pid!], {
+      readProcessInfo: readAdoptedBy(86_400),
+      signalProcess: (pid) => {
+        signalledOfOld.push(pid)
+      },
+      waitMs: 100,
+    })
+
+    // Assert
+    assert.deepEqual(signalledOfYoung, [young.pid])
+    assert.deepEqual(signalledOfOld, [])
+  },
+)
+
+// Value: protects=the orphan age rule (an orphan older than the test is somebody else's with the same id by chance); fails_when=the age comparison is inverted or dropped, so an old orphan of process 1 is signalled or a young one is not; why_new=Cycle 0064 task 125; seam=endProcesses with a real child and an injected reader that answers a parent of process 1 and a given age; no_claim=the two-second slack of the comparison
+test(
+  'an orphan of process 1 is signalled when it started after the test and left alone when it is older',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const ages = [86_400, 0]
+    const results: Array<{ ageSeconds: number; signalled: boolean }> = []
+
+    for (const ageSeconds of ages) {
+      const child = await startWaitingProcess()
+      context.after(() => child.kill('SIGKILL'))
+      const signalled: number[] = []
+
+      // Act
+      await endProcesses([child.pid!], {
+        readProcessInfo: () => ({ state: 'S', parentPid: 1, ageSeconds }),
+        signalProcess: (pid) => {
+          signalled.push(pid)
+        },
+        waitMs: 100,
+      })
+      results.push({ ageSeconds, signalled: signalled.length > 0 })
+    }
+
+    // Assert
+    assert.deepEqual(results, [
+      { ageSeconds: 86_400, signalled: false },
+      { ageSeconds: 0, signalled: true },
+    ])
+  },
+)
+
+// Value: protects=the speed of every end from one `ps` per ancestor hop for every id it classifies; fails_when=each id walks the ancestor chain again; why_new=Cycle 0064 task 126; seam=endProcesses with three real children and a counting reader; no_claim=the number of reads of the ids themselves
+test('the ancestor chain of the test is read once however many ids an end classifies', async (context) => {
+  // Arrange
+  const children = [
+    await startWaitingProcess(),
+    await startWaitingProcess(),
+    await startWaitingProcess(),
+  ]
+  for (const child of children) context.after(() => child.kill('SIGKILL'))
+  let readsOfParent = 0
+  const countingReader = (pid: number) => {
+    if (pid === process.ppid) readsOfParent += 1
+    return readProcess(pid)
+  }
+
+  // Act
+  await endProcesses(
+    children.map((child) => child.pid!),
+    {
+      readProcessInfo: countingReader,
+      signalProcess: () => undefined,
+      waitMs: 50,
+    },
+  )
+
+  // Assert
+  assert.equal(readsOfParent, 1)
 })
 
 test('a pid file that cannot be read fails the clean-up, and the held child is ended', async (context) => {
