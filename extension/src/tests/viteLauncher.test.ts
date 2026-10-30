@@ -34,6 +34,7 @@ import {
   createViteRepository,
   freePort,
   type StubViteBehavior,
+  type ViteRepository,
 } from './utils/createViteRepository'
 import { pausedViteRun } from './utils/pausedViteRun'
 
@@ -474,12 +475,25 @@ test('a .env value written as "NAME: value" is masked in a refusal', async (cont
   assert.equal(error.message.includes('coloncsecret1'), false)
 })
 
-// Value: protects=the launcher reports a VITE_-prefixed value that only its environment defines (Vite inlines it into client code) for masking, and no other environment value; fails_when=masking keeps only the names an env file defines, or every process.env entry; why_new=Cycle 0064 ship pass 1; seam=a direct fork of the compiled launcher with its own environment (the extension's allowlist never forwards such a variable, so only the launcher can show it); no_claim=a custom envPrefix
-test('the launcher reports a VITE_ prefixed environment-only value for masking but not an unprefixed one', async (context) => {
-  // Arrange
-  const port = await freePort()
-  const repository = await createViteRepository(context)
-  await repository.behave({ port })
+/**
+ * Starts the compiled launcher directly on a stub Vite repository with its own environment and returns the env values it reports for masking.
+ *
+ * Why it exists: the extension's environment allowlist never forwards such variables, so only a direct fork shows how the launcher treats them. Called by the env-masking tests below.
+ *
+ * @param context - The test context, which kills the launcher when the test ends.
+ * @param repository - The stub repository, its behavior already written.
+ * @param port - The port the stub's config resolves.
+ * @param environment - Variables set (a string) or removed (`undefined`) in the launcher's environment.
+ * @returns The `envValues` of the launcher's facts message, sent once the stub's config resolved.
+ * @example
+ * await reportedEnvValues(context, repository, port, { VITE_ONLY: 'onlyvalue1' }) // => ['onlyvalue1']
+ */
+async function reportedEnvValues(
+  context: TestContext,
+  repository: ViteRepository,
+  port: number,
+  environment: Record<string, string | undefined>,
+): Promise<string[]> {
   const launcher = fork(
     LAUNCHER,
     [
@@ -493,18 +507,14 @@ test('the launcher reports a VITE_ prefixed environment-only value for masking b
     ],
     {
       cwd: repository.root,
-      env: {
-        ...process.env,
-        VITE_ENV_ONLY_GREETING: 'envonlysecret1',
-        PLAIN_ENV_ONLY: 'readablevalue1',
-      },
+      env: { ...process.env, ...environment },
       stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
     },
   )
   context.after(() => {
     launcher.kill('SIGKILL')
   })
-  const facts = new Promise<{ envValues: string[] }>((resolve) =>
+  const facts = await new Promise<{ envValues: string[] }>((resolve) =>
     launcher.on(
       'message',
       (message: { type?: string; envValues: string[] }) => {
@@ -515,11 +525,81 @@ test('the launcher reports a VITE_ prefixed environment-only value for masking b
       },
     ),
   )
+  return facts.envValues
+}
+
+// Value: protects=the launcher reports a VITE_-prefixed value that only its environment defines (Vite inlines it into client code) for masking, and no other environment value; fails_when=masking keeps only the names an env file defines, or every process.env entry; why_new=Cycle 0064 ship pass 1; seam=a direct fork of the compiled launcher with its own environment (the extension's allowlist never forwards such a variable, so only the launcher can show it); no_claim=a custom envPrefix
+test('the launcher reports a VITE_ prefixed environment-only value for masking but not an unprefixed one', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const repository = await createViteRepository(context)
+  await repository.behave({ port })
   // Act
-  const { envValues } = await facts
+  const envValues = await reportedEnvValues(context, repository, port, {
+    VITE_ENV_ONLY_GREETING: 'envonlysecret1',
+    PLAIN_ENV_ONLY: 'readablevalue1',
+  })
   // Assert
   assert.ok(envValues.includes('envonlysecret1'), envValues.join())
   assert.equal(envValues.includes('readablevalue1'), false)
+})
+
+// Value: protects=a config's envPrefix string replaces VITE_ in deciding which environment-only values are masked, as Vite inlines only that prefix; fails_when=envPrefixesOf ignores config.envPrefix and keeps VITE_; why_new=Cycle 0064 ship pass 2 coverage audit (only the default prefix was exercised); seam=a direct fork of the compiled launcher with its own environment; no_claim=Vite's own envPrefix validation
+test('a config envPrefix string decides which environment-only values the launcher reports for masking', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const repository = await createViteRepository(context)
+  await repository.behave({ port, config: { envPrefix: 'APP_' } })
+  // Act
+  const envValues = await reportedEnvValues(context, repository, port, {
+    APP_ONLY_GREETING: 'apponlyvalue1',
+    VITE_ONLY_GREETING: 'viteonlyvalue1',
+  })
+  // Assert
+  assert.ok(envValues.includes('apponlyvalue1'), envValues.join())
+  assert.equal(envValues.includes('viteonlyvalue1'), false)
+})
+
+// Value: protects=every prefix of a config's envPrefix list counts for masking environment-only values; fails_when=envPrefixesOf reads only the first prefix of the list or treats the list as one string; why_new=Cycle 0064 ship pass 2 coverage audit (the list branch was untested); seam=a direct fork of the compiled launcher with its own environment; no_claim=Vite's own envPrefix validation
+test('every prefix of a config envPrefix list decides which environment-only values the launcher reports for masking', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const repository = await createViteRepository(context)
+  await repository.behave({
+    port,
+    config: { envPrefix: ['APP_', 'PUBLIC_'] },
+  })
+  // Act
+  const envValues = await reportedEnvValues(context, repository, port, {
+    APP_ONLY_GREETING: 'apponlyvalue1',
+    PUBLIC_ONLY_GREETING: 'publiconlyvalue1',
+    VITE_ONLY_GREETING: 'viteonlyvalue1',
+  })
+  // Assert
+  assert.ok(envValues.includes('apponlyvalue1'), envValues.join())
+  assert.ok(envValues.includes('publiconlyvalue1'), envValues.join())
+  assert.equal(envValues.includes('viteonlyvalue1'), false)
+})
+
+// Value: protects=the mode names NODE_ENV and VITE_USER_NODE_ENV are never masked, so a refusal still reads "development" or "production"; fails_when=the VITE_MODE_ENV_NAMES filter is dropped (an env file's NODE_ENV and the VITE_-prefixed VITE_USER_NODE_ENV would then be reported); why_new=Cycle 0064 ship pass 2 coverage audit; seam=a direct fork of the compiled launcher with its own environment; no_claim=other variables Vite's loadEnv sets
+test('the launcher never reports the mode names NODE_ENV and VITE_USER_NODE_ENV for masking', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const repository = await createViteRepository(context)
+  await repository.behave({ port })
+  await writeFile(
+    join(repository.root, '.env'),
+    'NODE_ENV=development\nAPI_TOKEN=modetestsecret1\n',
+  )
+  // Act
+  const envValues = await reportedEnvValues(context, repository, port, {
+    NODE_ENV: undefined,
+    VITE_USER_NODE_ENV: 'production',
+  })
+  // Assert
+  assert.ok(envValues.includes('modetestsecret1'), envValues.join())
+  assert.equal(envValues.includes('development'), false)
+  assert.equal(envValues.includes('production'), false)
 })
 
 // Value: protects=a config that fails before it resolves never prints a value from its custom envDir, whatever file sets it; fails_when=the launcher quotes the error line of a failed config; why_new=Codebook cannot learn envDir without evaluating the failed config, so the line is never quoted (owner decision D7); seam=none; no_claim=a failure after the config resolved
