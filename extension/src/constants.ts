@@ -11,7 +11,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.11'
-export const EXTENSION_VERSION = '0.2.63'
+export const EXTENSION_VERSION = '0.2.64'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -293,6 +293,10 @@ export const APPLICATION_GROUP_MARKER_VERSION = 1
 /** The version of the record under {@link APPLICATION_GROUP_MARKER_KEY} that names two or more groups Codebook created by their `columns` (the Application's group and the Study Context's created group, finding 599); a reader of {@link APPLICATION_GROUP_MARKER_VERSION} alone ignores it, so it never retires one group of the pair on a proof made for the pair. */
 export const STUDY_GROUPS_MARKER_VERSION = 2
 export const PRESENTATION_READY_TIMEOUT_MS = 5_000
+/** Bounds the wait for the Application's tab to stop being a preview after Keep Open ({@link StudyWorkspace}): the editor reports the kept tab within milliseconds, and a tab still a preview after this bound is accepted as it is, so a host where Keep Open leaves a webview tab a preview must not stall every run start by {@link PRESENTATION_READY_TIMEOUT_MS}. */
+export const APPLICATION_TAB_KEEP_PROBE_MS = 500
+/** How long the borrow of the main editor's focus waits for any report after `workbench.action.focusFirstEditorGroup` before it reveals the first group's Codebook pane with the focus instead; Cursor 3.27.22 answers that command from the Agent chat in about 9 ms with no event at all, so a report that comes at all comes within this bound (Cycle 0064 task 4). */
+export const PRESENTATION_FOCUS_COMMAND_PROBE_MS = 500
 /**
  * How much wider the editor area must have become, in pixels, for {@link StudyWorkspace} to conclude that a side bar was open before it was hidden: the editor's side bars are at least 170 px wide, and a sash or a rounded size moves the width by a few pixels at most.
  * @example

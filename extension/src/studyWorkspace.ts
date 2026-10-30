@@ -53,7 +53,9 @@ import {
   STOP_OWN_FOCUS_BOUND_MS,
   PRESENTATION_PREFERENCE_KEY,
   PAUSED_SOURCE_MOVE_ATTEMPTS,
+  PRESENTATION_FOCUS_COMMAND_PROBE_MS,
   PRESENTATION_PREFERENCE_VERSION,
+  APPLICATION_TAB_KEEP_PROBE_MS,
   PRESENTATION_READY_TIMEOUT_MS,
   PRESENTATION_SETTLE_CEILING_MS,
   READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE,
@@ -390,6 +392,7 @@ import {
   type ReplayRefusalKey,
 } from './utils/replayRefusals'
 import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition'
+import { runStopFilePaths } from './utils/runStopFilePaths'
 import { type CauseRoots, sanitizeCause } from './utils/sanitizeCause'
 import { sanitizedStack } from './utils/sanitizedStack'
 import { sanitizeNodeTestHistory } from './utils/sanitizeNodeTestHistory'
@@ -7286,6 +7289,8 @@ export class StudyWorkspace {
         this.yieldFocusToLearner()
         throw refusePreview(foreignPreview.tab, foreignPreview.group, true)
       }
+      // Pinning replaces Cursor's group and tab objects, so a run's stop-file preview is pinned before any tab or group reference is kept below.
+      await this.keepRunOwnedPreviews(signal)
       // A debugger stop opens a cited workspace file as a clean preview and a learner's single click opens any file as one; both are kept by pinning instead of refusing the selection.
       const preparedPreviews: {
         uri: vscode.Uri
@@ -10059,6 +10064,9 @@ export class StudyWorkspace {
             throw new Error('The Application lease was replaced.')
           this.assertApplicationReveal(current)
         },
+        // The run's stop file opens as a preview in this group; a preview Application would be replaced by it (N64p2-F2).
+        keepsPaneOpen: (attachSignal) =>
+          this.keepMovedApplicationTab(panel, attachSignal),
         // Before the pane covers the paused file, the chat that had the keyboard before the pause gets it back, and a file the learner's selected frame opened keeps the pane from the keyboard; a pane that had to take it tells the learner once where it is.
         comesWithoutKeyboard: () => this.keepsKeyboardFromPane(),
         tookKeyboardFromEditor: () => this.tellPaneTookKeyboard(),
@@ -17663,6 +17671,99 @@ export class StudyWorkspace {
   }
 
   /**
+   * Keeps the Application's tab open after its move, so a text preview that the editor opens later in the Application's group cannot replace it.
+   *
+   * Why it exists: Cursor 3.27.22 lists the tab of a pane moved into a new group as a preview, and the native debugger opens a run's stop file as a preview in that group; the new preview replaced the Application's webview and the run failed with "Owned viewport closed before cleanup" (N64p2-F2, task 67). Called through the lease of {@link leaseApplicationViewport} when the run attaches its browser ({@link BrowserViewport.attach}), not for a Study entry: a learner's own Study pane stays as the editor shows it.
+   * The extension API cannot pin a webview's tab, so the editor's Keep Open command runs, which acts on the focused editor; it runs only when that editor is the Application's own tab, so a learner's tab is never kept by it. The command acts on the workbench's active group, and the extension's active group mirrors it, so the keep runs only when the editor names the Application's group the active one (a pane that reports itself active while the editor keeps naming the Agent chat's group, as Cursor 3.27.22 does, see {@link readMainEditorGrid}, would make the command act on the chat part's editor). When the Application's tab is a preview but another group is the active one, no command runs and the keyboard is not taken: a one-shot watch of the pane's view state and of the tab groups' changes runs the same keep once the editor names the Application's group active while its tab is still a preview in front of its group. A preview that stands behind another tab of its group (a file of the learner's opened there) keeps the watch armed, or arms it, until the learner brings it to the front. The watch ends after the keep, when the tab is no preview any more, when it left its group, when the pane is disposed, and when the run's signal aborts; a signal already aborted before the watch is armed arms nothing and returns without error. A tab that stays a preview, or a command the editor rejects, is left as it is: the move itself has succeeded.
+   * Remaining limit: a stop file that the debugger opens in the Application's group before the editor ever names that group active can still replace the preview Application in Cursor 3.27; Codebook does not take the learner's keyboard to prevent that.
+   * @param panel - The run's Application pane.
+   * @param signal - The run's cancellation.
+   * @returns Once the tab is no preview, the editor left it one after the command, or the watch is armed.
+   * @throws The signal's reason when the run was cancelled during the command.
+   * @example await this.keepMovedApplicationTab(panel, signal)
+   */
+  private async keepMovedApplicationTab(
+    panel: vscode.WebviewPanel,
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    // Read from the current groups each time: Cursor builds every tab object anew at a tab change.
+    const readOwnTab = ():
+      { isPreview: boolean; isFront: boolean } | undefined => {
+      const group = vscode.window.tabGroups.all.find(
+        (candidate) => candidate.viewColumn === this.viewColumnOf(panel),
+      )
+      // The front tab is asked first: a group can hold more than one pane tab.
+      const isPaneTab = (tab: vscode.Tab): boolean =>
+        this.isCodebookPaneInput(tab.input, 'codebook.scopedBrowser')
+      const frontTab = group?.activeTab
+      if (frontTab && isPaneTab(frontTab))
+        return { isPreview: frontTab.isPreview, isFront: true }
+      const hiddenTab = group?.tabs.find(isPaneTab)
+      return hiddenTab && { isPreview: hiddenTab.isPreview, isFront: false }
+    }
+    // A preview behind another tab of its group is still a preview: only the front tab can be kept.
+    const isOwnPreview = (): boolean => Boolean(readOwnTab()?.isPreview)
+    const isOwnPreviewInFront = (): boolean => {
+      const ownTab = readOwnTab()
+      return Boolean(ownTab?.isPreview && ownTab.isFront)
+    }
+    // Keep Open acts on the workbench's active group, which the extension's active group mirrors; the pane's own `active` flag says nothing about it.
+    const holdsKeyboard = (): boolean =>
+      vscode.window.tabGroups.activeTabGroup.viewColumn ===
+      this.viewColumnOf(panel)
+    const keep = async (): Promise<void> => {
+      // The state may have changed between the check that armed this run and now.
+      if (!isOwnPreviewInFront() || !holdsKeyboard()) return
+      try {
+        await this.executeEditorCommand('workbench.action.keepEditor')
+      } catch (error) {
+        // A pane the editor cannot keep is no error; only a cancelled run ends here.
+        if (signal?.aborted) throw error
+        return
+      }
+      signal?.throwIfAborted()
+      // The editor reports the tab's new state after the command answered; a tab that stays a preview is not an error.
+      await waitUntil(
+        () => !isOwnPreview(),
+        'kept application main pane',
+        APPLICATION_TAB_KEEP_PROBE_MS,
+        signal,
+      ).catch((error: unknown) => {
+        if (signal?.aborted) throw error
+      })
+    }
+    // Only the Application's own preview is kept; any other state needs no command.
+    if (!isOwnPreview()) return
+    if (isOwnPreviewInFront() && holdsKeyboard()) return keep()
+    // A run cancelled before the watch is armed never fires its abort event again: nothing is armed and no command runs, as when it aborts later.
+    if (signal?.aborted) return
+    // The learner works elsewhere: wait for the pane to become active instead of taking the keyboard.
+    const watches: vscode.Disposable[] = []
+    const stopWatching = (): void => {
+      signal?.removeEventListener('abort', stopWatching)
+      for (const watch of watches.splice(0)) watch.dispose()
+    }
+    const recheck = (): void => {
+      // Kept by other means, or gone from its group: nothing is left to keep.
+      if (!isOwnPreview()) return stopWatching()
+      // A preview behind another tab, or in a group the editor does not name active, is kept once it is both in front and active.
+      if (!isOwnPreviewInFront() || !holdsKeyboard()) return
+      stopWatching()
+      void keep().catch((error: unknown) => {
+        if (!signal?.aborted) this.report('layout', error)
+      })
+    }
+    watches.push(
+      panel.onDidChangeViewState(recheck),
+      // Group activation can be reported by the tab groups alone, without a view state of the pane.
+      vscode.window.tabGroups.onDidChangeTabGroups(recheck),
+      vscode.window.tabGroups.onDidChangeTabs(recheck),
+      panel.onDidDispose(stopWatching),
+    )
+    signal?.addEventListener('abort', stopWatching, { once: true })
+  }
+
+  /**
    * Watches what the learner sees and works in while the Application pane moves into its group and the editor removes the group the move emptied: the active text editor (document, version, selections and column, {@link textEditorFocusState}) and, for every group that holds a learner's tab, those tabs ({@link learnersTabKeysOf}) and the learner's tab in front; asked by {@link moveApplicationIntoItsGroup} (row 670).
    * The move's own effects change none of these: the pane's tab leaves its old group, which can bring the learner's tab behind it to the front (a group whose front was a Codebook tab is not compared there, and in the active group that file becomes the active text editor, which is taken as the move's), and stands in front of the new group, which holds no learner's tab; the emptied group holds none either. A change is latched when it is reported, so a learner who clicks away and back meanwhile is still seen.
    * @returns `assertUnchanged`, which throws once the active text editor, a learner group's tabs or the learner's tab in front of a group changed since the watch began, and `dispose`, which ends the watch.
@@ -21476,6 +21577,72 @@ export class StudyWorkspace {
     )
   }
 
+  /**
+   * Pins the clean source previews that this window's own runs made the native debugger open, so Cursor's main editor can report focus again before a layout read borrows it.
+   *
+   * Why it exists: a debugger stop opens the run's cited file as a preview tab, and Cursor reports no primary focus beside a preview, so the next Study placement ended in a foreign-preview refusal for a tab the learner never opened. Called at the start of {@link readMainEditorGrid} and by {@link placePresentation} before it collects the prepared previews (that call comes first because pinning rebuilds Cursor's group objects, so the collected tabs must be read after it). A preview of any other file is the learner's and stays untouched (it still refuses), and so does an edited one. Only a preview that is already the front tab of its group is pinned: showing a document also makes it the group's active tab, so pinning a run preview that stands behind a learner's tab would bring it in front of what the learner sees; that one is left as it is and the later foreign-preview refusal names it. The pins are awaited one after the other, so right before each one the group (found again by its column) is read anew and the pin is skipped unless that group still shows the same clean preview in front: a learner who switched or closed the tab, or moved it away, meanwhile keeps their choice.
+   * @param signal - The placement's cancellation.
+   * @returns Once every such front preview is a kept tab; a tab the editor cannot pin (its show was refused) or that the learner changed meanwhile stays as it is and the later foreign-preview refusal names a remaining preview.
+   * @throws The signal's reason or the editor's error when the placement was cancelled during a pin; a refused pin is no error.
+   * @example await this.keepRunOwnedPreviews(signal) // login-form.tsx, opened by the run's stop, is no longer a preview
+   */
+  private async keepRunOwnedPreviews(
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    let workspaceRoot: string
+    try {
+      workspaceRoot = requireWorkspace()
+    } catch {
+      // No single workspace folder: no run can have opened a file here.
+      return
+    }
+    // The files of every stop the window's runs declared; a run's debugger opens only these.
+    const runSourceFiles = runStopFilePaths(
+      [...(this.service?.records.values() ?? [])].flatMap((record) =>
+        record.definition ? [record.definition.configuration] : [],
+      ),
+      workspaceRoot,
+    )
+    if (!runSourceFiles.size) return
+    const ownedPreviews = vscode.window.tabGroups.all
+      .flatMap((group) => group.tabs.map((tab) => ({ group, tab })))
+      .filter(
+        ({ group, tab }) =>
+          // Same read of the groups: a background preview would be brought to the front by showing it.
+          group.activeTab === tab &&
+          tab.isPreview &&
+          !tab.isDirty &&
+          tab.input instanceof vscode.TabInputText &&
+          runSourceFiles.has(canonicalFsPath(tab.input.uri.fsPath)),
+      )
+    for (const { group, tab } of ownedPreviews) {
+      signal?.throwIfAborted()
+      if (!(tab.input instanceof vscode.TabInputText)) continue
+      const uri = tab.input.uri
+      // An earlier pin was awaited: the learner may have changed this group meanwhile, and Cursor builds every group and tab object anew at a tab change, so the group is read again by its column.
+      const standing = vscode.window.tabGroups.all.find(
+        (candidate) => candidate.viewColumn === group.viewColumn,
+      )?.activeTab
+      if (!(
+        standing?.input instanceof vscode.TabInputText &&
+        standing.isPreview &&
+        !standing.isDirty &&
+        standing.input.uri.toString() === uri.toString()
+      ))
+        continue
+      try {
+        await this.showTextDocumentNoted(uri, {
+          viewColumn: group.viewColumn,
+          preserveFocus: true,
+          preview: false,
+        })
+      } catch (error) {
+        // A cancelled placement ends here; any other refusal leaves this tab a preview, which the foreign-preview refusal names later.
+        if (signal?.aborted) throw error
+      }
+    }
+  }
+
   /** Measures the main editor part before {@link arrange} or presentation placement; global chat/floating groups remain protected outside its leaves. @example const grid = await this.readMainEditorGrid(signal, assertCurrent) */
   private async readMainEditorGrid(
     signal: AbortSignal | undefined,
@@ -21484,6 +21651,8 @@ export class StudyWorkspace {
     beforeScopeFocus?: (acquire?: RepositoryFocusTarget) => void,
   ) {
     let assertAcquiredFocus = (): void => {}
+    // A preview the run's own debugger opened would keep Cursor from reporting main-editor focus; keep it before anything is measured.
+    await this.keepRunOwnedPreviews(signal)
     const assertInitial = this.retainPresentationPlacement(
       'readMainEditorGrid/assertInitial',
     )
@@ -21531,11 +21700,15 @@ export class StudyWorkspace {
     } finally {
       for (const subscription of initialChanges) subscription.dispose()
     }
-    let count = editorLayoutGroupCount(layout)
-    if (count === undefined || count > vscode.window.tabGroups.all.length)
+    const firstMeasuredGroupCount = editorLayoutGroupCount(layout)
+    if (
+      firstMeasuredGroupCount === undefined ||
+      firstMeasuredGroupCount > vscode.window.tabGroups.all.length
+    )
       throw new Error(
         'The editor did not expose a valid measured grid; existing panes were preserved.',
       )
+    let count: number = firstMeasuredGroupCount
     const firstFocused = () => this.hasMainEditorFocus(vscode.ViewColumn.One)
     const receipt = this.layoutReceipt
     // A retained measured grid plus native focus proves its part without a primary-webview focus echo overtaking restoration.
@@ -21732,6 +21905,33 @@ export class StudyWorkspace {
           }
       // Cursor's Agent chat group (another part, named active before the borrow) can take the keyboard back a few milliseconds after the first group's focus command: the first group's Codebook pane then reports itself active only for a moment and never while the poll below looks (Cycle 0060, N60). That report is the main editor's focus report, kept here as a latch; the post-wait layout read must still answer for the main editor.
       let paneFocusReportedBesideChat = false
+      // Cursor 3.27.22 treats `workbench.action.focusFirstEditorGroup` as a no-op while the Agent chat's own editor part holds the keyboard, so a Codebook pane in front of the first group is revealed with focus instead (C64 task 4, measured natively).
+      const paneInFirstGroup =
+        !useCitation &&
+        !sourceBorrow &&
+        firstInput instanceof vscode.TabInputWebview &&
+        namedColumn > count
+          ? [this.app, this.contextPanel].find(
+              (candidate) =>
+                candidate !== undefined &&
+                this.viewColumnOf(candidate) === vscode.ViewColumn.One &&
+                isCodebookPaneViewType(firstInput.viewType, candidate.viewType),
+            )
+          : undefined
+      /**
+       * Tells that a Codebook pane of the first group holds the keyboard while the editor still names a chat-only group beyond the main grid as the active tab group, which Cursor 3.27.22 does after a pane was revealed with focus (no group event for the first group arrives).
+       * @returns `true` for an active pane in the first group when every group beyond the measured columns holds chats only.
+       * @example paneFocusedBesideChat() // => true right after the reveal of the Application pane from the Agent chat
+       */
+      const paneFocusedBesideChat = (): boolean =>
+        [this.app, this.contextPanel].some(
+          (candidate) =>
+            candidate !== undefined &&
+            this.viewColumnOf(candidate) === vscode.ViewColumn.One &&
+            candidate.active &&
+            vscode.window.tabGroups.activeTabGroup.viewColumn > count &&
+            this.holdsOnlyChatsBeyond(count),
+        )
       // Empty/opaque primary panes need the actual requested citation, never a disposable placeholder or unobserved command result.
       beforeScopeFocus?.(useCitation ? undefined : borrowedFocus)
       // Created after the check above, which can refuse, so a refusal leaves no view-state listener behind.
@@ -21754,7 +21954,21 @@ export class StudyWorkspace {
                 : [],
             )
           : []
+      /**
+       * Says whether any report proves the main editor holds the keyboard after the borrow; asked by the probe after the focus command and by the wait for the primary focus.
+       * @returns `true` for the first group's focus, a reported primary or captured-source text editor, the latched or current pane report beside the chat, or the sole main group beside a chat.
+       * @example hasMainEditorFocusProof() // => true once the Application pane reports itself active while the editor names the chat's group
+       */
+      const hasMainEditorFocusProof = (): boolean =>
+        firstFocused() ||
+        primaryEditorReported() ||
+        sourceEditorReported() ||
+        paneFocusReportedBesideChat ||
+        paneFocusedBesideChat() ||
+        this.isSoleMainGroupBesideChat(count)
       this.mainEditorFocusBorrows++
+      // How long the probe after the focus command waited; the only time of the borrow that counts against the primary-focus wait.
+      let probeElapsedMs = 0
       this.firstGroupFrontAtBorrow = undefined
       try {
         if (useCitation) {
@@ -21776,6 +21990,61 @@ export class StudyWorkspace {
           )
           assertCurrent()
           assertGroups()
+          // Cursor 3.27.22 answers the command from the Agent chat with no event at all: when no report of the main editor's focus follows shortly, the pane in front of the first group is revealed with the focus, which does move the keyboard there.
+          if (paneInFirstGroup) {
+            const probeStartedMs = performance.now()
+            // A learner's click into a file of another group moves neither the first group's front tab nor the layout; the active text editor event is the only trace, so it is latched for the probe's length.
+            let didLearnerFocusOtherGroup = false
+            const learnerFocusWatch = vscode.window.onDidChangeActiveTextEditor(
+              (editor) => {
+                if (editor && editor.viewColumn !== vscode.ViewColumn.One)
+                  didLearnerFocusOtherGroup = true
+              },
+            )
+            const didProbeSucceed = await waitUntil(
+              hasMainEditorFocusProof,
+              'the first group focus command effect',
+              PRESENTATION_FOCUS_COMMAND_PROBE_MS,
+              signal,
+            )
+              .then(
+                () => true,
+                (probeError: unknown) => {
+                  // Only the expired probe is answered here; a cancellation or a failed read keeps its own error.
+                  if (probeError instanceof WaitTimeoutError) return false
+                  throw probeError
+                },
+              )
+              .finally(() => learnerFocusWatch.dispose())
+            // The learner's newer focus keeps the keyboard: nothing is revealed and the borrow ends with the learner-change refusal.
+            if (didLearnerFocusOtherGroup) {
+              this.yieldFocusToLearner()
+              throw new Error(
+                'The primary editor selection changed during scope measurement; the newer learner focus was preserved.',
+              )
+            }
+            // Set whether the probe passed or expired.
+            probeElapsedMs = performance.now() - probeStartedMs
+            // The learner may have brought another tab to the front of the first group during the probe; then nothing is revealed, and the wait below refuses for the learner's newer choice.
+            const firstGroupFront = vscode.window.tabGroups.all.find(
+              (group) => group.viewColumn === vscode.ViewColumn.One,
+            )?.activeTab?.input
+            const paneStillInFront =
+              this.viewColumnOf(paneInFirstGroup) === vscode.ViewColumn.One &&
+              firstGroupFront instanceof vscode.TabInputWebview &&
+              isCodebookPaneViewType(
+                firstGroupFront.viewType,
+                paneInFirstGroup.viewType,
+              )
+            if (!didProbeSucceed && paneStillInFront) {
+              // A learner's change during the probe refuses before the reveal takes the keyboard.
+              assertCurrent()
+              assertGroups()
+              this.revealPane(paneInFirstGroup, vscode.ViewColumn.One, false)
+              assertCurrent()
+              assertGroups()
+            }
+          }
         }
       } catch (error) {
         // A failed borrow ends its watch; the wait below ends the others.
@@ -21804,16 +22073,11 @@ export class StudyWorkspace {
               'The primary editor selection changed during scope measurement; the newer learner focus was preserved.',
             )
           }
-          return (
-            firstFocused() ||
-            primaryEditorReported() ||
-            sourceEditorReported() ||
-            paneFocusReportedBesideChat ||
-            this.isSoleMainGroupBesideChat(count ?? 0)
-          )
+          return hasMainEditorFocusProof()
         },
         'identifiable primary editor focus',
-        PRESENTATION_READY_TIMEOUT_MS,
+        // Only the probe after the focus command belongs to the same bound, so a refusal still comes after PRESENTATION_READY_TIMEOUT_MS in all; the time the command, the source show or the citation focus took stays outside it.
+        Math.max(0, PRESENTATION_READY_TIMEOUT_MS - probeElapsedMs),
         signal,
       )
         .finally(() => {
@@ -21871,9 +22135,13 @@ export class StudyWorkspace {
           `${primaryEditor ? 'The primary editor' : 'The captured source'} content or selection changed during scope measurement; the newer learner focus was preserved.`,
         )
       }
-      count = editorLayoutGroupCount(layout)
-      if (count === undefined || count > vscode.window.tabGroups.all.length)
+      const remeasuredGroupCount = editorLayoutGroupCount(layout)
+      if (
+        remeasuredGroupCount === undefined ||
+        remeasuredGroupCount > vscode.window.tabGroups.all.length
+      )
         throw new Error('The primary editor grid could not be measured safely.')
+      count = remeasuredGroupCount
       // Only a moment's pane report proved the focus: the read must have answered for the main editor, so every group beyond its count holds chats only; a read the chat part answered after taking the keyboard back is refused as before.
       if (
         paneFocusReportedBesideChat &&
@@ -21915,8 +22183,10 @@ export class StudyWorkspace {
         await waitUntil(
           () =>
             panel.active &&
-            vscode.window.tabGroups.activeTabGroup.viewColumn ===
-              panel.viewColumn,
+            // Beside the Agent chat Cursor keeps naming the chat's group after a pane was revealed with focus: the pane's own report is the proof then.
+            (vscode.window.tabGroups.activeTabGroup.viewColumn ===
+              panel.viewColumn ||
+              paneFocusedBesideChat()),
           'retained main editor focus',
           PRESENTATION_READY_TIMEOUT_MS,
           signal,
@@ -23813,6 +24083,12 @@ export class StudyWorkspace {
           event.opened.includes(group) || event.changed.includes(group),
       ),
     )
+    // Codebook's own removal of a group is under way and the editor reports a tab change that opens and closes no group.
+    const isOwnRemovalReport = this.isOwnRemovalTabReport(
+      event,
+      current,
+      previous,
+    )
     // Opened/closed groups never inherit identity; only changed replacement wrappers may represent survivors.
     const survivors = event
       ? previous.filter(
@@ -23831,15 +24107,19 @@ export class StudyWorkspace {
           )
           .map((group) => ({
             group,
-            matches: survivors.filter(
-              (entry) =>
-                this.retainsEditorTabs(
-                  entry.group,
-                  group,
-                  everyGroupReplaced,
-                ) ||
-                (emptyOutsideMatch?.before === entry &&
-                  emptyOutsideMatch.after === group),
+            matches: this.narrowedToColumnDuringOwnRemoval(
+              survivors.filter(
+                (entry) =>
+                  this.retainsEditorTabs(
+                    entry.group,
+                    group,
+                    everyGroupReplaced,
+                  ) ||
+                  (emptyOutsideMatch?.before === entry &&
+                    emptyOutsideMatch.after === group),
+              ),
+              group,
+              isOwnRemovalReport,
             ),
           }))
       : []
@@ -23952,7 +24232,9 @@ export class StudyWorkspace {
         this.editorGroupIdentities.set(group, createdSourceIdentity)
         continue
       }
-      const emptyMatch = emptySurvivor(group)
+      const emptyMatch =
+        this.groupEmptiedByOwnRemoval(group, previous, isOwnRemovalReport) ??
+        emptySurvivor(group)
       if (emptyMatch) {
         this.editorGroupIdentities.set(
           group,
@@ -23993,6 +24275,76 @@ export class StudyWorkspace {
       group,
       column: group.viewColumn,
     }))
+  }
+
+  /**
+   * Says whether a tab report arrived while Codebook's own removal of a group is marked ({@link applicationGroupChange}), the report opening and closing no group; asked by {@link observeEditorGroups} before it names the groups of such a report.
+   * Cursor 3.27.22 reports the Application pane's move as its tab opening in the new group and closing in the old one, each time with every group an object anew, and removes the emptied group only after that (Cycle 0064 N64p2-F1: tabs closed +9 ms, group closed +15 ms).
+   * @param event - The tab-group event the observer runs for, if any.
+   * @param current - The editor's groups now.
+   * @param previous - The groups the observer recorded last.
+   * @returns `true` while a removal is marked and the report changed tabs only; `false` otherwise.
+   * @example this.isOwnRemovalTabReport(event, current, previous) // => true for the close of the Application's tab in the group the move emptied
+   */
+  private isOwnRemovalTabReport(
+    event: vscode.TabGroupChangeEvent | undefined,
+    current: readonly vscode.TabGroup[],
+    previous: StudyWorkspace['observedEditorGroups'],
+  ): boolean {
+    return Boolean(
+      this.applicationGroupChange?.kind === 'remove' &&
+      event &&
+      !event.opened.length &&
+      !event.closed.length &&
+      current.length === previous.length,
+    )
+  }
+
+  /**
+   * Resolves a content match that two earlier groups share during Codebook's own removal, by the group's column; asked by {@link observeEditorGroups} for each replaced group.
+   * Between the open of the moved Application tab in its new group and its close in the old one, both groups hold that tab, so the tab alone names two survivors for the new group and neither keeps its identity. The move changes no column then, so the survivor in the group's own column is the group.
+   * @param matches - The earlier groups whose tabs the group still holds.
+   * @param group - The group of the editor's current model.
+   * @param isOwnRemovalReport - The answer of {@link isOwnRemovalTabReport}.
+   * @returns The single match in the group's column when several matched and exactly one stands there, else `matches` as they are.
+   * @example this.narrowedToColumnDuringOwnRemoval([atColumn1, atColumn2], groupAtColumn1, true) // => [atColumn1]
+   */
+  private narrowedToColumnDuringOwnRemoval<
+    Entry extends StudyWorkspace['observedEditorGroups'][number],
+  >(
+    matches: readonly Entry[],
+    group: vscode.TabGroup,
+    isOwnRemovalReport: boolean,
+  ): readonly Entry[] {
+    if (!isOwnRemovalReport || matches.length < 2) return matches
+    const sameColumn = matches.filter(
+      (entry) => entry.column === group.viewColumn,
+    )
+    return sameColumn.length === 1 ? sameColumn : matches
+  }
+
+  /**
+   * Finds the earlier group that Codebook's marked removal targets when it now stands empty in its own column; asked by {@link observeEditorGroups} for each group without an identity.
+   * The close of the Application's tab leaves the group the pane moved out of without tabs, and a group that had one has nothing to be recognized by; the marked identity names it, so its later removal is known as Codebook's own ({@link issuedApplicationColumnShift}).
+   * @param group - A group of the editor's current model.
+   * @param previous - The groups the observer recorded last.
+   * @param isOwnRemovalReport - The answer of {@link isOwnRemovalTabReport}.
+   * @returns The earlier entry holding the marked identity in the group's column, when the group has no tabs; `undefined` otherwise.
+   * @example this.groupEmptiedByOwnRemoval(emptyGroupAtColumn2, previous, true) // => the entry of the Application's old group
+   */
+  private groupEmptiedByOwnRemoval(
+    group: vscode.TabGroup,
+    previous: StudyWorkspace['observedEditorGroups'],
+    isOwnRemovalReport: boolean,
+  ): StudyWorkspace['observedEditorGroups'][number] | undefined {
+    const change = this.applicationGroupChange
+    if (!isOwnRemovalReport || change?.kind !== 'remove' || group.tabs.length)
+      return undefined
+    return previous.find(
+      (entry) =>
+        entry.column === group.viewColumn &&
+        this.editorGroupIdentities.get(entry.group) === change.identity,
+    )
   }
 
   /**

@@ -1086,8 +1086,14 @@ export async function workspaceHarness(
   /** The view column of the group the editor's maximize command maximized, read while `maximizedEditorGroup` is set: the group that was the active one when the command ran. */
   let maximizedColumn: number | undefined
   let closeEmptyGroupsOnMove = false
+  /** Whether the editor's Keep Open command leaves a webview tab a preview, as a host that reports the kept webview late or never; see `keepEditorLeavesWebviewPreviews`. */
+  let keepEditorLeavesWebviewPreviewsFlag = false
+  /** Whether the editor's Keep Open command rejects, as a command the editor refuses; see `rejectsKeepEditor`. */
+  let rejectsKeepEditorFlag = false
   /** Whether the group a pane's move left empty goes {@link MOVED_PANE_GROUP_REMOVAL_DELAY_MS} after the move instead of with it; see `removeGroupLeftByPanelMoveLater`. */
   let removesGroupLeftByMoveLater = false
+  /** Whether a pane's move is reported as its tab opening in the new group first and closing in the old group after that; see `reportsPaneMoveAsOpenThenClose`. */
+  let reportsPaneMoveAsOpenThenCloseFlag = false
   /** The removals of groups a pane's move left empty that the fake editor has not run yet; see `removeGroupLeftByPanelMoveLater`. */
   const pendingMoveRemovals: (() => void)[] = []
   let closeDisposedPanelTabsLater = false
@@ -1257,6 +1263,8 @@ export async function workspaceHarness(
   let closeDisposedPanelTabsDuringLayoutRead = false
   /** The fake editor answers every tab change with new TabGroup objects, as Cursor does; see `replaceGroupObjectsOnTabChanges`. */
   let replacesGroupObjectsOnTabChanges = false
+  /** Whether a text tab opened as a preview replaces the preview tab its group already shows, a Codebook pane included; see `replacesPreviewTabOnTextPreview`. */
+  let replacesPreviewTabOnTextPreviewFlag = false
   /** The fake editor answers a removed group with new Tab objects, as Cursor does; see `rebuildTabObjectsAtGroupRemoval`. */
   let rebuildsTabObjectsAtGroupRemoval = false
   /** The view column a panel of a kind reports while it differs from the column of its tab's group; see `reportPanelColumn`. */
@@ -1382,6 +1390,10 @@ export async function workspaceHarness(
   /** Set by `takesKeyboardBackFromFirstGroupBesideChat`: the pane the first group's focus command made active briefly, until the next layout read has been answered. */
   let chatRetakesKeyboardAfterLayoutRead: (() => void) | undefined
   let chatRetakesKeyboardFromFirstGroup = false
+  // Cursor 3.27.22: while the Agent chat part has the keyboard `workbench.action.focusFirstEditorGroup` does nothing, and a pane revealed with the focus takes the keyboard (it reports itself active) while the editor goes on naming the chat's group; see `ignoresFirstGroupFocusCommandBesideChat`.
+  let ignoresFirstGroupFocusCommandBesideChatFlag = false
+  // An editor that lists every webview tab under the main-thread view type (`mainThreadWebview-<viewType>`), Codebook's own panes included; see `reportsMainThreadWebviewViewTypes`.
+  let reportsMainThreadWebviewViewTypesFlag = false
   // Cursor 3.23.12: "Navigate Down Call Stack" gives the frame's file the keyboard while the editor keeps naming the group it named before; see `keepNamingGroupAfterFrameNavigation`.
   let keepsNamingGroupAfterFrameNavigation = false
   // Cursor 3.23.12: the learner's click into a file of the main editor keeps the chat part's group named; see `keepChatPartNameAtLearnersFileClick`.
@@ -2378,7 +2390,7 @@ export async function workspaceHarness(
       version: 1,
       getText: () => text,
     }
-    const group = groups.find((group) => group.viewColumn === column)!
+    let group = groups.find((group) => group.viewColumn === column)!
     const tab = {
       input: new TabInputText(document.uri),
       label: textTabLabel(document.uri),
@@ -2386,6 +2398,19 @@ export async function workspaceHarness(
       // A draft has unsaved text; a file the editor opens as a preview tab has none.
       isDirty: !isPreview,
     }
+    // A preview opened in a group replaces that group's preview tab; a preview pane is disposed with it.
+    if (isPreview && replacesPreviewTabOnTextPreviewFlag) {
+      const replacedTab = group.tabs.find((candidate) => candidate.isPreview)
+      const replacedPane = [...panels].find(
+        (panel) => panel.nativeTab === replacedTab,
+      )
+      if (replacedPane) replacedPane.dispose()
+      else if (replacedTab)
+        group.tabs = group.tabs.filter((candidate) => candidate !== replacedTab)
+      // Closing the pane's tab can replace every group object: the live one takes the new tab.
+      group = currentGroupOf(group) ?? group
+    }
+    // Built from the live group, after the replacement above.
     const editor = Object.assign(sourceEditor(document, group), { group })
     let selections = editor.selections
     Object.defineProperty(editor, 'selections', {
@@ -2736,6 +2761,12 @@ export async function workspaceHarness(
     keyboardOnBody = false
     keyboardInView = false
     innerFocusedPanel = undefined
+    // The chat has the keyboard again: a pane revealed beside it no longer reports itself active (Cursor 3.27.22 model).
+    if (ignoresFirstGroupFocusCommandBesideChatFlag) {
+      heldActivePane = undefined
+      staleNamedGroup = undefined
+      for (const panel of panels) panel.notifyViewState()
+    }
     activeTextEditorChanged(undefined)
   }
   /**
@@ -2929,7 +2960,11 @@ export async function workspaceHarness(
     }
     // The tab of a webview panel is labelled with the panel's title, as both editors' tab models name it.
     let nativeTab: Tab = {
-      input: new TabInputWebview(kind),
+      input: new TabInputWebview(
+        reportsMainThreadWebviewViewTypesFlag
+          ? `mainThreadWebview-${kind}`
+          : kind,
+      ),
       label: title,
       isPreview: false,
     }
@@ -3240,16 +3275,25 @@ export async function workspaceHarness(
               group.activeTab === nativeTab &&
               group.viewColumn === value.viewColumn,
           )
-          const homeGroup = groups.find((candidate) =>
-              candidate.tabs.includes(nativeTab),
-            ),
-            homeIndex = homeGroup?.tabs.indexOf(nativeTab) ?? -1
+          let homeGroup = groups.find((candidate) =>
+            candidate.tabs.includes(nativeTab),
+          )
+          const homeIndex = homeGroup?.tabs.indexOf(nativeTab) ?? -1
+          const destinationGroup = nativeGroup(value.viewColumn ?? 1)
+          // Opening a missing destination group replaces every group object under `replaceGroupObjectsOnTabChanges`: the home group is followed to its live object.
+          if (homeGroup) homeGroup = currentGroupOf(homeGroup) ?? homeGroup
+          // Cursor 3.27.22 reports the open in the new group first; the old group still holds the tab until the close that follows (N64p2-F1).
+          const closesAfterOpen =
+            reportsPaneMoveAsOpenThenCloseFlag &&
+            homeGroup !== undefined &&
+            homeGroup !== destinationGroup
           for (const group of groups) {
+            if (closesAfterOpen && group === homeGroup) continue
             group.tabs = group.tabs.filter((tab) => tab !== nativeTab)
             if (group.activeTab === nativeTab)
               group.activeTab = group.tabs.at(-1)
           }
-          const group = nativeGroup(value.viewColumn ?? 1)
+          let group = destinationGroup
           revealIntoHiddenEditorArea(
             group.viewColumn,
             !wasInFront || !preserveFocus,
@@ -3278,6 +3322,18 @@ export async function workspaceHarness(
               shownIndexBeforeMove,
             )
           group.activeTab = nativeTab
+          if (closesAfterOpen && homeGroup) {
+            // The open is reported with every group an object anew, then the old group's tab closes.
+            replaceGroupObjects()
+            // The rebuild gave the destination a new object too; the later activation and echoes follow it.
+            group = currentGroupOf(group) ?? group
+            const standingHome = currentGroupOf(homeGroup) ?? homeGroup
+            standingHome.tabs = standingHome.tabs.filter(
+              (tab) => tab !== nativeTab,
+            )
+            if (standingHome.activeTab === nativeTab)
+              standingHome.activeTab = standingHome.tabs.at(-1)
+          }
           endTextEditorReportKeptAtNewGroup(group)
           if (column !== undefined && previousColumn !== column)
             nativeTab.isPreview = true
@@ -3299,9 +3355,11 @@ export async function workspaceHarness(
                 const index = pendingMoveRemovals.indexOf(removeLater)
                 if (index < 0) return
                 pendingMoveRemovals.splice(index, 1)
-                if (!groups.includes(emptied) || emptied.tabs.length) return
-                automaticallyClosedColumns.push(emptied.viewColumn)
-                removeEmptiedGroup(emptied)
+                // Cursor replaced every group object at the pane's move (N64p2-F1): the group is followed to the object the model holds by then.
+                const standing = currentGroupOf(emptied)
+                if (!standing || standing.tabs.length) return
+                automaticallyClosedColumns.push(standing.viewColumn)
+                removeEmptiedGroup(standing)
               }
               pendingMoveRemovals.push(removeLater)
               runEditorChangeLater(
@@ -3326,6 +3384,19 @@ export async function workspaceHarness(
               innerFocusedPanel = undefined
             else if (!suppressNativeInnerFocus && !value.blockInnerFocus)
               innerFocusedPanel = kind
+            // Cursor 3.27.22 beside the chat: the revealed pane has the keyboard and reports itself active, the editor goes on naming the chat's group, and no group event arrives.
+            if (
+              ignoresFirstGroupFocusCommandBesideChatFlag &&
+              separateEditorPart &&
+              ((staleNamedGroup ?? activeTabGroup) ===
+                separateEditorPart.group ||
+                separateEditorPart.lastActive)
+            ) {
+              staleNamedGroup = staleNamedGroup ?? activeTabGroup
+              heldActivePane = kind
+              leaveChatForMainEditor()
+              for (const panel of panels) panel.notifyViewState()
+            }
             leaveChatForMainEditor()
             // Refocusing an already kept Application can echo after the following Context acknowledgement.
             if (pendingKeptFocusEcho && kind === 'codebook.studyContext') {
@@ -3654,6 +3725,7 @@ export async function workspaceHarness(
         released(): void
         assertCanReveal?(current: ReturnType<typeof panel>): void
         comesWithoutKeyboard?(): Promise<boolean>
+        keepsPaneOpen?(signal: AbortSignal): Promise<void>
         tookKeyboardFromEditor?(): void
       },
       _observer?: unknown,
@@ -3774,8 +3846,10 @@ export async function workspaceHarness(
     lastFrameAt(): number | undefined {
       return undefined
     }
-    /** The fake renderer needs no screencast. */
-    async attach(): Promise<void> {}
+    /** The fake renderer needs no screencast; like the real viewport it first lets its lease's owner keep the pane's tab open. @example await viewport.attach(cdp, signal) */
+    async attach(_cdp?: unknown, signal?: AbortSignal): Promise<void> {
+      await this.lease.keepsPaneOpen?.(signal ?? new AbortController().signal)
+    }
     /** The fake renderer has no pinned pause to leave. */
     resume(): void {}
     /** Reserves the simulated renderer so workspace tests enforce drain before adoption. @example const release = await viewport.holdPlacement() */
@@ -4263,9 +4337,15 @@ export async function workspaceHarness(
             setGroupLock(activeTabGroup, false)
             return
           }
+          if (name === 'workbench.action.keepEditor' && rejectsKeepEditorFlag)
+            throw new Error('Injected Keep Open failure')
           if (
             name === 'workbench.action.keepEditor' &&
-            activeTabGroup.activeTab
+            activeTabGroup.activeTab &&
+            !(
+              keepEditorLeavesWebviewPreviewsFlag &&
+              activeTabGroup.activeTab.input instanceof TabInputWebview
+            )
           )
             activeTabGroup.activeTab.isPreview = false
           // The learner's Close Editor closes the tab the focused group shows, as a close request for that tab does.
@@ -4421,7 +4501,15 @@ export async function workspaceHarness(
               runEditorChangeLater(focusChatInputOwed, 0)
             } else focusChatInput()
           }
-          if (name === 'workbench.action.focusFirstEditorGroup') {
+          if (
+            name === 'workbench.action.focusFirstEditorGroup' &&
+            ignoresFirstGroupFocusCommandBesideChatFlag &&
+            separateEditorPart &&
+            ((staleNamedGroup ?? activeTabGroup) === separateEditorPart.group ||
+              separateEditorPart.lastActive)
+          ) {
+            // Cursor 3.27.22 measured in the Agent chat: the command resolved without any editor event.
+          } else if (name === 'workbench.action.focusFirstEditorGroup') {
             // The first group is the main window's: focusing it makes that window the focused one.
             if (floatingEditorWindow) floatingEditorWindow.active = false
             const previousEditor = focusedSourceEditor(),
@@ -5019,7 +5107,12 @@ export async function workspaceHarness(
             keyboardOnBody = false
             keyboardInView = false
           }
-          if (options?.preview !== undefined) tab.isPreview = options.preview
+          if (options?.preview !== undefined) {
+            const wasPreview = tab.isPreview
+            tab.isPreview = options.preview
+            // Cursor rebuilds every group object when a tab stops being a preview (a tab change event).
+            if (wasPreview && !tab.isPreview) replaceGroupObjects()
+          }
           const editor = sourceEditor(
             sourceDocument,
             group,
@@ -5906,6 +5999,67 @@ export async function workspaceHarness(
       activeTabGroup = group
       for (const listener of tabChangeListeners) listener()
     },
+    /**
+     * Gives a Codebook pane the keyboard as the learner's click into it does, and tells the pane's view-state listeners: its tab is the one its group shows, the group is the active one, and the pane reports itself active.
+     * @param kind - The view type of the pane.
+     * @example harness.activatePaneByHand('codebook.scopedBrowser') // the learner clicks into the Application
+     */
+    activatePaneByHand(kind: string): void {
+      const pane = [...panels].find((candidate) => candidate.kind === kind)
+      assert.ok(pane)
+      const group = groups.find((candidate) =>
+        candidate.tabs.includes(pane.nativeTab),
+      )
+      assert.ok(group)
+      group.activeTab = pane.nativeTab
+      activeTabGroup = group
+      // The learner's click ends the chat's keyboard ownership and puts the keyboard in the pane's document, as the reveal path does.
+      leaveChatForMainEditor()
+      keyboardOnBody = false
+      keyboardInView = false
+      innerFocusedPanel = kind
+      for (const listener of tabChangeListeners) listener()
+      for (const panel of panels) panel.notifyViewState()
+    },
+    /**
+     * Makes the editor name a Codebook pane's group the active one by a tab-group event alone: the pane's tab is the one its group shows and the group is the active one, but no pane reports a view state and no tab event fires.
+     * @param kind - The view type of the pane whose group becomes the active one.
+     * @example harness.activatePaneGroupByGroupEventOnly('codebook.scopedBrowser') // the learner focuses the Application's group, e.g. by its column
+     */
+    activatePaneGroupByGroupEventOnly(kind: string): void {
+      const pane = [...panels].find((candidate) => candidate.kind === kind)
+      assert.ok(pane)
+      const group = groups.find((candidate) =>
+        candidate.tabs.includes(pane.nativeTab),
+      )
+      assert.ok(group)
+      group.activeTab = pane.nativeTab
+      activeTabGroup = group
+      leaveChatForMainEditor()
+      // The group event names the active group again, ending any stale name.
+      changedGroups({ opened: [], closed: [], changed: [group] })
+    },
+    /**
+     * Models Cursor 3.27.22 naming the Agent chat's group as the active tab group while a Codebook pane holds the keyboard: the pane's group is the one the editor's commands act on and the pane reports itself active, but `tabGroups.activeTabGroup` keeps naming the chat's group. Needs {@link addSeparateEditorPart}.
+     * @param kind - The view type of the pane that holds the keyboard.
+     * @example harness.nameChatGroupWhilePaneHoldsKeyboard('codebook.scopedBrowser')
+     */
+    nameChatGroupWhilePaneHoldsKeyboard(kind: string): void {
+      assert.ok(separateEditorPart)
+      const pane = [...panels].find((candidate) => candidate.kind === kind)
+      assert.ok(pane)
+      const group = groups.find((candidate) =>
+        candidate.tabs.includes(pane.nativeTab),
+      )
+      assert.ok(group)
+      group.activeTab = pane.nativeTab
+      activeTabGroup = group
+      staleNamedGroup = separateEditorPart.group
+      heldActivePane = kind
+      // The pane holds the keyboard, so the chat no longer does.
+      leaveChatForMainEditor()
+      for (const panel of panels) panel.notifyViewState()
+    },
     /** Gives every tab of the fake tab model a new Tab object now, as Cursor's extension host does when the editor sends a whole new tab model (the model of `rebuildTabObjectsAtGroupRemoval`, without a group removal); the tab listeners hear nothing, as at a removed group's rebuild. @example harness.rebuildTabObjectsNow() */
     rebuildTabObjectsNow(): void {
       rebuildTabObjects()
@@ -6119,6 +6273,20 @@ export async function workspaceHarness(
       closeEmptyGroupsOnMove = true
     },
     /**
+     * Makes the editor's Keep Open command leave a webview tab a preview, as a host that never reports the kept webview tab; text and other tabs are kept as before.
+     * @example harness.keepEditorLeavesWebviewPreviews()
+     */
+    keepEditorLeavesWebviewPreviews(): void {
+      keepEditorLeavesWebviewPreviewsFlag = true
+    },
+    /**
+     * Makes the editor's Keep Open command reject, as an editor that refuses the command for the focused tab.
+     * @example harness.rejectsKeepEditor()
+     */
+    rejectsKeepEditor(): void {
+      rejectsKeepEditorFlag = true
+    },
+    /**
      * Makes the fake editor remove the group a pane's move left empty after the move, which is reported at once, instead of with the move: while the next layout read is pending, or by itself {@link MOVED_PANE_GROUP_REMOVAL_DELAY_MS} after the move when no read comes, as VS Code 1.140.0 did with the earlier window's leftover after the Application's move into its own group in C58 round 1d (the group events at +571 ms of the Return, during the layout read issued at +564 and answered at +611; Cycle 0046 row 658). Only in the model of `closeEmptyGroupsAfterPanelMove`.
      * @example
      * harness.closeEmptyGroupsAfterPanelMove()
@@ -6126,6 +6294,26 @@ export async function workspaceHarness(
      */
     removeGroupLeftByPanelMoveLater(): void {
       removesGroupLeftByMoveLater = true
+    },
+    /**
+     * Makes the fake editor report a pane's move to another group as Cursor 3.27.22 did for the Application in N64p2-F1: the tab opens in the new group (every group an object anew) and closes in the old group in a later report (every group an object anew again, the old group now empty); with {@link removeGroupLeftByPanelMoveLater} the old group is removed after both.
+     * @example
+     * harness.closeEmptyGroupsAfterPanelMove()
+     * harness.removeGroupLeftByPanelMoveLater()
+     * harness.reportsPaneMoveAsOpenThenClose()
+     */
+    reportsPaneMoveAsOpenThenClose(): void {
+      reportsPaneMoveAsOpenThenCloseFlag = true
+      replacesGroupObjectsOnTabChanges = true
+    },
+    /**
+     * Makes the fake editor open a text tab as a preview in place of the preview tab its group already shows, as Cursor 3.27.22 did at the debugger's stop in the Application's group (N64p2-F2): a Codebook pane that is that preview is disposed, so its tab and its webview go.
+     * @example
+     * harness.replacesPreviewTabOnTextPreview()
+     * harness.openPausedFileInLockedGroup('index.tsx', 1) // closes a preview Application in column 1
+     */
+    replacesPreviewTabOnTextPreview(): void {
+      replacesPreviewTabOnTextPreviewFlag = true
     },
     /** The fake editor the reader runs in, so a test can act on it as the learner or another extension does: run a native command, create a panel, show a document or close a tab. @example await harness.editor.commands.executeCommand('workbench.action.focusFirstEditorGroup') */
     editor: editorDependencies.vscode,
@@ -7023,6 +7211,26 @@ export async function workspaceHarness(
       replacesGroupObjectsOnTabChanges = true
     },
     /**
+     * Makes the fake editor list the tabs of the panes created from now on under the main-thread view type (`mainThreadWebview-<viewType>`), as an editor does that reports its webview tabs that way.
+     * @example
+     * harness.reportsMainThreadWebviewViewTypes()
+     * await harness.reader.open() // the Application tab's view type reads 'mainThreadWebview-codebook.scopedBrowser'
+     */
+    reportsMainThreadWebviewViewTypes(): void {
+      reportsMainThreadWebviewViewTypesFlag = true
+    },
+    /**
+     * Makes the fake editor behave as Cursor 3.27.22 was measured to while its Agent chat has the keyboard (Cycle 0064 task 4): `workbench.action.focusFirstEditorGroup` resolves with no event at all, and a pane revealed with the focus in the first group takes the keyboard and reports itself active while the editor goes on naming the chat's group, with no group event.
+     * @example
+     * const chat = harness.addSeparateEditorPart()
+     * harness.ignoresFirstGroupFocusCommandBesideChat()
+     * chat.focusTab()
+     */
+    ignoresFirstGroupFocusCommandBesideChat(): void {
+      ignoresFirstGroupFocusCommandBesideChatFlag = true
+      replacesGroupObjectsOnTabChanges = true
+    },
+    /**
      * Makes the fake editor answer `workbench.action.focusFirstEditorGroup` the way Cursor 3.27.12 was seen to while its Agent chat group is the active one (Cycle 0060, N60): the first group's pane reports itself active for a moment while the editor goes on naming the chat's group, the next layout read is answered for the main editor, and the chat input has the keyboard again right after that read, while later layout reads still answer for the main editor. No text editor is reported.
      * @example
      * const chat = harness.addSeparateEditorPart()
@@ -7245,6 +7453,18 @@ export async function workspaceHarness(
     },
     failNextCommand(name: string): void {
       failingCommand = name
+    },
+    /**
+     * Models the learner opening a kept file in front of a group and the editor announcing the new tab to the tab listeners, as `focusMutableDraft` does not: that call changes the tabs silently. A pane tab the file covers stays in its group behind it.
+     * @param filename - The file's name in the harness's folder.
+     * @param column - The view column of the group the file opens in; the group becomes the active one.
+     * @example harness.openAnnouncedKeptFile('pinned-notes.ts', 1) // covers the Application pane in group 1 and tells the tab listeners
+     */
+    openAnnouncedKeptFile(filename: string, column: number): void {
+      const opened = openDraftTab(filename, column)
+      giveDraftKeyboard(opened)
+      for (const listener of tabChangeListeners)
+        listener({ opened: [opened.tab], closed: [], changed: [] })
     },
     /** Gives presentation/scope regressions a learner-owned document whose edits do not move its tab. @example const draft = harness.focusMutableDraft('notes.txt', 2); draft.replaceContent('new text'); */
     focusMutableDraft(
@@ -7796,14 +8016,30 @@ export async function workspaceHarness(
         listener({ opened: [tab], closed: [], changed: [] })
       return tab
     },
-    addTextPreview(path: string, column: number, dirty = false) {
+    /**
+     * Opens a preview tab of a text file in a group, as the editor opens a file at one click or the debugger opens a stop's file.
+     * @param path - The file's absolute path.
+     * @param column - The view column of the group.
+     * @param dirty - Whether the tab holds unsaved text.
+     * @param isFront - Whether the tab is the one the group shows (the debugger's stop file is); left out, the tab stands behind the group's shown tab and the group's `activeTab` is unchanged.
+     * @returns The tab.
+     * @example const stopFile = harness.addTextPreview('/repo/src/theme.ts', 1, false, true)
+     */
+    addTextPreview(
+      path: string,
+      column: number,
+      dirty = false,
+      isFront = false,
+    ) {
       const tab = {
         input: new TabInputText(Uri.file(path)),
         label: textTabLabel(Uri.file(path)),
         isPreview: true,
         isDirty: dirty,
       }
-      groups.find((group) => group.viewColumn === column)!.tabs.push(tab)
+      const group = groups.find((group) => group.viewColumn === column)!
+      group.tabs.push(tab)
+      if (isFront) group.activeTab = tab
       return tab
     },
     /**

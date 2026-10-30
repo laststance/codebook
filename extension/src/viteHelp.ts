@@ -100,6 +100,7 @@ export function viteHelp() {
         'A dev script with any other command, flag, shell operator (&&, ;, |), variable expansion, quote or redirect; a cross-env, npx or pnpm exec prefix; a predev script.',
         'Config settings Codebook does not own: a server.host other than 127.0.0.1 (also one a plugin sets), a server.port of 0, https, origin, an own-listener hmr or server.ws (port, host or server), middlewareMode or appType "custom", a base other than "/", a root other than the package root, a cacheDir outside the package root (symlinks resolved). These are found at the start, not by codebook_status, and are refused all at once.',
         'Stops in .vue, .svelte or other non-JS/TS files, in node_modules, or outside the package root.',
+        "A stop in a file that a Vite plugin rewrites without a source map (for example code-inspector-plugin adding attributes to components): the served map holds the rewritten text, so the executed code is not the file and the stop is refused at sealing with VITE_SEAL_FAILED. Stop in a module the plugin leaves alone, or use the plugin's own development switch to turn it off.",
         'SSR and a server participant (participant "server" is refused with vite-dev).',
         'A page that reloads after the declared inputs were written: the run ends and the click is not resent.',
       ],

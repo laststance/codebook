@@ -179,6 +179,8 @@ async function viewportHarness(
     assertCanReveal(panel: ReturnType<typeof viewportPanel>['panel']): void
     beforeOwnerAnswer?(): void
   },
+  /** What the lease's owner does when the run attaches its browser, before any pause can happen (the lease's optional `keepsPaneOpen`); left out, the lease has no such hook. @example async () => { await delay(0) } */
+  keepsPaneOpen?: (signal: AbortSignal) => Promise<void>,
 ) {
   const filename = join(__dirname, '../runtimeSupport/browserViewport.js')
   const nativeRequire = createRequire(filename)
@@ -261,6 +263,7 @@ async function viewportHarness(
             released(): void {
               leaseReleases++
             },
+            ...(keepsPaneOpen ? { keepsPaneOpen } : {}),
             tookKeyboardFromEditor(): void {
               keyboardTakes++
             },
@@ -789,6 +792,72 @@ test('a live capture whose Application pane paints no frame within the bound end
     )
   } finally {
     resetFakeClock(context)
+    harness.viewport.close()
+  }
+})
+
+// Value: protects=the run's pane owner keeping the Application tab open before the debugger can pause, so the stop's file cannot replace it (N64p2-F2, Cursor 3.27.22); fails_when=attach does not call the lease's keepsPaneOpen hook once, or goes on to the screencast before the hook's promise resolves; why_new=Cycle 0064 pt2 /ship coverage audit; seam=the viewport harness with a lease whose keepsPaneOpen hook is held; no_claim=the real editor's answer to Keep Open (native Cursor trial)
+test('attaching a live run waits once for the pane owner to keep the Application tab open before it starts the screencast', async () => {
+  // Arrange: a lease whose keepsPaneOpen hook answers only when the test releases it.
+  const calls: string[] = []
+  let releaseHook = (): void => {}
+  const harness = await viewportHarness(
+    'normal',
+    true,
+    undefined,
+    'live',
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    (): Promise<void> => {
+      calls.push('keepsPaneOpen')
+      return new Promise<void>((resolve) => {
+        releaseHook = resolve
+      })
+    },
+  )
+  const cdp = {
+    on: () => undefined,
+    request: async () => {
+      calls.push('request')
+      return {}
+    },
+    subscribe: async (): Promise<void> => {
+      calls.push('subscribe')
+    },
+  }
+  try {
+    // Act: attach starts; the hook has not answered yet.
+    let attached = false
+    const attaching = harness.viewport
+      .attach(cdp as never, new AbortController().signal)
+      .then(() => {
+        attached = true
+      })
+    await waitUntil(
+      () => calls.includes('keepsPaneOpen'),
+      'the keepsPaneOpen hook to be called',
+    )
+    // The hook's promise is still pending, so after one more turn of the event loop any step that attach took past it would show in the log.
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const callsWhileHookHeld = [...calls]
+    const attachedWhileHookHeld = attached
+    releaseHook()
+    // The renderer answers the readiness request that attach sends once the hook has answered.
+    await waitUntil(
+      () => harness.messages.some((message) => message.type === 'requestReady'),
+      'the readiness request',
+    )
+    harness.ready('11111111-1111-1111-1111-111111111111')
+    await attaching
+
+    // Assert
+    assert.deepEqual(callsWhileHookHeld, ['keepsPaneOpen'])
+    assert.equal(attachedWhileHookHeld, false)
+    assert.equal(calls.filter((call) => call === 'keepsPaneOpen').length, 1)
+    assert.equal(calls.indexOf('keepsPaneOpen'), 0)
+  } finally {
     harness.viewport.close()
   }
 })

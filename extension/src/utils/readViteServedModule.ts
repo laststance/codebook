@@ -33,8 +33,8 @@ const servedMapSchema = z.object({
   sourceRoot: z.literal('').optional(),
 })
 
-/** Ends a seal with the refusal that names the stop, the reason and the fix. */
-type Refuse = (reason: string) => never
+/** Ends a seal with the `VITE_SEAL_FAILED` refusal that names the stop, the reason and the fix; the optional way out replaces the generic advice for a refusal that has its own. */
+type Refuse = (reason: string, wayOut?: string) => never
 
 /** Reads a response body whole, ending the read as soon as it passes the byte cap. */
 async function readCappedBody(
@@ -199,7 +199,9 @@ async function normalizeServedMap(
     )
   if (retained !== sourceText)
     refuse(
-      `the inline map of ${address.url} carries source text that differs from the file`,
+      `the inline map of ${address.url} carries source text that differs from the file: most likely a Vite plugin rewrote this file without a source map, so the served map's sourcesContent is the rewritten text and the executed code is not the file on disk; a file edited after the dev server transformed it gives the same result`,
+      // This refusal's stop is already in a JavaScript or TypeScript file, so the generic advice to move it does not apply.
+      "Stop in a module the plugin leaves alone, or turn the plugin off with its own development switch, then start again; if you edited the file after the run's dev server started, save it unchanged and start again.",
     )
   return JSON.stringify({
     ...map,
@@ -234,10 +236,13 @@ export async function readViteServedModule(
   signal: AbortSignal,
 ) {
   const started = performance.now()
-  const refuse: Refuse = (reason) => {
+  const refuse: Refuse = (
+    reason,
+    wayOut = 'Move the stop to a JavaScript or TypeScript file under the package root that the entry page loads.',
+  ) => {
     throw viteRefusal(
       'VITE_SEAL_FAILED',
-      `Declared stop ${source.path}:${source.line} cannot be sealed: ${reason}. Move the stop to a JavaScript or TypeScript file under the package root that the entry page loads.`,
+      `Declared stop ${source.path}:${source.line} cannot be sealed: ${reason}. ${wayOut}`,
     )
   }
   const sourceText = await readRepositoryBuildText(
