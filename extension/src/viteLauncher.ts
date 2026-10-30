@@ -7,13 +7,14 @@ import {
   VITE_ERROR_LINE_LIMIT_CHARS,
   VITE_ERROR_LINE_WITHHELD_SENTENCE,
   VITE_LAUNCHER_MESSAGES,
+  VITE_DEFAULT_ENV_PREFIX,
   VITE_MASKED_VALUE_MIN_CHARS,
+  VITE_MODE_ENV_NAMES,
 } from './constants'
 import { findViteConfigFileName } from './utils/findViteConfigFileName'
 import { hasOwnHmrListener } from './utils/hasOwnHmrListener'
 import { isViteLauncherCommand } from './utils/isViteLauncherCommand'
 import { maskKnownValues } from './utils/maskKnownValues'
-import { readEnvFileKeys } from './utils/readEnvFileKeys'
 import {
   waitForViteOptimizerIdle,
   type ViteDependencyOptimizer,
@@ -33,6 +34,7 @@ type ViteServer = {
     cacheDir: string
     mode: string
     envDir?: string | false
+    envPrefix?: string | string[]
     configFile?: string
     appType?: string
     server: {
@@ -65,13 +67,16 @@ type ViteModule = {
 }
 
 /**
- * Reads the values of the project's env files best-effort, so a launcher message can be masked by value.
+ * Reads the values Vite would load from the project's env files or inline into client code, best-effort, so a launcher message can be masked by value.
+ *
+ * Why it exists: a refusal or saved output must never quote a `.env` secret or a prefixed value of the real environment. Called by {@link run} when it reports env values, facts or a failure.
+ *
  * @param vite - The app's Vite module, when it was imported.
  * @param options - The launcher's options (root and mode).
- * @param config - The resolved config, once there is one: its `envDir` and `mode` are the ones Vite really loaded.
+ * @param config - The resolved config, once there is one: its `envDir`, `envPrefix` and `mode` are the ones Vite really loaded.
  * @returns The values of at least {@link VITE_MASKED_VALUE_MIN_CHARS} characters; empty when Vite is not loaded or cannot read them.
- * Only values of variables an env file defines are returned, as `loadEnv` expands them against the real environment (so `${VAR}` in a file reads as Vite inlines it); `HOME` or `PATH` stay readable in a refusal. `process.env` is never swapped.
- * Limit: before the config resolved (an import failure, a config that throws or exits) the values come from the package root and the dev script's mode; values of a custom `envDir` are masked only once the config resolved, which is why {@link run} never quotes the error line of a config that failed before it resolved.
+ * `loadEnv` (not Node's dotenv parser) names and expands the values, so every syntax Vite accepts (`NAME=value`, `NAME: value`, `${VAR}`) is covered. An entry is kept when the environment before the call did not define its name (an env file did) or its name starts with an env prefix (`VITE_` unless the config sets `envPrefix`), which Vite inlines into client code; the mode names ({@link VITE_MODE_ENV_NAMES}) are never kept, so `HOME` or `PATH` stay readable in a refusal. `process.env` is never swapped.
+ * Limit: before the config resolved (an import failure, a config that throws or exits) the values come from the package root and the dev script's mode with the default prefix; values of a custom `envDir` are masked only once the config resolved, which is why {@link run} never quotes the error line of a config that failed before it resolved.
  * @example
  * loadedEnvValues(vite, options) // => ['plainsecretvalue']
  */
@@ -84,14 +89,38 @@ function loadedEnvValues(
     const envDir =
       config && typeof config.envDir === 'string' ? config.envDir : options.root
     const mode = config?.mode ?? options.mode ?? 'development'
+    const prefixes = envPrefixesOf(config)
+    // Taken before loadEnv: a name absent here was defined by an env file.
+    const environmentBefore = { ...process.env }
     const loaded = vite?.loadEnv(mode, envDir, '') ?? {}
-    // The names come from the env files; the values from loadEnv, which expands them like Vite does.
-    return readEnvFileKeys(envDir, mode)
-      .map((name) => loaded[name] ?? '')
-      .filter((value) => value.length >= VITE_MASKED_VALUE_MIN_CHARS)
+    return Object.entries(loaded)
+      .filter(
+        ([name, value]) =>
+          (!(name in environmentBefore) ||
+            prefixes.some((prefix) => name.startsWith(prefix))) &&
+          !VITE_MODE_ENV_NAMES.includes(name) &&
+          value.length >= VITE_MASKED_VALUE_MIN_CHARS,
+      )
+      .map(([, value]) => value)
   } catch {
     return []
   }
+}
+
+/**
+ * Lists the prefixes whose environment variables Vite inlines into client code.
+ *
+ * Why it exists: {@link loadedEnvValues} must also mask a prefixed value that only the real environment defines. Called by it.
+ *
+ * @param config - The resolved config, once there is one.
+ * @returns The config's `envPrefix` as a list, or `VITE_` when it sets none.
+ * @example
+ * envPrefixesOf(undefined) // => ['VITE_']
+ */
+function envPrefixesOf(config?: ViteServer['config']): string[] {
+  const configured = config?.envPrefix
+  if (configured === undefined) return [VITE_DEFAULT_ENV_PREFIX]
+  return typeof configured === 'string' ? [configured] : configured
 }
 
 /**

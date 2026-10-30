@@ -2256,6 +2256,15 @@ export const NODE_VERSION_TIMEOUT_MS = 10_000
 /** The shortest environment value (characters) the launcher diagnostics mask by value, so a short common word is not blanked everywhere. */
 export const VITE_MASKED_VALUE_MIN_CHARS = 6
 
+/** The prefix of the environment variables Vite inlines into client code when a config sets no `envPrefix`. */
+export const VITE_DEFAULT_ENV_PREFIX = 'VITE_'
+
+/** The variables `loadEnv` also returns that only name the mode (not secrets); masking them would blank "development" in a refusal. */
+export const VITE_MODE_ENV_NAMES: readonly string[] = [
+  'NODE_ENV',
+  'VITE_USER_NODE_ENV',
+]
+
 /** The most messages an owned development server's IPC channel keeps unread; project code that floods the channel loses the newest messages instead of growing memory. */
 export const DEVELOPMENT_SERVER_MESSAGE_QUEUE_LIMIT = 32
 

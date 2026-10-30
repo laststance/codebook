@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
+import { fork } from 'node:child_process'
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
-import { createServer } from 'node:net'
+import { connect, createServer } from 'node:net'
 import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -454,6 +455,73 @@ test('a config error keeps a process.env value readable while masking the .env v
   assert.equal(error.message.includes('plainsecret1'), false)
 })
 
+// Value: protects=a .env value written in dotenv's colon form (which Vite loads and inlines) is masked in a refusal; fails_when=the names come from Node's parseEnv, which drops the colon form; why_new=Cycle 0064 ship pass 1; seam=none; no_claim=other dotenv forms
+test('a .env value written as "NAME: value" is masked in a refusal', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const run = await startVite(context, {
+    files: { '.env': 'VITE_COLON_KEY: coloncsecret1\n' },
+    behavior: { port, listenThrows: 'cannot connect with coloncsecret1 now' },
+  })
+  // Act
+  const error = await refusalOf(run.started)
+  // Assert
+  assert.equal(error.code, 'VITE_LAUNCHER_FAILED')
+  assert.ok(
+    error.message.includes('cannot connect with [masked] now'),
+    error.message,
+  )
+  assert.equal(error.message.includes('coloncsecret1'), false)
+})
+
+// Value: protects=the launcher reports a VITE_-prefixed value that only its environment defines (Vite inlines it into client code) for masking, and no other environment value; fails_when=masking keeps only the names an env file defines, or every process.env entry; why_new=Cycle 0064 ship pass 1; seam=a direct fork of the compiled launcher with its own environment (the extension's allowlist never forwards such a variable, so only the launcher can show it); no_claim=a custom envPrefix
+test('the launcher reports a VITE_ prefixed environment-only value for masking but not an unprefixed one', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const repository = await createViteRepository(context)
+  await repository.behave({ port })
+  const launcher = fork(
+    LAUNCHER,
+    [
+      JSON.stringify({
+        viteEntry: join(repository.root, 'node_modules/vite/index.mjs'),
+        root: repository.root,
+        mode: undefined,
+        configFile: undefined,
+        port,
+      }),
+    ],
+    {
+      cwd: repository.root,
+      env: {
+        ...process.env,
+        VITE_ENV_ONLY_KEY: 'envonlysecret1',
+        PLAIN_ENV_ONLY: 'readablevalue1',
+      },
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    },
+  )
+  context.after(() => {
+    launcher.kill('SIGKILL')
+  })
+  const facts = new Promise<{ envValues: string[] }>((resolve) =>
+    launcher.on(
+      'message',
+      (message: { type?: string; envValues: string[] }) => {
+        if (message.type === 'vite-facts') {
+          launcher.send({ type: 'vite-refuse' })
+          resolve(message)
+        }
+      },
+    ),
+  )
+  // Act
+  const { envValues } = await facts
+  // Assert
+  assert.ok(envValues.includes('envonlysecret1'), envValues.join())
+  assert.equal(envValues.includes('readablevalue1'), false)
+})
+
 // Value: protects=a config that fails before it resolves never prints a value from its custom envDir, whatever file sets it; fails_when=the launcher quotes the error line of a failed config; why_new=Codebook cannot learn envDir without evaluating the failed config, so the line is never quoted (owner decision D7); seam=none; no_claim=a failure after the config resolved
 test('a config that fails before resolving never quotes its error line, so a value of an envDir set in an imported base config never prints', async (context) => {
   // Arrange
@@ -805,4 +873,54 @@ test('a .env secret is masked in the refusal, the evidence journal, the kept stu
       channels[channel].includes('[masked]'),
       `${channel} lacks [masked]`,
     )
+})
+
+// Value: protects=a launcher whose first command after the facts is vite-await-optimizer (sent too early) never listens; fails_when=the launcher treats any command but a refusal as permission to listen; why_new=Cycle 0064 ship pass 1; seam=a direct fork of the compiled launcher; no_claim=the optimizer wait after listening
+test('a vite-await-optimizer command sent before vite-listen makes the launcher exit without listening', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const repository = await createViteRepository(context)
+  await repository.behave({ port })
+  const reports: { type?: string }[] = []
+  const launcher = fork(
+    LAUNCHER,
+    [
+      JSON.stringify({
+        viteEntry: join(repository.root, 'node_modules/vite/index.mjs'),
+        root: repository.root,
+        mode: undefined,
+        configFile: undefined,
+        port,
+      }),
+    ],
+    { cwd: repository.root, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] },
+  )
+  context.after(() => {
+    launcher.kill('SIGKILL')
+  })
+  const exited = new Promise<number | null>((resolve) =>
+    launcher.once('exit', (code) => resolve(code)),
+  )
+  launcher.on('message', (message: { type?: string }) => {
+    reports.push(message)
+    if (message.type === 'vite-facts')
+      launcher.send({ type: 'vite-await-optimizer' })
+  })
+  // Act
+  const exitCode = await exited
+  const portAnswers = await new Promise<boolean>((resolve) => {
+    const probe = connect({ port, host: '127.0.0.1' })
+    probe.once('connect', () => {
+      probe.destroy()
+      resolve(true)
+    })
+    probe.once('error', () => resolve(false))
+  })
+  // Assert
+  assert.equal(exitCode, 0)
+  assert.equal(portAnswers, false)
+  assert.deepEqual(
+    reports.map((report) => report.type),
+    ['vite-env', 'vite-facts'],
+  )
 })
