@@ -1361,3 +1361,131 @@ test("a repository run's lease opens only its own stop files beside the Applicat
     await harness.close()
   }
 })
+
+/**
+ * Opens a repository run's Application in Cursor beside the Agent chat, with actions.ts in front of group 2 and auth.ts in group 3, for the stop-file tests below; the run declared a stop in src/theme.ts, which is open nowhere.
+ */
+async function openRunBesideChat() {
+  const harness = await workspaceHarness(true, true)
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.rebuildTabObjectsAtGroupRemoval()
+  harness.closeEmptyGroupsAfterPanelMove()
+  harness.removeGroupLeftByPanelMoveLater()
+  harness.reportsPaneMoveAsOpenThenClose()
+  harness.replacesPreviewTabOnTextPreview()
+  harness.acknowledgeContext()
+  const receipt = harness.service.start({
+    instanceId: harness.service.instanceId,
+    profile: 'repository-browser',
+    configuration: harness.configuration,
+    key: 'declares-the-stop',
+  })
+  await harness.service.records.get(receipt.runId)!.preparation
+  const runtimeId = harness.service.records.get(receipt.runId)!.runtime!.id
+  harness.focusMutableDraft('auth.ts', 3)
+  harness.focusMutableDraft('actions.ts', 2)
+  await harness.reader.open()
+  chat.focusTab()
+  const viewport = await harness.reader.presentation.createViewport(
+    runtimeId,
+    () => {},
+    () => {},
+    'normal',
+  )
+  const attach = (): Promise<void> =>
+    viewport.attach(
+      {
+        on: () => undefined,
+        request: async () => ({}),
+        subscribe: async () => undefined,
+      },
+      new AbortController().signal,
+    )
+  return { harness, chat, viewport, attach }
+}
+
+// Value: protects=the file a learner is reading in the group beside the Application staying in front when the run opens its stop files there before the first pause (Cycle 0064 pt3 CodeRabbit CLI, task 97): each stop file shown there became the front tab, so the learner's open file was replaced in front before any pause; fails_when=the lease does not bring the group's earlier front tab back after the stop files open, or takes the keyboard to do it; why_new=Cycle 0064 pt3 local CodeRabbit CLI; seam=createViewport (a live repository run), declared run stops, BrowserViewport.attach, addSeparateEditorPart (the Agent chat holds the keyboard); no_claim=the real Cursor's answer (native Cursor trial)
+test("a repository run's stop file opened beside the Application leaves the file the learner reads in front", async () => {
+  // Arrange: a file of the learner's is in front of group 2, and the Agent chat has the keyboard.
+  const { harness, chat, viewport, attach } = await openRunBesideChat()
+  try {
+    const frontBefore = harness.groups.find(
+      (candidate) => candidate.viewColumn === 2,
+    )!.activeTab?.label
+    assert.ok(frontBefore)
+
+    // Act
+    await attach()
+
+    // Assert: the stop file is a tab of group 2 behind the same front tab, and the chat still has the keyboard.
+    const group = harness.groups.find(
+      (candidate) => candidate.viewColumn === 2,
+    )!
+    assert.equal(
+      group.tabs.some((tab) => tab.label === 'theme.ts'),
+      true,
+    )
+    assert.equal(group.activeTab?.label, frontBefore)
+    assert.equal(chat.focused(), true)
+    assert.equal(harness.textDocumentShows().at(-1)?.preserveFocus, true)
+  } finally {
+    viewport.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=a tab the learner chooses in the group beside the Application while the run opens its stop files staying in front; fails_when=the lease brings its remembered front tab back although the learner selected another tab after the stop file opened; why_new=Cycle 0064 pt3 local CodeRabbit CLI; seam=createViewport, BrowserViewport.attach, changeAfterNextSourceDisplay (the learner's choice right after the show); no_claim=the real Cursor's answer
+test('a tab the learner selects while the stop file opens beside the Application stays in front', async () => {
+  // Arrange: actions.ts is in front of group 2; right after the stop file shows, the learner opens notes.ts there.
+  const { harness, viewport, attach } = await openRunBesideChat()
+  try {
+    harness.changeAfterNextSourceDisplay(() =>
+      harness.openAnnouncedKeptFile('notes.ts', 2),
+    )
+
+    // Act
+    await attach()
+
+    // Assert: notes.ts, the learner's newer choice, is in front; the stop file stays open in the group.
+    const group = harness.groups.find(
+      (candidate) => candidate.viewColumn === 2,
+    )!
+    assert.equal(group.activeTab?.label, 'notes.ts')
+    assert.equal(
+      group.tabs.some((tab) => tab.label === 'theme.ts'),
+      true,
+    )
+  } finally {
+    viewport.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=the stop file being opened as a file tab beside the Application when only a git (virtual) tab of the same path stands in another group; fails_when=the already-open check compares the path alone, so a git original counts as the file and the debugger's preview replaces the Application; why_new=Cycle 0064 pt3 local CodeRabbit CLI; seam=createViewport, BrowserViewport.attach, addVirtualTextTab; no_claim=the real Cursor's answer
+test('a git tab of the stop file in another group does not keep the run from opening the file beside the Application', async () => {
+  // Arrange: group 3 holds the git original of src/theme.ts, not the file.
+  const { harness, viewport, attach } = await openRunBesideChat()
+  try {
+    harness.addVirtualTextTab('src/theme.ts', 'git', 3)
+
+    // Act
+    await attach()
+
+    // Assert: the file itself is a tab of group 2.
+    const group = harness.groups.find(
+      (candidate) => candidate.viewColumn === 2,
+    )!
+    assert.equal(
+      group.tabs.some((tab) => tab.label === 'theme.ts'),
+      true,
+    )
+  } finally {
+    viewport.close()
+    await harness.close()
+  }
+})

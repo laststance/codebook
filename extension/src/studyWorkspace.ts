@@ -10283,33 +10283,96 @@ export class StudyWorkspace {
     runId: string,
   ): Promise<void> {
     // Written as the run resolved them: the canonical form is lowercased on macOS and Windows and is for comparing only; only this lease's run, never an earlier run's or another study's.
-    for (const stopFile of this.declaredRunStopFiles((path) => path, runId)) {
-      signal?.throwIfAborted()
-      const canonicalStopFile = canonicalFsPath(stopFile)
-      const applicationColumn = this.viewColumnOf(panel)
-      const isOpenOutsideApplication = vscode.window.tabGroups.all.some(
-        (group) =>
-          group.viewColumn !== applicationColumn &&
-          group.tabs.some(
-            (tab) =>
-              tab.input instanceof vscode.TabInputText &&
-              canonicalFsPath(tab.input.uri.fsPath) === canonicalStopFile,
-          ),
+    const stopFiles = this.declaredRunStopFiles((path) => path, runId)
+    const canonicalStopFiles = new Set(
+      [...stopFiles].map((stopFile) => canonicalFsPath(stopFile)),
+    )
+    // The learner's front text tab of each destination group before the first stop file opened there, by column.
+    const frontTabsBefore = new Map<vscode.ViewColumn, vscode.Uri>()
+    try {
+      for (const stopFile of stopFiles) {
+        signal?.throwIfAborted()
+        const canonicalStopFile = canonicalFsPath(stopFile)
+        const applicationColumn = this.viewColumnOf(panel)
+        const isOpenOutsideApplication = vscode.window.tabGroups.all.some(
+          (group) =>
+            group.viewColumn !== applicationColumn &&
+            group.tabs.some(
+              (tab) =>
+                tab.input instanceof vscode.TabInputText &&
+                // A git or other virtual tab of the same path is not the file.
+                tab.input.uri.scheme === 'file' &&
+                canonicalFsPath(tab.input.uri.fsPath) === canonicalStopFile,
+            ),
+        )
+        if (isOpenOutsideApplication) continue
+        // Read anew for each file: a show can change the groups.
+        const destination = this.sourceGroupAfterApplication(applicationColumn)
+        if (!destination) continue
+        const frontInput = destination.activeTab?.input
+        if (
+          !frontTabsBefore.has(destination.viewColumn) &&
+          frontInput instanceof vscode.TabInputText
+        )
+          frontTabsBefore.set(destination.viewColumn, frontInput.uri)
+        try {
+          await this.showTextDocumentNoted(vscode.Uri.file(stopFile), {
+            viewColumn: destination.viewColumn,
+            preserveFocus: true,
+            // A kept tab replaces no preview of the learner's.
+            preview: false,
+          })
+        } catch (error) {
+          // A file the editor cannot open leaves the run as it was; only a cancelled run ends here.
+          if (signal?.aborted) throw error
+          this.report('layout', error)
+        }
+      }
+    } finally {
+      await this.restoreFrontTabsAfterStopFiles(
+        frontTabsBefore,
+        canonicalStopFiles,
       )
-      if (isOpenOutsideApplication) continue
-      // Read anew for each file: a show can change the groups.
-      const destination = this.sourceGroupAfterApplication(applicationColumn)
-      if (!destination) continue
+    }
+  }
+
+  /**
+   * Brings the learner's earlier front tab of a group back to the front after {@link openRunStopFilesBesideApplication} put stop files in front of it, without the keyboard; a tab is never closed or moved.
+   * A group is left alone when its earlier front tab is gone, or when its front tab is not one of the run's stop files (the learner chose another tab meanwhile).
+   * @param frontTabsBefore - The earlier front text tab's uri by group column.
+   * @param canonicalStopFiles - The canonical paths of the run's stop files.
+   * @returns Once every group that needed it shows its earlier tab; a refused show is reported, no error.
+   * @example await this.restoreFrontTabsAfterStopFiles(new Map([[2, Uri.file('/repo/auth.ts')]]), new Set(['/repo/src/index.tsx']))
+   */
+  private async restoreFrontTabsAfterStopFiles(
+    frontTabsBefore: ReadonlyMap<vscode.ViewColumn, vscode.Uri>,
+    canonicalStopFiles: ReadonlySet<string>,
+  ): Promise<void> {
+    for (const [column, previousUri] of frontTabsBefore) {
+      // The group is found again by its column: the editor can replace group objects at a show.
+      const group = vscode.window.tabGroups.all.find(
+        (candidate) => candidate.viewColumn === column,
+      )
+      const front = group?.activeTab?.input
+      const isSameUri = (input: unknown): boolean =>
+        input instanceof vscode.TabInputText &&
+        input.uri.toString() === previousUri.toString()
+      if (
+        !group ||
+        isSameUri(front) ||
+        !group.tabs.some((tab) => isSameUri(tab.input)) ||
+        // Only a stop file the run opened in front is replaced; any other front tab is the learner's choice.
+        !(front instanceof vscode.TabInputText) ||
+        front.uri.scheme !== 'file' ||
+        !canonicalStopFiles.has(canonicalFsPath(front.uri.fsPath))
+      )
+        continue
       try {
-        await this.showTextDocumentNoted(vscode.Uri.file(stopFile), {
-          viewColumn: destination.viewColumn,
+        await this.showTextDocumentNoted(previousUri, {
+          viewColumn: column,
           preserveFocus: true,
-          // A kept tab replaces no preview of the learner's.
-          preview: false,
         })
       } catch (error) {
-        // A file the editor cannot open leaves the run as it was; only a cancelled run ends here.
-        if (signal?.aborted) throw error
         this.report('layout', error)
       }
     }

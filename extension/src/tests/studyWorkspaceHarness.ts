@@ -7501,6 +7501,31 @@ export async function workspaceHarness(
       for (const listener of tabChangeListeners)
         listener({ opened: [opened.tab], closed: [], changed: [] })
     },
+    /**
+     * Leaves a text tab of a virtual document (a `git` original, for example) behind a group's front tab, with the same path as a file of the folder; it announces nothing and takes no keyboard.
+     * @param filename - The folder file whose path the virtual document shares.
+     * @param scheme - The virtual document's uri scheme.
+     * @param column - The view column of the group.
+     * @returns The tab.
+     * @example harness.addVirtualTextTab('theme.ts', 'git', 3) // theme.ts's git original in group 3
+     */
+    addVirtualTextTab(filename: string, scheme: string, column: number): Tab {
+      const group = groups.find((candidate) => candidate.viewColumn === column)!
+      const tab: Tab = {
+        input: new TabInputText(
+          Uri.from({
+            scheme,
+            authority: '',
+            path: Uri.file(join(harness.directory, filename)).path,
+          }),
+        ),
+        label: `${filename} (${scheme})`,
+        isPreview: false,
+        isDirty: false,
+      }
+      group.tabs.push(tab)
+      return tab
+    },
     /** Gives presentation/scope regressions a learner-owned document whose edits do not move its tab. @example const draft = harness.focusMutableDraft('notes.txt', 2); draft.replaceContent('new text'); */
     focusMutableDraft(
       filename = 'mutable-notes.txt',
