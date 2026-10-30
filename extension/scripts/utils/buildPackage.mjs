@@ -79,7 +79,8 @@ export async function buildPackage(
         'Compiled metadata does not match package inputs.',
       )
       const capturedInputs = new Map()
-      const result = await bundle({
+      // The options object is kept so the manifest records the target esbuild really received, not a second copy of the constant.
+      const bundleOptions = {
         absWorkingDir: repository,
         entryPoints: {
           extension: 'extension/dist/extension.js',
@@ -121,7 +122,8 @@ export async function buildPackage(
           'process.env.WS_NO_BUFFER_UTIL': '"1"',
           'process.env.WS_NO_UTF_8_VALIDATE': '"1"',
         },
-      })
+      }
+      const result = await bundle(bundleOptions)
       assert.equal(
         result.warnings.length,
         0,
@@ -197,7 +199,8 @@ export async function buildPackage(
           node: process.versions.node,
           pnpm: pnpmVersion.trim(),
           esbuild: esbuildVersion,
-          bundleTarget: BUNDLE_NODE_TARGET,
+          // Read from the options esbuild ran with, so a literal restored in `target` shows in the manifest.
+          bundleTarget: bundleOptions.target,
           vsce: vsceManifest.version,
           typescript: typescriptManifest.version,
         },
