@@ -84,7 +84,7 @@ export async function configuredRuntimeHarness(
     adapter?: 'vite-dev'
     /** Makes the Vite stand-in refuse to seal with this sentence, as a missing served module does. */
     sealFailure?: string
-    /** Makes the Vite stand-in never finish reading the served module, as a server that stops answering does while a stop is sealed. */
+    /** Makes the stand-in seal (the Vite served-module read, or the Next `.next/dev` read) never finish, as a server that stops answering does while a stop is sealed. */
     sealHangs?: boolean
     /** The executed module's text instead of the default one-statement module, such as a Vite module with an inlined env value. */
     moduleJavascript?: string
@@ -694,8 +694,11 @@ export async function configuredRuntimeHarness(
       constructor(readonly location: unknown) {}
     },
   }
+  // The entry path the run passed to each readiness check of the stand-in server, in order.
+  const readyEntryPaths: (string | undefined)[] = []
   const fakeApplication = {
-    ready: async () => {
+    ready: async (_signal: AbortSignal, entryPath?: string) => {
+      readyEntryPaths.push(entryPath)
       releases.push('application acquired')
       return 'http://127.0.0.1:4321'
     },
@@ -778,7 +781,18 @@ export async function configuredRuntimeHarness(
         },
       },
       './utils/readDevelopmentBundle': {
-        readDevelopmentBundle: async () => ({ bundle, discovery: {} }),
+        readDevelopmentBundle: async (
+          _workspace: string,
+          _source: unknown,
+          signal: AbortSignal,
+        ) => {
+          // A hung `.next/dev` read ends only when the run is cancelled.
+          if (options.sealHangs)
+            await new Promise<never>((_resolve, reject) =>
+              signal.addEventListener('abort', () => reject(signal.reason)),
+            )
+          return { bundle, discovery: {} }
+        },
       },
       './utils/assertDevelopmentWorkspace': {
         assertDevelopmentWorkspace: async () => undefined,
@@ -987,6 +1001,8 @@ export async function configuredRuntimeHarness(
     },
     /** Every URL the run navigated the page to, in order. */
     navigations,
+    /** The entry path the run passed to each readiness check of the stand-in server (`app.ready`), in order. */
+    readyEntryPaths,
     /** The configuration of each browser the run launched, in order. */
     launchConfigurations,
     /** Reports another main-frame page load, as a Vite dependency-optimizer reload or a click's navigation does. @example harness.reloadPage() */
