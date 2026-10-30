@@ -30,6 +30,8 @@ const contract = {
   adapter: 'next-dev-webpack',
   // Every adapter a configuration may name; `adapter` stays the Next default for older readers.
   adapters: ['next-dev-webpack', 'vite-dev'],
+  // The Next routers next-dev-webpack serves; an agent that remembers another list re-reads the help.
+  nextRouters: ['app', 'pages'],
   actions: [
     { id: REPOSITORY_BROWSER_ACTION, title: 'Perform configured action' },
   ],
@@ -54,7 +56,7 @@ const contract = {
     buildChunkBytes: REPOSITORY_CHUNK_LIMIT_BYTES,
   },
   scope:
-    "Two development runtimes, chosen by the configuration adapter. next-dev-webpack: installed Next webpack development runtime, default .next/dev output, retained original source maps; version 1 retains same-citation browser stops, version 2 takes browser stops and uses the owned Next worker for server-action stops. vite-dev (Vite 8, since API 1.11): the repository's own Vite development server started by Codebook on a loopback port, served modules sealed against their inline source maps, browser stops only (no SSR, no server participant). Both: an explicit same-origin entry path (default /), optional prepared text controls, one unique visible enabled target, one click, up to eight ordered verified pauses, each bound to its retained source citation, actual declared values and verified after conditions. No arbitrary launch commands, ports, roots, debugger expressions, expected runtime values or inferred server links. Native host compatibility requires installed validation.",
+    "Two development runtimes, chosen by the configuration adapter. next-dev-webpack: installed Next webpack development runtime, default .next/dev output, retained original source maps, serving App Router and Pages Router pages; version 1 retains same-citation browser stops, version 2 takes browser stops and uses the owned Next worker for server-action stops; a Pages Router page takes client stops only. vite-dev (Vite 8, since API 1.11): the repository's own Vite development server started by Codebook on a loopback port, served modules sealed against their inline source maps, browser stops only (no SSR, no server participant). Both: an explicit same-origin entry path (default /), optional prepared text controls, one unique visible enabled target, one click, up to eight ordered verified pauses, each bound to its retained source citation, actual declared values and verified after conditions. No arbitrary launch commands, ports, roots, debugger expressions, expected runtime values or inferred server links. Native host compatibility requires installed validation.",
 }
 export const CONFIGURED_PROFILE = {
   ...contract,

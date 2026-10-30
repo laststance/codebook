@@ -20,3 +20,18 @@ test('the public repository-browser catalog names the vite-dev adapter and its s
     /version 2 takes browser stops and uses the owned Next worker for server-action stops/,
   )
 })
+
+// Value: protects=an agent reading codebook_status learns which Next routers next-dev-webpack serves, and re-reads the help when the marker differs from what it remembers; fails_when=the marker is absent or lists other routers, or the scope still reads App-only; why_new=Cycle 0065 capability marker for the Pages Router; seam=none; no_claim=the run's own route resolution
+test('the public repository-browser catalog names the Next routers next-dev-webpack serves', () => {
+  // Arrange
+  const expectedRouters = ['app', 'pages']
+  // Act
+  const { nextRouters, scope } = CONFIGURED_PROFILE
+  // Assert
+  assert.deepEqual(nextRouters, expectedRouters)
+  assert.match(
+    scope,
+    /next-dev-webpack: installed Next webpack development runtime, default \.next\/dev output, retained original source maps, serving App Router and Pages Router pages;/,
+  )
+  assert.match(scope, /a Pages Router page takes client stops only\./)
+})
