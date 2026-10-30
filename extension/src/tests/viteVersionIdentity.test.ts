@@ -110,7 +110,7 @@ test('a vite-dev run names the Vite version in its run resource, its manifest an
   assert.ok('text' in resource && 'text' in manifest)
   assert.equal(JSON.parse(resource.text).viteVersion, '8.3.5')
   assert.equal(JSON.parse(manifest.text).viteVersion, '8.3.5')
-  assert.equal(archive?.version, 5)
+  assert.equal(archive?.version, 6)
   assert.equal(archive?.viteVersion, '8.3.5')
 })
 
@@ -125,6 +125,6 @@ test('a Next run has no viteVersion in its run resource, its manifest or its sav
   assert.ok('text' in resource && 'text' in manifest)
   assert.equal('viteVersion' in JSON.parse(resource.text), false)
   assert.equal('viteVersion' in JSON.parse(manifest.text), false)
-  assert.equal(archive?.version, 3)
+  assert.equal(archive?.version, 6)
   assert.equal(archive?.viteVersion, undefined)
 })

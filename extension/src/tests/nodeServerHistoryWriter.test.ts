@@ -128,7 +128,7 @@ test('a server header round-trips and stores the declared request with its secre
   const parsed = JSON.parse(stored)
 
   // Assert
-  assert.equal(parsed.formatVersion, 1)
+  assert.equal(parsed.formatVersion, 2)
   assert.equal(parsed.profile, 'node-server')
   assert.equal(
     parsed.declaredRequest.path,

@@ -56,8 +56,7 @@ export class ReplayDebugAdapter {
   private sources = new Map<number, NonNullable<RecordedFrame['source']>>()
   private groups = new Map<number, DebugProtocol.Variable[]>()
   private frameSources = new Map<number, number>()
-  /** Session handle of a caller frame's placeholder source, by frame id; its text is in {@link placeholderTexts}. */
-  private placeholderSources = new Map<number, number>()
+  /** The text a placeholder source handle serves (a caller frame whose executed text was not recorded), by session handle; its frame's handle is in {@link frameSources}. */
   private placeholderTexts = new Map<number, string>()
   private frameScopes = new Map<number, DebugProtocol.Scope[]>()
   private retiredFrameIds = new Set<number>()
@@ -229,7 +228,7 @@ export class ReplayDebugAdapter {
     }
     if (!frame.recordedLocation) return
     const placeholderId = ++this.nextHandle
-    this.placeholderSources.set(frameId, placeholderId)
+    this.frameSources.set(frameId, placeholderId)
     this.placeholderTexts.set(
       placeholderId,
       `${REPLAY_FRAME_TEXT_NOT_RECORDED_TEXT}\nRecorded location: ${frame.recordedLocation.path ?? frame.recordedLocation.name}:${frame.line}`,
@@ -288,13 +287,7 @@ export class ReplayDebugAdapter {
     this.selectedAtMs = Date.now()
     this.stoppedAtMs = undefined
     this.snapshot = undefined
-    this.frames.clear()
-    this.sources.clear()
-    this.groups.clear()
-    this.frameSources.clear()
-    this.placeholderSources.clear()
-    this.placeholderTexts.clear()
-    this.frameScopes.clear()
+    this.clearRecordedHandles()
     this.label = 'Not recorded at this moment'
     try {
       if (value) {
@@ -414,7 +407,7 @@ export class ReplayDebugAdapter {
                 ? {
                     source: {
                       name: frame.recordedLocation.name,
-                      sourceReference: this.placeholderSources.get(id),
+                      sourceReference: this.frameSources.get(id),
                       presentationHint: 'deemphasize' as const,
                       origin: REPLAY_FRAME_TEXT_NOT_RECORDED_ORIGIN,
                     },
@@ -543,14 +536,18 @@ export class ReplayDebugAdapter {
     this.selectionValid = false
     this.sourceDocument = undefined
     this.snapshot = undefined
+    this.clearRecordedHandles()
+    this.retiredFrameIds.clear()
+  }
+
+  /** Forgets every session handle of the recorded moment (frames, sources, placeholder texts, variable groups, scopes); called by {@link select} before another moment is served and by {@link dispose}. @example this.clearRecordedHandles() */
+  private clearRecordedHandles(): void {
     this.frames.clear()
     this.sources.clear()
+    this.placeholderTexts.clear()
     this.groups.clear()
     this.frameSources.clear()
-    this.placeholderSources.clear()
-    this.placeholderTexts.clear()
     this.frameScopes.clear()
-    this.retiredFrameIds.clear()
   }
 
   /** Marks the once-per-selection notification that the native client has now retrieved its recorded values; {@link notifyInspection} delivers it. @example this.reportInspection() */

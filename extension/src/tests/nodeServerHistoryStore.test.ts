@@ -100,7 +100,7 @@ test('a test header written by the generalized store has exactly the keys of the
     Object.keys(fixtureHeader).sort(),
   )
   assert.equal(written.profile, 'node-test')
-  assert.equal(written.version, 1)
+  assert.equal(written.version, 2)
 })
 
 // protects=a server history another window records lists as recording with what has been written, and opens its verified prefix; fails_when=it lists as interrupted or unavailable while its writer lives; no_claim=deleting it, which belongs to the workspace's Trash path (pt2)

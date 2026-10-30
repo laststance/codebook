@@ -689,8 +689,8 @@ test('the study of this window’s own stopped run stays removed through refresh
       harness.trashMoves.map((move) => move.path.slice(directory.length + 1)),
       [
         join('recordings.v2', harness.studyId),
-        `${harness.studyId}.study.meta.v3.json`,
-        `${harness.studyId}.study.v3.json`,
+        `${harness.studyId}.study.meta.v6.json`,
+        `${harness.studyId}.study.v6.json`,
       ],
     )
     assert.deepEqual(await library.list(), [])
@@ -2119,7 +2119,7 @@ test('a removal the Trash refuses at the first file of a study the ledger names 
     const ledgerBefore = await readFile(ledgerPath, 'utf8')
     harness.answerWarningDialogs(async ([confirm]) => confirm)
     // The Trash refuses only the first file, the catalog sidecar, and would take the archive: a removal that went on would leave that move in harness.trashMoves.
-    harness.rejectTrashMoves((path) => path.endsWith('.study.meta.v3.json'))
+    harness.rejectTrashMoves((path) => path.endsWith('.study.meta.v6.json'))
     // Act
     await requestRemoval(harness, harness.studyId)
     const afterRefusedMove = harness.reader.inspect().view!
@@ -2144,7 +2144,7 @@ test('a removal the Trash refuses at the first file of a study the ledger names 
     assert.deepEqual(structuredClone(afterRefusedMove.studyRemoval), {
       status: 'failed',
       studyId: harness.studyId,
-      text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Trash refused ${harness.studyId}.study.meta.v3.json`,
+      text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Trash refused ${harness.studyId}.study.meta.v6.json`,
     })
     assert.deepEqual(harness.trashMoves, [])
     assert.equal(JSON.parse(ledgerBefore).selection.studyId, harness.studyId)
@@ -3883,7 +3883,7 @@ test('a removal whose storage lock cannot be released after every file moved rep
     await readerSeams(harness).refresh()
     harness.answerWarningDialogs(async ([confirm]) => confirm)
     harness.beforeTrashMoves(async (path) => {
-      if (path.endsWith('.study.v3.json'))
+      if (path.endsWith('.study.v6.json'))
         await refuseLockRelease(context, directory)
     })
     // Act: the learner confirms while the first save is in flight; every file then moves and the lock release fails.
@@ -4060,7 +4060,7 @@ test('a removal that moved no file and cannot write the ledger back says that no
       await mkdir(join(ledgerPath, 'blocked'), { recursive: true })
     })
     // The Trash refuses only the first file, the catalog sidecar, and would take the archive: a removal that went on would leave that move in harness.trashMoves.
-    harness.rejectTrashMoves((path) => path.endsWith('.study.meta.v3.json'))
+    harness.rejectTrashMoves((path) => path.endsWith('.study.meta.v6.json'))
     // Act
     await requestRemoval(harness, harness.studyId)
     // Assert
@@ -4069,7 +4069,7 @@ test('a removal that moved no file and cannot write the ledger back says that no
     assert.match(
       view.studyRemoval?.text ?? '',
       new RegExp(
-        `^The saved study could not be moved to the ${TRASH}\\. Nothing was deleted\\. Trash refused ${harness.studyId}\\.study\\.meta\\.v3\\.json; the learner ledger could not be written back: EISDIR`,
+        `^The saved study could not be moved to the ${TRASH}\\. Nothing was deleted\\. Trash refused ${harness.studyId}\\.study\\.meta\\.v6\\.json; the learner ledger could not be written back: EISDIR`,
       ),
     )
     assert.deepEqual(harness.trashMoves, [])
@@ -4717,16 +4717,16 @@ test('after a removal refused because nothing was left of the study, a run refus
 
 // Value: protects=a study a newer Codebook saved is shown with the sentence that says what to do, is no storage failure, and is not half deleted by a Codebook that does not know its files; fails_when=its note counts as an error Retry storage should answer, or a delete request opens the Trash dialog for it (RT-1, DX-15, PC-4.1); why_new=the reader never listed a newer format; seam=the library directory, into which the test writes a file as a newer Codebook would name it
 test('a saved study in a newer format is listed with its note, adds no storage error and is refused when the learner asks to delete it', async () => {
-  // Arrange: one saved study, saved again in format 6 by a newer Codebook.
+  // Arrange: one saved study, saved again in format 7 by a newer Codebook.
   const harness = await workspaceHarness()
   try {
     const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
     await writeFile(
       join(
         harness.reader.inspect().libraryDirectory!,
-        `${study.id}.study.v6.json`,
+        `${study.id}.study.v7.json`,
       ),
-      JSON.stringify({ ...study, version: 6 }),
+      JSON.stringify({ ...study, version: 7 }),
     )
     await harness.reader.action('retry')
     // Act
@@ -4743,7 +4743,7 @@ test('a saved study in a newer format is listed with its note, adds no storage e
         [
           study.id,
           'newer',
-          'This study was saved in format 6 by a newer Codebook; this Codebook reads formats up to 5. Update the extension to open it. The study is kept as it is.',
+          'This study was saved in format 7 by a newer Codebook; this Codebook reads formats up to 6. Update the extension to open it. The study is kept as it is.',
         ],
       ],
     )
@@ -4765,7 +4765,7 @@ test('a saved study in a newer format is listed with its note, adds no storage e
 
 // Value: protects=after a rollback the reader still opens on a study it can read; fails_when=the reader tries to open the newest entry although a newer Codebook saved it, shows no study and reports its note as a storage failure (RT-1, PC-4.1); why_new=a newer format was never the first entry of the list; seam=the library directory, into which the test writes a file as a newer Codebook would name it, and a second reader over the same storage
 test('a reader that starts with a study of a newer Codebook as its newest entry shows the newest study it can read, without a storage line', async () => {
-  // Arrange: two saved studies and no saved selection; the newer of them was saved again in format 6, so the list shows it first.
+  // Arrange: two saved studies and no saved selection; the newer of them was saved again in format 7, so the list shows it first.
   const harness = await workspaceHarness()
   try {
     const readable = await saveEarlierStudy(
@@ -4779,9 +4779,9 @@ test('a reader that starts with a study of a newer Codebook as its newest entry 
     await writeFile(
       join(
         harness.reader.inspect().libraryDirectory!,
-        `${savedAgainByNewer.id}.study.v6.json`,
+        `${savedAgainByNewer.id}.study.v7.json`,
       ),
-      JSON.stringify({ ...savedAgainByNewer, version: 6 }),
+      JSON.stringify({ ...savedAgainByNewer, version: 7 }),
     )
     const restarted = harness.createReader()
     try {
@@ -5241,7 +5241,7 @@ test('after the archive of a stopped run could not be saved, Retry storage / ref
       library = await harness.reader.learningStorage(),
       archive = join(
         harness.reader.inspect().libraryDirectory!,
-        `${studyId}.study.v3.json`,
+        `${studyId}.study.v6.json`,
       )
     const beforeRetry = structuredClone({
       listed: (await library.list()).map((entry) => [entry.id, entry.format]),
@@ -5280,7 +5280,7 @@ test('after the archive of a stopped run could not be saved, Retry storage / ref
         entry.format,
         entry.metadata,
       ]),
-      [[studyId, 'v3', 'validated']],
+      [[studyId, 'v6', 'validated']],
     )
     assert.equal((await readFile(archive)).length > 0, true)
     assert.ok('text' in run)
@@ -5318,7 +5318,7 @@ test('after the archive of a stopped run could not be saved, the one press on Re
     })
     assert.deepEqual(
       (await library.list()).map((entry) => [entry.id, entry.format]),
-      [[unsaved.studyId, 'v3']],
+      [[unsaved.studyId, 'v6']],
     )
     const view = harness.reader.inspect().view!
     // No line at all is left (rows 266 and 280).
@@ -5910,7 +5910,7 @@ test('a Retry storage / refresh pressed while a study whose archive still waits 
         entry.id,
         entry.format,
       ]),
-      [[unsaved.studyId, 'v3']],
+      [[unsaved.studyId, 'v6']],
     )
   } finally {
     context.mock.restoreAll()
@@ -6013,7 +6013,7 @@ test('after the archive of a stopped run could not be saved, a reader made again
       history: 'failed',
     })
     assert.deepEqual(afterRetry, {
-      listed: [[unsaved.studyId, 'v3', 'validated']],
+      listed: [[unsaved.studyId, 'v6', 'validated']],
       errorLines: [],
     })
     assert.ok('text' in run)
@@ -6123,7 +6123,7 @@ for (const [situation, isWriteStillRunning, lineOfNewReader] of [
       })
       assert.deepEqual(afterRetry, {
         queued: 0,
-        listed: [[unsaved.studyId, 'v3', 'validated']],
+        listed: [[unsaved.studyId, 'v6', 'validated']],
         errors: [],
       })
       // The chosen study is shown: the captured source of the run's stop is rendered, without a line.
@@ -6242,7 +6242,7 @@ test('after the last save of the selected study failed, its archive on disk was 
     await rm(
       join(
         harness.reader.inspect().libraryDirectory!,
-        `${studyId}.study.v3.json`,
+        `${studyId}.study.v6.json`,
       ),
     )
     // Act: the workspace's folders change: the extension takes what the reader could not save, disposes it and makes a new reader with it. Then the disk is writable again and the learner presses Retry storage / refresh.
@@ -6272,7 +6272,7 @@ test('after the last save of the selected study failed, its archive on disk was 
     // Assert
     const capturedSourceOfTheStop = `codebook://${harness.service.instanceId}/runs/${harness.record.id}/snapshots/browser-session%3A1`
     assert.deepEqual(savedBeforeTheDiskRefused, {
-      listed: [[studyId, 'v3']],
+      listed: [[studyId, 'v6']],
       ledgerSelection: studyId,
     })
     assert.deepEqual(
@@ -6289,7 +6289,7 @@ test('after the last save of the selected study failed, its archive on disk was 
     })
     assert.deepEqual(afterRetry, {
       queued: 0,
-      listed: [[studyId, 'v3']],
+      listed: [[studyId, 'v6']],
       selected: studyId,
       ledgerSelection: studyId,
       shown: capturedSourceOfTheStop,
@@ -6309,7 +6309,7 @@ test('after the archive of the study of this window’s own stopped run was remo
   try {
     const library = await harness.reader.learningStorage(),
       directory = harness.reader.inspect().libraryDirectory!,
-      archive = join(directory, `${harness.studyId}.study.v3.json`)
+      archive = join(directory, `${harness.studyId}.study.v6.json`)
     const filesBefore = (await readdir(directory))
       .filter((name) => name.includes('.study.'))
       .sort()
@@ -6319,14 +6319,14 @@ test('after the archive of the study of this window’s own stopped run was remo
     await harness.reader.action('retry')
     // Assert
     assert.deepEqual(filesBefore, [
-      `${harness.studyId}.study.meta.v3.json`,
-      `${harness.studyId}.study.v3.json`,
+      `${harness.studyId}.study.meta.v6.json`,
+      `${harness.studyId}.study.v6.json`,
     ])
     assert.deepEqual(
       (await readdir(directory))
         .filter((name) => name.includes('.study.'))
         .sort(),
-      [`${harness.studyId}.study.meta.v3.json`],
+      [`${harness.studyId}.study.meta.v6.json`],
     )
     assert.deepEqual(
       (await library.list()).map((entry) => [entry.id, entry.format]),
@@ -6349,8 +6349,8 @@ async function removeStudyFilesByHand(
   studyId = harness.studyId,
 ): Promise<void> {
   const directory = harness.reader.inspect().libraryDirectory!
-  await rm(join(directory, `${studyId}.study.v3.json`))
-  await rm(join(directory, `${studyId}.study.meta.v3.json`))
+  await rm(join(directory, `${studyId}.study.v6.json`))
+  await rm(join(directory, `${studyId}.study.meta.v6.json`))
   await rm(join(directory, 'recordings.v2', studyId), {
     recursive: true,
   })
@@ -6457,7 +6457,7 @@ test('after the archive of the study of this window’s own stopped run was remo
     await rm(
       join(
         harness.reader.inspect().libraryDirectory!,
-        `${harness.studyId}.study.v3.json`,
+        `${harness.studyId}.study.v6.json`,
       ),
     )
     await harness.reader.action('retry')
@@ -9677,8 +9677,8 @@ test('a stopped and saved run whose study another window deletes with its record
         removal: { outcome: 'moved' },
         movedByTheOtherWindow: [
           join('recordings.v2', harness.studyId),
-          `${harness.studyId}.study.meta.v3.json`,
-          `${harness.studyId}.study.v3.json`,
+          `${harness.studyId}.study.meta.v6.json`,
+          `${harness.studyId}.study.v6.json`,
         ],
         filesOfTheStudy: [],
         recordings: [],
@@ -10593,7 +10593,7 @@ test('a recorded run whose saves cannot look at its recording folder keeps its s
       {
         errors: [],
         history: 'saved',
-        listed: [[studyId, 'v3']],
+        listed: [[studyId, 'v6']],
         isRecordingSealed: true,
       },
     )

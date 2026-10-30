@@ -227,7 +227,7 @@ for (const scenario of [
       recording = await restarted.read(archive.id)
 
     // Assert: a restarted reader recovers each participant's own source/values, including repeated server generation.
-    assert.equal(archive.version, 4)
+    assert.equal(archive.version, 6)
     assert.equal(recording.header?.version, 3)
     assert.equal(
       service.state(record).recordedStudyOutcome,
@@ -376,7 +376,7 @@ test('version 2 with a mismatched citation fails before runtime acquisition and 
   // Assert
   assert.equal(record.error?.code, 'INVALID_CONFIGURATION')
   assert.equal(runtimes.length, 0)
-  assert.equal(archive.version, 4)
+  assert.equal(archive.version, 6)
   assert.equal(archive.finalOutcome, 'not-demonstrated')
   assert.deepEqual(archive.observations, [])
   await library.saveStudy(archive)
