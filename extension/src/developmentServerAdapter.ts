@@ -1,3 +1,4 @@
+import type { ViteSetupStep } from './constants'
 import type { BundleSource } from './repositoryBundle'
 import type { RepositoryConfiguration } from './repositoryConfigSchemas'
 import type { PortCheckOptions } from './utils/assertDevelopmentPortFree'
@@ -31,7 +32,7 @@ export type DevelopmentServerStart = {
     refuse?: PortCheckOptions['refuse'],
   ) => Promise<void>
   /** Names the setup step reached (`resolving the Vite config`, `starting Vite`), so a setup-deadline refusal can say where it stopped. */
-  onStep: (step: string) => void
+  onStep: (step: ViteSetupStep) => void
   /** Reports where the port was declared, once known, for the run resource. */
   onDeclaredPort: (declared: DeclaredDevelopmentPort) => void
   /** Hands the started server to the run the moment it exists, so cleanup closes it even when a later step fails. */
@@ -86,9 +87,22 @@ export interface DevelopmentServerAdapter {
     port: number
     /** The Vite version the launcher reported from the resolved `vite/package.json` (Vite only). */
     viteVersion?: string
+    /** Masks the values the start learned (dev-script assignments and env-file values) in text the run keeps, such as a sealed module; the mask reads its values at call time. Vite only. */
+    maskText?: (text: string) => string
+    /** Masks only the env-file and script values, with no secret-shape redaction, in the sealed module text and map a run keeps: project code can hold credential-shaped literals that are not env values. Vite only. */
+    maskModuleText?: (text: string) => string
   }>
   /** Reads the identity of the dev lock the started server owns; only Next has one. */
   readOwnedLock(workspace: string): Promise<DevelopmentLockIdentity | undefined>
+  /**
+   * Waits until the server has finished work that would reload the page by itself (Vite's dependency optimizer); Next has none and returns at once.
+   * Called by the run before each quiet window of the page, bounded by `timeoutMs` and `signal`.
+   */
+  waitForServerSettled(
+    app: DevelopmentApp,
+    timeoutMs: number,
+    signal: AbortSignal,
+  ): Promise<void>
   /** Seals the module one declared stop runs in. */
   readBundle(request: DevelopmentBundleRequest): Promise<DevelopmentBundle>
   /** The js-debug launch fields of the browser that opens the app. */

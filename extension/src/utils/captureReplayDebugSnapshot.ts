@@ -51,6 +51,8 @@ interface CaptureInput {
   ): PromiseLike<unknown>
   assertCurrent(): void
   signal?: AbortSignal
+  /** Masks the values a Vite run learned from its env files in every saved string; absent for a run without such values. */
+  maskKnownText?(text: string): string
   limits?: {
     timeoutMs: number
     maxFrames: number
@@ -106,7 +108,7 @@ export async function captureReplayDebugSnapshot(
   const deadline = performance.now() + timeoutMs
   // Masks secrets before the cut, for every field: a secret straddling the cut would otherwise leave a fragment shorter than any pattern's minimum.
   const shorten = (value: string) => {
-    const masked = redactSecretText(value)
+    const masked = redactSecretText(input.maskKnownText?.(value) ?? value)
     return masked.length <= REPLAY_DEBUG_TEXT_LIMIT_CHARS
       ? masked
       : `${masked.slice(0, REPLAY_DEBUG_TEXT_LIMIT_CHARS - REPLAY_DEBUG_TRUNCATION_MARKER.length)}${REPLAY_DEBUG_TRUNCATION_MARKER}`

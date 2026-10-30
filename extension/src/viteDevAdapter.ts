@@ -2,6 +2,7 @@ import { join } from 'node:path'
 
 import type { DevelopmentServerAdapter } from './developmentServerAdapter'
 import { assessViteWorkspace } from './utils/assessViteWorkspace'
+import { awaitViteOptimizerIdle } from './utils/awaitViteOptimizerIdle'
 import { isViteScriptOfModule } from './utils/isViteScriptOfModule'
 import { launchViteDevelopmentServer } from './utils/launchViteDevelopmentServer'
 import { readViteServedModule } from './utils/readViteServedModule'
@@ -29,6 +30,7 @@ export const VITE_DEV_ADAPTER: DevelopmentServerAdapter = {
   },
   // Vite has no development lock.
   readOwnedLock: async () => undefined,
+  waitForServerSettled: awaitViteOptimizerIdle,
   readBundle: (request) =>
     readViteServedModule(
       request.workspace,

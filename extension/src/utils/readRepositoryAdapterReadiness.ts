@@ -1,25 +1,18 @@
-import { access, readFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { z } from 'zod'
 
 import { VITE_SUPPORTED_MAJOR } from '../constants'
 
-import {
-  VITE_NO_DEV_SCRIPT_MESSAGE,
-  VITE_PNP_MESSAGE,
-  VITE_PREDEV_MESSAGE,
-  viteEnginesMessage,
-  viteMajorMessage,
-  viteScriptMessage,
-} from './assessViteWorkspace'
-import { parseViteDevScript } from './parseViteDevScript'
+import { hasNextExecutable } from './hasNextExecutable'
 import { readNodeVersion } from './readNodeVersion'
-import { resolveViteInstallation } from './resolveViteInstallation'
-import { satisfiesNodeRange } from './satisfiesNodeRange'
+import {
+  readViteWorkspaceGaps,
+  type ViteDevScriptReadiness,
+} from './readViteWorkspaceGaps'
 
-const NODE_NOT_CONFIGURED_MESSAGE =
-  'The Vite engines.node check needs the configured Node executable (codebook.nodeExecutable).'
+export type { ViteDevScriptReadiness }
 
 /** The Next prerequisite of one workspace. */
 export type NextAdapterReadiness = {
@@ -28,12 +21,6 @@ export type NextAdapterReadiness = {
   version?: string
   missing: string[]
 }
-
-/** The `dev` script state of a Vite workspace. */
-export type ViteDevScriptReadiness =
-  | { form: 'accepted' }
-  | { form: 'refused'; refused: string[] }
-  | { form: 'absent' }
 
 /** The Vite prerequisite of one workspace. */
 export type ViteAdapterReadiness = {
@@ -60,20 +47,12 @@ export type RepositoryAdapterReadiness = {
 }
 
 const nextPackageSchema = z.object({ version: z.string() })
-const scriptsSchema = z.object({
-  scripts: z.record(z.string(), z.unknown()).optional(),
-})
 
 /** Reads the `next` readiness: its executable present, its version when readable. */
 async function readNextReadiness(
   workspace: string,
 ): Promise<NextAdapterReadiness> {
-  const installed = await access(
-    join(workspace, 'node_modules/next/dist/bin/next'),
-  ).then(
-    () => true,
-    () => false,
-  )
+  const installed = await hasNextExecutable(workspace)
   if (!installed)
     return {
       ready: false,
@@ -104,111 +83,37 @@ async function readNextReadiness(
   return { ready: true, missing: [], version: manifest.version }
 }
 
-/** Reads the scripts of the workspace's package.json: the scripts, or the sentence for a file that is unreadable JSON (never its contents); no file reads as no scripts. */
-async function readPackageScripts(
-  workspace: string,
-): Promise<{ scripts: Record<string, unknown> } | { problem: string }> {
-  const text = await readFile(join(workspace, 'package.json'), 'utf8').catch(
-    () => undefined,
-  )
-  if (text === undefined) return { scripts: {} }
-  try {
-    return { scripts: scriptsSchema.parse(JSON.parse(text)).scripts ?? {} }
-  } catch (error) {
-    const reason =
-      error instanceof SyntaxError
-        ? 'is not valid JSON'
-        : 'has no valid scripts'
-    return {
-      problem: `package.json could not be read: it ${reason}. Fix it so Codebook can read the dev script.`,
-    }
-  }
-}
-
-/** Reads the `dev` script state and the sentences it adds to `missing`. */
-async function readViteScript(
-  workspace: string,
-): Promise<{ devScript: ViteDevScriptReadiness; missing: string[] }> {
-  const missing: string[] = []
-  const read = await readPackageScripts(workspace)
-  if ('problem' in read)
-    return { devScript: { form: 'absent' }, missing: [read.problem] }
-  const { scripts } = read
-  if (scripts.predev !== undefined) missing.push(VITE_PREDEV_MESSAGE)
-  if (typeof scripts.dev !== 'string') {
-    missing.push(VITE_NO_DEV_SCRIPT_MESSAGE)
-    return { devScript: { form: 'absent' }, missing }
-  }
-  const reading = parseViteDevScript(scripts.dev, workspace)
-  if (reading.accepted) return { devScript: { form: 'accepted' }, missing }
-  missing.push(viteScriptMessage(reading.refused))
-  return {
-    devScript: { form: 'refused', refused: reading.refused },
-    missing,
-  }
-}
-
-/** Reads the `vite` readiness against the configured Node. */
+/** Reads the `vite` readiness against the configured Node from the same gaps a start refuses with. */
 async function readViteReadiness(
   workspace: string,
   node: string | undefined,
   signal: AbortSignal,
 ): Promise<ViteAdapterReadiness> {
-  const lookup = await resolveViteInstallation(workspace)
-  if (!lookup.found) {
-    // A malformed package.json also stops Node's resolution, so name it beside the install sentence
-    const read = await readPackageScripts(workspace)
-    return {
-      ready: false,
-      installed: false,
-      supportedMajor: VITE_SUPPORTED_MAJOR,
-      yarnPnp: lookup.reason === 'yarn-pnp',
-      missing: [
-        lookup.reason === 'yarn-pnp'
-          ? VITE_PNP_MESSAGE
-          : 'Install the workspace dependencies, including vite, before using vite-dev (the vite package does not resolve from the package root).',
-        ...('problem' in read ? [read.problem] : []),
-      ],
-    }
-  }
-  const { installation } = lookup
-  const missing: string[] = []
-  const supported = installation.major === VITE_SUPPORTED_MAJOR
-  if (!supported) missing.push(viteMajorMessage(installation.version))
-  // The run's Node is the configured one; without it the engines check cannot run.
-  const nodeVersion = node
-    ? await readNodeVersion(node, signal).catch(() => undefined)
-    : undefined
-  let nodeSatisfiesEngines: boolean | undefined
-  if (installation.enginesNode && nodeVersion) {
-    nodeSatisfiesEngines = satisfiesNodeRange(
-      installation.enginesNode,
-      nodeVersion,
-    )
-    if (!nodeSatisfiesEngines)
-      missing.push(
-        viteEnginesMessage(
-          installation.version,
-          installation.enginesNode,
-          nodeVersion,
-        ),
-      )
-  } else if (installation.enginesNode) missing.push(NODE_NOT_CONFIGURED_MESSAGE)
-  const script = await readViteScript(workspace)
-  missing.push(...script.missing)
+  const reading = await readViteWorkspaceGaps(
+    workspace,
+    // The run's Node is the configured one; without it the engines check cannot run, and one that cannot run is named by the shared check, as at a start.
+    async () => (node ? await readNodeVersion(node, signal) : undefined),
+    false,
+  )
+  const { installation } = reading
+  const missing = reading.gaps.map((gap) => gap.statusMessage ?? gap.message)
   return {
     ready: missing.length === 0,
-    installed: true,
-    version: installation.version,
-    supported,
+    installed: installation !== undefined,
+    ...(installation ? { version: installation.version } : {}),
+    ...(reading.supported === undefined
+      ? {}
+      : { supported: reading.supported }),
     supportedMajor: VITE_SUPPORTED_MAJOR,
-    ...(installation.enginesNode
+    ...(installation?.enginesNode
       ? { enginesNode: installation.enginesNode }
       : {}),
-    ...(nodeVersion ? { nodeVersion } : {}),
-    ...(nodeSatisfiesEngines === undefined ? {} : { nodeSatisfiesEngines }),
-    devScript: script.devScript,
-    yarnPnp: false,
+    ...(reading.nodeVersion ? { nodeVersion: reading.nodeVersion } : {}),
+    ...(reading.nodeSatisfiesEngines === undefined
+      ? {}
+      : { nodeSatisfiesEngines: reading.nodeSatisfiesEngines }),
+    ...(reading.devScript ? { devScript: reading.devScript } : {}),
+    yarnPnp: reading.yarnPnp,
     missing,
   }
 }

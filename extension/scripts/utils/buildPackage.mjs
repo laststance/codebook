@@ -11,7 +11,10 @@ import { assertStableCheckout } from './assertStableCheckout.mjs'
 import { cleanPackageOutputs } from './cleanPackageOutputs.mjs'
 import { inspectBundle } from './inspectBundle.mjs'
 import { loadBuiltExtension } from './loadBuiltExtension.mjs'
-import { PACKAGE_MANIFEST_PATH } from './packageConstants.mjs'
+import {
+  BUNDLE_NODE_TARGET,
+  PACKAGE_MANIFEST_PATH,
+} from './packageConstants.mjs'
 import { readBuildIdentity } from './readBuildIdentity.mjs'
 import { readVsixBytes } from './readVsixBytes.mjs'
 import { readVsixEntries } from './readVsixEntries.mjs'
@@ -76,7 +79,8 @@ export async function buildPackage(
         'Compiled metadata does not match package inputs.',
       )
       const capturedInputs = new Map()
-      const result = await bundle({
+      // The options object is kept so the manifest records the target esbuild really received, not a second copy of the constant.
+      const bundleOptions = {
         absWorkingDir: repository,
         entryPoints: {
           extension: 'extension/dist/extension.js',
@@ -89,7 +93,7 @@ export async function buildPackage(
         outdir: join(stage, 'dist'),
         bundle: true,
         platform: 'node',
-        target: 'node24',
+        target: BUNDLE_NODE_TARGET,
         format: 'cjs',
         external: ['vscode'],
         metafile: true,
@@ -118,7 +122,8 @@ export async function buildPackage(
           'process.env.WS_NO_BUFFER_UTIL': '"1"',
           'process.env.WS_NO_UTF_8_VALIDATE': '"1"',
         },
-      })
+      }
+      const result = await bundle(bundleOptions)
       assert.equal(
         result.warnings.length,
         0,
@@ -194,6 +199,8 @@ export async function buildPackage(
           node: process.versions.node,
           pnpm: pnpmVersion.trim(),
           esbuild: esbuildVersion,
+          // Read from the options esbuild ran with, so a literal restored in `target` shows in the manifest.
+          bundleTarget: bundleOptions.target,
           vsce: vsceManifest.version,
           typescript: typescriptManifest.version,
         },

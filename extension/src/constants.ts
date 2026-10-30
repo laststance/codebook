@@ -11,7 +11,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.11'
-export const EXTENSION_VERSION = '0.2.62'
+export const EXTENSION_VERSION = '0.2.63'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -2232,6 +2232,15 @@ export const VITE_SUPPORTED_MAJOR = 8
 /** Vite's own default dev-server port, used when neither the project's config nor its `dev` script names one. */
 export const VITE_DEFAULT_PORT = 5173
 
+/** The first port an unprivileged program may listen on; Codebook's Vite port refusal names it as where to move a not-permitted port to. */
+export const FIRST_UNPRIVILEGED_PORT = 1024
+
+/** The first HTTP status of the redirect class (3xx), which Codebook never follows when it reads a module the owned Vite server serves. */
+export const HTTP_REDIRECT_STATUS_MIN = 300
+
+/** The first HTTP status after the redirect class (the client-error class starts here), so a redirect status is below it. */
+export const HTTP_REDIRECT_STATUS_END = 400
+
 /** The one host Codebook owns for a Vite dev server; the launcher passes it inline and the parent refuses a resolved `server.host` that differs (a plugin can widen it to every interface). */
 export const VITE_LOOPBACK_HOST = '127.0.0.1'
 
@@ -2247,6 +2256,15 @@ export const NODE_VERSION_TIMEOUT_MS = 10_000
 /** The shortest environment value (characters) the launcher diagnostics mask by value, so a short common word is not blanked everywhere. */
 export const VITE_MASKED_VALUE_MIN_CHARS = 6
 
+/** The prefix of the environment variables Vite inlines into client code when a config sets no `envPrefix`. */
+export const VITE_DEFAULT_ENV_PREFIX = 'VITE_'
+
+/** The variables `loadEnv` also returns that only name the mode (not secrets); masking them would blank "development" in a refusal. */
+export const VITE_MODE_ENV_NAMES: readonly string[] = [
+  'NODE_ENV',
+  'VITE_USER_NODE_ENV',
+]
+
 /** The most messages an owned development server's IPC channel keeps unread; project code that floods the channel loses the newest messages instead of growing memory. */
 export const DEVELOPMENT_SERVER_MESSAGE_QUEUE_LIMIT = 32
 
@@ -2255,6 +2273,24 @@ export const VITE_VERSION_MAX_CHARS = 64
 
 /** The longest a Vite config's thrown error line is carried in a refusal. */
 export const VITE_ERROR_LINE_LIMIT_CHARS = 200
+
+/** The comment appended to the kept copy of a Vite module whose env-file values are masked (the run's evidence file and the replay's JavaScript resource), so the redaction stays explicit; the module's sealed hash still names the executed bytes, while columns on lines with a masked value differ from them. */
+export const REDACTED_MODULE_LABEL =
+  '// [masked] Codebook masked env-file values in this module; columns on lines with a masked value differ from the executed bytes, and its sealed hash names the executed bytes.'
+
+/** The file names Vite looks up as the project config when the dev script names none, in Vite's own order. */
+export const VITE_DEFAULT_CONFIG_FILE_NAMES: readonly string[] = [
+  'vite.config.js',
+  'vite.config.mjs',
+  'vite.config.ts',
+  'vite.config.cjs',
+  'vite.config.mts',
+  'vite.config.cts',
+]
+
+/** Replaces the quoted error line of a Vite config that failed before it resolved: its `envDir` (also one set by an imported base config or a plugin) is unknown until the config resolves, so the line could print a value of that folder. */
+export const VITE_ERROR_LINE_WITHHELD_SENTENCE =
+  "the error text is not quoted, because Codebook cannot read the values of the config's envDir before the config resolves; run the project's dev script in a terminal to read the error"
 
 /** The extensions of a source file the Vite dev server serves as JavaScript with an inline map; `.vue` and `.svelte` need a framework plugin's own map and are refused. */
 export const VITE_STOP_EXTENSIONS: readonly string[] = [
@@ -2271,6 +2307,26 @@ export const VITE_STOP_EXTENSIONS: readonly string[] = [
 /** How long the Vite page must stay loaded, with no further reload, before the initial inputs are written. */
 export const VITE_PAGE_QUIET_MS = 500
 
+/**
+ * The setup steps of a Vite run, named once for the setters in the configured browser run, the adapter's launcher and the setup-deadline sentence.
+ * A deadline names the step the run had reached, so a renamed step cannot fall through to the wrong sentence.
+ */
+export const VITE_SETUP_STEPS = {
+  validatingProject: 'validating the project',
+  resolvingConfig: 'resolving the Vite config',
+  startingVite: 'starting Vite',
+  waitingForServer: 'waiting for the server to answer the entry page',
+  sealingStops: 'sealing the declared stops',
+  openingBrowser: 'opening the browser',
+  loadingEntryPage: 'loading the entry page',
+  settlingPage: 'waiting for the page to settle',
+  writingInputs: 'writing the initial inputs and arming the first stop',
+} as const
+
+/** One setup step of {@link VITE_SETUP_STEPS}. */
+export type ViteSetupStep =
+  (typeof VITE_SETUP_STEPS)[keyof typeof VITE_SETUP_STEPS]
+
 /** The most reloads before the inputs the run tolerates (a dependency optimizer reloads once or twice). */
 export const VITE_PAGE_GENERATION_LIMIT = 4
 
@@ -2282,4 +2338,8 @@ export const VITE_LAUNCHER_MESSAGES = {
   listen: 'vite-listen',
   refuse: 'vite-refuse',
   listening: 'vite-listening',
+  /** Command after listening: asks the launcher to report once Vite's dependency optimizer is idle. */
+  awaitOptimizer: 'vite-await-optimizer',
+  /** Report answering {@link VITE_LAUNCHER_MESSAGES.awaitOptimizer}: the optimizer has nothing left to process. */
+  optimizerIdle: 'vite-optimizer-idle',
 } as const

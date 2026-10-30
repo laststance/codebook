@@ -95,7 +95,7 @@ test('a real VSIX loads outside the checkout and excludes bundled applications a
   // Assert
   assert.equal(receipt.isolatedModuleLoad, true)
   assert.equal(receipt.isolatedWikiPageWorker, true)
-  assert.equal(checked.extension.version, '0.2.62')
+  assert.equal(checked.extension.version, '0.2.63')
   assert.equal(checked.extension.apiVersion, '1.11')
   assert.equal(checked.entries, 34)
   assert.equal(receipt.dependencies.length, 16)
@@ -235,7 +235,7 @@ test('a coherent SHA-256 Git revision survives real archive checking', async () 
   )
 })
 
-test('the packaged tool inventory records actual pnpm and resolved compiler versions', () => {
+test('the packaged tool inventory records actual pnpm and resolved compiler versions and the oldest Node the Vite launcher bundle still parses on', () => {
   // Arrange / Act
   const inventory = JSON.parse(original.get('extension/package-manifest.json'))
   // Assert
@@ -243,6 +243,7 @@ test('the packaged tool inventory records actual pnpm and resolved compiler vers
     node: process.versions.node,
     pnpm: '12.4.2',
     esbuild: '0.28.2',
+    bundleTarget: 'node20.19',
     vsce: '4.0.0',
     typescript: '5.9.3',
   })

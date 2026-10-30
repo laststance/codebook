@@ -12,7 +12,7 @@ import {
   configuredDefinitionSchema,
   type ConfiguredDefinition,
 } from './configuredStudySchemas'
-import type { CONFIGURED_CAPTURE_PHASES } from './constants'
+import type { CONFIGURED_CAPTURE_PHASES, ViteSetupStep } from './constants'
 import {
   ACTIVE_TIMEOUT_MS,
   ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION,
@@ -26,6 +26,7 @@ import {
   REPOSITORY_BINDING_HINT_EDGE_LINES,
   REPOSITORY_BINDING_HINT_NEAR_LINES,
   REPOSITORY_BROWSER_ACTION,
+  REDACTED_MODULE_LABEL,
   REPOSITORY_BROWSER_PROFILE,
   REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
   REPOSITORY_PATH_LIMIT_CHARS,
@@ -36,6 +37,7 @@ import {
   REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT,
   REPOSITORY_SETUP_TIMEOUT_MS,
   VITE_PAGE_GENERATION_LIMIT,
+  VITE_SETUP_STEPS,
   VITE_PAGE_QUIET_MS,
   REPOSITORY_STACK_FRAME_LIMIT,
   REPOSITORY_UNOWNED_PAGE_PAUSE_LIMIT_MS,
@@ -65,6 +67,7 @@ import type {
   ConfiguredRuntimeView,
   RuntimeAction,
   RuntimeControl,
+  RuntimeSource,
   RuntimeSnapshot,
   StudyRuntime,
   Participant,
@@ -135,6 +138,7 @@ import { isPauseInScript } from './utils/isPauseInScript'
 import { isRefreshedFrameAtStop } from './utils/isRefreshedFrameAtStop'
 import { isSameGeneratedPosition } from './utils/isSameGeneratedPosition'
 import { launchDevelopmentServer } from './utils/launchDevelopmentServer'
+import { maskSourceMapText } from './utils/maskSourceMapText'
 import {
   browserOriginOf,
   isOwnedApplicationOrigin,
@@ -169,6 +173,8 @@ import { VITE_DEV_ADAPTER } from './viteDevAdapter'
 import {
   viteRefusal,
   viteReloadText,
+  viteResealFailureSentence,
+  viteSetupDeadlineSentence,
   viteSetupDeadlineText,
 } from './viteRefusals'
 
@@ -202,6 +208,8 @@ const NEXT_DEV_WEBPACK_ADAPTER: DevelopmentServerAdapter = {
     request.onApp(app)
     return { app, port: declaredPort.port }
   },
+  // Next has no dependency optimizer that reloads the page by itself.
+  waitForServerSettled: async () => undefined,
   async readOwnedLock(workspace) {
     // The lock's identity is read with exact numbers: a file id can be larger than a number holds exactly.
     const developmentLock = await lstat(join(workspace, '.next/dev/lock'), {
@@ -444,10 +452,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private ownedDevelopmentLock?: DevelopmentLockIdentity
   /** The adapter of the configuration, chosen at the start of preparation. */
   private adapter?: DevelopmentServerAdapter
-  /** The origin the owned server reported (`http://127.0.0.1:<port>`), which a served-module sealer fetches from. */
-  private ownedOrigin?: string
   /** The setup step reached, named when the setup deadline expires. */
-  private setupStep = 'validating the project'
+  private setupStep: ViteSetupStep = VITE_SETUP_STEPS.validatingProject
+  /** When the setup budget ends (epoch milliseconds); bounds the wait for the Vite dependency optimizer. */
+  private preparationDeadlineAt = 0
+  /** The length of the setup budget (milliseconds), named by the setup-deadline refusal. */
+  private preparationBudgetMs = 0
   /** Whether the run asked its browser to open the entry page; only then is a page load a reload. */
   private navigationRequested = false
   /** Whether the first load of the entry page was seen. */
@@ -456,6 +466,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private inputsPrepared = false
   /** How many reloads before the inputs started a new page generation (a Vite dependency-optimizer reload). */
   private pageGeneration = 0
+  /** The page generation the stops' current seals were read for (0 after the first seal); {@link waitForStablePage} seals again when the stable page is a later one. */
+  private sealedGeneration = 0
   private preparation?: Promise<void>
   private cleanupPromise?: Promise<void>
   private manifest?: ConfiguredRuntimeView['manifest']
@@ -525,6 +537,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private portSource?: string
   /** The Vite version the launcher reported, for a `vite-dev` run. */
   private viteVersion?: string
+  /** Masks env-file and script values, and secret shapes, in captured values ({@link inspectConfiguredValues}); absent for a Next run. */
+  private maskText?: (text: string) => string
+  /** Masks only env-file and script values in the module text a Vite run keeps ({@link archivedModuleText}); absent for a Next run. */
+  private maskModuleText?: (text: string) => string
+  /** The masked copy of each bundle, kept so a read does not mask the same module again; a re-sealed bundle is a new object, so its entry is never stale. */
+  private readonly archivedModules = new WeakMap<
+    BundleSource,
+    ReturnType<ConfiguredBrowserRun['archivedModuleText']>
+  >()
   /** Codebook's listener on `[::1]:<port>` (D66), closed with the run. */
   private ipv6Forwarder?: Ipv6LoopbackForwarder
   /** Whether `[::1]` at the port is the run's own, so the origin checks accept it. */
@@ -623,6 +644,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         this.options.control?.deadlineAt ?? now + REPOSITORY_RUN_TIMEOUT_MS
     if (now >= preparationDeadlineAt || now >= deadlineAt)
       throw new Error('Repository preparation deadline already expired')
+    this.preparationDeadlineAt = preparationDeadlineAt
+    this.preparationBudgetMs = preparationDeadlineAt - now
     this.progressDeadline(
       preparationDeadlineAt - now,
       this.definition.configuration.adapter === 'vite-dev'
@@ -685,14 +708,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       },
     })
     this.viteVersion = started.viteVersion
+    this.maskText = started.maskText
+    this.maskModuleText = started.maskModuleText
     const declaredPort = { port: started.port }
     // The server binds 127.0.0.1; the browser opens `localhost` at its port, the name the project's own origin settings use (D65).
-    this.setupStep = 'waiting for the server to answer the entry page'
-    this.ownedOrigin = await this.app!.ready(
+    this.setupStep = VITE_SETUP_STEPS.waitingForServer
+    const ownedOrigin = await this.app!.ready(
       this.abort.signal,
       this.definition.configuration.entryPath,
     )
-    this.origin = browserOriginOf(this.ownedOrigin)
+    this.origin = browserOriginOf(ownedOrigin)
     // `localhost` may resolve to ::1: Codebook owns that endpoint for the whole run, or the host has none (D66).
     this.ipv6Forwarder = await startIpv6LoopbackForwarder(declaredPort.port)
     this.ownsIpv6Loopback = this.ipv6Forwarder !== undefined
@@ -700,75 +725,195 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.ownedDevelopmentLock = await adapter.readOwnedLock(
       this.options.workspace,
     )
-    this.setupStep = 'sealing the declared stops'
+    this.setupStep = VITE_SETUP_STEPS.sealingStops
     for (const [index, stop] of configuredStops(
       this.definition.configuration,
-    ).entries()) {
-      const acquired = await adapter.readBundle({
-        workspace: this.options.workspace,
-        source: stop.source,
-        signal: this.abort.signal,
-        entryPath: this.definition.configuration.entryPath ?? '/',
-        execution: stop.participant === 'server' ? 'server-action' : 'browser',
-        ownedOrigin: this.ownedOrigin,
-        record: (type, detail) => this.evidence.record(type, detail),
+    ).entries())
+      this.stops.push(
+        await this.sealDeclaredStop(stop, index, adapter, ownedOrigin),
+      )
+    this.freezeSealedStops()
+    if (needsServer) await this.selectServer()
+    this.alive()
+    this.setupStep = VITE_SETUP_STEPS.openingBrowser
+    await this.browser.launch(
+      {
+        name: `codebook repository ${this.id}`,
+        type: 'pwa-chrome',
+        request: 'launch',
+        url: 'about:blank',
+        ...adapter.browserDebugFields(this.options.workspace),
+        timeout: ACTIVE_TIMEOUT_MS,
+      },
+      this.abort.signal,
+    )
+    this.alive()
+    await this.selectPage()
+    this.alive()
+    const cdp = this.requireCdp()
+    await this.observeParticipant('browser')
+    this.alive()
+    cdp.aggregateScreencastTelemetry(() => this.evidence.elapsedMs())
+    await this.browser.attachViewport(cdp, this.abort.signal)
+    this.alive()
+    const storage = this.definition.configuration.initialStorage ?? []
+    if (storage.length) {
+      await cdp.request('Page.addScriptToEvaluateOnNewDocument', {
+        source: `if(${JSON.stringify(loopbackOriginsOf(this.origin, this.ownsIpv6Loopback))}.includes(location.origin))for(const entry of ${JSON.stringify(storage)})localStorage.setItem(entry.key,entry.value);`,
       })
       this.alive()
-      const verifier = createBundleVerifier(acquired.bundle),
-        citation = this.definition.descriptor.anchors[stop.anchorIndex]!
-      // The sealed map is scanned once per stop, from its declared line to the end of its citation; the place, the rule and the refusal below read that scan, and the pause handler only compares lines.
-      const scan = verifier.mappedPositions(stop.source.line, citation.endLine),
-        taken = this.takeDeclaredPosition(stop, index),
-        afterDeclaration = this.requestAfterSelfDeclaringLine(
-          stop,
-          acquired.bundle.source.split(/\r\n|\r|\n/),
-          scan,
-          citation.endLine,
-        ),
-        // A stop whose own line declares a binding it requires is requested after that declaration's statement; otherwise the debugger verifies no breakpoint on a line without a mapped position, so such a stop is requested at the first mapped position after it. The rule is measured from there.
-        armed = afterDeclaration.armed ?? resolveArmedPlace(taken, scan)
-      const bindingRule = createBindingLineRule(
-        stop.source.line,
-        citation,
+    }
+    this.setupStep = VITE_SETUP_STEPS.loadingEntryPage
+    this.navigationRequested = true
+    await cdp.request('Page.navigate', {
+      url: `${this.origin}${this.definition.configuration.entryPath ?? '/'}`,
+    })
+    this.alive()
+    await this.waitForDom('before')
+    this.alive()
+    // Vite's dependency optimizer may reload the page once after the first load; each reload before the inputs starts a new page generation.
+    if (adapter.name === 'vite-dev') {
+      this.setupStep = VITE_SETUP_STEPS.settlingPage
+      await this.waitForStablePage(adapter, ownedOrigin)
+    }
+    this.setupStep = VITE_SETUP_STEPS.writingInputs
+    const inputs = this.definition.configuration.initialInputs ?? []
+    // A page load after this point is a reload the run did not make: the inputs may already be in the page.
+    this.inputsPrepared = true
+    await prepareRepositoryInputs(
+      cdp,
+      inputs,
+      loopbackOriginsOf(this.origin, this.ownsIpv6Loopback),
+      () => this.alive(),
+    )
+    this.alive()
+    if (inputs.length)
+      this.evidence.record('inputs.prepared', { count: inputs.length })
+    // Only the next expected stop is armed: a later stop's line may run before its turn and must not pause then. {@link continue} arms each later stop.
+    await this.armStop(this.stops[0]!)
+    // A later browser stop is armed only in its turn, but a module that is already loaded can be compared with its sealed bundle now, before any application effect.
+    for (const laterStop of this.stops.slice(1))
+      if (laterStop.participant === 'browser' && laterStop.script)
+        await this.assertExecutedModuleSealed(laterStop, 'before input')
+    await this.browser.reveal(this.abort.signal)
+    this.alive()
+    await this.capture('before')
+    this.alive()
+    clearTimeout(this.progressTimer)
+    this.status = 'ready'
+    await this.persist()
+  }
+
+  /**
+   * Reads and seals the module one declared stop runs in, and prepares everything the run derives from the sealed bytes (map scan, armed place, binding rule).
+   *
+   * Why it exists: the first seal happens once in {@link prepareOwned}; a Vite run seals again for each new page generation before the inputs ({@link resealStopsForGeneration}), because the dev server serves new `?v=` import hashes after a dependency-optimizer reload. Both go through the adapter's `readBundle`.
+   * @param stop - The configured stop, as {@link configuredStops} gives it.
+   * @param index - Its zero-based place among the declared stops.
+   * @param adapter - The run's development-server adapter, whose `readBundle` reads the served module.
+   * @param ownedOrigin - The origin the owned server reported, which the module is fetched from.
+   * @param generation - The page generation a renewal belongs to; absent for the first seal. Only the first seal journals the position decisions of the stop (`breakpoint.column-on-blank-line`, `breakpoint.armed-after-self-declaring-line`), because a renewal reaches the same decisions again.
+   * @returns The prepared stop for the freshly sealed bytes; its sealed files and journal entry are written.
+   * @throws When the module cannot be sealed or the run is no longer alive.
+   * @example
+   * ```ts
+   * this.stops.push(await this.sealDeclaredStop(stop, 0, adapter, ownedOrigin))
+   * ```
+   */
+  private async sealDeclaredStop(
+    stop: ReturnType<typeof configuredStops>[number],
+    index: number,
+    adapter: DevelopmentServerAdapter,
+    ownedOrigin: string,
+    generation?: number,
+  ): Promise<PreparedStop> {
+    const acquired = await adapter.readBundle({
+      workspace: this.options.workspace,
+      source: stop.source,
+      signal: this.abort.signal,
+      entryPath: this.definition.configuration.entryPath ?? '/',
+      execution: stop.participant === 'server' ? 'server-action' : 'browser',
+      ownedOrigin,
+      record: (type, detail) => this.evidence.record(type, detail),
+    })
+    this.alive()
+    const verifier = createBundleVerifier(acquired.bundle),
+      citation = this.definition.descriptor.anchors[stop.anchorIndex]!
+    // The sealed map is scanned once per stop, from its declared line to the end of its citation; the place, the rule and the refusal below read that scan, and the pause handler only compares lines.
+    const scan = verifier.mappedPositions(stop.source.line, citation.endLine),
+      // A renewal reaches the decisions of the first seal again, so only the first seal journals them.
+      isFirstSeal = generation === undefined,
+      taken = this.takeDeclaredPosition(stop, index, isFirstSeal),
+      afterDeclaration = this.requestAfterSelfDeclaringLine(
+        stop,
+        acquired.bundle.source.split(/\r\n|\r|\n/),
         scan,
-        armed.line,
-      )
-      const prepared: PreparedStop = {
-        ...stop,
-        bundle: acquired.bundle,
-        verifier,
-        scan,
-        armed: { line: armed.line, column: armed.column },
-        earliestRequestLine: afterDeclaration.earliestLine,
-        acceptsBoundLine: bindingRule.accepts,
-        bindingRefusal: bindingRule.refusal,
-        instances: new Map(),
-        unusableInstances: new Map(),
-      }
-      this.stops.push(prepared)
-      await this.evidence.save(
-        `sealed-${index}-source.ts`,
-        prepared.bundle.source,
-      )
-      this.alive()
-      await this.evidence.save(
-        `sealed-${index}-module.js`,
-        prepared.bundle.javascript,
-      )
-      this.alive()
-      await this.evidence.save(
-        `sealed-${index}-module.map.json`,
-        prepared.bundle.sourceMap,
-      )
-      this.alive()
-      this.evidence.record('source.sealed', {
+        citation.endLine,
+        isFirstSeal,
+      ),
+      // A stop whose own line declares a binding it requires is requested after that declaration's statement; otherwise the debugger verifies no breakpoint on a line without a mapped position, so such a stop is requested at the first mapped position after it. The rule is measured from there.
+      armed = afterDeclaration.armed ?? resolveArmedPlace(taken, scan)
+    const bindingRule = createBindingLineRule(
+      stop.source.line,
+      citation,
+      scan,
+      armed.line,
+    )
+    const prepared: PreparedStop = {
+      ...stop,
+      bundle: acquired.bundle,
+      verifier,
+      scan,
+      armed: { line: armed.line, column: armed.column },
+      earliestRequestLine: afterDeclaration.earliestLine,
+      acceptsBoundLine: bindingRule.accepts,
+      bindingRefusal: bindingRule.refusal,
+      instances: new Map(),
+      unusableInstances: new Map(),
+    }
+    // A renewal keeps the first seal's files, so each journal entry names the bytes of its own files.
+    const fileStem = isFirstSeal
+      ? `sealed-${index}`
+      : `sealed-${index}-generation-${generation}`
+    await this.evidence.save(`${fileStem}-source.ts`, prepared.bundle.source)
+    this.alive()
+    const archivedModule = this.archivedModuleText(prepared.bundle)
+    await this.evidence.save(
+      `${fileStem}-module.js`,
+      archivedModule.evidenceJavascript,
+    )
+    this.alive()
+    await this.evidence.save(
+      `${fileStem}-module.map.json`,
+      archivedModule.sourceMap,
+    )
+    this.alive()
+    this.evidence.record(
+      generation === undefined ? 'source.sealed' : 'source.resealed',
+      {
         index,
+        ...(generation === undefined ? {} : { generation }),
+        // The hashes below name the executed bytes; the saved copy is masked when this is true.
+        redacted: archivedModule.redacted,
         participant: stop.participant,
         discovery: acquired.discovery,
         scriptUrl: prepared.bundle.scriptUrl,
         hashes: prepared.verifier.hashes,
-      })
-    }
+      },
+    )
+    return prepared
+  }
+
+  /**
+   * Binds the run's manifest to the first stop's current seal and refuses a stop that can never bind, after all stops are sealed or sealed again.
+   * Called by {@link prepareOwned} after the first seal and by {@link resealStopsForGeneration} after each renewal, so the manifest always names the bytes that are checked.
+   * @throws When a later stop's line has no mapped position in its sealed module.
+   * @example
+   * ```ts
+   * this.freezeSealedStops()
+   * ```
+   */
+  private freezeSealedStops(): void {
     const first = this.stops[0]!
     const { itemId, bookTitle, nodeTitle, anchors, citationContext } =
       this.definition.descriptor
@@ -802,70 +947,47 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         unmappedStop,
         `Declared stop ${this.declaredAt(unmappedStop)} has no mapped position on that line in the sealed module`,
       )
-    if (needsServer) await this.selectServer()
-    this.alive()
-    this.setupStep = 'opening the browser'
-    await this.browser.launch(
-      {
-        name: `codebook repository ${this.id}`,
-        type: 'pwa-chrome',
-        request: 'launch',
-        url: 'about:blank',
-        ...adapter.browserDebugFields(this.options.workspace),
-        timeout: ACTIVE_TIMEOUT_MS,
-      },
-      this.abort.signal,
-    )
-    this.alive()
-    await this.selectPage()
-    this.alive()
-    const cdp = this.requireCdp()
-    await this.observeParticipant('browser')
-    this.alive()
-    cdp.aggregateScreencastTelemetry(() => this.evidence.elapsedMs())
-    await this.browser.attachViewport(cdp, this.abort.signal)
-    this.alive()
-    const storage = this.definition.configuration.initialStorage ?? []
-    if (storage.length) {
-      await cdp.request('Page.addScriptToEvaluateOnNewDocument', {
-        source: `if(${JSON.stringify(loopbackOriginsOf(this.origin, this.ownsIpv6Loopback))}.includes(location.origin))for(const entry of ${JSON.stringify(storage)})localStorage.setItem(entry.key,entry.value);`,
+  }
+
+  /**
+   * Seals every declared stop again for a new page generation, before the inputs are written.
+   *
+   * Why it exists: after Vite's dependency optimizer reloads the page, the dev server serves the stop modules with new `?v=` import hashes, so the bytes the new page executes differ from the first seal. Replacing the seals here lets the executed-bytes check guard the latest seal; once the inputs are written nothing is sealed again and a reload still refuses with `VITE_PAGE_RELOADED`.
+   * Called by {@link waitForStablePage} for each generation it sees. The prepared stops are updated in place so a script the new page already announced stays bound.
+   * @param generation - The page generation the renewal belongs to; journaled with each renewal.
+   * @param adapter - The run's development-server adapter.
+   * @param ownedOrigin - The origin the owned server reported.
+   * @example
+   * ```ts
+   * await this.resealStopsForGeneration(this.pageGeneration, adapter, ownedOrigin)
+   * ```
+   */
+  private async resealStopsForGeneration(
+    generation: number,
+    adapter: DevelopmentServerAdapter,
+    ownedOrigin: string,
+  ): Promise<void> {
+    for (const [index, stop] of configuredStops(
+      this.definition.configuration,
+    ).entries()) {
+      const renewed = await this.sealDeclaredStop(
+        stop,
+        index,
+        adapter,
+        ownedOrigin,
+        generation,
+      ).catch((error: unknown) => {
+        // A renewal fails after the browser opened: the refusal says so and that one new start may pass, unlike a first seal.
+        if (!(error instanceof StudyError) || error.code !== 'VITE_SEAL_FAILED')
+          throw error
+        throw viteRefusal(
+          'VITE_SEAL_FAILED',
+          viteResealFailureSentence(generation, error.message),
+        )
       })
-      this.alive()
+      Object.assign(this.stops[index]!, renewed)
     }
-    this.navigationRequested = true
-    await cdp.request('Page.navigate', {
-      url: `${this.origin}${this.definition.configuration.entryPath ?? '/'}`,
-    })
-    this.alive()
-    await this.waitForDom('before')
-    this.alive()
-    // Vite's dependency optimizer may reload the page once after the first load; each reload before the inputs starts a new page generation.
-    if (adapter.name === 'vite-dev') await this.waitForStablePage()
-    const inputs = this.definition.configuration.initialInputs ?? []
-    // A page load after this point is a reload the run did not make: the inputs may already be in the page.
-    this.inputsPrepared = true
-    await prepareRepositoryInputs(
-      cdp,
-      inputs,
-      loopbackOriginsOf(this.origin, this.ownsIpv6Loopback),
-      () => this.alive(),
-    )
-    this.alive()
-    if (inputs.length)
-      this.evidence.record('inputs.prepared', { count: inputs.length })
-    // Only the next expected stop is armed: a later stop's line may run before its turn and must not pause then. {@link continue} arms each later stop.
-    await this.armStop(this.stops[0]!)
-    // A later browser stop is armed only in its turn, but a module that is already loaded can be compared with its sealed bundle now, before any application effect.
-    for (const laterStop of this.stops.slice(1))
-      if (laterStop.participant === 'browser' && laterStop.script)
-        await this.assertExecutedModuleSealed(laterStop, 'before input')
-    await this.browser.reveal(this.abort.signal)
-    this.alive()
-    await this.capture('before')
-    this.alive()
-    clearTimeout(this.progressTimer)
-    this.status = 'ready'
-    await this.persist()
+    this.freezeSealedStops()
   }
 
   /**
@@ -899,25 +1021,81 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Waits until the page has stayed loaded for a quiet window with no further reload, called by {@link prepareOwned} for a Vite run before the inputs are written.
-   * @throws When the page reloads more often than {@link VITE_PAGE_GENERATION_LIMIT} before the inputs.
+   * Before each quiet window it waits for the server's dependency optimizer to be idle ({@link DevelopmentServerAdapter.waitForServerSettled}), and after each reload it seals the stops again ({@link resealStopsForGeneration}).
+   * The optimizer wait is bounded by what is left of the setup budget, with no floor, so a never-settling optimizer ends as the coded setup deadline naming the step, never as the uncoded wait timeout.
+   * @param adapter - The run's development-server adapter, asked whether the server is settled.
+   * @param ownedOrigin - The origin the owned server reported, which the stops are sealed from again.
+   * @throws `VITE_PAGE_UNSTABLE` when the page reloads more often than {@link VITE_PAGE_GENERATION_LIMIT} before the inputs; `VITE_SETUP_DEADLINE` when the setup budget is spent while waiting for the optimizer.
    * @example
    * ```ts
-   * await this.waitForStablePage()
+   * await this.waitForStablePage(adapter, ownedOrigin)
    * ```
    */
-  private async waitForStablePage(): Promise<void> {
+  private async waitForStablePage(
+    adapter: DevelopmentServerAdapter,
+    ownedOrigin: string,
+  ): Promise<void> {
     for (;;) {
       const generation = this.pageGeneration
+      // The optimizer's own run decides when its reload comes, so the quiet window starts only after it is idle.
+      await this.waitForOptimizerWithinBudget(adapter)
+      this.alive()
       await sleep(VITE_PAGE_QUIET_MS, undefined, { signal: this.abort.signal })
       this.alive()
-      if (generation === this.pageGeneration) return
       if (this.pageGeneration > VITE_PAGE_GENERATION_LIMIT)
         throw viteRefusal(
-          'VITE_PAGE_RELOADED',
-          `The page reloaded ${this.pageGeneration} times before the inputs were written; Codebook stops after ${VITE_PAGE_GENERATION_LIMIT}.`,
+          'VITE_PAGE_UNSTABLE',
+          `The page reloaded ${this.pageGeneration} times before the inputs were written; Codebook stops after ${VITE_PAGE_GENERATION_LIMIT} and nothing was sent.`,
         )
+      // A reload during this iteration: wait for the new page, then judge it again.
+      if (generation !== this.pageGeneration) {
+        await this.waitForDom('before')
+        this.alive()
+        continue
+      }
+      // Stable, and the seals already belong to this generation.
+      if (this.sealedGeneration === generation) return
+      // A reload that landed before this wait began leaves stable but unsealed generations too.
       await this.waitForDom('before')
       this.alive()
+      // The page executes the modules the server serves now: seal them again, then confirm the page stays stable.
+      await this.resealStopsForGeneration(generation, adapter, ownedOrigin)
+      this.sealedGeneration = generation
+    }
+  }
+
+  /**
+   * Waits for the server's dependency optimizer to be idle, bounded by what is left of the setup budget.
+   *
+   * Why it exists: the setup-deadline timer and the launcher's own wait both end at the deadline; bounding the wait by the remaining budget and turning its timeout into the coded refusal keeps the deadline from surfacing as the uncoded wait timeout. Called by {@link waitForStablePage} before each quiet window.
+   * @param adapter - The run's development-server adapter.
+   * @throws `VITE_SETUP_DEADLINE` naming the current step when the budget is spent or the wait times out; any other failure of the wait unchanged.
+   * @example
+   * ```ts
+   * await this.waitForOptimizerWithinBudget(adapter)
+   * ```
+   */
+  private async waitForOptimizerWithinBudget(
+    adapter: DevelopmentServerAdapter,
+  ): Promise<void> {
+    const remainingMs = this.preparationDeadlineAt - Date.now()
+    const deadlineRefusal = (): StudyError =>
+      viteRefusal(
+        'VITE_SETUP_DEADLINE',
+        viteSetupDeadlineSentence(this.setupStep, this.preparationBudgetMs),
+      )
+    // No floor: a spent budget is a deadline, not a one-second grace wait.
+    if (remainingMs <= 0) throw deadlineRefusal()
+    try {
+      await adapter.waitForServerSettled(
+        this.app!,
+        remainingMs,
+        this.abort.signal,
+      )
+    } catch (error) {
+      // The launcher's wait timed out at the budget's end: report the deadline, not the wait.
+      if (error instanceof WaitTimeoutError) throw deadlineRefusal()
+      throw error
     }
   }
 
@@ -925,6 +1103,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Takes a declared stop at the position Codebook uses for it and journals the difference, for the preparation of each stop in {@link prepareOwned}: a column declared on a blank line means that line, so the stop is taken at the line's start ({@link takenStopPosition}) and its breakpoint is requested from there.
    * @param stop - The declared stop, as {@link configuredStops} gives it.
    * @param stopIndex - Its zero-based place among the declared stops, which names its configuration field.
+   * @param journalDecision - Whether to journal the decision; false for a renewal, which reaches the first seal's decision again.
    * @returns
    * - A stop declared past column 1 of a blank line: its line at column 1, after the journal entry `breakpoint.column-on-blank-line` with the field, the declared and the taken position
    * - Any other stop: its declared position, and nothing is journaled
@@ -936,13 +1115,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private takeDeclaredPosition(
     stop: ReturnType<typeof configuredStops>[number],
     stopIndex: number,
+    journalDecision: boolean,
   ): ReturnType<typeof configuredStops>[number]['source'] {
     const taken = takenStopPosition(
       stop.source,
       this.definition.descriptor.sources,
     )
     // Only a column the run set aside is journaled, so the journal says what Codebook did with the declaration.
-    if (taken.column !== stop.source.column)
+    if (journalDecision && taken.column !== stop.source.column)
       this.evidence.record('breakpoint.column-on-blank-line', {
         participant: stop.participant,
         field: `${configuredStopFields(this.definition.configuration.version, stopIndex).source}.column`,
@@ -958,6 +1138,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @param lines - The lines of the stop's sealed source.
    * @param scan - The stop's one scan of its sealed map, from the declared line to the end of its citation.
    * @param citationEndLine - The last line of the stop's citation.
+   * @param journalDecision - Whether to journal the decision; false for a renewal, which reaches the first seal's decision again.
    * @returns `armed` and `earliestLine`:
    * - `armed`: the first mapped position after the declaring statement's last line within the citation ({@link declarationStatementEndLine}, {@link placeAfterDeclaringLine}), after the journal entry `breakpoint.armed-after-self-declaring-line` with the participant, the declared and the armed place and the bindings; `undefined` when the declared line declares no required binding of the stop, the statement does not end within the citation (or the text cannot tell where it ends), or the scan finds no later line of the citation to request (a partial scan may have missed it): the stop is then placed by {@link resolveArmedPlace}, and nothing is journaled; a server stop so placed by a partial scan is refused at its arming when its module is not loaded yet ({@link confirmRequestedPlace})
    * - `earliestLine`: the line after the declaring statement when the statement's end is known, otherwise the declared line; {@link confirmRequestedPlace} searches the debugger's break locations from it when the scan was partial
@@ -971,6 +1152,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     lines: readonly string[],
     scan: MappedPositionsScan,
     citationEndLine: number,
+    journalDecision: boolean,
   ): { armed?: { line: number; column: number }; earliestLine: number } {
     const bindings = requiredBindingsDeclaredOn(stop, lines)
     // Only a required binding of the declared line itself moves the stop; a stop whose values exist before its line stays where it was declared.
@@ -983,7 +1165,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // A statement that does not end within the citation, or whose end the text cannot tell, leaves the stop where it was declared.
     if (statementEnd === undefined) return { earliestLine: stop.source.line }
     const armed = placeAfterDeclaringLine(statementEnd, scan)
-    if (armed)
+    if (armed && journalDecision)
       this.evidence.record('breakpoint.armed-after-self-declaring-line', {
         participant: stop.participant,
         declared: { line: stop.source.line, column: stop.source.column },
@@ -5696,6 +5878,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       callFrame.callFrameId,
       stop.inspections,
       current,
+      this.maskText,
     )
     current()
     const debuggerSnapshot = await captureReplayDebugSnapshot({
@@ -5710,6 +5893,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         participant.selected!.customRequest(command, arguments_),
       assertCurrent: current,
       signal: this.abort.signal,
+      maskKnownText: this.maskText,
     })
     current()
     let inspectionFailure: Error | undefined
@@ -5784,13 +5968,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     try {
       // A stop captured in another layer's instance keeps that instance's generated code and map, which its hashes name, beside the sealed ones.
       if (executedModule !== stop) {
+        const archivedModule = this.archivedModuleText(executedModule.bundle)
         await this.evidence.save(
           `snapshot-${stop.participant}-${pause.generation}-module.js`,
-          executedModule.bundle.javascript,
+          archivedModule.evidenceJavascript,
         )
         await this.evidence.save(
           `snapshot-${stop.participant}-${pause.generation}-module.map.json`,
-          executedModule.bundle.sourceMap,
+          archivedModule.sourceMap,
         )
       }
       await this.evidence.save(
@@ -6381,10 +6566,79 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @returns The bundle, or `undefined` for another item or an unknown snapshot.
    * @example run.source(itemId, snapshot.id)?.javascript // the (middleware) instance's code for a stop captured there
    */
-  source(item: string, snapshotId?: string): BundleSource | undefined {
+  source(item: string, snapshotId?: string): RuntimeSource | undefined {
     if (item !== this.definition.descriptor.itemId) return undefined
-    if (snapshotId === undefined) return this.stops[0]?.bundle
-    return this.snapshotBundles.get(snapshotId)
+    const bundle =
+      snapshotId === undefined
+        ? this.stops[0]?.bundle
+        : this.snapshotBundles.get(snapshotId)
+    if (!bundle) return undefined
+    const archivedModule = this.archivedModuleText(bundle)
+    return archivedModule.redacted
+      ? {
+          ...bundle,
+          javascript: archivedModule.javascript,
+          sourceMap: archivedModule.sourceMap,
+          redacted: true,
+          executedHashes: {
+            javascript: sha256(bundle.javascript),
+            sourceMap: sha256(bundle.sourceMap),
+          },
+        }
+      : bundle
+  }
+  /**
+   * Masks the env-file and script values in the module text a Vite run keeps, and says whether anything was masked.
+   *
+   * Why it exists: Vite inlines `import.meta.env` values (the `VITE_` ones from the `.env` files) into the modules it serves, and the sealed module is written to the run's evidence and served by the source resources. Called by the sealing loop, the snapshot save and {@link source}.
+   * Only those values are masked, never secret shapes: project code may hold credential-shaped literals that are not env values. The source map is masked through its parsed strings, so it stays valid JSON. The seal's hashes keep naming the executed bytes; only the kept copy is masked.
+   *
+   * @param bundle - The sealed or executed module.
+   * @returns The JavaScript and map text to keep, `redacted` when either changed, and `evidenceJavascript`: the JavaScript with the label line appended when redacted (the evidence file; the source resource appends the same label itself).
+   * @example
+   * this.archivedModuleText(bundle) // => { javascript: 'const k = "[masked]"', sourceMap: '{…}', redacted: true, evidenceJavascript: 'const k = "[masked]"\n// [masked] …\n' }
+   */
+  private archivedModuleText(bundle: BundleSource): {
+    javascript: string
+    sourceMap: string
+    redacted: boolean
+    evidenceJavascript: string
+  } {
+    // Every source read, seal and evidence save asks again; the bundle never changes, so the first answer stands.
+    const remembered = this.archivedModules.get(bundle)
+    if (remembered) return remembered
+    const archived = this.maskedArchive(bundle)
+    this.archivedModules.set(bundle, archived)
+    return archived
+  }
+  /** Masks one bundle without the memo; see {@link archivedModuleText}. */
+  private maskedArchive(bundle: BundleSource): {
+    javascript: string
+    sourceMap: string
+    redacted: boolean
+    evidenceJavascript: string
+  } {
+    const mask = this.maskModuleText
+    if (!mask)
+      return {
+        javascript: bundle.javascript,
+        sourceMap: bundle.sourceMap,
+        redacted: false,
+        evidenceJavascript: bundle.javascript,
+      }
+    const javascript = mask(bundle.javascript)
+    const sourceMap = maskSourceMapText(bundle.sourceMap, mask)
+    const redacted =
+      javascript !== bundle.javascript || sourceMap !== bundle.sourceMap
+    return {
+      javascript,
+      sourceMap,
+      redacted,
+      // The label comes after the last line, so no line number moves.
+      evidenceJavascript: redacted
+        ? `${javascript}\n${REDACTED_MODULE_LABEL}\n`
+        : javascript,
+    }
   }
   /** Exposes bounded descriptors and immutable references; service signatures never serialize full modules or maps. @example run.view().participants.browser.pause */
   view(): ConfiguredRuntimeView {

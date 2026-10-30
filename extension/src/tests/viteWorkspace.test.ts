@@ -19,6 +19,8 @@ import {
 } from '../utils/assessViteWorkspace'
 import { maskKnownValues } from '../utils/maskKnownValues'
 import { parseViteLauncherReport } from '../utils/parseViteLauncherReport'
+import { readRepositoryAdapterReadiness } from '../utils/readRepositoryAdapterReadiness'
+import { readViteWorkspaceGaps } from '../utils/readViteWorkspaceGaps'
 import { satisfiesNodeRange } from '../utils/satisfiesNodeRange'
 import {
   VITE_REFUSAL_CODES,
@@ -179,6 +181,7 @@ test('every Vite refusal code has a recovery sentence that cites its own help an
     'VITE_SETUP_DEADLINE',
     'VITE_SEAL_FAILED',
     'VITE_PAGE_RELOADED',
+    'VITE_PAGE_UNSTABLE',
     'VITE_PORT_UNAVAILABLE',
   ])
   for (const { code, recovery, anchor } of recoveries) {
@@ -279,9 +282,101 @@ test('reads engines.node ranges the way package engines write them', () => {
     satisfiesNodeRange(range, 'v24.22.1'),
     satisfiesNodeRange('>=18 <20', 'v20.1.0'),
     satisfiesNodeRange('some-new-syntax', 'v24.0.0'),
+    satisfiesNodeRange('>=18 <=bad', 'v24.22.1'),
   ]
   // Assert
-  assert.deepEqual(results, [true, false, false, true, true, false, true])
+  assert.deepEqual(results, [
+    true,
+    false,
+    false,
+    true,
+    true,
+    false,
+    false,
+    false,
+  ])
+})
+
+// Value: protects=x-ranges, partial versions and hyphen ranges are read as npm's semver reads them; fails_when=20.x reads as exactly 20.0.0 so Node 20.19 is refused as excluded; why_new=Cycle 0064 task 11 acceptance; seam=none; expectations checked against the semver package
+test('reads x-ranges, partial versions and hyphen ranges the way semver does', () => {
+  // Arrange
+  const cases: Array<[string, string, boolean]> = [
+    ['20.x', 'v20.19.0', true],
+    ['20.x', 'v22.0.0', false],
+    ['20.19.x', 'v20.19.7', true],
+    ['20.19.x', 'v20.20.0', false],
+    ['20', 'v20.5.0', true],
+    ['20', 'v21.0.0', false],
+    ['*', 'v18.0.0', true],
+    ['x', 'v24.22.1', true],
+    ['20.19.0 - 22', 'v22.5.0', true],
+    ['20.19.0 - 22', 'v23.0.0', false],
+    ['20.19.0 - 22', 'v20.18.9', false],
+    ['18.x || 22.12.0 - 24', 'v24.22.1', true],
+    ['18.x || 22.12.0 - 24', 'v20.19.0', false],
+    ['>=20.x <22', 'v21.3.0', true],
+    ['^20.19.0 - bad', 'v20.19.0', false],
+  ]
+  // Act
+  const results = cases.map(([range, version]) =>
+    satisfiesNodeRange(range, version),
+  )
+  // Assert
+  assert.deepEqual(
+    results,
+    cases.map(([, , expected]) => expected),
+  )
+})
+
+// Value: protects=npm range forms with a space after the operator or a prerelease comparator, and prerelease Node versions, are judged as semver judges them; fails_when=">= 20.19.0" is refused as unknown syntax or a prerelease Node reads as unparseable; why_new=Cycle 0064 round 1 findings on valid npm forms; seam=none; expectations checked against the semver package
+test('reads operators with a space, prerelease comparators and prerelease Node versions the way semver does', () => {
+  // Arrange
+  const cases: Array<[string, string, boolean]> = [
+    ['>= 20.19.0', 'v24.0.0', true],
+    ['>= 20.19.0', 'v20.18.0', false],
+    ['>=18 < 20', 'v19.5.0', true],
+    ['~ 20.1.0', 'v20.1.5', true],
+    ['>=20.19.0-0', 'v20.19.0', true],
+    ['>=20.19.0-0', 'v20.19.0-rc.1', true],
+    ['>=20.19.0-0', 'v20.18.0', false],
+    ['>=20.19.0-0 <21', 'v20.19.0-rc.2', true],
+    ['>=25', 'v25.0.0-nightly20261030', false],
+    ['>=25.0.0-0', 'v25.0.0-nightly20261030', true],
+    ['>=24', 'v25.0.0-rc.1', false],
+    ['^20.19.0 || >=22.12.0', 'v25.0.0-rc.1', false],
+    ['>=22.12.0', 'v22.12.0-rc.1', false],
+    ['>=22.12.0', 'v22.12.0+build5', true],
+    ['<25', 'v25.0.0-rc.1', false],
+  ]
+  // Act
+  const results = cases.map(([range, version]) =>
+    satisfiesNodeRange(range, version),
+  )
+  // Assert
+  assert.deepEqual(
+    results,
+    cases.map(([, , expected]) => expected),
+  )
+})
+
+// Value: protects=a Node version text Codebook cannot read is named as unreadable, not as excluded by the range; fails_when=the refusal says the range excludes a Node whose version was never placed in it; why_new=an unparseable version used to read as outside every range; seam=readNode injected; no_claim=the text a real Node prints
+test('a Node version text that is not a version is refused as unreadable, not as excluded by the range', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context, {
+    engines: '>=20.19.0',
+  })
+  // Act
+  const reading = await readViteWorkspaceGaps(
+    repository.root,
+    async () => 'node-latest',
+    true,
+  )
+  // Assert
+  assert.equal(reading.gaps[0]?.code, 'VITE_UNSUPPORTED')
+  assert.match(
+    reading.gaps[0]?.message ?? '',
+    /reported "node-latest", which Codebook cannot read as a version/,
+  )
 })
 
 test('masks values by length and by secret shape and leaves short words alone', () => {
@@ -363,4 +458,147 @@ test('a not-yet-created cacheDir inside the package root is supported', async (c
   )
   // Assert
   assert.deepEqual(unsupported, [])
+})
+
+// Value: protects=a workspace opened through a symlinked path starts; fails_when=root is compared by lexical path while Vite reports process.cwd() (a real path), so every symlinked workspace (macOS /tmp) is refused with "root is not the package root"; why_new=every fixture used a realpath'd temp folder; seam=none; no_claim=cacheDir
+test('a workspace opened through a symlinked path accepts the real-path root Vite reports', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context)
+  const linkParent = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-link-')),
+  )
+  context.after(() => rm(linkParent, { recursive: true, force: true }))
+  const symlinkedRoot = join(linkParent, 'opened-through-link')
+  await symlink(repository.root, symlinkedRoot)
+  // Act
+  const unsupported = await assessViteSettings(
+    {
+      ...supported,
+      root: repository.root,
+      cacheDir: join(repository.root, 'node_modules/.vite'),
+    },
+    symlinkedRoot,
+  )
+  // Assert
+  assert.deepEqual(unsupported, [])
+})
+
+// Value: protects=a root that is really another folder is still refused after the real-path comparison; fails_when=the comparison accepts any root; why_new=task 28 changed the comparison; seam=none; no_claim=symlinks
+test('a root that is another folder than the package root is still unsupported', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context)
+  // Act
+  const unsupported = await assessViteSettings(
+    {
+      ...supported,
+      root: join(repository.root, 'packages/app'),
+      cacheDir: join(repository.root, 'node_modules/.vite'),
+    },
+    repository.root,
+  )
+  // Assert
+  assert.deepEqual(unsupported, ['root is not the package root'])
+})
+
+// Value: protects=an unreadable package.json gives a coded refusal that names the file; fails_when=a SyntaxError escapes uncoded, or the start says only "install vite"; why_new=JSON.parse threw an uncoded SyntaxError; seam=none; no_claim=file contents
+test('a malformed package.json is refused with VITE_UNSUPPORTED naming package.json and not its contents', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context)
+  await writeFile(
+    join(repository.root, 'package.json'),
+    '{ "secret-token-xyz": ',
+  )
+  // Act
+  const error = await refusalOf(
+    assessViteWorkspace(repository.root, process.execPath, SIGNAL),
+  )
+  // Assert
+  assert.equal(error.code, 'VITE_UNSUPPORTED')
+  assert.match(
+    error.message,
+    /^package\.json could not be read: it is not valid JSON/,
+  )
+  assert.equal(error.message.includes('secret-token-xyz'), false)
+})
+
+// Value: protects=a package.json that parses but has no valid scripts is a coded refusal too; fails_when=a ZodError escapes; why_new=the start parsed the manifest with a throwing schema; seam=none; no_claim=none
+test('a package.json whose scripts is not an object is refused with VITE_UNSUPPORTED naming package.json', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context)
+  await writeFile(
+    join(repository.root, 'package.json'),
+    JSON.stringify({ scripts: 'not an object' }),
+  )
+  // Act
+  const error = await refusalOf(
+    assessViteWorkspace(repository.root, process.execPath, SIGNAL),
+  )
+  // Assert
+  assert.equal(error.code, 'VITE_UNSUPPORTED')
+  assert.match(
+    error.message,
+    /^package\.json could not be read: it has no valid scripts/,
+  )
+})
+
+// Value: protects=an engines.node range with syntax Codebook does not know is refused and named as unknown; fails_when=the range passes unchecked or is worded as excluding the Node; why_new=unknown syntax used to let the start through; seam=none; no_claim=the Next path, which never reads engines
+test('a Vite whose engines.node range is unknown syntax is refused naming the range as unknown', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context, {
+    engines: '>=18 <=bad',
+  })
+  // Act
+  const error = await refusalOf(
+    assessViteWorkspace(repository.root, process.execPath, SIGNAL),
+  )
+  // Assert
+  assert.equal(error.code, 'VITE_UNSUPPORTED')
+  assert.match(
+    error.message,
+    /declares the Node range ">=18 <=bad", which Codebook does not know how to read/,
+  )
+})
+
+// Value: protects=the start and codebook_status agree after a prerequisite changes; fails_when=either side keeps its own copy of the checks and one says ready while the other refuses; why_new=the checks were written twice; seam=none; no_claim=launcher-time settings
+test('a refused start and the status readiness agree on each prerequisite that changes', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context, { dev: 'vite' })
+  const manifestPath = join(repository.root, 'package.json')
+  const manifests = [
+    { dev: 'vite', predev: 'echo hi' },
+    {},
+    { dev: 'vite && echo done' },
+  ]
+  // Act
+  const readyBefore = (
+    await readRepositoryAdapterReadiness(
+      repository.root,
+      process.execPath,
+      SIGNAL,
+    )
+  )['vite-dev'].ready
+  const outcomes: Array<{ startMessage: string; statusMissing: string[] }> = []
+  for (const scripts of manifests) {
+    await writeFile(manifestPath, JSON.stringify({ scripts }))
+    const startError = await refusalOf(
+      assessViteWorkspace(repository.root, process.execPath, SIGNAL),
+    )
+    const status = await readRepositoryAdapterReadiness(
+      repository.root,
+      process.execPath,
+      SIGNAL,
+    )
+    outcomes.push({
+      startMessage: startError.message,
+      statusMissing: status['vite-dev'].missing,
+    })
+  }
+  // Assert
+  assert.equal(readyBefore, true)
+  assert.deepEqual(
+    outcomes.map((outcome) =>
+      outcome.statusMissing.includes(outcome.startMessage),
+    ),
+    [true, true, true],
+  )
 })

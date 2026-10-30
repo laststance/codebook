@@ -1,5 +1,10 @@
 export const BUILD_PACKAGES = ['extension']
 export const COMPILED_DIRECTORIES = ['extension/dist']
+/**
+ * The oldest Node the bundles must still parse: the lowest Node that Vite 8's `engines.node` (`^20.19.0 || >=22.12.0`) accepts.
+ * The Vite launcher runs under the learner's configured Node (`codebook.nodeExecutable`), which may be older than the extension host's Node 24, so the bundler lowers syntax to this floor.
+ */
+export const BUNDLE_NODE_TARGET = 'node20.19'
 export const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
 export const MAX_ARCHIVE_ENTRIES = 2048
 export const PACKAGE_MANIFEST_PATH = 'package-manifest.json'

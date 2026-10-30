@@ -2,11 +2,14 @@ import {
   REPOSITORY_SETUP_TIMEOUT_MS,
   VITE_LAUNCHER_FACTS_TIMEOUT_MS,
   VITE_LAUNCHER_MESSAGES,
+  VITE_MODE_ENV_NAMES,
+  VITE_SETUP_STEPS,
 } from '../constants'
 import type {
   DevelopmentApp,
   DevelopmentServerStart,
 } from '../developmentServerAdapter'
+import type { StudyError } from '../errors'
 import type {
   ViteLauncherOptions,
   ViteLauncherReport,
@@ -16,8 +19,13 @@ import { viteRefusal } from '../viteRefusals'
 import { assessViteSettings, type ViteFacts } from './assessViteSettings'
 import type { ViteWorkspace } from './assessViteWorkspace'
 import { buildDevelopmentServerEnvironment } from './developmentServerEnvironment'
+import { isPortInUseFailure } from './isPortInUseFailure'
 import { launchDevelopmentServer } from './launchDevelopmentServer'
-import { longestMaskedLength, maskKnownValues } from './maskKnownValues'
+import {
+  longestMaskedLength,
+  maskEnvValues,
+  maskKnownValues,
+} from './maskKnownValues'
 import { parseViteLauncherReport } from './parseViteLauncherReport'
 import {
   listViteTimestampFiles,
@@ -75,7 +83,8 @@ function isViteLauncherMessage(message: unknown): boolean {
     type === VITE_LAUNCHER_MESSAGES.env ||
     type === VITE_LAUNCHER_MESSAGES.facts ||
     type === VITE_LAUNCHER_MESSAGES.failed ||
-    type === VITE_LAUNCHER_MESSAGES.listening
+    type === VITE_LAUNCHER_MESSAGES.listening ||
+    type === VITE_LAUNCHER_MESSAGES.optimizerIdle
   )
 }
 
@@ -89,6 +98,36 @@ function refuseLaunch(app: DevelopmentApp): void {
 }
 
 /**
+ * Words a launcher failure of the listen phase: a busy port as `VITE_PORT_UNAVAILABLE`, anything else as `VITE_LAUNCHER_FAILED`.
+ *
+ * Why it exists: another process can take the port between the free-port check and the listen; that race must read as a busy port, as the earlier check words it. Called by {@link launchViteDevelopmentServer} on a failed report after the listen command.
+ *
+ * @param failure - The launcher's failed report.
+ * @param declared - The port the config resolved and where it was declared.
+ * @param mask - Masks env values and secret shapes in a sentence.
+ * @returns The error to throw.
+ * @example
+ * throw listenFailureRefusal(report, { port: 3010, source: 'the Vite config' }, mask)
+ */
+function listenFailureRefusal(
+  failure: { phase: string; errorName: string; firstLine: string },
+  declared: { port: number; source: string },
+  mask: (text: string) => string,
+): StudyError {
+  if (isPortInUseFailure(failure))
+    return vitePortRefusal(
+      { port: declared.port, reason: 'in-use' },
+      declared.source,
+    )
+  return viteRefusal(
+    'VITE_LAUNCHER_FAILED',
+    mask(
+      `Vite could not start listening (${failure.errorName}): ${failure.firstLine}`,
+    ),
+  )
+}
+
+/**
  * Starts the owned Vite launcher, judges the facts of the config the server will use, and lets it listen only when the project is supported and its port is free.
  *
  * Why it exists: the Vite adapter must evaluate the project's config once, on the server that is then started, and refuse before any listener exists. Called by the Vite adapter's `start` during repository-browser preparation.
@@ -97,7 +136,8 @@ function refuseLaunch(app: DevelopmentApp): void {
  * @param request - What the run provides ({@link DevelopmentServerStart}).
  * @param workspaceInfo - The Vite installation and accepted `dev` script ({@link assessViteWorkspace}).
  * @param launcherPath - The absolute path of the compiled launcher module.
- * @returns The ready-to-wait server, the port it listens on and the Vite version the launcher reported.
+ * @param factsTimeoutMs - How long the launcher may take to report its facts; production keeps {@link VITE_LAUNCHER_FACTS_TIMEOUT_MS}, a test passes a short one.
+ * @returns The ready-to-wait server, the port it listens on, the Vite version the launcher reported and the value mask for text the run keeps and the env-values-only mask for a sealed module (its inlined `VITE_` values come from the env files; credential-shaped literals of the project's code stay).
  * @throws `VITE_LAUNCHER_FAILED` (config error, crash, no report in time), `VITE_UNSUPPORTED` (settings), `VITE_PORT_UNAVAILABLE`; each message is masked by value and redacted.
  * @example
  * const { app, port } = await launchViteDevelopmentServer(request, workspaceInfo, join(__dirname, 'viteLauncher.js'))
@@ -106,10 +146,19 @@ export async function launchViteDevelopmentServer(
   request: DevelopmentServerStart,
   workspaceInfo: ViteWorkspace,
   launcherPath: string,
-): Promise<{ app: DevelopmentApp; port: number; viteVersion: string }> {
+  factsTimeoutMs: number = VITE_LAUNCHER_FACTS_TIMEOUT_MS,
+): Promise<{
+  app: DevelopmentApp
+  port: number
+  viteVersion: string
+  maskText: (text: string) => string
+  maskModuleText: (text: string) => string
+}> {
   const { script, installation } = workspaceInfo
-  // Every value the launcher is given or loads is masked by value in what leaves this module.
-  const maskedValues = Object.values(script.assignments)
+  // Every value the launcher is given or loads is masked by value in what leaves this module; a mode name is no secret, and masking it would blank "development" as the launcher's own list avoids.
+  const maskedValues = Object.entries(script.assignments)
+    .filter(([name]) => !VITE_MODE_ENV_NAMES.includes(name))
+    .map(([, value]) => value)
   const mask = (text: string): string => maskKnownValues(text, maskedValues)
   const timestampFilesBefore = await listViteTimestampFiles(
     request.workspace,
@@ -122,7 +171,7 @@ export async function launchViteDevelopmentServer(
     configFile: script.configFile,
     port: script.port,
   }
-  request.onStep('resolving the Vite config')
+  request.onStep(VITE_SETUP_STEPS.resolvingConfig)
   const app = launchDevelopmentServer(
     request.workspace,
     request.node,
@@ -163,11 +212,11 @@ export async function launchViteDevelopmentServer(
       )
     }
   }
-  let first = await receive(VITE_LAUNCHER_FACTS_TIMEOUT_MS)
+  let first = await receive(factsTimeoutMs)
   // The launcher sends its env values before any project code runs, so a later death still leaves them masked.
   if (first.type === VITE_LAUNCHER_MESSAGES.env) {
     maskedValues.push(...first.envValues)
-    first = await receive(VITE_LAUNCHER_FACTS_TIMEOUT_MS)
+    first = await receive(factsTimeoutMs)
   }
   if (first.type === VITE_LAUNCHER_MESSAGES.failed) {
     maskedValues.push(...first.envValues)
@@ -211,17 +260,12 @@ export async function launchViteDevelopmentServer(
   }
   request.alive()
   app.declarePort(facts.port)
-  request.onStep('starting Vite')
+  request.onStep(VITE_SETUP_STEPS.startingVite)
   app.send({ type: VITE_LAUNCHER_MESSAGES.listen })
   const listening = await receive(REPOSITORY_SETUP_TIMEOUT_MS)
   if (listening.type === VITE_LAUNCHER_MESSAGES.failed) {
     maskedValues.push(...listening.envValues)
-    throw viteRefusal(
-      'VITE_LAUNCHER_FAILED',
-      mask(
-        `Vite could not start listening (${listening.errorName}): ${listening.firstLine}`,
-      ),
-    )
+    throw listenFailureRefusal(listening, declared, mask)
   }
   if (
     listening.type !== VITE_LAUNCHER_MESSAGES.listening ||
@@ -231,5 +275,11 @@ export async function launchViteDevelopmentServer(
       'VITE_LAUNCHER_FAILED',
       `Vite listens on another port than the one its config resolved (${facts.port}).`,
     )
-  return { app, port: facts.port, viteVersion: mask(facts.viteVersion) }
+  return {
+    app,
+    port: facts.port,
+    viteVersion: mask(facts.viteVersion),
+    maskText: mask,
+    maskModuleText: (text) => maskEnvValues(text, maskedValues),
+  }
 }

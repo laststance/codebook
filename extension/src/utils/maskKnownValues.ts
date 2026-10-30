@@ -41,6 +41,25 @@ export function longestMaskedLength(values: readonly string[]): number {
 }
 
 /**
+ * Masks every occurrence of the given values only, with no secret-shape redaction.
+ *
+ * Why it exists: text that holds project code (a sealed module and its map) can contain credential-shaped literals that are not env values; shape redaction would corrupt it (an unterminated PEM literal cuts the text). Called by {@link maskKnownValues} and by the Vite adapter's kept-module mask ({@link launchViteDevelopmentServer}).
+ * Values shorter than {@link VITE_MASKED_VALUE_MIN_CHARS} are left alone; each line of a multi-line value and its JSON-escaped form are masked too ({@link maskCandidates}).
+ *
+ * @param text - The text to mask.
+ * @param values - The values to mask; the array is read at call time.
+ * @returns The text with each value replaced by the mask.
+ * @example
+ * maskEnvValues('Bearer abcdefghijklmnop and hunter2hunter2', ['hunter2hunter2']) // => 'Bearer abcdefghijklmnop and [masked]'
+ */
+export function maskEnvValues(text: string, values: readonly string[]): string {
+  let masked = text
+  for (const candidate of maskCandidates(values))
+    masked = masked.split(candidate).join(REDACTION_MASK)
+  return masked
+}
+
+/**
  * Masks every occurrence of values the launcher passed or loaded (script assignments, `.env` files), then the secret shapes {@link redactSecretText} knows.
  *
  * Why it exists: a plain secret has no recognizable shape, so a diagnostic can only hide it by its value. Called by {@link launchViteDevelopmentServer} on every published output tail and sentence, by {@link launchDevelopmentServer} before an output tail is cut, and by the Vite launcher (`viteLauncher.ts`) on its error line before the line is cut.
@@ -56,8 +75,5 @@ export function maskKnownValues(
   text: string,
   values: readonly string[],
 ): string {
-  let masked = text
-  for (const candidate of maskCandidates(values))
-    masked = masked.split(candidate).join(REDACTION_MASK)
-  return redactSecretText(masked)
+  return redactSecretText(maskEnvValues(text, values))
 }

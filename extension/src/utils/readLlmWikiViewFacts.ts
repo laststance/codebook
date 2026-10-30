@@ -72,11 +72,11 @@ export type LlmWikiViewFactsDependencies = {
   now: () => number
 }
 
-/** What a read of the facts found about the marker; `isOwnMarkerLive` is this window's own live marker, whose settle is judged together with the run ({@link readLlmWikiViewFacts}), and `wasReadDuringRun` says this window's run was running when that read began. */
+/** What a read of the facts found about the marker; `isOwnMarkerLive` is this window's own live marker, whose settle is judged together with the run ({@link readLlmWikiViewFacts}), and `wasReadBeforeSettled` says this window's run was running, or its change of the marker was pending, when that read began. */
 type MarkerFacts = Pick<
   Extract<LlmWikiViewFacts, { kind: 'ready' }>,
   'elsewhere' | 'reservation'
-> & { isOwnMarkerLive?: true; wasReadDuringRun?: true }
+> & { isOwnMarkerLive?: true; wasReadBeforeSettled?: true }
 
 /**
  * Words the sentence of a start block for the attention row: the update's sentence where a Wiki stands, the generation's where none does.
@@ -114,23 +114,25 @@ function sentenceOfBlock(
 /**
  * Says whether this window's own marker, which still stands as a run's, is being removed or turned into a reservation after its run ended.
  *
- * Why: a run's end reaches the view before the file work that removes its marker or turns it into the reservation of a stopped watch, and a change that failed waits for its retry, so a read in that time sees neither a run nor a reservation. The change is pending from the turn the run's end is recorded until it is made or given up, and either end makes the view read again; a marker still standing after that is not settling, so the view shows what the facts say. A marker read while the run still ran says nothing of the marker once the run has ended during the read: it counts as settling, and the read the run's end asks for shows the marker as it is.
+ * Why: a run's end reaches the view before the file work that removes its marker or turns it into the reservation of a stopped watch, and a change that failed waits for its retry, so a read in that time sees neither a run nor a reservation. The change is pending from the turn the run's end is recorded until it is made or given up, and either end makes the view read again; a marker still standing after that is not settling, so the view shows what the facts say. A marker read while the run still ran, or while its change was pending, says nothing of the marker once the run has ended or the change was made during the read (the read may hold the marker as it was before the change): it counts as settling, and the read the run's end asks for shows the marker as it is.
  * Trigger: {@link readLlmWikiViewFacts} asks it for this window's own live marker, in the turn it reads the run.
  *
  * @param dependencies - The editor window's closures.
  * @param outputDirectory - The Wiki folder whose marker it is.
- * @param wasReadDuringRun - Whether this window's run was running when the marker read began.
- * @returns `true` while this window has no running run and either the marker was read while the run ran or its change of this marker is pending; `false` while a run runs, and once the change was made or given up.
+ * @param wasReadBeforeSettled - Whether this window's run was running, or its marker change pending, when the marker read began.
+ * @returns `true` while this window has no running run and either the marker was read while the run ran or its change was pending, or its change of this marker is pending; `false` while a run runs, and once the change was made or given up.
  * @example isOwnMarkerSettling({ ...dependencies, runStatus: () => ({ state: 'idle' }), isMarkerChangePending: () => true }, '/repo/.codebook/wiki', false) // => true
  */
 function isOwnMarkerSettling(
   dependencies: LlmWikiViewFactsDependencies,
   outputDirectory: string,
-  wasReadDuringRun: boolean,
+  wasReadBeforeSettled: boolean,
 ): boolean {
   // A running run's marker is row 2's.
   if (dependencies.runStatus().state === 'running') return false
-  return wasReadDuringRun || dependencies.isMarkerChangePending(outputDirectory)
+  return (
+    wasReadBeforeSettled || dependencies.isMarkerChangePending(outputDirectory)
+  )
 }
 
 /**
@@ -144,8 +146,10 @@ async function readMarkerFacts(
   dependencies: LlmWikiViewFactsDependencies,
   outputDirectory: string,
 ): Promise<MarkerFacts> {
-  // Taken before the read: a marker read while the run ran may have been changed by the run's end before the read is over.
-  const wasReadDuringRun = dependencies.runStatus().state === 'running'
+  // Taken before the read: a marker read while the run ran, or while its change was pending, may have been changed before the read is over, and then it shows the marker as it was; a check of the pending change after the read alone would call that read settled and show no message.
+  const wasReadBeforeSettled =
+    dependencies.runStatus().state === 'running' ||
+    dependencies.isMarkerChangePending(outputDirectory)
   const look = await dependencies
     .readMarker(outputDirectory)
     .catch(() => undefined)
@@ -160,8 +164,8 @@ async function readMarkerFacts(
   if (held.watchEndedAtMs === undefined) {
     // This window's own live marker is row 2's, never "another window"; whether it settles is read with the run, at the end of the read.
     if (held.windowId === dependencies.ownWindowId)
-      return wasReadDuringRun
-        ? { isOwnMarkerLive: true, wasReadDuringRun: true }
+      return wasReadBeforeSettled
+        ? { isOwnMarkerLive: true, wasReadBeforeSettled: true }
         : { isOwnMarkerLive: true }
     return { elsewhere: { kind: held.runKind, startedAtMs: held.startedAtMs } }
   }
@@ -332,7 +336,7 @@ export async function readLlmWikiViewFacts(
     }),
     readMarkerFacts(dependencies, outputDirectory),
   ])
-  const { isOwnMarkerLive, wasReadDuringRun, ...markerRows } = markerFacts
+  const { isOwnMarkerLive, wasReadBeforeSettled, ...markerRows } = markerFacts
   // The run and the settle of this window's own marker are read in the same turn, so a run that ended during the reads is seen as ended by both.
   const runFacts = readRunFacts(dependencies, outputDirectory)
   const isMarkerSettling =
@@ -340,7 +344,7 @@ export async function readLlmWikiViewFacts(
     isOwnMarkerSettling(
       dependencies,
       outputDirectory,
-      wasReadDuringRun === true,
+      wasReadBeforeSettled === true,
     )
   return {
     kind: 'ready',

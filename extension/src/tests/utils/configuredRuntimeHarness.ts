@@ -20,6 +20,7 @@ import { WaitTimeoutError } from '../../runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
 import { configuredDomExpression } from '../../utils/configuredDomExpression'
 import { createBundleVerifier } from '../../utils/createBundleVerifier'
+import { maskEnvValues, maskKnownValues } from '../../utils/maskKnownValues'
 import * as viteDevAdapter from '../../viteDevAdapter'
 
 import {
@@ -83,6 +84,18 @@ export async function configuredRuntimeHarness(
     adapter?: 'vite-dev'
     /** Makes the Vite stand-in refuse to seal with this sentence, as a missing served module does. */
     sealFailure?: string
+    /** Makes the Vite stand-in never finish reading the served module, as a server that stops answering does while a stop is sealed. */
+    sealHangs?: boolean
+    /** The executed module's text instead of the default one-statement module, such as a Vite module with an inlined env value. */
+    moduleJavascript?: string
+    /** Makes the Vite stand-in report these values as the ones it masks in kept module text, as the launcher's env-file values are. */
+    maskedValues?: string[]
+    /** Names the executed module's source map lists (its `names`), such as an env value an inlined constant carries. */
+    sourceMapNames?: string[]
+    /** The text the debugger reports for `nextTheme` (its variable and the declared inspection) instead of `dark`. */
+    capturedValue?: string
+    /** Makes the Vite stand-in reload the page, serving changed module bytes, right after the entry page was requested and before the run waits for the page to settle. */
+    reloadDuringEntryLoad?: boolean
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
@@ -125,7 +138,9 @@ export async function configuredRuntimeHarness(
     ),
     source = reference.descriptor!.sources[0]!.text,
     // With a fixture the executed module mirrors the source line for line, so a pause can be placed on any of its lines.
-    javascript = fixture ? source : 'const nextTheme = "dark";'
+    javascript =
+      options.moduleJavascript ??
+      (fixture ? source : 'const nextTheme = "dark";')
   const bundle: BundleSource = {
     sourcePath,
     source,
@@ -134,7 +149,7 @@ export async function configuredRuntimeHarness(
       version: 3,
       sources: [sourcePath],
       sourcesContent: [source],
-      names: [],
+      names: options.sourceMapNames ?? [],
       mappings:
         options.mappings ?? (additionalStops.length ? 'AAAA,MAAM' : 'AAAA'),
     }),
@@ -155,6 +170,18 @@ export async function configuredRuntimeHarness(
   const navigations: string[] = []
   const launchConfigurations: DebugSession['configuration'][] = []
   const setupSteps: string[] = []
+  // The text of the module the Vite stand-in serves now; {@link serveChangedModule} replaces it, as a dependency-optimizer reload does.
+  let servedJavascript = javascript
+  // The seal refusal the Vite stand-in gives from now on; {@link refuseLaterSeals} sets it.
+  let laterSealRefusal: string | undefined
+  // How many times the run asked the Vite stand-in whether the server is settled, and the hold on its answer.
+  let settledQuestions = 0
+  // How many times the run read a stop module from the Vite stand-in.
+  let sealReads = 0
+  let optimizerHold: Promise<void> | undefined
+  // The wait bounds the run passed to the stand-in, and the way to end a wait as the launcher's own wait does at its bound.
+  const settledTimeoutsMs: number[] = []
+  let expireOptimizerWait = (): void => {}
   let emitInputPause = true,
     emitPreparationResume = false,
     stopAtStartupBreakpoint = false,
@@ -265,7 +292,9 @@ export async function configuredRuntimeHarness(
           variables: [
             {
               name: 'nextTheme',
-              value: requiredValueUndefined ? 'undefined' : 'dark',
+              value: requiredValueUndefined
+                ? 'undefined'
+                : (options.capturedValue ?? 'dark'),
               type: requiredValueUndefined ? 'undefined' : 'string',
               variablesReference: 0,
             },
@@ -396,7 +425,9 @@ export async function configuredRuntimeHarness(
     if (requiredValueUnavailable)
       return 'x'.repeat(REPOSITORY_LITERAL_LIMIT_CHARS + 1)
     if (requiredValueObject) return { email: 'learner@example.com' }
-    return requiredValueUndefined ? undefined : 'dark'
+    return requiredValueUndefined
+      ? undefined
+      : (options.capturedValue ?? 'dark')
   }
   const proxy = {
     closed: false,
@@ -467,6 +498,13 @@ export async function configuredRuntimeHarness(
           listeners.get('Page.frameNavigated')?.({
             frame: { id: 'main', url: String(parameters?.url) },
           })
+        // A dependency-optimizer reload that lands while the entry page is still loading, with new bytes served.
+        if (options.adapter && options.reloadDuringEntryLoad) {
+          servedJavascript = `${javascript}\n// ?v=late-reload`
+          listeners.get('Page.frameNavigated')?.({
+            frame: { id: 'main', url: String(parameters?.url) },
+          })
+        }
         bound = !rejectBinding
         // VS Code can surface a bound source stop during hydration when Codebook arms its breakpoint too early.
         if (
@@ -495,7 +533,7 @@ export async function configuredRuntimeHarness(
         return {}
       }
       if (method === 'Debugger.getScriptSource')
-        return { scriptSource: executedScriptSource ?? javascript }
+        return { scriptSource: executedScriptSource ?? servedJavascript }
       if (method === 'Debugger.evaluateOnCallFrame') {
         try {
           return {
@@ -784,11 +822,56 @@ export async function configuredRuntimeHarness(
             request.onStep('starting Vite')
             setupSteps.push('starting Vite')
             request.onApp(fakeApplication)
-            return { app: fakeApplication, port: 4321, viteVersion: '8.3.5' }
+            return {
+              app: fakeApplication,
+              port: 4321,
+              viteVersion: '8.3.5',
+              ...(options.maskedValues
+                ? {
+                    maskText: (text: string) =>
+                      maskKnownValues(text, options.maskedValues ?? []),
+                    maskModuleText: (text: string) =>
+                      maskEnvValues(text, options.maskedValues ?? []),
+                  }
+                : {}),
+            }
           },
-          readBundle: async () => {
+          waitForServerSettled: async (_app: unknown, timeoutMs: number) => {
+            settledQuestions += 1
+            settledTimeoutsMs.push(timeoutMs)
+            await Promise.race([
+              optimizerHold,
+              // The launcher's wait ends with the uncoded wait timeout when its bound passes.
+              new Promise<never>((_resolve, reject) => {
+                expireOptimizerWait = (): void =>
+                  reject(
+                    new WaitTimeoutError(
+                      'Timed out waiting for a message of the owned launcher',
+                    ),
+                  )
+              }),
+            ])
+          },
+          readBundle: async (request: { signal: AbortSignal }) => {
+            sealReads += 1
             if (options.sealFailure) throw new Error(options.sealFailure)
-            return { bundle, discovery: {} }
+            if (laterSealRefusal !== undefined)
+              throw new StudyError(
+                'VITE_SEAL_FAILED',
+                laterSealRefusal,
+                laterSealRefusal,
+              )
+            // A hung server read ends only when the run is cancelled.
+            if (options.sealHangs)
+              await new Promise<never>((_resolve, reject) =>
+                request.signal.addEventListener('abort', () =>
+                  reject(request.signal.reason),
+                ),
+              )
+            return {
+              bundle: { ...bundle, javascript: servedJavascript },
+              discovery: {},
+            }
           },
         },
       },
@@ -921,6 +1004,38 @@ export async function configuredRuntimeHarness(
           url: 'http://localhost:4321/x',
         },
       })
+    },
+    /** Makes the Vite stand-in serve this text for the stop module from now on, and the page execute it, as a dependency-optimizer reload does with new import hashes. @example harness.serveChangedModule('const nextTheme = "dark";\n// ?v=2') */
+    serveChangedModule(changedJavascript: string): void {
+      servedJavascript = changedJavascript
+    },
+    /** Makes every later seal read of the Vite stand-in refuse with `VITE_SEAL_FAILED` and this sentence, as a module read during a reload can. @example harness.refuseLaterSeals('Declared stop src/theme.ts:1 cannot be sealed: no source map.') */
+    refuseLaterSeals(sentence: string): void {
+      laterSealRefusal = sentence
+    },
+    /** Keeps the Vite stand-in's dependency optimizer busy until the returned function is called. @example const release = harness.holdOptimizer() */
+    holdOptimizer(): () => void {
+      let release = (): void => {}
+      optimizerHold = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return release
+    },
+    /** The bounds (milliseconds) the run gave each wait for the optimizer to be idle. */
+    settledTimeoutsMs(): readonly number[] {
+      return settledTimeoutsMs
+    },
+    /** Ends the pending optimizer wait as the launcher's own wait does when its bound passes: with the uncoded wait timeout. @example harness.expireOptimizerWait() */
+    expireOptimizerWait(): void {
+      expireOptimizerWait()
+    },
+    /** How many times the run read a stop module from the Vite stand-in. */
+    sealReadCount(): number {
+      return sealReads
+    },
+    /** How many times the run asked whether the server was settled (the dependency optimizer idle). */
+    settledQuestionCount(): number {
+      return settledQuestions
     },
     /** Re-announces the sealed module the way the new page generation parses it. @example harness.announceSealedModule('second') */
     announceSealedModule(scriptId: string): void {

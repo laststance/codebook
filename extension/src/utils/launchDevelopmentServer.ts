@@ -129,9 +129,12 @@ export function launchDevelopmentServer(
         REPOSITORY_APPLICATION_LOG_LIMIT_BYTES,
       )
   }
+  // The whole tail is masked again at each read: a value the launcher reported after some output was already settled (its env values arrive on the IPC channel, output on a pipe, in no fixed order) is then masked in the journal and the refusals too.
   const publishedTail = (): string =>
     keepUtf8Tail(
-      publishedLog + (spec?.mask ? spec.mask(pendingLog) : pendingLog),
+      spec?.mask
+        ? spec.mask(publishedLog + pendingLog)
+        : publishedLog + pendingLog,
       REPOSITORY_APPLICATION_LOG_LIMIT_BYTES,
     )
   // Each channel is redacted statefully, so a credential the server prints across chunks is masked before it is kept for publication.

@@ -1,3 +1,4 @@
+import { FIRST_UNPRIVILEGED_PORT } from '../constants'
 import type { StudyError } from '../errors'
 import { viteRefusal } from '../viteRefusals'
 
@@ -25,7 +26,7 @@ export function vitePortRefusal(
   if (refusal.reason === 'not-permitted')
     return viteRefusal(
       'VITE_PORT_UNAVAILABLE',
-      `${subject} is not permitted for Codebook on this machine (the operating system refuses to let this program listen on it). Ask the learner to use a port from 1024 up.`,
+      `${subject} is not permitted for Codebook on this machine (the operating system refuses to let this program listen on it). Ask the learner to use a port from ${FIRST_UNPRIVILEGED_PORT} up.`,
     )
   if (refusal.reason === 'unreadable')
     return viteRefusal(

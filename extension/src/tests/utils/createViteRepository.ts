@@ -34,6 +34,10 @@ export type StubViteBehavior = {
   projectRoot?: string
   /** Makes the stub's process exit with this code while loading. */
   exits?: number
+  /** Gives the stub a client dependency optimizer whose one discovered dependency stays in processing this long (milliseconds) from the moment the launcher is first asked whether the optimizer is idle. */
+  optimizerBusyMs?: number
+  /** Variables the stub's config sets in `process.env` while it loads, as a config that loads an env file itself (`process.loadEnvFile`, `dotenv/config`) does. */
+  setsEnv?: Record<string, string>
 }
 
 /** A temporary package root that holds a stub `vite` package. */
@@ -50,20 +54,32 @@ import { readFileSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 export const version = '8.3.5'
-export function loadEnv(mode, directory) {
+export function loadEnv(mode, directory, prefix) {
+  // Like Vite: the env files first, then every process.env entry with the prefix wins (an empty prefix matches all of them).
+  let fileValues = {}
   try {
-    return Object.fromEntries(
-      readFileSync(join(directory, '.env'), 'utf8').split('\\n').filter(Boolean).map((line) => line.split('=')),
+    // Like Vite's dotenv-expand: \${NAME} reads the real environment.
+    fileValues = Object.fromEntries(
+      readFileSync(join(directory, '.env'), 'utf8').split('\\n').flatMap((line) => {
+        // Like dotenv: NAME=value, NAME: value and export NAME=value define a variable; a comment or any other line is skipped.
+        const match = line.match(/^\\s*(?:export\\s+)?([\\w.-]+)\\s*[=:]\\s*(.*)$/)
+        if (!match) return []
+        const [, name, rest] = match
+        return [[name, rest.replace(/\\$\\{(\\w+)\\}/g, (_match, variable) => globalThis.process.env[variable] ?? '')]]
+      }),
     )
-  } catch {
-    return {}
-  }
+  } catch {}
+  const processValues = Object.fromEntries(
+    Object.entries(globalThis.process.env).filter(([name]) => name.startsWith(prefix)),
+  )
+  return { ...fileValues, ...processValues }
 }
 export async function createServer(inline) {
   const cwd = globalThis.process.cwd()
   const behavior = JSON.parse(await readFile(join(cwd, 'stub-vite.json'), 'utf8'))
   // Vite: an inline root wins over the project config's root, which wins over the working directory.
   const root = inline.root ?? (behavior.projectRoot ? join(cwd, behavior.projectRoot) : cwd)
+  for (const [name, value] of Object.entries(behavior.setsEnv ?? {})) globalThis.process.env[name] = value
   for (const line of behavior.logLines ?? []) console.log(line)
   for (const name of behavior.logEnv ?? []) console.log('ENV ' + name + '=' + (globalThis.process.env[name] ?? ''))
   for (const message of behavior.sendsMessages ?? []) globalThis.process.send(message)
@@ -89,6 +105,7 @@ export async function createServer(inline) {
     server: { port, host: inline.server.host, ...behavior.server },
   }
   let http
+  let optimizer
   return {
     config,
     httpServer: null,
@@ -103,6 +120,18 @@ export async function createServer(inline) {
         http.listen(port, '127.0.0.1', resolve)
       })
       this.httpServer = http
+    },
+    environments: {
+      client: {
+        // The busy period starts when the launcher first reads the optimizer, so a slow start never shortens it.
+        get depsOptimizer() {
+          if (behavior.optimizerBusyMs === undefined) return undefined
+          optimizer ??= {
+            metadata: { discovered: { late: { processing: new Promise((resolve) => setTimeout(resolve, behavior.optimizerBusyMs)) } } },
+          }
+          return optimizer
+        },
+      },
     },
     printUrls() {
       if (behavior.silent) return
