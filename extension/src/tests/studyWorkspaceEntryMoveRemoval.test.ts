@@ -1193,3 +1193,84 @@ test("in Cursor, a repository run's Application is revealed at a pause after its
     await harness.close()
   }
 })
+
+// Value: protects=a repository run's first pause in Cursor 3.27.22 while the Agent chat has the keyboard: the run's stop file is already open outside the Application's group, so the native debugger reveals that editor instead of opening a preview in the Application's group that replaces the Application (N64p3-F2: "Owned viewport closed before cleanup"), without Codebook taking the keyboard or touching a learner's tab; fails_when=the run's stop files are not opened beside the Application at attach, so the debugger's preview in column 1 replaces the preview Application and disposes its webview; why_new=Cycle 0064 task 97 (D14); seam=createViewport (a live repository run), declared run stops of the window's records, BrowserViewport.attach, debuggerOpensStopFile (reveals an open editor in any group, else opens a preview in the Application's group), replacesPreviewTabOnTextPreview, addSeparateEditorPart (the Agent chat holds the keyboard); no_claim=the real Cursor's answer (native Cursor trial)
+test("in Cursor, a repository run's first pause keeps the Application open while the Agent chat has the keyboard", async () => {
+  // Arrange: a run declared a stop in src/theme.ts, the file is open nowhere, and the Agent chat has the keyboard.
+  const harness = await workspaceHarness(true, true)
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.rebuildTabObjectsAtGroupRemoval()
+  harness.closeEmptyGroupsAfterPanelMove()
+  harness.removeGroupLeftByPanelMoveLater()
+  harness.reportsPaneMoveAsOpenThenClose()
+  harness.replacesPreviewTabOnTextPreview()
+  let viewport:
+    | Awaited<
+        ReturnType<
+          NonNullable<typeof harness.reader.presentation.createViewport>
+        >
+      >
+    | undefined
+  try {
+    harness.acknowledgeContext()
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: 'declares-the-stop',
+    })
+    await harness.service.records.get(receipt.runId)!.preparation
+    harness.focusMutableDraft('auth.ts', 3)
+    harness.focusMutableDraft('actions.ts', 2)
+    await harness.reader.open()
+    chat.focusTab()
+    viewport = await harness.reader.presentation.createViewport(
+      'stop-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+    const learnerTabLabels = (): string[] =>
+      harness.groups
+        .filter((group) => group.viewColumn !== 1)
+        .flatMap((group) => group.tabs.map((tab) => tab.label))
+        .filter((label) => label !== 'theme.ts')
+        .sort()
+    const learnerTabsBefore = learnerTabLabels()
+
+    // Act: the run attaches its browser, then the debugger pauses at the stop and shows its file.
+    await viewport.attach(
+      {
+        on: () => undefined,
+        request: async () => ({}),
+        subscribe: async () => undefined,
+      },
+      new AbortController().signal,
+    )
+    const shownInColumn = harness.debuggerOpensStopFile('src/theme.ts', 1)
+
+    // Assert: the Application is still open in column 1 and the stop file stands in another group; no learner's tab went; the chat still has the keyboard.
+    assert.notEqual(shownInColumn, 1)
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+    assert.deepEqual(
+      harness.groups
+        .find((group) => group.viewColumn === 1)!
+        .tabs.map((tab) => tab.label),
+      ['codebook · Application stop-run'],
+    )
+    assert.deepEqual(learnerTabLabels(), learnerTabsBefore)
+    assert.equal(chat.focused(), true)
+    assert.equal(
+      harness.commands.includes('workbench.action.keepEditor'),
+      false,
+    )
+  } finally {
+    viewport?.close()
+    await harness.close()
+  }
+})
