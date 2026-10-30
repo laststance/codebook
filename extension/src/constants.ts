@@ -1592,6 +1592,12 @@ export const REPOSITORY_STORAGE_KEY_LIMIT_CHARS = 128
 export const REPOSITORY_STORAGE_VALUE_LIMIT_CHARS = 2_048
 export const REPOSITORY_STORAGE_LIMIT_BYTES = 16_384
 export const REPOSITORY_SETUP_TIMEOUT_MS = 90_000
+/** How long {@link readNextRouteManifests} waits, after the readiness GET of the entry path, for the route to appear in Next's route manifests. A cold first compile writes them shortly after it answers; the wait counts against {@link REPOSITORY_SETUP_TIMEOUT_MS}. */
+export const NEXT_MANIFEST_POLL_MS = 10_000
+/** How often {@link readNextRouteManifests} reads the route manifests again while it waits within {@link NEXT_MANIFEST_POLL_MS}. */
+export const NEXT_MANIFEST_POLL_INTERVAL_MS = 250
+/** The source extensions Next tries for a Pages Router page, in its own order (its default `pageExtensions`); a custom `pageExtensions` is not read. */
+export const NEXT_PAGES_SOURCE_EXTENSIONS = ['tsx', 'ts', 'jsx', 'js'] as const
 export const REPOSITORY_PAUSE_HOLD_TIMEOUT_MS = 300_000
 /** The longest private observation hold a native Node test trial accepts (`CODEBOOK_NODE_TEST_HOLD_MS`, `CODEBOOK_NODE_TEST_HOLD_AFTER_MS`), so a recording can show the state the trial reached. */
 export const NATIVE_TRIAL_HOLD_LIMIT_MS = 60_000
