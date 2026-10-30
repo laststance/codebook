@@ -495,7 +495,7 @@ test('the launcher reports a VITE_ prefixed environment-only value for masking b
       cwd: repository.root,
       env: {
         ...process.env,
-        VITE_ENV_ONLY_KEY: 'envonlysecret1',
+        VITE_ENV_ONLY_GREETING: 'envonlysecret1',
         PLAIN_ENV_ONLY: 'readablevalue1',
       },
       stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
