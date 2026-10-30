@@ -20,6 +20,7 @@ import { WaitTimeoutError } from '../../runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
 import { configuredDomExpression } from '../../utils/configuredDomExpression'
 import { createBundleVerifier } from '../../utils/createBundleVerifier'
+import * as viteDevAdapter from '../../viteDevAdapter'
 
 import {
   answerBreakLocationRequest,
@@ -78,6 +79,10 @@ export async function configuredRuntimeHarness(
     browserProfileLeft?: ProfileLeft
     /** How the stand-in `[::1]` forwarder starts: its own (default), absent on a host without IPv6 loopback, or refused because another process holds `[::1]`. */
     ipv6Loopback?: 'owned' | 'absent' | 'held'
+    /** Runs the configuration on the Vite adapter: its stand-in starts the stub server, serves the sealed module at its owned address and loads the entry page once. */
+    adapter?: 'vite-dev'
+    /** Makes the Vite stand-in refuse to seal with this sentence, as a missing served module does. */
+    sealFailure?: string
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
@@ -91,6 +96,7 @@ export async function configuredRuntimeHarness(
       fixture ? (fixture.source ?? FIXTURE_SOURCE) : undefined,
       fixture?.citationEndLine,
     )
+  if (options.adapter) reference.configuration.adapter = options.adapter
   if (additionalStops.length)
     reference.configuration.additionalStops = additionalStops
   if (options.before) reference.configuration.action.before = options.before
@@ -99,7 +105,7 @@ export async function configuredRuntimeHarness(
   if (fixture?.declaredColumn)
     reference.configuration.source.column = fixture.declaredColumn
   // Each of these changes makes the frozen intent hash stale.
-  if (additionalStops.length || options.before || fixture)
+  if (additionalStops.length || options.before || fixture || options.adapter)
     reference.configurationHash = sha256(
       JSON.stringify(reference.configuration),
     )
@@ -133,7 +139,9 @@ export async function configuredRuntimeHarness(
         options.mappings ?? (additionalStops.length ? 'AAAA,MAAM' : 'AAAA'),
     }),
     mapSource: sourcePath,
-    scriptUrl: 'webpack-internal:///(app-pages-browser)/./src/theme.ts',
+    scriptUrl: options.adapter
+      ? 'http://127.0.0.1:4321/src/theme.ts'
+      : 'webpack-internal:///(app-pages-browser)/./src/theme.ts',
     chunkPath: join(repository.directory, '.next/dev/chunk.js'),
     chunkHash: '0'.repeat(64),
   }
@@ -145,6 +153,8 @@ export async function configuredRuntimeHarness(
   let requestSequence = 0
   const bindingWaitBudgetsMs: (number | undefined)[] = []
   const navigations: string[] = []
+  const launchConfigurations: DebugSession['configuration'][] = []
+  const setupSteps: string[] = []
   let emitInputPause = true,
     emitPreparationResume = false,
     stopAtStartupBreakpoint = false,
@@ -453,6 +463,10 @@ export async function configuredRuntimeHarness(
         return { result: { value: pageEvaluation(parameters?.expression) } }
       if (method === 'Page.navigate') {
         navigations.push(String(parameters?.url))
+        if (options.adapter)
+          listeners.get('Page.frameNavigated')?.({
+            frame: { id: 'main', url: String(parameters?.url) },
+          })
         bound = !rejectBinding
         // VS Code can surface a bound source stop during hydration when Codebook arms its breakpoint too early.
         if (
@@ -642,6 +656,15 @@ export async function configuredRuntimeHarness(
       constructor(readonly location: unknown) {}
     },
   }
+  const fakeApplication = {
+    ready: async () => {
+      releases.push('application acquired')
+      return 'http://127.0.0.1:4321'
+    },
+    close: async (): Promise<void> => {
+      releases.push('application')
+    },
+  }
   const breakpointModule = await loadModule<
     typeof OwnedRepositoryBreakpointModule
   >(resolve(__dirname, '../../ownedRepositoryBreakpoint.js'), { vscode })
@@ -659,6 +682,7 @@ export async function configuredRuntimeHarness(
           async launch(
             configuration: DebugSession['configuration'],
           ): Promise<void> {
+            launchConfigurations.push(configuration)
             root.configuration.name = configuration.name
             run.addSession(root)
             run.addSession(selected)
@@ -747,15 +771,26 @@ export async function configuredRuntimeHarness(
         },
       },
       './utils/launchDevelopmentServer': {
-        launchDevelopmentServer: () => ({
-          ready: async () => {
-            releases.push('application acquired')
-            return 'http://127.0.0.1:4321'
+        launchDevelopmentServer: () => fakeApplication,
+      },
+      './viteDevAdapter': {
+        VITE_DEV_ADAPTER: {
+          ...viteDevAdapter.VITE_DEV_ADAPTER,
+          assertWorkspace: async () => undefined,
+          start: async (request: {
+            onApp(app: typeof fakeApplication): void
+            onStep(step: string): void
+          }) => {
+            request.onStep('starting Vite')
+            setupSteps.push('starting Vite')
+            request.onApp(fakeApplication)
+            return { app: fakeApplication, port: 4321 }
           },
-          close: async (): Promise<void> => {
-            releases.push('application')
+          readBundle: async () => {
+            if (options.sealFailure) throw new Error(options.sealFailure)
+            return { bundle, discovery: {} }
           },
-        }),
+        },
       },
       './runtimeSupport/utils/waitUntil': {
         waitUntil: async <Value>(
@@ -869,6 +904,32 @@ export async function configuredRuntimeHarness(
     },
     /** Every URL the run navigated the page to, in order. */
     navigations,
+    /** The configuration of each browser the run launched, in order. */
+    launchConfigurations,
+    /** Reports another main-frame page load, as a Vite dependency-optimizer reload or a click's navigation does. @example harness.reloadPage() */
+    reloadPage(): void {
+      listeners.get('Page.frameNavigated')?.({
+        frame: { id: 'main', url: 'http://localhost:4321/' },
+      })
+    },
+    /** Reports a page load inside a frame other than the main one. */
+    loadSubframe(): void {
+      listeners.get('Page.frameNavigated')?.({
+        frame: {
+          id: 'child',
+          parentId: 'main',
+          url: 'http://localhost:4321/x',
+        },
+      })
+    },
+    /** Re-announces the sealed module the way the new page generation parses it. @example harness.announceSealedModule('second') */
+    announceSealedModule(scriptId: string): void {
+      listeners.get('Debugger.scriptParsed')?.({
+        scriptId,
+        url: bundle.scriptUrl,
+        executionContextId: 1,
+      })
+    },
     rejectBreakpointBinding(): void {
       rejectBinding = true
     },

@@ -3905,7 +3905,11 @@ test('the input schema of codebook_start states the inspection rule for the firs
   // Assert
   const variantSchema = z.object({
     properties: z.object({
-      adapter: z.object({ const: z.string() }),
+      // A repository variant lists the supported servers as an enum (the first, Next, names it); the node-test variant has one constant.
+      adapter: z.object({
+        const: z.string().optional(),
+        enum: z.array(z.string()).optional(),
+      }),
       version: z.object({ const: z.number() }),
       inspections: z.object({ description: z.string() }),
       additionalStops: z.object({
@@ -3935,7 +3939,7 @@ test('the input schema of codebook_start states the inspection rule for the firs
     ).properties.configuration.anyOf
   const described = [...repositoryVariants.anyOf, nodeTestVariant].map(
     (variant) => [
-      `${variant.properties.adapter.const} ${variant.properties.version.const}`,
+      `${variant.properties.adapter.const ?? variant.properties.adapter.enum?.[0]} ${variant.properties.version.const}`,
       variant.properties.inspections.description,
       variant.properties.additionalStops.items.properties.inspections
         .description,
@@ -3964,7 +3968,11 @@ test("the input schema of codebook_start says that a required value is read befo
   // Assert
   const variantSchema = z.object({
     properties: z.object({
-      adapter: z.object({ const: z.string() }),
+      // A repository variant lists the supported servers as an enum (the first, Next, names it); the node-test variant has one constant.
+      adapter: z.object({
+        const: z.string().optional(),
+        enum: z.array(z.string()).optional(),
+      }),
       version: z.object({ const: z.number() }),
       inspections: z.object({ description: z.string() }),
       additionalStops: z.object({
@@ -3998,7 +4006,7 @@ test("the input schema of codebook_start says that a required value is read befo
       "A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; require a value that already exists before that line, or declare the stop on a later line."
   const saysIt = [...repositoryVariants.anyOf, nodeTestVariant].map(
     (variant) => [
-      `${variant.properties.adapter.const} ${variant.properties.version.const}`,
+      `${variant.properties.adapter.const ?? variant.properties.adapter.enum?.[0]} ${variant.properties.version.const}`,
       variant.properties.inspections.description.includes(movedSentence),
       variant.properties.additionalStops.items.properties.inspections.description.includes(
         movedSentence,
