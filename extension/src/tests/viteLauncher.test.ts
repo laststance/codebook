@@ -391,8 +391,8 @@ test('a launcher that exited after its facts still gives the coded busy-port ref
   )
 })
 
-// Value: protects=a port another process takes between the extension's free-port check and Vite's listen is refused with the launcher's coded failure naming the listen phase, not a hang until the setup deadline; fails_when=a listen-phase failure is dropped or parsed as the facts phase so the run waits; why_new=the busy-port tests refuse in the extension's check, before the launcher is told to listen; seam=none; no_claim=the real Vite error text
-test('a port taken after the free-port check refuses as a launcher failure while listening', async (context) => {
+// Value: protects=a port another process takes between the extension's free-port check and Vite's listen is refused as a busy port (VITE_PORT_UNAVAILABLE, Cycle 0064 task 17), not as VITE_LAUNCHER_FAILED and not a hang until the setup deadline; fails_when=a listen-phase EADDRINUSE maps to the launcher failure; why_new=the busy-port tests refuse in the extension's check, before the launcher is told to listen; seam=none; no_claim=the real Vite error text
+test('a port taken after the free-port check refuses as VITE_PORT_UNAVAILABLE while listening', async (context) => {
   // Arrange
   const port = await freePort()
   const occupier = createServer()
@@ -404,11 +404,8 @@ test('a port taken after the free-port check refuses as a launcher failure while
   // Act
   const error = await refusalOf(run.started)
   // Assert
-  assert.equal(error.code, 'VITE_LAUNCHER_FAILED')
-  assert.match(
-    error.message,
-    /Vite could not start listening \(Error\): listen EADDRINUSE/,
-  )
+  assert.equal(error.code, 'VITE_PORT_UNAVAILABLE')
+  assert.match(error.message, /is in use on this machine/)
 })
 
 // Value: protects=a .env secret never leaks when the launcher dies in project code before its facts; fails_when=the parent masks only the dev-script assignments; why_new=the launcher now sends its env values before createServer runs; seam=none; no_claim=values of a custom envDir before the config resolved

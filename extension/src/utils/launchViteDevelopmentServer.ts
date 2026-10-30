@@ -7,6 +7,7 @@ import type {
   DevelopmentApp,
   DevelopmentServerStart,
 } from '../developmentServerAdapter'
+import type { StudyError } from '../errors'
 import type {
   ViteLauncherOptions,
   ViteLauncherReport,
@@ -16,6 +17,7 @@ import { viteRefusal } from '../viteRefusals'
 import { assessViteSettings, type ViteFacts } from './assessViteSettings'
 import type { ViteWorkspace } from './assessViteWorkspace'
 import { buildDevelopmentServerEnvironment } from './developmentServerEnvironment'
+import { isPortInUseFailure } from './isPortInUseFailure'
 import { launchDevelopmentServer } from './launchDevelopmentServer'
 import { longestMaskedLength, maskKnownValues } from './maskKnownValues'
 import { parseViteLauncherReport } from './parseViteLauncherReport'
@@ -87,6 +89,36 @@ function refuseLaunch(app: DevelopmentApp): void {
   } catch {
     // The launcher is gone; the coded refusal that follows is the message that matters.
   }
+}
+
+/**
+ * Words a launcher failure of the listen phase: a busy port as `VITE_PORT_UNAVAILABLE`, anything else as `VITE_LAUNCHER_FAILED`.
+ *
+ * Why it exists: another process can take the port between the free-port check and the listen; that race must read as a busy port, as the earlier check words it. Called by {@link launchViteDevelopmentServer} on a failed report after the listen command.
+ *
+ * @param failure - The launcher's failed report.
+ * @param declared - The port the config resolved and where it was declared.
+ * @param mask - Masks env values and secret shapes in a sentence.
+ * @returns The error to throw.
+ * @example
+ * throw listenFailureRefusal(report, { port: 3010, source: 'the Vite config' }, mask)
+ */
+function listenFailureRefusal(
+  failure: { phase: string; errorName: string; firstLine: string },
+  declared: { port: number; source: string },
+  mask: (text: string) => string,
+): StudyError {
+  if (isPortInUseFailure(failure))
+    return vitePortRefusal(
+      { port: declared.port, reason: 'in-use' },
+      declared.source,
+    )
+  return viteRefusal(
+    'VITE_LAUNCHER_FAILED',
+    mask(
+      `Vite could not start listening (${failure.errorName}): ${failure.firstLine}`,
+    ),
+  )
 }
 
 /**
@@ -219,12 +251,7 @@ export async function launchViteDevelopmentServer(
   const listening = await receive(REPOSITORY_SETUP_TIMEOUT_MS)
   if (listening.type === VITE_LAUNCHER_MESSAGES.failed) {
     maskedValues.push(...listening.envValues)
-    throw viteRefusal(
-      'VITE_LAUNCHER_FAILED',
-      mask(
-        `Vite could not start listening (${listening.errorName}): ${listening.firstLine}`,
-      ),
-    )
+    throw listenFailureRefusal(listening, declared, mask)
   }
   if (
     listening.type !== VITE_LAUNCHER_MESSAGES.listening ||
