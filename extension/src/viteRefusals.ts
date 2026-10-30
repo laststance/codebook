@@ -1,3 +1,4 @@
+import { MILLISECONDS_PER_SECOND } from './constants'
 import { StudyError, type ErrorCode } from './errors'
 
 /**
@@ -72,7 +73,7 @@ export function viteFailureOf(
  * viteSetupDeadlineText('sealing the declared stops', 90_000) // => 'VITE_SETUP_DEADLINE: Repository setup deadline (90 s) exceeded while sealing the declared stops. …'
  */
 export function viteSetupDeadlineText(step: string, limitMs: number): string {
-  return `VITE_SETUP_DEADLINE: Repository setup deadline (${Math.round(limitMs / 1000)} s) exceeded while ${step}. First-run dependency pre-bundling can take long; the owned server was stopped and the browser was not opened, so start again once (the dependency cache is warm then).`
+  return `VITE_SETUP_DEADLINE: Repository setup deadline (${Math.round(limitMs / MILLISECONDS_PER_SECOND)} s) exceeded while ${step}. First-run dependency pre-bundling can take long; the owned server was stopped and the browser was not opened, so start again once (the dependency cache is warm then).`
 }
 
 /**

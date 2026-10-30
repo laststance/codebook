@@ -95,7 +95,7 @@ export function viteHelp() {
       unsupported: [
         'Another Vite major, or a vite package that does not resolve from the package root (Yarn Plug-n-Play without node_modules).',
         'A dev script with any other command, flag, shell operator (&&, ;, |), variable expansion, quote or redirect; a cross-env, npx or pnpm exec prefix; a predev script.',
-        'Config settings Codebook does not own: https, origin, an own-listener hmr (port, host or server), middlewareMode or appType "custom", a base other than "/", a root other than the package root, a cacheDir outside the package root. These are found at the start, not by codebook_status, and are refused all at once.',
+        'Config settings Codebook does not own: a server.port of 0, https, origin, an own-listener hmr (port, host or server), middlewareMode or appType "custom", a base other than "/", a root other than the package root, a cacheDir outside the package root. These are found at the start, not by codebook_status, and are refused all at once.',
         'Stops in .vue, .svelte or other non-JS/TS files, in node_modules, or outside the package root.',
         'SSR and a server participant (participant "server" is refused with vite-dev).',
         'A page that reloads after the declared inputs were written: the run ends and the click is not resent.',

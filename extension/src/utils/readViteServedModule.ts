@@ -55,19 +55,26 @@ async function readCappedBody(
   return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks))
 }
 
-/** Resolves one entry of a served map's `sources` to an absolute path of the package, or an absolute address for another origin. */
+/** Resolves one entry of a served map's `sources` to an absolute path of the package, or an absolute address for another origin; a malformed escape ends the seal through `refuse`. */
 async function absoluteSourceOf(
   source: string,
   moduleUrl: string,
   packageRoot: string,
+  refuse: Refuse,
 ): Promise<string> {
   const resolved = new URL(source, moduleUrl)
   if (resolved.protocol === 'file:') return fileURLToPath(resolved)
   if (resolved.origin !== new URL(moduleUrl).origin) return resolved.href
-  const path = join(
-    packageRoot,
-    ...decodeURIComponent(resolved.pathname).split('/'),
-  )
+  // A malformed escape in the entry is a refusal, not a raw URIError
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(resolved.pathname)
+  } catch {
+    return refuse(
+      `the inline map of ${moduleUrl} has the source entry ${JSON.stringify(source)}, which is not a valid URL path`,
+    )
+  }
+  const path = join(packageRoot, ...decoded.split('/'))
   return realpath(path).catch(() => path)
 }
 
@@ -150,9 +157,18 @@ async function normalizeServedMap(
     mapBytes.toString('base64') !== encoded
   )
     refuse(`the inline map of ${address.url} is oversized or malformed`)
-  const parsed = servedMapSchema.safeParse(
-    JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(mapBytes)),
-  )
+  // Non-UTF-8 or non-JSON bytes are a coded refusal, not a raw TypeError/SyntaxError
+  let mapJson: unknown
+  try {
+    mapJson = JSON.parse(
+      new TextDecoder('utf-8', { fatal: true }).decode(mapBytes),
+    )
+  } catch {
+    return refuse(
+      `the inline source map of ${address.url} is not valid UTF-8 JSON`,
+    )
+  }
+  const parsed = servedMapSchema.safeParse(mapJson)
   if (!parsed.success)
     return refuse(
       `the inline map of ${address.url} is not a flat version 3 map`,
@@ -160,7 +176,7 @@ async function normalizeServedMap(
   const map = parsed.data
   const sources = await Promise.all(
     map.sources.map((entry) =>
-      absoluteSourceOf(entry, address.url, packageRoot),
+      absoluteSourceOf(entry, address.url, packageRoot, refuse),
     ),
   )
   const matches = sources.flatMap((entry, index) =>

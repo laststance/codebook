@@ -317,6 +317,70 @@ test('refuses stop files outside the root, in node_modules or of a framework ext
   assert.match(messages[2]!, /App\.vue has the extension \.vue/)
 })
 
+test('refuses a map that is not UTF-8 JSON with the coded seal failure instead of a raw parse error', async (context) => {
+  // Arrange
+  const notJson = Buffer.from('not json').toString('base64')
+  const notUtf8 = Buffer.from([0xff, 0xfe, 0xfd]).toString('base64')
+  const fixtures = await Promise.all(
+    [notJson, notUtf8].map((encoded) =>
+      startFixture(context, {
+        '/src/theme.ts': {
+          status: 200,
+          type: 'text/javascript',
+          body: `export const theme = "dark";\n//# sourceMappingURL=data:application/json;base64,${encoded}\n`,
+        },
+      }),
+    ),
+  )
+  // Act
+  const errors = await Promise.all(
+    fixtures.map((fixture) =>
+      refusalOf(
+        readViteServedModule(
+          fixture.root,
+          fixture.origin,
+          fixture.stop,
+          new AbortController().signal,
+        ),
+      ),
+    ),
+  )
+  // Assert
+  for (const error of errors) {
+    assert.equal(error.code, 'VITE_SEAL_FAILED')
+    assert.match(
+      error.message,
+      /the inline source map of http:\/\/127\.0\.0\.1:\d+\/src\/theme\.ts is not valid UTF-8 JSON/,
+    )
+  }
+})
+
+test('refuses a map source entry with a malformed percent escape with the coded seal failure', async (context) => {
+  // Arrange
+  const fixture = await startFixture(context, {
+    '/src/theme.ts': {
+      status: 200,
+      type: 'text/javascript',
+      body: servedModule({ ...GOOD_MAP, sources: ['theme.ts', '/%E0%A4%A'] }),
+    },
+  })
+  // Act
+  const error = await refusalOf(
+    readViteServedModule(
+      fixture.root,
+      fixture.origin,
+      fixture.stop,
+      new AbortController().signal,
+    ),
+  )
+  // Assert
+  assert.equal(error.code, 'VITE_SEAL_FAILED')
+  assert.match(
+    error.message,
+    /has the source entry "\/%E0%A4%A", which is not a valid URL path/,
+  )
+})
+
 test('matches an announced script to its sealed address on any loopback host and ignores the hot-update query', () => {
   // Arrange
   const sealed = 'http://127.0.0.1:3010/src/theme.ts'

@@ -10,6 +10,7 @@ import {
   refuseViteMisroute,
 } from '../utils/assessViteWorkspace'
 import { maskKnownValues } from '../utils/maskKnownValues'
+import { parseViteLauncherReport } from '../utils/parseViteLauncherReport'
 import { satisfiesNodeRange } from '../utils/satisfiesNodeRange'
 import { VITE_REFUSAL_CODES, viteHelpAnchor } from '../viteRefusals'
 
@@ -215,6 +216,25 @@ test('lists every unsupported setting at once with values only for safe scalars'
     'server.hmr is set (its own port, host or server)',
     'server.middlewareMode is true',
     'cacheDir is outside the package root',
+  ])
+})
+
+test('a server.port of 0 reaches the settings policy and is listed as unsupported', () => {
+  // Arrange
+  const message = {
+    type: 'vite-facts',
+    facts: { ...supported, port: 0 },
+    envValues: [],
+  }
+  // Act
+  const report = parseViteLauncherReport(message)
+  const unsupported =
+    report.type === 'vite-facts'
+      ? assessViteSettings(report.facts, '/repo')
+      : ['not a facts report']
+  // Assert
+  assert.deepEqual(unsupported, [
+    'server.port is 0 (a random port Codebook cannot own)',
   ])
 })
 

@@ -1,10 +1,9 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
-const executeFile = promisify(execFile)
+import { NODE_VERSION_TIMEOUT_MS } from '../constants'
 
-/** The longest `node --version` may take. */
-const NODE_VERSION_TIMEOUT_MS = 10_000
+const executeFile = promisify(execFile)
 
 /**
  * Reads the version of the Node executable a run uses, for the Node gate of {@link assessViteWorkspace}.

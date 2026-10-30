@@ -8,7 +8,8 @@ const factsSchema = z.object({
   root: z.string(),
   base: z.string(),
   cacheDir: z.string(),
-  port: z.number().int().min(1).max(65_535),
+  // 0 is legal in Vite (a random port); the settings policy refuses it
+  port: z.number().int().min(0).max(65_535),
   https: z.boolean(),
   origin: z.string().optional(),
   hmrOwnListener: z.boolean(),

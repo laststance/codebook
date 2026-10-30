@@ -2238,6 +2238,9 @@ export const VITE_LAUNCHER_FACTS_TIMEOUT_MS = 30_000
 /** How long one request for a module the Vite dev server serves may take while a stop is sealed. */
 export const VITE_MODULE_FETCH_TIMEOUT_MS = 15_000
 
+/** The longest `node --version` may take when a run's Node executable is checked. */
+export const NODE_VERSION_TIMEOUT_MS = 10_000
+
 /** The shortest environment value (characters) the launcher diagnostics mask by value, so a short common word is not blanked everywhere. */
 export const VITE_MASKED_VALUE_MIN_CHARS = 6
 

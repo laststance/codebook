@@ -62,6 +62,8 @@ export function assessViteSettings(
     unsupported.push(`base is ${JSON.stringify(redactSecretText(facts.base))}`)
   if (resolve(facts.root) !== resolve(packageRoot))
     unsupported.push('root is not the package root')
+  if (facts.port === 0)
+    unsupported.push('server.port is 0 (a random port Codebook cannot own)')
   if (facts.https) unsupported.push('server.https is set')
   if (facts.origin !== undefined)
     unsupported.push(`server.origin is ${printOrigin(facts.origin)}`)
