@@ -19,6 +19,7 @@ import {
 } from '../utils/assessViteWorkspace'
 import { maskKnownValues } from '../utils/maskKnownValues'
 import { parseViteLauncherReport } from '../utils/parseViteLauncherReport'
+import { readRepositoryAdapterReadiness } from '../utils/readRepositoryAdapterReadiness'
 import { satisfiesNodeRange } from '../utils/satisfiesNodeRange'
 import {
   VITE_REFUSAL_CODES,
@@ -280,9 +281,19 @@ test('reads engines.node ranges the way package engines write them', () => {
     satisfiesNodeRange(range, 'v24.22.1'),
     satisfiesNodeRange('>=18 <20', 'v20.1.0'),
     satisfiesNodeRange('some-new-syntax', 'v24.0.0'),
+    satisfiesNodeRange('>=18 <=bad', 'v24.22.1'),
   ]
   // Assert
-  assert.deepEqual(results, [true, false, false, true, true, false, true])
+  assert.deepEqual(results, [
+    true,
+    false,
+    false,
+    true,
+    true,
+    false,
+    false,
+    false,
+  ])
 })
 
 test('masks values by length and by secret shape and leaves short words alone', () => {
@@ -364,4 +375,147 @@ test('a not-yet-created cacheDir inside the package root is supported', async (c
   )
   // Assert
   assert.deepEqual(unsupported, [])
+})
+
+// Value: protects=a workspace opened through a symlinked path starts; fails_when=root is compared by lexical path while Vite reports process.cwd() (a real path), so every symlinked workspace (macOS /tmp) is refused with "root is not the package root"; why_new=every fixture used a realpath'd temp folder; seam=none; no_claim=cacheDir
+test('a workspace opened through a symlinked path accepts the real-path root Vite reports', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context)
+  const linkParent = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-link-')),
+  )
+  context.after(() => rm(linkParent, { recursive: true, force: true }))
+  const symlinkedRoot = join(linkParent, 'opened-through-link')
+  await symlink(repository.root, symlinkedRoot)
+  // Act
+  const unsupported = await assessViteSettings(
+    {
+      ...supported,
+      root: repository.root,
+      cacheDir: join(repository.root, 'node_modules/.vite'),
+    },
+    symlinkedRoot,
+  )
+  // Assert
+  assert.deepEqual(unsupported, [])
+})
+
+// Value: protects=a root that is really another folder is still refused after the real-path comparison; fails_when=the comparison accepts any root; why_new=task 28 changed the comparison; seam=none; no_claim=symlinks
+test('a root that is another folder than the package root is still unsupported', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context)
+  // Act
+  const unsupported = await assessViteSettings(
+    {
+      ...supported,
+      root: join(repository.root, 'packages/app'),
+      cacheDir: join(repository.root, 'node_modules/.vite'),
+    },
+    repository.root,
+  )
+  // Assert
+  assert.deepEqual(unsupported, ['root is not the package root'])
+})
+
+// Value: protects=an unreadable package.json gives a coded refusal that names the file; fails_when=a SyntaxError escapes uncoded, or the start says only "install vite"; why_new=JSON.parse threw an uncoded SyntaxError; seam=none; no_claim=file contents
+test('a malformed package.json is refused with VITE_UNSUPPORTED naming package.json and not its contents', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context)
+  await writeFile(
+    join(repository.root, 'package.json'),
+    '{ "secret-token-xyz": ',
+  )
+  // Act
+  const error = await refusalOf(
+    assessViteWorkspace(repository.root, process.execPath, SIGNAL),
+  )
+  // Assert
+  assert.equal(error.code, 'VITE_UNSUPPORTED')
+  assert.match(
+    error.message,
+    /^package\.json could not be read: it is not valid JSON/,
+  )
+  assert.equal(error.message.includes('secret-token-xyz'), false)
+})
+
+// Value: protects=a package.json that parses but has no valid scripts is a coded refusal too; fails_when=a ZodError escapes; why_new=the start parsed the manifest with a throwing schema; seam=none; no_claim=none
+test('a package.json whose scripts is not an object is refused with VITE_UNSUPPORTED naming package.json', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context)
+  await writeFile(
+    join(repository.root, 'package.json'),
+    JSON.stringify({ scripts: 'not an object' }),
+  )
+  // Act
+  const error = await refusalOf(
+    assessViteWorkspace(repository.root, process.execPath, SIGNAL),
+  )
+  // Assert
+  assert.equal(error.code, 'VITE_UNSUPPORTED')
+  assert.match(
+    error.message,
+    /^package\.json could not be read: it has no valid scripts/,
+  )
+})
+
+// Value: protects=an engines.node range with syntax Codebook does not know is refused and named as unknown; fails_when=the range passes unchecked or is worded as excluding the Node; why_new=unknown syntax used to let the start through; seam=none; no_claim=the Next path, which never reads engines
+test('a Vite whose engines.node range is unknown syntax is refused naming the range as unknown', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context, {
+    engines: '>=18 <=bad',
+  })
+  // Act
+  const error = await refusalOf(
+    assessViteWorkspace(repository.root, process.execPath, SIGNAL),
+  )
+  // Assert
+  assert.equal(error.code, 'VITE_UNSUPPORTED')
+  assert.match(
+    error.message,
+    /declares the Node range ">=18 <=bad", which Codebook does not know how to read/,
+  )
+})
+
+// Value: protects=the start and codebook_status agree after a prerequisite changes; fails_when=either side keeps its own copy of the checks and one says ready while the other refuses; why_new=the checks were written twice; seam=none; no_claim=launcher-time settings
+test('a refused start and the status readiness agree on each prerequisite that changes', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context, { dev: 'vite' })
+  const manifestPath = join(repository.root, 'package.json')
+  const manifests = [
+    { dev: 'vite', predev: 'echo hi' },
+    {},
+    { dev: 'vite && echo done' },
+  ]
+  // Act
+  const readyBefore = (
+    await readRepositoryAdapterReadiness(
+      repository.root,
+      process.execPath,
+      SIGNAL,
+    )
+  )['vite-dev'].ready
+  const outcomes: Array<{ startMessage: string; statusMissing: string[] }> = []
+  for (const scripts of manifests) {
+    await writeFile(manifestPath, JSON.stringify({ scripts }))
+    const startError = await refusalOf(
+      assessViteWorkspace(repository.root, process.execPath, SIGNAL),
+    )
+    const status = await readRepositoryAdapterReadiness(
+      repository.root,
+      process.execPath,
+      SIGNAL,
+    )
+    outcomes.push({
+      startMessage: startError.message,
+      statusMissing: status['vite-dev'].missing,
+    })
+  }
+  // Assert
+  assert.equal(readyBefore, true)
+  assert.deepEqual(
+    outcomes.map((outcome) =>
+      outcome.statusMissing.includes(outcome.startMessage),
+    ),
+    [true, true, true],
+  )
 })

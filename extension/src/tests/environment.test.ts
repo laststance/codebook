@@ -912,6 +912,14 @@ test('the configured environment routes only owned DAP responses and reveals imm
     preparing.profiles?.['repository-browser']?.missing.join(' ') ?? '',
     /belongs to another process/,
   )
+  // A start of next-dev-webpack refuses while a managed run prepares, so its adapter status says not ready too (Cycle 0064 task 14).
+  const preparingNext =
+    preparing.profiles?.['repository-browser']?.adapters?.['next-dev-webpack']
+  assert.equal(preparingNext?.ready, false)
+  assert.match(
+    preparingNext?.missing.join(' ') ?? '',
+    /Poll the current run; do not stop its process/,
+  )
   runStatus = 'ready'
   ownedLock = { dev: lockStatus.dev, ino: lockStatus.ino }
   assert.equal(

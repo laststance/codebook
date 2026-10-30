@@ -435,7 +435,16 @@ export async function createEnvironment(
           'repository-browser': {
             ...check(configured),
             adapters: {
-              ...adapters,
+              // A next-dev-webpack start needs the shared prerequisites, Next's own workspace checks and no other managed run, as the profile does; the adapter's own gaps join them once.
+              'next-dev-webpack': {
+                ...adapters['next-dev-webpack'],
+                ...check([
+                  ...new Set([
+                    ...adapters['next-dev-webpack'].missing,
+                    ...configured,
+                  ]),
+                ]),
+              },
               // A vite-dev start needs the shared prerequisites, Vite's own gates and no other managed run; Next's workspace checks do not apply to it, so a Vite app without Next can start.
               'vite-dev': {
                 ...adapters['vite-dev'],

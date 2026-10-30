@@ -12,7 +12,7 @@ export type ViteFacts = {
   root: string
   base: string
   cacheDir: string
-  /** The port the dev server will use: the `dev` script's `--port`, else the config's, else 5173. */
+  /** The port the dev server will use: the `dev` script's `--port`, else the config's, else {@link VITE_DEFAULT_PORT}. */
   port: number
   https: boolean
   origin?: string
@@ -78,7 +78,7 @@ async function isInside(packageRoot: string, folder: string): Promise<boolean> {
  *
  * @param facts - The facts the launcher sent.
  * @param packageRoot - The package root (the workspace root this version).
- * @returns One phrase per unsupported setting, empty when the config is supported. `cacheDir` is judged on real paths, so a symlinked folder that leaves the package root is listed.
+ * @returns One phrase per unsupported setting, empty when the config is supported. `root` and `cacheDir` are judged on real paths, so a symlinked folder that leaves the package root is listed.
  * @example
  * await assessViteSettings({ …facts, base: '/app/', https: true }, '/repo') // => ['base is "/app/"', 'server.https is set']
  */
@@ -89,7 +89,11 @@ export async function assessViteSettings(
   const unsupported: string[] = []
   if (facts.base !== '/')
     unsupported.push(`base is ${JSON.stringify(redactSecretText(facts.base))}`)
-  if (resolve(facts.root) !== resolve(packageRoot))
+  // Vite reports `root` as the real path of the working directory, so a workspace opened through a symlink (macOS /tmp) compares by real paths on both sides.
+  if (
+    (await realPathOfPlanned(facts.root)) !==
+    (await realPathOfPlanned(packageRoot))
+  )
     unsupported.push('root is not the package root')
   if (facts.port === 0)
     unsupported.push('server.port is 0 (a random port Codebook cannot own)')

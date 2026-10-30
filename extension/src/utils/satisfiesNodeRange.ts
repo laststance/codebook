@@ -42,34 +42,55 @@ function satisfiesComparator(
   }
 }
 
+/** Splits a range into its `||` alternatives, each a list of comparator texts. */
+function alternativesOf(range: string): string[][] {
+  return range
+    .split('||')
+    .map((alternative) => alternative.trim().split(/\s+/).filter(Boolean))
+}
+
 /**
- * Tells whether a Node version is inside an `engines.node` range, for the Node gate of {@link assessViteWorkspace}.
+ * Tells whether every comparator of an `engines.node` range is syntax this reader knows, for the refusal of {@link readViteWorkspaceGaps} that names a range it cannot judge.
  *
- * Why it exists: the extension has no semver dependency and only the range forms package engines use are needed: `||` alternatives of space-separated comparators.
- * A range with syntax this reader does not know does not exclude the version, so an unusual range never blocks a start by itself.
+ * @param range - The `engines.node` text, such as `>=18 <=bad`.
+ * @returns `false` when the range is empty or any comparator is unknown, so {@link satisfiesNodeRange} cannot judge it.
+ * @example
+ * isReadableNodeRange('^20.19.0 || >=22.12.0') // => true
+ * isReadableNodeRange('>=18 <=bad') // => false
+ */
+export function isReadableNodeRange(range: string): boolean {
+  const alternatives = alternativesOf(range)
+  return alternatives.every(
+    (comparators) =>
+      comparators.length > 0 &&
+      // The parse of a comparator does not depend on the version, so any fixed version tells known from unknown syntax.
+      comparators.every(
+        (comparator) =>
+          satisfiesComparator(comparator, [0, 0, 0]) !== undefined,
+      ),
+  )
+}
+
+/**
+ * Tells whether a Node version is inside an `engines.node` range, for the Node gate of {@link readViteWorkspaceGaps}.
+ *
+ * Why it exists: the extension has no semver dependency and only the range forms package engines use are needed: `||` alternatives of space-separated comparators (`>=`, `>`, `<=`, `<`, `^`, `~`, `=` or a bare version).
+ * A range with syntax this reader does not know contains no version, so the gate refuses it and names it (see {@link isReadableNodeRange}) instead of letting an unusual range pass unchecked.
  *
  * @param range - The `engines.node` text, such as `^20.19.0 || >=22.12.0`.
  * @param version - The running Node's version, such as `v24.22.1`.
- * @returns `false` only when every alternative is read and none contains the version.
+ * @returns `true` only when the whole range is read and one alternative contains the version.
  * @example
  * satisfiesNodeRange('^20.19.0 || >=22.12.0', 'v24.22.1') // => true
  * satisfiesNodeRange('^20.19.0 || >=22.12.0', 'v18.20.0') // => false
+ * satisfiesNodeRange('>=18 <=bad', 'v24.22.1') // => false
  */
 export function satisfiesNodeRange(range: string, version: string): boolean {
   const running = parseTriplet(version)
-  if (!running) return true
-  let unknownSyntax = false
-  for (const alternative of range.split('||')) {
-    const results = alternative
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean)
-      .map((comparator) => satisfiesComparator(comparator, running))
-    if (results.includes(undefined)) {
-      unknownSyntax = true
-      continue
-    }
-    if (results.every(Boolean)) return true
-  }
-  return unknownSyntax
+  if (!running || !isReadableNodeRange(range)) return false
+  return alternativesOf(range).some((comparators) =>
+    comparators.every(
+      (comparator) => satisfiesComparator(comparator, running) === true,
+    ),
+  )
 }

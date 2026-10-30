@@ -77,7 +77,7 @@ test('a Next workspace reports next-dev-webpack ready and vite-dev missing the v
   assert.equal(readiness['vite-dev'].ready, false)
   assert.equal(readiness['vite-dev'].installed, false)
   assert.deepEqual(readiness['vite-dev'].missing, [
-    'Install the workspace dependencies, including vite, before using vite-dev (the vite package does not resolve from the package root).',
+    'vite-dev was chosen, but this workspace has Next and no vite package: use adapter "next-dev-webpack".',
   ])
 })
 
@@ -190,7 +190,7 @@ test('a malformed package.json reports the parse failure and not a missing dev s
   assert.equal(readiness.ready, false)
   assert.equal(readiness.missing.length, 2)
   assert.equal(
-    readiness.missing[1],
+    readiness.missing[0],
     'package.json could not be read: it is not valid JSON. Fix it so Codebook can read the dev script.',
   )
   assert.equal(JSON.stringify(readiness).includes('secret-token-xyz'), false)
