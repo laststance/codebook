@@ -481,6 +481,39 @@ test('a cross-env prefix before next dev is reported as an unapplied environment
   })
 })
 
+// Value: protects=a PORT assignment is not named as unapplied, since Codebook starts the app on the declared port; fails_when=PORT appears in envSettings or a note says Codebook does not apply it; why_new=Cycle 0065 parent decision on unapplied env names; seam=none; no_claim=the port the run uses
+test('a PORT assignment before next dev reports no unapplied environment setting', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await mkdir(join(root, 'app'))
+  await writeScripts(root, { dev: 'PORT=4000 next dev' })
+  // Act
+  const preparation = await readNextDevPreparation(root)
+  const readiness = await readRepositoryAdapterReadiness(
+    root,
+    process.execPath,
+    SIGNAL,
+  )
+  // Assert
+  assert.deepEqual(preparation, { status: 'none' })
+  assert.equal(readiness['next-dev-webpack'].preparation, undefined)
+  assert.equal(readiness['next-dev-webpack'].notes, undefined)
+})
+
+// Value: protects=PORT is left out while the other unapplied names stay listed; fails_when=PORT is listed beside NODE_OPTIONS or NODE_OPTIONS is lost with it; why_new=Cycle 0065 parent decision on unapplied env names; seam=none; no_claim=the port the run uses
+test('a PORT assignment beside NODE_OPTIONS reports only NODE_OPTIONS as unapplied', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await writeScripts(root, { dev: 'PORT=4000 NODE_OPTIONS=x next dev' })
+  // Act
+  const preparation = await readNextDevPreparation(root)
+  // Assert
+  assert.deepEqual(preparation, {
+    status: 'none',
+    envSettings: ['NODE_OPTIONS'],
+  })
+})
+
 // Value: protects=concurrently cannot be read for preparation, so status says it was not checked instead of claiming none; fails_when=the reading is none or skipped, or the sentence differs; why_new=Cycle 0065 preparation states; seam=none; no_claim=the port reader's own concurrently grammar
 test('a concurrently dev script reports preparation unknown with the could-not-read sentence', async (context) => {
   // Arrange

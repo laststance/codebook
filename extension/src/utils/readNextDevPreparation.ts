@@ -25,7 +25,7 @@ import {
  * - `skipped`: `statements` statements run before `next dev` (a `predev` script counts as one); Codebook runs none of them.
  * - `unknown`: the script could not be read, so whether it prepares anything before `next dev` was not checked.
  *
- * `envSettings` names, never values, the environment settings the script gives `next dev` (`A=1 next dev`, `cross-env X=1 next dev`, `export X=1`); Codebook does not apply them.
+ * `envSettings` names, never values, the environment settings the script gives `next dev` (`A=1 next dev`, `cross-env X=1 next dev`, `export X=1`) that Codebook does not apply; `PORT` is never listed, since Codebook starts the app on the declared port ({@link readDeclaredDevelopmentPort}).
  */
 export type NextDevPreparation =
   | { status: 'none'; envSettings?: string[] }
@@ -48,6 +48,9 @@ const COMMAND_RUNNER_PROGRAMS: ReadonlySet<string> = new Set([
 
 /** A word that assigns an environment variable; only its name is ever kept. A word with a quote before its `=` carries the tokenizer's mark and does not match (F501). */
 const ENVIRONMENT_ASSIGNMENT = /^([A-Za-z_]\w*)=/
+
+/** The one environment setting Codebook applies: it starts the app on the port a `PORT` assignment declares ({@link readDeclaredDevelopmentPort}), so `PORT` is never named as unapplied. */
+const APPLIED_ENVIRONMENT_NAME = 'PORT'
 
 /** The `package.json` fields the reader needs; any other field is ignored. */
 const packageManifestSchema = z.object({
@@ -235,7 +238,7 @@ function readLine(line: string, scope: LineScope): LineReading {
  * - `{ status: 'none' }` for a plain `next dev`, or no `dev` script
  * - `{ status: 'skipped', statements: n }` when `n` statements (a `predev` script counts as one) run before `next dev`
  * - `{ status: 'unknown' }` when `package.json` or the script could not be read
- * - `envSettings` beside `none` or `skipped` when `next dev` is given environment settings, by name only
+ * - `envSettings` beside `none` or `skipped` when `next dev` is given environment settings Codebook does not apply, by name only (`PORT` is applied, so never listed)
  * @example
  * await readNextDevPreparation('/repo') // => { status: 'skipped', statements: 1 } for "prisma generate && next dev"
  * await readNextDevPreparation('/repo') // => { status: 'none', envSettings: ['NODE_OPTIONS'] } for "cross-env NODE_OPTIONS=x next dev"
@@ -275,7 +278,10 @@ export async function readNextDevPreparation(
   if (!reading.runsNextDev) return UNKNOWN_PREPARATION
   const statements =
     reading.statementsBefore + (typeof scripts?.predev === 'string' ? 1 : 0)
-  const envSettings = [...new Set(reading.environmentNames)]
+  // Only settings Codebook really does not apply are listed; PORT decides the port Codebook starts the app on.
+  const envSettings = [...new Set(reading.environmentNames)].filter(
+    (name) => name !== APPLIED_ENVIRONMENT_NAME,
+  )
   const environment = envSettings.length > 0 ? { envSettings } : {}
   return statements > 0
     ? { status: 'skipped', statements, ...environment }
