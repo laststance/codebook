@@ -560,6 +560,157 @@ test("in Cursor, a run's Application is kept once the learner moves to it, not a
   }
 })
 
+// Value: protects=the Application pane staying open when it is a preview behind a file the learner pinned in its group at attach and comes to the front later; fails_when=the entry check reads only the group's front tab, so no watch is armed and the stop file's preview replaces the Application; why_new=Cycle 0064 pt2 OCR delegate finding; seam=focusMutableDraft in the Application's group at attach, activatePaneByHand, replacesPreviewTabOnTextPreview, BrowserViewport.attach; no_claim=the real Cursor's answer (native Cursor trial)
+test("in Cursor, a run's Application stays watched when it is a preview behind the learner's file at attach, and is kept once it is in front again", async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.rebuildTabObjectsAtGroupRemoval()
+  harness.closeEmptyGroupsAfterPanelMove()
+  harness.removeGroupLeftByPanelMoveLater()
+  harness.reportsPaneMoveAsOpenThenClose()
+  harness.replacesPreviewTabOnTextPreview()
+  let viewport:
+    | Awaited<
+        ReturnType<
+          NonNullable<typeof harness.reader.presentation.createViewport>
+        >
+      >
+    | undefined
+  try {
+    harness.focusMutableDraft('auth.ts', 3)
+    harness.focusMutableDraft('actions.ts', 2)
+    await harness.reader.open()
+    chat.focusTab()
+    viewport = await harness.reader.presentation.createViewport(
+      'stop-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+    const attachCdp = {
+      on: () => undefined,
+      request: async () => ({}),
+      subscribe: async () => undefined,
+    }
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    harness.focusMutableDraft('pinned-notes.ts', 1)
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    const commandsBeforeAttach = harness.commands.length
+    const keepsSince = (from: number): number =>
+      harness.commands
+        .slice(from)
+        .filter((command) => command === 'workbench.action.keepEditor').length
+
+    // Act
+    await viewport.attach(attachCdp, new AbortController().signal)
+    const keepsAtAttach = keepsSince(commandsBeforeAttach)
+    harness.activatePaneByHand('codebook.scopedBrowser')
+    await waitUntil(
+      () => keepsSince(commandsBeforeAttach) > 0,
+      'the Keep Open command after the Application came back to the front',
+    )
+    harness.activatePaneByHand('codebook.scopedBrowser')
+    // An asynchronous duplicate Keep Open command would be issued by now.
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    harness.openPausedFileInLockedGroup('index.tsx', 1)
+
+    // Assert
+    assert.equal(keepsAtAttach, 0)
+    assert.equal(keepsSince(commandsBeforeAttach), 1)
+    assert.deepEqual(
+      harness.groups
+        .find((group) => group.viewColumn === 1)!
+        .tabs.map((tab) => tab.label),
+      ['codebook · Application stop-run', 'pinned-notes.ts', 'index.tsx'],
+    )
+  } finally {
+    viewport?.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=the Application pane staying open when the learner opens a file in its group after attach, which puts the preview Application behind that file, and then returns to the Application; fails_when=the watch ends at the first tab change that leaves the Application behind another tab, as if it had been kept; why_new=Cycle 0064 pt2 OCR delegate finding; seam=focusMutableDraft in the Application's group after attach, activatePaneByHand, replacesPreviewTabOnTextPreview, BrowserViewport.attach; no_claim=the real Cursor's answer (native Cursor trial)
+test("in Cursor, a run's Application stays watched when the learner's file covers it after attach, and is kept once it is in front again", async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.rebuildTabObjectsAtGroupRemoval()
+  harness.closeEmptyGroupsAfterPanelMove()
+  harness.removeGroupLeftByPanelMoveLater()
+  harness.reportsPaneMoveAsOpenThenClose()
+  harness.replacesPreviewTabOnTextPreview()
+  let viewport:
+    | Awaited<
+        ReturnType<
+          NonNullable<typeof harness.reader.presentation.createViewport>
+        >
+      >
+    | undefined
+  try {
+    harness.focusMutableDraft('auth.ts', 3)
+    harness.focusMutableDraft('actions.ts', 2)
+    await harness.reader.open()
+    chat.focusTab()
+    viewport = await harness.reader.presentation.createViewport(
+      'stop-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+    const attachCdp = {
+      on: () => undefined,
+      request: async () => ({}),
+      subscribe: async () => undefined,
+    }
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    const commandsBeforeAttach = harness.commands.length
+    const keepsSince = (from: number): number =>
+      harness.commands
+        .slice(from)
+        .filter((command) => command === 'workbench.action.keepEditor').length
+
+    // Act
+    await viewport.attach(attachCdp, new AbortController().signal)
+    const keepsAtAttach = keepsSince(commandsBeforeAttach)
+    harness.openAnnouncedKeptFile('pinned-notes.ts', 1)
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    harness.openAnnouncedKeptFile('learner-extra.ts', 2)
+    harness.activatePaneByHand('codebook.scopedBrowser')
+    await waitUntil(
+      () => keepsSince(commandsBeforeAttach) > 0,
+      'the Keep Open command after the Application came back to the front',
+    )
+    harness.activatePaneByHand('codebook.scopedBrowser')
+    // An asynchronous duplicate Keep Open command would be issued by now.
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    harness.openPausedFileInLockedGroup('index.tsx', 1)
+
+    // Assert
+    assert.equal(keepsAtAttach, 0)
+    assert.equal(keepsSince(commandsBeforeAttach), 1)
+    assert.deepEqual(
+      harness.groups
+        .find((group) => group.viewColumn === 1)!
+        .tabs.map((tab) => tab.label),
+      ['codebook · Application stop-run', 'pinned-notes.ts', 'index.tsx'],
+    )
+  } finally {
+    viewport?.close()
+    await harness.close()
+  }
+})
+
 // Value: protects=the Application pane staying open when the editor names the Application's group active by a tab-group event alone, with no view-state event of the pane, while its tab is still a preview; fails_when=the deferred watch listens to the pane's view state only, so Keep Open never runs and the stop file's preview replaces the Application; why_new=Cycle 0064 pt2 /ship Step 11 round 2; seam=focusMutableDraft in another group at attach, activatePaneGroupByGroupEventOnly (tab-group events only), replacesPreviewTabOnTextPreview, BrowserViewport.attach; no_claim=the real Cursor's answer (native Cursor trial)
 test("in Cursor, a run's Application is kept once the editor names its group by a tab-group event alone", async () => {
   // Arrange

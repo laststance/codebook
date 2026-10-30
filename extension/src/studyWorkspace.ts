@@ -17674,7 +17674,7 @@ export class StudyWorkspace {
    * Keeps the Application's tab open after its move, so a text preview that the editor opens later in the Application's group cannot replace it.
    *
    * Why it exists: Cursor 3.27.22 lists the tab of a pane moved into a new group as a preview, and the native debugger opens a run's stop file as a preview in that group; the new preview replaced the Application's webview and the run failed with "Owned viewport closed before cleanup" (N64p2-F2, task 67). Called through the lease of {@link leaseApplicationViewport} when the run attaches its browser ({@link BrowserViewport.attach}), not for a Study entry: a learner's own Study pane stays as the editor shows it.
-   * The extension API cannot pin a webview's tab, so the editor's Keep Open command runs, which acts on the focused editor; it runs only when that editor is the Application's own tab, so a learner's tab is never kept by it. The command acts on the workbench's active group, and the extension's active group mirrors it, so the keep runs only when the editor names the Application's group the active one (a pane that reports itself active while the editor keeps naming the Agent chat's group, as Cursor 3.27.22 does, see {@link readMainEditorGrid}, would make the command act on the chat part's editor). When the Application's tab is a preview but another group is the active one, no command runs and the keyboard is not taken: a one-shot watch of the pane's view state and of the tab groups' changes runs the same keep once the editor names the Application's group active while its tab is still a preview, and ends after that, when the tab is kept by other means, when the pane is disposed, and when the run's signal aborts; a signal already aborted before the watch is armed arms nothing and returns without error. A tab that stays a preview, or a command the editor rejects, is left as it is: the move itself has succeeded.
+   * The extension API cannot pin a webview's tab, so the editor's Keep Open command runs, which acts on the focused editor; it runs only when that editor is the Application's own tab, so a learner's tab is never kept by it. The command acts on the workbench's active group, and the extension's active group mirrors it, so the keep runs only when the editor names the Application's group the active one (a pane that reports itself active while the editor keeps naming the Agent chat's group, as Cursor 3.27.22 does, see {@link readMainEditorGrid}, would make the command act on the chat part's editor). When the Application's tab is a preview but another group is the active one, no command runs and the keyboard is not taken: a one-shot watch of the pane's view state and of the tab groups' changes runs the same keep once the editor names the Application's group active while its tab is still a preview in front of its group. A preview that stands behind another tab of its group (a file of the learner's opened there) keeps the watch armed, or arms it, until the learner brings it to the front. The watch ends after the keep, when the tab is no preview any more, when it left its group, when the pane is disposed, and when the run's signal aborts; a signal already aborted before the watch is armed arms nothing and returns without error. A tab that stays a preview, or a command the editor rejects, is left as it is: the move itself has succeeded.
    * Remaining limit: a stop file that the debugger opens in the Application's group before the editor ever names that group active can still replace the preview Application in Cursor 3.27; Codebook does not take the learner's keyboard to prevent that.
    * @param panel - The run's Application pane.
    * @param signal - The run's cancellation.
@@ -17687,14 +17687,25 @@ export class StudyWorkspace {
     signal: AbortSignal | undefined,
   ): Promise<void> {
     // Read from the current groups each time: Cursor builds every tab object anew at a tab change.
-    const isOwnPreview = (): boolean => {
-      const tab = vscode.window.tabGroups.all.find(
-        (group) => group.viewColumn === this.viewColumnOf(panel),
-      )?.activeTab
-      return Boolean(
-        tab?.isPreview &&
-        this.isCodebookPaneInput(tab.input, 'codebook.scopedBrowser'),
+    const readOwnTab = ():
+      { isPreview: boolean; isFront: boolean } | undefined => {
+      const group = vscode.window.tabGroups.all.find(
+        (candidate) => candidate.viewColumn === this.viewColumnOf(panel),
       )
+      // The front tab is asked first: a group can hold more than one pane tab.
+      const isPaneTab = (tab: vscode.Tab): boolean =>
+        this.isCodebookPaneInput(tab.input, 'codebook.scopedBrowser')
+      const frontTab = group?.activeTab
+      if (frontTab && isPaneTab(frontTab))
+        return { isPreview: frontTab.isPreview, isFront: true }
+      const hiddenTab = group?.tabs.find(isPaneTab)
+      return hiddenTab && { isPreview: hiddenTab.isPreview, isFront: false }
+    }
+    // A preview behind another tab of its group is still a preview: only the front tab can be kept.
+    const isOwnPreview = (): boolean => Boolean(readOwnTab()?.isPreview)
+    const isOwnPreviewInFront = (): boolean => {
+      const ownTab = readOwnTab()
+      return Boolean(ownTab?.isPreview && ownTab.isFront)
     }
     // Keep Open acts on the workbench's active group, which the extension's active group mirrors; the pane's own `active` flag says nothing about it.
     const holdsKeyboard = (): boolean =>
@@ -17702,7 +17713,7 @@ export class StudyWorkspace {
       this.viewColumnOf(panel)
     const keep = async (): Promise<void> => {
       // The state may have changed between the check that armed this run and now.
-      if (!isOwnPreview() || !holdsKeyboard()) return
+      if (!isOwnPreviewInFront() || !holdsKeyboard()) return
       try {
         await this.executeEditorCommand('workbench.action.keepEditor')
       } catch (error) {
@@ -17723,7 +17734,7 @@ export class StudyWorkspace {
     }
     // Only the Application's own preview is kept; any other state needs no command.
     if (!isOwnPreview()) return
-    if (holdsKeyboard()) return keep()
+    if (isOwnPreviewInFront() && holdsKeyboard()) return keep()
     // A run cancelled before the watch is armed never fires its abort event again: nothing is armed and no command runs, as when it aborts later.
     if (signal?.aborted) return
     // The learner works elsewhere: wait for the pane to become active instead of taking the keyboard.
@@ -17733,8 +17744,10 @@ export class StudyWorkspace {
       for (const watch of watches.splice(0)) watch.dispose()
     }
     const recheck = (): void => {
+      // Kept by other means, or gone from its group: nothing is left to keep.
       if (!isOwnPreview()) return stopWatching()
-      if (!holdsKeyboard()) return
+      // A preview behind another tab, or in a group the editor does not name active, is kept once it is both in front and active.
+      if (!isOwnPreviewInFront() || !holdsKeyboard()) return
       stopWatching()
       void keep().catch((error: unknown) => {
         if (!signal?.aborted) this.report('layout', error)
@@ -21687,11 +21700,15 @@ export class StudyWorkspace {
     } finally {
       for (const subscription of initialChanges) subscription.dispose()
     }
-    let count = editorLayoutGroupCount(layout)
-    if (count === undefined || count > vscode.window.tabGroups.all.length)
+    const firstMeasuredGroupCount = editorLayoutGroupCount(layout)
+    if (
+      firstMeasuredGroupCount === undefined ||
+      firstMeasuredGroupCount > vscode.window.tabGroups.all.length
+    )
       throw new Error(
         'The editor did not expose a valid measured grid; existing panes were preserved.',
       )
+    let count: number = firstMeasuredGroupCount
     const firstFocused = () => this.hasMainEditorFocus(vscode.ViewColumn.One)
     const receipt = this.layoutReceipt
     // A retained measured grid plus native focus proves its part without a primary-webview focus echo overtaking restoration.
@@ -21912,8 +21929,8 @@ export class StudyWorkspace {
             candidate !== undefined &&
             this.viewColumnOf(candidate) === vscode.ViewColumn.One &&
             candidate.active &&
-            vscode.window.tabGroups.activeTabGroup.viewColumn > count! &&
-            this.holdsOnlyChatsBeyond(count!),
+            vscode.window.tabGroups.activeTabGroup.viewColumn > count &&
+            this.holdsOnlyChatsBeyond(count),
         )
       // Empty/opaque primary panes need the actual requested citation, never a disposable placeholder or unobserved command result.
       beforeScopeFocus?.(useCitation ? undefined : borrowedFocus)
@@ -21948,7 +21965,7 @@ export class StudyWorkspace {
         sourceEditorReported() ||
         paneFocusReportedBesideChat ||
         paneFocusedBesideChat() ||
-        this.isSoleMainGroupBesideChat(count ?? 0)
+        this.isSoleMainGroupBesideChat(count)
       this.mainEditorFocusBorrows++
       // How long the probe after the focus command waited; the only time of the borrow that counts against the primary-focus wait.
       let probeElapsedMs = 0
@@ -22118,9 +22135,13 @@ export class StudyWorkspace {
           `${primaryEditor ? 'The primary editor' : 'The captured source'} content or selection changed during scope measurement; the newer learner focus was preserved.`,
         )
       }
-      count = editorLayoutGroupCount(layout)
-      if (count === undefined || count > vscode.window.tabGroups.all.length)
+      const remeasuredGroupCount = editorLayoutGroupCount(layout)
+      if (
+        remeasuredGroupCount === undefined ||
+        remeasuredGroupCount > vscode.window.tabGroups.all.length
+      )
         throw new Error('The primary editor grid could not be measured safely.')
+      count = remeasuredGroupCount
       // Only a moment's pane report proved the focus: the read must have answered for the main editor, so every group beyond its count holds chats only; a read the chat part answered after taking the keyboard back is refused as before.
       if (
         paneFocusReportedBesideChat &&

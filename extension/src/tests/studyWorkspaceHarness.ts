@@ -7454,6 +7454,18 @@ export async function workspaceHarness(
     failNextCommand(name: string): void {
       failingCommand = name
     },
+    /**
+     * Models the learner opening a kept file in front of a group and the editor announcing the new tab to the tab listeners, as `focusMutableDraft` does not: that call changes the tabs silently. A pane tab the file covers stays in its group behind it.
+     * @param filename - The file's name in the harness's folder.
+     * @param column - The view column of the group the file opens in; the group becomes the active one.
+     * @example harness.openAnnouncedKeptFile('pinned-notes.ts', 1) // covers the Application pane in group 1 and tells the tab listeners
+     */
+    openAnnouncedKeptFile(filename: string, column: number): void {
+      const opened = openDraftTab(filename, column)
+      giveDraftKeyboard(opened)
+      for (const listener of tabChangeListeners)
+        listener({ opened: [opened.tab], closed: [], changed: [] })
+    },
     /** Gives presentation/scope regressions a learner-owned document whose edits do not move its tab. @example const draft = harness.focusMutableDraft('notes.txt', 2); draft.replaceContent('new text'); */
     focusMutableDraft(
       filename = 'mutable-notes.txt',
