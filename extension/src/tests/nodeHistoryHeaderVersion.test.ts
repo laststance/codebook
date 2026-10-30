@@ -209,3 +209,29 @@ test('a node-test history saved with header version 1 still lists and reads seal
   assert.equal(listed.length, 1)
   assert.equal(reread.seal?.status, 'partial')
 })
+
+// Value: protects=a node-server history saved with header formatVersion 1 (before this release) still lists and reads; fails_when=the server header schema accepts only formatVersion 2; why_new=Cycle 0064 pt3 review (testing specialist: only the node-test twin read a stored header 1); seam=none; no_claim=node-test histories (the twin above)
+test('a node-server history saved with header formatVersion 1 still lists and reads sealed', async (context) => {
+  // Arrange
+  const { repository, learningDirectory: directory } =
+    await openServerRepository(context)
+  const { header } = await writeServerHistory(repository)
+  const headerPath = join(
+    directory,
+    NODE_SERVER_HISTORY_DIRECTORY,
+    header.studyId,
+    'header.json',
+  )
+  await writeFile(
+    headerPath,
+    JSON.stringify({ ...(await readJson(headerPath)), formatVersion: 1 }),
+  )
+
+  // Act
+  const listed = await repository.serverHistories.list()
+  const reread = await repository.serverHistories.read(header.studyId)
+
+  // Assert
+  assert.equal(listed.length, 1)
+  assert.equal(reread.seal?.status, 'complete')
+})
