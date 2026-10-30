@@ -152,7 +152,7 @@ export async function endProcesses(
 /**
  * Signals the ids {@link classifyRunning} found to be the test's, waits for them to be gone and answers the survivors.
  *
- * Called by {@link endProcesses}, and by {@link endProcessesAfter}, which classifies once, lets the tree end run, and ends what is left without classifying the same ids again.
+ * Called by {@link endProcesses}, and by {@link endProcessesAfter}, which classifies the ids, lets the tree end run, then classifies them again and passes that second result here, so an id recycled in between is not signalled on the first answer. The classification already checks that each id runs, so nothing is filtered here.
  * @param classified - The result of {@link classifyRunning}.
  * @param options - `kill` replaces the signal call; `waitMs` is how long a killed process may take to be seen gone.
  * @returns The unconfirmed ids and the owned ids that still run once the wait is over.
