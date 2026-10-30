@@ -409,6 +409,27 @@ test('Next webpack placeholder metadata keeps the final selected module availabl
   assert.equal(result.scriptUrl, 'webpack-internal:///theme.tsx')
 })
 
+// Characterization (Cycle 0065): the Pages seal shares this module search, so the App search keeps stopping at its discovery deadline.
+test('module discovery in a built chunk stops at its deadline instead of searching on', () => {
+  // Arrange
+  const script = `work();\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(payload)).toString('base64')}\n//# sourceURL=webpack-internal:///theme.tsx\n`
+  const chunk = `eval(${JSON.stringify(script)});`
+  const passedDeadline = performance.now() - 1
+  // Act / Assert
+  assert.throws(
+    () =>
+      extractDevelopmentModule(
+        chunk,
+        sourcePath,
+        source,
+        '/repo/layout.js',
+        'webpack-internal:///theme.tsx',
+        passedDeadline,
+      ),
+    { message: 'Module discovery deadline exceeded' },
+  )
+})
+
 test('competing or trailing script identities cannot impersonate the selected webpack module', () => {
   // Arrange
   const selected = '//# sourceURL=webpack-internal:///theme.tsx\n'

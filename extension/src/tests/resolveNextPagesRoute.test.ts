@@ -115,12 +115,12 @@ const PRECEDENCE_CASES = [
     },
   },
   {
-    behavior: 'the query is dropped',
-    entryPath: '/posts/42?tab=comments&page=2',
+    behavior: 'the query is dropped, so a static segment still matches',
+    entryPath: '/posts/new?from=home&page=2',
     expected: {
       kind: 'matched',
-      route: '/posts/[id]',
-      compiledPath: 'pages/posts/[id].js',
+      route: '/posts/new',
+      compiledPath: 'pages/posts/new.js',
     },
   },
   {

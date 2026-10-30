@@ -367,6 +367,8 @@ test('a stop is refused once the run’s earlier stops spent its discovery bytes
     }),
     { message: 'Build discovery resource limit exceeded' },
   )
+  // The source alone (more than 64 bytes) is refused before it is read.
+  assert.equal(cache.readBytes, REPOSITORY_DISCOVERY_LIMIT_BYTES - 64)
 })
 
 test('a stop is refused once the run’s earlier stops spent its discovery time', async (context) => {

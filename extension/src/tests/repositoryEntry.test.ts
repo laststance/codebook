@@ -98,6 +98,20 @@ test('ambiguous or escaped generated route paths never select an arbitrary sourc
   )
 })
 
+// Characterization (Cycle 0065 pt1): App route matching is unchanged; its additive score still ties these two routes, a later candidate for pt2 (the Pages matcher decides per segment instead).
+test('the App route matcher still finds no unique page when /a/[y] and /[x]/b both match /a/b', () => {
+  // Arrange
+  const routes = {
+    '/a/[y]/page': 'app/a/[y]/page.js',
+    '/[x]/b/page': 'app/[x]/b/page.js',
+  }
+  // Act / Assert
+  assert.throws(() => resolveNextClientManifest(routes, '/a/b'), {
+    message:
+      'Selected route has no unique compiled Next page. Check its path and redirects.',
+  })
+})
+
 /** Runs the emitted fixed DOM functions against retained node identities through the real CDP transport. @example const controls = inputHarness(); await controls.prepare() */
 function inputHarness() {
   let active: Input | undefined,
