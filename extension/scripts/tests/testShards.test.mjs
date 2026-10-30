@@ -4490,7 +4490,12 @@ test(
       const line = readOutput()
         .split('\n')
         .find((candidate) => candidate.includes('latePid'))
-      return line === undefined ? [] : [JSON.parse(line).latePid]
+      // The helper may still be writing the line when the test ends: a truncated line names no process.
+      try {
+        return line === undefined ? [] : [JSON.parse(line).latePid]
+      } catch {
+        return []
+      }
     })
     assert.equal(await waitForOutput(readOutput, 'ready', 20_000), true)
     child.kill('SIGTERM')

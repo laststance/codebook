@@ -39,7 +39,9 @@ import { writeProgressWhileRunning } from '../utils/writeProgressWhileRunning.mj
 import {
   endProcesses,
   endProcessesAfter,
+  processRuns,
   readNotedPids,
+  removeAfterProcessEnds,
 } from './utils/endProcessesAfter.mjs'
 
 // Value: protects=the pre-gate's local lane when it selects product tests together with the package tests, which rebuild extension/dist while they run; fails_when=both are passed to one node --test call, so product tests fail to load their modules from dist (906 of 5,725 failed on Cycle 0048's branch), or the script tests run with more than four at a time; why_new=Cycle 0048 task 32 (found while the pre-gate ran on PR #106); seam=none; no_claim=the run itself, which run-pregate-tests.mjs makes from this plan
@@ -572,7 +574,7 @@ test('the pre-gate policy declares the script test that starts or copies each sc
 async function createFixtureRepository(context, productTests) {
   const scriptsDirectory = fileURLToPath(new URL('../', import.meta.url))
   const root = await mkdtemp(join(tmpdir(), 'codebook-pregate-runner-'))
-  context.after(() => rm(root, { recursive: true, force: true }))
+  removeAfterProcessEnds(context, root)
   const extension = join(root, 'extension')
   await mkdir(join(extension, 'scripts/tests'), { recursive: true })
   await cp(join(scriptsDirectory, 'utils'), join(extension, 'scripts/utils'), {
@@ -1452,19 +1454,6 @@ test('the pre-gate runner writes its whole output, the combined summary last, to
   ])
 })
 
-/** Tells whether a process still runs; a zombie that nobody has reaped yet counts as gone. @example processRuns(4242) // => false */
-function processRuns(pid) {
-  try {
-    const state = execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], {
-      encoding: 'utf8',
-    }).trim()
-    return state !== '' && !state.startsWith('Z')
-  } catch {
-    // `ps` exits with 1 when no process has this id.
-    return false
-  }
-}
-
 /** Waits until the file holds a process id, which the stand-in build writes once it has started its process. @example await waitForProcessId('/tmp/x/grandchild.pid', 10_000) // => 4242 */
 async function waitForProcessId(pidFile, waitMs) {
   const until = Date.now() + waitMs
@@ -1794,7 +1783,7 @@ test('the output keeper counts no test for an output with no complete summary bl
 test('the output keeper keeps the counts of a real node --test call whose failure report is longer than its bound', async (context) => {
   // Arrange
   const folder = await mkdtemp(join(tmpdir(), 'codebook-bounded-output-'))
-  context.after(() => rm(folder, { recursive: true, force: true }))
+  removeAfterProcessEnds(context, folder)
   const fixture = join(folder, 'long-failure.test.mjs')
   await writeFile(
     fixture,
@@ -2304,7 +2293,7 @@ test(
 /** Writes a stand-in `taskkill.exe` into `<folder>/System32/` that notes its arguments in `taskkill.log` beside it and then hangs (`hangs`) or exits with 1 as an access denied does; it ends nothing. @example const systemRoot = await writeFailingTaskkill(context, { hangs: true }) */
 async function writeFailingTaskkill(context, { hangs }) {
   const systemRoot = await mkdtemp(join(tmpdir(), 'codebook-stand-in-root-'))
-  context.after(() => rm(systemRoot, { recursive: true, force: true }))
+  removeAfterProcessEnds(context, systemRoot)
   await mkdir(join(systemRoot, 'System32'))
   await writeFile(
     join(systemRoot, 'System32', 'taskkill.exe'),
@@ -2333,7 +2322,7 @@ test(
     const scriptDirectory = await mkdtemp(
       join(tmpdir(), 'codebook-windows-signal-'),
     )
-    context.after(() => rm(scriptDirectory, { recursive: true, force: true }))
+    removeAfterProcessEnds(context, scriptDirectory)
     const scriptPath = join(scriptDirectory, 'build.mjs')
     await writeFile(
       scriptPath,
@@ -2442,7 +2431,7 @@ test(
     const scriptDirectory = await mkdtemp(
       join(tmpdir(), 'codebook-windows-exit-code-'),
     )
-    context.after(() => rm(scriptDirectory, { recursive: true, force: true }))
+    removeAfterProcessEnds(context, scriptDirectory)
     const systemRoot = await writeFailingTaskkill(context, { hangs: false })
     const buildPidFile = join(scriptDirectory, 'build.pid')
     endProcessesAfter(context, () => readNotedPids(buildPidFile))
@@ -2539,7 +2528,7 @@ test(
   async (context) => {
     // Arrange
     const systemRoot = await mkdtemp(join(tmpdir(), 'codebook-stand-in-root-'))
-    context.after(() => rm(systemRoot, { recursive: true, force: true }))
+    removeAfterProcessEnds(context, systemRoot)
     await mkdir(join(systemRoot, 'System32'))
     await writeFile(
       join(systemRoot, 'System32', 'taskkill.exe'),
@@ -2735,3 +2724,90 @@ test(
     )
   },
 )
+
+// Value: protects=the after-check of every test that starts a process from failing on a child that has exited but is not reaped yet (a zombie), which the signal probe finds like a running process; fails_when=a zombie counts as running, so endProcesses reports it as a survivor and the check fails a test whose process is gone; why_new=Cycle 0064 pt3 review (CodeRabbit major); seam=endProcesses with a real zombie (a child of a parent whose event loop is blocked, so nobody reaps it); no_claim=Windows, where the process table has no zombie
+test(
+  'a process that exited and is not reaped yet is not reported as a survivor of a test',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange: the parent starts `true` and then blocks without reading its exit, so `true` stays a zombie.
+    const parent = spawn(
+      process.execPath,
+      [
+        '-e',
+        [
+          "const child = require('node:child_process').spawn('true')",
+          'console.log(child.pid)',
+          'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60_000)',
+        ].join(';'),
+      ],
+      { stdio: ['ignore', 'pipe', 'ignore'] },
+    )
+    context.after(() => parent.kill('SIGKILL'))
+    const zombiePid = await new Promise((resolve) =>
+      parent.stdout.once('data', (chunk) => resolve(Number(String(chunk)))),
+    )
+    const until = Date.now() + 10_000
+    const stateOf = () =>
+      execFileSync('ps', ['-o', 'stat=', '-p', String(zombiePid)], {
+        encoding: 'utf8',
+      }).trim()
+    while (!stateOf().startsWith('Z') && Date.now() < until) await delay(20)
+
+    // Act
+    const survivors = await endProcesses([zombiePid], { waitMs: 300 })
+
+    // Assert
+    assert.equal(stateOf().startsWith('Z'), true)
+    assert.doesNotThrow(() => process.kill(zombiePid, 0))
+    assert.deepEqual(survivors, [])
+  },
+)
+
+// Value: protects=a test's clean-up from killing an unrelated process whose id the test once noted (a recycled id, or with a process group the whole group); fails_when=endProcesses signals every running id it is given; why_new=Cycle 0064 pt3 review (OCR low); seam=endProcesses with a running process that is neither a descendant of the test process nor an orphan started after the test began (its own parent process); no_claim=an orphan that started after the test began, which is taken for the test's
+test(
+  'a running process that is not a descendant of the test is not signalled',
+  { skip: process.platform === 'win32' },
+  async () => {
+    // Arrange: the test runner's parent runs and is no descendant of this process.
+    const signalled = []
+
+    // Act
+    const survivors = await endProcesses([process.ppid], {
+      kill: (pid) => signalled.push(pid),
+      waitMs: 100,
+    })
+
+    // Assert
+    assert.deepEqual({ survivors, signalled }, { survivors: [], signalled: [] })
+  },
+)
+
+// Value: protects=the processes of a failed test from outliving it when the fixture folder is removed before the clean-up reads the pid file in it (`after` hooks run in the order they were registered, the folder's removal first); fails_when=the removal hook is a plain `rm`, so the pid file is gone when the end hook reads it and the grandchild runs on; why_new=Cycle 0064 pt3 review (CodeRabbit major); seam=removeAfterProcessEnds and endProcessesAfter on a stand-in test context that runs its hooks in registration order, a real process noted in a file of the folder; no_claim=the node:test runner's own hook order
+test('the pid file a test noted is read before its fixture folder is removed, so the process is ended', async (context) => {
+  // Arrange
+  const hooks = []
+  const standInContext = { after: (hook) => hooks.push(hook) }
+  const folder = await mkdtemp(join(tmpdir(), 'codebook-end-before-remove-'))
+  context.after(() => rm(folder, { recursive: true, force: true }))
+  const child = spawn(
+    process.execPath,
+    ['-e', 'setInterval(() => {}, 1_000)'],
+    {
+      stdio: 'ignore',
+    },
+  )
+  context.after(() => child.kill('SIGKILL'))
+  const pidFile = join(folder, 'child.pid')
+  await writeFile(pidFile, String(child.pid))
+  // The folder's removal is registered first, as createFixtureRepository does.
+  removeAfterProcessEnds(standInContext, folder)
+  endProcessesAfter(standInContext, () => readNotedPids(pidFile))
+
+  // Act: the hooks run in the order they were registered.
+  for (const hook of hooks) await hook()
+
+  // Assert
+  assert.equal(existsSync(folder), false)
+  assert.equal(processRuns(child.pid), false)
+})

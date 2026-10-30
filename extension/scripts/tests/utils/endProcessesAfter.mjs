@@ -1,31 +1,111 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { readFile, rm } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 
-/** Tells whether a process exists: `process.kill(pid, 0)` throws `ESRCH` for a process that is gone. @example processRuns(4242) // => false */
-export function processRuns(pid) {
+// There are two of these helpers on purpose: this one serves `scripts/tests`, which run on plain Node without a build (the Windows job's `scripts/tests` step among them) and so cannot import the compiled `src/tests/utils/endProcessesAfter.ts`, and that one serves the extension's compiled tests, which cannot import this `.mjs`. Keep their process rules (zombie, ownership) in step: a change here is made there too.
+
+/** How many parents {@link isOwnedProcess} follows up from a process before it gives up; a tree of a test is a few levels deep. */
+const MAX_PARENT_HOPS = 64
+
+/**
+ * Reads the state, the parent id and the age of one process from `ps`.
+ * @param pid - The process id.
+ * @returns `{ state, parentPid, ageSeconds }`; `undefined` when no process has this id; `'unreadable'` where `ps` cannot answer (Windows).
+ * @example readProcess(process.pid) // => { state: 'S+', parentPid: 4100, ageSeconds: 3 }
+ */
+function readProcess(pid) {
+  let printed
   try {
-    process.kill(pid, 0)
-    return true
+    printed = execFileSync(
+      'ps',
+      ['-o', 'stat=,ppid=,etime=', '-p', String(pid)],
+      {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      },
+    )
   } catch (error) {
-    return error.code !== 'ESRCH'
+    // `ps` exits with 1 when no process has this id; a system without `ps` cannot say.
+    return error.code === 'ENOENT' ? 'unreadable' : undefined
   }
+  const [state, parentText, elapsed] = printed.trim().split(/\s+/)
+  if (!state || !elapsed) return undefined
+  // `etime` is [[dd-]hh:]mm:ss.
+  const [days, clock] = elapsed.includes('-')
+    ? elapsed.split('-')
+    : [0, elapsed]
+  const [seconds = 0, minutes = 0, hours = 0] = clock
+    .split(':')
+    .map(Number)
+    .reverse()
+  return {
+    state,
+    parentPid: Number(parentText),
+    ageSeconds: Number(days) * 86_400 + hours * 3_600 + minutes * 60 + seconds,
+  }
+}
+
+/** Tells whether a process runs: a zombie nobody has reaped yet counts as gone (`process.kill(pid, 0)` finds it), and a system without `ps` falls back to that probe, where `ESRCH` means gone. @example processRuns(4242) // => false */
+export function processRuns(pid) {
+  const process_ = readProcess(pid)
+  if (process_ === 'unreadable') {
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch (error) {
+      return error.code !== 'ESRCH'
+    }
+  }
+  return process_ !== undefined && !process_.state.startsWith('Z')
+}
+
+/**
+ * Tells whether a running process can be one this test process started, so a recycled id of an unrelated process is never signalled.
+ * Owned: a descendant of this process, or an orphan (its parent is gone, so the system parents it to process 1) that started after `sinceMs`, as a child whose parent the test ended. Where `ps` cannot answer, nothing tells otherwise and the process counts as owned.
+ * @param pid - The process id.
+ * @param sinceMs - The time from which a process may be the test's: when the test began.
+ * @returns Whether the process is the test's.
+ * @example isOwnedProcess(process.ppid, Date.now()) // => false
+ */
+export function isOwnedProcess(pid, sinceMs) {
+  const process_ = readProcess(pid)
+  if (process_ === 'unreadable') return true
+  if (process_ === undefined) return false
+  let parentPid = process_.parentPid
+  for (let hop = 0; hop < MAX_PARENT_HOPS && parentPid > 1; hop += 1) {
+    if (parentPid === process.pid) return true
+    const parent = readProcess(parentPid)
+    if (typeof parent !== 'object') break
+    parentPid = parent.parentPid
+  }
+  // An orphan older than the test is somebody else's, with the same id by chance.
+  return (
+    process_.parentPid <= 1 &&
+    process_.ageSeconds <= (Date.now() - sinceMs) / 1000 + 2
+  )
+}
+
+/** The default `sinceMs` of {@link endProcesses}: when this process started. @example processStartMs() // => 1761900000000 */
+function processStartMs() {
+  return Date.now() - process.uptime() * 1000
 }
 
 /**
  * Kills the given processes with SIGKILL, one by one, and answers which of them still run after the wait.
  * Called by {@link endProcessesAfter} when a test ends, and by the test of this helper with a kill that kills nothing, to show that a survivor is reported.
- * @param pids - Ids of processes a test started; ids that are gone already are not signalled (a recycled id is not the test's).
- * @param options - `kill` replaces the signal call, `waitMs` is how long a killed process may take to be seen gone (5 s by default).
+ * @param pids - Ids of processes a test started. An id that is gone already, a zombie, or a process that cannot be the test's ({@link isOwnedProcess}: a recycled id of an unrelated process) is not signalled and is no survivor.
+ * @param options - `kill` replaces the signal call, `waitMs` is how long a killed process may take to be seen gone (5 s by default), `sinceMs` is when the test began (when this process started by default).
  * @returns The ids that still run once the wait is over; empty when all are gone.
  * @example
  * await endProcesses([4242, 4243]) // => []
  */
-export async function endProcesses(pids, { kill, waitMs = 5_000 } = {}) {
+export async function endProcesses(
+  pids,
+  { kill, waitMs = 5_000, sinceMs = processStartMs() } = {},
+) {
   const signal = kill ?? ((pid) => process.kill(pid, 'SIGKILL'))
-  const running = [...new Set(pids)].filter(
-    (pid) => Number.isInteger(pid) && pid > 1 && processRuns(pid),
-  )
+  const running = ownedRunningProcesses(pids, sinceMs)
   for (const pid of running)
     try {
       signal(pid)
@@ -41,23 +121,77 @@ export async function endProcesses(pids, { kill, waitMs = 5_000 } = {}) {
   return survivors
 }
 
+/** Keeps, once each, the ids that run and can be the test's. @example ownedRunningProcesses([4242, process.ppid], Date.now()) // => [4242] */
+function ownedRunningProcesses(pids, sinceMs) {
+  return [...new Set(pids)].filter(
+    (pid) =>
+      Number.isInteger(pid) &&
+      pid > 1 &&
+      processRuns(pid) &&
+      isOwnedProcess(pid, sinceMs),
+  )
+}
+
+/** The ends registered per test and not run yet, so that {@link runPendingEnds} can run them ahead of a hook that removes the fixture they read. */
+const pendingEnds = new WeakMap()
+
+/**
+ * Runs the process ends registered for a test, once.
+ * `after` hooks run in the order they were registered, and a fixture's folder is registered for removal before the test names the pid file inside it: the pids would be unreadable by the time the end hook runs and the processes never reaped. A hook that removes such a folder calls this first, so the ends read their files while they exist; the hook that {@link endProcessesAfter} registered then finds nothing left to do.
+ * @param context - The running test.
+ * @returns Once every registered end has run.
+ * @throws The assertion of an end whose processes outlived the test.
+ * @example
+ * context.after(async () => { try { await runPendingEnds(context) } finally { await rm(root, { recursive: true, force: true }) } })
+ */
+export async function runPendingEnds(context) {
+  const ends = pendingEnds.get(context) ?? []
+  // Taken first: a second caller finds none, so no end runs twice.
+  pendingEnds.set(context, [])
+  const results = await Promise.allSettled(ends.map((end) => end()))
+  const failed = results.find((result) => result.status === 'rejected')
+  if (failed) throw failed.reason
+}
+
+/**
+ * Registers the removal of a fixture folder at the end of a test, after the process ends that were registered for the test have read their files in it ({@link runPendingEnds}), whichever of the two was registered first.
+ * @param context - The running test.
+ * @param folder - The folder to remove, with everything in it.
+ * @example
+ * removeAfterProcessEnds(context, root)
+ */
+export function removeAfterProcessEnds(context, folder) {
+  context.after(async () => {
+    try {
+      await runPendingEnds(context)
+    } finally {
+      await rm(folder, { recursive: true, force: true })
+    }
+  })
+}
+
 /**
  * Registers the end of the processes a test started, with a check that they are gone: the test fails when one outlives it.
- * A test registers it before the first await that can fail, with a reader that finds the ids when the test ends (a pid file the fixture writes, a list that fills while the test runs), so a failed assertion, a timeout or an early return leaves no process behind. The tool under test may still be asserted to end the same process earlier; this only removes what is left.
+ * A test registers it before the first await that can fail, with a reader that finds the ids when the test ends (a pid file the fixture writes, a list that fills while the test runs), so a failed assertion, a timeout or an early return leaves no process behind. The tool under test may still be asserted to end the same process earlier; this only removes what is left. A hook that removes a folder the reader reads calls {@link runPendingEnds} before it removes it.
  * @param context - The running test.
  * @param readPids - Answers the ids to end; read once, when the test ends.
- * @param killTree - Ends the given ids and what they started (`killProcessIds`); a plain SIGKILL of each id is used without it.
+ * @param killTree - Ends the given ids and what they started (`killProcessIds`); a plain SIGKILL of each id is used without it. It gets only ids that run and can be the test's.
  * @example
  * endProcessesAfter(context, () => readPids(join(root, 'pids.log')))
  */
 export function endProcessesAfter(context, readPids, killTree) {
-  context.after(async () => {
-    const pids = await readPids()
-    killTree?.(pids)
-    const survivors = await endProcesses(pids)
-    // A process that outlives its test would run until the machine restarts.
-    assert.deepEqual(survivors, [], 'processes of the test outlived it')
-  })
+  const sinceMs = Date.now()
+  pendingEnds.set(context, [
+    ...(pendingEnds.get(context) ?? []),
+    async () => {
+      const pids = ownedRunningProcesses(await readPids(), sinceMs)
+      killTree?.(pids)
+      const survivors = await endProcesses(pids, { sinceMs })
+      // A process that outlives its test would run until the machine restarts.
+      assert.deepEqual(survivors, [], 'processes of the test outlived it')
+    },
+  ])
+  context.after(() => runPendingEnds(context))
 }
 
 /** Reads the process ids a fixture noted in a file, one per line; none when the file is not there. @example await readNotedPids('/tmp/root/pids.log') // => [4242] */
