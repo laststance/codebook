@@ -1732,3 +1732,74 @@ test('capture keeps a workspace-relative caller path and only the name for a pat
   )
   assert.equal(JSON.stringify(snapshot).includes('/home/learner'), false)
 })
+
+// Value: protects=a saved replay never holds a URL, a drive path of another host or a relative path as a caller frame's recorded location; fails_when=a URL or `C:\\` name is kept whole, or a URL-like or relative path is resolved against the host's working folder and kept; why_new=Cycle 0064 pt3 review (OCR low); seam=none
+test('capture keeps only the last segment of a URL or drive-path caller name and drops a relative or URL path', async () => {
+  // Arrange
+  const stackFrames = [
+    { id: 1, name: 'top', line: 1, column: 1 },
+    {
+      id: 2,
+      name: 'fileUrl',
+      line: 5,
+      column: 1,
+      source: { name: 'file:///Users/learner/cache/a.js' },
+    },
+    {
+      id: 3,
+      name: 'drivePath',
+      line: 6,
+      column: 1,
+      source: { name: 'C:\\Users\\learner\\cache\\b.js' },
+    },
+    {
+      id: 4,
+      name: 'httpUrl',
+      line: 7,
+      column: 1,
+      source: { name: 'http://localhost:3000/static/c.js?build=7421' },
+    },
+    {
+      id: 5,
+      name: 'bundlerUrl',
+      line: 8,
+      column: 1,
+      source: { name: 'a.ts', path: 'webpack:///src/a.ts' },
+    },
+    {
+      id: 6,
+      name: 'relativePath',
+      line: 9,
+      column: 1,
+      source: { name: 'd.ts', path: 'src/d.ts' },
+    },
+  ]
+
+  // Act
+  const snapshot = await captureReplayDebugSnapshot({
+    stack: { stackFrames, totalFrames: 6 },
+    verifiedSource: source,
+    workspaceRoot: process.cwd(),
+    assertCurrent() {},
+    request(command) {
+      return Promise.resolve(
+        command === 'scopes' ? { scopes: [] } : { variables: [] },
+      )
+    },
+  })
+
+  // Assert
+  assert.deepEqual(
+    snapshot.frames.map((frame) => frame.recordedLocation),
+    [
+      undefined,
+      { name: 'a.js' },
+      { name: 'b.js' },
+      { name: 'c.js' },
+      { name: 'a.ts' },
+      { name: 'd.ts' },
+    ],
+  )
+  assert.equal(JSON.stringify(snapshot).includes('learner'), false)
+  assert.equal(JSON.stringify(snapshot).includes('7421'), false)
+})

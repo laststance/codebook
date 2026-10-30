@@ -77,6 +77,39 @@ type PendingExpansion = {
 }
 
 /**
+ * Says whether a frame's reported name is a place rather than a bare file name: an absolute path of either host, a URL or a drive path.
+ *
+ * Called by {@link recordedLocationOf}.
+ *
+ * @param name - The name the debugger reported.
+ * @returns `true` for `/home/me/x.js`, `C:\\Users\\me\\x.js`, `file:///Users/me/x.js` and `http://localhost/x.js`; `false` for `x.js` and `src/x.js`.
+ * @example namesALocationOutsideTheWorkspace('file:///Users/me/x.js') // => true
+ */
+function namesALocationOutsideTheWorkspace(name: string): boolean {
+  return (
+    path.isAbsolute(name) ||
+    path.win32.isAbsolute(name) ||
+    // A scheme (`file:`, `http:`, `webpack:`) or a drive letter (`C:`).
+    /^[a-z][a-z0-9+.-]*:/i.test(name)
+  )
+}
+
+/**
+ * Cuts a place down to its last segment, without a URL's query or fragment.
+ *
+ * Called by {@link recordedLocationOf}.
+ *
+ * @param name - A name {@link namesALocationOutsideTheWorkspace} accepted.
+ * @returns The last non-empty segment, split at `/` and `\\`.
+ * @example lastSegmentOf('C:\\Users\\me\\x.js') // => 'x.js'
+ */
+function lastSegmentOf(name: string): string {
+  const withoutQuery = name.split(/[?#]/, 1)[0] ?? name
+  const segments = withoutQuery.split(/[/\\]/).filter(Boolean)
+  return segments.at(-1) ?? name
+}
+
+/**
  * Keeps the source name and path a live debugger reported for one stack frame, for the replay Call Stack of frames whose executed text was not verified.
  *
  * Called by {@link captureReplayDebugSnapshot} for every frame below the top one.
@@ -95,11 +128,11 @@ function recordedLocationOf(
   shorten: (value: string) => string,
   workspaceRoot?: string,
 ): Pick<ReplayDebugSnapshot['frames'][number], 'recordedLocation'> {
-  // A name that is itself an absolute path would carry the home folder, so only its last segment is kept.
+  // A name that is itself an absolute path, a URL or a drive path (any host's) would carry the home folder or an address, so only its last segment is kept.
   const reportedName = source?.name ?? source?.path
   const name =
-    reportedName && path.isAbsolute(reportedName)
-      ? path.basename(reportedName)
+    reportedName && namesALocationOutsideTheWorkspace(reportedName)
+      ? lastSegmentOf(reportedName)
       : reportedName
   // A frame without any reported name or path has no location to keep
   if (!source || !name) return {}
@@ -107,6 +140,8 @@ function recordedLocationOf(
   const keptPath =
     workspaceRoot !== undefined &&
     source.path !== undefined &&
+    // A relative or URL-like path would resolve against the host's working folder, so only an absolute one is compared.
+    path.isAbsolute(source.path) &&
     isInsideFolder(workspaceRoot, source.path)
       ? path.relative(workspaceRoot, source.path).split(path.sep).join('/')
       : undefined
