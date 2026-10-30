@@ -7,6 +7,7 @@ import { configuredStops } from './configuredStops'
 import { isCrossRuntimeStudy } from './isCrossRuntimeStudy'
 import { isSavedBindingReceiptAtStop } from './isSavedBindingReceiptAtStop'
 import { isSavedSourceAtStop } from './isSavedSourceAtStop'
+import { legacyStudyFormatOfConfiguration } from './legacyStudyFormatOfConfiguration'
 import { studyFormatOfConfiguration } from './studyFormatOfConfiguration'
 
 /** Validates sealed configured facts for archive and recording readers without requiring current files or granting runtime authority. @example validateConfiguredStudyEvidence(study, workspaceKey) // rejects altered source or pause */
@@ -15,7 +16,11 @@ export function validateConfiguredStudyEvidence(
   workspaceKey: string,
 ): void {
   const configuration = study.configuration
-  if (study.version !== studyFormatOfConfiguration(configuration))
+  // A new save is the current format; an older archive keeps the format its configuration implied when it was saved.
+  if (
+    study.version !== studyFormatOfConfiguration() &&
+    study.version !== legacyStudyFormatOfConfiguration(configuration)
+  )
     throw new Error('Configured archive and intent versions disagree.')
   if (
     study.workspaceKey !== workspaceKey ||

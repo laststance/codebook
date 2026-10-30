@@ -10,9 +10,9 @@ const NUMBERED_STUDY_ARCHIVE = /^(.+)\.study\.v(\d+)\.json$/
  * - the study id and the format number, for `<id>.study.v<n>.json` with a number above the formats this Codebook reads
  * - `undefined` for every other name, also for a known format and for a catalog sidecar
  * @example
- * newerStudyArchive('a_b.study.v6.json')      // => { id: 'a_b', version: 6 }
- * newerStudyArchive('a_b.study.v5.json')      // => undefined
- * newerStudyArchive('a_b.study.meta.v6.json') // => undefined
+ * newerStudyArchive('a_b.study.v7.json')      // => { id: 'a_b', version: 7 }
+ * newerStudyArchive('a_b.study.v6.json')      // => undefined
+ * newerStudyArchive('a_b.study.meta.v7.json') // => undefined
  */
 export function newerStudyArchive(
   name: string,

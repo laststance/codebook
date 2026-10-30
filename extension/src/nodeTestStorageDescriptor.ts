@@ -1,5 +1,6 @@
 import {
   NODE_TEST_HISTORY_DIRECTORY,
+  NODE_TEST_HISTORY_HEADER_VERSION,
   NODE_TEST_HISTORY_LIMIT_BYTES,
   NODE_TEST_HISTORY_SEAL_LIMIT_BYTES,
   NODE_TEST_LEARNING_MATERIAL_VERSION,
@@ -87,7 +88,10 @@ export const nodeTestStorageDescriptor: HistoryStorageDescriptor<NodeTestHistory
       assertCitations: (content, citable, lead) =>
         assertNodeLearningCitations(content, citable, { lead }),
     },
-    stampHeader: (input) => ({ ...input, version: 1 }),
+    stampHeader: (input) => ({
+      ...input,
+      version: NODE_TEST_HISTORY_HEADER_VERSION,
+    }),
     parseHeader: (value) => nodeTestHistoryHeaderSchema.parse(value),
     parseSeal: (value) => nodeTestHistorySealSchema.parse(value),
     parseIndex: (value) => nodeTestHistoryIndexSchema.parse(value),

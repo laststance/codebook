@@ -9,6 +9,7 @@ import {
   NODE_SERVER_HISTORY_MESSAGE_LIMIT_CHARS,
   NODE_SERVER_HISTORY_UNAVAILABLE_PATH_LIMIT_CHARS,
   NODE_SERVER_HISTORY_FORMAT_VERSION,
+  NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION,
   NODE_SERVER_HISTORY_MAX_ENTRIES,
   NODE_SERVER_HISTORY_MAX_STOPS,
   NODE_SERVER_OUTPUT_TEXT_LIMIT_CHARS,
@@ -38,7 +39,11 @@ const repositoryPath = z.string().min(1).max(REPOSITORY_PATH_LIMIT_CHARS)
  */
 export const nodeServerHistoryHeaderSchema = z
   .strictObject({
-    formatVersion: z.literal(NODE_SERVER_HISTORY_FORMAT_VERSION),
+    // Header 1 is a history saved before recorded caller locations; both are read, new ones write 2.
+    formatVersion: z.union([
+      z.literal(NODE_SERVER_HISTORY_FORMAT_VERSION),
+      z.literal(NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION),
+    ]),
     profile: z.literal(NODE_SERVER_PROFILE),
     workspaceKey: repositoryHashSchema,
     studyId: studyIdSchema,

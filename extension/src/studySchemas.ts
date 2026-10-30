@@ -53,6 +53,7 @@ export interface StudyCatalogEntry {
     | 'v3'
     | 'v4'
     | 'v5'
+    | 'v6'
     | 'node-test-history'
     | 'newer'
     | 'archive-missing'

@@ -179,7 +179,7 @@ export async function captureStudy(
   const configured =
     record.profile === REPOSITORY_BROWSER_PROFILE
       ? {
-          version: studyFormatOfConfiguration(record.configuration),
+          version: studyFormatOfConfiguration(),
           configuration: record.configuration,
           configurationHash: sha256(JSON.stringify(record.configuration)),
           descriptor: record.definition?.descriptor,
