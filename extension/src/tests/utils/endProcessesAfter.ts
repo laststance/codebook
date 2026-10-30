@@ -101,7 +101,7 @@ type ReadProcess = (pid: number) => ProcessInfo | 'unreadable' | undefined
  * ancestorsOf() // => Set { 4100, 3990 }
  * ```
  */
-export function ancestorsOf(read: ReadProcess = readProcess): Set<number> {
+function ancestorsOf(read: ReadProcess = readProcess): Set<number> {
   const ancestors = new Set<number>()
   let ancestor = process.ppid
   for (let hop = 0; hop < MAX_PARENT_HOPS && ancestor > 1; hop += 1) {
@@ -116,7 +116,7 @@ export function ancestorsOf(read: ReadProcess = readProcess): Set<number> {
 /**
  * Says whether a running process can be one this test process started, so a recycled id of an unrelated process is never signalled.
  *
- * Never owned: process 1 and below, this process, and its ancestors (the runner that started it, whose group a `group` end would kill). Owned: an id the test holds a child handle of (`held`), a descendant of this process, or an orphan that started after `sinceMs`, as a child whose parent the test ended. An orphan's parent is process 0 or 1, or an ancestor of this process: a Linux subreaper (a `systemd --user` manager, a container init that is not process 1) adopts it instead of process 1, and the adopter is always a living ancestor of the chain the orphan came from. Where `ps` cannot answer and no handle is held, nothing confirms the id: `'unconfirmed'`, and the caller must not signal it.
+ * Never owned: process 1 and below, this process, and its ancestors (the runner that started it, whose group a `group` end would kill). Owned: an id the test holds a child handle of (`held`), a descendant of this process, or an orphan that started after `sinceMs`, as a child whose parent the test ended. An orphan's parent is process 0 or 1, or an ancestor of this process other than its direct parent: a Linux subreaper (a `systemd --user` manager, a container init that is not process 1) adopts it instead of process 1, and the adopter is always a living ancestor of the chain the orphan came from. The direct parent (`process.ppid`) is excluded: it is the `node --test` runner, which starts sibling test-file processes all the time and is never a subreaper (Node never sets PR_SET_CHILD_SUBREAPER), so a young child of it is a sibling, not an adopted orphan (and a `group` end would kill its whole group). The remaining exposure is an id recycled to a process that process 1 or a farther ancestor started after the test began, the same class the process 1 rule always had. Where `ps` cannot answer and no handle is held, nothing confirms the id: `'unconfirmed'`, and the caller must not signal it.
  *
  * @param pid - The process id.
  * @param sinceMs - The time from which a process may be the test's: when the test began.
@@ -150,8 +150,10 @@ function ownershipOf(
     if (typeof parent !== 'object') break
     parentPid = parent.parentPid
   }
-  // The adopter of an orphan is process 0 or 1, or (Linux subreaper) an ancestor of this process.
-  const isOrphan = info.parentPid <= 1 || ancestors.has(info.parentPid)
+  // The adopter of an orphan is process 0 or 1, or (Linux subreaper) an ancestor farther than the runner, which is no subreaper and has siblings of this process as children.
+  const isOrphan =
+    info.parentPid <= 1 ||
+    (info.parentPid !== process.ppid && ancestors.has(info.parentPid))
   // An orphan older than the test is somebody else's, with the same id by chance.
   return isOrphan && info.ageSeconds <= (Date.now() - sinceMs) / 1000 + 2
     ? 'owned'

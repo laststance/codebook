@@ -65,7 +65,7 @@ export function processRuns(pid) {
  * @returns The ids of the ancestors; where `ps` cannot answer, the ones reached up to that hop.
  * @example ancestorsOf() // => Set { 4100, 3990 }
  */
-export function ancestorsOf(read = readProcess) {
+function ancestorsOf(read = readProcess) {
   const ancestors = new Set()
   let ancestor = process.ppid
   for (let hop = 0; hop < MAX_PARENT_HOPS && ancestor > 1; hop += 1) {
@@ -79,7 +79,7 @@ export function ancestorsOf(read = readProcess) {
 
 /**
  * Tells how a running process stands to this test process, so a recycled id of an unrelated process is never signalled.
- * Never owned: process 1 and below, this process, and its ancestors (the runner that started it, whose group a group end would kill). Owned: an id the test holds a child handle of (`held`), a descendant of this process, or an orphan that started after `sinceMs`, as a child whose parent the test ended. An orphan's parent is process 0 or 1, or an ancestor of this process: a Linux subreaper (a `systemd --user` manager, a container init that is not process 1) adopts it instead of process 1, and the adopter is always a living ancestor of the chain the orphan came from. Where `ps` cannot answer and no handle is held, nothing confirms the id: `'unconfirmed'`, and the caller must not signal it.
+ * Never owned: process 1 and below, this process, and its ancestors (the runner that started it, whose group a group end would kill). Owned: an id the test holds a child handle of (`held`), a descendant of this process, or an orphan that started after `sinceMs`, as a child whose parent the test ended. An orphan's parent is process 0 or 1, or an ancestor of this process other than its direct parent: a Linux subreaper (a `systemd --user` manager, a container init that is not process 1) adopts it instead of process 1, and the adopter is always a living ancestor of the chain the orphan came from. The direct parent (`process.ppid`) is excluded: it is the `node --test` runner, which starts sibling test-file processes all the time and is never a subreaper (Node never sets PR_SET_CHILD_SUBREAPER), so a young child of it is a sibling, not an adopted orphan. The remaining exposure is an id recycled to a process that process 1 or a farther ancestor started after the test began, the same class the process 1 rule always had. Where `ps` cannot answer and no handle is held, nothing confirms the id: `'unconfirmed'`, and the caller must not signal it.
  * @param pid - The process id.
  * @param sinceMs - The time from which a process may be the test's: when the test began.
  * @param read - Reads one process's facts ({@link readProcess} by default); tests of this helper replace it.
@@ -110,8 +110,10 @@ export function ownershipOf(
     parentPid = parent.parentPid
   }
   // An orphan older than the test is somebody else's, with the same id by chance.
-  // The adopter of an orphan is process 0 or 1, or (Linux subreaper) an ancestor of this process.
-  const isOrphan = process_.parentPid <= 1 || ancestors.has(process_.parentPid)
+  // The adopter of an orphan is process 0 or 1, or (Linux subreaper) an ancestor farther than the runner, which is no subreaper and has siblings of this process as children.
+  const isOrphan =
+    process_.parentPid <= 1 ||
+    (process_.parentPid !== process.ppid && ancestors.has(process_.parentPid))
   return isOrphan && process_.ageSeconds <= (Date.now() - sinceMs) / 1000 + 2
     ? 'owned'
     : 'foreign'
@@ -158,8 +160,7 @@ export async function endProcesses(
  */
 async function endClassified({ owned, unconfirmed }, { kill, waitMs = 5_000 }) {
   const signal = kill ?? ((pid) => process.kill(pid, 'SIGKILL'))
-  // A tree end that ran in between may have ended some already: only what still runs is signalled.
-  const running = owned.filter(processRuns)
+  const running = owned
   for (const pid of running)
     try {
       signal(pid)
@@ -238,7 +239,7 @@ export function removeAfterProcessEnds(context, folder) {
  * @param context - The running test.
  * @param readPids - Answers the ids to end; read once, when the test ends.
  * @param killTree - Ends the given ids and what they started (`killProcessIds`); a plain SIGKILL of each id is used without it. It gets only ids that run and are surely the test's.
- * @param options - `held` answers the children the test holds a handle of: their ids are the test's even where `ps` cannot say, and they are ended when `readPids` itself fails.
+ * @param options - `held` answers the children the test holds a handle of: their ids are the test's even where `ps` cannot say, and they are ended when `readPids` itself fails. `readProcessInfo` replaces the `ps` read (tests of this helper use it to show an id that changes between the tree end and the final kill).
  * @throws The failure of `readPids` (for example an unreadable pid file), after the held children were ended.
  * @example
  * endProcessesAfter(context, () => readPids(join(root, 'pids.log')))
@@ -249,34 +250,26 @@ export function endProcessesAfter(context, readPids, killTree, options = {}) {
     ...(pendingEnds.get(context) ?? []),
     async () => {
       const held = options.held?.() ?? []
-      // Read once for this end and reused for every id.
-      const ancestors = ancestorsOf()
+      const read = options.readProcessInfo ?? readProcess
+      // Read once for this end and reused for every id and both classifications.
+      const ancestors = ancestorsOf(read)
+      /** Classifies the ids, runs the tree end on the owned ones, then classifies again before the final kill: an id recycled in between must not be signalled on the strength of the first answer. */
+      const endIds = async (ids) => {
+        killTree?.(classifyRunning(ids, sinceMs, read, held, ancestors).owned)
+        return endClassified(
+          classifyRunning(ids, sinceMs, read, held, ancestors),
+          {},
+        )
+      }
       let noted
       try {
         noted = await readPids()
       } catch (error) {
         // The ids cannot be read, so the clean-up fails loudly; the children whose handles the test holds are ended first.
-        const classified = classifyRunning(
-          held,
-          sinceMs,
-          readProcess,
-          held,
-          ancestors,
-        )
-        killTree?.(classified.owned)
-        await endClassified(classified, {})
+        await endIds(held)
         throw error
       }
-      // Classified once: the tree end and the final kill share it.
-      const classified = classifyRunning(
-        noted,
-        sinceMs,
-        readProcess,
-        held,
-        ancestors,
-      )
-      killTree?.(classified.owned)
-      const survivors = await endClassified(classified, {})
+      const survivors = await endIds(noted)
       // A process that outlives its test would run until the machine restarts.
       assert.deepEqual(survivors, [], 'processes of the test outlived it')
     },

@@ -83,7 +83,7 @@ test('this process and its parent are never signalled, even when they look like 
 
 // Value: protects=the leak check from missing a grandchild that a Linux subreaper (a `systemd --user` manager, a container init that is not process 1) adopted when its parent was killed; fails_when=an orphan counts as the test's only when its parent is process 0 or 1, so the adopted grandchild is foreign, never ended and never reported; why_new=Cycle 0064 task 124; seam=endProcesses with a real child and an injected reader that gives it this process's parent as its parent; no_claim=a real subreaper
 test(
-  'an orphan adopted by an ancestor of the test is ended when it is young and left alone when it is old',
+  'an orphan adopted by a farther ancestor of the test is ended when it is young and left alone when it is old',
   { skip: process.platform === 'win32' },
   async (context) => {
     // Arrange
@@ -91,10 +91,14 @@ test(
     const old = await startWaitingProcess()
     context.after(() => young.kill('SIGKILL'))
     context.after(() => old.kill('SIGKILL'))
-    const readAdoptedBy = (ageSeconds) => (pid) =>
-      pid === process.ppid
-        ? { state: 'S', parentPid: 1, ageSeconds: 86_400 }
-        : { state: 'S', parentPid: process.ppid, ageSeconds }
+    // The ancestors are {ppid, 424242}: the adopter 424242 is farther than the runner.
+    const readAdoptedBy = (ageSeconds) => (pid) => {
+      if (pid === process.ppid)
+        return { state: 'S', parentPid: 424242, ageSeconds: 86_400 }
+      if (pid === 424242)
+        return { state: 'S', parentPid: 1, ageSeconds: 86_400 }
+      return { state: 'S', parentPid: 424242, ageSeconds }
+    }
     const signalledOfYoung = []
     const signalledOfOld = []
 
@@ -113,6 +117,66 @@ test(
     // Assert
     assert.deepEqual(signalledOfYoung, [young.pid])
     assert.deepEqual(signalledOfOld, [])
+  },
+)
+
+// Value: protects=a sibling test-file process of the runner (`node --test` starts them all the time, and is no subreaper) from being killed by a clean-up that holds its recycled id; fails_when=a parent among the ancestors counts as the adopter, so a young child of the direct parent is taken for the test's; why_new=Cycle 0064 task 132; seam=endProcesses with a real child and an injected reader that gives it this process's direct parent as its parent; no_claim=a real runner
+test(
+  'a young process whose parent is the runner of the test is a sibling and is not signalled',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const sibling = await startWaitingProcess()
+    context.after(() => sibling.kill('SIGKILL'))
+    const signalled = []
+
+    // Act
+    await endProcesses([sibling.pid], {
+      readProcessInfo: (pid) =>
+        pid === process.ppid
+          ? { state: 'S', parentPid: 424242, ageSeconds: 86_400 }
+          : { state: 'S', parentPid: process.ppid, ageSeconds: 0 },
+      kill: (pid) => signalled.push(pid),
+      waitMs: 100,
+    })
+
+    // Assert
+    assert.deepEqual(signalled, [])
+  },
+)
+
+// Value: protects=a process that took over a noted id between the tree end and the final kill from being killed on the strength of the first classification; fails_when=the ownership classified before the tree end is reused for the final kill; why_new=Cycle 0064 task 133; seam=endProcessesAfter with a reader option whose answer for the id changes when the tree end runs; no_claim=a real id recycling
+test(
+  'an id that reads as a foreign old process after the tree end is not signalled by the final kill',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const process_ = await startWaitingProcess()
+    context.after(() => process_.kill('SIGKILL'))
+    let treeEnded = false
+    const hooks = []
+    endProcessesAfter(
+      { after: (hook) => hooks.push(hook) },
+      () => [process_.pid],
+      () => {
+        treeEnded = true
+      },
+      {
+        readProcessInfo: (pid) =>
+          pid === process.ppid
+            ? { state: 'S', parentPid: 1, ageSeconds: 86_400 }
+            : treeEnded
+              ? { state: 'S', parentPid: 424242, ageSeconds: 86_400 }
+              : { state: 'S', parentPid: 1, ageSeconds: 0 },
+      },
+    )
+
+    // Act
+    await hooks[0]()
+
+    // Assert
+    assert.equal(treeEnded, true)
+    assert.equal(processRuns(process_.pid), true)
   },
 )
 
