@@ -7,6 +7,7 @@ import { test } from 'node:test'
 import type { ConfiguredStudy } from '../configuredStudySchemas'
 import { LearningLibrary } from '../learningLibrary'
 import type { RecordingIndex } from '../recordingSchemas'
+import { crossRuntimeRepositoryConfigSchema } from '../repositoryConfigSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { buildRecordingContext } from '../utils/buildRecordingContext'
 import { decodeConfiguredStudy } from '../utils/decodeConfiguredStudy'
@@ -43,6 +44,39 @@ function viteStudy(): ConfiguredStudy {
 }
 
 /**
+ * Re-seals the cross-runtime fixture as a version 2 `vite-dev` study with browser participants only (the server stop is dropped, as `vite-dev` refuses it): format 5, the hash of the changed configuration and a run id of its own.
+ * @returns A decodable cross-runtime study whose configuration names `vite-dev`.
+ * @example
+ * viteCrossRuntimeStudy().configuration.version // => 2
+ */
+function viteCrossRuntimeStudy(): ConfiguredStudy {
+  const study = createCrossRuntimeStudy()
+  const [browser, , finalBrowser] = study.observations
+  const configuration = crossRuntimeRepositoryConfigSchema.parse({
+    ...study.configuration,
+    adapter: 'vite-dev',
+    additionalStops: study.configuration.additionalStops?.slice(1),
+  })
+  const observations = [browser!, finalBrowser!].map((observation) => ({
+    ...observation,
+    snapshotUri: observation.snapshotUri.replace(study.runId, VITE_RUN_ID),
+  }))
+  const pausedIds = new Set(observations.map((observation) => observation.id))
+  return {
+    ...study,
+    version: 5,
+    configuration,
+    configurationHash: sha256(JSON.stringify(configuration)),
+    runId: VITE_RUN_ID,
+    id: `${study.instanceId}_${VITE_RUN_ID}`,
+    observations,
+    captures: study.captures.filter(
+      (capture) => !capture.snapshotId || pausedIds.has(capture.snapshotId),
+    ),
+  }
+}
+
+/**
  * Reads the format number written inside a saved archive file.
  * @param path - Absolute path of a `.study.v<n>.json` file.
  * @returns The `version` field of the archive.
@@ -53,6 +87,46 @@ async function savedVersion(path: string): Promise<number> {
   const archive: { version: number } = JSON.parse(await readFile(path, 'utf8'))
   return archive.version
 }
+
+test('a vite-dev configuration of version 2 with browser participants is stored in format 5, not the Next cross-runtime format 4', () => {
+  // Arrange
+  const configuration = viteCrossRuntimeStudy().configuration
+  // Act
+  const format = studyFormatOfConfiguration(configuration)
+  // Assert
+  assert.equal(configuration.version, 2)
+  assert.equal(format, 5)
+})
+
+test('a format-5 cross-runtime vite-dev study decodes and its recording context builds and validates as the cross-runtime recording version', () => {
+  // Arrange
+  const study = viteCrossRuntimeStudy()
+  // Act
+  const decoded = decodeConfiguredStudy(study, study.workspaceKey)
+  const context = validateRecordingContext(
+    buildRecordingContext(decoded, [], 1),
+    study.workspaceKey,
+  )
+  // Assert
+  assert.equal(decoded.version, 5)
+  assert.equal(context.version, 3)
+})
+
+test('a demonstrated format-5 cross-runtime vite-dev study without debugger state is still refused as incomplete cross-runtime history', () => {
+  // Arrange
+  const study = viteCrossRuntimeStudy()
+  const withoutDebugger = {
+    ...study,
+    observations: study.observations.map(
+      ({ debugger: _debugger, ...observation }) => observation,
+    ),
+  }
+  // Act / Assert
+  assert.throws(
+    () => decodeConfiguredStudy(withoutDebugger, study.workspaceKey),
+    { message: 'Completed cross-runtime history lacks native debugger state.' },
+  )
+})
 
 test('a Next configuration of version 1 is stored in format 3, version 2 in format 4 and a vite-dev configuration in format 5', () => {
   // Arrange

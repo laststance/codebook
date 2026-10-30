@@ -1,13 +1,11 @@
-import {
-  CROSS_RUNTIME_RECORDING_VERSION,
-  CROSS_RUNTIME_STUDY_VERSION,
-} from '../constants'
+import { CROSS_RUNTIME_RECORDING_VERSION } from '../constants'
 import {
   retainedRecordingContextSchema,
   type RecordingContext,
 } from '../recordingSchemas'
 
 import { describeStudy } from './describeStudy'
+import { isCrossRuntimeStudy } from './isCrossRuntimeStudy'
 import { validateConfiguredStudyEvidence } from './validateConfiguredStudyEvidence'
 
 /** Rejects mismatched identities, source hashes and impossible availability before recording context reaches playback. @example validateRecordingContext(value, key).studyId */
@@ -19,7 +17,7 @@ export function validateRecordingContext(
     study = context.study
   validateConfiguredStudyEvidence(study, workspaceKey)
   if (
-    (study.version === CROSS_RUNTIME_STUDY_VERSION) !==
+    isCrossRuntimeStudy(study) !==
     (context.version === CROSS_RUNTIME_RECORDING_VERSION)
   )
     throw new Error('Recording context and study format disagree.')

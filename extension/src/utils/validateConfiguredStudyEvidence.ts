@@ -1,12 +1,10 @@
 import type { ConfiguredStudy } from '../configuredStudySchemas'
-import {
-  CROSS_RUNTIME_STUDY_VERSION,
-  REPOSITORY_CAPTURED_TYPES,
-} from '../constants'
+import { REPOSITORY_CAPTURED_TYPES } from '../constants'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
 import { assertConfiguredDescriptor } from './assertConfiguredDescriptor'
 import { configuredStops } from './configuredStops'
+import { isCrossRuntimeStudy } from './isCrossRuntimeStudy'
 import { isSavedBindingReceiptAtStop } from './isSavedBindingReceiptAtStop'
 import { isSavedSourceAtStop } from './isSavedSourceAtStop'
 import { studyFormatOfConfiguration } from './studyFormatOfConfiguration'
@@ -126,7 +124,7 @@ export function validateConfiguredStudyEvidence(
         'Configured observation binding receipt is missing or differs from its declared and observed lines.',
       )
     if (
-      study.version === CROSS_RUNTIME_STUDY_VERSION &&
+      isCrossRuntimeStudy(study) &&
       study.finalOutcome === 'demonstrated' &&
       !observation.debugger
     )

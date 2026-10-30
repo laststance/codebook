@@ -2,14 +2,11 @@ import {
   configuredStudySchema,
   type ConfiguredStudy,
 } from '../configuredStudySchemas'
-import {
-  CONFIGURED_CAPTURE_PHASES,
-  CROSS_RUNTIME_STUDY_VERSION,
-  IMAGE_LIMIT_BYTES,
-} from '../constants'
+import { CONFIGURED_CAPTURE_PHASES, IMAGE_LIMIT_BYTES } from '../constants'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
 import { assertReadableStudyFormat } from './assertReadableStudyFormat'
+import { isCrossRuntimeStudy } from './isCrossRuntimeStudy'
 import { validateConfiguredStudyEvidence } from './validateConfiguredStudyEvidence'
 
 /** Validates configured history for storage/replay without consulting current files or granting live pause authority. @example decodeConfiguredStudy(archive, workspaceKey).profile // 'repository-browser' */
@@ -25,10 +22,7 @@ export function decodeConfiguredStudy(
     throw new Error('Configured evidence has no bound descriptor.')
   const phases = new Set<string>()
   for (const capture of study.captures) {
-    if (
-      study.version !== CROSS_RUNTIME_STUDY_VERSION &&
-      capture.phase === 'paused-server'
-    )
+    if (!isCrossRuntimeStudy(study) && capture.phase === 'paused-server')
       throw new Error('Browser archive cannot contain server captures.')
     const identity = `${capture.phase}:${capture.snapshotId ?? ''}`
     if (
@@ -41,7 +35,7 @@ export function decodeConfiguredStudy(
     )
       throw new Error('Configured image belongs to another observation.')
     if (
-      study.version === CROSS_RUNTIME_STUDY_VERSION &&
+      isCrossRuntimeStudy(study) &&
       capture.phase.startsWith('paused-') &&
       capture.status === 'captured' &&
       !capture.snapshotId
