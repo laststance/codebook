@@ -316,7 +316,7 @@ export function launchDevelopmentServer(
     },
     /** Stops only the acquired process group and verifies its listener; cleanup calls this even after failed readiness. @example await app.close() */
     async close(): Promise<void> {
-      const attempt = (closing ??= (async () => {
+      const stopAndRelease = async (): Promise<void> => {
         if (claim) beginReleaseOfOwnedDevelopmentPort(claim)
         if (child.pid) {
           const processGroup = child.pid
@@ -350,7 +350,21 @@ export function launchDevelopmentServer(
             REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS,
           )
         if (claim) releaseOwnedDevelopmentPort(claim)
-        await spec?.afterClose?.()
+      }
+      const attempt = (closing ??= (async () => {
+        let failure: { cause: unknown } | undefined
+        try {
+          await stopAndRelease()
+        } catch (cause) {
+          failure = { cause }
+        }
+        // Transient files are removed whether or not the stop succeeded; an earlier failure wins over a cleanup failure.
+        try {
+          await spec?.afterClose?.()
+        } catch (cause) {
+          failure ??= { cause }
+        }
+        if (failure) throw failure.cause
         for (const flush of flushes) flush()
         record('application.closed', {
           pid: child.pid,

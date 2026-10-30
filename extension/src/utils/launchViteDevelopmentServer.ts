@@ -53,6 +53,15 @@ function portSourceOf(facts: ViteFacts, scriptPort: number | undefined) {
     : "Vite's default port"
 }
 
+/** Tells the launcher not to listen; best effort, because a launcher that already exited must not replace the coded refusal with a plain send error (the run's cleanup closes the process either way). */
+function refuseLaunch(app: DevelopmentApp): void {
+  try {
+    app.send({ type: VITE_LAUNCHER_MESSAGES.refuse })
+  } catch {
+    // The launcher is gone; the coded refusal that follows is the message that matters.
+  }
+}
+
 /**
  * Starts the owned Vite launcher, judges the facts of the config the server will use, and lets it listen only when the project is supported and its port is free.
  *
@@ -76,7 +85,10 @@ export async function launchViteDevelopmentServer(
   // Every value the launcher is given or loads is masked by value in what leaves this module.
   const maskedValues = Object.values(script.assignments)
   const mask = (text: string): string => maskKnownValues(text, maskedValues)
-  const timestampFilesBefore = await listViteTimestampFiles(request.workspace)
+  const timestampFilesBefore = await listViteTimestampFiles(
+    request.workspace,
+    script.configFile,
+  )
   const options: ViteLauncherOptions = {
     viteEntry: installation.entry,
     root: request.workspace,
@@ -98,7 +110,11 @@ export async function launchViteDevelopmentServer(
       mask,
       name: 'Vite',
       afterClose: () =>
-        removeNewViteTimestampFiles(request.workspace, timestampFilesBefore),
+        removeNewViteTimestampFiles(
+          request.workspace,
+          timestampFilesBefore,
+          script.configFile,
+        ),
     },
   )
   request.onApp(app)
@@ -136,10 +152,10 @@ export async function launchViteDevelopmentServer(
   const { facts } = first
   const unsupported = assessViteSettings(facts, request.workspace)
   if (unsupported.length) {
-    app.send({ type: VITE_LAUNCHER_MESSAGES.refuse })
+    refuseLaunch(app)
     throw viteRefusal(
       'VITE_UNSUPPORTED',
-      `The Vite config${facts.configFile ? ` (${facts.configFile})` : ''} has settings Codebook cannot run: ${unsupported.join('; ')}. Codebook supports a root app on 127.0.0.1 with base "/", no HTTPS, no server.origin, no own HMR listener, no middleware mode and a cacheDir inside the package root.`,
+      `The Vite config${facts.configFile ? ` (${facts.configFile})` : ''} has settings Codebook cannot run: ${unsupported.join('; ')}. Codebook supports a root app on 127.0.0.1 with a fixed server.port (not 0), base "/", no HTTPS, no server.origin, no own HMR listener, no middleware mode and a cacheDir inside the package root.`,
     )
   }
   const declared = {
@@ -152,7 +168,7 @@ export async function launchViteDevelopmentServer(
       vitePortRefusal(refusal, declared.source),
     )
   } catch (error) {
-    app.send({ type: VITE_LAUNCHER_MESSAGES.refuse })
+    refuseLaunch(app)
     throw error
   }
   request.alive()

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { access, writeFile } from 'node:fs/promises'
+import { access, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -304,4 +304,53 @@ test('removes only the transient config files the launch left behind', async (co
   await assert.rejects(access(leftBehind))
   await access(join(run.repository.root, 'vite.config.ts.timestamp-1-old.mjs'))
   await access(join(run.repository.root, 'notes.mjs'))
+})
+
+test("removes the transient file of a dev script's own --config, beside that config", async (context) => {
+  // Arrange
+  const port = await freePort()
+  const run = await startVite(context, {
+    dev: 'vite --config config/custom.config.ts',
+    behavior: { port, leaveTimestampFile: true },
+    files: {},
+  })
+  await mkdir(join(run.repository.root, 'config'))
+  // Act
+  await run.started
+  const leftBehind = join(
+    run.repository.root,
+    'config',
+    'custom.config.ts.timestamp-1730000000-abc.mjs',
+  )
+  await access(leftBehind)
+  await run.app().close()
+  // Assert
+  await assert.rejects(access(leftBehind))
+})
+
+test('a launcher that exited after its facts still gives the coded busy-port refusal', async (context) => {
+  // Arrange
+  const port = await freePort()
+  let appOfRun: (() => DevelopmentApp) | undefined
+  const run = await startVite(context, {
+    behavior: { port },
+    portCheck: async () => {
+      // The launcher is gone by the time the extension answers it.
+      const app = appOfRun!()
+      process.kill(app.pid!, 'SIGKILL')
+      while (app.isRunning())
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      throw vitePortRefusal({ port, reason: 'in-use' }, 'the Vite config')
+    },
+  })
+  appOfRun = run.app
+  // Act
+  const error = await refusalOf(run.started)
+  // Assert
+  assert.equal(error.code, 'VITE_PORT_UNAVAILABLE')
+  assert.match(
+    error.message,
+    new RegExp(`Port ${port} \\(the Vite config\\) is in use`),
+  )
 })

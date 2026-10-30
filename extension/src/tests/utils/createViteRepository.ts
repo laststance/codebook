@@ -18,7 +18,7 @@ export type StubViteBehavior = {
   logLines?: string[]
   /** A message the stub's config throws while it loads. */
   throws?: string
-  /** Makes the stub write a transient `vite.config.ts.timestamp-*.mjs` file and not remove it. */
+  /** Makes the stub write a transient `<config file>.timestamp-*.mjs` file beside the config it was given (default `vite.config.ts`) and not remove it. */
   leaveTimestampFile?: boolean
   /** Makes the stub never answer `createServer`. */
   hangs?: boolean
@@ -38,7 +38,7 @@ const STUB_ENTRY = `
 import { createServer as createHttpServer } from 'node:http'
 import { readFileSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 export const version = '8.3.5'
 export function loadEnv(mode, directory) {
   try {
@@ -58,7 +58,8 @@ export async function createServer(inline) {
   if (behavior.throws) throw new Error(behavior.throws)
   let timestamp
   if (behavior.leaveTimestampFile) {
-    timestamp = join(inline.root, 'vite.config.ts.timestamp-1730000000-abc.mjs')
+    const configPath = resolve(inline.root, inline.configFile ?? 'vite.config.ts')
+    timestamp = join(dirname(configPath), basename(configPath) + '.timestamp-1730000000-abc.mjs')
     await writeFile(timestamp, 'export default {}')
   }
   const port = inline.server.port ?? behavior.port

@@ -172,6 +172,36 @@ test('a vite-dev start is refused with the Vite gate sentence when Vite itself i
   assert.equal(runtimes.length, 0)
 })
 
+test('a vite-dev start is refused, not judged by Next readiness, when the window reports no Vite readiness', async (context) => {
+  // Arrange
+  const { service, configuration, environment, runtimes } =
+    await configuredServiceHarness(context)
+  environment.prerequisites = async () => ({
+    ready: true,
+    missing: [],
+    profiles: {
+      'repository-browser': { ready: true, missing: [] },
+    },
+  })
+  // Act
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'vite-readiness-unreported',
+    configuration: { ...configuration, adapter: 'vite-dev' },
+  })
+  const record = service.record(receipt)
+  await record.preparation
+  await service.stop(receipt)
+  // Assert
+  assert.equal(record.error?.code, 'PREREQUISITE_MISSING')
+  assert.equal(
+    record.error?.message,
+    "Codebook could not read the Vite adapter's readiness for this window. Call codebook_status again, or reload the window, and retry.",
+  )
+  assert.equal(runtimes.length, 0)
+})
+
 test('missing repository runtime support prevents acquisition while source authoring remains available', async (context) => {
   // Arrange
   const { service, configuration, environment, runtimes, books } =
