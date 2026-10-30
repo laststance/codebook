@@ -255,6 +255,25 @@ test('a reload before the inputs that changes the served stop module seals it ag
   )
 })
 
+test('a reload that lands while the entry page is still loading seals the stops again before the inputs', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    adapter: 'vite-dev',
+    reloadDuringEntryLoad: true,
+  })
+  // Act
+  await harness.run.prepare()
+  // Assert
+  assert.equal(harness.run.view().status, 'ready')
+  assert.deepEqual([...harness.run.view().failures], [])
+  assert.equal(
+    harness.run
+      .view()
+      .events.filter((event) => event.type === 'source.resealed').length,
+    1,
+  )
+})
+
 test('the inputs wait for a dependency optimizer that stays busy longer than the quiet window and then reloads the page', async (context) => {
   // Arrange
   const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {

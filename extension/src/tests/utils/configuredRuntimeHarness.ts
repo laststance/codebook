@@ -92,6 +92,8 @@ export async function configuredRuntimeHarness(
     maskedValues?: string[]
     /** The text the debugger reports for `nextTheme` (its variable and the declared inspection) instead of `dark`. */
     capturedValue?: string
+    /** Makes the Vite stand-in reload the page, serving changed module bytes, right after the entry page was requested and before the run waits for the page to settle. */
+    reloadDuringEntryLoad?: boolean
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
@@ -489,6 +491,13 @@ export async function configuredRuntimeHarness(
           listeners.get('Page.frameNavigated')?.({
             frame: { id: 'main', url: String(parameters?.url) },
           })
+        // A dependency-optimizer reload that lands while the entry page is still loading, with new bytes served.
+        if (options.adapter && options.reloadDuringEntryLoad) {
+          servedJavascript = `${javascript}\n// ?v=late-reload`
+          listeners.get('Page.frameNavigated')?.({
+            frame: { id: 'main', url: String(parameters?.url) },
+          })
+        }
         bound = !rejectBinding
         // VS Code can surface a bound source stop during hydration when Codebook arms its breakpoint too early.
         if (

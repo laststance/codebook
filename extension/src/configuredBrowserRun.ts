@@ -462,6 +462,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private inputsPrepared = false
   /** How many reloads before the inputs started a new page generation (a Vite dependency-optimizer reload). */
   private pageGeneration = 0
+  /** The page generation the stops' current seals were read for (0 after the first seal); {@link waitForStablePage} seals again when the stable page is a later one. */
+  private sealedGeneration = 0
   private preparation?: Promise<void>
   private cleanupPromise?: Promise<void>
   private manifest?: ConfiguredRuntimeView['manifest']
@@ -998,16 +1000,25 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.alive()
       await sleep(VITE_PAGE_QUIET_MS, undefined, { signal: this.abort.signal })
       this.alive()
-      if (generation === this.pageGeneration) return
       if (this.pageGeneration > VITE_PAGE_GENERATION_LIMIT)
         throw viteRefusal(
           'VITE_PAGE_UNSTABLE',
           `The page reloaded ${this.pageGeneration} times before the inputs were written; Codebook stops after ${VITE_PAGE_GENERATION_LIMIT} and nothing was sent.`,
         )
+      // A reload during this iteration: wait for the new page, then judge it again.
+      if (generation !== this.pageGeneration) {
+        await this.waitForDom('before')
+        this.alive()
+        continue
+      }
+      // Stable, and the seals already belong to this generation.
+      if (this.sealedGeneration === generation) return
+      // A reload that landed before this wait began leaves stable but unsealed generations too.
       await this.waitForDom('before')
       this.alive()
-      // The new page executes the modules the server serves now: seal them again before the inputs.
-      await this.resealStopsForGeneration(this.pageGeneration)
+      // The page executes the modules the server serves now: seal them again, then confirm the page stays stable.
+      await this.resealStopsForGeneration(generation)
+      this.sealedGeneration = generation
     }
   }
 
