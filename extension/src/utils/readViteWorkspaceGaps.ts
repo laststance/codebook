@@ -44,7 +44,7 @@ export type ViteDevScriptReadiness =
   | { form: 'absent' }
 
 /** One reason a workspace cannot start on `vite-dev`, with the code a start refuses with. */
-export type ViteWorkspaceGap = {
+type ViteWorkspaceGap = {
   code: Extract<
     ErrorCode,
     'ADAPTER_MISROUTE' | 'VITE_UNSUPPORTED' | 'PREREQUISITE_MISSING'
