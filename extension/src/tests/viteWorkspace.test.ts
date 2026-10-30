@@ -296,6 +296,37 @@ test('reads engines.node ranges the way package engines write them', () => {
   ])
 })
 
+// Value: protects=x-ranges, partial versions and hyphen ranges are read as npm's semver reads them; fails_when=20.x reads as exactly 20.0.0 so Node 20.19 is refused as excluded; why_new=Cycle 0064 task 11 acceptance; seam=none; expectations checked against the semver package
+test('reads x-ranges, partial versions and hyphen ranges the way semver does', () => {
+  // Arrange
+  const cases: Array<[string, string, boolean]> = [
+    ['20.x', 'v20.19.0', true],
+    ['20.x', 'v22.0.0', false],
+    ['20.19.x', 'v20.19.7', true],
+    ['20.19.x', 'v20.20.0', false],
+    ['20', 'v20.5.0', true],
+    ['20', 'v21.0.0', false],
+    ['*', 'v18.0.0', true],
+    ['x', 'v24.22.1', true],
+    ['20.19.0 - 22', 'v22.5.0', true],
+    ['20.19.0 - 22', 'v23.0.0', false],
+    ['20.19.0 - 22', 'v20.18.9', false],
+    ['18.x || 22.12.0 - 24', 'v24.22.1', true],
+    ['18.x || 22.12.0 - 24', 'v20.19.0', false],
+    ['>=20.x <22', 'v21.3.0', true],
+    ['^20.19.0 - bad', 'v20.19.0', false],
+  ]
+  // Act
+  const results = cases.map(([range, version]) =>
+    satisfiesNodeRange(range, version),
+  )
+  // Assert
+  assert.deepEqual(
+    results,
+    cases.map(([, , expected]) => expected),
+  )
+})
+
 test('masks values by length and by secret shape and leaves short words alone', () => {
   // Act
   const masked = maskKnownValues(
