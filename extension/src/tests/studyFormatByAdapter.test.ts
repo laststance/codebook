@@ -14,7 +14,6 @@ import { decodeConfiguredStudy } from '../utils/decodeConfiguredStudy'
 import { legacyStudyFormatOfConfiguration } from '../utils/legacyStudyFormatOfConfiguration'
 import { newerStudyArchive } from '../utils/newerStudyArchive'
 import { projectRecording } from '../utils/projectRecording'
-import { studyFormatOfConfiguration } from '../utils/studyFormatOfConfiguration'
 import { validateRecordingContext } from '../utils/validateRecordingContext'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
@@ -141,13 +140,6 @@ test('an archive saved before format 6 holds format 3 for a Next configuration o
   )
   // Assert
   assert.deepEqual(formats, [3, 4, 5])
-})
-
-test('every new save of any configuration kind is study format 6', () => {
-  // Arrange / Act
-  const format = studyFormatOfConfiguration()
-  // Assert
-  assert.equal(format, 6)
 })
 
 test('a Next browser, a Next cross-runtime and a vite-dev study sealed as format 6 decode', () => {
