@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { access, mkdir, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:net'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -352,5 +353,25 @@ test('a launcher that exited after its facts still gives the coded busy-port ref
   assert.match(
     error.message,
     new RegExp(`Port ${port} \\(the Vite config\\) is in use`),
+  )
+})
+
+// Value: protects=a port another process takes between the extension's free-port check and Vite's listen is refused with the launcher's coded failure naming the listen phase, not a hang until the setup deadline; fails_when=a listen-phase failure is dropped or parsed as the facts phase so the run waits; why_new=the busy-port tests refuse in the extension's check, before the launcher is told to listen; seam=none; no_claim=the real Vite error text
+test('a port taken after the free-port check refuses as a launcher failure while listening', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const occupier = createServer()
+  await new Promise<void>((resolve) =>
+    occupier.listen(port, '127.0.0.1', resolve),
+  )
+  context.after(() => new Promise((resolve) => occupier.close(resolve)))
+  const run = await startVite(context, { behavior: { port } })
+  // Act
+  const error = await refusalOf(run.started)
+  // Assert
+  assert.equal(error.code, 'VITE_LAUNCHER_FAILED')
+  assert.match(
+    error.message,
+    /Vite could not start listening \(Error\): listen EADDRINUSE/,
   )
 })
