@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { before, test } from 'node:test'
@@ -171,4 +171,41 @@ test('an earlier Codebook that reads only server header version 1 does not list 
   // Assert
   assert.deepEqual(listed, [])
   assert.deepEqual(await folderBytes(folder), bytesBefore)
+})
+
+// Value: protects=a node-test history saved with header version 1 (before this release) still lists and reads; fails_when=the header schema accepts only version 2; why_new=the other tests here write header 2 only; seam=none; no_claim=server histories (same union rule)
+test('a node-test history saved with header version 1 still lists and reads sealed', async (context) => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-header-v1-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const header = nodeTestHistoryHeader(WORKSPACE_KEY)
+  const writer = await new NodeTestHistoryStore(directory, WORKSPACE_KEY).start(
+    header,
+  )
+  await writer.appendOutput({
+    sequence: 1,
+    elapsedMs: 1,
+    channel: 'stdout',
+    text: 'RUN src/theme.test.ts',
+  })
+  await writer.finish('partial', 'The learner stopped this run.')
+  const headerPath = join(
+    directory,
+    NODE_TEST_HISTORY_DIRECTORY,
+    header.studyId,
+    'header.json',
+  )
+  await writeFile(
+    headerPath,
+    JSON.stringify({ ...(await readJson(headerPath)), version: 1 }),
+  )
+  const store = new NodeTestHistoryStore(directory, WORKSPACE_KEY)
+
+  // Act
+  const listed = await store.list()
+  const reread = await store.read(header.studyId)
+
+  // Assert
+  assert.equal(listed.length, 1)
+  assert.equal(reread.seal?.status, 'partial')
 })

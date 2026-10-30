@@ -1803,3 +1803,50 @@ test('capture keeps only the last segment of a URL or drive-path caller name and
   assert.equal(JSON.stringify(snapshot).includes('learner'), false)
   assert.equal(JSON.stringify(snapshot).includes('7421'), false)
 })
+
+// Value: protects=a saved replay never holds a path when the capture is given no workspace folder; fails_when=a caller's absolute path is kept without a root to make it relative; why_new=the other capture tests all pass a workspaceRoot; seam=none; no_claim=that each capture call site passes its workspace (checked at their runs)
+test('capture without a workspace root keeps only the name of a caller frame', async () => {
+  // Arrange
+  const stackFrames = [
+    { id: 1, name: 'top', line: 1, column: 1 },
+    {
+      id: 2,
+      name: 'inside',
+      line: 5,
+      column: 1,
+      source: { name: 'a.ts', path: '/home/learner/repo/src/a.ts' },
+    },
+  ]
+
+  // Act
+  const snapshot = await captureReplayDebugSnapshot({
+    stack: { stackFrames, totalFrames: 2 },
+    verifiedSource: source,
+    assertCurrent() {},
+    request(command) {
+      return Promise.resolve(
+        command === 'scopes' ? { scopes: [] } : { variables: [] },
+      )
+    },
+  })
+
+  // Assert
+  assert.deepEqual(snapshot.frames[1]!.recordedLocation, { name: 'a.ts' })
+  assert.equal(JSON.stringify(snapshot).includes('/home/learner'), false)
+})
+
+// Value: protects=a placeholder source reference of a moment already left is refused; fails_when=select or dispose keeps the placeholder texts, so a stale reference still serves text; why_new=placeholders are a new handle table; seam=none
+test('a placeholder source reference of an earlier moment is refused after another moment is selected', () => {
+  // Arrange
+  const { adapter, request } = harness()
+  adapter.select(callerLocationSnapshot(), 'Recorded')
+  const staleReference = request('stackTrace', { threadId: 1 }).body
+    .stackFrames[1].source.sourceReference
+
+  // Act
+  adapter.select(recorded(), 'Recorded later')
+  const response = request('source', { sourceReference: staleReference })
+
+  // Assert
+  assert.equal(response.success, false)
+})

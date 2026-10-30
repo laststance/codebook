@@ -1489,3 +1489,28 @@ test('a git tab of the stop file in another group does not keep the run from ope
     await harness.close()
   }
 })
+
+// Value: protects=a stop file the learner already has open in another group being left there, not opened again beside the Application; fails_when=the lease shows the file again although a file tab of it stands outside the Application's group; why_new=the other stop-file tests start with the file open nowhere; seam=createViewport, BrowserViewport.attach, openAnnouncedKeptFile; no_claim=the real Cursor's answer
+test('a stop file already open in another group is not shown again beside the Application', async () => {
+  // Arrange
+  const { harness, viewport, attach } = await openRunBesideChat()
+  try {
+    harness.openAnnouncedKeptFile('src/theme.ts', 3)
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act
+    await attach()
+
+    // Assert
+    assert.deepEqual(
+      harness
+        .textDocumentShows()
+        .slice(showsBefore)
+        .filter((show) => show.name === 'theme.ts'),
+      [],
+    )
+  } finally {
+    viewport.close()
+    await harness.close()
+  }
+})
