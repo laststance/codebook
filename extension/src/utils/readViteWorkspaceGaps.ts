@@ -29,6 +29,7 @@ import {
   viteEnginesUnknownMessage,
   viteMajorMessage,
   viteManifestUnreadableMessage,
+  viteNodeUnrunnableMessage,
   viteNodeVersionUnknownMessage,
   viteScriptMessage,
 } from './viteWorkspaceMessages'
@@ -179,7 +180,7 @@ async function resolutionGapOf(
  *
  * @param installation - The found Vite, named in the sentence.
  * @param enginesNode - Vite's `engines.node` range.
- * @param readNode - Reads the run's Node version; `undefined` when no Node is configured.
+ * @param readNode - Reads the run's Node version; `undefined` when no Node is configured; rejects when a configured Node cannot run, which is named as such.
  * @returns The version read, whether it is inside, and the gap when it is not or cannot be judged.
  * @example
  * await readEnginesGap(installation, '^18.0.0', async () => 'v24.22.1') // => { nodeVersion: 'v24.22.1', nodeSatisfiesEngines: false, gap: { code: 'VITE_UNSUPPORTED', message: '…' } }
@@ -193,7 +194,19 @@ async function readEnginesGap(
   nodeSatisfiesEngines?: boolean
   gap?: ViteWorkspaceGap
 }> {
-  const nodeVersion = await readNode()
+  const nodeVersion = await readNode().catch((error: unknown) =>
+    // A cancelled run stays cancelled; a Node that is set but cannot run is named as such, never as not set.
+    error instanceof Error && error.name === 'AbortError'
+      ? Promise.reject(error)
+      : { unrunnable: error instanceof Error ? error.message : String(error) },
+  )
+  if (typeof nodeVersion === 'object')
+    return {
+      gap: {
+        code: 'PREREQUISITE_MISSING',
+        message: viteNodeUnrunnableMessage(nodeVersion.unrunnable),
+      },
+    }
   if (nodeVersion === undefined)
     return {
       gap: {
@@ -292,7 +305,7 @@ function readScriptGaps(
  * The checks: the app's own Vite (found, no Yarn Plug-n-Play, supported major, `engines.node` read and including the run's Node) and the manifest's `dev` script (readable, present, no `predev`, inside the grammar).
  *
  * @param workspace - The package root.
- * @param readNode - Reads the run's Node version, called only when the Node gate is reached; `undefined` when no Node is configured. A start passes a reader that throws when Node cannot run.
+ * @param readNode - Reads the run's Node version, called only when the Node gate is reached; `undefined` when no Node is configured. A reader that rejects (a configured Node that cannot run) gives the same `PREREQUISITE_MISSING` gap to a start and to `codebook_status`.
  * @param firstGapOnly - Stop at the first gap, as a start does, so nothing after a refusal is read (no Node process after an unsupported major).
  * @returns The facts found and the gaps, empty when `vite-dev` could start as far as this check can tell.
  * @example

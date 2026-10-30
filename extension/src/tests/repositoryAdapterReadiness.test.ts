@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
+import { StudyError } from '../errors'
+import { assessViteWorkspace } from '../utils/assessViteWorkspace'
 import { readNodeVersion } from '../utils/readNodeVersion'
 import { readRepositoryAdapterReadiness } from '../utils/readRepositoryAdapterReadiness'
 
@@ -220,6 +222,35 @@ test('a corrupt next/package.json makes only Next not ready and keeps the Vite r
 })
 
 // Value: protects=node --version runs once per executable for the host's life; fails_when=a second read starts the process again; why_new=status spawned it on every call; seam=none; no_claim=version changes of the same path
+// Value: protects=a configured Node executable that cannot run is named as such by codebook_status and by a start alike, never as a Node that is not configured; fails_when=the status reader turns the failed read into "not configured", or the start throws the raw spawn error; why_new=Cycle 0064 local CodeRabbit CLI r2 (minor); seam=none (a path that does not exist); no_claim=a Node that runs but reports an unreadable version
+test('a configured Node that cannot run is named as such by codebook_status and by a start alike', async (context) => {
+  // Arrange
+  const repository = await createViteRepository(context)
+  const missingNode = join(repository.root, 'no-such-node')
+  // Act
+  const readiness = await readRepositoryAdapterReadiness(
+    repository.root,
+    missingNode,
+    SIGNAL,
+  )
+  const starting = assessViteWorkspace(repository.root, missingNode, SIGNAL)
+  // Assert
+  const [statusSentence] = readiness['vite-dev'].missing
+  assert.equal(readiness['vite-dev'].ready, false)
+  assert.ok(
+    statusSentence?.startsWith(
+      'The configured Node executable (codebook.nodeExecutable) could not be run for the Vite engines.node check: ',
+    ),
+    statusSentence,
+  )
+  await assert.rejects(starting, (error: unknown) => {
+    assert.ok(error instanceof StudyError)
+    assert.equal(error.code, 'PREREQUISITE_MISSING')
+    assert.equal(error.message, statusSentence)
+    return true
+  })
+})
+
 test('reads the version of one Node executable once and answers the second read from memory', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-node-memo-'))

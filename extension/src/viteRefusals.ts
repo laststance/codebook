@@ -117,8 +117,25 @@ export function viteSetupDeadlineText(
   step: ViteSetupStep,
   limitMs: number,
 ): string {
+  return `VITE_SETUP_DEADLINE: ${viteSetupDeadlineSentence(step, limitMs)}`
+}
+
+/**
+ * Words the setup-deadline sentence of a Vite run without its code, naming the step it reached.
+ *
+ * Why it exists: a coded refusal ({@link viteRefusal}) takes the sentence alone, and {@link viteSetupDeadlineText} leads the same sentence with its code, so neither cuts a prefix off the other. Called by {@link ConfiguredBrowserRun} when the optimizer wait outlasts the setup budget, and by {@link viteSetupDeadlineText}.
+ * @param step - The setup step reached, one of {@link VITE_SETUP_STEPS}.
+ * @param limitMs - The setup budget that expired.
+ * @returns The sentence that names the budget, the step and whether a browser was opened.
+ * @example
+ * viteSetupDeadlineSentence(VITE_SETUP_STEPS.sealingStops, 90_000) // => 'Repository setup deadline (90 s) exceeded while sealing the declared stops. …'
+ */
+export function viteSetupDeadlineSentence(
+  step: ViteSetupStep,
+  limitMs: number,
+): string {
   const browserState = VITE_SETUP_BROWSER_STATE_BY_STEP[step]
-  return `VITE_SETUP_DEADLINE: Repository setup deadline (${Math.round(limitMs / MILLISECONDS_PER_SECOND)} s) exceeded while ${step}. First-run dependency pre-bundling can take long; the owned server was stopped and ${browserState}, so start again once (the dependency cache is warm then).`
+  return `Repository setup deadline (${Math.round(limitMs / MILLISECONDS_PER_SECOND)} s) exceeded while ${step}. First-run dependency pre-bundling can take long; the owned server was stopped and ${browserState}, so start again once (the dependency cache is warm then).`
 }
 
 /**

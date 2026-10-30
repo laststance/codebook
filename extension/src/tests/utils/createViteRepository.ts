@@ -60,10 +60,12 @@ export function loadEnv(mode, directory, prefix) {
   try {
     // Like Vite's dotenv-expand: \${NAME} reads the real environment.
     fileValues = Object.fromEntries(
-      readFileSync(join(directory, '.env'), 'utf8').split('\\n').filter(Boolean).map((line) => {
-        // Like dotenv: both NAME=value and NAME: value define a variable.
-        const [, name, rest] = line.match(/^\\s*([\\w.-]+)\\s*[=:]\\s*(.*)$/) ?? []
-        return [name, rest.replace(/\\$\\{(\\w+)\\}/g, (_match, variable) => globalThis.process.env[variable] ?? '')]
+      readFileSync(join(directory, '.env'), 'utf8').split('\\n').flatMap((line) => {
+        // Like dotenv: NAME=value, NAME: value and export NAME=value define a variable; a comment or any other line is skipped.
+        const match = line.match(/^\\s*(?:export\\s+)?([\\w.-]+)\\s*[=:]\\s*(.*)$/)
+        if (!match) return []
+        const [, name, rest] = match
+        return [[name, rest.replace(/\\$\\{(\\w+)\\}/g, (_match, variable) => globalThis.process.env[variable] ?? '')]]
       }),
     )
   } catch {}

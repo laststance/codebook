@@ -91,11 +91,8 @@ async function readViteReadiness(
 ): Promise<ViteAdapterReadiness> {
   const reading = await readViteWorkspaceGaps(
     workspace,
-    // The run's Node is the configured one; without it the engines check cannot run.
-    async () =>
-      node
-        ? await readNodeVersion(node, signal).catch(() => undefined)
-        : undefined,
+    // The run's Node is the configured one; without it the engines check cannot run, and one that cannot run is named by the shared check, as at a start.
+    async () => (node ? await readNodeVersion(node, signal) : undefined),
     false,
   )
   const { installation } = reading

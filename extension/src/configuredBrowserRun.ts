@@ -173,6 +173,7 @@ import { VITE_DEV_ADAPTER } from './viteDevAdapter'
 import {
   viteRefusal,
   viteReloadText,
+  viteSetupDeadlineSentence,
   viteSetupDeadlineText,
 } from './viteRefusals'
 
@@ -1072,9 +1073,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const deadlineRefusal = (): StudyError =>
       viteRefusal(
         'VITE_SETUP_DEADLINE',
-        viteSetupDeadlineText(this.setupStep, this.preparationBudgetMs).slice(
-          'VITE_SETUP_DEADLINE: '.length,
-        ),
+        viteSetupDeadlineSentence(this.setupStep, this.preparationBudgetMs),
       )
     // No floor: a spent budget is a deadline, not a one-second grace wait.
     if (remainingMs <= 0) throw deadlineRefusal()

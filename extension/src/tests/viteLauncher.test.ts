@@ -475,6 +475,27 @@ test('a .env value written as "NAME: value" is masked in a refusal', async (cont
   assert.equal(error.message.includes('coloncsecret1'), false)
 })
 
+// Value: protects=a .env file with a comment line and an export line still has its values masked, as dotenv reads such a file; fails_when=the stub's loadEnv drops every value of a file that holds a line it does not parse, so a masking test passes or fails on the fixture instead of the product; why_new=Cycle 0064 local CodeRabbit CLI r2 (fixture fidelity); seam=the stub Vite package's loadEnv; no_claim=other dotenv syntax such as quoted multi-line values
+test('a .env file with a comment and an export line keeps its values masked in a refusal', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const run = await startVite(context, {
+    files: {
+      '.env': '# local settings\nexport API_TOKEN=exportedsecret1\n',
+    },
+    behavior: { port, listenThrows: 'cannot connect with exportedsecret1 now' },
+  })
+  // Act
+  const error = await refusalOf(run.started)
+  // Assert
+  assert.equal(error.code, 'VITE_LAUNCHER_FAILED')
+  assert.ok(
+    error.message.includes('cannot connect with [masked] now'),
+    error.message,
+  )
+  assert.equal(error.message.includes('exportedsecret1'), false)
+})
+
 // Value: protects=a secret the project's config puts into the environment while it loads (by loading an env file itself, for example from its custom envDir) is masked in a refusal, though its name is then in process.env; fails_when=the env-file test compares names with process.env at the time of the report instead of at launcher start; why_new=Cycle 0064 ship pass 2 (native adversarial and Codex adversarial, P1); seam=none; no_claim=a variable the launcher's own environment already held
 test('a secret the config loads into the environment while it runs is masked in a refusal', async (context) => {
   // Arrange

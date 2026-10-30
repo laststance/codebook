@@ -21,6 +21,17 @@ export const VITE_NODE_NOT_CONFIGURED_MESSAGE =
   'The Vite engines.node check needs the configured Node executable (codebook.nodeExecutable).'
 
 /**
+ * The sentence for an `engines.node` check whose configured Node executable is set but cannot run, so it is never mistaken for one that is not set.
+ * @param cause - What running the executable reported.
+ * @returns The sentence, naming the cause and the setting to fix.
+ * @example
+ * viteNodeUnrunnableMessage('spawn /opt/node ENOENT') // => 'The configured Node executable (codebook.nodeExecutable) could not be run for the Vite engines.node check: spawn /opt/node ENOENT. Point the setting at a Node that runs.'
+ */
+export function viteNodeUnrunnableMessage(cause: string): string {
+  return `The configured Node executable (codebook.nodeExecutable) could not be run for the Vite engines.node check: ${cause}. Point the setting at a Node that runs.`
+}
+
+/**
  * The sentence for a Vite whose major is not supported.
  * @param version - The found Vite version.
  * @returns The refusal sentence, naming the found version and the supported major.
