@@ -539,6 +539,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private maskText?: (text: string) => string
   /** Masks only env-file and script values in the module text a Vite run keeps ({@link archivedModuleText}); absent for a Next run. */
   private maskModuleText?: (text: string) => string
+  /** The masked copy of each bundle, kept so a read does not mask the same module again; a re-sealed bundle is a new object, so its entry is never stale. */
+  private readonly archivedModules = new WeakMap<
+    BundleSource,
+    ReturnType<ConfiguredBrowserRun['archivedModuleText']>
+  >()
   /** Codebook's listener on `[::1]:<port>` (D66), closed with the run. */
   private ipv6Forwarder?: Ipv6LoopbackForwarder
   /** Whether `[::1]` at the port is the run's own, so the origin checks accept it. */
@@ -6585,6 +6590,20 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * this.archivedModuleText(bundle) // => { javascript: 'const k = "[masked]"', sourceMap: '{…}', redacted: true, evidenceJavascript: 'const k = "[masked]"\n// [masked] …\n' }
    */
   private archivedModuleText(bundle: BundleSource): {
+    javascript: string
+    sourceMap: string
+    redacted: boolean
+    evidenceJavascript: string
+  } {
+    // Every source read, seal and evidence save asks again; the bundle never changes, so the first answer stands.
+    const remembered = this.archivedModules.get(bundle)
+    if (remembered) return remembered
+    const archived = this.maskedArchive(bundle)
+    this.archivedModules.set(bundle, archived)
+    return archived
+  }
+  /** Masks one bundle without the memo; see {@link archivedModuleText}. */
+  private maskedArchive(bundle: BundleSource): {
     javascript: string
     sourceMap: string
     redacted: boolean
