@@ -5,7 +5,7 @@ import { redactSecretText } from './redactSecretText'
 /**
  * Masks every occurrence of values the launcher passed or loaded (script assignments, `.env` files), then the secret shapes {@link redactSecretText} knows.
  *
- * Why it exists: a plain secret has no recognizable shape, so a diagnostic can only hide it by its value. Called by {@link launchViteDevelopmentServer} on every published output tail and every launcher error line.
+ * Why it exists: a plain secret has no recognizable shape, so a diagnostic can only hide it by its value. Called by {@link launchViteDevelopmentServer} on every published output tail and every launcher error line, and by the Vite launcher (`viteLauncher.ts`) on its error line before the line is cut.
  * Values shorter than {@link VITE_MASKED_VALUE_MIN_CHARS} are left alone so a short word is not blanked everywhere. Longer values are masked first so one value inside another cannot leave a fragment.
  *
  * @param text - Output, error text or a refusal sentence.

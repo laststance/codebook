@@ -8,6 +8,7 @@ import {
   VITE_MASKED_VALUE_MIN_CHARS,
 } from './constants'
 import { hasOwnHmrListener } from './utils/hasOwnHmrListener'
+import { maskKnownValues } from './utils/maskKnownValues'
 import type {
   ViteLauncherCommand,
   ViteLauncherOptions,
@@ -164,16 +165,18 @@ async function run(): Promise<void> {
     })
   } catch (error) {
     const failure = error instanceof Error ? error : new Error(String(error))
+    const envValues = loadedEnvValues(viteModule, options)
     await send({
       type: VITE_LAUNCHER_MESSAGES.failed,
       phase,
       errorName: failure.name,
-      firstLine: (failure.message.split(/\r?\n/)[0] ?? '').slice(
-        0,
-        VITE_ERROR_LINE_LIMIT_CHARS,
-      ),
+      // The line is masked before it is cut: a value that crosses the cut would leave a fragment the extension's exact-value mask cannot match.
+      firstLine: maskKnownValues(
+        failure.message.split(/\r?\n/)[0] ?? '',
+        envValues,
+      ).slice(0, VITE_ERROR_LINE_LIMIT_CHARS),
       configFile,
-      envValues: loadedEnvValues(viteModule, options),
+      envValues,
     })
     await server?.close().catch(() => undefined)
     process.exit(1)

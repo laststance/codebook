@@ -222,6 +222,24 @@ test('a config that throws is refused with the error name, the phase and a maske
   assert.equal(error.message.includes('envsecretvalue'), false)
 })
 
+// Value: protects=a secret that crosses the cut of a config error's first line leaves no unmasked fragment in the refusal (Codex P1, Cycle 0063 ship review); fails_when=the launcher cuts the line before it masks, so the parent's exact-value mask misses the cut tail of the secret; why_new=the masked-first-line test keeps the secret inside the cut; seam=none; no_claim=secret shapes the shape redaction knows
+test('a secret that crosses the cut of a config error line is masked, not left as a fragment', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const run = await startVite(context, {
+    files: { '.env': 'DB_PASSWORD=envsecretvalue\n' },
+    behavior: {
+      port,
+      throws: `${'x'.repeat(190)} envsecretvalue tail`,
+    },
+  })
+  // Act
+  const error = await refusalOf(run.started)
+  // Assert
+  assert.equal(error.code, 'VITE_LAUNCHER_FAILED')
+  assert.equal(error.message.includes('envsecret'), false)
+})
+
 test('a launcher that exits before reporting its settings is refused with its masked output', async (context) => {
   // Arrange
   const port = await freePort()
