@@ -784,7 +784,7 @@ export async function configuredRuntimeHarness(
             request.onStep('starting Vite')
             setupSteps.push('starting Vite')
             request.onApp(fakeApplication)
-            return { app: fakeApplication, port: 4321 }
+            return { app: fakeApplication, port: 4321, viteVersion: '8.3.5' }
           },
           readBundle: async () => {
             if (options.sealFailure) throw new Error(options.sealFailure)

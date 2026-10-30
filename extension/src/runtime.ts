@@ -375,6 +375,8 @@ export type ConfiguredRuntimeView = {
   applicationOrigin?: string
   /** Where the app's port was declared (D67): the `dev` script's own `-p`/`--port`, a `PORT=` that the script assigns (also in a script it delegates to), or Next's default 3000; the text also says when 3000 was taken because the script has a form Codebook does not read. `.env*` files are not read. */
   applicationPortSource?: string
+  /** The Vite version a `vite-dev` run started, read from the resolved `vite/package.json`. */
+  viteVersion?: string
   status: string
   cleaned: boolean
   resourcesReleased: boolean
@@ -411,6 +413,7 @@ export type ConfiguredRuntimeView = {
     sourceHash: string
     javascriptHash: string
     mapHash: string
+    viteVersion?: string
   }
   participants: { browser: RuntimeParticipant; server?: RuntimeParticipant }
   snapshots: ConfiguredRuntimeSnapshot[]

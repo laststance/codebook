@@ -62,7 +62,7 @@ function portSourceOf(facts: ViteFacts, scriptPort: number | undefined) {
  * @param request - What the run provides ({@link DevelopmentServerStart}).
  * @param workspaceInfo - The Vite installation and accepted `dev` script ({@link assessViteWorkspace}).
  * @param launcherPath - The absolute path of the compiled launcher module.
- * @returns The ready-to-wait server and the port it listens on.
+ * @returns The ready-to-wait server, the port it listens on and the Vite version the launcher reported.
  * @throws `VITE_LAUNCHER_FAILED` (config error, crash, no report in time), `VITE_UNSUPPORTED` (settings), `VITE_PORT_UNAVAILABLE`; each message is masked by value and redacted.
  * @example
  * const { app, port } = await launchViteDevelopmentServer(request, workspaceInfo, join(__dirname, 'viteLauncher.js'))
@@ -71,7 +71,7 @@ export async function launchViteDevelopmentServer(
   request: DevelopmentServerStart,
   workspaceInfo: ViteWorkspace,
   launcherPath: string,
-): Promise<{ app: DevelopmentApp; port: number }> {
+): Promise<{ app: DevelopmentApp; port: number; viteVersion: string }> {
   const { script, installation } = workspaceInfo
   // Every value the launcher is given or loads is masked by value in what leaves this module.
   const maskedValues = Object.values(script.assignments)
@@ -175,5 +175,5 @@ export async function launchViteDevelopmentServer(
       'VITE_LAUNCHER_FAILED',
       `Vite listens on another port than the one its config resolved (${facts.port}).`,
     )
-  return { app, port: facts.port }
+  return { app, port: facts.port, viteVersion: facts.viteVersion }
 }

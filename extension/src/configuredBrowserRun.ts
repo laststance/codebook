@@ -523,6 +523,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private origin?: string
   /** Where the app's port was declared, reported beside the origin so a default is visible. */
   private portSource?: string
+  /** The Vite version the launcher reported, for a `vite-dev` run. */
+  private viteVersion?: string
   /** Codebook's listener on `[::1]:<port>` (D66), closed with the run. */
   private ipv6Forwarder?: Ipv6LoopbackForwarder
   /** Whether `[::1]` at the port is the run's own, so the origin checks accept it. */
@@ -682,6 +684,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         this.app = app
       },
     })
+    this.viteVersion = started.viteVersion
     const declaredPort = { port: started.port }
     // The server binds 127.0.0.1; the browser opens `localhost` at its port, the name the project's own origin settings use (D65).
     this.setupStep = 'waiting for the server to answer the entry page'
@@ -777,6 +780,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       sourceHash: first.verifier.hashes.typescript,
       javascriptHash: first.verifier.hashes.javascript,
       mapHash: first.verifier.hashes.sourceMap,
+      // Only a Vite run names its version, so a Next manifest and its hash are what they were.
+      ...(this.viteVersion ? { viteVersion: this.viteVersion } : {}),
     }
     this.manifest = { ...bound, hash: sha256(JSON.stringify(bound)) }
     // Later stops are armed only in their turn, so a line that can never bind is refused here, before any application effect.
@@ -6408,6 +6413,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       manifest: this.manifest,
       applicationOrigin: this.origin,
       applicationPortSource: this.portSource,
+      viteVersion: this.viteVersion,
       status: this.status,
       cleaned: this.cleaned,
       resourcesReleased: this.resourcesReleased,

@@ -162,6 +162,8 @@ export const configuredStudySchema = z.strictObject({
   configuration: retainedRepositoryConfigSchema,
   configurationHash: repositoryHashSchema,
   descriptor: configuredDescriptorSchema.optional(),
+  // The Vite version a `vite-dev` run started on (read from the resolved `vite/package.json`); a Next study has none.
+  viteVersion: z.string().min(1).max(64).optional(),
   operation: z
     .strictObject({
       id: z.uuid(),

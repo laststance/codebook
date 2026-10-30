@@ -183,6 +183,11 @@ export async function captureStudy(
           configuration: record.configuration,
           configurationHash: sha256(JSON.stringify(record.configuration)),
           descriptor: record.definition?.descriptor,
+          // A Vite study names the Vite it ran on; a Next study carries no such field.
+          ...(runtime?.profile === REPOSITORY_BROWSER_PROFILE &&
+          runtime.viteVersion
+            ? { viteVersion: runtime.viteVersion }
+            : {}),
           operation:
             runtime?.profile === REPOSITORY_BROWSER_PROFILE
               ? runtime.operation

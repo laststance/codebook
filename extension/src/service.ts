@@ -3028,6 +3028,27 @@ export class StudyService {
   }
 
   /**
+   * Makes the run resource's error object for a failure the runtime recorded after its preparation.
+   *
+   * A Vite run's timer failures (the reload after the click, the setup deadline) lead with their refusal code, so the agent reads the stable code, its recovery and help anchor and not only a text prefix. Called by {@link StudyService.state}.
+   *
+   * @param runtimeFailure - The runtime's first failure text, sanitized.
+   * @returns The Vite refusal for a failure led by its code; any other failure as `RUNTIME_FAILED` with the text as its cause.
+   * @example
+   * this.runtimeFailureError('VITE_PAGE_RELOADED: The page reloaded …').code // => 'VITE_PAGE_RELOADED'
+   */
+  private runtimeFailureError(runtimeFailure: string): StudyError {
+    const viteFailure = viteFailureOf(runtimeFailure)
+    if (viteFailure)
+      return new StudyError(viteFailure.code, viteFailure.message)
+    return new StudyError(
+      'RUNTIME_FAILED',
+      'The run failed in its runtime.',
+      runtimeFailure,
+    )
+  }
+
+  /**
    * Gives the runtime's own first failure for {@link StudyService.state}'s terminal reason, read when the run has no error of its own and no evidence failure of the run: a runtime that failed itself on a failed evidence write (a snapshot's save into the gone directory of a removed study) gives its raw error, and when the run was stopped before a maintenance turn made that the run's error, nothing words it again once the removal is known ({@link StudyService.wordFailuresByRemoval}). For a removed study such a failure names the internal storage path, so it is worded as a failed evidence write with the removal's sentence ({@link StudyService.writeFailureError}), as the run's error is (Cycle 0046 rows 667, 700 and 707); every other failure stays as the runtime gave it.
    * @param record - The run.
    * @param runtime - Its runtime's view read for this state; `undefined` without a runtime.
@@ -3362,6 +3383,7 @@ export class StudyService {
           : undefined,
       applicationOrigin: runtime?.applicationOrigin,
       applicationPortSource: runtime?.applicationPortSource,
+      viteVersion: runtime?.viteVersion,
       manifestUri:
         runtime?.manifest || record.nodePrepared
           ? this.uri(record.id, 'manifest')
@@ -3413,11 +3435,7 @@ export class StudyService {
       error:
         record.error?.describe() ??
         (runtimeFailure
-          ? new StudyError(
-              'RUNTIME_FAILED',
-              'The run failed in its runtime.',
-              runtimeFailure,
-            ).describe()
+          ? this.runtimeFailureError(runtimeFailure).describe()
           : undefined),
       cleanupError: record.cleanupError?.describe(),
       cleaned: record.stopped,

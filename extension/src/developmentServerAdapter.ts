@@ -84,6 +84,8 @@ export interface DevelopmentServerAdapter {
   start(request: DevelopmentServerStart): Promise<{
     app: DevelopmentApp
     port: number
+    /** The Vite version the launcher reported from the resolved `vite/package.json` (Vite only). */
+    viteVersion?: string
   }>
   /** Reads the identity of the dev lock the started server owns; only Next has one. */
   readOwnedLock(workspace: string): Promise<DevelopmentLockIdentity | undefined>

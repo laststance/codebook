@@ -205,3 +205,23 @@ test('the setup deadline failure names the step reached, its limit and its code'
   assert.equal(viteFailureOf('Repository setup deadline exceeded'), undefined)
   assert.match(viteReloadText(true), /^VITE_PAGE_RELOADED: /)
 })
+
+test('a Vite stop in a module the entry page never loads ends the run with the declared-stop-not-hit explanation', async (context) => {
+  // Arrange
+  const { run, suppressInputPause, advance, mouse } =
+    await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+      adapter: 'vite-dev',
+    })
+  await run.prepare()
+  suppressInputPause()
+  run.action('one', 'repository-click')
+  await waitUntil(() => mouse.length === 2, 'pending input')
+  // Act
+  advance(20000)
+  await run.stop()
+  // Assert
+  assert.equal(
+    run.view().failures[0],
+    'Repository input reached no verified pause: declared stop src/theme.ts:1 was not hit within 20 s of the accepted action; its line must execute after the input',
+  )
+})
