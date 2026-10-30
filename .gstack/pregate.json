@@ -19,14 +19,22 @@
     ".github/workflows/*.yaml": [
       "extension/scripts/tests/workflowPins.test.mjs"
     ],
-    ".github/actions/**": ["extension/scripts/tests/workflowPins.test.mjs"],
-    ".gstack/pregate.json": ["extension/scripts/tests/pregateTests.test.mjs"],
+    ".github/actions/**": [
+      "extension/scripts/tests/workflowPins.test.mjs"
+    ],
+    ".gstack/pregate.json": [
+      "extension/scripts/tests/pregateTests.test.mjs"
+    ],
     ".node-version": [
       "extension/scripts/tests/health.test.mjs",
       "extension/scripts/tests/workflowPins.test.mjs"
     ],
-    "AGENTS.md": [".codex/restore-product-context.test.mjs"],
-    ".codex/hooks.json": [".codex/restore-product-context.test.mjs"],
+    "AGENTS.md": [
+      ".codex/restore-product-context.test.mjs"
+    ],
+    ".codex/hooks.json": [
+      ".codex/restore-product-context.test.mjs"
+    ],
     "extension/scripts/watch-background.mjs": [
       "extension/scripts/tests/watchBackground.test.mjs"
     ],
@@ -36,11 +44,15 @@
     ".github/reader-dom/package-lock.json": [
       "extension/scripts/tests/workflowPins.test.mjs"
     ],
-    "extension/scripts/gate.mjs": ["extension/scripts/tests/gate.test.mjs"],
+    "extension/scripts/gate.mjs": [
+      "extension/scripts/tests/gate.test.mjs"
+    ],
     "extension/scripts/ci-failures.mjs": [
       "extension/scripts/tests/ciFailures.test.mjs"
     ],
-    "extension/.node-version": ["extension/scripts/tests/gate.test.mjs"],
+    "extension/.node-version": [
+      "extension/scripts/tests/gate.test.mjs"
+    ],
     "extension/scripts/checkHealth.mjs": [
       "extension/scripts/tests/health.test.mjs"
     ],
@@ -92,7 +104,9 @@
     "extension/src/utils/installShortcutHelp.ts": [
       "extension/scripts/tests/publishWiki.test.mjs"
     ],
-    "codecov.yml": ["extension/scripts/tests/workflowPins.test.mjs"],
+    "codecov.yml": [
+      "extension/scripts/tests/workflowPins.test.mjs"
+    ],
     "extension/package.json": [
       "extension/scripts/tests/workflowPins.test.mjs",
       "extension/scripts/tests/package.test.mjs",
@@ -132,13 +146,27 @@
     "extension/scripts/tests/utils/crlfShellFileSystem.mjs": [
       "extension/scripts/tests/publishWiki.test.mjs"
     ],
-    "extension/README.md": ["extension/scripts/tests/package.test.mjs"],
-    "extension/pnpm-lock.yaml": ["extension/scripts/tests/package.test.mjs"],
-    "extension/tsconfig.json": ["extension/scripts/tests/package.test.mjs"],
-    "extension/patches/**": ["extension/scripts/tests/package.test.mjs"],
-    "extension/src/**": ["extension/scripts/tests/package.test.mjs"],
-    "extension/scripts/**": ["extension/scripts/tests/package.test.mjs"],
-    "extension/skills/**": ["extension/scripts/tests/package.test.mjs"],
+    "extension/README.md": [
+      "extension/scripts/tests/package.test.mjs"
+    ],
+    "extension/pnpm-lock.yaml": [
+      "extension/scripts/tests/package.test.mjs"
+    ],
+    "extension/tsconfig.json": [
+      "extension/scripts/tests/package.test.mjs"
+    ],
+    "extension/patches/**": [
+      "extension/scripts/tests/package.test.mjs"
+    ],
+    "extension/src/**": [
+      "extension/scripts/tests/package.test.mjs"
+    ],
+    "extension/scripts/**": [
+      "extension/scripts/tests/package.test.mjs"
+    ],
+    "extension/skills/**": [
+      "extension/scripts/tests/package.test.mjs"
+    ],
     "extension/scripts/utils/runPackageCommand.mjs": [
       "extension/scripts/tests/runPackageCommand.test.mjs"
     ],
@@ -150,25 +178,35 @@
     ]
   },
   "strays": {
-    "allow": [".gstack"]
+    "allow": [
+      ".gstack"
+    ]
   },
-  "warn": ["literals"],
+  "warn": [
+    "literals"
+  ],
   "allowlist": [
     {
       "finding": "auth.bearer",
-      "paths": ["extension/src/tests/chromeExtension*.test.ts"],
+      "paths": [
+        "extension/src/tests/chromeExtension*.test.ts"
+      ],
       "pattern": "abcdefghijklmnop1234567890",
       "reason": "the dummy bearer token the chrome-extension masking tests feed in; never a credential"
     },
     {
       "finding": "env.kv",
-      "paths": ["extension/src/tests/chromeExtensionObservation.test.ts"],
+      "paths": [
+        "extension/src/tests/chromeExtensionObservation.test.ts"
+      ],
       "pattern": "\\[masked\\]",
       "reason": "the mask placeholder an observed-value masking test expects; no secret value"
     },
     {
       "finding": "env.kv",
-      "paths": ["extension/src/tests/chromeExtensionService.test.ts"],
+      "paths": [
+        "extension/src/tests/chromeExtensionService.test.ts"
+      ],
       "pattern": "extension-run",
       "reason": "a codebook_start idempotency key named key in a test; no secret value"
     },
@@ -176,14 +214,17 @@
       "finding": "env.kv",
       "paths": [
         "extension/src/tests/configuredService.test.ts",
-        "extension/src/tests/viteRunResource.test.ts"
+        "extension/src/tests/viteRunResource.test.ts",
+        "extension/src/tests/utils/pausedViteRun.ts"
       ],
       "pattern": "vite-[a-z-]+",
-      "reason": "codebook_start idempotency keys named key in the vite-dev tests; no secret value"
+      "reason": "codebook_start idempotency keys named key in the vite-dev tests and their paused-run helper; no secret value"
     },
     {
       "finding": "env.kv",
-      "paths": ["extension/src/tests/viteDevScript.test.ts"],
+      "paths": [
+        "extension/src/tests/viteDevScript.test.ts"
+      ],
       "pattern": "plainsecret1",
       "reason": "the dummy assignment value a dev-script refusal test expects to see masked; never a credential"
     },
