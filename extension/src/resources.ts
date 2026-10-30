@@ -36,6 +36,7 @@ import {
   REPOSITORY_ANNOUNCED_PAUSE_RESUME_LIMIT_MS,
 } from './constants'
 import { ERROR_RECOVERY, EvidenceIntegrityError, StudyError } from './errors'
+import { nextHelp, REPOSITORY_BROWSER_START_HERE } from './nextHelp'
 import type { NodeHistorySummary } from './nodeHistorySummary'
 import { nodeServerHelp } from './nodeServerHelp'
 import { nodeTestConfigSchema } from './nodeTestConfigSchemas'
@@ -225,8 +226,11 @@ export async function readResource(
   }
   if (uri === 'codebook://help/repository-browser')
     return json({
-      // The Vite quick start, support table and refusal anchors come first (API 1.11).
+      // One sentence that sends an agent from codebook_status to its adapter's quick start comes first.
+      startHere: REPOSITORY_BROWSER_START_HERE,
+      // The Vite quick start, support table and refusal anchors (API 1.11), then the Next quick start, Pages support table and refusal anchors.
       ...viteHelp(),
+      ...nextHelp(),
       profile: CONFIGURED_PROFILE,
       configurationSchema: z.toJSONSchema(retainedRepositoryConfigSchema, {
         io: 'input',
