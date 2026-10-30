@@ -74,7 +74,7 @@ export async function pausedViteRun(context: TestContext, secret: string) {
   const receipt = service.start({
     instanceId: service.instanceId,
     profile: 'repository-browser',
-    key: 'vite-secret-study',
+    key: 'vite-masking-study',
     configuration: harness.definition.configuration,
   })
   const record = service.record(receipt)

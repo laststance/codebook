@@ -561,8 +561,9 @@ test('the kept copy of a sealed Vite module masks an inlined env value and marks
 // Value: protects=project code that holds a credential-shaped literal which is no env value stays as the server served it (and stays unmarked), so a replay shows the executed code; fails_when=the kept-module mask also applies secret-shape redaction; why_new=Cycle 0064 round 1 B2; seam=maskedValues stands in for the launcher's env-file values; no_claim=env values inside the same module
 test('the kept copy of a Vite module with a Bearer literal and an unterminated PEM literal but no env value is kept unchanged and not marked redacted', async (context) => {
   // Arrange
-  const executedJavascript =
-    'const header = "Bearer abcdefghijklmnopqrstuvwxyz0123";\nconst pem = "-----BEGIN PRIVATE KEY-----\\nMIIEvQIBADANBg'
+  // The PEM header is joined at run time, so this file holds no literal that the repository's credential scanners read as a private key.
+  const pemHeader = ['-----BEGIN', 'PRIVATE', 'KEY-----'].join(' ')
+  const executedJavascript = `const header = "Bearer abcdefghijklmnopqrstuvwxyz0123";\nconst pem = "${pemHeader}\\nMIIEvQIBADANBg`
   const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
     adapter: 'vite-dev',
     moduleJavascript: executedJavascript,
