@@ -81,6 +81,97 @@ test('dispatch and acknowledgement each invalidate a saved configured checkpoint
   assert.equal(acknowledged.operationProgress?.inputAcknowledged, true)
 })
 
+test('a vite-dev start in a Vite app without Next waits on Vite readiness, not on the missing Next runtime', async (context) => {
+  // Arrange
+  const { service, configuration, environment, runtimes } =
+    await configuredServiceHarness(context)
+  environment.prerequisites = async () => ({
+    ready: true,
+    missing: [],
+    profiles: {
+      'repository-browser': {
+        ready: false,
+        missing: [
+          'Install the selected workspace dependencies, including Next, before using next-dev-webpack.',
+        ],
+        adapters: {
+          'next-dev-webpack': {
+            ready: false,
+            missing: [
+              'Install the selected workspace dependencies, including Next, before using next-dev-webpack.',
+            ],
+          },
+          'vite-dev': {
+            ready: true,
+            installed: true,
+            version: '8.3.5',
+            supported: true,
+            supportedMajor: 8,
+            yarnPnp: false,
+            missing: [],
+          },
+        },
+      },
+    },
+  })
+  // Act
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'vite-without-next',
+    configuration: { ...configuration, adapter: 'vite-dev' },
+  })
+  const record = service.record(receipt)
+  await record.preparation
+  await service.stop(receipt)
+  // Assert
+  assert.notEqual(record.error?.code, 'PREREQUISITE_MISSING')
+  assert.equal(runtimes.length, 1)
+})
+
+test('a vite-dev start is refused with the Vite gate sentence when Vite itself is not ready', async (context) => {
+  // Arrange
+  const { service, configuration, environment, runtimes } =
+    await configuredServiceHarness(context)
+  environment.prerequisites = async () => ({
+    ready: true,
+    missing: [],
+    profiles: {
+      'repository-browser': {
+        ready: true,
+        missing: [],
+        adapters: {
+          'next-dev-webpack': { ready: true, missing: [] },
+          'vite-dev': {
+            ready: false,
+            installed: false,
+            supportedMajor: 8,
+            yarnPnp: false,
+            missing: ['vite does not resolve from the workspace root.'],
+          },
+        },
+      },
+    },
+  })
+  // Act
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'vite-not-ready',
+    configuration: { ...configuration, adapter: 'vite-dev' },
+  })
+  const record = service.record(receipt)
+  await record.preparation
+  await service.stop(receipt)
+  // Assert
+  assert.equal(record.error?.code, 'PREREQUISITE_MISSING')
+  assert.equal(
+    record.error?.message,
+    'vite does not resolve from the workspace root.',
+  )
+  assert.equal(runtimes.length, 0)
+})
+
 test('missing repository runtime support prevents acquisition while source authoring remains available', async (context) => {
   // Arrange
   const { service, configuration, environment, runtimes, books } =

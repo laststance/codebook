@@ -183,6 +183,7 @@ import {
 import { readerNotFollowingRunRefusal } from './utils/readerNotFollowingRunRefusal'
 import type { RepositoryAdapterReadiness } from './utils/readRepositoryAdapterReadiness'
 import { releaseVitestListings } from './utils/releaseVitestListings'
+import { repositoryBrowserStartPrerequisites } from './utils/repositoryBrowserStartPrerequisites'
 import { resolveCapturedFactPaths } from './utils/resolveCapturedFactPaths'
 import {
   createRootHider,
@@ -4014,7 +4015,13 @@ export class StudyService {
           : await this.environment.prerequisites().then(
               // Shared Node/Chrome availability alone cannot authorize an unsupported selected profile.
               (prerequisites) =>
-                prerequisites.profiles?.[record.profile] ?? prerequisites,
+                repositoryBrowserStartPrerequisites(
+                  prerequisites,
+                  record.profile,
+                  record.configuration,
+                ) ??
+                prerequisites.profiles?.[record.profile] ??
+                prerequisites,
             )
       if (!selectedPrerequisites.ready)
         throw new StudyError(

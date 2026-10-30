@@ -400,37 +400,48 @@ export async function createEnvironment(
         // The machine's part of node-server: a supported system, a listener tool and ps.
         nodeServerMachineGaps(),
       ])
-      // A preparing run may have created its lock before it has sealed ownership; never label that interval foreign.
-      const configured = releasingConfiguredRun
+      // A managed run that is preparing or releasing blocks a new start under either adapter.
+      const managedRunState = releasingConfiguredRun
         ? [
-            ...checkedConfigured.filter(
-              (message) => !message.includes('Next development build lock'),
-            ),
             'Codebook is releasing its managed run. Read the current run error and retry Stop if cleanup fails.',
           ]
         : preparingConfiguredRun
           ? [
-              ...checkedConfigured.filter(
-                (message) => !message.includes('Next development build lock'),
-              ),
               'Codebook is preparing its managed repository run. Poll the current run; do not stop its process or remove its lock.',
             ]
-          : checkedConfigured
+          : []
+      // A preparing run may have created its lock before it has sealed ownership; never label that interval foreign.
+      const configured = managedRunState.length
+        ? [
+            ...checkedConfigured.filter(
+              (message) => !message.includes('Next development build lock'),
+            ),
+            ...managedRunState,
+          ]
+        : checkedConfigured
       const check = (specific: string[]) => ({
         ready: ready && specific.length === 0,
         missing: [...missing, ...specific],
       })
+      const adapters = await readRepositoryAdapterReadiness(
+        workspace,
+        nodeExecutable,
+        new AbortController().signal,
+      )
       return {
         ready,
         missing,
         profiles: {
           'repository-browser': {
             ...check(configured),
-            adapters: await readRepositoryAdapterReadiness(
-              workspace,
-              nodeExecutable,
-              new AbortController().signal,
-            ),
+            adapters: {
+              ...adapters,
+              // A vite-dev start needs the shared prerequisites, Vite's own gates and no other managed run; Next's workspace checks do not apply to it, so a Vite app without Next can start.
+              'vite-dev': {
+                ...adapters['vite-dev'],
+                ...check([...adapters['vite-dev'].missing, ...managedRunState]),
+              },
+            },
           },
           'node-test': {
             ready:
