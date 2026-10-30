@@ -1118,3 +1118,78 @@ test("in Cursor, a run start is not stalled when Keep Open leaves the run's Appl
     await harness.close()
   }
 })
+
+// Value: protects=a live run of a repository or server in Cursor 3.27.22 keeping its Application revealable at a pause: the native debugger opens the stop's file in front of the Application inside the Application's own group, and the reveal at the pause moves that file out instead of refusing (N64p3 Cursor runs 1-4: "Application ownership changed" at the first stop); fails_when=only an extension run's lease moves the paused file out, so the reveal of a repository run's Application finds the stop file in front of it and the run fails; why_new=Cycle 0064 task 96; seam=createViewport (a live repository run), declared run stops of the window's records, openPausedFileInLockedGroup, revealApplicationPaneOverPausedFile, replacesPreviewTabOnTextPreview, replaceGroupObjectsOnTabChanges; no_claim=the real Cursor's answer (native Cursor trial)
+test("in Cursor, a repository run's Application is revealed at a pause after its stop file opened in front of it in its group", async () => {
+  // Arrange: a run declared a stop in src/theme.ts; the Study is open and the run's Application sits at column 1 with the learner's files in the groups after it.
+  const harness = await workspaceHarness(true, true)
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.rebuildTabObjectsAtGroupRemoval()
+  harness.closeEmptyGroupsAfterPanelMove()
+  harness.removeGroupLeftByPanelMoveLater()
+  harness.reportsPaneMoveAsOpenThenClose()
+  harness.replacesPreviewTabOnTextPreview()
+  let viewport:
+    | Awaited<
+        ReturnType<
+          NonNullable<typeof harness.reader.presentation.createViewport>
+        >
+      >
+    | undefined
+  try {
+    harness.acknowledgeContext()
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: 'declares-the-stop',
+    })
+    await harness.service.records.get(receipt.runId)!.preparation
+    harness.focusMutableDraft('auth.ts', 3)
+    harness.focusMutableDraft('actions.ts', 2)
+    await harness.reader.open()
+    chat.focusTab()
+    viewport = await harness.reader.presentation.createViewport(
+      'stop-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+    await viewport.attach(
+      {
+        on: () => undefined,
+        request: async () => ({}),
+        subscribe: async () => undefined,
+      },
+      new AbortController().signal,
+    )
+
+    // Act: the debugger pauses and opens the stop's file in front of the Application, then the viewport reveals the Application.
+    harness.openPausedFileInLockedGroup('src/theme.ts', 1)
+    await waitUntil(
+      () =>
+        !harness.groups
+          .find((group) => group.viewColumn === 1)
+          ?.tabs.some((tab) => tab.label === 'theme.ts'),
+      'the stop file leaving the Application group',
+    )
+    await harness.revealApplicationPaneOverPausedFile()
+
+    // Assert
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+    assert.deepEqual(
+      harness.groups
+        .find((group) => group.viewColumn === 1)!
+        .tabs.map((tab) => tab.label),
+      ['codebook · Application stop-run'],
+    )
+  } finally {
+    viewport?.close()
+    await harness.close()
+  }
+})

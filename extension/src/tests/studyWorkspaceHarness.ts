@@ -3618,7 +3618,8 @@ export async function workspaceHarness(
           // Without a layout read the worker closes the tab by itself a moment later.
           applyByItselfLater(closeTab)
         } else closeTab()
-        for (const listener of disposed) listener()
+        // Like the editor's emitter, a listener that disposes its own subscription must not skip the next listener.
+        for (const listener of [...disposed]) listener()
       },
     }
     if (kind === 'codebook.repositoryWiki') answerAsWikiDocument(value)
