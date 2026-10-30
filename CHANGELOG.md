@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.2.64.0] - 2026-10-31 (development candidate)
+
+Cycle 0064 ([Issue #162](https://github.com/laststance/codebook/issues/162)), the second pull request of a bug-fix cycle: Cursor's Agent chat opens the Study itself, a run keeps its Application open through its stops, and a run's own stop preview no longer blocks the next Study. No new feature.
+
+**Cursor 3.27's Agent chat opens the Study with no step of yours.**
+
+- **The keyboard reaches the main editor from the Agent chat**: Codebook reveals its pane in the first editor group, because Cursor's own first-group focus command does nothing while the Agent chat has the keyboard.
+- **A click of yours into another editor group keeps the keyboard**: if you click into a file of another group in the half second Codebook waits for Cursor's focus command, nothing is revealed and the Study does not open; the answer says your newer focus was kept, so ask again.
+- **The Application's move into its group is recognized as Codebook's own** when Cursor rebuilds its editor groups during the move, so the run starts without asking you to restore the layout.
+- **A run keeps its Application open through its stops**: Cursor lists the moved Application tab as a preview that the debugger's stop file would replace, so Codebook keeps the tab open when its editor group is the active one at the start of the run or becomes active before the first stop; if the Application's tab stands behind another tab of its group, Codebook goes on watching and keeps it once you bring it to the front with its group active. If you work in another editor group then, a stop's file can still replace the Application in Cursor 3.27; start the run again. Codebook never takes your keyboard for this.
+
+**A run's own stop preview no longer blocks the next Study.** A clean preview of a file that one of this window's runs declared as a stop, in front of its group (the debugger opens a stop's file that way), is pinned before the Study opens, without a dialog. An edited one, one behind another tab and any other preview of yours still get the **Keep Tab Open** / **Close Tab** dialog.
+
+**Vite runs.**
+
+- **A stop in a file that a Vite plugin rewrites without a source map** (for example `code-inspector-plugin` on a component) is refused at sealing with `VITE_SEAL_FAILED`, naming the plugin rewrite as the likely cause and a file edited after the dev server transformed it as the other, with the way out for each.
+- **The `repository-browser` profile lists both adapters**, `next-dev-webpack` and `vite-dev`, with the scope of each, in `codebook_status`.
+
+**Known limits (the next pull request of this cycle).** The replay Call Stack shows "Unknown Source" for recorded frames below the top one.
+
+**Compatibility.** MCP API 1.11 and the bundled skill 1.0.57 are unchanged; the profile's `adapter` field stays `next-dev-webpack` for older readers, beside the new `adapters` list. To update, install this VSIX and reopen the work window.
+
 ## [0.2.63.0] - 2026-10-30 (development candidate)
 
 Cycle 0064 ([Issue #162](https://github.com/laststance/codebook/issues/162)), the first pull request of a bug-fix cycle: it fixes the Vite run and masking defects Cycle 0063 carried. No new feature.
