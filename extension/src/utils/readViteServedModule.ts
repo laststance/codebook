@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 
 import {
+  HTTP_REDIRECT_STATUS_END,
+  HTTP_REDIRECT_STATUS_MIN,
   REPOSITORY_JAVASCRIPT_LIMIT_BYTES,
   REPOSITORY_MAP_LIMIT_BYTES,
   REPOSITORY_SOURCE_LIMIT_BYTES,
@@ -80,7 +82,10 @@ async function absoluteSourceOf(
 
 /** Names why a response is not a servable module; `undefined` when it is. */
 function servedProblemOf(response: Response, url: string): string | undefined {
-  if (response.status >= 300 && response.status < 400)
+  if (
+    response.status >= HTTP_REDIRECT_STATUS_MIN &&
+    response.status < HTTP_REDIRECT_STATUS_END
+  )
     return `${url} redirects (status ${response.status}) and Codebook follows no redirect`
   if (!response.ok) return `${url} answered status ${response.status}`
   const contentType = response.headers.get('content-type') ?? ''

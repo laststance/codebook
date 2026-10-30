@@ -2232,6 +2232,15 @@ export const VITE_SUPPORTED_MAJOR = 8
 /** Vite's own default dev-server port, used when neither the project's config nor its `dev` script names one. */
 export const VITE_DEFAULT_PORT = 5173
 
+/** The first port an unprivileged program may listen on; Codebook's Vite port refusal names it as where to move a not-permitted port to. */
+export const FIRST_UNPRIVILEGED_PORT = 1024
+
+/** The first HTTP status of the redirect class (3xx), which Codebook never follows when it reads a module the owned Vite server serves. */
+export const HTTP_REDIRECT_STATUS_MIN = 300
+
+/** The first HTTP status after the redirect class (the client-error class starts here), so a redirect status is below it. */
+export const HTTP_REDIRECT_STATUS_END = 400
+
 /** The one host Codebook owns for a Vite dev server; the launcher passes it inline and the parent refuses a resolved `server.host` that differs (a plugin can widen it to every interface). */
 export const VITE_LOOPBACK_HOST = '127.0.0.1'
 
