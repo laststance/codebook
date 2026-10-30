@@ -41,7 +41,12 @@ export type ViteLauncherReport =
       envValues: string[]
     }
   | { type: 'vite-listening'; port: number }
+  /** The dependency optimizer of Vite's client environment has nothing left to process (or there is none). */
+  | { type: 'vite-optimizer-idle' }
 
 /** What the extension tells the launcher after the facts. */
 export type ViteLauncherCommand =
-  { type: 'vite-listen' } | { type: 'vite-refuse' }
+  | { type: 'vite-listen' }
+  | { type: 'vite-refuse' }
+  /** Sent after listening: the launcher answers `vite-optimizer-idle` once Vite's dependency optimizer is idle. */
+  | { type: 'vite-await-optimizer' }

@@ -89,6 +89,15 @@ export interface DevelopmentServerAdapter {
   }>
   /** Reads the identity of the dev lock the started server owns; only Next has one. */
   readOwnedLock(workspace: string): Promise<DevelopmentLockIdentity | undefined>
+  /**
+   * Waits until the server has finished work that would reload the page by itself (Vite's dependency optimizer); Next has none and returns at once.
+   * Called by the run before each quiet window of the page, bounded by `timeoutMs` and `signal`.
+   */
+  waitForServerSettled(
+    app: DevelopmentApp,
+    timeoutMs: number,
+    signal: AbortSignal,
+  ): Promise<void>
   /** Seals the module one declared stop runs in. */
   readBundle(request: DevelopmentBundleRequest): Promise<DevelopmentBundle>
   /** The js-debug launch fields of the browser that opens the app. */

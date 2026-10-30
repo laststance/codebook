@@ -34,6 +34,8 @@ export type StubViteBehavior = {
   projectRoot?: string
   /** Makes the stub's process exit with this code while loading. */
   exits?: number
+  /** Gives the stub a client dependency optimizer whose one discovered dependency stays in processing this long (milliseconds) from the moment the launcher is first asked whether the optimizer is idle. */
+  optimizerBusyMs?: number
 }
 
 /** A temporary package root that holds a stub `vite` package. */
@@ -89,6 +91,7 @@ export async function createServer(inline) {
     server: { port, host: inline.server.host, ...behavior.server },
   }
   let http
+  let optimizer
   return {
     config,
     httpServer: null,
@@ -103,6 +106,18 @@ export async function createServer(inline) {
         http.listen(port, '127.0.0.1', resolve)
       })
       this.httpServer = http
+    },
+    environments: {
+      client: {
+        // The busy period starts when the launcher first reads the optimizer, so a slow start never shortens it.
+        get depsOptimizer() {
+          if (behavior.optimizerBusyMs === undefined) return undefined
+          optimizer ??= {
+            metadata: { discovered: { late: { processing: new Promise((resolve) => setTimeout(resolve, behavior.optimizerBusyMs)) } } },
+          }
+          return optimizer
+        },
+      },
     },
     printUrls() {
       if (behavior.silent) return

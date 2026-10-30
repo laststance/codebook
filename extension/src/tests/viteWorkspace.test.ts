@@ -179,6 +179,7 @@ test('every Vite refusal code has a recovery sentence that cites its own help an
     'VITE_SETUP_DEADLINE',
     'VITE_SEAL_FAILED',
     'VITE_PAGE_RELOADED',
+    'VITE_PAGE_UNSTABLE',
     'VITE_PORT_UNAVAILABLE',
   ])
   for (const { code, recovery, anchor } of recoveries) {

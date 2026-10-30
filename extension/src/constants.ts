@@ -2271,6 +2271,9 @@ export const VITE_STOP_EXTENSIONS: readonly string[] = [
 /** How long the Vite page must stay loaded, with no further reload, before the initial inputs are written. */
 export const VITE_PAGE_QUIET_MS = 500
 
+/** The shortest wait for the optimizer-idle report: a nearly spent setup budget never becomes a zero-length wait. */
+export const VITE_OPTIMIZER_WAIT_MIN_MS = 1_000
+
 /** The most reloads before the inputs the run tolerates (a dependency optimizer reloads once or twice). */
 export const VITE_PAGE_GENERATION_LIMIT = 4
 
@@ -2282,4 +2285,8 @@ export const VITE_LAUNCHER_MESSAGES = {
   listen: 'vite-listen',
   refuse: 'vite-refuse',
   listening: 'vite-listening',
+  /** Command after listening: asks the launcher to report once Vite's dependency optimizer is idle. */
+  awaitOptimizer: 'vite-await-optimizer',
+  /** Report answering {@link VITE_LAUNCHER_MESSAGES.awaitOptimizer}: the optimizer has nothing left to process. */
+  optimizerIdle: 'vite-optimizer-idle',
 } as const

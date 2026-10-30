@@ -83,6 +83,8 @@ export async function configuredRuntimeHarness(
     adapter?: 'vite-dev'
     /** Makes the Vite stand-in refuse to seal with this sentence, as a missing served module does. */
     sealFailure?: string
+    /** Makes the Vite stand-in never finish reading the served module, as a server that stops answering does while a stop is sealed. */
+    sealHangs?: boolean
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
@@ -155,6 +157,13 @@ export async function configuredRuntimeHarness(
   const navigations: string[] = []
   const launchConfigurations: DebugSession['configuration'][] = []
   const setupSteps: string[] = []
+  // The text of the module the Vite stand-in serves now; {@link serveChangedModule} replaces it, as a dependency-optimizer reload does.
+  let servedJavascript = javascript
+  // How many times the run asked the Vite stand-in whether the server is settled, and the hold on its answer.
+  let settledQuestions = 0
+  // How many times the run read a stop module from the Vite stand-in.
+  let sealReads = 0
+  let optimizerHold: Promise<void> | undefined
   let emitInputPause = true,
     emitPreparationResume = false,
     stopAtStartupBreakpoint = false,
@@ -495,7 +504,7 @@ export async function configuredRuntimeHarness(
         return {}
       }
       if (method === 'Debugger.getScriptSource')
-        return { scriptSource: executedScriptSource ?? javascript }
+        return { scriptSource: executedScriptSource ?? servedJavascript }
       if (method === 'Debugger.evaluateOnCallFrame') {
         try {
           return {
@@ -786,9 +795,24 @@ export async function configuredRuntimeHarness(
             request.onApp(fakeApplication)
             return { app: fakeApplication, port: 4321, viteVersion: '8.3.5' }
           },
-          readBundle: async () => {
+          waitForServerSettled: async () => {
+            settledQuestions += 1
+            await optimizerHold
+          },
+          readBundle: async (request: { signal: AbortSignal }) => {
+            sealReads += 1
             if (options.sealFailure) throw new Error(options.sealFailure)
-            return { bundle, discovery: {} }
+            // A hung server read ends only when the run is cancelled.
+            if (options.sealHangs)
+              await new Promise<never>((_resolve, reject) =>
+                request.signal.addEventListener('abort', () =>
+                  reject(request.signal.reason),
+                ),
+              )
+            return {
+              bundle: { ...bundle, javascript: servedJavascript },
+              discovery: {},
+            }
           },
         },
       },
@@ -921,6 +945,26 @@ export async function configuredRuntimeHarness(
           url: 'http://localhost:4321/x',
         },
       })
+    },
+    /** Makes the Vite stand-in serve this text for the stop module from now on, and the page execute it, as a dependency-optimizer reload does with new import hashes. @example harness.serveChangedModule('const nextTheme = "dark";\n// ?v=2') */
+    serveChangedModule(changedJavascript: string): void {
+      servedJavascript = changedJavascript
+    },
+    /** Keeps the Vite stand-in's dependency optimizer busy until the returned function is called. @example const release = harness.holdOptimizer() */
+    holdOptimizer(): () => void {
+      let release = (): void => {}
+      optimizerHold = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return release
+    },
+    /** How many times the run read a stop module from the Vite stand-in. */
+    sealReadCount(): number {
+      return sealReads
+    },
+    /** How many times the run asked whether the server was settled (the dependency optimizer idle). */
+    settledQuestionCount(): number {
+      return settledQuestions
     },
     /** Re-announces the sealed module the way the new page generation parses it. @example harness.announceSealedModule('second') */
     announceSealedModule(scriptId: string): void {

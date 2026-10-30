@@ -13,6 +13,7 @@ export const VITE_REFUSAL_CODES = [
   'VITE_SETUP_DEADLINE',
   'VITE_SEAL_FAILED',
   'VITE_PAGE_RELOADED',
+  'VITE_PAGE_UNSTABLE',
   'VITE_PORT_UNAVAILABLE',
 ] as const satisfies readonly ErrorCode[]
 
@@ -90,8 +91,23 @@ export function viteFailureOf(
  * viteSetupDeadlineText('sealing the declared stops', 90_000) // => 'VITE_SETUP_DEADLINE: Repository setup deadline (90 s) exceeded while sealing the declared stops. …'
  */
 export function viteSetupDeadlineText(step: string, limitMs: number): string {
-  return `VITE_SETUP_DEADLINE: Repository setup deadline (${Math.round(limitMs / MILLISECONDS_PER_SECOND)} s) exceeded while ${step}. First-run dependency pre-bundling can take long; the owned server was stopped and the browser was not opened, so start again once (the dependency cache is warm then).`
+  const browserState = VITE_SETUP_STEPS_AFTER_BROWSER_OPENED.includes(step)
+    ? 'the browser Codebook opened was closed and no click was sent'
+    : step === VITE_SETUP_STEP_OPENING_BROWSER
+      ? 'the browser Codebook was opening was closed and no click was sent'
+      : 'the browser was not opened'
+  return `VITE_SETUP_DEADLINE: Repository setup deadline (${Math.round(limitMs / MILLISECONDS_PER_SECOND)} s) exceeded while ${step}. First-run dependency pre-bundling can take long; the owned server was stopped and ${browserState}, so start again once (the dependency cache is warm then).`
 }
+
+/** The setup step whose browser may or may not be open yet when the deadline expires. */
+const VITE_SETUP_STEP_OPENING_BROWSER = 'opening the browser'
+
+/** The setup steps that run after the browser was opened, so a deadline in them closes a browser instead of finding none. */
+const VITE_SETUP_STEPS_AFTER_BROWSER_OPENED: readonly string[] = [
+  'loading the entry page',
+  'waiting for the page to settle',
+  'writing the initial inputs and arming the first stop',
+]
 
 /**
  * Words the failure of a Vite run whose page loaded again after the inputs were written, led by its code.

@@ -7,7 +7,7 @@ import type { ViteLauncherCommand } from '../viteLauncherProtocol'
  * Why it exists: IPC data is untrusted until checked, so the launcher never casts it. Called by the Vite launcher module (`viteLauncher.ts`) for the reply to its facts; any other shape is treated as a refusal.
  *
  * @param message - The value received from the channel.
- * @returns `true` for `{ type: 'vite-listen' }` and `{ type: 'vite-refuse' }`, `false` for anything else.
+ * @returns `true` for `{ type: 'vite-listen' }`, `{ type: 'vite-refuse' }` and `{ type: 'vite-await-optimizer' }`, `false` for anything else.
  * @example
  * isViteLauncherCommand({ type: 'vite-listen' }) // => true
  * isViteLauncherCommand('listen') // => false
@@ -19,6 +19,7 @@ export function isViteLauncherCommand(
   const type = (message as { type?: unknown }).type
   return (
     type === VITE_LAUNCHER_MESSAGES.listen ||
-    type === VITE_LAUNCHER_MESSAGES.refuse
+    type === VITE_LAUNCHER_MESSAGES.refuse ||
+    type === VITE_LAUNCHER_MESSAGES.awaitOptimizer
   )
 }

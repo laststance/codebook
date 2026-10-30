@@ -10,6 +10,7 @@ import type {
 } from '../developmentServerAdapter'
 import { StudyError } from '../errors'
 import { assessViteWorkspace } from '../utils/assessViteWorkspace'
+import { awaitViteOptimizerIdle } from '../utils/awaitViteOptimizerIdle'
 import {
   buildViteEnvironment,
   launchViteDevelopmentServer,
@@ -37,6 +38,8 @@ async function startVite(
     behavior: StubViteBehavior
     portCheck?: (signal: AbortSignal) => Promise<void>
     files?: Record<string, string>
+    /** Replaces the facts timeout so a hanging launcher is refused quickly; production keeps 30 s. */
+    factsTimeoutMs?: number
   },
 ) {
   const repository = await createViteRepository(context, { dev: options.dev })
@@ -74,7 +77,12 @@ async function startVite(
     process.execPath,
     controller.signal,
   )
-  const started = launchViteDevelopmentServer(request, workspaceInfo, LAUNCHER)
+  const started = launchViteDevelopmentServer(
+    request,
+    workspaceInfo,
+    LAUNCHER,
+    options.factsTimeoutMs,
+  )
   return {
     repository,
     controller,
@@ -561,4 +569,50 @@ test('script assignments cannot enable color or a browser in the launcher enviro
   assert.equal(environment.NO_COLOR, '1')
   assert.equal(environment.FORCE_COLOR, undefined)
   assert.equal(environment.CLICOLOR_FORCE, undefined)
+})
+
+test('a launcher that never reports its facts is refused as a launcher failure naming the facts timeout', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const run = await startVite(context, {
+    behavior: { port, hangs: true },
+    factsTimeoutMs: 300,
+  })
+  // Act
+  const error = await refusalOf(run.started)
+  // Assert
+  assert.equal(error.code, 'VITE_LAUNCHER_FAILED')
+  assert.match(
+    error.message,
+    /did not report the project's settings \(resolving the Vite config; Vite 8\.3\.5, mode development; within 0\.3 s\)/,
+  )
+})
+
+test('the launcher answers the optimizer wait only after every discovered dependency finished processing', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const run = await startVite(context, {
+    behavior: { port, optimizerBusyMs: 1200 },
+  })
+  await run.started
+  const startedAt = Date.now()
+  // Act
+  await awaitViteOptimizerIdle(run.app(), 10_000, run.controller.signal)
+  // Assert
+  assert.ok(
+    Date.now() - startedAt >= 1000,
+    'the launcher answered before the optimizer was idle',
+  )
+})
+
+test('the launcher answers the optimizer wait at once when Vite has no dependency optimizer', async (context) => {
+  // Arrange
+  const port = await freePort()
+  const run = await startVite(context, { behavior: { port } })
+  await run.started
+  const startedAt = Date.now()
+  // Act
+  await awaitViteOptimizerIdle(run.app(), 10_000, run.controller.signal)
+  // Assert
+  assert.ok(Date.now() - startedAt < 1000)
 })

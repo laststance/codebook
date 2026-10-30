@@ -75,7 +75,8 @@ function isViteLauncherMessage(message: unknown): boolean {
     type === VITE_LAUNCHER_MESSAGES.env ||
     type === VITE_LAUNCHER_MESSAGES.facts ||
     type === VITE_LAUNCHER_MESSAGES.failed ||
-    type === VITE_LAUNCHER_MESSAGES.listening
+    type === VITE_LAUNCHER_MESSAGES.listening ||
+    type === VITE_LAUNCHER_MESSAGES.optimizerIdle
   )
 }
 
@@ -97,6 +98,7 @@ function refuseLaunch(app: DevelopmentApp): void {
  * @param request - What the run provides ({@link DevelopmentServerStart}).
  * @param workspaceInfo - The Vite installation and accepted `dev` script ({@link assessViteWorkspace}).
  * @param launcherPath - The absolute path of the compiled launcher module.
+ * @param factsTimeoutMs - How long the launcher may take to report its facts; production keeps {@link VITE_LAUNCHER_FACTS_TIMEOUT_MS}, a test passes a short one.
  * @returns The ready-to-wait server, the port it listens on and the Vite version the launcher reported.
  * @throws `VITE_LAUNCHER_FAILED` (config error, crash, no report in time), `VITE_UNSUPPORTED` (settings), `VITE_PORT_UNAVAILABLE`; each message is masked by value and redacted.
  * @example
@@ -106,6 +108,7 @@ export async function launchViteDevelopmentServer(
   request: DevelopmentServerStart,
   workspaceInfo: ViteWorkspace,
   launcherPath: string,
+  factsTimeoutMs: number = VITE_LAUNCHER_FACTS_TIMEOUT_MS,
 ): Promise<{ app: DevelopmentApp; port: number; viteVersion: string }> {
   const { script, installation } = workspaceInfo
   // Every value the launcher is given or loads is masked by value in what leaves this module.
@@ -163,11 +166,11 @@ export async function launchViteDevelopmentServer(
       )
     }
   }
-  let first = await receive(VITE_LAUNCHER_FACTS_TIMEOUT_MS)
+  let first = await receive(factsTimeoutMs)
   // The launcher sends its env values before any project code runs, so a later death still leaves them masked.
   if (first.type === VITE_LAUNCHER_MESSAGES.env) {
     maskedValues.push(...first.envValues)
-    first = await receive(VITE_LAUNCHER_FACTS_TIMEOUT_MS)
+    first = await receive(factsTimeoutMs)
   }
   if (first.type === VITE_LAUNCHER_MESSAGES.failed) {
     maskedValues.push(...first.envValues)

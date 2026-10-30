@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { setTimeout as sleep } from 'node:timers/promises'
 
+import { REPOSITORY_SETUP_TIMEOUT_MS, VITE_PAGE_QUIET_MS } from '../constants'
+import { StudyError } from '../errors'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import {
   viteFailureOf,
@@ -224,4 +227,166 @@ test('a Vite stop in a module the entry page never loads ends the run with the d
     run.view().failures[0],
     'Repository input reached no verified pause: declared stop src/theme.ts:1 was not hit within 20 s of the accepted action; its line must execute after the input',
   )
+})
+
+test('a reload before the inputs that changes the served stop module seals it again and the run reaches its pause', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    adapter: 'vite-dev',
+  })
+  const preparing = harness.run.prepare()
+  await waitUntil(() => harness.navigations.length === 1, 'first navigation')
+  // Act
+  harness.serveChangedModule('const nextTheme = "dark";\n// ?v=57ee5d84')
+  harness.reloadPage()
+  harness.announceSealedModule('second')
+  await preparing
+  // Assert
+  assert.equal(harness.run.view().status, 'ready')
+  assert.deepEqual([...harness.run.view().failures], [])
+  assert.equal(
+    harness.run
+      .view()
+      .events.filter((event) => event.type === 'source.resealed').length,
+    1,
+  )
+})
+
+test('the inputs wait for a dependency optimizer that stays busy longer than the quiet window and then reloads the page', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    adapter: 'vite-dev',
+  })
+  const releaseOptimizer = harness.holdOptimizer()
+  const preparing = harness.run.prepare()
+  await waitUntil(() => harness.navigations.length === 1, 'first navigation')
+  await waitUntil(
+    () => harness.settledQuestionCount() === 1,
+    'the optimizer question',
+  )
+  // Act
+  await sleep(VITE_PAGE_QUIET_MS + 200)
+  const statusWhileBusy = harness.run.view().status
+  harness.reloadPage()
+  harness.announceSealedModule('second')
+  releaseOptimizer()
+  await preparing
+  // Assert
+  assert.notEqual(statusWhileBusy, 'ready')
+  assert.equal(harness.run.view().status, 'ready')
+  assert.deepEqual([...harness.run.view().failures], [])
+})
+
+test('a page that reloads more than the limit before the inputs ends the preparation with VITE_PAGE_UNSTABLE and sends nothing', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    adapter: 'vite-dev',
+  })
+  const preparing = harness.run.prepare()
+  await waitUntil(() => harness.navigations.length === 1, 'first navigation')
+  // Act
+  for (let reload = 0; reload < 5; reload += 1) harness.reloadPage()
+  harness.announceSealedModule('second')
+  const error: unknown = await preparing.then(
+    () => undefined,
+    (cause: unknown) => cause,
+  )
+  // Assert
+  assert.ok(error instanceof StudyError)
+  assert.equal(error.code, 'VITE_PAGE_UNSTABLE')
+  assert.match(error.message, /reloaded 5 times .* nothing was sent/)
+  assert.equal(harness.mouse.length, 0)
+})
+
+test('the executed bytes at the pause differing from the sealed bytes end the run without an explanation', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    adapter: 'vite-dev',
+  })
+  await harness.run.prepare()
+  harness.replaceExecutedModule('rebuilt()')
+  // Act
+  harness.run.action('one', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().failures.length > 0,
+    'the refusal at the pause',
+  )
+  // Assert
+  assert.equal(harness.run.view().snapshots.length, 0)
+  assert.equal(harness.run.view().finalOutcome, 'not-demonstrated')
+})
+
+test('the setup budget expiring while the stops are sealed fails with the coded deadline naming that step', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    adapter: 'vite-dev',
+    sealHangs: true,
+  })
+  const preparing = harness.run.prepare().catch(() => undefined)
+  await waitUntil(() => harness.sealReadCount() === 1, 'the seal read')
+  // Act
+  harness.advance(REPOSITORY_SETUP_TIMEOUT_MS)
+  await preparing
+  // Assert
+  const failure = viteFailureOf(harness.run.view().failures[0] ?? '')
+  assert.equal(failure?.code, 'VITE_SETUP_DEADLINE')
+  assert.match(
+    failure?.message ?? '',
+    /exceeded while sealing the declared stops/,
+  )
+})
+
+test('the setup deadline text says the browser was not opened for every step before the browser launches', () => {
+  // Arrange
+  const stepsBeforeBrowser = [
+    'validating the project',
+    'resolving the Vite config',
+    'starting Vite',
+    'waiting for the server to answer the entry page',
+    'sealing the declared stops',
+  ]
+  // Act
+  const tails = stepsBeforeBrowser.map((step) =>
+    viteSetupDeadlineText(step, 90_000).replace(
+      /^.*pre-bundling can take long; /,
+      '',
+    ),
+  )
+  // Assert
+  assert.deepEqual(
+    tails,
+    stepsBeforeBrowser.map(
+      () =>
+        'the owned server was stopped and the browser was not opened, so start again once (the dependency cache is warm then).',
+    ),
+  )
+})
+
+test('the setup deadline text says the browser being opened was closed for the opening step', () => {
+  // Act
+  const text = viteSetupDeadlineText('opening the browser', 90_000)
+  // Assert
+  assert.equal(
+    text,
+    'VITE_SETUP_DEADLINE: Repository setup deadline (90 s) exceeded while opening the browser. First-run dependency pre-bundling can take long; the owned server was stopped and the browser Codebook was opening was closed and no click was sent, so start again once (the dependency cache is warm then).',
+  )
+})
+
+test('the setup deadline text says the opened browser was closed for every step after the browser launched', () => {
+  // Arrange
+  const stepsAfterBrowser = [
+    'loading the entry page',
+    'waiting for the page to settle',
+    'writing the initial inputs and arming the first stop',
+  ]
+  // Act
+  const texts = stepsAfterBrowser.map((step) =>
+    viteSetupDeadlineText(step, 90_000),
+  )
+  // Assert
+  assert.deepEqual(texts, [
+    'VITE_SETUP_DEADLINE: Repository setup deadline (90 s) exceeded while loading the entry page. First-run dependency pre-bundling can take long; the owned server was stopped and the browser Codebook opened was closed and no click was sent, so start again once (the dependency cache is warm then).',
+    'VITE_SETUP_DEADLINE: Repository setup deadline (90 s) exceeded while waiting for the page to settle. First-run dependency pre-bundling can take long; the owned server was stopped and the browser Codebook opened was closed and no click was sent, so start again once (the dependency cache is warm then).',
+    'VITE_SETUP_DEADLINE: Repository setup deadline (90 s) exceeded while writing the initial inputs and arming the first stop. First-run dependency pre-bundling can take long; the owned server was stopped and the browser Codebook opened was closed and no click was sent, so start again once (the dependency cache is warm then).',
+  ])
 })

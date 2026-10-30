@@ -36,6 +36,7 @@ import {
   REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT,
   REPOSITORY_SETUP_TIMEOUT_MS,
   VITE_PAGE_GENERATION_LIMIT,
+  VITE_OPTIMIZER_WAIT_MIN_MS,
   VITE_PAGE_QUIET_MS,
   REPOSITORY_STACK_FRAME_LIMIT,
   REPOSITORY_UNOWNED_PAGE_PAUSE_LIMIT_MS,
@@ -202,6 +203,8 @@ const NEXT_DEV_WEBPACK_ADAPTER: DevelopmentServerAdapter = {
     request.onApp(app)
     return { app, port: declaredPort.port }
   },
+  // Next has no dependency optimizer that reloads the page by itself.
+  waitForServerSettled: async () => undefined,
   async readOwnedLock(workspace) {
     // The lock's identity is read with exact numbers: a file id can be larger than a number holds exactly.
     const developmentLock = await lstat(join(workspace, '.next/dev/lock'), {
@@ -448,6 +451,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private ownedOrigin?: string
   /** The setup step reached, named when the setup deadline expires. */
   private setupStep = 'validating the project'
+  /** When the setup budget ends (epoch milliseconds); bounds the wait for the Vite dependency optimizer. */
+  private preparationDeadlineAt = 0
   /** Whether the run asked its browser to open the entry page; only then is a page load a reload. */
   private navigationRequested = false
   /** Whether the first load of the entry page was seen. */
@@ -623,6 +628,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         this.options.control?.deadlineAt ?? now + REPOSITORY_RUN_TIMEOUT_MS
     if (now >= preparationDeadlineAt || now >= deadlineAt)
       throw new Error('Repository preparation deadline already expired')
+    this.preparationDeadlineAt = preparationDeadlineAt
     this.progressDeadline(
       preparationDeadlineAt - now,
       this.definition.configuration.adapter === 'vite-dev'
@@ -703,72 +709,179 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.setupStep = 'sealing the declared stops'
     for (const [index, stop] of configuredStops(
       this.definition.configuration,
-    ).entries()) {
-      const acquired = await adapter.readBundle({
-        workspace: this.options.workspace,
-        source: stop.source,
-        signal: this.abort.signal,
-        entryPath: this.definition.configuration.entryPath ?? '/',
-        execution: stop.participant === 'server' ? 'server-action' : 'browser',
-        ownedOrigin: this.ownedOrigin,
-        record: (type, detail) => this.evidence.record(type, detail),
+    ).entries())
+      this.stops.push(await this.sealDeclaredStop(stop, index))
+    this.freezeSealedStops()
+    if (needsServer) await this.selectServer()
+    this.alive()
+    this.setupStep = 'opening the browser'
+    await this.browser.launch(
+      {
+        name: `codebook repository ${this.id}`,
+        type: 'pwa-chrome',
+        request: 'launch',
+        url: 'about:blank',
+        ...adapter.browserDebugFields(this.options.workspace),
+        timeout: ACTIVE_TIMEOUT_MS,
+      },
+      this.abort.signal,
+    )
+    this.alive()
+    await this.selectPage()
+    this.alive()
+    const cdp = this.requireCdp()
+    await this.observeParticipant('browser')
+    this.alive()
+    cdp.aggregateScreencastTelemetry(() => this.evidence.elapsedMs())
+    await this.browser.attachViewport(cdp, this.abort.signal)
+    this.alive()
+    const storage = this.definition.configuration.initialStorage ?? []
+    if (storage.length) {
+      await cdp.request('Page.addScriptToEvaluateOnNewDocument', {
+        source: `if(${JSON.stringify(loopbackOriginsOf(this.origin, this.ownsIpv6Loopback))}.includes(location.origin))for(const entry of ${JSON.stringify(storage)})localStorage.setItem(entry.key,entry.value);`,
       })
       this.alive()
-      const verifier = createBundleVerifier(acquired.bundle),
-        citation = this.definition.descriptor.anchors[stop.anchorIndex]!
-      // The sealed map is scanned once per stop, from its declared line to the end of its citation; the place, the rule and the refusal below read that scan, and the pause handler only compares lines.
-      const scan = verifier.mappedPositions(stop.source.line, citation.endLine),
-        taken = this.takeDeclaredPosition(stop, index),
-        afterDeclaration = this.requestAfterSelfDeclaringLine(
-          stop,
-          acquired.bundle.source.split(/\r\n|\r|\n/),
-          scan,
-          citation.endLine,
-        ),
-        // A stop whose own line declares a binding it requires is requested after that declaration's statement; otherwise the debugger verifies no breakpoint on a line without a mapped position, so such a stop is requested at the first mapped position after it. The rule is measured from there.
-        armed = afterDeclaration.armed ?? resolveArmedPlace(taken, scan)
-      const bindingRule = createBindingLineRule(
-        stop.source.line,
-        citation,
+    }
+    this.setupStep = 'loading the entry page'
+    this.navigationRequested = true
+    await cdp.request('Page.navigate', {
+      url: `${this.origin}${this.definition.configuration.entryPath ?? '/'}`,
+    })
+    this.alive()
+    await this.waitForDom('before')
+    this.alive()
+    // Vite's dependency optimizer may reload the page once after the first load; each reload before the inputs starts a new page generation.
+    if (adapter.name === 'vite-dev') {
+      this.setupStep = 'waiting for the page to settle'
+      await this.waitForStablePage()
+    }
+    this.setupStep = 'writing the initial inputs and arming the first stop'
+    const inputs = this.definition.configuration.initialInputs ?? []
+    // A page load after this point is a reload the run did not make: the inputs may already be in the page.
+    this.inputsPrepared = true
+    await prepareRepositoryInputs(
+      cdp,
+      inputs,
+      loopbackOriginsOf(this.origin, this.ownsIpv6Loopback),
+      () => this.alive(),
+    )
+    this.alive()
+    if (inputs.length)
+      this.evidence.record('inputs.prepared', { count: inputs.length })
+    // Only the next expected stop is armed: a later stop's line may run before its turn and must not pause then. {@link continue} arms each later stop.
+    await this.armStop(this.stops[0]!)
+    // A later browser stop is armed only in its turn, but a module that is already loaded can be compared with its sealed bundle now, before any application effect.
+    for (const laterStop of this.stops.slice(1))
+      if (laterStop.participant === 'browser' && laterStop.script)
+        await this.assertExecutedModuleSealed(laterStop, 'before input')
+    await this.browser.reveal(this.abort.signal)
+    this.alive()
+    await this.capture('before')
+    this.alive()
+    clearTimeout(this.progressTimer)
+    this.status = 'ready'
+    await this.persist()
+  }
+
+  /**
+   * Reads and seals the module one declared stop runs in, and prepares everything the run derives from the sealed bytes (map scan, armed place, binding rule).
+   *
+   * Why it exists: the first seal happens once in {@link prepareOwned}; a Vite run seals again for each new page generation before the inputs ({@link resealStopsForGeneration}), because the dev server serves new `?v=` import hashes after a dependency-optimizer reload. Both go through the adapter's `readBundle`.
+   * @param stop - The configured stop, as {@link configuredStops} gives it.
+   * @param index - Its zero-based place among the declared stops.
+   * @param generation - The page generation a renewal belongs to; absent for the first seal.
+   * @returns The prepared stop for the freshly sealed bytes; its sealed files and journal entry are written.
+   * @throws When the module cannot be sealed or the run is no longer alive.
+   * @example
+   * ```ts
+   * this.stops.push(await this.sealDeclaredStop(stop, 0))
+   * ```
+   */
+  private async sealDeclaredStop(
+    stop: ReturnType<typeof configuredStops>[number],
+    index: number,
+    generation?: number,
+  ): Promise<PreparedStop> {
+    const acquired = await this.adapter!.readBundle({
+      workspace: this.options.workspace,
+      source: stop.source,
+      signal: this.abort.signal,
+      entryPath: this.definition.configuration.entryPath ?? '/',
+      execution: stop.participant === 'server' ? 'server-action' : 'browser',
+      ownedOrigin: this.ownedOrigin!,
+      record: (type, detail) => this.evidence.record(type, detail),
+    })
+    this.alive()
+    const verifier = createBundleVerifier(acquired.bundle),
+      citation = this.definition.descriptor.anchors[stop.anchorIndex]!
+    // The sealed map is scanned once per stop, from its declared line to the end of its citation; the place, the rule and the refusal below read that scan, and the pause handler only compares lines.
+    const scan = verifier.mappedPositions(stop.source.line, citation.endLine),
+      taken = this.takeDeclaredPosition(stop, index),
+      afterDeclaration = this.requestAfterSelfDeclaringLine(
+        stop,
+        acquired.bundle.source.split(/\r\n|\r|\n/),
         scan,
-        armed.line,
-      )
-      const prepared: PreparedStop = {
-        ...stop,
-        bundle: acquired.bundle,
-        verifier,
-        scan,
-        armed: { line: armed.line, column: armed.column },
-        earliestRequestLine: afterDeclaration.earliestLine,
-        acceptsBoundLine: bindingRule.accepts,
-        bindingRefusal: bindingRule.refusal,
-        instances: new Map(),
-        unusableInstances: new Map(),
-      }
-      this.stops.push(prepared)
-      await this.evidence.save(
-        `sealed-${index}-source.ts`,
-        prepared.bundle.source,
-      )
-      this.alive()
-      await this.evidence.save(
-        `sealed-${index}-module.js`,
-        prepared.bundle.javascript,
-      )
-      this.alive()
-      await this.evidence.save(
-        `sealed-${index}-module.map.json`,
-        prepared.bundle.sourceMap,
-      )
-      this.alive()
-      this.evidence.record('source.sealed', {
+        citation.endLine,
+      ),
+      // A stop whose own line declares a binding it requires is requested after that declaration's statement; otherwise the debugger verifies no breakpoint on a line without a mapped position, so such a stop is requested at the first mapped position after it. The rule is measured from there.
+      armed = afterDeclaration.armed ?? resolveArmedPlace(taken, scan)
+    const bindingRule = createBindingLineRule(
+      stop.source.line,
+      citation,
+      scan,
+      armed.line,
+    )
+    const prepared: PreparedStop = {
+      ...stop,
+      bundle: acquired.bundle,
+      verifier,
+      scan,
+      armed: { line: armed.line, column: armed.column },
+      earliestRequestLine: afterDeclaration.earliestLine,
+      acceptsBoundLine: bindingRule.accepts,
+      bindingRefusal: bindingRule.refusal,
+      instances: new Map(),
+      unusableInstances: new Map(),
+    }
+    await this.evidence.save(
+      `sealed-${index}-source.ts`,
+      prepared.bundle.source,
+    )
+    this.alive()
+    await this.evidence.save(
+      `sealed-${index}-module.js`,
+      prepared.bundle.javascript,
+    )
+    this.alive()
+    await this.evidence.save(
+      `sealed-${index}-module.map.json`,
+      prepared.bundle.sourceMap,
+    )
+    this.alive()
+    this.evidence.record(
+      generation === undefined ? 'source.sealed' : 'source.resealed',
+      {
         index,
+        ...(generation === undefined ? {} : { generation }),
         participant: stop.participant,
         discovery: acquired.discovery,
         scriptUrl: prepared.bundle.scriptUrl,
         hashes: prepared.verifier.hashes,
-      })
-    }
+      },
+    )
+    return prepared
+  }
+
+  /**
+   * Binds the run's manifest to the first stop's current seal and refuses a stop that can never bind, after all stops are sealed or sealed again.
+   * Called by {@link prepareOwned} after the first seal and by {@link resealStopsForGeneration} after each renewal, so the manifest always names the bytes that are checked.
+   * @throws When a later stop's line has no mapped position in its sealed module.
+   * @example
+   * ```ts
+   * this.freezeSealedStops()
+   * ```
+   */
+  private freezeSealedStops(): void {
     const first = this.stops[0]!
     const { itemId, bookTitle, nodeTitle, anchors, citationContext } =
       this.definition.descriptor
@@ -802,70 +915,27 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         unmappedStop,
         `Declared stop ${this.declaredAt(unmappedStop)} has no mapped position on that line in the sealed module`,
       )
-    if (needsServer) await this.selectServer()
-    this.alive()
-    this.setupStep = 'opening the browser'
-    await this.browser.launch(
-      {
-        name: `codebook repository ${this.id}`,
-        type: 'pwa-chrome',
-        request: 'launch',
-        url: 'about:blank',
-        ...adapter.browserDebugFields(this.options.workspace),
-        timeout: ACTIVE_TIMEOUT_MS,
-      },
-      this.abort.signal,
-    )
-    this.alive()
-    await this.selectPage()
-    this.alive()
-    const cdp = this.requireCdp()
-    await this.observeParticipant('browser')
-    this.alive()
-    cdp.aggregateScreencastTelemetry(() => this.evidence.elapsedMs())
-    await this.browser.attachViewport(cdp, this.abort.signal)
-    this.alive()
-    const storage = this.definition.configuration.initialStorage ?? []
-    if (storage.length) {
-      await cdp.request('Page.addScriptToEvaluateOnNewDocument', {
-        source: `if(${JSON.stringify(loopbackOriginsOf(this.origin, this.ownsIpv6Loopback))}.includes(location.origin))for(const entry of ${JSON.stringify(storage)})localStorage.setItem(entry.key,entry.value);`,
-      })
-      this.alive()
+  }
+
+  /**
+   * Seals every declared stop again for a new page generation, before the inputs are written.
+   *
+   * Why it exists: after Vite's dependency optimizer reloads the page, the dev server serves the stop modules with new `?v=` import hashes, so the bytes the new page executes differ from the first seal. Replacing the seals here lets the executed-bytes check guard the latest seal; once the inputs are written nothing is sealed again and a reload still refuses with `VITE_PAGE_RELOADED`.
+   * Called by {@link waitForStablePage} for each generation it sees. The prepared stops are updated in place so a script the new page already announced stays bound.
+   * @param generation - The page generation the renewal belongs to; journaled with each renewal.
+   * @example
+   * ```ts
+   * await this.resealStopsForGeneration(this.pageGeneration)
+   * ```
+   */
+  private async resealStopsForGeneration(generation: number): Promise<void> {
+    for (const [index, stop] of configuredStops(
+      this.definition.configuration,
+    ).entries()) {
+      const renewed = await this.sealDeclaredStop(stop, index, generation)
+      Object.assign(this.stops[index]!, renewed)
     }
-    this.navigationRequested = true
-    await cdp.request('Page.navigate', {
-      url: `${this.origin}${this.definition.configuration.entryPath ?? '/'}`,
-    })
-    this.alive()
-    await this.waitForDom('before')
-    this.alive()
-    // Vite's dependency optimizer may reload the page once after the first load; each reload before the inputs starts a new page generation.
-    if (adapter.name === 'vite-dev') await this.waitForStablePage()
-    const inputs = this.definition.configuration.initialInputs ?? []
-    // A page load after this point is a reload the run did not make: the inputs may already be in the page.
-    this.inputsPrepared = true
-    await prepareRepositoryInputs(
-      cdp,
-      inputs,
-      loopbackOriginsOf(this.origin, this.ownsIpv6Loopback),
-      () => this.alive(),
-    )
-    this.alive()
-    if (inputs.length)
-      this.evidence.record('inputs.prepared', { count: inputs.length })
-    // Only the next expected stop is armed: a later stop's line may run before its turn and must not pause then. {@link continue} arms each later stop.
-    await this.armStop(this.stops[0]!)
-    // A later browser stop is armed only in its turn, but a module that is already loaded can be compared with its sealed bundle now, before any application effect.
-    for (const laterStop of this.stops.slice(1))
-      if (laterStop.participant === 'browser' && laterStop.script)
-        await this.assertExecutedModuleSealed(laterStop, 'before input')
-    await this.browser.reveal(this.abort.signal)
-    this.alive()
-    await this.capture('before')
-    this.alive()
-    clearTimeout(this.progressTimer)
-    this.status = 'ready'
-    await this.persist()
+    this.freezeSealedStops()
   }
 
   /**
@@ -899,7 +969,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Waits until the page has stayed loaded for a quiet window with no further reload, called by {@link prepareOwned} for a Vite run before the inputs are written.
-   * @throws When the page reloads more often than {@link VITE_PAGE_GENERATION_LIMIT} before the inputs.
+   * Before each quiet window it waits for the server's dependency optimizer to be idle ({@link DevelopmentServerAdapter.waitForServerSettled}), and after each reload it seals the stops again ({@link resealStopsForGeneration}).
+   * @throws `VITE_PAGE_UNSTABLE` when the page reloads more often than {@link VITE_PAGE_GENERATION_LIMIT} before the inputs.
    * @example
    * ```ts
    * await this.waitForStablePage()
@@ -908,16 +979,28 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private async waitForStablePage(): Promise<void> {
     for (;;) {
       const generation = this.pageGeneration
+      // The optimizer's own run decides when its reload comes, so the quiet window starts only after it is idle.
+      await this.adapter!.waitForServerSettled(
+        this.app!,
+        Math.max(
+          VITE_OPTIMIZER_WAIT_MIN_MS,
+          this.preparationDeadlineAt - Date.now(),
+        ),
+        this.abort.signal,
+      )
+      this.alive()
       await sleep(VITE_PAGE_QUIET_MS, undefined, { signal: this.abort.signal })
       this.alive()
       if (generation === this.pageGeneration) return
       if (this.pageGeneration > VITE_PAGE_GENERATION_LIMIT)
         throw viteRefusal(
-          'VITE_PAGE_RELOADED',
-          `The page reloaded ${this.pageGeneration} times before the inputs were written; Codebook stops after ${VITE_PAGE_GENERATION_LIMIT}.`,
+          'VITE_PAGE_UNSTABLE',
+          `The page reloaded ${this.pageGeneration} times before the inputs were written; Codebook stops after ${VITE_PAGE_GENERATION_LIMIT} and nothing was sent.`,
         )
       await this.waitForDom('before')
       this.alive()
+      // The new page executes the modules the server serves now: seal them again before the inputs.
+      await this.resealStopsForGeneration(this.pageGeneration)
     }
   }
 

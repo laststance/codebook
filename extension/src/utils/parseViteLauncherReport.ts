@@ -43,6 +43,7 @@ const reportSchema = z.discriminatedUnion('type', [
     type: z.literal(VITE_LAUNCHER_MESSAGES.listening),
     port: z.number().int(),
   }),
+  z.object({ type: z.literal(VITE_LAUNCHER_MESSAGES.optimizerIdle) }),
 ])
 
 /**

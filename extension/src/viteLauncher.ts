@@ -11,6 +11,10 @@ import {
 import { hasOwnHmrListener } from './utils/hasOwnHmrListener'
 import { isViteLauncherCommand } from './utils/isViteLauncherCommand'
 import { maskKnownValues } from './utils/maskKnownValues'
+import {
+  waitForViteOptimizerIdle,
+  type ViteDependencyOptimizer,
+} from './utils/waitForViteOptimizerIdle'
 import type {
   ViteLauncherCommand,
   ViteLauncherOptions,
@@ -42,6 +46,8 @@ type ViteServer = {
   printUrls(): void
   close(): Promise<void>
   httpServer: { address(): unknown } | null
+  /** Vite 6+ environments; the client one owns the dependency optimizer. */
+  environments?: { client?: { depsOptimizer?: ViteDependencyOptimizer } }
 }
 
 /** The part of the app's Vite module the launcher uses. */
@@ -170,7 +176,8 @@ async function run(): Promise<void> {
     )
     await factsSent
     const command = await reply
-    if (command.type === VITE_LAUNCHER_MESSAGES.refuse) {
+    // Anything but an explicit listen (including an optimizer command sent too early) is a refusal.
+    if (command.type !== VITE_LAUNCHER_MESSAGES.listen) {
       await server.close()
       process.exit(0)
     }
@@ -178,6 +185,20 @@ async function run(): Promise<void> {
     await server.listen()
     // Human output only: readiness comes from the verified `listening` report below, because a project's logLevel can silence the URLs.
     server.printUrls()
+    // From now on the extension may ask when the dependency optimizer is idle, before it writes its inputs.
+    const listeningServer = server
+    process.on('message', (message) => {
+      if (
+        !isViteLauncherCommand(message) ||
+        message.type !== VITE_LAUNCHER_MESSAGES.awaitOptimizer
+      )
+        return
+      void waitForViteOptimizerIdle(
+        listeningServer.environments?.client?.depsOptimizer,
+      )
+        .catch(() => undefined)
+        .then(() => send({ type: VITE_LAUNCHER_MESSAGES.optimizerIdle }))
+    })
     const address = server.httpServer?.address()
     await send({
       type: VITE_LAUNCHER_MESSAGES.listening,
