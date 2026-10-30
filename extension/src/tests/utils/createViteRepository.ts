@@ -36,6 +36,8 @@ export type StubViteBehavior = {
   exits?: number
   /** Gives the stub a client dependency optimizer whose one discovered dependency stays in processing this long (milliseconds) from the moment the launcher is first asked whether the optimizer is idle. */
   optimizerBusyMs?: number
+  /** Variables the stub's config sets in `process.env` while it loads, as a config that loads an env file itself (`process.loadEnvFile`, `dotenv/config`) does. */
+  setsEnv?: Record<string, string>
 }
 
 /** A temporary package root that holds a stub `vite` package. */
@@ -75,6 +77,7 @@ export async function createServer(inline) {
   const behavior = JSON.parse(await readFile(join(cwd, 'stub-vite.json'), 'utf8'))
   // Vite: an inline root wins over the project config's root, which wins over the working directory.
   const root = inline.root ?? (behavior.projectRoot ? join(cwd, behavior.projectRoot) : cwd)
+  for (const [name, value] of Object.entries(behavior.setsEnv ?? {})) globalThis.process.env[name] = value
   for (const line of behavior.logLines ?? []) console.log(line)
   for (const name of behavior.logEnv ?? []) console.log('ENV ' + name + '=' + (globalThis.process.env[name] ?? ''))
   for (const message of behavior.sendsMessages ?? []) globalThis.process.send(message)

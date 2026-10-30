@@ -73,16 +73,18 @@ type ViteModule = {
  *
  * @param vite - The app's Vite module, when it was imported.
  * @param options - The launcher's options (root and mode).
+ * @param launchEnvironmentNames - The names the launcher's environment held when it started, before Vite or the project's config ran.
  * @param config - The resolved config, once there is one: its `envDir`, `envPrefix` and `mode` are the ones Vite really loaded.
  * @returns The values of at least {@link VITE_MASKED_VALUE_MIN_CHARS} characters; empty when Vite is not loaded or cannot read them.
- * `loadEnv` (not Node's dotenv parser) names and expands the values, so every syntax Vite accepts (`NAME=value`, `NAME: value`, `${VAR}`) is covered. An entry is kept when the environment before the call did not define its name (an env file did) or its name starts with an env prefix (`VITE_` unless the config sets `envPrefix`), which Vite inlines into client code; the mode names ({@link VITE_MODE_ENV_NAMES}) are never kept, so `HOME` or `PATH` stay readable in a refusal. `process.env` is never swapped.
+ * `loadEnv` (not Node's dotenv parser) names and expands the values, so every syntax Vite accepts (`NAME=value`, `NAME: value`, `${VAR}`) is covered. An entry is kept when the launcher's environment did not hold its name at start (an env file defined it, or the project's config set it while loading, for example by loading an env file itself) or its name starts with an env prefix (`VITE_` unless the config sets `envPrefix`), which Vite inlines into client code; the mode names ({@link VITE_MODE_ENV_NAMES}) are never kept, so `HOME` or `PATH` stay readable in a refusal. `process.env` is never swapped. Names compare case-sensitively, as `loadEnv` returns them, so an env file's `PATH` stays apart from Windows' `Path`.
  * Limit: before the config resolved (an import failure, a config that throws or exits) the values come from the package root and the dev script's mode with the default prefix; values of a custom `envDir` are masked only once the config resolved, which is why {@link run} never quotes the error line of a config that failed before it resolved.
  * @example
- * loadedEnvValues(vite, options) // => ['plainsecretvalue']
+ * loadedEnvValues(vite, options, new Set(['HOME', 'PATH'])) // => ['plainsecretvalue']
  */
 function loadedEnvValues(
   vite: ViteModule | undefined,
   options: ViteLauncherOptions,
+  launchEnvironmentNames: ReadonlySet<string>,
   config?: ViteServer['config'],
 ): string[] {
   try {
@@ -90,13 +92,11 @@ function loadedEnvValues(
       config && typeof config.envDir === 'string' ? config.envDir : options.root
     const mode = config?.mode ?? options.mode ?? 'development'
     const prefixes = envPrefixesOf(config)
-    // Taken before loadEnv: a name absent here was defined by an env file.
-    const environmentBefore = { ...process.env }
     const loaded = vite?.loadEnv(mode, envDir, '') ?? {}
     return Object.entries(loaded)
       .filter(
         ([name, value]) =>
-          (!(name in environmentBefore) ||
+          (!launchEnvironmentNames.has(name) ||
             prefixes.some((prefix) => name.startsWith(prefix))) &&
           !VITE_MODE_ENV_NAMES.includes(name) &&
           value.length >= VITE_MASKED_VALUE_MIN_CHARS,
@@ -183,6 +183,10 @@ function failedConfigFile(
  * // node dist/viteLauncher.js '{"viteEntry":"/repo/node_modules/vite/dist/node/index.js","root":"/repo"}'
  */
 async function run(): Promise<void> {
+  // Taken before Vite or the project's config runs: a name that appears later was set by an env file or by the config, so its value is masked.
+  const launchEnvironmentNames: ReadonlySet<string> = new Set(
+    Object.keys(process.env),
+  )
   // The exit that follows a failure report must wait until the channel has flushed it.
   const send = (report: ViteLauncherReport): Promise<void> =>
     new Promise((resolve) => {
@@ -207,7 +211,7 @@ async function run(): Promise<void> {
     // Sent before the project's config runs: a launcher that dies in project code still leaves the extension the values to mask.
     await send({
       type: VITE_LAUNCHER_MESSAGES.env,
-      envValues: loadedEnvValues(vite, options),
+      envValues: loadedEnvValues(vite, options, launchEnvironmentNames),
     })
     phase = 'config'
     // No inline `root`: an inline root would win over a project config's own `root`, hiding it from the settings policy; the launcher's working directory is the package root.
@@ -227,7 +231,12 @@ async function run(): Promise<void> {
       ? relative(options.root, config.configFile)
       : undefined
     const hmr = config.server.hmr
-    const envValues = loadedEnvValues(vite, options, config)
+    const envValues = loadedEnvValues(
+      vite,
+      options,
+      launchEnvironmentNames,
+      config,
+    )
     const factsSent = send({
       type: VITE_LAUNCHER_MESSAGES.facts,
       envValues,
@@ -292,7 +301,12 @@ async function run(): Promise<void> {
     })
   } catch (error) {
     const failure = error instanceof Error ? error : new Error(String(error))
-    const envValues = loadedEnvValues(viteModule, options, server?.config)
+    const envValues = loadedEnvValues(
+      viteModule,
+      options,
+      launchEnvironmentNames,
+      server?.config,
+    )
     const configUnresolved = phase === 'config' && !server
     const quoted = quotedErrorLine(failure, envValues, configUnresolved)
     await send({
