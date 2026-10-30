@@ -11,6 +11,7 @@ import {
 } from '../constants'
 import type { RepositoryConfiguration } from '../repositoryConfigSchemas'
 
+import { maskStoredFact } from './maskStoredFact'
 import { redactInspectedValue } from './redactInspectedValue'
 
 /** Captures declared bounded facts for {@link ConfiguredBrowserRun}; an object or function is captured as its `{ type }` marker, because its members are not bounded, and explicit unavailability preserves other facts while the caller gates continuation. @param maskKnownText - Masks the values a Vite run learned from its env files in a captured string; the identity for a run without such values. @example await inspectConfiguredValues(evaluate, callFrameId, configuration.inspections, assertCurrent) */
@@ -51,10 +52,19 @@ export async function inspectConfiguredValues(
       (inspection.mode !== 'type' ||
         REPOSITORY_CAPTURED_TYPES.some((type) => type === value.data))
     if (available && value.success) {
-      const redacted = redactInspectedValue(inspection, value.data)
-      // Known env-file values are masked by value, beside the name and shape redaction above.
-      values[path] =
-        typeof redacted === 'string' ? maskKnownText(redacted) : redacted
+      // Known env-file values are masked by value, beside the name and shape redaction.
+      const stored = maskStoredFact(
+        redactInspectedValue(inspection, value.data),
+        maskKnownText,
+      )
+      // A mask can be longer than the value it hides: a text grown past the stored bound stays unavailable, so the study still saves.
+      if (stored === undefined)
+        unavailableValues.push({
+          path,
+          reason:
+            'The value exceeds the stored bound once its secrets are masked.',
+        })
+      else values[path] = stored
       continue
     }
     const reason = response.exceptionDetails

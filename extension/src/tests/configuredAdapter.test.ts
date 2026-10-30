@@ -889,6 +889,33 @@ test('required undefined remains an observed value distinct from null strings an
   )
 })
 
+// Value: protects=a captured text that fits the bound but grows past it when a short env value is masked is reported unavailable, so the study's saved observation still parses; fails_when=the masked text is stored without checking the bound, and the save throws on the schema; why_new=Cycle 0064 ship pass 2 (Codex structured review, P2); seam=none; no_claim=the shape redaction of secret-looking text
+test('a captured text that grows past the stored bound once an env value is masked is reported unavailable', async () => {
+  // Arrange
+  const environment = { nearLimit: 'x'.repeat(1018) + 'abcdef' }
+  // Act
+  const result = await inspectConfiguredValues(
+    async (parameters) => {
+      const value = runInNewContext(parameters.expression, environment)
+      return JSON.parse(
+        JSON.stringify({ result: { type: typeof value, value } }),
+      )
+    },
+    'exact-frame',
+    [{ path: 'nearLimit', mode: 'value', required: true }],
+    () => {},
+    (text) => text.replaceAll('abcdef', '[masked]'),
+  )
+  // Assert
+  assert.deepEqual(result.values, {})
+  assert.deepEqual(result.unavailableValues, [
+    {
+      path: 'value:nearLimit',
+      reason: 'The value exceeds the stored bound once its secrets are masked.',
+    },
+  ])
+})
+
 /**
  * Reads what the owned page answers for one declared text condition against an element holding the given text.
  * @param elementText - The element's textContent.
