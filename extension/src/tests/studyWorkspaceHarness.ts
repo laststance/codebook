@@ -1088,6 +1088,8 @@ export async function workspaceHarness(
   let closeEmptyGroupsOnMove = false
   /** Whether the group a pane's move left empty goes {@link MOVED_PANE_GROUP_REMOVAL_DELAY_MS} after the move instead of with it; see `removeGroupLeftByPanelMoveLater`. */
   let removesGroupLeftByMoveLater = false
+  /** Whether a pane's move is reported as its tab opening in the new group first and closing in the old group after that; see `reportsPaneMoveAsOpenThenClose`. */
+  let reportsPaneMoveAsOpenThenCloseFlag = false
   /** The removals of groups a pane's move left empty that the fake editor has not run yet; see `removeGroupLeftByPanelMoveLater`. */
   const pendingMoveRemovals: (() => void)[] = []
   let closeDisposedPanelTabsLater = false
@@ -3252,12 +3254,19 @@ export async function workspaceHarness(
               candidate.tabs.includes(nativeTab),
             ),
             homeIndex = homeGroup?.tabs.indexOf(nativeTab) ?? -1
+          const destinationGroup = nativeGroup(value.viewColumn ?? 1)
+          // Cursor 3.27.22 reports the open in the new group first; the old group still holds the tab until the close that follows (N64p2-F1).
+          const closesAfterOpen =
+            reportsPaneMoveAsOpenThenCloseFlag &&
+            homeGroup !== undefined &&
+            homeGroup !== destinationGroup
           for (const group of groups) {
+            if (closesAfterOpen && group === homeGroup) continue
             group.tabs = group.tabs.filter((tab) => tab !== nativeTab)
             if (group.activeTab === nativeTab)
               group.activeTab = group.tabs.at(-1)
           }
-          const group = nativeGroup(value.viewColumn ?? 1)
+          const group = destinationGroup
           revealIntoHiddenEditorArea(
             group.viewColumn,
             !wasInFront || !preserveFocus,
@@ -3286,6 +3295,16 @@ export async function workspaceHarness(
               shownIndexBeforeMove,
             )
           group.activeTab = nativeTab
+          if (closesAfterOpen && homeGroup) {
+            // The open is reported with every group an object anew, then the old group's tab closes.
+            replaceGroupObjects()
+            const standingHome = currentGroupOf(homeGroup) ?? homeGroup
+            standingHome.tabs = standingHome.tabs.filter(
+              (tab) => tab !== nativeTab,
+            )
+            if (standingHome.activeTab === nativeTab)
+              standingHome.activeTab = standingHome.tabs.at(-1)
+          }
           endTextEditorReportKeptAtNewGroup(group)
           if (column !== undefined && previousColumn !== column)
             nativeTab.isPreview = true
@@ -3307,9 +3326,11 @@ export async function workspaceHarness(
                 const index = pendingMoveRemovals.indexOf(removeLater)
                 if (index < 0) return
                 pendingMoveRemovals.splice(index, 1)
-                if (!groups.includes(emptied) || emptied.tabs.length) return
-                automaticallyClosedColumns.push(emptied.viewColumn)
-                removeEmptiedGroup(emptied)
+                // Cursor replaced every group object at the pane's move (N64p2-F1): the group is followed to the object the model holds by then.
+                const standing = currentGroupOf(emptied)
+                if (!standing || standing.tabs.length) return
+                automaticallyClosedColumns.push(standing.viewColumn)
+                removeEmptiedGroup(standing)
               }
               pendingMoveRemovals.push(removeLater)
               runEditorChangeLater(
@@ -6155,6 +6176,17 @@ export async function workspaceHarness(
      */
     removeGroupLeftByPanelMoveLater(): void {
       removesGroupLeftByMoveLater = true
+    },
+    /**
+     * Makes the fake editor report a pane's move to another group as Cursor 3.27.22 did for the Application in N64p2-F1: the tab opens in the new group (every group an object anew) and closes in the old group in a later report (every group an object anew again, the old group now empty); with {@link removeGroupLeftByPanelMoveLater} the old group is removed after both.
+     * @example
+     * harness.closeEmptyGroupsAfterPanelMove()
+     * harness.removeGroupLeftByPanelMoveLater()
+     * harness.reportsPaneMoveAsOpenThenClose()
+     */
+    reportsPaneMoveAsOpenThenClose(): void {
+      reportsPaneMoveAsOpenThenCloseFlag = true
+      replacesGroupObjectsOnTabChanges = true
     },
     /** The fake editor the reader runs in, so a test can act on it as the learner or another extension does: run a native command, create a panel, show a document or close a tab. @example await harness.editor.commands.executeCommand('workbench.action.focusFirstEditorGroup') */
     editor: editorDependencies.vscode,
