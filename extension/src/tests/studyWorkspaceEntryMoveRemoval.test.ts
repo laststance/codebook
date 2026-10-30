@@ -238,3 +238,63 @@ test("in Cursor, a learner's tab brought to the front of their group while the e
     await harness.close()
   }
 })
+
+// Value: protects=the Application pane staying open when the native debugger opens a run's stop file in the Application's group in Cursor 3.27.22 (N64p2-F2: the Application tab stood as a preview in column 1 after its move, the stop's file opened as a preview in that group replaced it, and the run failed ten seconds later with "Owned viewport closed before cleanup"): the Application is still at column 1 beside the stop file; fails_when=the Application's tab is left a preview after its move, so a text preview opened in its group closes the pane and its webview; why_new=Cycle 0064 N64p2-F2 (task 67); seam=BrowserViewport.attach (the run's browser attach), reader open (the Application's first pane), createViewport (a live run's Application moved into its new group), addSeparateEditorPart (Cursor's chat part), replaceGroupObjectsOnTabChanges, closeEmptyGroupsAfterPanelMove with removeGroupLeftByPanelMoveLater, reportsPaneMoveAsOpenThenClose, replacesPreviewTabOnTextPreview (a text preview replaces the group's preview tab), openPausedFileInLockedGroup; no_claim=the real Cursor's answer (native Cursor trial), the run's journal
+test("in Cursor, a run's Application stays open when the debugger opens the run's stop file as a preview in its group", async () => {
+  // Arrange: the Study is open with its Application pane and an agent starts a run from Cursor's Agent chat; the run's Application moves into its new group at column 1, where Cursor lists its tab as a preview.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.rebuildTabObjectsAtGroupRemoval()
+  harness.closeEmptyGroupsAfterPanelMove()
+  harness.removeGroupLeftByPanelMoveLater()
+  harness.reportsPaneMoveAsOpenThenClose()
+  harness.replacesPreviewTabOnTextPreview()
+  let viewport:
+    | Awaited<
+        ReturnType<
+          NonNullable<typeof harness.reader.presentation.createViewport>
+        >
+      >
+    | undefined
+  try {
+    harness.focusMutableDraft('auth.ts', 3)
+    harness.focusMutableDraft('actions.ts', 2)
+    await harness.reader.open()
+    chat.focusTab()
+    viewport = await harness.reader.presentation.createViewport(
+      'stop-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+
+    // Act: the run attaches its browser, pauses, and the debugger opens its stop file as a preview in the Application's group.
+    await viewport.attach(
+      {
+        on: () => undefined,
+        request: async () => ({}),
+        subscribe: async () => undefined,
+      },
+      new AbortController().signal,
+    )
+    harness.openPausedFileInLockedGroup('index.tsx', 1)
+
+    // Assert
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+    const applicationGroup = harness.groups.find(
+      (group) => group.viewColumn === 1,
+    )!
+    assert.deepEqual(
+      applicationGroup.tabs.map((tab) => tab.label),
+      ['codebook · Application stop-run', 'index.tsx'],
+    )
+  } finally {
+    viewport?.close()
+    await harness.close()
+  }
+})

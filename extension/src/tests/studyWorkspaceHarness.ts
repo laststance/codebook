@@ -1259,6 +1259,8 @@ export async function workspaceHarness(
   let closeDisposedPanelTabsDuringLayoutRead = false
   /** The fake editor answers every tab change with new TabGroup objects, as Cursor does; see `replaceGroupObjectsOnTabChanges`. */
   let replacesGroupObjectsOnTabChanges = false
+  /** Whether a text tab opened as a preview replaces the preview tab its group already shows, a Codebook pane included; see `replacesPreviewTabOnTextPreview`. */
+  let replacesPreviewTabOnTextPreviewFlag = false
   /** The fake editor answers a removed group with new Tab objects, as Cursor does; see `rebuildTabObjectsAtGroupRemoval`. */
   let rebuildsTabObjectsAtGroupRemoval = false
   /** The view column a panel of a kind reports while it differs from the column of its tab's group; see `reportPanelColumn`. */
@@ -2400,6 +2402,16 @@ export async function workspaceHarness(
           listener({ textEditor: editor, selections: value, kind: undefined })
       },
     })
+    // A preview opened in a group replaces that group's preview tab; a preview pane is disposed with it.
+    if (isPreview && replacesPreviewTabOnTextPreviewFlag) {
+      const replacedTab = group.tabs.find((candidate) => candidate.isPreview)
+      const replacedPane = [...panels].find(
+        (panel) => panel.nativeTab === replacedTab,
+      )
+      if (replacedPane) replacedPane.dispose()
+      else if (replacedTab)
+        group.tabs = group.tabs.filter((candidate) => candidate !== replacedTab)
+    }
     group.tabs.push(tab)
     group.activeTab = tab
     visibleSourceEditors.push(editor)
@@ -3696,6 +3708,7 @@ export async function workspaceHarness(
         released(): void
         assertCanReveal?(current: ReturnType<typeof panel>): void
         comesWithoutKeyboard?(): Promise<boolean>
+        keepsPaneOpen?(signal: AbortSignal): Promise<void>
         tookKeyboardFromEditor?(): void
       },
       _observer?: unknown,
@@ -3816,8 +3829,10 @@ export async function workspaceHarness(
     lastFrameAt(): number | undefined {
       return undefined
     }
-    /** The fake renderer needs no screencast. */
-    async attach(): Promise<void> {}
+    /** The fake renderer needs no screencast; like the real viewport it first lets its lease's owner keep the pane's tab open. @example await viewport.attach(cdp, signal) */
+    async attach(_cdp?: unknown, signal?: AbortSignal): Promise<void> {
+      await this.lease.keepsPaneOpen?.(signal ?? new AbortController().signal)
+    }
     /** The fake renderer has no pinned pause to leave. */
     resume(): void {}
     /** Reserves the simulated renderer so workspace tests enforce drain before adoption. @example const release = await viewport.holdPlacement() */
@@ -6187,6 +6202,15 @@ export async function workspaceHarness(
     reportsPaneMoveAsOpenThenClose(): void {
       reportsPaneMoveAsOpenThenCloseFlag = true
       replacesGroupObjectsOnTabChanges = true
+    },
+    /**
+     * Makes the fake editor open a text tab as a preview in place of the preview tab its group already shows, as Cursor 3.27.22 did at the debugger's stop in the Application's group (N64p2-F2): a Codebook pane that is that preview is disposed, so its tab and its webview go.
+     * @example
+     * harness.replacesPreviewTabOnTextPreview()
+     * harness.openPausedFileInLockedGroup('index.tsx', 1) // closes a preview Application in column 1
+     */
+    replacesPreviewTabOnTextPreview(): void {
+      replacesPreviewTabOnTextPreviewFlag = true
     },
     /** The fake editor the reader runs in, so a test can act on it as the learner or another extension does: run a native command, create a panel, show a document or close a tab. @example await harness.editor.commands.executeCommand('workbench.action.focusFirstEditorGroup') */
     editor: editorDependencies.vscode,
