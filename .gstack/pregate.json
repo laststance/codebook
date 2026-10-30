@@ -171,6 +171,30 @@
       "paths": ["extension/src/tests/chromeExtensionService.test.ts"],
       "pattern": "extension-run",
       "reason": "a codebook_start idempotency key named key in a test; no secret value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "extension/src/tests/configuredService.test.ts",
+        "extension/src/tests/viteRunResource.test.ts"
+      ],
+      "pattern": "vite-[a-z-]+",
+      "reason": "codebook_start idempotency keys named key in the vite-dev tests; no secret value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": ["extension/src/tests/viteDevScript.test.ts"],
+      "pattern": "plainsecret1",
+      "reason": "the dummy assignment value a dev-script refusal test expects to see masked; never a credential"
+    },
+    {
+      "finding": "creds.basic_auth_url",
+      "paths": [
+        "extension/src/tests/viteLauncher.test.ts",
+        "extension/src/tests/viteWorkspace.test.ts"
+      ],
+      "pattern": "https[:]//u(?:ser)?:(?:plainsecretpw|pw|\\[masked\\])@[a-z.]+",
+      "reason": "dummy basic-auth URLs the Vite settings and masking tests feed in or expect masked; never a credential"
     }
   ]
 }
