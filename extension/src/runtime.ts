@@ -359,6 +359,8 @@ export type RuntimeSource = {
   source: string
   javascript: string
   sourceMap: string
+  /** True when `javascript` and `sourceMap` are the masked copy (env-file values replaced by the mask): their text no longer hashes to the seal's hashes, which name the executed bytes. */
+  redacted?: boolean
 }
 export type Participant = 'server' | 'browser'
 export type RuntimeParticipant = {

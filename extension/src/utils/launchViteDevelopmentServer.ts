@@ -131,7 +131,7 @@ function listenFailureRefusal(
  * @param workspaceInfo - The Vite installation and accepted `dev` script ({@link assessViteWorkspace}).
  * @param launcherPath - The absolute path of the compiled launcher module.
  * @param factsTimeoutMs - How long the launcher may take to report its facts; production keeps {@link VITE_LAUNCHER_FACTS_TIMEOUT_MS}, a test passes a short one.
- * @returns The ready-to-wait server, the port it listens on and the Vite version the launcher reported.
+ * @returns The ready-to-wait server, the port it listens on, the Vite version the launcher reported and the value mask for text the run keeps (a sealed module whose inlined `VITE_` values come from the env files).
  * @throws `VITE_LAUNCHER_FAILED` (config error, crash, no report in time), `VITE_UNSUPPORTED` (settings), `VITE_PORT_UNAVAILABLE`; each message is masked by value and redacted.
  * @example
  * const { app, port } = await launchViteDevelopmentServer(request, workspaceInfo, join(__dirname, 'viteLauncher.js'))
@@ -141,7 +141,12 @@ export async function launchViteDevelopmentServer(
   workspaceInfo: ViteWorkspace,
   launcherPath: string,
   factsTimeoutMs: number = VITE_LAUNCHER_FACTS_TIMEOUT_MS,
-): Promise<{ app: DevelopmentApp; port: number; viteVersion: string }> {
+): Promise<{
+  app: DevelopmentApp
+  port: number
+  viteVersion: string
+  maskText: (text: string) => string
+}> {
   const { script, installation } = workspaceInfo
   // Every value the launcher is given or loads is masked by value in what leaves this module.
   const maskedValues = Object.values(script.assignments)
@@ -261,5 +266,10 @@ export async function launchViteDevelopmentServer(
       'VITE_LAUNCHER_FAILED',
       `Vite listens on another port than the one its config resolved (${facts.port}).`,
     )
-  return { app, port: facts.port, viteVersion: mask(facts.viteVersion) }
+  return {
+    app,
+    port: facts.port,
+    viteVersion: mask(facts.viteVersion),
+    maskText: mask,
+  }
 }

@@ -66,6 +66,7 @@ import type {
   ConfiguredRuntimeView,
   RuntimeAction,
   RuntimeControl,
+  RuntimeSource,
   RuntimeSnapshot,
   StudyRuntime,
   Participant,
@@ -530,6 +531,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private portSource?: string
   /** The Vite version the launcher reported, for a `vite-dev` run. */
   private viteVersion?: string
+  /** Masks env-file and script values in the module text a Vite run keeps ({@link archivedModuleText}); absent for a Next run. */
+  private maskText?: (text: string) => string
   /** Codebook's listener on `[::1]:<port>` (D66), closed with the run. */
   private ipv6Forwarder?: Ipv6LoopbackForwarder
   /** Whether `[::1]` at the port is the run's own, so the origin checks accept it. */
@@ -691,6 +694,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       },
     })
     this.viteVersion = started.viteVersion
+    this.maskText = started.maskText
     const declaredPort = { port: started.port }
     // The server binds 127.0.0.1; the browser opens `localhost` at its port, the name the project's own origin settings use (D65).
     this.setupStep = 'waiting for the server to answer the entry page'
@@ -848,14 +852,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       prepared.bundle.source,
     )
     this.alive()
+    const archivedModule = this.archivedModuleText(prepared.bundle)
     await this.evidence.save(
       `sealed-${index}-module.js`,
-      prepared.bundle.javascript,
+      archivedModule.javascript,
     )
     this.alive()
     await this.evidence.save(
       `sealed-${index}-module.map.json`,
-      prepared.bundle.sourceMap,
+      archivedModule.sourceMap,
     )
     this.alive()
     this.evidence.record(
@@ -863,6 +868,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       {
         index,
         ...(generation === undefined ? {} : { generation }),
+        // The hashes below name the executed bytes; the saved copy is masked when this is true.
+        redacted: archivedModule.redacted,
         participant: stop.participant,
         discovery: acquired.discovery,
         scriptUrl: prepared.bundle.scriptUrl,
@@ -5867,13 +5874,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     try {
       // A stop captured in another layer's instance keeps that instance's generated code and map, which its hashes name, beside the sealed ones.
       if (executedModule !== stop) {
+        const archivedModule = this.archivedModuleText(executedModule.bundle)
         await this.evidence.save(
           `snapshot-${stop.participant}-${pause.generation}-module.js`,
-          executedModule.bundle.javascript,
+          archivedModule.javascript,
         )
         await this.evidence.save(
           `snapshot-${stop.participant}-${pause.generation}-module.map.json`,
-          executedModule.bundle.sourceMap,
+          archivedModule.sourceMap,
         )
       }
       await this.evidence.save(
@@ -6464,10 +6472,47 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @returns The bundle, or `undefined` for another item or an unknown snapshot.
    * @example run.source(itemId, snapshot.id)?.javascript // the (middleware) instance's code for a stop captured there
    */
-  source(item: string, snapshotId?: string): BundleSource | undefined {
+  source(item: string, snapshotId?: string): RuntimeSource | undefined {
     if (item !== this.definition.descriptor.itemId) return undefined
-    if (snapshotId === undefined) return this.stops[0]?.bundle
-    return this.snapshotBundles.get(snapshotId)
+    const bundle =
+      snapshotId === undefined
+        ? this.stops[0]?.bundle
+        : this.snapshotBundles.get(snapshotId)
+    if (!bundle) return undefined
+    const archivedModule = this.archivedModuleText(bundle)
+    return archivedModule.redacted ? { ...bundle, ...archivedModule } : bundle
+  }
+  /**
+   * Masks the env-file and script values in the module text a Vite run keeps, and says whether anything was masked.
+   *
+   * Why it exists: Vite inlines `import.meta.env` values (the `VITE_` ones from the `.env` files) into the modules it serves, and the sealed module is written to the run's evidence and served by the source resources. Called by the sealing loop, the snapshot save and {@link source}.
+   * The seal's hashes keep naming the executed bytes; only the kept copy is masked.
+   *
+   * @param bundle - The sealed or executed module.
+   * @returns The JavaScript and map text to keep, and `redacted` when either changed.
+   * @example
+   * this.archivedModuleText(bundle) // => { javascript: 'const k = "[masked]"', sourceMap: '{…}', redacted: true }
+   */
+  private archivedModuleText(bundle: BundleSource): {
+    javascript: string
+    sourceMap: string
+    redacted: boolean
+  } {
+    const mask = this.maskText
+    if (!mask)
+      return {
+        javascript: bundle.javascript,
+        sourceMap: bundle.sourceMap,
+        redacted: false,
+      }
+    const javascript = mask(bundle.javascript)
+    const sourceMap = mask(bundle.sourceMap)
+    return {
+      javascript,
+      sourceMap,
+      redacted:
+        javascript !== bundle.javascript || sourceMap !== bundle.sourceMap,
+    }
   }
   /** Exposes bounded descriptors and immutable references; service signatures never serialize full modules or maps. @example run.view().participants.browser.pause */
   view(): ConfiguredRuntimeView {

@@ -9,6 +9,7 @@ import {
   CONFIGURED_MINIMUM_EXTENSION_VERSION,
   REPOSITORY_BROWSER_ACTION,
   REPOSITORY_JAVASCRIPT_LIMIT_BYTES,
+  REDACTED_MODULE_LABEL,
   REPOSITORY_MAP_LIMIT_BYTES,
   BOOK_INPUT_LIMIT_BYTES,
   HTTP_BODY_LIMIT_BYTES,
@@ -699,14 +700,23 @@ export async function readResource(
           : sourceMatch[2] === 'javascript'
             ? REPOSITORY_JAVASCRIPT_LIMIT_BYTES
             : REPOSITORY_MAP_LIMIT_BYTES
+    // A masked copy cannot hash to the executed bytes' hash; the seal identity stays the executed bytes' hash.
     if (
       Buffer.byteLength(selection.text) > limit ||
-      sha256(selection.text) !== selection.hash
+      (!source.redacted && sha256(selection.text) !== selection.hash)
     )
       throw new EvidenceIntegrityError(
         'Captured source exceeds limits or its sealed hash changed.',
       )
-    return { uri, mimeType: selection.mimeType, text: selection.text }
+    return {
+      uri,
+      mimeType: selection.mimeType,
+      // The label stays after the last line, so no line number moves.
+      text:
+        source.redacted && sourceMatch[2] === 'javascript'
+          ? `${selection.text}\n${REDACTED_MODULE_LABEL}\n`
+          : selection.text,
+    }
   }
   throw new StudyError('NOT_FOUND', 'Unknown resource kind.')
 }

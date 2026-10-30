@@ -20,6 +20,7 @@ import { WaitTimeoutError } from '../../runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
 import { configuredDomExpression } from '../../utils/configuredDomExpression'
 import { createBundleVerifier } from '../../utils/createBundleVerifier'
+import { maskKnownValues } from '../../utils/maskKnownValues'
 import * as viteDevAdapter from '../../viteDevAdapter'
 
 import {
@@ -85,6 +86,10 @@ export async function configuredRuntimeHarness(
     sealFailure?: string
     /** Makes the Vite stand-in never finish reading the served module, as a server that stops answering does while a stop is sealed. */
     sealHangs?: boolean
+    /** The executed module's text instead of the default one-statement module, such as a Vite module with an inlined env value. */
+    moduleJavascript?: string
+    /** Makes the Vite stand-in report these values as the ones it masks in kept module text, as the launcher's env-file values are. */
+    maskedValues?: string[]
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
@@ -127,7 +132,9 @@ export async function configuredRuntimeHarness(
     ),
     source = reference.descriptor!.sources[0]!.text,
     // With a fixture the executed module mirrors the source line for line, so a pause can be placed on any of its lines.
-    javascript = fixture ? source : 'const nextTheme = "dark";'
+    javascript =
+      options.moduleJavascript ??
+      (fixture ? source : 'const nextTheme = "dark";')
   const bundle: BundleSource = {
     sourcePath,
     source,
@@ -793,7 +800,17 @@ export async function configuredRuntimeHarness(
             request.onStep('starting Vite')
             setupSteps.push('starting Vite')
             request.onApp(fakeApplication)
-            return { app: fakeApplication, port: 4321, viteVersion: '8.3.5' }
+            return {
+              app: fakeApplication,
+              port: 4321,
+              viteVersion: '8.3.5',
+              ...(options.maskedValues
+                ? {
+                    maskText: (text: string) =>
+                      maskKnownValues(text, options.maskedValues ?? []),
+                  }
+                : {}),
+            }
           },
           waitForServerSettled: async () => {
             settledQuestions += 1

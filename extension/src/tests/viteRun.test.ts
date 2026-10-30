@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { test } from 'node:test'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { REPOSITORY_SETUP_TIMEOUT_MS, VITE_PAGE_QUIET_MS } from '../constants'
 import { StudyError } from '../errors'
+import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import {
   viteFailureOf,
@@ -389,4 +392,38 @@ test('the setup deadline text says the opened browser was closed for every step 
     'VITE_SETUP_DEADLINE: Repository setup deadline (90 s) exceeded while waiting for the page to settle. First-run dependency pre-bundling can take long; the owned server was stopped and the browser Codebook opened was closed and no click was sent, so start again once (the dependency cache is warm then).',
     'VITE_SETUP_DEADLINE: Repository setup deadline (90 s) exceeded while writing the initial inputs and arming the first stop. First-run dependency pre-bundling can take long; the owned server was stopped and the browser Codebook opened was closed and no click was sent, so start again once (the dependency cache is warm then).',
   ])
+})
+
+// Value: protects=a VITE_ value from .env that Vite inlined into the served module never stays in the kept copy of the module, while the seal keeps naming the executed bytes; fails_when=the sealed module text is saved or served unmasked; why_new=the run now masks kept module text with the launcher's env-file values; seam=maskedValues stands in for the launcher's mask; no_claim=the saved study JSON (it holds hashes only, no module text)
+test('the kept copy of a sealed Vite module masks an inlined env value and marks the module redacted while the seal hash names the executed bytes', async (context) => {
+  // Arrange
+  const executedJavascript = 'const apiKey = "plainsecret1";'
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    adapter: 'vite-dev',
+    moduleJavascript: executedJavascript,
+    maskedValues: ['plainsecret1'],
+  })
+  // Act
+  await harness.run.prepare()
+  await harness.run.evidence.flush()
+  // Assert
+  const keptModule = await readFile(
+    join(harness.run.evidence.directory, 'sealed-0-module.js'),
+    'utf8',
+  )
+  assert.equal(keptModule, 'const apiKey = "[masked]";')
+  const sealedEvent = harness.run.evidence.events.find(
+    (event) => event.type === 'source.sealed',
+  )
+  assert.equal(
+    JSON.stringify(sealedEvent?.detail).includes('"redacted":true'),
+    true,
+  )
+  assert.equal(
+    harness.run.view().manifest?.javascriptHash,
+    sha256(executedJavascript),
+  )
+  const served = harness.run.source(harness.definition.descriptor.itemId)
+  assert.equal(served?.javascript, 'const apiKey = "[masked]";')
+  assert.equal(served?.redacted, true)
 })

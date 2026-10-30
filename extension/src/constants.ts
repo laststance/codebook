@@ -2265,6 +2265,10 @@ export const VITE_VERSION_MAX_CHARS = 64
 /** The longest a Vite config's thrown error line is carried in a refusal. */
 export const VITE_ERROR_LINE_LIMIT_CHARS = 200
 
+/** The comment a replay appends to a Vite module whose env-file values are masked, so the redaction stays explicit; the module's sealed hash still names the executed bytes. */
+export const REDACTED_MODULE_LABEL =
+  '// [masked] Codebook masked env-file values in this module; its sealed hash names the executed bytes.'
+
 /** The file names Vite looks up as the project config when the dev script names none, in Vite's own order. */
 export const VITE_DEFAULT_CONFIG_FILE_NAMES: readonly string[] = [
   'vite.config.js',
