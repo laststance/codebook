@@ -90,6 +90,8 @@ export async function configuredRuntimeHarness(
     moduleJavascript?: string
     /** Makes the Vite stand-in report these values as the ones it masks in kept module text, as the launcher's env-file values are. */
     maskedValues?: string[]
+    /** The text the debugger reports for `nextTheme` (its variable and the declared inspection) instead of `dark`. */
+    capturedValue?: string
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
@@ -281,7 +283,9 @@ export async function configuredRuntimeHarness(
           variables: [
             {
               name: 'nextTheme',
-              value: requiredValueUndefined ? 'undefined' : 'dark',
+              value: requiredValueUndefined
+                ? 'undefined'
+                : (options.capturedValue ?? 'dark'),
               type: requiredValueUndefined ? 'undefined' : 'string',
               variablesReference: 0,
             },
@@ -412,7 +416,9 @@ export async function configuredRuntimeHarness(
     if (requiredValueUnavailable)
       return 'x'.repeat(REPOSITORY_LITERAL_LIMIT_CHARS + 1)
     if (requiredValueObject) return { email: 'learner@example.com' }
-    return requiredValueUndefined ? undefined : 'dark'
+    return requiredValueUndefined
+      ? undefined
+      : (options.capturedValue ?? 'dark')
   }
   const proxy = {
     closed: false,

@@ -13,7 +13,7 @@ import type { RepositoryConfiguration } from '../repositoryConfigSchemas'
 
 import { redactInspectedValue } from './redactInspectedValue'
 
-/** Captures declared bounded facts for {@link ConfiguredBrowserRun}; an object or function is captured as its `{ type }` marker, because its members are not bounded, and explicit unavailability preserves other facts while the caller gates continuation. @example await inspectConfiguredValues(evaluate, callFrameId, configuration.inspections, assertCurrent) */
+/** Captures declared bounded facts for {@link ConfiguredBrowserRun}; an object or function is captured as its `{ type }` marker, because its members are not bounded, and explicit unavailability preserves other facts while the caller gates continuation. @param maskKnownText - Masks the values a Vite run learned from its env files in a captured string; the identity for a run without such values. @example await inspectConfiguredValues(evaluate, callFrameId, configuration.inspections, assertCurrent) */
 export async function inspectConfiguredValues(
   evaluate: (
     parameters: Protocol.Debugger.EvaluateOnCallFrameRequest,
@@ -21,6 +21,7 @@ export async function inspectConfiguredValues(
   callFrameId: string,
   inspections: RepositoryConfiguration['inspections'],
   assertCurrent: () => void,
+  maskKnownText: (text: string) => string = (text) => text,
 ) {
   const values: ConfiguredObservation['values'] = {},
     unavailableValues: ConfiguredObservation['unavailableValues'] = []
@@ -50,7 +51,10 @@ export async function inspectConfiguredValues(
       (inspection.mode !== 'type' ||
         REPOSITORY_CAPTURED_TYPES.some((type) => type === value.data))
     if (available && value.success) {
-      values[path] = redactInspectedValue(inspection, value.data)
+      const redacted = redactInspectedValue(inspection, value.data)
+      // Known env-file values are masked by value, beside the name and shape redaction above.
+      values[path] =
+        typeof redacted === 'string' ? maskKnownText(redacted) : redacted
       continue
     }
     const reason = response.exceptionDetails

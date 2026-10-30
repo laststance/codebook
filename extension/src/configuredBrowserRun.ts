@@ -5786,6 +5786,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       callFrame.callFrameId,
       stop.inspections,
       current,
+      this.maskText,
     )
     current()
     const debuggerSnapshot = await captureReplayDebugSnapshot({
@@ -5800,6 +5801,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         participant.selected!.customRequest(command, arguments_),
       assertCurrent: current,
       signal: this.abort.signal,
+      maskKnownText: this.maskText,
     })
     current()
     let inspectionFailure: Error | undefined
