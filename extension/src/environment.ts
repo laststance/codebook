@@ -53,6 +53,7 @@ import {
   planNodeTestExecution,
   type NodeTestExecutionPlan,
 } from './utils/planNodeTestExecution'
+import { readRepositoryAdapterReadiness } from './utils/readRepositoryAdapterReadiness'
 import {
   resolveExternalNode,
   resolveExternalNodeExecutable,
@@ -367,7 +368,15 @@ export async function createEnvironment(
         if (ownedConfiguredLock) break
       }
       const [
-        { ready, missing, nodeMissing, editorMissing, chromeMissing, chrome },
+        {
+          ready,
+          missing,
+          nodeMissing,
+          editorMissing,
+          chromeMissing,
+          chrome,
+          nodeExecutable,
+        },
         checkedConfigured,
         vitestSearch,
         machineMissing,
@@ -415,7 +424,14 @@ export async function createEnvironment(
         ready,
         missing,
         profiles: {
-          'repository-browser': check(configured),
+          'repository-browser': {
+            ...check(configured),
+            adapters: await readRepositoryAdapterReadiness(
+              workspace,
+              nodeExecutable,
+              new AbortController().signal,
+            ),
+          },
           'node-test': {
             ready:
               nodeMissing.length === 0 &&

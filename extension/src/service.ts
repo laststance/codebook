@@ -181,6 +181,7 @@ import {
   type NodeTestHistoryState,
 } from './utils/projectNodeTestOutcome'
 import { readerNotFollowingRunRefusal } from './utils/readerNotFollowingRunRefusal'
+import type { RepositoryAdapterReadiness } from './utils/readRepositoryAdapterReadiness'
 import { releaseVitestListings } from './utils/releaseVitestListings'
 import { resolveCapturedFactPaths } from './utils/resolveCapturedFactPaths'
 import {
@@ -745,11 +746,31 @@ export class StudyService {
     const sanitized = (prerequisite: {
       ready: boolean
       missing: string[]
+      adapters?: RepositoryAdapterReadiness
     }) => ({
       ...prerequisite,
       missing: prerequisite.missing.map((sentence) =>
         this.sanitizedCause(sentence),
       ),
+      // Each adapter's gaps are sentences too (they can quote a file error), so they pass the same sanitizer.
+      ...(prerequisite.adapters
+        ? {
+            adapters: {
+              'next-dev-webpack': {
+                ...prerequisite.adapters['next-dev-webpack'],
+                missing: prerequisite.adapters['next-dev-webpack'].missing.map(
+                  (sentence) => this.sanitizedCause(sentence),
+                ),
+              },
+              'vite-dev': {
+                ...prerequisite.adapters['vite-dev'],
+                missing: prerequisite.adapters['vite-dev'].missing.map(
+                  (sentence) => this.sanitizedCause(sentence),
+                ),
+              },
+            },
+          }
+        : {}),
     })
     return {
       ...sanitized(reported),

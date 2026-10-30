@@ -46,6 +46,7 @@ import type {
   VitestListingReleaseFailure,
 } from './utils/listVitestTestFiles'
 import type { NodeTestExecutionPlan } from './utils/planNodeTestExecution'
+import type { RepositoryAdapterReadiness } from './utils/readRepositoryAdapterReadiness'
 import type { CauseRoots } from './utils/sanitizeCause'
 import type { NodeTestVitestSearch } from './utils/searchRepositoryVitest'
 
@@ -477,6 +478,8 @@ export interface StudyEnvironment {
           missing: string[]
           /** node-test only: what the readiness search for a usable Vitest found ({@link searchRepositoryVitest}). */
           vitestSearch?: NodeTestVitestSearch
+          /** repository-browser only: each adapter's readiness for this workspace ({@link readRepositoryAdapterReadiness}). */
+          adapters?: RepositoryAdapterReadiness
         }
       >
     >
