@@ -48,7 +48,7 @@ function importEntryOf(exported: unknown): string | undefined {
  *
  * @param workspace - The package root.
  * @returns The installation, or `yarn-pnp` / `not-installed` as the reason there is none.
- * @throws When `vite/package.json` is unreadable or malformed (the message names it).
+ * @throws When `vite/package.json` lacks a version or names no importable entry (the message names it); a manifest Node's resolution cannot parse fails that resolution first and reads as `not-installed`.
  * @example
  * await resolveViteInstallation('/repo') // => { found: true, installation: { version: '8.3.5', major: 8, … } }
  */
