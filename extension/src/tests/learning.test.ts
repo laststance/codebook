@@ -305,7 +305,7 @@ test('a configured sixteen-entry library rejects the seventeenth study without l
 
 // Value: protects=after a rollback a study the newer release saved stays listed, counted and untouched, and its older file never stands in for it; fails_when=the listing skips a file whose format number it does not know and shows the older file as the study, or a read ends in a schema error (RT-1, DX-15, PC-4.1); why_new=the library knew only the suffixes of its own formats; seam=the library directory, into which the test writes files as a newer Codebook would name them
 test('a library that holds a study in a newer format beside its older file lists it as saved by a newer Codebook, counts it once and refuses to read it', async (context) => {
-  // Arrange: one study this Codebook saved, one study that also has a file in format 6, and one whose format 4 files (archive and sidecar) hold format 7.
+  // Arrange: one study this Codebook saved, one study that also has a file in format 7, and one whose format 4 files (archive and sidecar) hold format 8.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
   context.after(() => rm(directory, { recursive: true, force: true }))
   const library = new LearningLibrary(directory, workspaceKey, () => 16),
@@ -314,16 +314,16 @@ test('a library that holds a study in a newer format beside its older file lists
     newerInKnownFile = capturedStudy()
   await library.saveStudy(readable)
   await library.saveStudy(savedAgainByNewer)
-  const newerPath = join(directory, `${savedAgainByNewer.id}.study.v6.json`),
-    newerBytes = JSON.stringify({ ...savedAgainByNewer, version: 6 })
+  const newerPath = join(directory, `${savedAgainByNewer.id}.study.v7.json`),
+    newerBytes = JSON.stringify({ ...savedAgainByNewer, version: 7 })
   await writeFile(newerPath, newerBytes)
   await writeFile(
     join(directory, `${newerInKnownFile.id}.study.v4.json`),
-    JSON.stringify({ ...newerInKnownFile, version: 7 }),
+    JSON.stringify({ ...newerInKnownFile, version: 8 }),
   )
   await writeFile(
     join(directory, `${newerInKnownFile.id}.study.meta.v4.json`),
-    JSON.stringify({ version: 7, id: newerInKnownFile.id }),
+    JSON.stringify({ version: 8, id: newerInKnownFile.id }),
   )
   const olderBytes = await readFile(
     join(directory, `${savedAgainByNewer.id}.study.v3.json`),
@@ -337,9 +337,9 @@ test('a library that holds a study in a newer format beside its older file lists
     readOfKnownFile = library.readStudy(newerInKnownFile.id)
   // Assert
   const newerSentence =
-      'This study was saved in format 6 by a newer Codebook; this Codebook reads formats up to 5. Update the extension to open it. The study is kept as it is.',
+      'This study was saved in format 7 by a newer Codebook; this Codebook reads formats up to 6. Update the extension to open it. The study is kept as it is.',
     newerSentenceOfKnownFile =
-      'This study was saved in format 7 by a newer Codebook; this Codebook reads formats up to 5. Update the extension to open it. The study is kept as it is.'
+      'This study was saved in format 8 by a newer Codebook; this Codebook reads formats up to 6. Update the extension to open it. The study is kept as it is.'
   // All three refusals get their handler at once: a read that rejects while an earlier one is still awaited would be unhandled.
   await Promise.all([
     assert.rejects(readOfNewer, { message: newerSentence }),
@@ -469,7 +469,7 @@ test('Retry storage over sixty-four saved studies lists the library directory on
 })
 
 // Value: protects=a file in the library directory that is named like an archive of a newer format but belongs to no study leaves the saved studies usable (Cycle 0045 review PL-5); fails_when=the listing parses the file's prefix as a study id and throws, which breaks the list, the save admission, the removal, forgetting absent studies and Retry storage together; why_new=every listing test named its files after study ids; seam=the library directory, into which the test writes the stray file
-test('a stray x.study.v6.json in the library leaves the list, save admission, removal, forgetting absent studies and Retry storage working', async (context) => {
+test('a stray x.study.v7.json in the library leaves the list, save admission, removal, forgetting absent studies and Retry storage working', async (context) => {
   // Arrange: two saved studies and the stray file beside them.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
   context.after(() => rm(directory, { recursive: true, force: true }))
@@ -479,7 +479,7 @@ test('a stray x.study.v6.json in the library leaves the list, save admission, re
     removedByHand = capturedStudy()
   await library.saveStudy(kept)
   await library.saveStudy(removed)
-  await writeFile(join(directory, 'x.study.v6.json'), '{"version":6}')
+  await writeFile(join(directory, 'x.study.v7.json'), '{"version":7}')
   // Act
   const listedIds = (await library.list()).map((entry) => entry.id).sort()
   const admitsThird = await library.admitsStudy(removedByHand.id)
@@ -512,14 +512,14 @@ test('a stray x.study.v6.json in the library leaves the list, save admission, re
     [kept.id],
   )
   assert.equal(
-    await readFile(join(directory, 'x.study.v6.json'), 'utf8'),
-    '{"version":6}',
+    await readFile(join(directory, 'x.study.v7.json'), 'utf8'),
+    '{"version":7}',
   )
 })
 
 // Value: protects=Retry storage still repairs the library when one study's known file holds the format of a newer Codebook, and writes over neither that study's archive nor its catalog sidecar; fails_when=the repair reads that study's archive, which is refused as a newer format, and the whole Retry storage fails with that study's sentence, or a sidecar of a newer format beside a readable archive counts as a failed checkpoint and is written again in this Codebook's format, although the list shows the study as kept as it is (Cycle 0046 row 94); why_new=found in Cycle 0046 while the repair was changed to read each study from the one listing; the sidecar was added by the delegated review of that change; seam=the library directory, into which the test writes the files a newer Codebook would write under a known name
 test('Retry storage over a library with a study a newer Codebook saved under a known file name repairs the other studies and keeps that study as it is', async (context) => {
-  // Arrange: one saved study whose sidecar is gone, one study whose format 4 archive holds format 6, and one saved study whose sidecar a newer Codebook wrote again in format 6 beside the readable archive.
+  // Arrange: one saved study whose sidecar is gone, one study whose format 4 archive holds format 7, and one saved study whose sidecar a newer Codebook wrote again in format 7 beside the readable archive.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
   context.after(() => rm(directory, { recursive: true, force: true }))
   const library = new LearningLibrary(directory, workspaceKey, () => 16),
@@ -528,7 +528,7 @@ test('Retry storage over a library with a study a newer Codebook saved under a k
     newerSidecarOnly = capturedStudy()
   await library.saveStudy(repaired)
   await rm(join(directory, `${repaired.id}.study.meta.v3.json`))
-  const newerBytes = JSON.stringify({ ...newerInKnownFile, version: 7 })
+  const newerBytes = JSON.stringify({ ...newerInKnownFile, version: 8 })
   await writeFile(
     join(directory, `${newerInKnownFile.id}.study.v4.json`),
     newerBytes,
@@ -538,7 +538,7 @@ test('Retry storage over a library with a study a newer Codebook saved under a k
       directory,
       `${newerSidecarOnly.id}.study.meta.v3.json`,
     ),
-    newerSidecarBytes = JSON.stringify({ version: 7, id: newerSidecarOnly.id })
+    newerSidecarBytes = JSON.stringify({ version: 8, id: newerSidecarOnly.id })
   await writeFile(newerSidecar, newerSidecarBytes)
   // Act
   const retry = await library.reconcile().then(
@@ -564,7 +564,7 @@ test('Retry storage over a library with a study a newer Codebook saved under a k
   assert.equal(await readFile(newerSidecar, 'utf8'), newerSidecarBytes)
   assert.equal(
     checkpointOfNewerSidecar,
-    'Error: This study was saved in format 7 by a newer Codebook; this Codebook reads formats up to 5. Update the extension to open it. The study is kept as it is.',
+    'Error: This study was saved in format 8 by a newer Codebook; this Codebook reads formats up to 6. Update the extension to open it. The study is kept as it is.',
   )
   assert.deepEqual(
     (await library.list())

@@ -11,7 +11,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.11'
-export const EXTENSION_VERSION = '0.2.64'
+export const EXTENSION_VERSION = '0.2.65'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -1327,7 +1327,10 @@ export const PROCESS_OUTPUT_EVENT_LIMIT_CHARS = 4_096
 export const SAVE_LEARNING_REPLAY_COMMAND = 'codebook.saveLearningReplay'
 /** The command id of the status item's Open replay and Open retained history. */
 export const OPEN_LEARNING_REPLAY_COMMAND = 'codebook.openLearningReplay'
+/** The `version` of a node-test history's seal and every record other than its header; the header has {@link NODE_TEST_HISTORY_HEADER_VERSION}. */
 export const NODE_TEST_HISTORY_VERSION = 1
+/** The `version` a node-test history header is written with since replay frames keep their recorded location; Codebook reads headers 1 and 2, and an earlier Codebook does not list a history with header 2 and keeps its files. */
+export const NODE_TEST_HISTORY_HEADER_VERSION = 2
 export const NODE_TEST_READER_POSITION_VERSION = 1
 export const NODE_TEST_READER_POSITION_LIMIT_BYTES = 4_096
 export const NODE_TEST_LEARNING_DECISION_VERSION = 1
@@ -1383,8 +1386,10 @@ export const NODE_TEST_HISTORY_SEAL_LIMIT_BYTES = 16_384
 export const NODE_TEST_HISTORY_MAX_ENTRIES = 10_000
 /** The folder of node-server histories beside `node-tests.v1`, so test histories need no migration and a revert leaves them untouched. */
 export const NODE_SERVER_HISTORY_DIRECTORY = 'node-servers.v1'
-/** The `formatVersion` of a node-server history header; a later cycle relates several histories of one explanation without a format break. */
+/** The `version` of a node-server history's seal and every record other than its header (the header has {@link NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION}); a later cycle relates several histories of one explanation without a format break. */
 export const NODE_SERVER_HISTORY_FORMAT_VERSION = 1
+/** The `formatVersion` a node-server history header is written with since replay frames keep their recorded location; Codebook reads headers 1 and 2, and an earlier Codebook does not list a history with header 2 and keeps its files. */
+export const NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION = 2
 /** The most entries one node-server history holds, `source` and `end` included. */
 export const NODE_SERVER_HISTORY_MAX_ENTRIES = 10_000
 /** The largest journal of a node-server history. */
@@ -1513,13 +1518,21 @@ export const CONFIGURED_STUDY_VERSION = 3
 export const CROSS_RUNTIME_STUDY_VERSION = 4
 /** The format of a repository-browser study made with the `vite-dev` adapter; an older Codebook lists it as saved by a newer one. */
 export const VITE_STUDY_VERSION = 5
+/** The format of every configured study saved since replay frames below the top keep their recorded location; an older Codebook lists it as saved by a newer one and keeps it. The kind of study still comes from its configuration. */
+export const RECORDED_LOCATION_STUDY_VERSION = 6
 /** The highest study format this Codebook reads; a saved study above it is listed as saved by a newer Codebook. */
-export const READABLE_STUDY_VERSION = VITE_STUDY_VERSION
+export const READABLE_STUDY_VERSION = RECORDED_LOCATION_STUDY_VERSION
 export const CONFIGURED_STUDY_SUFFIX = '.study.v3.json'
 export const CONFIGURED_STUDY_METADATA_SUFFIX = '.study.meta.v3.json'
 // Highest existing version owns a logical study, including when its bytes are corrupt.
 // A change of the saved study format that an older Codebook cannot read takes the next format number and its own `.study.v<n>.json` suffix in this table; an older Codebook then lists such a study as saved by a newer one and keeps it, instead of failing on its schema.
 export const STUDY_STORAGE_FORMATS = [
+  {
+    version: RECORDED_LOCATION_STUDY_VERSION,
+    format: 'v6',
+    archiveSuffix: '.study.v6.json',
+    metadataSuffix: '.study.meta.v6.json',
+  },
   {
     version: VITE_STUDY_VERSION,
     format: 'v5',
@@ -1864,6 +1877,12 @@ export const REPLAY_DEBUG_MAX_SCOPES = 16
 /** The reason a snapshot gives for a scope it deliberately did not copy: replay keeps only the stopped frame's local values. The capture writes it and the server stop's presentability check reads it, so a capture that follows the policy is never judged unread. */
 export const REPLAY_SCOPE_NOT_CAPTURED_TEXT =
   "This scope was not captured; replay keeps only the stopped frame's local values."
+/** What the placeholder source of a caller frame says first: its executed text was never captured, so the replay shows no file text for it (the current checkout is never substituted). */
+export const REPLAY_FRAME_TEXT_NOT_RECORDED_TEXT =
+  'Not recorded at this moment: the executed text of this frame was not captured.'
+/** The Call Stack label beside a caller frame whose location was recorded but whose executed text was not. */
+export const REPLAY_FRAME_TEXT_NOT_RECORDED_ORIGIN =
+  'Executed text not recorded'
 export const REPLAY_DEBUG_MAX_VARIABLES = 2_000
 export const REPLAY_DEBUG_MAX_DEPTH = 5
 export const REPLAY_DEBUG_TEXT_LIMIT_CHARS = 4_096

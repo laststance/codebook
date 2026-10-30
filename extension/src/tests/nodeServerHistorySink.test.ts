@@ -428,6 +428,49 @@ test('a private root and a bearer token in any snapshot text reach no history fi
   assert.match(files, /value Bearer \[masked\] <workspace>/)
 })
 
+// protects=a caller frame's recorded location loses the private root like every other captured path before it reaches a history file; fails_when=the sink copies the frame's recordedLocation as captured; no_claim=the capture's own workspace-relative rule
+test('a private root in a caller frame recorded location reaches no history file', async (context) => {
+  // Arrange
+  const { sink, writer, folder } = await startSink(context, {
+    sanitize: (text) => hidePrivateRoots(text, PRIVATE_ROOTS),
+  })
+  const base = debuggerCapture({ line: 2 })
+  const frame = base.snapshot.frames[0]
+  assert.ok(frame)
+  const leak = '/Users/ada/app'
+  const capture = {
+    ...base,
+    snapshot: {
+      ...base.snapshot,
+      frames: [
+        frame,
+        {
+          name: 'caller',
+          line: 9,
+          column: 1,
+          scopes: [],
+          recordedLocation: {
+            name: `${leak}/caller.ts`,
+            path: `${leak}/src/caller.ts`,
+          },
+        },
+      ],
+    },
+  }
+
+  // Act
+  sink.openRequest(10, { method: 'GET', path: '/api/x', bodyBytes: 0 })
+  sink.markRequestSent(11)
+  sink.stop(12, { declaredStopIndex: 0 }, 1, capture)
+  sink.response(20, RESPONSE)
+  await writer.seal({ elapsedMs: 30, reason: 'stopped' })
+  const files = await readHistoryFolderText(folder)
+
+  // Assert
+  assert.doesNotMatch(files, /Users\/ada/)
+  assert.match(files, /<workspace>\/src\/caller\.ts/)
+})
+
 // protects=a failed request closes the open attempt and every later report of the sink (second failure, send mark, response, withdrawal) is dropped, so the writer holds no failure and the history keeps its four entries; fails_when=a late report reaches the writer, whose rules refuse it and mark the history failed; no_claim=the run's own order of reports
 test('reports after a request failure are dropped and leave the writer unfailed', async (context) => {
   // Arrange

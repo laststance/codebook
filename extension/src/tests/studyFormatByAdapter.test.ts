@@ -11,8 +11,9 @@ import { crossRuntimeRepositoryConfigSchema } from '../repositoryConfigSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { buildRecordingContext } from '../utils/buildRecordingContext'
 import { decodeConfiguredStudy } from '../utils/decodeConfiguredStudy'
+import { legacyStudyFormatOfConfiguration } from '../utils/legacyStudyFormatOfConfiguration'
+import { newerStudyArchive } from '../utils/newerStudyArchive'
 import { projectRecording } from '../utils/projectRecording'
-import { studyFormatOfConfiguration } from '../utils/studyFormatOfConfiguration'
 import { validateRecordingContext } from '../utils/validateRecordingContext'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
@@ -88,11 +89,11 @@ async function savedVersion(path: string): Promise<number> {
   return archive.version
 }
 
-test('a vite-dev configuration of version 2 with browser participants is stored in format 5, not the Next cross-runtime format 4', () => {
+test('an archive saved before format 6 for a vite-dev configuration of version 2 is format 5, not the Next cross-runtime format 4', () => {
   // Arrange
   const configuration = viteCrossRuntimeStudy().configuration
   // Act
-  const format = studyFormatOfConfiguration(configuration)
+  const format = legacyStudyFormatOfConfiguration(configuration)
   // Assert
   assert.equal(configuration.version, 2)
   assert.equal(format, 5)
@@ -128,20 +129,54 @@ test('a demonstrated format-5 cross-runtime vite-dev study without debugger stat
   )
 })
 
-test('a Next configuration of version 1 is stored in format 3, version 2 in format 4 and a vite-dev configuration in format 5', () => {
+test('an archive saved before format 6 holds format 3 for a Next configuration of version 1, 4 for version 2 and 5 for a vite-dev configuration', () => {
   // Arrange
   const nextBrowser = createConfiguredStudy().configuration
   const nextCrossRuntime = createCrossRuntimeStudy().configuration
   const vite = viteStudy().configuration
   // Act
   const formats = [nextBrowser, nextCrossRuntime, vite].map(
-    studyFormatOfConfiguration,
+    legacyStudyFormatOfConfiguration,
   )
   // Assert
   assert.deepEqual(formats, [3, 4, 5])
 })
 
-test('a vite-dev study decodes in this version and a Next browser study sealed as format 5 is refused', () => {
+test('a Next browser, a Next cross-runtime and a vite-dev study sealed as format 6 decode', () => {
+  // Arrange
+  const studies = [
+    { ...createConfiguredStudy(), version: 6 as const },
+    { ...createCrossRuntimeStudy(), version: 6 as const },
+    { ...viteStudy(), version: 6 as const },
+  ]
+  // Act
+  const versions = studies.map(
+    (study) => decodeConfiguredStudy(study, study.workspaceKey).version,
+  )
+  // Assert
+  assert.deepEqual(versions, [6, 6, 6])
+})
+
+test('a study of format 6 is saved as .study.v6.json and an earlier Codebook that reads up to 5 judges it newer by name and number', async (context) => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-v6-study-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const study = { ...createConfiguredStudy(), version: 6 as const }
+  const library = new LearningLibrary(directory, study.workspaceKey)
+  const previousReadableVersion = 5
+  // Act
+  await library.saveStudy(study)
+  const archive = join(directory, `${study.id}.study.v6.json`)
+  const reopened = await library.readStudy(study.id)
+  // Assert
+  assert.equal(await savedVersion(archive), 6)
+  assert.equal(reopened.version, 6)
+  assert.equal((await savedVersion(archive)) > previousReadableVersion, true)
+  assert.equal(newerStudyArchive(`${study.id}.study.v7.json`)?.version, 7)
+  assert.equal(newerStudyArchive(`${study.id}.study.v6.json`), undefined)
+})
+
+test('a vite-dev study of format 5 decodes in this version and a Next browser study sealed as format 5 is refused', () => {
   // Arrange
   const vite = viteStudy()
   const nextSealedAsVite = { ...createConfiguredStudy(), version: 5 }

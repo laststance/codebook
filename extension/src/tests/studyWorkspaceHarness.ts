@@ -3618,7 +3618,8 @@ export async function workspaceHarness(
           // Without a layout read the worker closes the tab by itself a moment later.
           applyByItselfLater(closeTab)
         } else closeTab()
-        for (const listener of disposed) listener()
+        // Like the editor's emitter, a listener that disposes its own subscription must not skip the next listener.
+        for (const listener of [...disposed]) listener()
       },
     }
     if (kind === 'codebook.repositoryWiki') answerAsWikiDocument(value)
@@ -6727,6 +6728,40 @@ export async function workspaceHarness(
       })
     },
     /**
+     * Models the native debugger's open of a stop's file in Cursor 3.27.22 (`Source.openInEditor`: `revealIfOpened: true`, no group of its own): a file already open in any group is revealed there, in front of that group and without the keyboard, and a file open nowhere opens as a preview in the Application's group (`applicationColumn`), where the active main group stands while the Agent chat has the keyboard (N64p3-F2).
+     * @param filename - The stop's file.
+     * @param applicationColumn - The Application's group, where an unopened file opens.
+     * @returns The column the file was shown in.
+     * @example harness.debuggerOpensStopFile('index.tsx', 1) // => 2 when index.tsx is open in column 2
+     */
+    debuggerOpensStopFile(filename: string, applicationColumn: number): number {
+      const uri = Uri.file(join(harness.directory, filename)).toString()
+      const holder = groups.find((group) =>
+        group.tabs.some(
+          (tab) =>
+            tab.input instanceof TabInputText &&
+            tab.input.uri.toString() === uri,
+        ),
+      )
+      if (!holder) {
+        openAnnouncedTextTab(filename, applicationColumn, {
+          isPreview: true,
+          isDirty: false,
+        })
+        return applicationColumn
+      }
+      // Revealed where it stands: the tab comes to the front of its group, the keyboard stays.
+      const tab = holder.tabs.find(
+        (candidate) =>
+          candidate.input instanceof TabInputText &&
+          candidate.input.uri.toString() === uri,
+      )!
+      holder.activeTab = tab
+      for (const listener of tabChangeListeners)
+        listener({ opened: [], closed: [], changed: [tab] })
+      return holder.viewColumn
+    },
+    /**
      * Opens a text tab in front of a group, even a locked one, without giving it the keyboard, and announces it: a file the learner dragged there (kept) or an edited preview, beside the paused file of `openPausedFileInLockedGroup`.
      * @param filename - The file.
      * @param column - The group.
@@ -7465,6 +7500,31 @@ export async function workspaceHarness(
       giveDraftKeyboard(opened)
       for (const listener of tabChangeListeners)
         listener({ opened: [opened.tab], closed: [], changed: [] })
+    },
+    /**
+     * Leaves a text tab of a virtual document (a `git` original, for example) behind a group's front tab, with the same path as a file of the folder; it announces nothing and takes no keyboard.
+     * @param filename - The folder file whose path the virtual document shares.
+     * @param scheme - The virtual document's uri scheme.
+     * @param column - The view column of the group.
+     * @returns The tab.
+     * @example harness.addVirtualTextTab('theme.ts', 'git', 3) // theme.ts's git original in group 3
+     */
+    addVirtualTextTab(filename: string, scheme: string, column: number): Tab {
+      const group = groups.find((candidate) => candidate.viewColumn === column)!
+      const tab: Tab = {
+        input: new TabInputText(
+          Uri.from({
+            scheme,
+            authority: '',
+            path: Uri.file(join(harness.directory, filename)).path,
+          }),
+        ),
+        label: `${filename} (${scheme})`,
+        isPreview: false,
+        isDirty: false,
+      }
+      group.tabs.push(tab)
+      return tab
     },
     /** Gives presentation/scope regressions a learner-owned document whose edits do not move its tab. @example const draft = harness.focusMutableDraft('notes.txt', 2); draft.replaceContent('new text'); */
     focusMutableDraft(

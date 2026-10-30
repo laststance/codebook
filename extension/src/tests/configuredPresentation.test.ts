@@ -559,8 +559,8 @@ test('configured live capture seals the accepted article, actual facts and three
     harness.library.workspaceKey,
   )
   // Assert
-  assert.equal(archive?.version, 3)
-  assert.ok(archive?.version === 3)
+  assert.equal(archive?.version, 6)
+  assert.ok(archive)
   assert.equal(archive.descriptor?.citationContext.anchors.length, 2)
   assert.equal(archive.observations[0]?.values['value:enabled'], false)
   assert.deepEqual(

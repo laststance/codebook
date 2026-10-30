@@ -797,6 +797,7 @@ export class OwnedNodeTestRun {
         bound.session.customRequest(command, arguments_),
       assertCurrent,
       signal,
+      workspaceRoot: this.workspace,
       limits: {
         timeoutMs: NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
         maxFrames: NODE_REPLAY_DEBUG_MAX_FRAMES,

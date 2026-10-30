@@ -2,6 +2,7 @@ import {
   NODE_TEST_HISTORY_LIMIT_BYTES,
   NODE_TEST_HISTORY_MAX_ENTRIES,
   NODE_TEST_HISTORY_SEAL_LIMIT_BYTES,
+  NODE_TEST_HISTORY_VERSION,
 } from './constants'
 import type { HistoryWriterRules } from './historyStorageDescriptor'
 import { HistoryJournalWriter } from './nodeHistoryJournalWriter'
@@ -94,7 +95,7 @@ class NodeTestWriterRules implements HistoryWriterRules<NodeTestHistoryTypes> {
     endedAt: string
   }): NodeTestHistorySeal {
     return nodeTestHistorySealSchema.parse({
-      version: 1,
+      version: NODE_TEST_HISTORY_VERSION,
       studyId: input.studyId,
       entryCount: input.entryCount,
       journalBytes: input.journal.byteLength,

@@ -35,6 +35,8 @@ import { readTestTimings } from '../utils/readTestTimings.mjs'
 import { runTestInvocation } from '../utils/runTestInvocation.mjs'
 import { takeEndStep } from '../utils/takeEndStep.mjs'
 
+import { endProcessesAfter } from './utils/endProcessesAfter.mjs'
+
 /** Tells whether `node --test` would run a test of this name in the given planned call, following its documented name and skip pattern rules. @example runsTest({ files: ['a.test.js'], skipPattern: '/^(?:x)$/' }, 'y') // => true */
 function runsTest(invocation, name) {
   const matches = (literal) => new RegExp(literal.slice(1, -1)).test(name)
@@ -1976,11 +1978,16 @@ function killNotedProcessesAfter(context, pidsPath) {
   }
   // gstack-timing-ok: a sampling interval of the clean-up, not a wait of the test; a process that starts and ends between two samples has ended by itself.
   const timer = setInterval(() => look().catch(() => {}), 200)
-  context.after(async () => {
-    clearInterval(timer)
-    await look().catch(() => {})
-    killProcessIds([...found])
-  })
+  // Only ids confirmed as the test's are killed: a sampled id may have been recycled since.
+  endProcessesAfter(
+    context,
+    async () => {
+      clearInterval(timer)
+      await look().catch(() => {})
+      return [...found]
+    },
+    killProcessIds,
+  )
 }
 
 /** Starts a process that starts a grandchild, both waiting, and answers their ids; both are ended when the test ends. @example const { childPid, grandchildPid } = await startTwoProcesses(context) */
@@ -1998,7 +2005,13 @@ async function startTwoProcesses(context, command = process.execPath) {
     { stdio: ['ignore', 'pipe', 'ignore'] },
   )
   killNotedProcessesAfter(context)
-  const grandchildPid = await new Promise((resolve) =>
+  // A test may end the child alone, which leaves the grandchild with another parent, outside the tree this process is searched for: both ids are named, the grandchild's once it is known.
+  let grandchildPid
+  // The child is held; the grandchild is the test's by construction (the child started it), whatever `ps` says (Windows has none).
+  endProcessesAfter(context, () => [child.pid, grandchildPid], undefined, {
+    held: () => [child.pid, grandchildPid].filter(Number.isInteger),
+  })
+  grandchildPid = await new Promise((resolve) =>
     child.stdout.once('data', (chunk) => resolve(Number(String(chunk)))),
   )
   return { childPid: child.pid, grandchildPid }
@@ -4474,6 +4487,18 @@ test(
         'setInterval(() => {}, 1_000)',
       ].join('\n'),
     )
+    // The late child is named by the helper's output; it is ended with the test whatever the waits below find.
+    endProcessesAfter(context, () => {
+      const line = readOutput()
+        .split('\n')
+        .find((candidate) => candidate.includes('latePid'))
+      // The helper may still be writing the line when the test ends: a truncated line names no process.
+      try {
+        return line === undefined ? [] : [JSON.parse(line).latePid]
+      } catch {
+        return []
+      }
+    })
     assert.equal(await waitForOutput(readOutput, 'ready', 20_000), true)
     child.kill('SIGTERM')
     assert.equal(await waitForOutput(readOutput, 'latePid', 20_000), true)
@@ -4482,7 +4507,6 @@ test(
         .split('\n')
         .find((line) => line.includes('latePid')),
     )
-    killProcessIdsAfter(context, latePid)
     const goneWhileFirstEndWaits = await waitUntilNoneExists([latePid], 10_000)
 
     // Act
@@ -4561,10 +4585,6 @@ test(
     )
   },
 )
-/** Ends a process by its id when the test ends, if it still runs. @example killProcessIdsAfter(context, 4242) */
-function killProcessIdsAfter(context, pid) {
-  context.after(() => killProcessIds([pid]))
-}
 
 // Value: protects=the shard script from a lane that starts its next call after a signal began to end the script: a call that closes while the handler still waits for another end (on Windows a call closes with its exit while the handler waits for its `taskkill`) answers nothing, so no lane goes on to start a call that nothing would end before the exit; fails_when=the close handler of the call answers whatever the state, so the caller goes on while the script is being ended; why_new=Cycle 0048 task 176 (OCR C, state machines: task 171's guard was read by the build only); seam=runTestInvocation in a helper process of its own with an extra end that resolves 1.5 s later (it keeps the handler waiting, as `taskkill` does on Windows), a call of a test file that notes its pid and hangs, and a SIGTERM to itself once the pid is noted; no_claim=Windows (the race is made on POSIX by the slow extra end)
 test(

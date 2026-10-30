@@ -11,6 +11,8 @@ import { listProcesses } from '../runtimeSupport/utils/listProcesses'
 import { profileProcesses } from '../runtimeSupport/utils/profileProcesses'
 import { windowsCommandLineArguments } from '../runtimeSupport/utils/windowsCommandLineArguments'
 
+import { endProcessesAfter } from './utils/endProcessesAfter'
+
 /** How long the scan of the command with 40,000 possible terminators may take. On the development host (16 CPUs, Node 24.21.0; median of 20 runs in a worker, as the test runs it) the scan takes 2.5 ms, and 3.8 ms under c8; the scan that read every reading's growing prefix again, which row 1053 replaced, took 1,600 ms with or without c8. The bound is over 100 times the one and a quarter of the other, so a slower host or coverage does not reach it while that regression does on this host already. */
 const PROFILE_SCAN_BOUND_MS = 400
 /** A worker can be stopped even when a regressed parser blocks its own event loop. */
@@ -194,7 +196,7 @@ test('profile switches keep Chrome’s exact whitespace sets on Linux and Window
   )
 })
 
-test('a symlinked profile observes its canonical process and excludes a prefix-sharing profile', async () => {
+test('a symlinked profile observes its canonical process and excludes a prefix-sharing profile', async (context) => {
   // Arrange: reproduce macOS /tmp -> /private/tmp normalization with an explicit portable symlink.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-process-test-'))
   const profile = await realpath(directory)
@@ -213,6 +215,11 @@ test('a symlinked profile observes its canonical process and excludes a prefix-s
     'chrome',
     `--user-data-dir=${profile}-other`,
   ])
+  // Both stand-ins end with the test, also when a spawn or an assertion below fails before the clean-up.
+  const heldPids = (): number[] =>
+    [owned.pid, unrelated.pid].filter((pid) => pid !== undefined)
+  // The handles are held: both are the test's whatever the system's process listing says (Windows has no `ps`).
+  endProcessesAfter(context, heldPids, { held: heldPids })
   try {
     await Promise.all([once(owned, 'spawn'), once(unrelated, 'spawn')])
     // Act

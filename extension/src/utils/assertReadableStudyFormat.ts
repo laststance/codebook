@@ -12,8 +12,8 @@ const numberedFormatSchema = z.object({ version: z.number() })
  * @param value - The parsed archive, not yet validated.
  * @throws A {@link NewerStudyFormatError} that names the saved format and the highest readable one.
  * @example
- * assertReadableStudyFormat({ version: 5 }) // passes
- * assertReadableStudyFormat({ version: 6 }) // throws 'This study was saved in format 6 by a newer Codebook; …'
+ * assertReadableStudyFormat({ version: 6 }) // passes
+ * assertReadableStudyFormat({ version: 7 }) // throws 'This study was saved in format 7 by a newer Codebook; …'
  */
 export function assertReadableStudyFormat(value: unknown): void {
   const format = numberedFormatSchema.safeParse(value)

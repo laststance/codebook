@@ -33,7 +33,7 @@ test('updating repository source and extension location preserves recorded bytes
     await harness.reader.dispose()
     const archivePath = join(
         library.directory,
-        `${harness.studyId}.study.v3.json`,
+        `${harness.studyId}.study.v6.json`,
       ),
       archiveBefore = await readFile(archivePath)
     const recordingDirectory = harness.store.path(harness.studyId),
@@ -240,7 +240,7 @@ test('retiring the reader leaves a study whose content did not change since its 
     const directory = harness.reader.inspect().libraryDirectory!
     const archiveOf = (runId: string): Promise<string> =>
       readFile(
-        join(directory, `${service.instanceId}_${runId}.study.v3.json`),
+        join(directory, `${service.instanceId}_${runId}.study.v6.json`),
         'utf8',
       )
     const unchangedBefore = await archiveOf(unchanged.id),
@@ -1088,7 +1088,7 @@ test('an obsolete failed history read cannot downgrade a newer verified reader o
     const studyId = `${service.instanceId}_${record.id}`,
       directory = harness.reader.inspect().libraryDirectory!
     const library = new LearningLibrary(directory, directory.split('/').at(-1)!)
-    await unlink(join(directory, `${studyId}.study.meta.v3.json`))
+    await unlink(join(directory, `${studyId}.study.meta.v6.json`))
     context.mock.method(
       LearningLibrary.prototype,
       'readCheckpoint',
@@ -1181,7 +1181,7 @@ for (const retired of [false, true])
       await unlink(
         join(
           harness.reader.inspect().libraryDirectory!,
-          `${studyId}.study.meta.v3.json`,
+          `${studyId}.study.meta.v6.json`,
         ),
       )
       await harness.reader['receive'](

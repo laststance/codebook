@@ -1,5 +1,6 @@
 import {
   NODE_SERVER_HISTORY_DIRECTORY,
+  NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION,
   NODE_SERVER_HISTORY_LIMIT_BYTES,
   NODE_SERVER_HISTORY_SEAL_LIMIT_BYTES,
   NODE_TEST_LEARNING_MATERIAL_VERSION,
@@ -121,7 +122,10 @@ export const nodeServerStorageDescriptor: HistoryStorageDescriptor<NodeServerHis
           withNearest: true,
         }),
     },
-    stampHeader: (input) => ({ ...input, formatVersion: 1 }),
+    stampHeader: (input) => ({
+      ...input,
+      formatVersion: NODE_SERVER_HISTORY_HEADER_FORMAT_VERSION,
+    }),
     parseHeader: (value) => nodeServerHistoryHeaderSchema.parse(value),
     parseSeal: (value) => nodeServerHistorySealSchema.parse(value),
     parseIndex: (value) => value,

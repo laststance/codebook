@@ -27,6 +27,10 @@ export const replayDebugSnapshotSchema = z
           column: z.number().int().positive(),
           source: sourceSchema.extend({ name: text }).optional(),
           sourceUnavailable: text.optional(),
+          // Where the debugger said this frame ran, kept for the Call Stack when the executed text was not verified (frames below the top). Never a claim that the text matches a file.
+          recordedLocation: z
+            .strictObject({ name: text, path: text.optional() })
+            .optional(),
           scopes: z
             .array(
               z.strictObject({

@@ -2806,6 +2806,7 @@ for (const besideChat of [false, true])
       arrange = harness.reader['arrange'],
       readsWithRetiredTab: boolean[] = [],
       chatKeyboardAtReads: boolean[] = [],
+      startedArrangements: Promise<void>[] = [],
       arrangements: {
         retiresContextPane: boolean
         commands: string[]
@@ -2835,26 +2836,31 @@ for (const besideChat of [false, true])
         }
         return executeCommand.call(harness.editor.commands, ...args)
       }
-      harness.reader['arrange'] = async (...args): Promise<void> => {
-        const start = harness.commands.length,
-          readsStart = readsWithRetiredTab.length
-        // The learner types in the chat when the final arrangement begins beside it: the measurement then meets a chat that holds the keyboard, which is the premise of the extra layout read asserted below.
-        if (args[5] !== undefined) chat?.focusTab()
-        const arranged = arrange.apply(harness.reader, args)
-        // The arrangement that retires the context pane runs up to its wait for the tab's close in this turn; the editor closes the tab in the next one.
-        if (args[5] !== undefined)
-          setImmediate(() => harness.closePendingDisposedPanelTabs())
-        try {
-          await arranged
-        } finally {
-          arrangements.push({
-            // The final arrangement of a live entry is the one that retires the Study context pane (its sixth argument).
-            retiresContextPane: args[5] !== undefined,
-            commands: harness.commands.slice(start),
-            readsWithRetiredTab: readsWithRetiredTab.slice(readsStart),
-            chatKeyboardAtReads: chatKeyboardAtReads.slice(readsStart),
-          })
-        }
+      harness.reader['arrange'] = (...args): Promise<void> => {
+        const started = (async (): Promise<void> => {
+          const start = harness.commands.length,
+            readsStart = readsWithRetiredTab.length
+          // The learner types in the chat when the final arrangement begins beside it: the measurement then meets a chat that holds the keyboard, which is the premise of the extra layout read asserted below.
+          if (args[5] !== undefined) chat?.focusTab()
+          const arranged = arrange.apply(harness.reader, args)
+          // The arrangement that retires the context pane runs up to its wait for the tab's close in this turn; the editor closes the tab in the next one.
+          if (args[5] !== undefined)
+            setImmediate(() => harness.closePendingDisposedPanelTabs())
+          try {
+            await arranged
+          } finally {
+            arrangements.push({
+              // The final arrangement of a live entry is the one that retires the Study context pane (its sixth argument).
+              retiresContextPane: args[5] !== undefined,
+              commands: harness.commands.slice(start),
+              readsWithRetiredTab: readsWithRetiredTab.slice(readsStart),
+              chatKeyboardAtReads: chatKeyboardAtReads.slice(readsStart),
+            })
+          }
+        })()
+        // Every arrangement the reader started is awaited before the assertions: one still running on a loaded machine is waited for, never counted as missing.
+        startedArrangements.push(started)
+        return started
       }
       harness.service.start({
         instanceId: harness.service.instanceId,
@@ -2869,6 +2875,8 @@ for (const besideChat of [false, true])
 
       // Act
       await harness.reader.open()
+      // An arrangement the open did not wait for (F154) still finishes before anything is asserted.
+      await Promise.all(startedArrangements)
 
       // Assert: preparation owns its extra reads; the final arrangement measures only once after retirement.
       assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
@@ -2909,6 +2917,77 @@ for (const besideChat of [false, true])
       await harness.close()
     }
   })
+
+// Value: protects=a live entry measuring the layout only after the editor closed the retired Study tab, when the close comes while the reader first waits for it; fails_when=the entry reads the layout while the retired Study tab is still open (the first wait for it is gone); why_new=Cycle 0064 task 94 (D5): the late-close test above reaches the arrangement's own wait only after two timeouts, so the early close is its counterpart; seam=passthrough layout-read observer and the reader's wait for the retired tab, which releases the held close
+test('live entry measures the layout only after the editor closed the retired Study tab it first waited for', async () => {
+  // Arrange: the editor closes the retired Study context tab as soon as the reader first waits for it.
+  const harness = await workspaceHarness()
+  const executeCommand = harness.editor.commands.executeCommand,
+    retiredStudyPaneClosed = harness.reader['retiredStudyPaneClosed'],
+    prepareApplicationGroup = harness.reader['prepareApplicationGroup'],
+    layoutReadsWithRetiredTab: boolean[] = [],
+    retiredTabAtApplicationPreparation: boolean[] = []
+  const hasRetiredTab = (): boolean =>
+    harness.groups.some((group) =>
+      group.tabs.some(
+        (tab) =>
+          tab.input instanceof harness.editor.TabInputWebview &&
+          tab.input.viewType === 'codebook.studyContext',
+      ),
+    )
+  let waitsForRetiredTab = 0
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
+    await harness.reader.open()
+    harness.closeDisposedPanelTabsLater()
+    harness.holdDisposedPanelTabCloses()
+    harness.editor.commands.executeCommand = async (...args) => {
+      if (args[0] === 'vscode.getEditorLayout')
+        layoutReadsWithRetiredTab.push(hasRetiredTab())
+      return executeCommand.call(harness.editor.commands, ...args)
+    }
+    harness.reader['retiredStudyPaneClosed'] = (...args): Promise<void> => {
+      waitsForRetiredTab += 1
+      // The editor closes the tab in the turn after the reader began waiting for it.
+      setImmediate(() => harness.closePendingDisposedPanelTabs())
+      return retiredStudyPaneClosed.apply(harness.reader, args)
+    }
+    harness.reader['prepareApplicationGroup'] = (...args) => {
+      retiredTabAtApplicationPreparation.push(hasRetiredTab())
+      return prepareApplicationGroup.apply(harness.reader, args)
+    }
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await [...harness.service.records.values()][0]!.preparation
+    const readsBefore = layoutReadsWithRetiredTab.length,
+      preparationsBefore = retiredTabAtApplicationPreparation.length
+
+    // Act
+    await harness.reader.open()
+
+    // Assert: no layout read of the entry met the retired tab, and the entry waited for it.
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
+    assert.equal(waitsForRetiredTab > 0, true)
+    const readsOfEntry = layoutReadsWithRetiredTab.slice(readsBefore)
+    assert.equal(readsOfEntry.length > 0, true)
+    assert.equal(readsOfEntry.includes(true), false)
+    // The entry prepares the Application group only once the retired tab is gone.
+    const preparationsOfEntry =
+      retiredTabAtApplicationPreparation.slice(preparationsBefore)
+    assert.equal(preparationsOfEntry.length > 0, true)
+    assert.equal(preparationsOfEntry.includes(true), false)
+  } finally {
+    harness.editor.commands.executeCommand = executeCommand
+    harness.reader['retiredStudyPaneClosed'] = retiredStudyPaneClosed
+    harness.reader['prepareApplicationGroup'] = prepareApplicationGroup
+    await harness.close()
+  }
+})
 
 // Value: protects=the layout confirmation of a live run surviving Cursor's habit of giving every editor group a new object with each tab change; fails_when=a replaced group object without a known tab (the Agent chat's group) or without any tab counts as another group, so the receipt the entry took no longer matches and the run reaches ready with "The native editor layout receipt no longer matches the Study panes."; why_new=Cycle 0045 NF-6 (observed on candidate 13 in Cursor 3.23.12: five such events during one entry, no receipt at ready); seam=workspace harness with a separate editor part and the fake editor's group object replacement
 test('a live entry in Cursor stays confirmed when the editor rebuilds the source group as its placeholder source tab closes', async () => {

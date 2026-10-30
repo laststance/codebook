@@ -6,6 +6,7 @@ import {
   MAX_EXPLANATION_CHARS,
   NODE_TEST_FACT_TYPE_LIMIT_CHARS,
   NODE_TEST_HISTORY_MAX_ENTRIES,
+  NODE_TEST_HISTORY_HEADER_VERSION,
   NODE_TEST_HISTORY_VERSION,
   NODE_TEST_LEARNING_DECISION_VERSION,
   NODE_TEST_LEARNING_MATERIAL_VERSION,
@@ -44,7 +45,11 @@ const fact = z.strictObject({
 
 export const nodeTestHistoryHeaderSchema = z
   .strictObject({
-    version: z.literal(NODE_TEST_HISTORY_VERSION),
+    // Header 1 is a history saved before recorded caller locations; both are read, new ones write 2.
+    version: z.union([
+      z.literal(NODE_TEST_HISTORY_VERSION),
+      z.literal(NODE_TEST_HISTORY_HEADER_VERSION),
+    ]),
     profile: z.literal(NODE_TEST_PROFILE),
     workspaceKey: repositoryHashSchema,
     studyId: studyIdSchema,

@@ -79,7 +79,7 @@ type PendingOutput = {
 }
 
 /**
- * Hides private roots and masks secrets in every free text a captured snapshot carries (frame, scope and variable names, values, types, unavailable reasons, source names, limitations) before it is stored; the executed source text is the learner's own and stays as it ran.
+ * Hides private roots and masks secrets in every free text a captured snapshot carries (frame, scope and variable names, values, types, unavailable reasons, source names, recorded caller locations, limitations) before it is stored; the executed source text is the learner's own and stays as it ran.
  * @param snapshot - The run's captured snapshot.
  * @param hide - Hides private roots, then masks secrets, in one text ({@link NodeServerHistorySinkImpl}'s own).
  * @returns A copy with every such text hidden and masked.
@@ -101,6 +101,17 @@ function maskSnapshot(
       ...(frame.sourceUnavailable === undefined
         ? {}
         : { sourceUnavailable: hide(frame.sourceUnavailable) }),
+      // A caller frame's recorded location is the debugger's own text: its name and path lose private roots like every other captured path.
+      ...(frame.recordedLocation
+        ? {
+            recordedLocation: {
+              name: hide(frame.recordedLocation.name),
+              ...(frame.recordedLocation.path === undefined
+                ? {}
+                : { path: hide(frame.recordedLocation.path) }),
+            },
+          }
+        : {}),
       ...(frame.unavailable === undefined
         ? {}
         : { unavailable: hide(frame.unavailable) }),

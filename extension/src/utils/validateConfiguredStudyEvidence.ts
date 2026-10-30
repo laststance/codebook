@@ -1,5 +1,8 @@
 import type { ConfiguredStudy } from '../configuredStudySchemas'
-import { REPOSITORY_CAPTURED_TYPES } from '../constants'
+import {
+  RECORDED_LOCATION_STUDY_VERSION,
+  REPOSITORY_CAPTURED_TYPES,
+} from '../constants'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
 import { assertConfiguredDescriptor } from './assertConfiguredDescriptor'
@@ -7,7 +10,7 @@ import { configuredStops } from './configuredStops'
 import { isCrossRuntimeStudy } from './isCrossRuntimeStudy'
 import { isSavedBindingReceiptAtStop } from './isSavedBindingReceiptAtStop'
 import { isSavedSourceAtStop } from './isSavedSourceAtStop'
-import { studyFormatOfConfiguration } from './studyFormatOfConfiguration'
+import { legacyStudyFormatOfConfiguration } from './legacyStudyFormatOfConfiguration'
 
 /** Validates sealed configured facts for archive and recording readers without requiring current files or granting runtime authority. @example validateConfiguredStudyEvidence(study, workspaceKey) // rejects altered source or pause */
 export function validateConfiguredStudyEvidence(
@@ -15,7 +18,11 @@ export function validateConfiguredStudyEvidence(
   workspaceKey: string,
 ): void {
   const configuration = study.configuration
-  if (study.version !== studyFormatOfConfiguration(configuration))
+  // A new save is the current format; an older archive keeps the format its configuration implied when it was saved.
+  if (
+    study.version !== RECORDED_LOCATION_STUDY_VERSION &&
+    study.version !== legacyStudyFormatOfConfiguration(configuration)
+  )
     throw new Error('Configured archive and intent versions disagree.')
   if (
     study.workspaceKey !== workspaceKey ||

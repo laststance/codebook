@@ -1,5 +1,6 @@
 import { configuredObservationSchema } from '../configuredStudySchemas'
 import {
+  RECORDED_LOCATION_STUDY_VERSION,
   REPOSITORY_BROWSER_ACTION,
   REPOSITORY_BROWSER_PROFILE,
 } from '../constants'
@@ -11,7 +12,6 @@ import type { StudyRecord, StudyService } from '../service'
 
 import { decodeRetainedStudy } from './decodeRetainedStudy'
 import { describeStudy } from './describeStudy'
-import { studyFormatOfConfiguration } from './studyFormatOfConfiguration'
 
 /** Copies only committed canonical evidence for {@link StudyWorkspace}; a changed read is discarded. @example await captureStudy(service, record, workspaceKey) */
 export async function captureStudy(
@@ -179,7 +179,7 @@ export async function captureStudy(
   const configured =
     record.profile === REPOSITORY_BROWSER_PROFILE
       ? {
-          version: studyFormatOfConfiguration(record.configuration),
+          version: RECORDED_LOCATION_STUDY_VERSION,
           configuration: record.configuration,
           configurationHash: sha256(JSON.stringify(record.configuration)),
           descriptor: record.definition?.descriptor,
