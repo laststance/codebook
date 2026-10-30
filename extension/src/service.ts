@@ -182,6 +182,7 @@ import {
 } from './utils/projectNodeTestOutcome'
 import { readerNotFollowingRunRefusal } from './utils/readerNotFollowingRunRefusal'
 import type { RepositoryAdapterReadiness } from './utils/readRepositoryAdapterReadiness'
+import { refusalFailureOf } from './utils/refusalFailureOf'
 import { releaseVitestListings } from './utils/releaseVitestListings'
 import { repositoryBrowserStartPrerequisites } from './utils/repositoryBrowserStartPrerequisites'
 import { resolveCapturedFactPaths } from './utils/resolveCapturedFactPaths'
@@ -203,7 +204,6 @@ import { vitestSearchField } from './utils/vitestSearchField'
 import { waitForNextRunState } from './utils/waitForNextRunState'
 import { waitWithin } from './utils/waitWithin'
 import { withKnownNodeHistory } from './utils/withKnownNodeHistory'
-import { viteFailureOf } from './viteRefusals'
 
 /** What the run resource tells an agent after the result while no explanation of the run carries a learning summary; `codebook://help/studies` describes the step in the last entry of its sequence. */
 const SAVE_LEARNING_SUMMARY_ADVICE =
@@ -3031,17 +3031,23 @@ export class StudyService {
   /**
    * Makes the run resource's error object for a failure the runtime recorded after its preparation.
    *
-   * A Vite run's timer failures (the reload after the click, the setup deadline) lead with their refusal code, so the agent reads the stable code, its recovery and help anchor and not only a text prefix. Called by {@link StudyService.state}.
+   * A run's timer and event failures (a Vite reload after the click, a Vite or Next setup deadline, a Fast Refresh of a sealed Next module) lead with their refusal code, so the agent reads the stable code, its recovery and help anchor and not only a text prefix ({@link refusalFailureOf}). Called by {@link StudyService.state}.
    *
    * @param runtimeFailure - The runtime's first failure text, sanitized.
-   * @returns The Vite refusal for a failure led by its code; any other failure as `RUNTIME_FAILED` with the text as its cause.
+   * @returns The refusal for a failure led by its code, with the static recovery its variant selects (a `NEXT_SETUP_DEADLINE` step); any other failure as `RUNTIME_FAILED` with the text as its cause.
    * @example
    * this.runtimeFailureError('VITE_PAGE_RELOADED: The page reloaded …').code // => 'VITE_PAGE_RELOADED'
+   * this.runtimeFailureError('NEXT_SETUP_DEADLINE(router-absent): Repository setup deadline (90 s) exceeded …').describe().recovery // => 'Tell the learner the page at entryPath is not a Next Pages page: …'
    */
   private runtimeFailureError(runtimeFailure: string): StudyError {
-    const viteFailure = viteFailureOf(runtimeFailure)
-    if (viteFailure)
-      return new StudyError(viteFailure.code, viteFailure.message)
+    const refusal = refusalFailureOf(runtimeFailure)
+    if (refusal)
+      return new StudyError(
+        refusal.code,
+        refusal.message,
+        refusal.message,
+        refusal.recoveryOverride,
+      )
     return new StudyError(
       'RUNTIME_FAILED',
       'The run failed in its runtime.',
@@ -4397,11 +4403,18 @@ export class StudyService {
   private preparationError(record: StudyRecord, error: unknown): StudyError {
     const runtime = record.runtime?.view(),
       runtimeFailure = runtime?.failures[0]
-    // A Vite run's timer failures (setup deadline) lead with their refusal code, so the agent reads the code, recovery and anchor.
-    const viteFailure =
-      runtimeFailure === undefined ? undefined : viteFailureOf(runtimeFailure)
-    if (viteFailure && !(error instanceof StudyError))
-      return new StudyError(viteFailure.code, viteFailure.message)
+    // A run's timer and event failures (a setup deadline, a Fast Refresh of a sealed module) lead with their refusal code, so the agent reads the code, recovery and anchor.
+    const refusal =
+      runtimeFailure === undefined
+        ? undefined
+        : refusalFailureOf(runtimeFailure)
+    if (refusal && !(error instanceof StudyError))
+      return new StudyError(
+        refusal.code,
+        refusal.message,
+        refusal.message,
+        refusal.recoveryOverride,
+      )
     if (!runtime || !runtimeFailure || error instanceof StudyError)
       return studyErrorNamingCause(domainError(error))
     // A failure naming the run's evidence directory is a failed evidence write's raw failure, which a removal of the study words by its own sentence (row 724).
