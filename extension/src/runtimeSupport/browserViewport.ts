@@ -96,6 +96,12 @@ export interface ViewportLease {
    * @returns `true` when the pane must not take the keyboard, `false` when it has to take it.
    */
   comesWithoutKeyboard?(): Promise<boolean>
+  /**
+   * Asked once when the run attaches its browser, before the debugger can pause: the pane's owner keeps the pane's tab open, so the file the debugger opens at a stop cannot replace it (N64p2-F2, Cursor 3.27.22).
+   * @param signal - The run's cancellation.
+   * @returns Once the owner has done what it can; a pane it cannot keep is not an error.
+   */
+  keepsPaneOpen?(signal: AbortSignal): Promise<void>
   /** Called right after the leased pane took the keyboard from that editor, so the owner can tell the learner where it is. */
   tookKeyboardFromEditor?(): void
 }
@@ -349,6 +355,8 @@ export class BrowserViewport {
     signal: AbortSignal,
     surface: ViewportSurface = 'page',
   ): Promise<void> {
+    // Before any pause can open the stop's file in the pane's group.
+    await this.lease?.keepsPaneOpen?.(signal)
     if (this.observer)
       cdp.aggregateScreencastTelemetry?.(() => this.observerTime())
     cdp.on('Page.screencastFrame', (frame) => {

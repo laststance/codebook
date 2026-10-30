@@ -10061,6 +10061,9 @@ export class StudyWorkspace {
             throw new Error('The Application lease was replaced.')
           this.assertApplicationReveal(current)
         },
+        // The run's stop file opens as a preview in this group; a preview Application would be replaced by it (N64p2-F2).
+        keepsPaneOpen: (attachSignal) =>
+          this.keepMovedApplicationTab(panel, attachSignal),
         // Before the pane covers the paused file, the chat that had the keyboard before the pause gets it back, and a file the learner's selected frame opened keeps the pane from the keyboard; a pane that had to take it tells the learner once where it is.
         comesWithoutKeyboard: () => this.keepsKeyboardFromPane(),
         tookKeyboardFromEditor: () => this.tellPaneTookKeyboard(),
@@ -17662,6 +17665,45 @@ export class StudyWorkspace {
         this.applicationGroupChange = previousChange
       learnerView.dispose()
     }
+  }
+
+  /**
+   * Keeps the Application's tab open after its move, so a text preview that the editor opens later in the Application's group cannot replace it.
+   *
+   * Why it exists: Cursor 3.27.22 lists the tab of a pane moved into a new group as a preview, and the native debugger opens a run's stop file as a preview in that group; the new preview replaced the Application's webview and the run failed with "Owned viewport closed before cleanup" (N64p2-F2, task 67). Called through the lease of {@link leaseApplicationViewport} when the run attaches its browser ({@link BrowserViewport.attach}), not for a Study entry: a learner's own Study pane stays as the editor shows it.
+   * The extension API cannot pin a webview's tab, so the editor's Keep Open command runs, which acts on the active tab of the active group; it runs only when that tab is the Application's own, so a learner's tab is never kept by it. A tab that stays a preview is left as it is: the move itself has succeeded.
+   * @param panel - The run's Application pane.
+   * @param signal - The run's cancellation.
+   * @returns Once the tab is no preview, or the editor left it one after the command.
+   * @example await this.keepMovedApplicationTab(panel, signal)
+   */
+  private async keepMovedApplicationTab(
+    panel: vscode.WebviewPanel,
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    // Read from the current groups each time: Cursor builds every tab object anew at a tab change.
+    const isOwnPreview = (): boolean => {
+      const group = vscode.window.tabGroups.activeTabGroup
+      const tab = group.activeTab
+      return Boolean(
+        tab?.isPreview &&
+        group.viewColumn === this.viewColumnOf(panel) &&
+        this.isCodebookPaneInput(tab.input, 'codebook.scopedBrowser'),
+      )
+    }
+    // Only the Application's own preview in the active group is kept; any other state needs no command.
+    if (!isOwnPreview()) return
+    await this.executeEditorCommand('workbench.action.keepEditor')
+    signal?.throwIfAborted()
+    // The editor reports the tab's new state after the command answered; a tab that stays a preview is not an error.
+    await waitUntil(
+      () => !isOwnPreview(),
+      'kept application main pane',
+      PRESENTATION_READY_TIMEOUT_MS,
+      signal,
+    ).catch((error: unknown) => {
+      if (signal?.aborted) throw error
+    })
   }
 
   /**
