@@ -21476,6 +21476,61 @@ export class StudyWorkspace {
     )
   }
 
+  /**
+   * Pins the clean source previews that this window's own runs made the native debugger open, so Cursor's main editor can report focus again before a layout read borrows it.
+   *
+   * Why it exists: a debugger stop opens the run's cited file as a preview tab, and Cursor reports no primary focus beside a preview, so the next Study placement ended in a foreign-preview refusal for a tab the learner never opened. Called at the start of {@link readMainEditorGrid}. A preview of any other file is the learner's and stays untouched (it still refuses), and so does an edited one.
+   * @param signal - The placement's cancellation.
+   * @returns Once every such preview is a kept tab; a tab the editor cannot pin stays a preview and the later foreign-preview refusal names it.
+   * @example await this.keepRunOwnedPreviews(signal) // login-form.tsx, opened by the run's stop, is no longer a preview
+   */
+  private async keepRunOwnedPreviews(
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    let workspaceRoot: string
+    try {
+      workspaceRoot = requireWorkspace()
+    } catch {
+      // No single workspace folder: no run can have opened a file here.
+      return
+    }
+    // The files of every stop the window's runs declared; a run's debugger opens only these.
+    const runSourceFiles = new Set(
+      [...(this.service?.records.values() ?? [])].flatMap((record) =>
+        record.definition
+          ? [
+              canonicalFsPath(
+                join(
+                  workspaceRoot,
+                  record.definition.configuration.source.path,
+                ),
+              ),
+            ]
+          : [],
+      ),
+    )
+    if (!runSourceFiles.size) return
+    const ownedPreviews = vscode.window.tabGroups.all
+      .flatMap((group) => group.tabs.map((tab) => ({ group, tab })))
+      .filter(
+        ({ tab }) =>
+          tab.isPreview &&
+          !tab.isDirty &&
+          tab.input instanceof vscode.TabInputText &&
+          runSourceFiles.has(canonicalFsPath(tab.input.uri.fsPath)),
+      )
+    for (const { group, tab } of ownedPreviews) {
+      signal?.throwIfAborted()
+      if (!(tab.input instanceof vscode.TabInputText)) continue
+      const uri = tab.input.uri
+      await this.showTextDocumentNoted(uri, {
+        viewColumn: group.viewColumn,
+        preserveFocus: true,
+        preview: false,
+      })
+    }
+  }
+
   /** Measures the main editor part before {@link arrange} or presentation placement; global chat/floating groups remain protected outside its leaves. @example const grid = await this.readMainEditorGrid(signal, assertCurrent) */
   private async readMainEditorGrid(
     signal: AbortSignal | undefined,
@@ -21484,6 +21539,8 @@ export class StudyWorkspace {
     beforeScopeFocus?: (acquire?: RepositoryFocusTarget) => void,
   ) {
     let assertAcquiredFocus = (): void => {}
+    // A preview the run's own debugger opened would keep Cursor from reporting main-editor focus; keep it before anything is measured.
+    await this.keepRunOwnedPreviews(signal)
     const assertInitial = this.retainPresentationPlacement(
       'readMainEditorGrid/assertInitial',
     )

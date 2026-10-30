@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -257,6 +257,44 @@ test('Open replay in Cursor beside a foreign preview tab that keeps the main edi
       harness.groups.some((group) => group.tabs.includes(debuggerPreview)),
       true,
     )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the next Study placement after a run: the source preview the run's own debugger opened is kept instead of refusing as a foreign preview; fails_when=a preview of a run's stop file still ends Open replay with the foreign-preview refusal; why_new=Cycle 0063 N63-F7 (Cursor 3.27.22); seam=addTextPreview, the main editor never reporting focus beside a preview (hasMainEditorFocus)
+test('Open replay beside the source preview the run own debugger opened keeps that tab and opens', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  try {
+    await harness.reader.close()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    const agentChat = harness.addSeparateEditorPart()
+    await mkdir(join(harness.directory, 'src'), { recursive: true })
+    await writeFile(join(harness.directory, 'src', 'theme.ts'), 'export {}\n')
+    const runPreview = harness.addTextPreview(
+      join(harness.directory, 'src', 'theme.ts'),
+      1,
+    )
+    agentChat.focus()
+    const hasMainEditorFocus = harness.reader['hasMainEditorFocus'].bind(
+      harness.reader,
+    )
+    harness.reader['hasMainEditorFocus'] = (groupCount: number): boolean =>
+      groupCount === 1 && runPreview.isPreview
+        ? false
+        : hasMainEditorFocus(groupCount)
+
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert
+    assert.notEqual(
+      harness.controller.state().reason,
+      'Error: A destination group contains a foreign preview: "theme.ts" in editor group 1. Close that tab, or keep it open (double-click its tab), then try again.',
+    )
+    assert.equal(runPreview.isPreview, false)
   } finally {
     await harness.close()
   }
