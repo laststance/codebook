@@ -835,12 +835,20 @@ test('attaching a live run waits once for the pane owner to keep the Application
       .then(() => {
         attached = true
       })
-    await delay(20)
+    await waitUntil(
+      () => calls.includes('keepsPaneOpen'),
+      'the keepsPaneOpen hook to be called',
+    )
+    // The hook's promise is still pending, so after one more turn of the event loop any step that attach took past it would show in the log.
+    await new Promise<void>((resolve) => setImmediate(resolve))
     const callsWhileHookHeld = [...calls]
     const attachedWhileHookHeld = attached
     releaseHook()
     // The renderer answers the readiness request that attach sends once the hook has answered.
-    await delay(20)
+    await waitUntil(
+      () => harness.messages.some((message) => message.type === 'requestReady'),
+      'the readiness request',
+    )
     harness.ready('11111111-1111-1111-1111-111111111111')
     await attaching
 
