@@ -293,6 +293,8 @@ export const APPLICATION_GROUP_MARKER_VERSION = 1
 /** The version of the record under {@link APPLICATION_GROUP_MARKER_KEY} that names two or more groups Codebook created by their `columns` (the Application's group and the Study Context's created group, finding 599); a reader of {@link APPLICATION_GROUP_MARKER_VERSION} alone ignores it, so it never retires one group of the pair on a proof made for the pair. */
 export const STUDY_GROUPS_MARKER_VERSION = 2
 export const PRESENTATION_READY_TIMEOUT_MS = 5_000
+/** How long the borrow of the main editor's focus waits for any report after `workbench.action.focusFirstEditorGroup` before it reveals the first group's Codebook pane with the focus instead; Cursor 3.27.22 answers that command from the Agent chat in about 9 ms with no event at all, so a report that comes at all comes within this bound (Cycle 0064 task 4). */
+export const PRESENTATION_FOCUS_COMMAND_PROBE_MS = 500
 /**
  * How much wider the editor area must have become, in pixels, for {@link StudyWorkspace} to conclude that a side bar was open before it was hidden: the editor's side bars are at least 170 px wide, and a sash or a rounded size moves the width by a few pixels at most.
  * @example

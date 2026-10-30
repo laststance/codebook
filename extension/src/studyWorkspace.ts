@@ -53,6 +53,7 @@ import {
   STOP_OWN_FOCUS_BOUND_MS,
   PRESENTATION_PREFERENCE_KEY,
   PAUSED_SOURCE_MOVE_ATTEMPTS,
+  PRESENTATION_FOCUS_COMMAND_PROBE_MS,
   PRESENTATION_PREFERENCE_VERSION,
   PRESENTATION_READY_TIMEOUT_MS,
   PRESENTATION_SETTLE_CEILING_MS,
@@ -21789,6 +21790,33 @@ export class StudyWorkspace {
           }
       // Cursor's Agent chat group (another part, named active before the borrow) can take the keyboard back a few milliseconds after the first group's focus command: the first group's Codebook pane then reports itself active only for a moment and never while the poll below looks (Cycle 0060, N60). That report is the main editor's focus report, kept here as a latch; the post-wait layout read must still answer for the main editor.
       let paneFocusReportedBesideChat = false
+      // Cursor 3.27.22 treats `workbench.action.focusFirstEditorGroup` as a no-op while the Agent chat's own editor part holds the keyboard, so a Codebook pane in front of the first group is revealed with focus instead (C64 task 4, measured natively).
+      const paneInFirstGroup =
+        !useCitation &&
+        !sourceBorrow &&
+        firstInput instanceof vscode.TabInputWebview &&
+        namedColumn > count
+          ? [this.app, this.contextPanel].find(
+              (candidate) =>
+                candidate !== undefined &&
+                this.viewColumnOf(candidate) === vscode.ViewColumn.One &&
+                candidate.viewType === firstInput.viewType,
+            )
+          : undefined
+      /**
+       * Tells that a Codebook pane of the first group holds the keyboard while the editor still names a chat-only group beyond the main grid as the active tab group, which Cursor 3.27.22 does after a pane was revealed with focus (no group event for the first group arrives).
+       * @returns `true` for an active pane in the first group when every group beyond the measured columns holds chats only.
+       * @example paneFocusedBesideChat() // => true right after the reveal of the Application pane from the Agent chat
+       */
+      const paneFocusedBesideChat = (): boolean =>
+        [this.app, this.contextPanel].some(
+          (candidate) =>
+            candidate !== undefined &&
+            this.viewColumnOf(candidate) === vscode.ViewColumn.One &&
+            candidate.active &&
+            vscode.window.tabGroups.activeTabGroup.viewColumn > count! &&
+            this.holdsOnlyChatsBeyond(count!),
+        )
       // Empty/opaque primary panes need the actual requested citation, never a disposable placeholder or unobserved command result.
       beforeScopeFocus?.(useCitation ? undefined : borrowedFocus)
       // Created after the check above, which can refuse, so a refusal leaves no view-state listener behind.
@@ -21811,7 +21839,20 @@ export class StudyWorkspace {
                 : [],
             )
           : []
+      /**
+       * Says whether any report proves the main editor holds the keyboard after the borrow; asked by the probe after the focus command and by the wait for the primary focus.
+       * @returns `true` for the first group's focus, a reported primary or captured-source text editor, the latched or current pane report beside the chat, or the sole main group beside a chat.
+       * @example hasMainEditorFocusProof() // => true once the Application pane reports itself active while the editor names the chat's group
+       */
+      const hasMainEditorFocusProof = (): boolean =>
+        firstFocused() ||
+        primaryEditorReported() ||
+        sourceEditorReported() ||
+        paneFocusReportedBesideChat ||
+        paneFocusedBesideChat() ||
+        this.isSoleMainGroupBesideChat(count ?? 0)
       this.mainEditorFocusBorrows++
+      const borrowStartedMs = performance.now()
       this.firstGroupFrontAtBorrow = undefined
       try {
         if (useCitation) {
@@ -21833,6 +21874,27 @@ export class StudyWorkspace {
           )
           assertCurrent()
           assertGroups()
+          // Cursor 3.27.22 answers the command from the Agent chat with no event at all: when no report of the main editor's focus follows shortly, the pane in front of the first group is revealed with the focus, which does move the keyboard there.
+          if (
+            paneInFirstGroup &&
+            !(await waitUntil(
+              hasMainEditorFocusProof,
+              'the first group focus command effect',
+              PRESENTATION_FOCUS_COMMAND_PROBE_MS,
+              signal,
+            ).then(
+              () => true,
+              (probeError: unknown) => {
+                // Only the expired probe is answered here; a cancellation or a failed read keeps its own error.
+                if (probeError instanceof WaitTimeoutError) return false
+                throw probeError
+              },
+            ))
+          ) {
+            this.revealPane(paneInFirstGroup, vscode.ViewColumn.One, false)
+            assertCurrent()
+            assertGroups()
+          }
         }
       } catch (error) {
         // A failed borrow ends its watch; the wait below ends the others.
@@ -21861,16 +21923,14 @@ export class StudyWorkspace {
               'The primary editor selection changed during scope measurement; the newer learner focus was preserved.',
             )
           }
-          return (
-            firstFocused() ||
-            primaryEditorReported() ||
-            sourceEditorReported() ||
-            paneFocusReportedBesideChat ||
-            this.isSoleMainGroupBesideChat(count ?? 0)
-          )
+          return hasMainEditorFocusProof()
         },
         'identifiable primary editor focus',
-        PRESENTATION_READY_TIMEOUT_MS,
+        // The probe after the focus command belongs to the same bound, so a refusal still comes after PRESENTATION_READY_TIMEOUT_MS in all.
+        Math.max(
+          0,
+          PRESENTATION_READY_TIMEOUT_MS - (performance.now() - borrowStartedMs),
+        ),
         signal,
       )
         .finally(() => {
@@ -21972,8 +22032,10 @@ export class StudyWorkspace {
         await waitUntil(
           () =>
             panel.active &&
-            vscode.window.tabGroups.activeTabGroup.viewColumn ===
-              panel.viewColumn,
+            // Beside the Agent chat Cursor keeps naming the chat's group after a pane was revealed with focus: the pane's own report is the proof then.
+            (vscode.window.tabGroups.activeTabGroup.viewColumn ===
+              panel.viewColumn ||
+              paneFocusedBesideChat()),
           'retained main editor focus',
           PRESENTATION_READY_TIMEOUT_MS,
           signal,
