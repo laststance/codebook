@@ -11,6 +11,11 @@ import { realProcessStart } from './utils/realProcessStart'
 import { debuggerCapture } from './utils/serverRunCapture'
 import { startHistoryServerRun } from './utils/startHistoryServerRun'
 
+/**
+ * The seal bound of a test whose temporary-file cleanup stalls forever after `sealed.json` is renamed into place, so the deadline fires after the publish: long enough for the publish itself to land on a loaded CI runner (a 250 ms bound once fired first there and read the run as failed), while the stalled cleanup still makes the deadline fire on every run.
+ */
+const SEAL_BOUND_AFTER_PUBLISH_MS = 1_000
+
 before(async () => {
   await realProcessStart(process.pid)
 })
@@ -138,7 +143,7 @@ test('a published seal stays sealed when the writer record removal stalls past t
     harness,
     context,
   )
-  service.nodeServerHistorySealBoundMs = 250
+  service.nodeServerHistorySealBoundMs = SEAL_BOUND_AFTER_PUBLISH_MS
   await run.sendRequest('k1')
   const originalRemove = fileSystem.rm
   context.mock.method(
@@ -169,7 +174,7 @@ test('a deadline firing right after the seal was published but before finish ret
   const harness = await createHarness()
   context.after(() => harness.close())
   const { service, record, run } = await startHistoryServerRun(harness, context)
-  service.nodeServerHistorySealBoundMs = 250
+  service.nodeServerHistorySealBoundMs = SEAL_BOUND_AFTER_PUBLISH_MS
   await run.sendRequest('k1')
   const originalUnlink = fileSystem.unlink
   context.mock.method(
@@ -296,7 +301,7 @@ test('a seal taken as published after the deadline fired still reads its summary
     harness,
     context,
   )
-  service.nodeServerHistorySealBoundMs = 250
+  service.nodeServerHistorySealBoundMs = SEAL_BOUND_AFTER_PUBLISH_MS
   await run.sendRequest('k1')
   const originalUnlink = fileSystem.unlink
   context.mock.method(
@@ -374,7 +379,7 @@ test('a late summary read fills the summary of a seal published at the deadline'
     harness,
     context,
   )
-  service.nodeServerHistorySealBoundMs = 100
+  service.nodeServerHistorySealBoundMs = SEAL_BOUND_AFTER_PUBLISH_MS
   await run.sendRequest('k1')
   const originalUnlink = fileSystem.unlink
   context.mock.method(
