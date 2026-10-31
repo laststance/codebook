@@ -78,6 +78,33 @@ async function readNextReadmeSection(): Promise<string> {
   return readme.slice(start + 1, end === -1 ? undefined : end)
 }
 
+/**
+ * Reads the packaged README's API 1.12 compatibility note: from "API 1.12 is additive" to the API 1.11 note after it.
+ * @returns The note, or an empty text when either end is missing.
+ * @example
+ * await readApi112ReadmeNote() // => 'API 1.12 is additive: it adds Next Pages Router pages to the `next-dev-webpack` adapter …'
+ */
+async function readApi112ReadmeNote(): Promise<string> {
+  const readme = await readFile(join(__dirname, '../../README.md'), 'utf8')
+  const start = readme.indexOf('API 1.12 is additive')
+  const end = readme.indexOf('API 1.11 was additive', start)
+  return start === -1 || end === -1 ? '' : readme.slice(start, end)
+}
+
+/**
+ * Reads the 1.12 line of the `API_VERSION` doc comment in `src/constants.ts` (tests run from `dist/tests`).
+ * @returns The line, or an empty text when the doc has no 1.12 line.
+ * @example
+ * await readApi112VersionDoc() // => ' * 1.12 is additive: Next Pages Router pages on the `next-dev-webpack` adapter …'
+ */
+async function readApi112VersionDoc(): Promise<string> {
+  const constants = await readFile(
+    join(__dirname, '../../src/constants.ts'),
+    'utf8',
+  )
+  return constants.split('\n').find((line) => line.startsWith(' * 1.12 ')) ?? ''
+}
+
 // protects=the Next quick start's configuration is valid for the public schema, so an agent that copies it and fills the placeholders is not refused for its shape; fails_when=the schema changes a field and the help keeps the old example, or the example loses its Pages citation or entryPath; no_claim=that the placeholders name real sources
 test('the Next quick start configuration parses with the public repository-browser schema', () => {
   // Arrange
@@ -406,5 +433,57 @@ test('the bundled skill forbids editing the project to make a browser run start 
     paragraph.includes(
       "Never edit the project's files, config or scripts to make a run start or reach its stops; when the page itself keeps the declared action from happening, tell the learner what blocks it.",
     ),
+  )
+})
+
+// Value: protects=a client or skill reading the API 1.12 note learns that every repository-browser click, App Router and Vite runs included, now scrolls a target outside the viewport to its middle before the click (1.11 read it as obscured); fails_when=the README note or the API_VERSION doc says App Router and Vite runs are unchanged, or stops naming the scroll; why_new=Cycle 0066 task 4 (Cycle 0065 review and CodeRabbit CLI round 5: the note contradicted the click step); seam=README and constants.ts text; no_claim=the run scrolls so (configuredDomExpression tests)
+test('the API 1.12 note in the README and the API_VERSION doc names the below-the-fold scroll of every repository-browser click', async () => {
+  // Arrange
+  const readmeNote = await readApi112ReadmeNote()
+  const versionDoc = await readApi112VersionDoc()
+  // Act
+  const notes = [readmeNote, versionDoc]
+  // Assert
+  assert.ok(
+    readmeNote.includes(
+      "API 1.12 also changes the click of every `repository-browser` run, App Router and Vite runs included: a click target whose centre lies outside the visible page is first scrolled to the middle of the viewport before the click, so the page's own scroll and visibility handlers run before it, where API 1.11 read such a target as obscured (`click-target-obscured`); App Router and Vite runs are otherwise unchanged.",
+    ),
+  )
+  assert.ok(
+    versionDoc.includes(
+      'It also changes the click of every `repository-browser` run, App Router and Vite runs included: a click target whose centre lies outside the viewport is first scrolled to the middle of the viewport, where 1.11 read it as obscured (`click-target-obscured`); App Router and Vite runs are otherwise unchanged.',
+    ),
+  )
+  assert.deepEqual(
+    notes.filter((note) =>
+      note.includes('App Router and Vite runs are unchanged'),
+    ),
+    [],
+  )
+})
+
+// Value: protects=a client reading the API 1.12 note expects nextRoute only where the runtime sets it, for a Next run in a workspace with a Pages folder, and not for a Next run without one; fails_when=the README note or the API_VERSION doc says every Next run's resource names its nextRoute; why_new=Cycle 0066 task 5 (Cycle 0065 review: runtime.ts documents nextRoute absent without a Pages folder; D4, the docs follow the runtime); seam=README and constants.ts text; no_claim=the run resource omits it (run tests)
+test('the API 1.12 note in the README and the API_VERSION doc name nextRoute only for a Next run in a workspace with a Pages folder', async () => {
+  // Arrange
+  const readmeNote = await readApi112ReadmeNote()
+  const versionDoc = await readApi112VersionDoc()
+  // Act
+  const notes = [readmeNote, versionDoc]
+  // Assert
+  assert.ok(
+    readmeNote.includes(
+      'the resource of a Next run in a workspace with a Pages folder (`pages/` or `src/pages/`) names its `nextRoute` once its entry path is resolved (router, route and, for a Pages route, its source file), while a Next run in a workspace without a Pages folder has no `nextRoute`',
+    ),
+  )
+  assert.ok(
+    versionDoc.includes(
+      'the resource of a Next run in a workspace with a Pages folder names its `nextRoute` (not a Next run in a workspace without one)',
+    ),
+  )
+  assert.deepEqual(
+    notes.filter((note) =>
+      note.includes("a Next run's resource names its `nextRoute`"),
+    ),
+    [],
   )
 })
