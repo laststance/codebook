@@ -16,6 +16,7 @@ import { test } from 'node:test'
 
 import {
   HELP_TEXT,
+  productionSeams,
   judgeReview,
   parseReviewLog,
   runQaCandidate,
@@ -1160,6 +1161,62 @@ test('a codex that closes before the CHILD line is written is logged with its re
     'CODEX_REVIEW_EXIT 3 2026-11-01T12:00:00.000Z\n',
     'CODEX_REVIEW_CLEANED\n',
   ])
+})
+
+// protects=a timeout is recorded as timeout even when ending the tree makes codex emit close before the end resolves (Windows taskkill); fails_when=the close with the kill code wins and the line says an exit code; no_claim=a real taskkill (the fake endTree emits close itself)
+test('a codex that closes while its tree is being ended at the limit is still logged as timeout', async () => {
+  // Arrange
+  const runner = makeRunnerHarness({
+    onEnd: (child) => child.emit('close', 1, null),
+  })
+
+  // Act
+  const finished = runCandidateReview(RUNNER_OPTIONS, runner.seams)
+  await waitFor(() => runner.timers.length === 1)
+  await runner.timers[0].callback()
+  await finished
+
+  // Assert
+  assert.equal(
+    runner.log[2],
+    'CODEX_REVIEW_EXIT timeout 2026-11-01T12:00:00.000Z\n',
+  )
+})
+
+// protects=a runner whose spawn fails asynchronously exits 3 with the NOT STARTED line instead of crashing the command; fails_when=the detached child has no error listener, so its error event is an uncaught exception; no_claim=a real spawn (a fake spawn returns a child with no pid that emits error on a later turn)
+test('an asynchronous runner spawn failure is reported as a review that did not start, not an uncaught error', async () => {
+  // Arrange
+  const harness = await makeHarness()
+  const fakeSpawn = () => {
+    const child = new EventEmitter()
+    child.pid = undefined
+    child.unref = () => {}
+    setImmediate(() => child.emit('error', new Error('spawn EAGAIN')))
+    return child
+  }
+  harness.seams.spawnRunner = productionSeams(
+    harness.repository,
+    fakeSpawn,
+  ).spawnRunner
+  let uncaught = 0
+  const onUncaught = () => {
+    uncaught += 1
+  }
+  process.once('uncaughtException', onUncaught)
+
+  // Act
+  const exitCode = await runCommand(harness, [])
+  await new Promise((resolve) => setImmediate(resolve))
+  process.off('uncaughtException', onUncaught)
+
+  // Assert
+  assert.equal(exitCode, 3)
+  assert.equal(uncaught, 0)
+  assert.equal(
+    harness.out.at(-1),
+    'codex review NOT STARTED: could not start the review runner: the runner has no pid',
+  )
+  await rm(harness.repository, { recursive: true })
 })
 
 /** Waits (by yielding to the event loop, not by time) until a condition holds. */

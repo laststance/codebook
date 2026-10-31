@@ -173,7 +173,7 @@ function compactUtc(date) {
 }
 
 /** The production seams: real build, git, file system, spawner, clock and pid probe. @example const seams = productionSeams(REPOSITORY) */
-export function productionSeams(repository) {
+export function productionSeams(repository, spawnProcess = spawn) {
   return {
     repository,
     print: (line) => console.log(line),
@@ -206,7 +206,7 @@ export function productionSeams(repository) {
     },
     spawnRunner: (runnerArguments) => {
       // Detached and unref'd: the review outlives this command.
-      const child = spawn(
+      const child = spawnProcess(
         process.execPath,
         [
           join(
@@ -217,6 +217,8 @@ export function productionSeams(repository) {
         ],
         { detached: true, stdio: 'ignore', cwd: repository },
       )
+      // An asynchronous spawn failure emits `error` on a later tick; without a listener it would crash this command. The missing pid is what reports it.
+      child.once('error', () => {})
       child.unref()
       return child
     },

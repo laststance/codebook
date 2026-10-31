@@ -136,6 +136,8 @@ export async function runCandidateReview(
   let release = () => {}
   let timer
   let ended = false
+  // Set the moment the limit passes, before the tree end: a `close` the end itself causes must not pass for codex's own exit.
+  let timedOut = false
   try {
     // Reset a branch an interrupted run left behind; the pinned base keeps the reviewed diff reproducible.
     await seams.git(['branch', '-f', names.branch, base])
@@ -149,6 +151,7 @@ export async function runCandidateReview(
       child.once('close', (code, signal) => resolve({ code, signal }))
       // Past the limit the tree is ended before the exit line, so the line is true when it is read.
       timer = seams.setTimer(async () => {
+        timedOut = true
         try {
           await seams.endTree(child)
         } catch {
@@ -166,7 +169,7 @@ export async function runCandidateReview(
     await seams.appendState(`CODEX_REVIEW_CHILD ${child.pid}\n`)
     const outcome = await outcomePromise
     if (!ended) {
-      if (outcome.timeout) await writeExit('timeout')
+      if (timedOut || outcome.timeout) await writeExit('timeout')
       else if (outcome.error)
         await writeExit(`error ${errorMessage(outcome.error)}`)
       else
