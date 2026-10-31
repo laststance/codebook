@@ -18,7 +18,6 @@ import {
 } from './constants'
 import type { HistoryWriterRules } from './historyStorageDescriptor'
 import { HistoryJournalWriter } from './nodeHistoryJournalWriter'
-import { sha256 } from './runtimeSupport/utils/sha256'
 import { cutHistoryReason } from './utils/cutHistoryReason'
 import {
   describeLastExtensionEntry,
@@ -30,6 +29,10 @@ import {
   cloneExtensionJournalProgress,
   newExtensionJournalProgress,
 } from './utils/extensionHistoryJournalRules'
+import {
+  parseJournalEntries,
+  structuredSealFields,
+} from './utils/structuredSealFields'
 
 /** The run clock a writer stamps entries with: milliseconds since the history started, monotonic. A test names its own. */
 export type ExtensionHistoryClock = () => number
@@ -39,7 +42,7 @@ export type ExtensionHistoryClock = () => number
  * @returns A clock that reads the milliseconds elapsed since this call on the host's monotonic clock.
  * @example const nowMs = startExtensionHistoryClock(); nowMs() // => 0.4
  */
-export function startExtensionHistoryClock(): ExtensionHistoryClock {
+function startExtensionHistoryClock(): ExtensionHistoryClock {
   const startedAt = performance.now()
   return () => performance.now() - startedAt
 }
@@ -99,11 +102,9 @@ class ExtensionWriterRules implements HistoryWriterRules<ExtensionHistoryTypes> 
     appendFailure?: Error
     limitReached: boolean
   }): ExtensionHistorySeal {
-    const entries = input.journal
-      .toString('utf8')
-      .split('\n')
-      .filter((line) => line.length > 0)
-      .map((line) => this.parseEntry(JSON.parse(line)))
+    const entries = parseJournalEntries(input.journal, (value) =>
+      this.parseEntry(value),
+    )
     const reasons = evaluateExtensionHistoryCapture(this.header, entries, {
       ...this.facts,
       ...(input.appendFailure
@@ -118,19 +119,16 @@ class ExtensionWriterRules implements HistoryWriterRules<ExtensionHistoryTypes> 
         : {}),
       sizeLimitReached: input.limitReached,
     })
-    const complete = reasons.length === 0
-    return extensionHistorySealSchema.parse({
-      version: CHROME_EXTENSION_HISTORY_FORMAT_VERSION,
-      studyId: input.studyId,
-      entryCount: input.entryCount,
-      journalBytes: input.journal.byteLength,
-      journalHash: sha256(input.journal),
-      status: complete ? 'complete' : 'partial',
-      endedAt: input.endedAt,
-      reasons,
-      capture: complete ? 'complete' : 'incomplete',
-      ...(reasons[0] ? { reason: cutHistoryReason(reasons[0].text) } : {}),
-    })
+    return extensionHistorySealSchema.parse(
+      structuredSealFields({
+        version: CHROME_EXTENSION_HISTORY_FORMAT_VERSION,
+        studyId: input.studyId,
+        entryCount: input.entryCount,
+        journal: input.journal,
+        endedAt: input.endedAt,
+        reasons,
+      }),
+    )
   }
 }
 
@@ -162,11 +160,6 @@ export class ChromeExtensionHistoryWriter extends HistoryJournalWriter<Extension
     this.extensionRules = rules
   }
 
-  /** Whether the writer takes no more entries: the seal began or an append failed. */
-  get isClosedToAppends(): boolean {
-    return this.closedToAppends || this.appendFailure !== undefined
-  }
-
   /**
    * Queues one entry with the run clock's time of this call.
    * @param input - The entry without its sequence and time.
@@ -189,6 +182,8 @@ export class ChromeExtensionHistoryWriter extends HistoryJournalWriter<Extension
   }
 
   /** Records the captured values and executed source of a pause. @example void writer.appendCapture({ pauseId, path, line, sourceHash, sourceBytes, debuggerSnapshot, facts: {} }) */
+  // Called through the recorder's `writer`, which the dead-code scan cannot follow.
+  // fallow-ignore-next-line unused-class-member
   appendCapture(
     input: Omit<
       ExtensionHistoryEntryOf<'capture'>,
@@ -199,6 +194,8 @@ export class ChromeExtensionHistoryWriter extends HistoryJournalWriter<Extension
   }
 
   /** Records that a pause ended and why. @example void writer.appendPauseClose({ pauseId, reason: 'continue' }) */
+  // Called through the recorder's `writer`, which the dead-code scan cannot follow.
+  // fallow-ignore-next-line unused-class-member
   appendPauseClose(
     input: Omit<
       ExtensionHistoryEntryOf<'pause-close'>,
@@ -229,6 +226,8 @@ export class ChromeExtensionHistoryWriter extends HistoryJournalWriter<Extension
   }
 
   /** Records the run's result. @example void writer.appendResult({ outcome: 'changed', before: { value: 'a' }, after: { value: 'b' } }) */
+  // Called through the recorder's `writer`, which the dead-code scan cannot follow.
+  // fallow-ignore-next-line unused-class-member
   appendResult(
     input: Omit<
       ExtensionHistoryEntryOf<'result'>,

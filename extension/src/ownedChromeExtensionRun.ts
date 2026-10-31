@@ -18,10 +18,8 @@ import type {
   ExtensionContinueArguments,
   ExtensionDebuggerInput,
 } from './chromeExtensionDebugger'
-import type {
-  ChromeExtensionHistorySink,
-  ExtensionHistoryPause,
-} from './chromeExtensionHistorySink'
+import { ExtensionHistoryPauseTracker } from './chromeExtensionHistoryPauseTracker'
+import type { ChromeExtensionHistorySink } from './chromeExtensionHistorySink'
 import {
   buildExtensionObserved,
   createExtensionObservationReader,
@@ -169,11 +167,8 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   private readonly pinnedGenerations = new Set<number>()
   /** The run's history once it started; `undefined` before, and for a run that goes on unrecorded. */
   private history: ChromeExtensionHistorySink | undefined
-  /** The declared pauses the history was told of, by pause generation. */
-  private readonly historyPauses = new Map<number, ExtensionHistoryPause>()
-  private readonly historyCaptured = new Set<string>()
-  /** The generations a continue of this run asked for, so a pause that ends otherwise is told apart. */
-  private readonly continuedGenerations = new Set<number>()
+  /** What the history was told of the debugger's pauses; created with the history, once the declaration resolved. */
+  private historyPauses: ExtensionHistoryPauseTracker | undefined
   private stage: ChromeExtensionPhase = 'starting'
   private launchedAtMs: number | undefined
   /** Settles when a cleanup left a step that ignored its abort behind at the stop bound, so {@link OwnedChromeExtensionRun.prepare} answers then instead of waiting on that step. */
@@ -573,6 +568,15 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
         })),
         chromeVersion: this.input.chromeVersion ?? 'unknown',
       })
+      if (this.history)
+        this.historyPauses = new ExtensionHistoryPauseTracker(
+          this.id,
+          resolved.surfaceUrl,
+          new URL(
+            resolved.workerPath ?? '',
+            `chrome-extension://${resolved.extensionId}/`,
+          ).href,
+        )
     } catch {
       // The history never fails the run.
       this.history = undefined
@@ -819,56 +823,18 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   }
 
   /**
-   * Tells the run's history what the debugger's pauses did since the last change: a declared pause opened, finished its capture or ended. The history only queues what it is told; a fault of its own never reaches the run.
+   * Tells the run's history what the debugger's pauses did since the last change. The history only queues what it is told; a fault of its own never reaches the run.
    * Called by {@link OwnedChromeExtensionRun.onDebuggerChange} on every change of the pause set.
    */
   private tellHistoryOfPauses(): void {
-    const { history, resolved, debug } = this
-    if (history === undefined || resolved === undefined || debug === undefined)
-      return
+    const { history, debug } = this
+    if (history === undefined || debug === undefined) return
     try {
-      const openGenerations = new Set<number>()
-      for (const pause of debug.pauses()) {
-        if (pause.kind !== 'declared' || pause.stopIndex === undefined) continue
-        openGenerations.add(pause.generation)
-        let recorded = this.historyPauses.get(pause.generation)
-        if (recorded === undefined) {
-          recorded = {
-            pauseId: `${this.id}:${pause.generation}:${pause.context}:${pause.stopIndex}`,
-            generation: pause.generation,
-            context: pause.context,
-            stopIndex: pause.stopIndex,
-            targetUrl:
-              pause.context === 'service-worker'
-                ? new URL(
-                    resolved.workerPath ?? '',
-                    `chrome-extension://${resolved.extensionId}/`,
-                  ).href
-                : resolved.surfaceUrl,
-            workerGeneration:
-              pause.context === 'service-worker' ? debug.workerGeneration() : 0,
-          }
-          this.historyPauses.set(pause.generation, recorded)
-          history.pauseOpened(recorded)
-        }
-        if (pause.captured && !this.historyCaptured.has(recorded.pauseId)) {
-          this.historyCaptured.add(recorded.pauseId)
-          history.captured(recorded.pauseId, pause.captured)
-        }
-      }
-      for (const [generation, recorded] of [...this.historyPauses]) {
-        if (openGenerations.has(generation)) continue
-        this.historyPauses.delete(generation)
-        const wasContinuedHere = this.continuedGenerations.has(generation)
-        const workerWentAway =
-          !wasContinuedHere &&
-          recorded.context === 'service-worker' &&
-          debug.workerGeneration() !== recorded.workerGeneration
-        history.pauseClosed(
-          recorded.pauseId,
-          workerWentAway ? 'worker-lost' : 'continue',
-        )
-      }
+      this.historyPauses?.sync(
+        debug.pauses(),
+        debug.workerGeneration(),
+        history,
+      )
     } catch {
       // A history that throws must not end the run.
     }
@@ -1105,7 +1071,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
         'NO_PAUSE',
         'The extension run is not paused at a declared stop.',
       )
-    this.continuedGenerations.add(args.generation)
+    this.historyPauses?.noteContinue(args.generation)
     try {
       await debug.resume(args, this.abort.signal)
     } catch (error) {

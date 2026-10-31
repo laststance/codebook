@@ -12,6 +12,8 @@ import {
   MAX_EXPLANATION_CHARS,
   REPOSITORY_PATH_LIMIT_CHARS,
 } from './constants'
+import type { historySealReasonSchema } from './historySealSchemas'
+import { buildStructuredHistorySealSchema } from './historySealSchemas'
 import { studyIdSchema } from './legacyStudySchemas'
 import { replayDebugSnapshotSchema } from './replayDebugSchemas'
 import { repositoryHashSchema } from './sourceSchemas'
@@ -32,7 +34,7 @@ const stopIndex = z.number().int().min(1).max(EXTENSION_STOP_LIMIT)
  * The header of a chrome-extension history: the run's identity, its question, the extension (name and version from its manifest), the surface it opened, the declared stops, the repository revision and the Chrome that ran it.
  * @example extensionHistoryHeaderSchema.parse({ formatVersion: 1, profile: 'chrome-extension', … })
  */
-export const extensionHistoryHeaderSchema = z
+const extensionHistoryHeaderSchema = z
   .strictObject({
     formatVersion: z.literal(CHROME_EXTENSION_HISTORY_FORMAT_VERSION),
     profile: z.literal(CHROME_EXTENSION_PROFILE),
@@ -74,7 +76,7 @@ export const extensionHistoryHeaderSchema = z
   )
 
 /** Why a pause ended: the learner or chat continued it, its worker went away, the surface closed or the run ended. */
-export const EXTENSION_PAUSE_CLOSE_REASONS = [
+const EXTENSION_PAUSE_CLOSE_REASONS = [
   'continue',
   'worker-lost',
   'surface-lost',
@@ -82,7 +84,7 @@ export const EXTENSION_PAUSE_CLOSE_REASONS = [
 ] as const
 
 /** One entry of a chrome-extension journal; each carries its journal `sequence` and `elapsedMs` on the run clock. */
-export const extensionHistoryEntrySchema = z.discriminatedUnion('type', [
+const extensionHistoryEntrySchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('pause-open'),
     ...base,
@@ -139,46 +141,18 @@ export const extensionHistoryEntrySchema = z.discriminatedUnion('type', [
   }),
 ])
 
-/** One reason an extension history is partial: a stable `code`, the `params` that make `text`, and the exact `text` the learner reads. */
-const extensionHistorySealReasonSchema = z.strictObject({
-  code: z.string().min(1).max(128),
-  params: z.record(z.string(), z.union([z.string().max(1_024), z.number()])),
-  text: z.string().min(1).max(2_048),
-})
-
 /** The seal of a chrome-extension history: status, every reason uncut and the journal's hash. `interrupted` is never persisted: it is read when a history has no seal and no live writer. */
-export const extensionHistorySealSchema = z
-  .strictObject({
-    version: z.literal(CHROME_EXTENSION_HISTORY_FORMAT_VERSION),
-    studyId: studyIdSchema,
-    entryCount: z
-      .number()
-      .int()
-      .nonnegative()
-      .max(EXTENSION_HISTORY_MAX_ENTRIES),
-    journalBytes: z.number().int().nonnegative(),
-    journalHash: repositoryHashSchema,
-    status: z.enum(['complete', 'partial']),
-    endedAt: z.iso.datetime(),
-    reasons: z.array(extensionHistorySealReasonSchema),
-    capture: z.enum(['complete', 'incomplete']),
-    reason: z.string().max(1_024).optional(),
-  })
-  .refine(
-    (seal) =>
-      (seal.status === 'complete') === (seal.reasons.length === 0) &&
-      (seal.capture === 'complete') === (seal.reasons.length === 0),
-    'A seal is complete exactly when it names no reason.',
-  )
+export const extensionHistorySealSchema = buildStructuredHistorySealSchema(
+  CHROME_EXTENSION_HISTORY_FORMAT_VERSION,
+  EXTENSION_HISTORY_MAX_ENTRIES,
+)
 
 export type ExtensionHistoryHeader = z.infer<
   typeof extensionHistoryHeaderSchema
 >
 export type ExtensionHistoryEntry = z.infer<typeof extensionHistoryEntrySchema>
 export type ExtensionHistorySeal = z.infer<typeof extensionHistorySealSchema>
-export type ExtensionHistorySealReason = z.infer<
-  typeof extensionHistorySealReasonSchema
->
+export type ExtensionHistorySealReason = z.infer<typeof historySealReasonSchema>
 /** One entry of the given `type`. */
 export type ExtensionHistoryEntryOf<
   Type extends ExtensionHistoryEntry['type'],
@@ -201,7 +175,7 @@ export type ExtensionHistoryEntryInput =
  * @throws An error that starts with `EXTENSION_HISTORY_FORMAT_NEWER` for any context other than `page` and `service-worker`.
  * @example assertKnownExtensionContext('content-script') // throws 'EXTENSION_HISTORY_FORMAT_NEWER: Recorded by a newer Codebook; …'
  */
-export function assertKnownExtensionContext(value: unknown): void {
+function assertKnownExtensionContext(value: unknown): void {
   if (
     typeof value === 'string' &&
     !EXTENSION_HISTORY_KNOWN_CONTEXTS.includes(value)

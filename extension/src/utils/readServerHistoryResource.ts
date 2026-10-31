@@ -6,6 +6,7 @@ import type { NodeHistoryStore } from '../nodeTestHistoryStore'
 import type { ResourceContent } from '../resources'
 
 import { answerUnreadableHistoryEntry } from './answerUnreadableHistoryEntry'
+import { describeHistoryHeadline } from './describeHistoryHeadline'
 import { readJsonPage } from './readJsonPage'
 import { rehydrateNodeServerEntries } from './rehydrateServerStopSnapshot'
 import { withKnownNodeHistory } from './withKnownNodeHistory'
@@ -219,18 +220,7 @@ export async function readServerHistoryResource(
   return readJsonPage(
     baseUri,
     {
-      header: history.header,
-      status: history.status,
-      reason: history.reason,
-      seal: history.seal
-        ? {
-            status: history.seal.status,
-            endedAt: history.seal.endedAt,
-            entryCount: history.seal.entryCount,
-            capture: history.seal.capture,
-          }
-        : undefined,
-      entryCount: history.entries.length,
+      ...describeHistoryHeadline(history),
       ...serverVerdicts(summary, history.seal !== undefined),
       eventsUri: `${baseUri}/events`,
     },

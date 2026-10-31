@@ -37,6 +37,10 @@ import {
   cloneNodeServerJournalProgress,
   newNodeServerJournalProgress,
 } from './utils/nodeServerJournalRules'
+import {
+  parseJournalEntries,
+  structuredSealFields,
+} from './utils/structuredSealFields'
 
 /** The node-server profile's writer rules: the journal rules every reader shares, plus the evaluator that builds the seal; holds the state of one writer. */
 class NodeServerWriterRules implements HistoryWriterRules<NodeServerHistoryTypes> {
@@ -92,11 +96,9 @@ class NodeServerWriterRules implements HistoryWriterRules<NodeServerHistoryTypes
     appendFailure?: Error
     limitReached: boolean
   }): NodeServerHistorySeal {
-    const entries = input.journal
-      .toString('utf8')
-      .split('\n')
-      .filter((line) => line.length > 0)
-      .map((line) => this.parseEntry(JSON.parse(line)))
+    const entries = parseJournalEntries(input.journal, (value) =>
+      this.parseEntry(value),
+    )
     const reasons = evaluateNodeServerCapture(this.header, entries, {
       ...(input.appendFailure
         ? {
@@ -112,19 +114,16 @@ class NodeServerWriterRules implements HistoryWriterRules<NodeServerHistoryTypes
       sizeLimitReached: input.limitReached,
       captureBudgetExhausted: this.captureBudgetExhausted,
     })
-    const complete = reasons.length === 0
-    return nodeServerHistorySealSchema.parse({
-      version: NODE_SERVER_HISTORY_FORMAT_VERSION,
-      studyId: input.studyId,
-      entryCount: input.entryCount,
-      journalBytes: input.journal.byteLength,
-      journalHash: sha256(input.journal),
-      status: complete ? 'complete' : 'partial',
-      endedAt: input.endedAt,
-      reasons,
-      capture: complete ? 'complete' : 'incomplete',
-      ...(reasons[0] ? { reason: cutHistoryReason(reasons[0].text) } : {}),
-    })
+    return nodeServerHistorySealSchema.parse(
+      structuredSealFields({
+        version: NODE_SERVER_HISTORY_FORMAT_VERSION,
+        studyId: input.studyId,
+        entryCount: input.entryCount,
+        journal: input.journal,
+        endedAt: input.endedAt,
+        reasons,
+      }),
+    )
   }
 }
 

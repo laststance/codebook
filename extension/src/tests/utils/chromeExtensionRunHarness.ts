@@ -21,7 +21,11 @@ import {
   type ChromeExtensionRunDependencies,
   type ChromeExtensionRunTimings,
 } from '../../ownedChromeExtensionRun'
-import type { ChromeExtensionRuntime } from '../../runtime'
+import type {
+  ChromeExtensionRunInput,
+  ChromeExtensionRuntime,
+} from '../../runtime'
+import type { ViewportRecordingObserver } from '../../runtimeSupport/browserViewport'
 import type { RunClock } from '../../utils/runningTimeLimit'
 import { REAL_DEADLINE_TIMERS } from '../../utils/slotDeadline'
 
@@ -136,6 +140,8 @@ export type HarnessBehaviour = {
   withoutViewport?: boolean
   /** The viewport factory throws this, as the editor's layout guard does when the pane cannot be placed. */
   viewportFailure?: Error
+  /** Starts the run's history once its declaration resolved; absent → the run does not record. */
+  beginHistory?: ChromeExtensionRunInput['beginHistory']
   /** The created viewport cannot show the surface, as when a learner's tab opened in its group makes the editor's lease refuse the reveal. */
   viewportAttachFailure?: Error
 }
@@ -191,6 +197,8 @@ export function createRunHarness(behaviour: HarnessBehaviour = {}) {
   let endDebugSession: () => void = () => undefined
   const resolved = behaviour.resolved ?? resolvedHarnessRun()
   const sourceCheckCalls = { count: 0 }
+  /** The frame observer the run gave its Application view. */
+  const viewportObserver: { current?: ViewportRecordingObserver } = {}
 
   const browser: OwnedExtensionBrowser = {
     port: 9222,
@@ -372,10 +380,13 @@ export function createRunHarness(behaviour: HarnessBehaviour = {}) {
     record: (type, detail) => journal.push({ type, detail }),
     workspace: '/repo',
     dependencies,
+    chromeVersion: 'Google Chrome 156.0.8078.74',
+    ...(behaviour.beginHistory ? { beginHistory: behaviour.beginHistory } : {}),
     ...(behaviour.withoutViewport
       ? {}
       : {
-          createViewport: async () => {
+          createViewport: async (_runId, _signal, observer) => {
+            viewportObserver.current = observer
             await behaviour.viewportGate
             if (behaviour.viewportFailure) throw behaviour.viewportFailure
             return viewport
@@ -388,6 +399,7 @@ export function createRunHarness(behaviour: HarnessBehaviour = {}) {
     journal,
     resolveInputs,
     viewportCalls,
+    viewportObserver,
     surface,
     pauses,
     browser,

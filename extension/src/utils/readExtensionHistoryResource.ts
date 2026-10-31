@@ -5,6 +5,7 @@ import { StudyError } from '../errors'
 import type { NodeHistoryStore } from '../nodeTestHistoryStore'
 import type { ResourceContent } from '../resources'
 
+import { describeHistoryHeadline } from './describeHistoryHeadline'
 import { readJsonPage } from './readJsonPage'
 import { withKnownNodeHistory } from './withKnownNodeHistory'
 
@@ -26,6 +27,32 @@ function leanExtensionEvent(
 }
 
 /**
+ * Answers one entry's detail page: the entry as stored, whole.
+ * Called by {@link readExtensionHistoryResource} for `events/<sequence>`.
+ * @param baseUri - The history's resource address.
+ * @param entries - The verified journal entries.
+ * @param sequence - The entry asked for.
+ * @param page - The page cursor, when the content spans pages.
+ * @returns The entry's first or requested page.
+ * @throws `NOT_FOUND` when no entry has the sequence.
+ * @example readEntryDetail('codebook://node-history/a_b', entries, 4, undefined)
+ */
+function readEntryDetail(
+  baseUri: string,
+  entries: readonly ExtensionHistoryEntry[],
+  sequence: number,
+  page: string | undefined,
+): ResourceContent {
+  const entry = entries.find((value) => value.sequence === sequence)
+  if (!entry)
+    throw new StudyError(
+      'NOT_FOUND',
+      `The history has no entry with sequence ${sequence}. Read ${baseUri}/events for the sequences it holds.`,
+    )
+  return readJsonPage(`${baseUri}/events/${sequence}`, entry, page)
+}
+
+/**
  * Answers a `codebook://node-history/<id>` resource for a chrome-extension history: the history with its capture codes, the lean events list, or one entry in full.
  * Called by {@link readResource} for an id the history repository resolves to the chrome-extension profile. The replies carry masked values only and never absolute paths; frames are named by hash.
  * @param store - The workspace's extension history store.
@@ -44,30 +71,22 @@ export async function readExtensionHistoryResource(
   const history = await withKnownNodeHistory(store, studyId, () =>
     store.read(studyId),
   )
-  const events = /^events(\/pages\/[a-f0-9]{64}\/\d+)?$/.exec(suffix ?? '')
-  if (events)
+  const route = /^events(?:\/(\d+))?(\/pages\/[a-f0-9]{64}\/\d+)?$/.exec(
+    suffix ?? '',
+  )
+  if (route && route[1] === undefined)
     return readJsonPage(
       `${baseUri}/events`,
       history.entries.map(leanExtensionEvent),
-      events[1]?.slice(1),
+      route[2]?.slice(1),
     )
-  const detail = /^events\/(\d+)(\/pages\/[a-f0-9]{64}\/\d+)?$/.exec(
-    suffix ?? '',
-  )
-  if (detail) {
-    const sequence = Number(detail[1])
-    const entry = history.entries.find((value) => value.sequence === sequence)
-    if (!entry)
-      throw new StudyError(
-        'NOT_FOUND',
-        `The history ${studyId} has no entry with sequence ${sequence}. Read ${baseUri}/events for the sequences it holds.`,
-      )
-    return readJsonPage(
-      `${baseUri}/events/${sequence}`,
-      entry,
-      detail[2]?.slice(1),
+  if (route?.[1] !== undefined)
+    return readEntryDetail(
+      baseUri,
+      history.entries,
+      Number(route[1]),
+      route[2]?.slice(1),
     )
-  }
   const summary = await withKnownNodeHistory(store, studyId, () =>
     store.summarize(studyId),
   )
@@ -75,18 +94,7 @@ export async function readExtensionHistoryResource(
     baseUri,
     {
       profile: CHROME_EXTENSION_PROFILE,
-      header: history.header,
-      status: history.status,
-      reason: history.reason,
-      seal: history.seal
-        ? {
-            status: history.seal.status,
-            endedAt: history.seal.endedAt,
-            entryCount: history.seal.entryCount,
-            capture: history.seal.capture,
-          }
-        : undefined,
-      entryCount: history.entries.length,
+      ...describeHistoryHeadline(history),
       captureComplete: summary?.captureComplete ?? false,
       captureMissing: (summary?.captureMissing ?? []).map(
         (reason) => reason.code,

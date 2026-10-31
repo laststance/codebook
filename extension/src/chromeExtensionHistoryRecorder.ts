@@ -1,5 +1,6 @@
 import type { CapturedExtensionStop } from './chromeExtensionContracts'
 import { ExtensionHistoryFrameWriter } from './chromeExtensionHistoryFrames'
+import type { ExtensionPauseCloseReason } from './chromeExtensionHistorySchemas'
 import type {
   ChromeExtensionHistorySink,
   ExtensionHistoryPause,
@@ -10,12 +11,15 @@ import { extensionObservationResult } from './chromeExtensionObservation'
 import {
   EXTENSION_HISTORY_DRAIN_TIMEOUT_MS,
   EXTENSION_HISTORY_START_BOUND_MS,
-  SEAL_RETRY_DELAY_MS,
-  TRANSIENT_SEAL_ERROR_CODES,
 } from './constants'
 import type { ChromeExtensionObserved } from './runtime'
 import type { ViewportRecordingObserver } from './runtimeSupport/browserViewport'
-import { systemErrorCode } from './utils/systemErrorCode'
+import { sealWithTransientRetry } from './utils/sealWithTransientRetry'
+import {
+  SEAL_DEADLINE_PASSED,
+  startSealDeadline,
+} from './utils/startSealDeadline'
+import { startWithinBound } from './utils/startWithinBound'
 
 /** Where a chrome-extension run's history stands: its writer takes entries, it was sealed, or it was abandoned because it could not be written or sealed. */
 export type ExtensionHistoryStatus = 'recording' | 'sealed' | 'failed'
@@ -111,46 +115,28 @@ export class ChromeExtensionHistoryRecorder implements ChromeExtensionHistorySin
     input: ExtensionHistoryBeginInput,
   ): Promise<ExtensionHistoryBegun> {
     const bound = input.startBoundMs ?? EXTENSION_HISTORY_START_BOUND_MS
-    const starting = input.start()
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const expired = Symbol('expired')
-    try {
-      const writer = await Promise.race([
-        starting,
-        new Promise<typeof expired>((resolve) => {
-          timer = setTimeout(() => resolve(expired), bound)
-          timer.unref()
-        }),
-      ])
-      if (writer === expired) {
-        // A start that finishes later is sealed with nothing in it, which removes its folder.
-        void starting
-          .then(
-            (late) => late.seal(),
-            () => undefined,
-          )
-          .catch(() => undefined)
-        return {
-          unavailable: `the history did not start within ${bound / 1_000} s.`,
-        }
+    const started = await startWithinBound(
+      input.start(),
+      bound,
+      // A start that finishes later is sealed with nothing in it, which removes its folder.
+      (late) => late.seal(),
+    ).catch((error: unknown) => ({ failure: input.describeCause(error) }))
+    if ('failure' in started) return { unavailable: started.failure }
+    if ('timedOut' in started)
+      return {
+        unavailable: `the history did not start within ${bound / 1_000} s.`,
       }
-      return { recorder: new ChromeExtensionHistoryRecorder(writer, input) }
-    } catch (error) {
-      return { unavailable: input.describeCause(error) }
-    } finally {
-      if (timer) clearTimeout(timer)
+    return {
+      recorder: new ChromeExtensionHistoryRecorder(started.writer, input),
     }
   }
 
   /** Why the history stopped taking evidence while the run lives, without private paths; `undefined` while it writes. */
   get appendFailure(): string | undefined {
-    const failure = this.writer.appendFailure
-    return failure ? this.input.describeCause(failure) : undefined
-  }
-
-  /** Whether the filmstrip lost a frame. */
-  get isFilmstripIncomplete(): boolean {
-    return this.frames.isIncomplete
+    const { appendFailure } = this.writer
+    return appendFailure === undefined
+      ? undefined
+      : this.input.describeCause(appendFailure)
   }
 
   pauseOpened(pause: ExtensionHistoryPause): void {
@@ -234,11 +220,6 @@ export class ChromeExtensionHistoryRecorder implements ChromeExtensionHistorySin
     this.didSurfaceEnd = true
   }
 
-  /** Whether the history still takes entries. */
-  get isRecording(): boolean {
-    return this.status === 'recording'
-  }
-
   /**
    * Ends and seals the history; the first call decides, every later call joins it.
    * @param end - How the run ended.
@@ -270,40 +251,39 @@ export class ChromeExtensionHistoryRecorder implements ChromeExtensionHistorySin
     }
     await this.frames.drain(EXTENSION_HISTORY_DRAIN_TIMEOUT_MS)
     if (this.frames.failure !== undefined) this.reportFault(this.frames.failure)
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const expired = Symbol('expired')
-    const deadline = new Promise<typeof expired>((resolve) => {
-      timer = setTimeout(() => resolve(expired), boundMs)
-      timer.unref()
-    })
+    const deadline = startSealDeadline(boundMs)
     try {
-      const raced = await Promise.race([this.sealWithRetry(), deadline])
+      const raced = await Promise.race([this.sealWithRetry(), deadline.passed])
       // A writer whose seal is already published is never abandoned: the store lists it sealed.
-      const hash = raced === expired ? this.writer.publishedSealHash : raced
-      if (raced === expired && hash === undefined) {
-        this.abandon('Learning replay could not be saved: the seal timed out.')
-        return
-      }
-      this.status = 'sealed'
-      this.sealed = { summary: await this.readSummary(), hash }
+      const hash =
+        raced === SEAL_DEADLINE_PASSED ? this.writer.publishedSealHash : raced
+      if (hash === undefined && raced === SEAL_DEADLINE_PASSED)
+        return this.abandon(
+          'Learning replay could not be saved: the seal timed out.',
+        )
+      await this.markSealed(hash)
     } catch (error) {
+      // A seal published before the fault is never abandoned either.
       const publishedHash = this.writer.publishedSealHash
-      if (publishedHash === undefined) {
+      if (publishedHash === undefined)
         this.abandon(this.input.describeCause(error))
-        return
-      }
-      this.status = 'sealed'
-      this.sealed = { summary: await this.readSummary(), hash: publishedHash }
+      else await this.markSealed(publishedHash)
     } finally {
-      if (timer) clearTimeout(timer)
+      deadline.cancel()
     }
+  }
+
+  /** Records the sealed state with the summary the store reads of it. */
+  private async markSealed(hash: string | undefined): Promise<void> {
+    this.status = 'sealed'
+    this.sealed = { summary: await this.readSummary(), hash }
   }
 
   /** Why a still-open pause closed when the run ended: its worker went away, the surface was lost, or the run simply ended. */
   private closeReasonOf(
     pause: ExtensionHistoryPause,
     end: ExtensionHistoryEnd,
-  ): 'worker-lost' | 'surface-lost' | 'run-ended' {
+  ): ExtensionPauseCloseReason {
     if (
       end.failureCode === 'SERVICE_WORKER_RESTARTED' &&
       pause.context === 'service-worker'
@@ -315,10 +295,7 @@ export class ChromeExtensionHistoryRecorder implements ChromeExtensionHistorySin
   }
 
   /** Journals the end of a pause once. */
-  private closePause(
-    pauseId: string,
-    reason: 'continue' | 'worker-lost' | 'surface-lost' | 'run-ended',
-  ): void {
+  private closePause(pauseId: string, reason: ExtensionPauseCloseReason): void {
     if (!this.openPauses.delete(pauseId)) return
     this.write(this.writer.appendPauseClose({ pauseId, reason }))
   }
@@ -348,36 +325,30 @@ export class ChromeExtensionHistoryRecorder implements ChromeExtensionHistorySin
   }
 
   /** Reads the sealed history's summary; never rejects. */
-  private readSummary(): Promise<ExtensionHistorySummary | undefined> {
-    return Promise.resolve()
-      .then(() => this.input.summarize(this.writer.header.studyId))
-      .catch(() => undefined)
+  private async readSummary(): Promise<ExtensionHistorySummary | undefined> {
+    try {
+      return await this.input.summarize(this.writer.header.studyId)
+    } catch {
+      return undefined
+    }
   }
 
   /** Abandons the writer, so a late seal publishes nothing and the folder lists as interrupted. */
   private abandon(cause: string): void {
-    this.writer.abandon()
     this.status = 'failed'
     this.failure = cause
+    this.writer.abandon()
   }
 
-  /** Seals with what the recorder knows, and once more after a short wait when the first attempt failed with a transient file-system code. */
-  private async sealWithRetry(): Promise<string | undefined> {
-    const facts = {
-      filmstripIncomplete: this.frames.isIncomplete,
-      surfaceEnded: this.didSurfaceEnd,
-    }
-    try {
-      return await this.writer.seal(facts)
-    } catch (error) {
-      if (!TRANSIENT_SEAL_ERROR_CODES.includes(systemErrorCode(error)))
-        throw error
-      const wait =
-        this.input.retryDelay ??
-        ((milliseconds: number): Promise<void> =>
-          new Promise<void>((resolve) => setTimeout(resolve, milliseconds)))
-      await wait(SEAL_RETRY_DELAY_MS)
-      return this.writer.seal(facts)
-    }
+  /** Seals with what the recorder knows, retrying once after a transient file-system failure. */
+  private sealWithRetry(): Promise<string | undefined> {
+    return sealWithTransientRetry(
+      () =>
+        this.writer.seal({
+          filmstripIncomplete: this.frames.isIncomplete,
+          surfaceEnded: this.didSurfaceEnd,
+        }),
+      this.input.retryDelay,
+    )
   }
 }
