@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.2.66.0] - 2026-10-31 (development candidate)
+
+Cycle 0065 ([Issue #166](https://github.com/laststance/codebook/issues/166)), a feature cycle: the chat explains a click in a **Next Pages Router** page (`pages/` or `src/pages/`) live and saves it as a learning replay, in VS Code and in Cursor, as it already did for App Router pages.
+
+**Next Pages Router pages run live.** With `adapter: "next-dev-webpack"` a stop may sit in the page module, a component it imports or `_app`. Codebook finds the entry page in Next's route manifests after the first request, seals each declared stop against the page's own client code before the browser opens, waits for the page's router, pauses at the declared line in the native debugger and saves the run as a learning replay. The replay's Call Stack names the page's own `src/…` frames.
+
+**When a stop cannot be verified, the run says why, with a code and its recovery.** Eight new refusal codes, each with an anchor in `codebook://help/repository-browser`: `NEXT_UNSUPPORTED_SETTING` (`basePath`, `i18n`), `NEXT_ENTRY_REDIRECTED` (a server redirect, a page that ends at another path or route, also before its before conditions hold, or a client redirect before the first input or the click; query and fragment values are redacted), `NEXT_ROUTE_NOT_COMPILED` (a page that never reached the route manifests, or a listed page that answers a server error, with the server's output quoted), `NEXT_ROUTE_CONFLICT` (an App and a Pages route equally specific for the path, or a stale listing in `.next/dev`), `NEXT_ROUTE_NOT_FOUND` (no route for the path, or a listed page that answers a client error such as 404), `NEXT_SERVER_ONLY_STOP` (`_document`, API routes, or a line only the page's server compile maps, such as `getServerSideProps` or `getStaticProps`, also when client code follows it), `NEXT_STOP_NOT_SEALED` (no verified browser mapping, for example a module `next/dynamic` loads later) and `NEXT_SETUP_DEADLINE` (the 90 s setup budget, with a recovery for the step it stopped at). A Fast Refresh of a sealed module during the run ends it with `SOURCE_CHANGED`; earlier observations stay readable. These codes reach the run resource's `error` with their static recovery text.
+
+**A project with both routers runs the route Next serves.** When the App and the Pages manifest both match the entry path, the more specific route runs (a static App page beside a Pages catch-all, for example); only an equally specific pair, or a more specific route whose source is gone, is refused as `NEXT_ROUTE_CONFLICT`.
+
+**`codebook_status` says more about a Next workspace.** The `next-dev-webpack` readiness adds `routerKind` (`app`, `pages`, `both` or `none`) and `preparation`: how many statements the `dev` script runs before `next dev` (Codebook does not run them) and which environment settings it does not apply, by name only. The `repository-browser` profile lists `nextRouters: ["app", "pages"]`.
+
+**App Router pages whose dev script is plain `next dev` run the same way**, because Codebook always starts `next dev --webpack`. A Pages launch or compile failure adds the webpack compatibility sentence when the dev script does not ask for webpack.
+
+**A click target below the visible page is clicked.** For every `repository-browser` run, a click target whose centre lies outside the viewport is scrolled to the middle first, as a learner scrolls before clicking, instead of being refused as obscured.
+
+**Skill 1.0.58.** The browser route covers Pages Router pages, re-reads the help when `nextRouters` changes, relays a refusal's code and recovery, never moves a stop to unrelated code, never edits the project to make a run start or reach its stops, and says the learning is saved only once the save has completed.
+
+**Known limits.** Stops in server components and in Pages server-side code are not supported. `basePath`, `i18n`, a custom `distDir` and a custom `pageExtensions` are refused. Development trials ran on TanStack Query's Next 16.4.3 Pages examples in VS Code 1.144.0 and Cursor 3.27.22 on macOS 26.
+
+**Compatibility.** MCP API 1.12 (additive). To update, install this VSIX, reopen the work window and, in Cursor, run **Codebook: Set Up AI Chat** so the managed skill updates to 1.0.58.
+
 ## [0.2.65.0] - 2026-10-31 (development candidate)
 
 Cycle 0064 ([Issue #162](https://github.com/laststance/codebook/issues/162)), the third and last pull request of a bug-fix cycle: the replay Call Stack names every recorded frame, and a repository run in Cursor 3.27 keeps its Application at every stop. No new feature.
