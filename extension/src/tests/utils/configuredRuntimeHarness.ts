@@ -517,6 +517,8 @@ export async function configuredRuntimeHarness(
       body: { threadId: 1, reason: 'breakpoint' },
     })
   }
+  // Whether the page answers held conditions without a click point; {@link answerWithoutClickPoint} sets it.
+  let clickTargetWithoutPoint = false
   let screenshot =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII='
   /** Answers what the page evaluates: its location, and the configured DOM conditions, of which the after conditions hold only once the input was sent. */
@@ -532,9 +534,10 @@ export async function configuredRuntimeHarness(
         ready: false,
         failure: { conditionIndex: 0, reason: 'not-visible' },
       }
-    return ready
-      ? { ready: true, x: 12, y: 18 }
-      : { ready: false, failure: beforeFailure }
+    if (!ready) return { ready: false, failure: beforeFailure }
+    return clickTargetWithoutPoint
+      ? { ready: true }
+      : { ready: true, x: 12, y: 18 }
   }
   /** Gives the required inspection's path its value at the pause: a theme name, or what a test asked for instead. */
   const requiredInspectionValue = (): unknown => {
@@ -1392,6 +1395,10 @@ export async function configuredRuntimeHarness(
     },
     setReady(value: boolean): void {
       ready = value
+    },
+    /** Makes every later DOM read answer that the conditions hold without a click point, as the owned page does for a click target still outside the viewport after the click step scrolled it. @example harness.answerWithoutClickPoint() */
+    answerWithoutClickPoint(): void {
+      clickTargetWithoutPoint = true
     },
     /** Makes every later DOM read answer this failure, as the owned page would for a before condition that never holds. */
     failBeforeWith(failure: BeforeFailure): void {

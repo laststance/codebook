@@ -4322,3 +4322,26 @@ test('a page at [::1] is not owned when the host has no IPv6 loopback', async (c
   )
   await harness.run.stop()
 })
+
+// Value: protects=a click target the click step scrolled but that still lies outside the viewport gets no click, and the run says why; fails_when=a point-less answer is clicked at a guessed point or ends with another text; why_new=Cycle 0066 integration (task 13 added this branch without a test); seam=answerWithoutClickPoint stands in for the page's answer after the scroll; no_claim=a real page that refuses to scroll
+test('a click target still outside the viewport after the scroll gets no click and the run names it', async (context) => {
+  // Arrange
+  const { run, answerWithoutClickPoint, resumeDuringPreparation, mouse } =
+    await configuredRuntimeHarness(context)
+  resumeDuringPreparation()
+  await run.prepare()
+  answerWithoutClickPoint()
+  // Act
+  run.action('one', 'repository-click')
+  await waitUntil(
+    () => run.view().failures.length > 0,
+    'the click step failure',
+  )
+  // Assert
+  assert.match(
+    run.view().failures[0] ?? '',
+    /Click target stayed outside the viewport after Codebook scrolled it into view/,
+  )
+  assert.equal(mouse.length, 0)
+  assert.equal(run.view().operation?.inputDispatched, false)
+})
