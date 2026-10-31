@@ -713,6 +713,31 @@ test('a Pages stop on a server-only line above client code is refused as server-
   assert.equal(harness.launchConfigurations.length, 0)
 })
 
+// Value: protects=a Pages stop declared on a blank line binds to the next mapped line without reading the page's server compile, so such a stop costs no discovery step and cannot meet the discovery deadline there; fails_when=every browser stop reads the server compile; why_new=final /ship fix-check (Cycle 0065); seam=a browser map that leaves the blank line 2 unmapped; no_claim=discovery time on a real build
+test('a Pages stop declared on a blank line binds to the next line without reading the server compile', async (context) => {
+  // Arrange
+  const source =
+    'export default function Home() {\n' +
+    '\n' +
+    "  const label = 'Show more'\n" +
+    '  return label\n' +
+    '}\n'
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    fixture: { source, citationEndLine: 5, declaredLine: 2 },
+    nextPages: { mappedLines: [1, 3, 4, 5], serverCompile: true },
+  })
+  // Act
+  await harness.run.prepare()
+  // Assert
+  assert.equal(harness.pagesSeals.length, 1)
+  assert.deepEqual(
+    [...harness.pagesSeals[0]!.cache.chunks.keys()].filter((key) =>
+      key.startsWith('server/'),
+    ),
+    [],
+  )
+})
+
 // Value: protects=an unmapped Pages line without server evidence is refused as not sealed, saying it is not thereby server-only; fails_when=it is called server-only or stays uncoded; why_new=Cycle 0065 NEXT_STOP_NOT_SEALED (no verified browser mapping); seam=a build without a server compile; no_claim=none
 test('a Pages stop on an unmapped line without server evidence is refused as not sealed, not as server-only', async (context) => {
   // Arrange

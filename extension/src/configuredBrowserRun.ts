@@ -1458,7 +1458,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }): Promise<void> {
     // Every browser stop is checked, not only one no later line can bind: a server-only line (getServerSideProps above the component) is never moved to the client code after it.
     for (const stop of this.stops) {
-      if (stop.participant !== 'browser') continue
+      // A blank, comment or type-only line holds no code to run on either side, so it binds to the next mapped line without a server read.
+      if (
+        stop.participant !== 'browser' ||
+        isBlankOrCommentLine(stop.bundle.source, stop.source.line)
+      )
+        continue
       const established = await readNextServerOnlyReason({
         workspace: this.options.workspace,
         path: stop.source.path,

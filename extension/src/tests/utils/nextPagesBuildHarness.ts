@@ -42,7 +42,8 @@ const VLQ_DIGITS =
  * @param path - The original's workspace-relative path.
  * @param source - The original's text.
  * @param layer - The webpack layer: `pages-dir-browser` (browser) or `pages-dir-node` (server compile).
- * @param mappedLines - How many original lines, from line 1, the map maps (one generated line each), or the ascending 1-based original lines it maps, so a line can be left unmapped between mapped ones.
+ * @param mappedLines - How many original lines, from line 1, the map maps (one generated line each), or the ascending 1-based original lines it maps, so a line can be left unmapped between mapped ones; consecutive lines may differ by 1 to 15.
+ * @throws When the listed lines are not ascending with steps of 1 to 15.
  * @returns The module text.
  * @example pagesEvalModule('/repo', 'src/pages/index.tsx', PAGE_SOURCE, 'pages-dir-browser', 4)
  */
@@ -57,6 +58,14 @@ export function pagesEvalModule(
     typeof mappedLines === 'number'
       ? Array.from({ length: mappedLines }, (_, index) => index + 1)
       : mappedLines
+  // The map writes each step as one VLQ digit, so only ascending steps below 16 are expressible; anything else would corrupt the map silently.
+  for (const [index, line] of originalLines.entries()) {
+    const step = line - (originalLines[index - 1] ?? 1)
+    if (step < 0 || step > 15 || (index > 0 && step === 0))
+      throw new Error(
+        `pagesEvalModule maps ascending lines with steps of 1 to 15 only, not ${originalLines.join(', ')}`,
+      )
+  }
   const code = originalLines.map((line) => `work${line}();`).join('\n')
   const map = {
     version: 3,

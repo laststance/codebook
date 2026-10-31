@@ -415,3 +415,25 @@ test('a stop is refused once the run’s earlier stops spent its discovery time'
   )
   assert.equal(cache.readBytes, 0)
 })
+
+// Value: protects=the Pages test harness refuses a list of mapped lines its one-digit map cannot express, so a test that expects a line to be unmapped never passes on a corrupt map; fails_when=a step of 16 or more, or a descending list, writes a silently wrong mapping; why_new=final /ship fix-check (Cycle 0065); seam=none; no_claim=none beyond protects
+test('the Pages test harness refuses mapped lines whose steps its one-digit source map cannot express', () => {
+  // Arrange
+  const unexpressible: number[][] = [
+    [1, 20],
+    [3, 2],
+  ]
+  // Act / Assert
+  for (const mappedLines of unexpressible)
+    assert.throws(
+      () =>
+        pagesEvalModule(
+          '/repo',
+          'src/pages/index.tsx',
+          'x\n',
+          'pages-dir-browser',
+          mappedLines,
+        ),
+      /pagesEvalModule maps ascending lines with steps of 1 to 15 only/,
+    )
+})
