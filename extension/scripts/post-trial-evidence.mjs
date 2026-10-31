@@ -4,7 +4,7 @@
 //
 // Run `--help` for the prerequisites, an example, the exit codes and the error codes.
 import { spawn } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
 import {
   access,
@@ -14,6 +14,7 @@ import {
   readdir,
   readFile,
   realpath,
+  rename,
   rm,
   stat,
   writeFile,
@@ -125,7 +126,10 @@ Error codes:
 const CANDIDATE_START =
   /file:\/\/|\/Users\/|\/home\/|\/mnt\/[a-z]\/Users\/|[a-z]:[\\/]+Users[\\/]+|[\\/]{2,}wsl\$[\\/]+|[\\/]{2,}wsl\.localhost[\\/]+|~\/|\$\{HOME\}|\$HOME|%USERPROFILE%/iy
 
-/** A character before a start that makes it part of a longer word or URL path (`https://example.com/home/a`, `artifacts/Users/a`), so it is no candidate; anything else (`.`, `-`, `_`, `:`, `,`, `=`, …) fails closed. */
+/**
+ * A character before a start that makes it part of a longer word or URL path (`https://example.com/home/a`, `artifacts/Users/a`), so it is no candidate; anything else (`.`, `-`, `_`, `:`, `,`, `=`, …) fails closed.
+ * The exemption holds only inside a relative path or a URL: a token that starts with `/` and holds no `://` before the start is an absolute path (`/Volumes/disk/Users/bob`, `//Users/bob`), where the start is a real home.
+ */
 const WORD_OR_PATH_CHARACTER = /[A-Za-z0-9/]/
 
 /** Separators that can chain several paths inside one token (`PATH=a:b`, `a,b`, `a;b`, `a|b`). */
@@ -196,7 +200,7 @@ function splitLines(text) {
  *
  * Why: the Issue is world-readable, so a run log must not name the owner's home directories, QA profiles or other projects (D4).
  * Called by {@link postTrialEvidence} on the run log (and the manifest text), before any network call.
- * The rule works on the text as written: a candidate starts at a home form (case-insensitive) unless a letter, digit or `/` precedes it, and ends at whitespace, a backtick, a quote, a parenthesis, a bracket, an angle bracket or the line end.
+ * The rule works on the text as written: a candidate starts at a home form (case-insensitive) unless a letter, digit or `/` precedes it inside a relative path or a URL (a token that starts with `/` and holds no `://` before the candidate is an absolute path, so a home form inside it is refused), and ends at whitespace, a backtick, a quote, a parenthesis, a bracket, an angle bracket or the line end.
  *
  * @param {string} text - Decoded text.
  * @returns {{ line: number, token: string }[]} One entry per refused token, in order; `line` starts at 1. The line itself is never returned.
@@ -210,13 +214,50 @@ export function findPrivatePaths(text) {
     // The end of the token being scanned, cached so rescanning inside a public token stays linear.
     let tokenEnd = -1
     let tokenStart = -1
+    // Where the surrounding token began (after the last terminator) and whether it started with `/` or held `://` so far, tracked as the position advances.
+    let surroundingTokenStart = 0
+    let surroundingIsAbsolute = false
+    let surroundingHasScheme = false
+    let advancedTo = 0
     while (position < line.length) {
-      // A word or path character before the start makes it part of something longer.
-      const hasLongerWordBefore =
+      while (advancedTo < position) {
+        const character = line[advancedTo]
+        if (CANDIDATE_END.test(character)) {
+          surroundingTokenStart = advancedTo + 1
+          surroundingIsAbsolute = false
+          surroundingHasScheme = false
+        } else {
+          if (advancedTo === surroundingTokenStart) {
+            surroundingIsAbsolute = character === '/'
+          }
+          if (
+            character === '/' &&
+            advancedTo > surroundingTokenStart &&
+            line[advancedTo - 1] === '/' &&
+            line[advancedTo - 2] === ':'
+          ) {
+            surroundingHasScheme = true
+          }
+        }
+        advancedTo += 1
+      }
+      // A word or path character before the start makes it part of something longer, unless that token is an absolute path.
+      const followsWordOrPath =
         position > 0 && WORD_OR_PATH_CHARACTER.test(line[position - 1])
+      // Inside an earlier public token (`/Users/lume/qa/home/x`) a later start is part of that public path.
+      const isInsidePublicToken = position > tokenStart && position < tokenEnd
+      const isInsideAbsolutePath =
+        followsWordOrPath &&
+        surroundingIsAbsolute &&
+        !surroundingHasScheme &&
+        !isInsidePublicToken
       CANDIDATE_START.lastIndex = position
-      const match = hasLongerWordBefore ? null : CANDIDATE_START.exec(line)
-      if (match === null) {
+      const match =
+        followsWordOrPath && !isInsideAbsolutePath
+          ? null
+          : CANDIDATE_START.exec(line)
+      // Only a slash start hides a home inside an absolute path; `a:/Users` after a slash stays a path segment.
+      if (match === null || (isInsideAbsolutePath && match[0][0] !== '/')) {
         position += 1
         continue
       }
@@ -714,7 +755,7 @@ function mapPostResult(result, { issue, copyPath, gstackPost, environment }) {
           'To accept the findings, run:',
         ],
         // Never passed by this command: the caller decides to accept a finding.
-        fix: `${shellQuote(gstackPost)} issue-comment ${issue} --body-file ${copyPath} --confirm ${token ?? '<token>'}`,
+        fix: `${shellQuote(gstackPost)} issue-comment ${issue} --body-file ${shellQuote(copyPath)} --confirm ${token ?? '<token>'}`,
       },
     )
   }
@@ -804,6 +845,7 @@ export function createDefaultSeams() {
       openFile: (path) => openWithoutFollowing(path),
     },
     writeFile,
+    rename,
     mkdir,
     mkdtemp,
     rm,
@@ -965,7 +1007,19 @@ export async function postTrialEvidence(
 
   if (manifest !== undefined) {
     progress.enter('write the manifest', { sideEffect: true })
-    await seams.writeFile(manifest.manifestPath, manifest.manifestText)
+    // A new exclusive file renamed over the name: a hard link or symlink at `manifest.sha256` is replaced, never written through.
+    const temporaryManifestPath = `${manifest.manifestPath}.${randomBytes(8).toString('hex')}.tmp`
+    try {
+      await seams.writeFile(temporaryManifestPath, manifest.manifestText, {
+        flag: 'wx',
+        mode: 0o644,
+      })
+      await seams.rename(temporaryManifestPath, manifest.manifestPath)
+    } catch (error) {
+      // A leftover temporary file would be hashed into the next manifest.
+      await seams.rm(temporaryManifestPath, { force: true })
+      throw error
+    }
     seams.print(`wrote ${manifest.displayPath} (${manifest.fileCount} files)`)
   }
 
@@ -1034,6 +1088,7 @@ export async function postTrialEvidence(
  *   isExecutable: (path: string) => Promise<boolean>,
  *   fileSystem: FileSystemSeams,
  *   writeFile: (path: string, data: string | Uint8Array, options?: object) => Promise<void>,
+ *   rename: (from: string, to: string) => Promise<void>,
  *   mkdir: (path: string, options?: object) => Promise<unknown>,
  *   mkdtemp: (prefix: string) => Promise<string>,
  *   rm: (path: string, options?: object) => Promise<void>,

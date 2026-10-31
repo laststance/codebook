@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import {
   appendFile,
+  link,
+  lstat,
   mkdir,
   mkdtemp,
   readdir,
@@ -275,6 +277,30 @@ test('refuses a home path after a dot, dash or underscore but keeps URL forms al
     { line: 2, token: '/home/x' },
     { line: 3, token: '/Users/x' },
     { line: 4, token: '/home/y' },
+  ])
+})
+
+// protects=a home path inside an absolute path or after extra leading slashes is refused while URL and relative forms stay allowed; fails_when=`//Users/bob/x`, `///home/bob/x`, `/Volumes/disk/Users/bob/x` or `/System/Volumes/Data/Users/bob/x` passes, or `artifacts/Users/a` / `https://example.com/x/home/a` is refused; no_claim=a home path after `=` or `:` inside a relative-looking token
+test('refuses a home path hidden in an absolute path or behind extra slashes but keeps URL and relative forms allowed', () => {
+  // Arrange
+  const text = [
+    'artifact: //Users/bob/secrets/result.png',
+    'artifact: ///home/bob/x',
+    'disk /Volumes/Backup/Users/bob/x',
+    'disk /System/Volumes/Data/Users/bob/x',
+    'artifacts/Users/a',
+    'https://example.com/x/home/a',
+  ].join('\n')
+
+  // Act
+  const refused = findPrivatePaths(text)
+
+  // Assert
+  assert.deepEqual(refused, [
+    { line: 1, token: '/Users/bob/secrets/result.png' },
+    { line: 2, token: '/home/bob/x' },
+    { line: 3, token: '/Users/bob/x' },
+    { line: 4, token: '/Users/bob/x' },
   ])
 })
 
@@ -584,6 +610,29 @@ test('maps a gstack-post MEDIUM result to exit 11 and prints the confirm command
   })
 })
 
+// protects=the printed confirm command quotes a kept copy path that holds a space; fails_when=the Fix line prints the raw path so the shell splits it; no_claim=the shell's own quoting of other characters
+test('quotes a kept copy path with a space in the MEDIUM confirm command', async () => {
+  await withRepository(async (root) => {
+    // Arrange
+    const spacedRoot = join(root, 'my checkout')
+    await mkdir(spacedRoot)
+    const logPath = await writeLog(root, 'ok\n')
+
+    // Act
+    const result = await run(spacedRoot, [logPath, '--issue', '172'], {
+      postResult: { status: 2, stdout: 'TOKEN: abc123\n', stderr: '' },
+    })
+
+    // Assert
+    const copyPath = result.calls[0].args[3]
+    assert.equal(result.exitCode, 11)
+    assert.equal(
+      result.errors.at(-1),
+      `Fix: ${FAKE_GSTACK_POST} issue-comment 172 --body-file '${copyPath}' --confirm abc123`,
+    )
+  })
+})
+
 // protects=a gh failure inside gstack-post exits 12; fails_when=it exits 3 or 0; no_claim=whether the comment reached GitHub
 test('maps a gstack-post gh failure to exit 12', async () => {
   await withRepository(async (root) => {
@@ -780,6 +829,83 @@ test('writes a sorted shasum-format manifest, excludes itself and appends its li
       'wrote artifacts/x/manifest.sha256 (3 files)',
       COMMENT_URL,
     ])
+  })
+})
+
+// protects=a manifest.sha256 that is a hard link to a recording is replaced, never written through; fails_when=the recording is truncated and replaced by the manifest text; no_claim=file systems without hard links (the test is skipped there)
+test('leaves a recording unchanged when manifest.sha256 is a hard link to it', async (context) => {
+  await withRepository(async (root) => {
+    // Arrange
+    const directory = await makeEvidence(root, { 'a.png': 'alpha' })
+    const recordingPath = join(directory, 'video.webm')
+    await writeFile(recordingPath, 'recording-bytes')
+    try {
+      await link(recordingPath, join(directory, 'manifest.sha256'))
+    } catch (error) {
+      context.skip(`hard links unavailable: ${error.code}`)
+      return
+    }
+    const logPath = await writeLog(root, 'trial ok\n')
+    const expectedManifest = `${sha256('alpha')}  a.png\n${sha256('recording-bytes')}  video.webm\n`
+
+    // Act
+    const result = await run(root, [
+      logPath,
+      '--issue',
+      '172',
+      '--manifest',
+      'artifacts/x',
+    ])
+
+    // Assert
+    assert.equal(result.exitCode, 0)
+    assert.equal(await readFile(recordingPath, 'utf8'), 'recording-bytes')
+    assert.equal(
+      await readFile(join(directory, 'manifest.sha256'), 'utf8'),
+      expectedManifest,
+    )
+    assert.deepEqual((await readdir(directory)).sort(), [
+      'a.png',
+      'manifest.sha256',
+      'video.webm',
+    ])
+  })
+})
+
+// protects=a symlink planted at the manifest name after the folder was listed is replaced by the manifest and its target stays unchanged; fails_when=the manifest is written through the link into the target; no_claim=the real race timing (the fake gstack-post lookup plants the link after the folder was listed and before the manifest is written)
+test('replaces a symlink planted at manifest.sha256 after listing without touching its target', async () => {
+  await withRepository(async (root) => {
+    // Arrange
+    const directory = await makeEvidence(root, { 'a.png': 'alpha' })
+    const targetPath = join(root, 'outside-target.txt')
+    await writeFile(targetPath, 'target-bytes')
+    const logPath = await writeLog(root, 'trial ok\n')
+
+    // Act
+    const result = await run(
+      root,
+      [logPath, '--issue', '172', '--manifest', 'artifacts/x'],
+      {
+        overrides: {
+          isExecutable: async (path) => {
+            await symlink(targetPath, join(directory, 'manifest.sha256'))
+            return path === FAKE_GSTACK_POST
+          },
+        },
+      },
+    )
+
+    // Assert
+    assert.equal(result.exitCode, 0)
+    assert.equal(await readFile(targetPath, 'utf8'), 'target-bytes')
+    assert.equal(
+      (await lstat(join(directory, 'manifest.sha256'))).isSymbolicLink(),
+      false,
+    )
+    assert.equal(
+      await readFile(join(directory, 'manifest.sha256'), 'utf8'),
+      `${sha256('alpha')}  a.png\n`,
+    )
   })
 })
 
