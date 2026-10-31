@@ -763,3 +763,30 @@ test('reselecting the shown extension stop after the learner ends the replay deb
     await harness.close()
   }
 })
+
+// protects=the time slider of an Extension replay marks only the spans outside a recorded pause as unrecorded, and ticks each stop whose source is recorded; fails_when=the whole timeline is one gap although stops show source and values (the node-test projection that knows no pause interval), or the pauses' spans are not taken from pause-open and pause-close; no_claim=the slider's drawing
+test('the timeline of an Extension replay marks the spans between recorded pauses as unrecorded and ticks the recorded stops', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await writeExtensionHistoryFor(harness, RUN)
+
+    // Act
+    await openExtensionReplay(harness, history.studyId)
+    const timeline = lastView(harness)?.nodeHistorySection?.timeline
+
+    // Assert
+    assert.deepEqual(timeline, {
+      startMs: 10,
+      endMs: 1800,
+      gaps: [
+        { startMs: 10, endMs: 100 },
+        { startMs: 200, endMs: 1550 },
+        { startMs: 1700, endMs: 1800 },
+      ],
+      recordedPoints: [100, 1550],
+    })
+  } finally {
+    await harness.close()
+  }
+})

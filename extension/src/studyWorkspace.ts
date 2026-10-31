@@ -377,6 +377,7 @@ import {
 } from './utils/placementRefusalReport'
 import { plannedStopLine } from './utils/plannedStopLine'
 import { presentServerHistory } from './utils/presentServerHistory'
+import { projectExtensionHistoryTimeline } from './utils/projectExtensionHistoryTimeline'
 import {
   extensionStepTarget,
   projectExtensionReplayViews,
@@ -14563,13 +14564,16 @@ export class StudyWorkspace {
     timeline?: NodeHistoryTimeline
   } {
     if (this.nodeHistoryTimeline?.history !== history) {
-      // A server recording's timeline ends at its `end` entry.
-      const timeline = projectNodeHistoryTimeline(
-        history,
-        this.selectedServerReplay?.history === history
-          ? this.selectedServerReplay.model.endedAtMs
-          : undefined,
-      )
+      // An Extension replay's journal knows when each pause opened and closed, so its timeline is built from them; a server recording's timeline ends at its `end` entry.
+      const timeline =
+        this.selectedExtensionReplay?.history === history
+          ? projectExtensionHistoryTimeline(this.selectedExtensionReplay.model)
+          : projectNodeHistoryTimeline(
+              history,
+              this.selectedServerReplay?.history === history
+                ? this.selectedServerReplay.model.endedAtMs
+                : undefined,
+            )
       this.nodeHistoryTimeline = {
         history,
         marks: timeline ? { timeline } : {},
