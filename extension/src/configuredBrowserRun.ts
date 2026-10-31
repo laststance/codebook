@@ -953,7 +953,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     ownedOrigin: string,
     generation?: number,
   ): Promise<PreparedStop> {
-    // A Pages run observes only the page's client code: a server stop, a `_document` or an API route never runs there, so it is refused before any chunk is read.
+    // A Pages run observes only the page's client code: a server stop, a `_document` or an API route never runs there, so it is refused before its own chunks are read.
     if (this.pagesRun) this.refuseServerOnlyPagesStop(stop, this.pagesRun)
     const acquired = await adapter.readBundle({
       workspace: this.options.workspace,
@@ -1423,7 +1423,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Refuses a declared stop of a Pages run that cannot pause in the page's client code, before any chunk is read and before the browser opens: a server stop, since a Pages run observes only the page's client code in the browser, or a browser stop in a file Next never runs in the browser (`_document`, an API route).
+   * Refuses a declared stop of a Pages run that cannot pause in the page's client code, before its own chunks are read and before the browser opens: a server stop, since a Pages run observes only the page's client code in the browser, or a browser stop in a file Next never runs in the browser (`_document`, an API route).
    * Called by {@link sealDeclaredStop} for each stop of a Pages run.
    * @param stop - The declared stop.
    * @param pagesRun - The resolved Pages route, whose folder the file rule reads.
