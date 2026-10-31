@@ -10,8 +10,10 @@ import type { ChromeExtensionHistoryWriter } from './chromeExtensionHistoryWrite
 import { extensionObservationResult } from './chromeExtensionObservation'
 import {
   EXTENSION_HISTORY_DRAIN_TIMEOUT_MS,
+  EXTENSION_HISTORY_REASON_CODES,
   EXTENSION_HISTORY_START_BOUND_MS,
 } from './constants'
+import { HistoryLimitReachedError } from './nodeHistoryJournalWriter'
 import type { ChromeExtensionObserved } from './runtime'
 import type { ViewportRecordingObserver } from './runtimeSupport/browserViewport'
 import { sealWithTransientRetry } from './utils/sealWithTransientRetry'
@@ -129,6 +131,19 @@ export class ChromeExtensionHistoryRecorder implements ChromeExtensionHistorySin
     return {
       recorder: new ChromeExtensionHistoryRecorder(started.writer, input),
     }
+  }
+
+  get livePartialCode(): string | undefined {
+    const { appendFailure } = this.writer
+    if (appendFailure instanceof HistoryLimitReachedError)
+      return EXTENSION_HISTORY_REASON_CODES.sizeLimit
+    if (appendFailure !== undefined)
+      return EXTENSION_HISTORY_REASON_CODES.appendFailed
+    if (this.frames.isIncomplete)
+      return EXTENSION_HISTORY_REASON_CODES.filmstripMissing
+    return this.didSurfaceEnd
+      ? EXTENSION_HISTORY_REASON_CODES.surfaceEnded
+      : undefined
   }
 
   /** Why the history stopped taking evidence while the run lives, without private paths; `undefined` while it writes. */

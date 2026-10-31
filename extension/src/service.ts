@@ -5631,6 +5631,7 @@ export class StudyService {
       privateRoots: runRoots,
       beginHistory: (identity) =>
         this.beginChromeExtensionHistory(record, identity),
+      historyUnavailable: () => record.chromeExtension?.historyUnavailable,
     })
     state.run = run
     state.subscription = run.onDidChange(() =>

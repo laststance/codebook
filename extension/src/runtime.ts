@@ -352,6 +352,8 @@ export type ChromeExtensionRunInput = {
   beginHistory?: (
     identity: ExtensionHistoryIdentity,
   ) => Promise<ChromeExtensionHistorySink | undefined>
+  /** Why no history started, once `beginHistory` resolved to `undefined`; the Application view's header words it as `Not recorded · <reason>`. */
+  historyUnavailable?: () => string | undefined
 }
 
 export type ConfiguredRuntimeSnapshot = Omit<

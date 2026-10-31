@@ -180,13 +180,21 @@ export type ExtensionViewportIdentity = {
   stopFiles: readonly string[]
 }
 
+/** What the Application view's header says of the run's recording: the history records, it is partial with the stable code of the first missing part, or no history started and the cause (shortened) says why. */
+export type ExtensionRecordingState =
+  | { kind: 'recording' }
+  | { kind: 'partial'; code: string }
+  | { kind: 'not-recorded'; reason: string }
+
 /**
  * The Application view of one chrome-extension run (DR1–DR8, DR13, ER22), implemented over the leased Application panel ({@link StudyPresentation.createChromeExtensionViewport}).
  * The run drives it in order: identity, preparing steps, the surface's screencast, phase texts and pinned pause frames, then exactly one of `surfaceLost` / `end`; `close` at every ending releases the lease without closing the kept view of an ended run.
  */
 export interface ChromeExtensionViewport {
-  /** Writes the header: `codebook · <name> · Extension popup` (or `Extension page <path>`), then the provenance line `Operated by chat · Test profile · seeded data · Live only · replay unavailable` (DR1, C1, C2). */
+  /** Writes the header: `codebook · <name> · Extension popup` (or `Extension page <path>`), then the provenance line `Operated by chat · Test profile · seeded data` with the recording state after it (DR1, C1, C2). */
   setIdentity(identity: ExtensionViewportIdentity): void
+  /** Words the recording state at the end of the provenance line: `Recording for replay`, `Recording partial · <code>` or `Not recorded · <reason>` (D16). */
+  setRecording(state: ExtensionRecordingState): void
   /** Before the first frame: `Preparing the extension · step <k> of <N>: <sentence>` (DR4). */
   showPreparing(step: number, steps: number, sentence: string): void
   /**

@@ -1,5 +1,6 @@
 import type {
   ChromeExtensionViewport,
+  ExtensionRecordingState,
   ExtensionViewportIdentity,
   FlatCdpConnection,
 } from './chromeExtensionContracts'
@@ -14,6 +15,7 @@ import type {
 import { formatCapturedTime } from './runtimeSupport/utils/formatCapturedTime'
 import { readScreencastFrame } from './runtimeSupport/utils/readScreencastFrame'
 import type { ExtensionPaneState } from './runtimeSupport/utils/viewportHtml'
+import { describeExtensionRecordingState } from './utils/describeExtensionRecordingState'
 
 /** The members of {@link BrowserViewport} the extension view drives; a fake of exactly these runs it in tests. */
 export type ExtensionPaneViewport = Pick<
@@ -78,6 +80,8 @@ export class ChromeExtensionViewportView implements ChromeExtensionViewport {
   private message = ''
   private detail = ''
   private dimmed = false
+  /** The recording state the header ends with; none until the run tells it, which is before the first frame. */
+  private recording?: ExtensionRecordingState
   private closed = false
   private flatSession?: {
     flat: FlatCdpConnection
@@ -94,6 +98,11 @@ export class ChromeExtensionViewportView implements ChromeExtensionViewport {
   setIdentity(identity: ExtensionViewportIdentity): void {
     this.identity = identity
     this.options.onStopFiles?.(identity.stopFiles)
+    this.publish()
+  }
+
+  setRecording(state: ExtensionRecordingState): void {
+    this.recording = state
     this.publish()
   }
 
@@ -206,7 +215,9 @@ export class ChromeExtensionViewportView implements ChromeExtensionViewport {
       surface: isPopup ? 'popup' : 'page',
       title: `codebook · ${name} · ${surfaceLabel}`,
       phase: this.phase,
-      provenance: EXTENSION_VIEW_PROVENANCE,
+      provenance: this.recording
+        ? `${EXTENSION_VIEW_PROVENANCE} · ${describeExtensionRecordingState(this.recording)}`
+        : EXTENSION_VIEW_PROVENANCE,
       message: this.message,
       imageAlt: `${surfaceLabel} of ${name}, captured from the test browser`,
       detail: [clicks, this.detail].filter(Boolean).join(' '),

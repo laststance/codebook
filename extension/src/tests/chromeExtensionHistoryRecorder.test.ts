@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -333,4 +333,37 @@ test('a history that starts after its bound leaves no folder and the run goes on
   assert.equal(begun.unavailable, 'the history did not start within 0.005 s.')
   assert.equal(store.holdsHistoryFolder(header.studyId), false)
   assert.equal(existsSync(lateFolder), false)
+})
+
+// protects=D16: while the run lives the recorder names the first part it is known to miss (a lost surface, a failed append) and nothing before; fails_when=a healthy recording reports a missing part, a lost surface reports none or a failed append reads as a lost surface; no_claim=the size-limit code, which needs a journal at its entry bound
+test('a recorder names no missing part while it writes and names the surface end or the failed append once they happen', async (context) => {
+  // Arrange
+  const healthy = await recorderOver(context)
+  const surfaceLost = await recorderOver(context)
+  const failing = await recorderOver(context)
+  // A history folder that disappeared under the writer makes its next append fail on the disk.
+  await rm(failing.recorder.writer.historyDirectory, {
+    recursive: true,
+    force: true,
+  })
+
+  // Act
+  healthy.recorder.pauseOpened(PAGE_PAUSE)
+  surfaceLost.recorder.surfaceEnded()
+  failing.recorder.pauseOpened(PAGE_PAUSE)
+  await waitUntil(
+    () => failing.recorder.livePartialCode !== undefined,
+    'the failed append to be known',
+  )
+
+  // Assert
+  assert.equal(healthy.recorder.livePartialCode, undefined)
+  assert.equal(
+    surfaceLost.recorder.livePartialCode,
+    'EXTENSION_HISTORY_SURFACE_ENDED',
+  )
+  assert.equal(
+    failing.recorder.livePartialCode,
+    'EXTENSION_HISTORY_APPEND_FAILED',
+  )
 })

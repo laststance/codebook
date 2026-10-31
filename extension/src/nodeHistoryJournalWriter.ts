@@ -22,6 +22,9 @@ export const HISTORY_SEAL_FILE = 'sealed.json'
  * It separates closed to new appends from draining accepted appends: an entry accepted before the seal began is written, then the seal follows; one offered after is refused at the call.
  * @example await writer.finish('partial', 'Cancelled by the learner.')
  */
+/** The failure of an append an entry or byte bound refused; a live run's header tells it from a disk failure ({@link ChromeExtensionHistoryRecorder.livePartialCode}). */
+export class HistoryLimitReachedError extends Error {}
+
 export class HistoryJournalWriter<Types extends HistoryTypes> {
   private sequence = 0
   private entries = 0
@@ -228,7 +231,9 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
         throw new Error('Node history is already sealing or sealed.')
       if (this.entries >= this.rules.maxEntries) {
         this.limitReached = true
-        throw new Error('Node history reached its event limit.')
+        throw new HistoryLimitReachedError(
+          'Node history reached its event limit.',
+        )
       }
       const entry = this.rules.parseEntry({
         ...input,
@@ -242,7 +247,7 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
         const stat = await handle.stat()
         if (stat.size + line.byteLength > this.rules.journalLimitBytes) {
           this.limitReached = true
-          throw new Error(
+          throw new HistoryLimitReachedError(
             'Node history reached its storage limit; existing evidence remains readable.',
           )
         }

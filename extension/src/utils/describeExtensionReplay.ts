@@ -145,6 +145,24 @@ export function describeExtensionPosition(
 }
 
 /**
+ * Words the action of a learning step that leads to an event, for the step's button in the summary.
+ * @param event - The event the step's reference leads to.
+ * @param model - The replay model, for a stop's number and context.
+ * @returns `Inspect page stop 1 · 0.42 s` for a stop, `Inspect result · 1.20 s` for the result, `Inspect frame · 0.30 s` otherwise.
+ * @example describeExtensionStepAction(event, model) // => 'Inspect page stop 1 · 0.42 s'
+ */
+export function describeExtensionStepAction(
+  event: ExtensionReplayEvent,
+  model: Pick<ExtensionReplayModel, 'pauses'>,
+): string {
+  const time = `${formatEventSeconds(event.timeMs)} s`
+  const pause = event.pauseId ? model.pauses.get(event.pauseId) : undefined
+  if (pause)
+    return `Inspect ${describeExtensionContext(pause.context)} stop ${pause.stopIndex} · ${time}`
+  return `Inspect ${event.type === 'result' ? 'result' : 'frame'} · ${time}`
+}
+
+/**
  * Words one event of the Study pane's event list: its heading and its body.
  * @param event - The event.
  * @param model - The replay model.

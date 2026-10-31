@@ -2809,7 +2809,7 @@ test('the extension pane state reaches the renderer once it is ready and after e
     title: 'codebook · Bookmark Notes · Extension popup',
     phase: 'Preparing the extension',
     provenance:
-      'Operated by chat · Test profile · seeded data · Live only · replay unavailable',
+      'Operated by chat · Test profile · seeded data · Recording for replay',
     message: '',
     imageAlt:
       'Extension popup of Bookmark Notes, captured from the test browser',

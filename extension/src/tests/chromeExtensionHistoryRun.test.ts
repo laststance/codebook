@@ -241,3 +241,50 @@ test('a browser lost at a paused stop seals the history partial naming the surfa
     1,
   )
 })
+
+// protects=D16: the run tells the Application view that it records while its history writes and names the first missing part once the browser is lost; fails_when=the view keeps reading "Recording for replay" after the surface ended, or never learns the run records; no_claim=the words the view prints (chromeExtensionViewport.test.ts)
+test('a run tells its view it records and then that the recording is partial once the browser is lost', async (context) => {
+  // Arrange
+  const { beginHistory } = await recordingOver(context)
+  const harness = createRunHarness({ beginHistory })
+  await harness.run.prepare()
+  await harness.run.click()
+  openCapturedPause(harness, 1, 'page')
+  const whileRecording = [...harness.recordingStates]
+
+  // Act
+  harness.loseBrowser()
+  await waitUntil(
+    () => harness.run.view().phase === 'failed',
+    'the run to fail',
+  )
+  await harness.run.stop()
+
+  // Assert
+  assert.deepEqual(whileRecording.at(0), { kind: 'recording' })
+  assert.deepEqual(harness.recordingStates.at(-1), {
+    kind: 'partial',
+    code: 'EXTENSION_HISTORY_SURFACE_ENDED',
+  })
+})
+
+// protects=D16: a run whose history could not start tells its view `not recorded` with the cause the service kept, and the run goes on; fails_when=the view says it records, or the cause is lost; no_claim=the shortening of the cause (chromeExtensionViewport.test.ts)
+test('a run whose history is unavailable tells its view it is not recorded with the cause', async () => {
+  // Arrange
+  const harness = createRunHarness({
+    beginHistory: async () => undefined,
+    historyUnavailable: () => 'Study library is full. Delete a saved study.',
+  })
+
+  // Act
+  await harness.run.prepare()
+
+  // Assert
+  assert.deepEqual(harness.recordingStates, [
+    {
+      kind: 'not-recorded',
+      reason: 'Study library is full. Delete a saved study.',
+    },
+  ])
+  await harness.run.stop()
+})

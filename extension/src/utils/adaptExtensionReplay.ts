@@ -26,6 +26,8 @@ export type ExtensionReplayPresentation = {
   shown: NodeTestHistoryIndex
   /** The stop entry each pause presents, by pause id, with its source verified exactly as a test stop's is. */
   stopEntries: ReadonlyMap<string, ExtensionTestShapedStop>
+  /** Finds the timeline event a learning citation leads to: an event cited by its own sequence, a capture by its pause's open; `undefined` for a sequence the timeline lacks. */
+  timelineSequenceOf: (sequence: number) => number | undefined
   /** Why the capture is partial or interrupted, every reason, for the replay's capture-reason line. */
   captureReasons: readonly string[]
 }
@@ -150,8 +152,20 @@ export function adaptExtensionReplay(
       toStopEntry(pause, true),
     ]),
   )
+  // A capture is not an event: a step citing it leads to the open of its pause.
+  const openOfCapture = new Map(
+    [...model.pauses.values()].flatMap((pause) =>
+      pause.capture
+        ? [[pause.capture.sequence, pause.openSequence] as const]
+        : [],
+    ),
+  )
   return {
     model,
+    timelineSequenceOf: (sequence) =>
+      model.indexBySequence.has(sequence)
+        ? sequence
+        : openOfCapture.get(sequence),
     history: toTestShapedHistory(model, stopEntries, false),
     shown: toTestShapedHistory(model, shownStops, true),
     stopEntries,

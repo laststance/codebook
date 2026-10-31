@@ -5,6 +5,7 @@ import type {
 } from '../../chromeExtensionActionExecutor'
 import type {
   ChromeExtensionViewport,
+  ExtensionRecordingState,
   OwnedExtensionBrowser,
   ResolvedExtensionRun,
 } from '../../chromeExtensionContracts'
@@ -142,6 +143,7 @@ export type HarnessBehaviour = {
   viewportFailure?: Error
   /** Starts the run's history once its declaration resolved; absent → the run does not record. */
   beginHistory?: ChromeExtensionRunInput['beginHistory']
+  historyUnavailable?: ChromeExtensionRunInput['historyUnavailable']
   /** The created viewport cannot show the surface, as when a learner's tab opened in its group makes the editor's lease refuse the reveal. */
   viewportAttachFailure?: Error
 }
@@ -177,6 +179,8 @@ export function createRunHarness(behaviour: HarnessBehaviour = {}) {
   const log: string[] = []
   const journal: { type: string; detail: unknown }[] = []
   const viewportCalls: [string, ...unknown[]][] = []
+  /** The recording states the run told the view, in order; kept apart from {@link viewportCalls} so the sequence tests of the view's other calls stay as they are. */
+  const recordingStates: ExtensionRecordingState[] = []
   const surface = fakeExtensionSurface({
     'Runtime.evaluate': () => ({
       result: {
@@ -303,6 +307,7 @@ export function createRunHarness(behaviour: HarnessBehaviour = {}) {
 
   const viewport: ChromeExtensionViewport = {
     setIdentity: (identity) => viewportCalls.push(['setIdentity', identity]),
+    setRecording: (state) => recordingStates.push(state),
     showPreparing: (step, steps, sentence) =>
       viewportCalls.push(['showPreparing', step, steps, sentence]),
     attachSurface: async () => {
@@ -382,6 +387,9 @@ export function createRunHarness(behaviour: HarnessBehaviour = {}) {
     dependencies,
     chromeVersion: 'Google Chrome 156.0.8078.74',
     ...(behaviour.beginHistory ? { beginHistory: behaviour.beginHistory } : {}),
+    ...(behaviour.historyUnavailable
+      ? { historyUnavailable: behaviour.historyUnavailable }
+      : {}),
     ...(behaviour.withoutViewport
       ? {}
       : {
@@ -399,6 +407,7 @@ export function createRunHarness(behaviour: HarnessBehaviour = {}) {
     journal,
     resolveInputs,
     viewportCalls,
+    recordingStates,
     viewportObserver,
     surface,
     pauses,

@@ -13224,7 +13224,7 @@ export class StudyWorkspace {
 
   /**
    * Reads a chrome-extension history for its replay: the journal dressed in the shared replay path, the learner's decision and the saved reader position restored to the nearest event at or before it; a history another window is still recording is refused, as it opens once sealed or interrupted. Called by {@link readNodeHistoryOpening} for a study id the repository resolves to the extension store.
-   * Learning material joins this open with the save path; until then an Extension replay shows its recording alone.
+   * The history's saved learning material is read as a server replay's is; a history without material shows its recording alone.
    * @param store - The extension store the repository resolved.
    * @param studyId - The history's study id.
    * @param request - The open's request token.
@@ -13247,8 +13247,8 @@ export class StudyWorkspace {
       NODE_EXTENSION_REPLAY_TEXT.stillRecording,
     )
     if (!journal) return undefined
-    // Learning material joins this open with the save path; until then an Extension replay shows its recording alone.
-    const sidecars = await this.readOpeningProgress(
+    // The same sidecars a test or server replay reads: the decision, the saved position and the learning material (a material that cannot be read is reported and left out).
+    const sidecars = await this.readOpeningSidecars(
       store,
       studyId,
       request,
@@ -13267,14 +13267,13 @@ export class StudyWorkspace {
     return {
       history: extensionReplay.history,
       extensionReplay,
-      learningDecision: sidecars.learningDecision,
-      positionError: sidecars.positionError,
+      ...sidecars,
       savedSequence: restored?.sequence,
     }
   }
 
   /**
-   * Reads what opening a history shows besides its journal (the learner's decision, the learning material and the saved reader position) from either profile's store, stopping as soon as a newer request, a newer reader revision or the reader's close supersedes the open; called by {@link readNodeHistoryOpening} and {@link readServerHistoryOpening}.
+   * Reads what opening a history shows besides its journal (the learner's decision, the learning material and the saved reader position) from either profile's store, stopping as soon as a newer request, a newer reader revision or the reader's close supersedes the open; called by {@link readNodeHistoryOpening}, {@link readServerHistoryOpening} and {@link readExtensionHistoryOpening}.
    * A decision or material that cannot be read is reported and left out, and a position that cannot be read is returned as its error, which the open reports once the replay is selected.
    * @param store - The store that holds the history.
    * @param studyId - The history's study id.
@@ -13286,7 +13285,8 @@ export class StudyWorkspace {
   private async readOpeningSidecars(
     store:
       | NodeHistoryStore<NodeTestHistoryTypes>
-      | NodeHistoryStore<NodeServerHistoryTypes>,
+      | NodeHistoryStore<NodeServerHistoryTypes>
+      | NodeHistoryStore<ExtensionHistoryTypes>,
     studyId: string,
     request: number,
     revision: number,
@@ -14337,7 +14337,12 @@ export class StudyWorkspace {
   private extensionReplayViews(
     replay: ExtensionReplayPresentation,
     selected: NodeTestHistoryIndex['entries'][number] | undefined,
-  ): Pick<StudyViewMessage, 'nodeHistoryApplication' | 'nodeHistorySection'> {
+  ): Pick<
+    StudyViewMessage,
+    | 'nodeHistoryApplication'
+    | 'nodeHistorySection'
+    | 'nodeHistoryLearningSummary'
+  > {
     const { views, memo } = projectExtensionReplayViews({
       replay,
       selected,
@@ -14350,6 +14355,8 @@ export class StudyWorkspace {
       nextGeneration: () => ++this.nodeHistoryApplicationGeneration,
       applicationClosed: !this.app,
       timeline: this.nodeHistoryTimelineMarks(replay.history).timeline,
+      learningMaterial: this.selectedNodeHistoryLearningMaterial,
+      chosenStepId: this.selectedNodeHistoryStepId,
     })
     this.nodeHistoryApplicationMemo = memo
     return views

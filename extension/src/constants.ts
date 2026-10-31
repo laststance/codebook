@@ -2230,9 +2230,17 @@ export const EXTENSION_STOP_COMMAND_TIMEOUT_MS = 1_000
 export const EXTENSION_CHROME_VERSION_READ_BOUND_MS = 5_000
 
 // Lane D (Application view of a chrome-extension run, Cycle 0061 pt2)
-/** Header line 2 of an extension run's Application view in every phase, after the run too (DR1, C1, C2). */
+/** Header line 2 of an extension run's Application view in every phase, after the run too (DR1, C1, C2): what is true of the run itself; the recording state follows it (see {@link EXTENSION_VIEW_RECORDING_TEXT}). */
 export const EXTENSION_VIEW_PROVENANCE =
-  'Operated by chat · Test profile · seeded data · Live only · replay unavailable'
+  'Operated by chat · Test profile · seeded data'
+/** The recording state the Application view's header line 2 ends with (Cycle 0069, D16): while the history records, once it is partial (with the stable code of the first missing part) and when no history started (with its shortened cause). */
+export const EXTENSION_VIEW_RECORDING_TEXT = {
+  recording: 'Recording for replay',
+  partial: 'Recording partial',
+  notRecorded: 'Not recorded',
+} as const
+/** The longest cause the header's `Not recorded · <reason>` keeps; a longer one is cut at a word and ends with an ellipsis. */
+export const EXTENSION_VIEW_REASON_LIMIT_CHARS = 80
 /** `Page.stopScreencast` on the surface's session, sent when the view ends, is waited for this long; the view is already final without its answer. */
 export const EXTENSION_SCREENCAST_STOP_TIMEOUT_MS = 1_000
 

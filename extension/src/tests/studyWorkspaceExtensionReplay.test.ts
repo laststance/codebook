@@ -3,6 +3,8 @@ import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { before, test } from 'node:test'
 
+import type { ChromeExtensionLearningMaterialContent } from '../chromeExtensionLearningSchemas'
+import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { workspaceHarness } from './studyWorkspaceHarness'
@@ -525,6 +527,165 @@ test('Next event follows the timeline order when a frame was appended after the 
     // Assert
     assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 3)
     assert.equal(lastView(harness)?.nodeHistorySection?.nextStop, true)
+  } finally {
+    await harness.close()
+  }
+})
+
+/** The learning material of {@link RUN}: a step citing the page capture, one citing the worker's pause, one citing the result. */
+function runMaterial() {
+  const step = (
+    id: string,
+    reference: ChromeExtensionLearningMaterialContent['steps'][number]['reference'],
+  ) => ({
+    id,
+    from: 'extension',
+    to: 'extension',
+    label: `Step ${id}`,
+    explanation: `Explains ${id}.`,
+    evidence: 'observed' as const,
+    reference,
+  })
+  return {
+    question: 'Why does Save fail?',
+    title: 'Saving a note',
+    summary: 'The popup asks the worker to save and the page shows the answer.',
+    participants: [{ id: 'extension', label: 'Extension' }],
+    steps: [
+      step('page-stop', {
+        type: 'stop' as const,
+        sequence: 3,
+        sourceHash: sha256(POPUP_SOURCE_TEXT),
+        context: 'page',
+      }),
+      step('worker-pause', {
+        type: 'pause' as const,
+        sequence: OPEN2,
+        context: 'service-worker',
+      }),
+      step('result', { type: 'result' as const, sequence: 11 }),
+    ],
+  } satisfies ChromeExtensionLearningMaterialContent
+}
+
+/** Sends the control a summary step's action sends: its event and that step, then waits for the playhead to commit there. */
+async function chooseStep(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+  studyId: string,
+  stepId: string,
+): Promise<number> {
+  const sequence = lastView(
+    harness,
+  )?.nodeHistoryLearningSummary?.positions.find(
+    (position) => position.stepId === stepId,
+  )?.sequence
+  assert.notEqual(sequence, undefined)
+  harness.receiveContext({
+    type: 'node-history-event',
+    revision: lastView(harness)!.revision,
+    studyId,
+    sequence: sequence!,
+    stepId,
+  })
+  await waitUntil(
+    () =>
+      lastView(harness)?.nodeHistoryPosition?.sequence === sequence &&
+      !lastView(harness)?.nodeHistoryPosition?.pending,
+    `the playhead commits at ${sequence}`,
+    READER_RESULT_BOUND_MS,
+  )
+  return sequence!
+}
+
+// protects=a saved Extension replay opens with its processing summary, sequence and step explanations in the Learning summary, as a server replay does; fails_when=the open drops the saved material, shows the summary of another history or leaves the stop unexplained; no_claim=the diagram's drawing
+test('opening a saved Extension replay shows its summary, sequence and step explanation', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await writeExtensionHistoryFor(harness, RUN)
+    await repositoryOf(harness).extensionHistories.saveLearningMaterial(
+      history.studyId,
+      0,
+      runMaterial(),
+    )
+
+    // Act
+    await openExtensionReplay(harness, history.studyId)
+    const summary = lastView(harness)?.nodeHistoryLearningSummary
+    const section = lastView(harness)?.nodeHistorySection
+
+    // Assert
+    assert.equal(summary?.content.title, 'Saving a note')
+    assert.equal(
+      summary?.content.summary,
+      'The popup asks the worker to save and the page shows the answer.',
+    )
+    assert.deepEqual(
+      summary?.content.steps.map((step) => step.id),
+      ['page-stop', 'worker-pause', 'result'],
+    )
+    assert.equal(section?.explanation, 'Explains page-stop.')
+    assert.equal(section?.selectedStepId, 'page-stop')
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=a step citing a page capture moves the playhead to that page stop's open, a step citing a pause to that pause and a step citing the result to the result; fails_when=a capture step leads nowhere (a capture is no timeline event), the result step stays on a stop or a step shows another step's text; no_claim=the diagram's drawing
+test('steps citing a page capture, a pause and the result move the playhead to that stop and to the result', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await writeExtensionHistoryFor(harness, RUN)
+    await repositoryOf(harness).extensionHistories.saveLearningMaterial(
+      history.studyId,
+      0,
+      runMaterial(),
+    )
+    await openExtensionReplay(harness, history.studyId)
+
+    // Act
+    const atWorker = await chooseStep(harness, history.studyId, 'worker-pause')
+    const workerExplanation = lastView(harness)?.nodeHistorySection?.explanation
+    const atResult = await chooseStep(harness, history.studyId, 'result')
+    const resultExplanation = lastView(harness)?.nodeHistorySection?.explanation
+    const resultPosition = lastView(harness)?.nodeHistorySection?.position
+    const atPage = await chooseStep(harness, history.studyId, 'page-stop')
+    const pagePosition = lastView(harness)?.nodeHistorySection?.position
+
+    // Assert
+    assert.equal(atWorker, OPEN2)
+    assert.equal(workerExplanation, 'Explains worker-pause.')
+    assert.equal(atResult, 11)
+    assert.equal(resultExplanation, 'Explains result.')
+    assert.equal(resultPosition, 'Result · changed · 1.80 s')
+    assert.equal(atPage, OPEN1)
+    assert.equal(pagePosition, 'Page stop 1 · 0.10 s')
+    assert.deepEqual(lastView(harness)?.nodeHistorySection?.stepActions, {
+      'page-stop': 'Inspect page stop 1 · 0.10 s',
+      'worker-pause': 'Inspect service worker stop 2 · 1.55 s',
+      result: 'Inspect result · 1.80 s',
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=an Extension replay without saved material shows the recording alone: no summary, no explanation line and the plain stop count; fails_when=a missing material invents a summary or an "explained" count; no_claim=the wording of the no-summary line in the webview
+test('an Extension replay without saved material shows its recording alone', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await writeExtensionHistoryFor(harness, RUN)
+
+    // Act
+    await openExtensionReplay(harness, history.studyId)
+    const section = lastView(harness)?.nodeHistorySection
+
+    // Assert
+    assert.equal(lastView(harness)?.nodeHistoryLearningSummary, undefined)
+    assert.equal(section?.explanation, undefined)
+    assert.equal(section?.status, 'Result changed · capture complete · 2 stops')
   } finally {
     await harness.close()
   }

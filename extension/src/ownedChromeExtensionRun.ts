@@ -510,6 +510,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     this.assertAccepting()
     await this.startHistory(resolved)
     this.assertAccepting()
+    this.showRecordingState()
     this.viewport?.setIdentity({
       manifestName: resolved.manifestName,
       surface: resolved.surface,
@@ -581,6 +582,27 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       // The history never fails the run.
       this.history = undefined
     }
+  }
+
+  /**
+   * Tells the Application view how the history stands: recording, partial with the code of the first missing part, or not recorded with the cause. The run is never changed by it.
+   * Called when the history started, on every change of the pause set and when the surface or browser ended.
+   * @example this.showRecordingState() // header ends with `Recording for replay`
+   */
+  private showRecordingState(): void {
+    const code = this.history?.livePartialCode
+    this.viewport?.setRecording(
+      this.history === undefined
+        ? {
+            kind: 'not-recorded',
+            reason:
+              this.input.historyUnavailable?.() ??
+              'recording is not available for this run',
+          }
+        : code === undefined
+          ? { kind: 'recording' }
+          : { kind: 'partial', code },
+    )
   }
 
   /** Creates the Application view; a view the editor refuses (its layout guard, for example a foreign preview tab where the pane would go) leaves the run without one and says why, in the view and the journal (DR6). */
@@ -758,6 +780,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     if (this.stage !== 'ready' && this.stage !== 'observing') return
     this.surfaceGone = true
     this.history?.surfaceEnded()
+    this.showRecordingState()
     this.observationAbort.abort()
     this.record('chrome-extension.surface-lost', {
       surface: resolved.surface.kind,
@@ -784,6 +807,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   /** The browser's CDP connection or process ended without the run's own close. */
   private onBrowserLost(): void {
     this.history?.surfaceEnded()
+    this.showRecordingState()
     this.fail(
       new StudyError(
         'BROWSER_LOST',
@@ -829,6 +853,8 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   private tellHistoryOfPauses(): void {
     const { history, debug } = this
     if (history === undefined || debug === undefined) return
+    // A part the history lost shows in the header at once, while the run goes on.
+    this.showRecordingState()
     try {
       this.historyPauses?.sync(
         debug.pauses(),

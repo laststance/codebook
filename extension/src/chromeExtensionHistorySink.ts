@@ -26,6 +26,8 @@ export type ExtensionHistoryPause = {
 export interface ChromeExtensionHistorySink {
   /** Receives the surface's screencast frames; give it to the Application view. */
   readonly frameObserver: ViewportRecordingObserver
+  /** The stable code of the first part the history is known to miss while the run lives (a refused append, a lost filmstrip frame, the surface ending); `undefined` while nothing is missing. The capture codes of a stop never reached are known only at the seal. */
+  readonly livePartialCode: string | undefined
   /** A declared stop paused. */
   pauseOpened(pause: ExtensionHistoryPause): void
   /** The pause's asynchronous capture finished. */

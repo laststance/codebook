@@ -6,14 +6,21 @@ import type { ExtensionReplayMoment } from './buildExtensionReplayModel'
 import {
   describeExtensionFrameLabel,
   describeExtensionPosition,
+  describeExtensionStepAction,
   describeExtensionStopGap,
   describeExtensionThread,
   NODE_EXTENSION_REPLAY_TEXT,
 } from './describeExtensionReplay'
 import { formatEventSeconds } from './formatEventSeconds'
+import { labelLearningStepActions } from './labelLearningStepActions'
 import type { NodeHistoryTimeline } from './projectNodeHistoryTimeline'
+import {
+  projectNodeLearningSummary,
+  type NodeLearningMaterialOfHistory,
+  type NodeLearningSummaryProjection,
+} from './projectNodeLearningSummary'
 import type { NodeTestApplicationView } from './projectNodeTestApplication'
-import type { NodeTestSectionView } from './projectNodeTestSection'
+import { momentSteps, type NodeTestSectionView } from './projectNodeTestSection'
 
 /** The Application view of the moment last shown and the key it was projected for, kept so the view is projected once per shown moment. */
 export type ExtensionApplicationMemo = {
@@ -47,17 +54,26 @@ export type ExtensionReplayViewsInput = {
   nextGeneration: () => number
   applicationClosed: boolean
   timeline: NodeHistoryTimeline | undefined
+  /** The history's saved learning material; absent shows the recording alone. */
+  learningMaterial?: NodeLearningMaterialOfHistory
+  /** The step the learner chose with the selected event. */
+  chosenStepId?: string
 }
 
 /**
- * Projects a selected Extension replay's views for the Study message: the Application pane's recorded frame and the Study section's lines; no learning material until the save path lands.
+ * Projects a selected Extension replay's views for the Study message: the Application pane's recorded frame, the Study section's lines and the saved learning material (summary, sequence, steps that lead to their stops or the result), which is absent for a recording without material.
  * The Application view is projected once per shown moment. Called by {@link StudyWorkspace} for a history that is an Extension replay's test-shaped view.
  * @param input - The replay, the selection, the memo and the workspace's state.
  * @returns The views and the memo to keep for the next call.
  * @example projectExtensionReplayViews(input).views.nodeHistorySection?.position // => 'Page stop 1 · 0.42 s'
  */
 export function projectExtensionReplayViews(input: ExtensionReplayViewsInput): {
-  views: Pick<StudyViewMessage, 'nodeHistoryApplication' | 'nodeHistorySection'>
+  views: Pick<
+    StudyViewMessage,
+    | 'nodeHistoryApplication'
+    | 'nodeHistorySection'
+    | 'nodeHistoryLearningSummary'
+  >
   memo: ExtensionApplicationMemo
 } {
   const { replay, selected } = input
@@ -98,24 +114,33 @@ export function projectExtensionReplayViews(input: ExtensionReplayViewsInput): {
       }),
     }
   }
-  const selectedMoment =
-    selectedPosition === undefined ? undefined : model.moments[selectedPosition]
-  const pendingMoment = pendingEvent
-    ? model.moments[input.leavingPosition!]
-    : undefined
-  const sectionMoment = pendingMoment ?? selectedMoment
+  // The section describes the event a selection is going to while it loads, else the selected one.
+  const sectionPosition = pendingEvent
+    ? input.leavingPosition
+    : selectedPosition
+  const sectionMoment =
+    sectionPosition === undefined ? undefined : model.moments[sectionPosition]
+  const learning = projectNodeLearningSummary(
+    input.learningMaterial,
+    replay.history,
+    replay.timelineSequenceOf,
+  )
   return {
     memo,
     views: {
       nodeHistoryApplication: memo.view,
       nodeHistorySection: projectExtensionSection({
         replay,
-        position: pendingEvent ? input.leavingPosition : selectedPosition,
+        position: sectionPosition,
         pending: pendingEvent !== undefined,
         isMomentStopVerified: Boolean(sectionMoment?.stop?.hasSource),
         applicationClosed: input.applicationClosed,
         timeline: input.timeline,
+        learning,
+        chosenStepId: input.chosenStepId,
+        selectedSequence: pendingEvent?.sequence ?? selected?.sequence,
       }),
+      ...(learning ? { nodeHistoryLearningSummary: learning } : {}),
     },
   }
 }
@@ -194,18 +219,24 @@ type ExtensionSectionInput = {
   isMomentStopVerified: boolean
   applicationClosed: boolean
   timeline: NodeHistoryTimeline | undefined
+  learning?: NodeLearningSummaryProjection
+  chosenStepId?: string
+  /** The sequence of the selected (or going-to) event. */
+  selectedSequence?: number
 }
 
 /**
  * Words the section's status line: the result, the capture state and how many stops the run reached; a history still recording says so.
  * @param replay - The replay.
  * @param stopCount - How many stops the journal holds.
- * @returns `Result changed · capture complete · 2 stops`, or `Extension replay · recording`.
- * @example sectionStatus(replay, 2) // => 'Result changed · capture complete · 2 stops'
+ * @param explainedStopCount - How many of them a step of the saved material leads to; `undefined` without material.
+ * @returns `Result changed · capture complete · 2 stops`, `… · 1 of 2 stops explained` with material, or `Extension replay · recording`.
+ * @example sectionStatus(replay, 2, 1) // => 'Result changed · capture complete · 1 of 2 stops explained'
  */
 function sectionStatus(
   replay: ExtensionReplayPresentation,
   stopCount: number,
+  explainedStopCount: number | undefined,
 ): string {
   const { model } = replay
   if (model.status === 'recording')
@@ -213,6 +244,8 @@ function sectionStatus(
   const result = model.result
     ? `Result ${model.result.outcome}`
     : 'No result recorded'
+  if (explainedStopCount !== undefined)
+    return `${result} · capture ${model.status} · ${explainedStopCount} of ${stopCount} stops explained`
   return `${result} · capture ${model.status} · ${stopCount} ${stopCount === 1 ? 'stop' : 'stops'}`
 }
 
@@ -267,6 +300,50 @@ function momentLines(
 }
 
 /**
+ * Gives the explanation shown under the locator when material was saved: the shown step's, else the line that no step explains a selected stop or the result; none without material (the recording alone), at a frame or while a selection only goes there.
+ * @param moment - The moment at the selected event.
+ * @param steps - The steps of the selected event.
+ * @param hasMaterial - Whether learning material was saved.
+ * @param pending - Whether the moment is only the one a selection is going to.
+ * @returns `{ explanation }` or nothing.
+ * @example momentExplanation(moment, { sameMomentStepIds: [] }, true, false).explanation // => 'No saved explanation for this stop.'
+ */
+function momentExplanation(
+  moment: ExtensionReplayMoment | undefined,
+  steps: ReturnType<typeof momentSteps>,
+  hasMaterial: boolean,
+  pending: boolean,
+): { explanation?: string } {
+  if (!hasMaterial || pending || !moment) return {}
+  if (steps.selectedStep) return { explanation: steps.selectedStep.explanation }
+  if (moment.event.type === 'pause-open')
+    return { explanation: NODE_EXTENSION_REPLAY_TEXT.noStepForStop }
+  return moment.event.type === 'result'
+    ? { explanation: NODE_EXTENSION_REPLAY_TEXT.noStepForResult }
+    : {}
+}
+
+/**
+ * Words each step's action by the event its reference leads to, for the steps whose event the replay holds.
+ * The labels are own data properties, so a step id such as `__proto__` keeps its label.
+ * @param replay - The replay.
+ * @param learning - The projected material, if any.
+ * @returns The action labels by step id.
+ * @example stepActionLabels(replay, learning) // => { read: 'Inspect page stop 1 · 0.42 s' }
+ */
+function stepActionLabels(
+  replay: ExtensionReplayPresentation,
+  learning: NodeLearningSummaryProjection | undefined,
+): Record<string, string> {
+  const { model } = replay
+  return labelLearningStepActions(learning, (sequence) => {
+    const at = model.indexBySequence.get(sequence)
+    const event = at === undefined ? undefined : model.events[at]
+    return event && describeExtensionStepAction(event, model)
+  })
+}
+
+/**
  * Words the Study pane's section for an Extension replay with the extension catalog: status, locator, the not-recorded lines for a moment without a stop or with a partial one, the capture reasons and the stop moves. It has the shape of {@link NodeTestSectionView}, so the pane's one section renderer draws it.
  * @param input - The replay and the selection.
  * @returns The section's view.
@@ -281,11 +358,31 @@ function projectExtensionSection(
   const stopPositions = model.events.flatMap((event, at) =>
     event.type === 'pause-open' ? [at] : [],
   )
+  const { learning } = input
+  const cited = new Set(
+    (learning?.positions ?? []).map((position) => position.sequence),
+  )
+  const steps = input.pending
+    ? { sameMomentStepIds: [] as string[] }
+    : momentSteps(
+        input.selectedSequence === undefined
+          ? undefined
+          : { sequence: input.selectedSequence },
+        learning,
+        input.chosenStepId,
+      )
   const hasCaptureReasons =
     (model.status === 'partial' || model.status === 'interrupted') &&
     replay.captureReasons.length > 0
   return {
-    status: sectionStatus(replay, stopPositions.length),
+    status: sectionStatus(
+      replay,
+      stopPositions.length,
+      learning
+        ? stopPositions.filter((at) => cited.has(model.events[at]!.sequence))
+            .length
+        : undefined,
+    ),
     ...(hasCaptureReasons
       ? {
           captureReason: `Capture ${model.status}: ${replay.captureReasons.join('; ')}`,
@@ -295,12 +392,16 @@ function projectExtensionSection(
       ? { position: sectionPosition(moment, model, input.pending) }
       : {}),
     ...momentLines(moment, input.isMomentStopVerified, input.pending),
+    ...momentExplanation(moment, steps, Boolean(learning), input.pending),
     pointer: input.applicationClosed
       ? NODE_EXTENSION_REPLAY_TEXT.applicationClosed
       : NODE_EXTENSION_REPLAY_TEXT.outputPointer,
     applicationClosed: input.applicationClosed,
-    sameMomentStepIds: [],
-    stepActions: {},
+    ...('selectedStepId' in steps && steps.selectedStepId
+      ? { selectedStepId: steps.selectedStepId }
+      : {}),
+    sameMomentStepIds: steps.sameMomentStepIds,
+    stepActions: stepActionLabels(replay, learning),
     events: `Events (${model.events.length})`,
     verdict: model.result
       ? `Result ${model.result.outcome}`

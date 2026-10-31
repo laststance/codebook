@@ -26,7 +26,7 @@ const PAGE: ExtensionViewportIdentity = {
   stopFiles: [],
 }
 const PROVENANCE =
-  'Operated by chat · Test profile · seeded data · Live only · replay unavailable'
+  'Operated by chat · Test profile · seeded data · Recording for replay'
 
 /** What the view asked of the pane viewport, plus the scripted frame time. */
 function paneViewport(lastFrameAt?: number) {
@@ -99,14 +99,42 @@ test('a popup view writes its header with the manifest name and the provenance l
   )
   const view = new ChromeExtensionViewportView(viewport)
   // Act
+  view.setRecording({ kind: 'recording' })
   view.setIdentity(POPUP)
   view.setPhase('Running the click')
   view.end('Clicked Add note.')
   // Assert
-  assert.equal(panes[0]!.title, 'codebook · Bookmark Notes · Extension popup')
+  assert.equal(panes[1]!.title, 'codebook · Bookmark Notes · Extension popup')
   assert.deepEqual(
     panes.map((pane) => pane.provenance),
-    [PROVENANCE, PROVENANCE, PROVENANCE],
+    [PROVENANCE, PROVENANCE, PROVENANCE, PROVENANCE],
+  )
+})
+
+// protects=D16: the header's second line names the recording state in the run's words while it records, once a part is missing and when no history started; fails_when=the old "Live only · replay unavailable" words come back, a partial recording hides its code or a full-library sentence is shown whole; no_claim=how the pane paints the line
+test('the header names whether the run is recorded, partially recorded or not recorded', () => {
+  // Arrange
+  const { viewport, panes } = paneViewport()
+  const view = new ChromeExtensionViewportView(viewport)
+  // Act
+  view.setRecording({ kind: 'recording' })
+  view.setRecording({
+    kind: 'partial',
+    code: 'EXTENSION_HISTORY_SURFACE_ENDED',
+  })
+  view.setRecording({
+    kind: 'not-recorded',
+    reason:
+      'Study library is full. Increase Codebook: Saved Study Limit in Settings. Existing learning was kept.',
+  })
+  // Assert
+  assert.deepEqual(
+    panes.map((pane) => pane.provenance),
+    [
+      'Operated by chat · Test profile · seeded data · Recording for replay',
+      'Operated by chat · Test profile · seeded data · Recording partial · EXTENSION_HISTORY_SURFACE_ENDED',
+      'Operated by chat · Test profile · seeded data · Not recorded · Study library is full',
+    ],
   )
 })
 
