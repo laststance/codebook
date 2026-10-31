@@ -13,6 +13,7 @@ import { parseExtensionHistoryHeader } from '../chromeExtensionHistorySchemas'
 import type { ExtensionHistoryPause } from '../chromeExtensionHistorySink'
 import { ChromeExtensionHistoryWriter } from '../chromeExtensionHistoryWriter'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import {
   capturedStop,
@@ -315,14 +316,21 @@ test('a history that starts after its bound leaves no folder and the run goes on
     summarize: async () => undefined,
     startBoundMs: 5,
   })
-  await new Promise((resolve) => setTimeout(resolve, 200))
+  const lateFolder = join(
+    learningDirectory,
+    'chrome-extensions.v1',
+    header.studyId,
+  )
+  // The late start's disposal settles on its own schedule; wait for that observable result instead of a fixed sleep, which a loaded runner can outlast.
+  await waitUntil(
+    () => !existsSync(lateFolder) && !store.holdsHistoryFolder(header.studyId),
+    'the late history folder to be removed',
+    5_000,
+  )
 
   // Assert
   assert.ok('unavailable' in begun)
   assert.equal(begun.unavailable, 'the history did not start within 0.005 s.')
   assert.equal(store.holdsHistoryFolder(header.studyId), false)
-  assert.equal(
-    existsSync(join(learningDirectory, 'chrome-extensions.v1', header.studyId)),
-    false,
-  )
+  assert.equal(existsSync(lateFolder), false)
 })
