@@ -27119,6 +27119,8 @@ export class StudyWorkspace {
     const availabilityChanged =
       reason === 'session-ended' && this.selectedNodeHistoryDebugAvailable
     if (availabilityChanged) this.selectedNodeHistoryDebugAvailable = false
+    // An ended session shows no stop any more, so an Extension moment no longer counts as presented natively: only the learner's explicit reselection restarts it, while Play and seeks report the stopped debugger.
+    if (reason === 'session-ended') this.extensionNativeShown = undefined
     const hintShown =
       Boolean(this.replayUninspectedSnapshot) ||
       this.selectedNodeHistoryValuesUninspected

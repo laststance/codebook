@@ -733,3 +733,33 @@ test('Open replay of a just-saved extension run opens the Extension replay befor
     await harness.close()
   }
 })
+
+// protects=reselecting the stop already shown after the learner ended the replay debugger presents the stop in a fresh debugger; fails_when=the shown stop counts as already presented natively, so the debugger stays stopped and Inspect, Select this stop and the event list do nothing; no_claim=the real debug session or Play and seeks (they report the stopped debugger and never restart it)
+test('reselecting the shown extension stop after the learner ends the replay debugger presents it again', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await writeExtensionHistoryFor(harness, RUN)
+    await openExtensionReplay(harness, history.studyId)
+    const presentationsBefore = harness.historicalDebugPresentations.length
+
+    // Act
+    harness.endHistoricalDebugSession()
+    await selectExtensionEvent(harness, history.studyId, OPEN1)
+    await waitUntil(
+      () =>
+        harness.historicalDebugPresentations.length > presentationsBefore &&
+        lastView(harness)?.nodeHistoryPosition?.debuggerAvailable === true,
+      'the stop is presented in a fresh debugger',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(
+      lastView(harness)?.nodeHistoryPosition?.debuggerAvailable,
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
