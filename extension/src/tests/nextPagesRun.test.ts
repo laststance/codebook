@@ -42,19 +42,25 @@ async function preparationFailure(
 }
 
 /**
- * Starts a study service over a harness run, as an agent's start does, and waits for its preparation.
- * @param context - The test, which shuts the service down when it ends.
- * @param harness - The run to serve.
- * @returns The service, the start receipt and the run's record.
+ * Creates a Pages harness run and starts a study service over it, as an agent's start does, and waits for its preparation.
+ * The service's shutdown is registered before the harness exists: node:test runs after hooks in registration order, so the service drains its recording writes before the harness stops its run and removes its folder (removing it first raced those writes into ENOTEMPTY under load).
+ * @param context - The test, which shuts the service down first when it ends.
+ * @param nextPages - The scripted Pages answers of the harness (entry answer, manifests, page states); none gives a page at `/`.
+ * @returns The harness, the service, the start receipt and the run's record.
  */
 async function startThroughService(
   context: TestContext,
-  harness: Awaited<ReturnType<typeof configuredRuntimeHarness>>,
+  nextPages: NonNullable<
+    Parameters<typeof configuredRuntimeHarness>[3]
+  >['nextPages'] = {},
 ) {
   let service: StudyService | undefined, books: RepositoryBookStore | undefined
   context.after(async () => {
     await service?.shutdown()
     books?.dispose()
+  })
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    nextPages,
   })
   const directory = join(harness.directory, '.learning')
   const library = new LearningLibrary(directory, '0'.repeat(64))
@@ -107,7 +113,7 @@ async function startThroughService(
   })
   const record = service.record(receipt)
   await record.preparation
-  return { service, receipt, record }
+  return { harness, service, receipt, record }
 }
 
 // --- The run sequence table ---
@@ -839,10 +845,7 @@ test('a Pages stop in an API route is refused as server-only before any chunk is
 // Value: protects=a Fast Refresh of a sealed module during a Pages run ends it with SOURCE_CHANGED, its static recovery reaching the agent through the run resource; fails_when=the run resource shows RUNTIME_FAILED or the App text; why_new=Cycle 0065 mid-run module replacement through lane B's registry; seam=announceSealedModule re-announces the module under a new script id; no_claim=a real Fast Refresh
 test('a Fast Refresh of the sealed module during a Pages run reaches the run resource as SOURCE_CHANGED with its recovery', async (context) => {
   // Arrange
-  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
-    nextPages: {},
-  })
-  const { service, receipt } = await startThroughService(context, harness)
+  const { harness, service, receipt } = await startThroughService(context)
   // Act
   harness.announceSealedModule('refreshed')
   await waitUntil(
@@ -1035,15 +1038,9 @@ test('a seeded SECRET in a redirect, the server output or a routes-manifest redi
   const outcomes: { code: string; secretSeen: boolean }[] = []
   // Act
   for (const { nextPages } of cases) {
-    const harness = await configuredRuntimeHarness(
+    const { harness, service, receipt, record } = await startThroughService(
       context,
-      undefined,
-      NO_STOPS,
-      { nextPages },
-    )
-    const { service, receipt, record } = await startThroughService(
-      context,
-      harness,
+      nextPages,
     )
     const resource = await readResource(service, receipt.runUri)
     assert.ok('text' in resource)
@@ -1068,12 +1065,8 @@ test('a seeded SECRET in a redirect, the server output or a routes-manifest redi
 
 // Value: protects=the run resource of a Pages run names the router, the resolved route and the page's source; fails_when=nextRoute is missing or differs; why_new=Cycle 0065 run resource field; seam=the service over a harness run; no_claim=an App run's resource (viteVersionIdentity tests keep it unchanged)
 test('the run resource of a Pages run shows the resolved Pages route and its source', async (context) => {
-  // Arrange
-  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
-    nextPages: {},
-  })
-  // Act
-  const { service, receipt } = await startThroughService(context, harness)
+  // Arrange / Act
+  const { service, receipt } = await startThroughService(context)
   const resource = await readResource(service, receipt.runUri)
   // Assert
   assert.ok('text' in resource)
