@@ -764,6 +764,74 @@ test('reselecting the shown extension stop after the learner ends the replay deb
   }
 })
 
+// protects=a seek onto a stop whose source is not recorded never starts a debugger the learner ended, so only an explicit reselection restarts it; fails_when=the seek presents the partial stop in a new debugger and debuggerAvailable returns to true; no_claim=the debugger's drawing or Play
+test('seeking to a partial stop after the learner ends the replay debugger starts no new debugger', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await writeExtensionHistoryFor(harness, [
+      { at: 10, type: 'open', pauseId: 'p1', stopIndex: 1, context: 'page' },
+      {
+        at: 11,
+        type: 'capture',
+        pauseId: 'p1',
+        stopIndex: 1,
+        context: 'page',
+      },
+      {
+        at: 20,
+        type: 'open',
+        pauseId: 'p2',
+        stopIndex: 2,
+        context: 'service-worker',
+      },
+      {
+        at: 21,
+        type: 'capture',
+        pauseId: 'p2',
+        stopIndex: 2,
+        context: 'service-worker',
+        staleSource: true,
+      },
+    ])
+    await openExtensionReplay(harness, history.studyId)
+    harness.endHistoricalDebugSession()
+    const presentationsBefore = harness.historicalDebugPresentations.length
+
+    // Act
+    harness.receiveContext({
+      type: 'node-history-playback',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      action: 'seek',
+      positionMs: 20,
+    })
+    await waitUntil(
+      () =>
+        Boolean(
+          lastView(harness)?.errors.some((error) =>
+            /replay debugger was stopped/.test(error),
+          ),
+        ),
+      'the seek reports why the partial stop was not presented',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(
+      harness.historicalDebugPresentations.length,
+      presentationsBefore,
+    )
+    assert.equal(
+      lastView(harness)?.nodeHistoryPosition?.debuggerAvailable,
+      false,
+    )
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 1)
+  } finally {
+    await harness.close()
+  }
+})
+
 // protects=the time slider of an Extension replay marks only the spans outside a recorded pause as unrecorded, and ticks each stop whose source is recorded; fails_when=the whole timeline is one gap although stops show source and values (the node-test projection that knows no pause interval), or the pauses' spans are not taken from pause-open and pause-close; no_claim=the slider's drawing
 test('the timeline of an Extension replay marks the spans between recorded pauses as unrecorded and ticks the recorded stops', async () => {
   // Arrange

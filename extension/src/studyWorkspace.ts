@@ -27200,9 +27200,12 @@ export class StudyWorkspace {
     // Only an explicit learner selection restarts a debugger the learner stopped; seek and Play report why they stopped.
     const debuggerStopped = this.replayDebuggers.current?.available === false
     const nativeUnchanged = this.keepsNativeMoment(extension, requireDebugger)
+    // An Extension replay's partial stop (source or capture missing) is a stop moment too: a seek must not restart a debugger the learner stopped there either.
+    const isStoppedDebuggerStop =
+      Boolean(verifiedStop) || extension?.stop !== undefined
     if (
       !nativeUnchanged &&
-      verifiedStop &&
+      isStoppedDebuggerStop &&
       debuggerStopped &&
       !publish &&
       !keepStoppedDebugger
@@ -27238,7 +27241,11 @@ export class StudyWorkspace {
       this.resetNodeSourceSlotText()
       this.selectedNodeHistoryDebugAvailable = false
       this.selectedNodeHistoryValuesUninspected = false
-    } else if (verifiedStop && debuggerStopped && keepStoppedDebugger) {
+    } else if (
+      isStoppedDebuggerStop &&
+      debuggerStopped &&
+      keepStoppedDebugger
+    ) {
       // The learner's stopped debugger stays stopped (Retry); the moment commits without a stop in it.
       this.selectedNodeHistoryDebugAvailable = false
       this.selectedNodeHistoryValuesUninspected = false
