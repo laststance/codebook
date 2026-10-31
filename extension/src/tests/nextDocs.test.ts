@@ -516,3 +516,31 @@ test('the help and the README say a Next run in a workspace with a Pages folder 
     ),
   )
 })
+
+// Value: protects=a chat whose Pages run hit the setup deadline tells the learner the recovery the run gave for the step it reached (a retry, a corrected entryPath, the input selector, or reading the history first), as the help's NEXT_SETUP_DEADLINE meaning says, not the section's general retry; fails_when=skill 1.0.59's browser paragraph or the README's skill bullet stops naming the run's own recovery for NEXT_SETUP_DEADLINE; why_new=Cycle 0066 task 8 (Cycle 0065 review: the skill worded the deadline recovery differently from the help's per-step recovery); seam=SKILL.md, help resource and README text; no_claim=how a chat follows it
+test('the bundled skill relays the recovery the run gives for NEXT_SETUP_DEADLINE, the per-step recovery the help names', async (context) => {
+  // Arrange
+  const skill = await readFile(
+    join(__dirname, '..', '..', 'skills', 'codebook', 'SKILL.md'),
+    'utf8',
+  )
+  const help = await readRepositoryBrowserHelp(context)
+  const section = await readNextReadmeSection()
+  // Act
+  const paragraph =
+    skill.split('\n\n').find((part) => part.startsWith('**Browser runs.**')) ??
+    ''
+  const meaning = help.nextRefusals?.NEXT_SETUP_DEADLINE?.meaning ?? ''
+  // Assert
+  assert.ok(
+    paragraph.includes(
+      "For `NEXT_SETUP_DEADLINE`, relay the `recovery` of the run resource's `error` instead, word for word: the run words it for the step it reached (one retry, a corrected `entryPath`, the input selector, or reading the captured history before any new start).",
+    ),
+  )
+  assert.ok(meaning.includes('The recovery the run gives fits that step'))
+  assert.ok(
+    section.includes(
+      "- **What the bundled skill does (1.0.59).** The chat sends a question about a Pages Router page to `next-dev-webpack` as it does for an App Router page, tells you a refusal's code with the recovery of that code's section in the help (for `NEXT_SETUP_DEADLINE`, the recovery the run itself gives for the step it reached: one retry, a corrected `entryPath`, the input selector, or reading the captured history first),",
+    ),
+  )
+})
