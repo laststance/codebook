@@ -3,7 +3,10 @@ import { test } from 'node:test'
 
 import type { DebugProtocol } from '@vscode/debugprotocol'
 
-import { REPLAY_DEBUG_MAX_VARIABLES } from '../constants'
+import {
+  REPLAY_DEBUG_MAX_VARIABLES,
+  REPLAY_DEBUG_NATIVE_STACK_PAGE_FRAMES,
+} from '../constants'
 import { ReplayDebugAdapter } from '../replayDebugAdapter'
 import {
   replayDebugSnapshotSchema,
@@ -1995,6 +1998,36 @@ test('the recorded inspections sit on the first frame with source when the top f
     'Locals',
     'Recorded inspections',
   ])
+})
+
+// Value: protects=the recorded inspections stay readable when the first frame with source lies past the first Call Stack page; fails_when=the scope sits on that unloaded frame while native Variables shows the top frame, so the recorded values are unreachable; why_new=CodeRabbit CLI round 2 (Cycle 0067); seam=none; no_claim=real VS Code paging
+test('the recorded inspections sit on the top frame when the first frame with source lies past the first Call Stack page', () => {
+  // Arrange
+  const { adapter, request } = harness()
+  const snapshot = recorded()
+  const libraryFrames = Array.from(
+    { length: REPLAY_DEBUG_NATIVE_STACK_PAGE_FRAMES },
+    (_, index) => ({
+      name: `library${index}`,
+      line: 1,
+      column: 1,
+      scopes: [],
+    }),
+  )
+  snapshot.frames.unshift(...libraryFrames)
+  adapter.select(snapshot, 'Recorded', undefined, [
+    { path: 'amount', mode: 'value', display: '120', type: 'number' },
+  ])
+  request('configurationDone')
+  const frames = request('stackTrace', { threadId: 1 }).body.stackFrames
+
+  // Act
+  const scopeNames = request('scopes', {
+    frameId: frames[0].id,
+  }).body.scopes.map((scope: DebugProtocol.Scope) => scope.name)
+
+  // Assert
+  assert.ok(scopeNames.includes('Recorded inspections'))
 })
 
 // Value: protects=a withheld recorded value is never shown as a value; fails_when=a type-only inspection displays its type as if it were the value; why_new=the replay never listed recorded inspections before; seam=none; no_claim=redaction rules of the capture

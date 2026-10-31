@@ -268,7 +268,7 @@ export class ReplayDebugAdapter {
    * @param value - The recorded stop to serve, or `undefined` for a moment without history to show.
    * @param label - What the thread and the stop description read: the recorded moment, or for `undefined` why no stack is shown ("Not recorded at this moment", or that the recorded application is covered).
    * @param sourceDocument - The captured source document the native editor opens for the stop's frames.
-   * @param inspections - The values the run recorded at this stop; listed read-only in one extra "Recorded inspections" scope of the top frame, so values outside the bounded captured scopes stay inspectable. Nothing is added when empty or absent.
+   * @param inspections - The values the run recorded at this stop; listed read-only in one extra "Recorded inspections" scope of the frame native Call Stack focuses (the first frame with source on the first Call Stack page, else the top frame), so values outside the bounded captured scopes stay inspectable. Nothing is added when empty or absent.
    * @throws When the snapshot is invalid or its source hash does not match; the session then shows "Not recorded at this moment".
    * @example adapter.select(undefined, 'Not recorded at this moment')
    */
@@ -323,11 +323,15 @@ export class ReplayDebugAdapter {
         this.snapshot = snapshot
         this.label = label
         this.sourceDocument = sourceDocument
-        // The recorded inspections go on the frame native Call Stack focuses: the first focusable frame, else the top frame, as {@link inspectionFrameId} picks it.
-        const focusedIndex = Math.max(
-          0,
-          snapshot.frames.findIndex((frame) => this.isFocusableFrame(frame)),
+        // The recorded inspections go on the frame native Call Stack focuses, as {@link inspectionFrameId} picks it: the first focusable frame within the first Call Stack page, else the top frame.
+        const firstFocusable = snapshot.frames.findIndex((frame) =>
+          this.isFocusableFrame(frame),
         )
+        const focusedIndex =
+          firstFocusable >= 0 &&
+          firstFocusable < REPLAY_DEBUG_NATIVE_STACK_PAGE_FRAMES
+            ? firstFocusable
+            : 0
         // Saved indices become session-local handles that are never reused across seeks.
         for (const [index, frame] of snapshot.frames.entries()) {
           const frameId = ++this.nextHandle
