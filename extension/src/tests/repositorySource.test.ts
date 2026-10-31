@@ -790,3 +790,24 @@ test('source discovery runs no clean filter, textconv driver or external diff th
     { files: ['src/module.ts'], ran: [] },
   )
 })
+
+// Value: protects=the learner whose project tracks more than 5,000 names (TanStack Query tracks 5,173): source discovery lists it and pages its first 100 names instead of refusing the whole catalog; fails_when=the tracked-name cap sits below a real project's size, so discovery refuses with LIMIT_EXCEEDED and no Codebook feature can start there; why_new=Cycle 0067 F1 (observed natively on TanStack Query c9c00015); seam=none (real Git, 5,001 real tracked files made by one add of all files); no_claim=the speed of discovery on a repository near the new cap
+test('source discovery lists a repository of 5,001 tracked source files and pages its first 100 names', async (context) => {
+  // Arrange: 5,001 tracked eligible files, written with the filesystem and tracked by one add.
+  const { directory, sources } = await sourceHarness(context)
+  await mkdir(join(directory, 'src'), { recursive: true })
+  for (let index = 0; index <= 5_000; index += 1)
+    await writeFile(
+      join(directory, 'src', `f${String(index).padStart(4, '0')}.ts`),
+      'export const price = 24;\n',
+    )
+  await executeFile('git', ['add', '-A'], { cwd: directory })
+  // Act
+  const page = await sources.list()
+  // Assert
+  assert.equal(page.trackedCount, 5_001)
+  assert.equal(page.eligibleCount, 5_001)
+  assert.equal(page.files.length, 100)
+  assert.equal(page.files[0], 'src/f0000.ts')
+  assert.equal(page.files[99], 'src/f0099.ts')
+})
