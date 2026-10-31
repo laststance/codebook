@@ -18,6 +18,10 @@ import type {
   ExtensionContinueArguments,
   ExtensionDebuggerInput,
 } from './chromeExtensionDebugger'
+import type {
+  ChromeExtensionHistorySink,
+  ExtensionHistoryPause,
+} from './chromeExtensionHistorySink'
 import {
   buildExtensionObserved,
   createExtensionObservationReader,
@@ -44,6 +48,7 @@ import type {
   ChromeExtensionRuntime,
   ChromeExtensionView,
 } from './runtime'
+import type { ViewportRecordingObserver } from './runtimeSupport/browserViewport'
 import type { OwnedBrowserLaunchOptions } from './runtimeSupport/ownedExtensionBrowser'
 import {
   readCdpString,
@@ -100,6 +105,8 @@ export type OwnedChromeExtensionRunInput = ChromeExtensionRunInput & {
   dependencies: ChromeExtensionRunDependencies
   /** Creates the Application view; absent → the run goes on without one. */
   createViewport?: ChromeExtensionViewportFactory
+  /** The Chrome the run launches, as `--version` reports it; the history's header names it. */
+  chromeVersion?: string
 }
 
 /** How a run ends; the first one wins. */
@@ -160,6 +167,13 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   private readonly outputs: ChromeExtensionOutputLine[] = []
   private readonly captures: ChromeExtensionView['captures'] = []
   private readonly pinnedGenerations = new Set<number>()
+  /** The run's history once it started; `undefined` before, and for a run that goes on unrecorded. */
+  private history: ChromeExtensionHistorySink | undefined
+  /** The declared pauses the history was told of, by pause generation. */
+  private readonly historyPauses = new Map<number, ExtensionHistoryPause>()
+  private readonly historyCaptured = new Set<string>()
+  /** The generations a continue of this run asked for, so a pause that ends otherwise is told apart. */
+  private readonly continuedGenerations = new Set<number>()
   private stage: ChromeExtensionPhase = 'starting'
   private launchedAtMs: number | undefined
   /** Settles when a cleanup left a step that ignored its abort behind at the stop bound, so {@link OwnedChromeExtensionRun.prepare} answers then instead of waiting on that step. */
@@ -499,6 +513,8 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     this.sourceCheck = dependencies.createSourceCheck(resolved)
     await this.sourceCheck()
     this.assertAccepting()
+    await this.startHistory(resolved)
+    this.assertAccepting()
     this.viewport?.setIdentity({
       manifestName: resolved.manifestName,
       surface: resolved.surface,
@@ -523,10 +539,54 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     await this.becomeReady(resolved, browser)
   }
 
+  /**
+   * The frame observer the Application view gets before the history exists (the view opens in `starting`, the header needs the resolved declaration): it forwards to the history once that started, and frames only arrive after the surface attached, which is after.
+   * @example this.historyFrameObserver.elapsedMs() // => 0 before the history started
+   */
+  private readonly historyFrameObserver: ViewportRecordingObserver = {
+    elapsedMs: () => this.history?.frameObserver.elapsedMs() ?? 0,
+    frame: (frame) => this.history?.frameObserver.frame(frame),
+    closed: (closing) => this.history?.frameObserver.closed(closing),
+  }
+
+  /**
+   * Starts the run's history once the declaration resolved and keeps the sink; a refusal or a failure leaves the run going unrecorded.
+   * @param resolved - The resolved declaration whose extension, surface and stops the header names.
+   * @example await this.startHistory(resolved)
+   */
+  private async startHistory(resolved: ResolvedExtensionRun): Promise<void> {
+    const { beginHistory } = this.input
+    if (beginHistory === undefined) return
+    try {
+      this.history = await beginHistory({
+        extension: {
+          id: resolved.extensionId,
+          name: resolved.manifestName,
+          version: resolved.manifestVersion,
+        },
+        surface: resolved.surface,
+        declaredStops: resolved.stops.map((stop) => ({
+          index: stop.index,
+          path: stop.path,
+          line: stop.line,
+          context: stop.context,
+        })),
+        chromeVersion: this.input.chromeVersion ?? 'unknown',
+      })
+    } catch {
+      // The history never fails the run.
+      this.history = undefined
+    }
+  }
+
   /** Creates the Application view; a view the editor refuses (its layout guard, for example a foreign preview tab where the pane would go) leaves the run without one and says why, in the view and the journal (DR6). */
   private async openViewport(): Promise<ChromeExtensionViewport | undefined> {
     try {
-      return await this.input.createViewport?.(this.id, this.abort.signal)
+      return await this.input.createViewport?.(
+        this.id,
+        this.abort.signal,
+        this.input.beginHistory ? this.historyFrameObserver : undefined,
+      )
     } catch (error) {
       this.reportViewUnavailable(error)
       return undefined
@@ -693,6 +753,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     if (this.ending !== undefined || this.surfaceGone) return
     if (this.stage !== 'ready' && this.stage !== 'observing') return
     this.surfaceGone = true
+    this.history?.surfaceEnded()
     this.observationAbort.abort()
     this.record('chrome-extension.surface-lost', {
       surface: resolved.surface.kind,
@@ -718,6 +779,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
 
   /** The browser's CDP connection or process ended without the run's own close. */
   private onBrowserLost(): void {
+    this.history?.surfaceEnded()
     this.fail(
       new StudyError(
         'BROWSER_LOST',
@@ -731,6 +793,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   /** A pause opened, finished its capture or ended. */
   private onDebuggerChange(): void {
     if (this.ending !== undefined) return
+    this.tellHistoryOfPauses()
     for (const pause of this.debug?.pauses() ?? []) {
       if (
         pause.kind === 'declared' &&
@@ -753,6 +816,62 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     if (!this.debug?.pauses().some((pause) => pause.kind === 'declared'))
       this.viewport?.resumeLive()
     this.changed()
+  }
+
+  /**
+   * Tells the run's history what the debugger's pauses did since the last change: a declared pause opened, finished its capture or ended. The history only queues what it is told; a fault of its own never reaches the run.
+   * Called by {@link OwnedChromeExtensionRun.onDebuggerChange} on every change of the pause set.
+   */
+  private tellHistoryOfPauses(): void {
+    const { history, resolved, debug } = this
+    if (history === undefined || resolved === undefined || debug === undefined)
+      return
+    try {
+      const openGenerations = new Set<number>()
+      for (const pause of debug.pauses()) {
+        if (pause.kind !== 'declared' || pause.stopIndex === undefined) continue
+        openGenerations.add(pause.generation)
+        let recorded = this.historyPauses.get(pause.generation)
+        if (recorded === undefined) {
+          recorded = {
+            pauseId: `${this.id}:${pause.generation}:${pause.context}:${pause.stopIndex}`,
+            generation: pause.generation,
+            context: pause.context,
+            stopIndex: pause.stopIndex,
+            targetUrl:
+              pause.context === 'service-worker'
+                ? new URL(
+                    resolved.workerPath ?? '',
+                    `chrome-extension://${resolved.extensionId}/`,
+                  ).href
+                : resolved.surfaceUrl,
+            workerGeneration:
+              pause.context === 'service-worker' ? debug.workerGeneration() : 0,
+          }
+          this.historyPauses.set(pause.generation, recorded)
+          history.pauseOpened(recorded)
+        }
+        if (pause.captured && !this.historyCaptured.has(recorded.pauseId)) {
+          this.historyCaptured.add(recorded.pauseId)
+          history.captured(recorded.pauseId, pause.captured)
+        }
+      }
+      for (const [generation, recorded] of [...this.historyPauses]) {
+        if (openGenerations.has(generation)) continue
+        this.historyPauses.delete(generation)
+        const wasContinuedHere = this.continuedGenerations.has(generation)
+        const workerWentAway =
+          !wasContinuedHere &&
+          recorded.context === 'service-worker' &&
+          debug.workerGeneration() !== recorded.workerGeneration
+        history.pauseClosed(
+          recorded.pauseId,
+          workerWentAway ? 'worker-lost' : 'continue',
+        )
+      }
+    } catch {
+      // A history that throws must not end the run.
+    }
   }
 
   /** Pins the surface's frame of a declared pause under its phase text (DR3); a paused page may not answer the capture, then the live frame stays. */
@@ -986,6 +1105,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
         'NO_PAUSE',
         'The extension run is not paused at a declared stop.',
       )
+    this.continuedGenerations.add(args.generation)
     try {
       await debug.resume(args, this.abort.signal)
     } catch (error) {
@@ -1054,6 +1174,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       observedAtMs: this.elapsedMs(),
       roots: this.roots,
     })
+    if (this.observed) this.history?.resultObserved(this.observed)
   }
 
   // ------------------------------------------------------------------ endings

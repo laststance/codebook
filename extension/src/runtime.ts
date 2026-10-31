@@ -16,6 +16,10 @@ import type {
   ExtensionPauseView,
 } from './chromeExtensionDebugger'
 import type {
+  ChromeExtensionHistorySink,
+  ExtensionHistoryIdentity,
+} from './chromeExtensionHistorySink'
+import type {
   ConfiguredDefinition,
   ConfiguredDescriptor,
   ConfiguredObservation,
@@ -341,6 +345,13 @@ export type ChromeExtensionRunInput = {
   record: (type: string, detail?: unknown) => unknown
   /** The service's private roots, hidden in journaled text and causes. */
   privateRoots?: CauseRoots
+  /**
+   * Starts the run's history once its declaration resolved (the header names the extension, so the run cannot ask earlier). The run tells the sink each pause, capture, continue, the surface ending and the result, and the Application view gives it the surface's frames.
+   * Resolves to `undefined` when no history could start, and the run goes on unrecorded; it never rejects. Absent → the run does not record.
+   */
+  beginHistory?: (
+    identity: ExtensionHistoryIdentity,
+  ) => Promise<ChromeExtensionHistorySink | undefined>
 }
 
 export type ConfiguredRuntimeSnapshot = Omit<

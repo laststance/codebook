@@ -1,0 +1,383 @@
+import type { CapturedExtensionStop } from './chromeExtensionContracts'
+import { ExtensionHistoryFrameWriter } from './chromeExtensionHistoryFrames'
+import type {
+  ChromeExtensionHistorySink,
+  ExtensionHistoryPause,
+} from './chromeExtensionHistorySink'
+import type { ExtensionHistorySummary } from './chromeExtensionHistoryTypes'
+import type { ChromeExtensionHistoryWriter } from './chromeExtensionHistoryWriter'
+import { extensionObservationResult } from './chromeExtensionObservation'
+import {
+  EXTENSION_HISTORY_DRAIN_TIMEOUT_MS,
+  EXTENSION_HISTORY_START_BOUND_MS,
+  SEAL_RETRY_DELAY_MS,
+  TRANSIENT_SEAL_ERROR_CODES,
+} from './constants'
+import type { ChromeExtensionObserved } from './runtime'
+import type { ViewportRecordingObserver } from './runtimeSupport/browserViewport'
+import { systemErrorCode } from './utils/systemErrorCode'
+
+/** Where a chrome-extension run's history stands: its writer takes entries, it was sealed, or it was abandoned because it could not be written or sealed. */
+export type ExtensionHistoryStatus = 'recording' | 'sealed' | 'failed'
+
+/** What {@link ChromeExtensionHistoryRecorder.begin} needs from the service. */
+export type ExtensionHistoryBeginInput = {
+  /** Reserves the history and returns its writer; rejects when storage is unavailable, full or refuses the start. */
+  start: () => Promise<ChromeExtensionHistoryWriter>
+  /** Words a failure for the learner without private paths. */
+  describeCause: (error: unknown) => string
+  /** The start's bound; {@link EXTENSION_HISTORY_START_BOUND_MS} unless a test names its own. */
+  startBoundMs?: number
+  /** Reads the sealed history's summary for the verdicts; `undefined` when it cannot be read. */
+  summarize: (studyId: string) => Promise<ExtensionHistorySummary | undefined>
+  /** Told once with the first fault of an append or a frame (the service writes it to Output › Codebook); the history is already marked failed. */
+  onFault?: (error: unknown) => void
+  /** Waits before the one retry of a transient seal failure. */
+  retryDelay?: (milliseconds: number) => Promise<void>
+}
+
+/** The outcome of a start: the recorder, or why this run has no history (the live run goes on either way). */
+export type ExtensionHistoryBegun =
+  { recorder: ChromeExtensionHistoryRecorder } | { unavailable: string }
+
+/** How the run ended, as far as the history needs it. */
+export type ExtensionHistoryEnd = {
+  /** The run's failure code, when it failed. */
+  failureCode?: string
+  /** The final observation the run kept; `null` or absent when it never read one. */
+  observed?: ChromeExtensionObserved | null
+}
+
+/** Converts a masked, JSON-shaped observation value into the JSON type the journal stores. */
+function toJson(value: unknown): ReturnType<typeof JSON.parse> {
+  return value === undefined ? null : JSON.parse(JSON.stringify(value))
+}
+
+/**
+ * Owns one live chrome-extension run's history from its start to its seal: the writer, the frame writer, the pauses still open and the one seal every ending joins.
+ * Why: Stop, `codebook_stop`, a failure, a lost surface and dispose must give one seal, and a history that cannot start, be written or be sealed must never fail or slow the run; this holds that state apart from {@link StudyService} and {@link OwnedChromeExtensionRun}.
+ * Created by {@link StudyService} before the run launches; the run feeds it as a {@link ChromeExtensionHistorySink}; {@link ChromeExtensionHistoryRecorder.seal} is called by the service's stop path.
+ * @example
+ * const begun = await ChromeExtensionHistoryRecorder.begin(input)
+ * if ('recorder' in begun) await begun.recorder.seal({}, 10_000)
+ */
+export class ChromeExtensionHistoryRecorder implements ChromeExtensionHistorySink {
+  status: ExtensionHistoryStatus = 'recording'
+  /** Why the history was abandoned or its seal failed, without private paths. */
+  failure?: string
+  /** The sealed history's summary and journal hash, once sealed. */
+  sealed?: {
+    summary: ExtensionHistorySummary | undefined
+    hash: string | undefined
+  }
+  readonly frameObserver: ViewportRecordingObserver
+  private readonly frames: ExtensionHistoryFrameWriter
+  private readonly openPauses = new Map<string, ExtensionHistoryPause>()
+  private didWriteResult = false
+  private didSurfaceEnd = false
+  private didReportFault = false
+  private sealOperation?: Promise<void>
+
+  private constructor(
+    readonly writer: ChromeExtensionHistoryWriter,
+    private readonly input: ExtensionHistoryBeginInput,
+  ) {
+    this.frames = new ExtensionHistoryFrameWriter(writer)
+    this.frameObserver = {
+      elapsedMs: () => writer.nowMs(),
+      frame: (frame): void => {
+        // The viewport acked Chrome before this call; only sampling and a bounded enqueue happen here.
+        if (frame.kind !== 'stream') return
+        this.frames.offer({
+          data: frame.data,
+          kind: 'stream',
+          capturedAtMs: frame.elapsedMs,
+        })
+      },
+      closed: ({ expected }): void => {
+        // A pane closed before the run's own cleanup ends the frames early.
+        if (!expected) this.frames.isIncomplete = true
+      },
+    }
+  }
+
+  /**
+   * Starts the history within its bound.
+   * @param input - How to start, word and read the history.
+   * @returns The recorder, or the cause for a run that goes on without a history: storage unavailable, a full store, a refused start or a start slower than its bound (a late writer is sealed empty, which removes its folder).
+   * @example const begun = await ChromeExtensionHistoryRecorder.begin(input) // => { recorder } | { unavailable: 'storage is full' }
+   */
+  static async begin(
+    input: ExtensionHistoryBeginInput,
+  ): Promise<ExtensionHistoryBegun> {
+    const bound = input.startBoundMs ?? EXTENSION_HISTORY_START_BOUND_MS
+    const starting = input.start()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const expired = Symbol('expired')
+    try {
+      const writer = await Promise.race([
+        starting,
+        new Promise<typeof expired>((resolve) => {
+          timer = setTimeout(() => resolve(expired), bound)
+          timer.unref()
+        }),
+      ])
+      if (writer === expired) {
+        // A start that finishes later is sealed with nothing in it, which removes its folder.
+        void starting
+          .then(
+            (late) => late.seal(),
+            () => undefined,
+          )
+          .catch(() => undefined)
+        return {
+          unavailable: `the history did not start within ${bound / 1_000} s.`,
+        }
+      }
+      return { recorder: new ChromeExtensionHistoryRecorder(writer, input) }
+    } catch (error) {
+      return { unavailable: input.describeCause(error) }
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+
+  /** Why the history stopped taking evidence while the run lives, without private paths; `undefined` while it writes. */
+  get appendFailure(): string | undefined {
+    const failure = this.writer.appendFailure
+    return failure ? this.input.describeCause(failure) : undefined
+  }
+
+  /** Whether the filmstrip lost a frame. */
+  get isFilmstripIncomplete(): boolean {
+    return this.frames.isIncomplete
+  }
+
+  pauseOpened(pause: ExtensionHistoryPause): void {
+    this.safely(() => this.pauseOpenedNow(pause))
+  }
+
+  private pauseOpenedNow(pause: ExtensionHistoryPause): void {
+    this.openPauses.set(pause.pauseId, pause)
+    this.write(
+      this.writer.appendPauseOpen({
+        pauseId: pause.pauseId,
+        generation: pause.generation,
+        context: pause.context,
+        stopIndex: pause.stopIndex,
+        targetUrl: pause.targetUrl,
+        workerGeneration: pause.workerGeneration,
+      }),
+    )
+  }
+
+  captured(pauseId: string, capture: CapturedExtensionStop): void {
+    this.safely(() => this.capturedNow(pauseId, capture))
+  }
+
+  private capturedNow(pauseId: string, capture: CapturedExtensionStop): void {
+    const top = capture.snapshot.frames[0]
+    this.write(
+      this.writer.appendCapture({
+        pauseId,
+        path: capture.path,
+        line: capture.line,
+        sourceHash: capture.sha256,
+        sourceBytes: Buffer.byteLength(top?.source?.text ?? ''),
+        debuggerSnapshot: capture.snapshot,
+        facts: {
+          stopIndex: capture.stopIndex,
+          context: capture.context,
+          workerGeneration: capture.workerGeneration,
+          targetUrl: capture.targetUrl,
+        },
+      }),
+    )
+  }
+
+  pauseClosed(pauseId: string, reason: 'continue' | 'worker-lost'): void {
+    this.safely(() => this.pauseClosedNow(pauseId, reason))
+  }
+
+  private pauseClosedNow(
+    pauseId: string,
+    reason: 'continue' | 'worker-lost',
+  ): void {
+    this.closePause(pauseId, reason)
+  }
+
+  resultObserved(observed: ChromeExtensionObserved): void {
+    this.safely(() => this.resultObservedNow(observed))
+  }
+
+  private resultObservedNow(observed: ChromeExtensionObserved): void {
+    if (this.didWriteResult) return
+    this.didWriteResult = true
+    const outcome = extensionObservationResult(observed)
+    this.write(
+      this.writer.appendResult({
+        outcome,
+        before: toJson(observed.before),
+        after: toJson(observed.after),
+        ...('unavailable' in observed.after
+          ? { cause: observed.after.cause }
+          : {}),
+      }),
+    )
+  }
+
+  surfaceEnded(): void {
+    this.safely(() => this.surfaceEndedNow())
+  }
+
+  private surfaceEndedNow(): void {
+    this.didSurfaceEnd = true
+  }
+
+  /** Whether the history still takes entries. */
+  get isRecording(): boolean {
+    return this.status === 'recording'
+  }
+
+  /**
+   * Ends and seals the history; the first call decides, every later call joins it.
+   * @param end - How the run ended.
+   * @param boundMs - How long the seal may take; past it the writer is abandoned (the folder lists as interrupted).
+   * @returns Settles when the seal ended in a sealed or a failed state; never rejects.
+   * @example await recorder.seal({ failureCode: 'SURFACE_LOST' }, 10_000)
+   */
+  seal(end: ExtensionHistoryEnd, boundMs: number): Promise<void> {
+    this.sealOperation ??= this.runSeal(end, boundMs)
+    return this.sealOperation
+  }
+
+  /** Does the one seal: the open pauses and the result first, then the queued frames within their deadline, then the writer's seal, bounded. */
+  private async runSeal(
+    end: ExtensionHistoryEnd,
+    boundMs: number,
+  ): Promise<void> {
+    for (const pause of [...this.openPauses.values()])
+      this.closePause(pause.pauseId, this.closeReasonOf(pause, end))
+    if (!this.didWriteResult && end.observed) this.resultObserved(end.observed)
+    if (!this.didWriteResult) {
+      this.didWriteResult = true
+      this.write(
+        this.writer.appendResult({
+          outcome: 'unavailable',
+          cause: 'The run ended before its result was read.',
+        }),
+      )
+    }
+    await this.frames.drain(EXTENSION_HISTORY_DRAIN_TIMEOUT_MS)
+    if (this.frames.failure !== undefined) this.reportFault(this.frames.failure)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const expired = Symbol('expired')
+    const deadline = new Promise<typeof expired>((resolve) => {
+      timer = setTimeout(() => resolve(expired), boundMs)
+      timer.unref()
+    })
+    try {
+      const raced = await Promise.race([this.sealWithRetry(), deadline])
+      // A writer whose seal is already published is never abandoned: the store lists it sealed.
+      const hash = raced === expired ? this.writer.publishedSealHash : raced
+      if (raced === expired && hash === undefined) {
+        this.abandon('Learning replay could not be saved: the seal timed out.')
+        return
+      }
+      this.status = 'sealed'
+      this.sealed = { summary: await this.readSummary(), hash }
+    } catch (error) {
+      const publishedHash = this.writer.publishedSealHash
+      if (publishedHash === undefined) {
+        this.abandon(this.input.describeCause(error))
+        return
+      }
+      this.status = 'sealed'
+      this.sealed = { summary: await this.readSummary(), hash: publishedHash }
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+
+  /** Why a still-open pause closed when the run ended: its worker went away, the surface was lost, or the run simply ended. */
+  private closeReasonOf(
+    pause: ExtensionHistoryPause,
+    end: ExtensionHistoryEnd,
+  ): 'worker-lost' | 'surface-lost' | 'run-ended' {
+    if (
+      end.failureCode === 'SERVICE_WORKER_RESTARTED' &&
+      pause.context === 'service-worker'
+    )
+      return 'worker-lost'
+    return this.didSurfaceEnd || end.failureCode === 'SURFACE_LOST'
+      ? 'surface-lost'
+      : 'run-ended'
+  }
+
+  /** Journals the end of a pause once. */
+  private closePause(
+    pauseId: string,
+    reason: 'continue' | 'worker-lost' | 'surface-lost' | 'run-ended',
+  ): void {
+    if (!this.openPauses.delete(pauseId)) return
+    this.write(this.writer.appendPauseClose({ pauseId, reason }))
+  }
+
+  /** Runs one sink call so that nothing it throws reaches the run; the fault is reported once. */
+  private safely(step: () => void): void {
+    try {
+      step()
+    } catch (error) {
+      this.reportFault(error)
+    }
+  }
+
+  /** Never lets a rejected append escape; the writer remembers the first failure, and the service hears of it once. */
+  private write(operation: Promise<void>): void {
+    operation.catch((error: unknown) => this.reportFault(error))
+  }
+
+  private reportFault(error: unknown): void {
+    if (this.didReportFault) return
+    this.didReportFault = true
+    try {
+      this.input.onFault?.(error)
+    } catch {
+      // A reporter that throws must not reach the run.
+    }
+  }
+
+  /** Reads the sealed history's summary; never rejects. */
+  private readSummary(): Promise<ExtensionHistorySummary | undefined> {
+    return Promise.resolve()
+      .then(() => this.input.summarize(this.writer.header.studyId))
+      .catch(() => undefined)
+  }
+
+  /** Abandons the writer, so a late seal publishes nothing and the folder lists as interrupted. */
+  private abandon(cause: string): void {
+    this.writer.abandon()
+    this.status = 'failed'
+    this.failure = cause
+  }
+
+  /** Seals with what the recorder knows, and once more after a short wait when the first attempt failed with a transient file-system code. */
+  private async sealWithRetry(): Promise<string | undefined> {
+    const facts = {
+      filmstripIncomplete: this.frames.isIncomplete,
+      surfaceEnded: this.didSurfaceEnd,
+    }
+    try {
+      return await this.writer.seal(facts)
+    } catch (error) {
+      if (!TRANSIENT_SEAL_ERROR_CODES.includes(systemErrorCode(error)))
+        throw error
+      const wait =
+        this.input.retryDelay ??
+        ((milliseconds: number): Promise<void> =>
+          new Promise<void>((resolve) => setTimeout(resolve, milliseconds)))
+      await wait(SEAL_RETRY_DELAY_MS)
+      return this.writer.seal(facts)
+    }
+  }
+}

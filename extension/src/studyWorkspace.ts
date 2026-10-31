@@ -8081,7 +8081,7 @@ export class StudyWorkspace {
           ),
       })
     },
-    createChromeExtensionViewport: async (runId, signal) => {
+    createChromeExtensionViewport: async (runId, signal, observer) => {
       let isFinal = false
       // The run's stop files, known once its configuration resolves (before that nothing moves).
       let stopFilePaths = new Set<string>()
@@ -8092,6 +8092,8 @@ export class StudyWorkspace {
         fail: () => undefined,
         scenario: 'normal',
         signal,
+        // The run's history receives the surface's frames through this observer; absent when the run records nothing.
+        observer,
         keepsEndedPane: () => isFinal,
         movesPausedSourceOut: (fsPath) =>
           stopFilePaths.has(canonicalFsPath(fsPath)),
@@ -14126,9 +14128,12 @@ export class StudyWorkspace {
     | NodeHistoryStore<NodeServerHistoryTypes>
     | undefined {
     // An unresolved id answers that no history has it; it is not read from the test store.
-    return this.nodeHistoryRepository
-      ? this.nodeHistoryRepository.resolve(studyId)?.store
-      : this.nodeHistoryStore
+    if (!this.nodeHistoryRepository) return this.nodeHistoryStore
+    const resolved = this.nodeHistoryRepository.resolve(studyId)
+    // A chrome-extension history has no reader here yet: its replay presentation is a later part of the cycle.
+    return resolved?.profile === 'chrome-extension'
+      ? undefined
+      : resolved?.store
   }
 
   /**

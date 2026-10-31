@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 
 import type { ChromeExtensionConfiguration } from './chromeExtensionConfigSchemas'
+import type { ChromeExtensionHistoryRecorder } from './chromeExtensionHistoryRecorder'
+import type { ExtensionHistoryIdentity } from './chromeExtensionHistorySink'
 import { describeChromeExtensionProfile } from './chromeExtensionProfile'
 import { CONFIGURED_PROFILE } from './configuredProfile'
 import type {
@@ -53,6 +55,8 @@ import {
   STUDY_PRESENTATIONS,
   TRANSIENT_SEAL_ERROR_CODES,
   NODE_SERVER_HISTORY_SEAL_BOUND_MS,
+  EXTENSION_HISTORY_SEAL_BOUND_MS,
+  EXTENSION_HISTORY_START_BOUND_MS,
   NODE_SERVER_HISTORY_START_BOUND_MS,
 } from './constants'
 import {
@@ -173,6 +177,7 @@ import type { NodeTestExecutionPlan } from './utils/planNodeTestExecution'
 import { prepareNodeServerStudy } from './utils/prepareNodeServerStudy'
 import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
 import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy'
+import { projectChromeExtensionHistory } from './utils/projectChromeExtensionHistory'
 import { projectChromeExtensionState } from './utils/projectChromeExtensionState'
 import { projectNodeServerHistory } from './utils/projectNodeServerHistory'
 import { projectNodeServerState } from './utils/projectNodeServerState'
@@ -195,6 +200,7 @@ import { sanitizedStack } from './utils/sanitizedStack'
 import { settledWithin } from './utils/settledWithin'
 import { sleepUntilAborted } from './utils/sleepUntilAborted'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
+import { startChromeExtensionHistory } from './utils/startChromeExtensionHistory'
 import { startNodeServerHistory } from './utils/startNodeServerHistory'
 import { StorageLockHeldError } from './utils/storageLockHeldError'
 import { studyErrorNamingCause } from './utils/studyErrorNamingCause'
@@ -326,6 +332,10 @@ export interface ChromeExtensionRecordState {
   >
   /** Stops listening to the run's changes once the run is released. */
   subscription?: { dispose(): void }
+  /** The run's history, from its resolved declaration to its seal; absent when none could start ({@link historyUnavailable}). */
+  history?: ChromeExtensionHistoryRecorder
+  /** Why the run has no history (storage unavailable, a full library, a refused or slow start); the live run goes on unrecorded. */
+  historyUnavailable?: string
 }
 /** A chrome-extension run's record with its extension state, as the narrowing {@link isChromeExtensionRecord} gives. */
 type ChromeExtensionStudyRecord = StudyRecord & {
@@ -628,6 +638,9 @@ export class StudyService {
   nodeServerHistoryStartBoundMs = NODE_SERVER_HISTORY_START_BOUND_MS
   /** How long the seal of a node-server history may take before it is abandoned; a test sets a short one. */
   nodeServerHistorySealBoundMs = NODE_SERVER_HISTORY_SEAL_BOUND_MS
+  /** How long a chrome-extension run waits for its history to start, and for it to seal; a test sets short ones. */
+  chromeExtensionHistoryStartBoundMs = EXTENSION_HISTORY_START_BOUND_MS
+  chromeExtensionHistorySealBoundMs = EXTENSION_HISTORY_SEAL_BOUND_MS
   /** Sealed server histories whose unreadable summary already has its Output › Codebook entry. */
   private readonly nodeServerSummaryDiagnosed = new WeakSet<object>()
   /** How long `codebook_start` of a chrome-extension run waits for its preparation before it answers the phase reached (CR4); a test sets a short one. */
@@ -3702,6 +3715,11 @@ export class StudyService {
       chromeExtension: extension.chromeExtension && {
         ...extension.chromeExtension,
         configurationHash: prepared?.configurationHash,
+        ...projectChromeExtensionHistory({
+          recorder: record.chromeExtension.history,
+          unavailable: record.chromeExtension.historyUnavailable,
+          historyUri: `codebook://node-history/${this.instanceId}_${record.id}`,
+        }),
       },
       claimable: extension.claimable,
       manifestUri: prepared ? this.uri(record.id, 'manifest') : undefined,
@@ -4623,6 +4641,7 @@ export class StudyService {
       if (extensionRun && extensionRun !== cancellingExtensionRun)
         await extensionRun.stop()
       record.chromeExtension?.subscription?.dispose()
+      await this.sealChromeExtensionHistory(record)
       // The history ends with the run: stopped, closed or failed, sealed once however many callers join this stop.
       await this.sealNodeServerHistory(record)
       // A root listing that was not released is the run's to release: one still running fails this stop, so the run stays unstopped, the next start answers BUSY, and the next stop tries again.
@@ -5504,6 +5523,8 @@ export class StudyService {
         sanitize: (text) => this.sanitizedCause(text, runRoots),
       }),
       privateRoots: runRoots,
+      beginHistory: (identity) =>
+        this.beginChromeExtensionHistory(record, identity),
     })
     state.run = run
     state.subscription = run.onDidChange(() =>
@@ -5512,6 +5533,71 @@ export class StudyService {
     if (this.stopping || record.stopping) return
     await run.prepare()
     record.prepared = true
+  }
+
+  /**
+   * Starts the history of a chrome-extension run, within its bound, once its declaration resolved; a failure of any kind leaves the live run running unrecorded and is kept as the cause the run resource shows.
+   * @param record - The chrome-extension run.
+   * @param identity - What the run's declaration resolved to.
+   * @returns The sink the run feeds, or `undefined` when no history started.
+   * @example const sink = await this.beginChromeExtensionHistory(record, identity)
+   */
+  private async beginChromeExtensionHistory(
+    record: ChromeExtensionStudyRecord,
+    identity: ExtensionHistoryIdentity,
+  ): Promise<ChromeExtensionHistoryRecorder | undefined> {
+    const begun = await startChromeExtensionHistory({
+      repository: this.nodeHistoryRepository,
+      workspace: this.environment.workspace,
+      instanceId: this.instanceId,
+      runId: record.id,
+      createdAtMs: record.createdAt,
+      identity,
+      describeCause: (error) =>
+        error instanceof SavedStudyStorageFullError
+          ? fullLibraryMessage('run', error.limit, this.removalAvailability)
+          : this.sanitizedCause(error),
+      startBoundMs: this.chromeExtensionHistoryStartBoundMs,
+      // A fault of the history's own writer reaches Output › Codebook, as a failed test-history seal does.
+      onFault: (error) =>
+        this.diagnose(
+          'HISTORY_SINK_FAULT',
+          record,
+          error,
+          this.sanitizedCause(error),
+        ),
+    })
+    if ('recorder' in begun) {
+      record.chromeExtension.history = begun.recorder
+      return begun.recorder
+    }
+    record.chromeExtension.historyUnavailable = begun.unavailable
+    return undefined
+  }
+
+  /**
+   * Seals a chrome-extension run's history once the run ended, through the one seal every ending joins: the run completed, was stopped, failed or lost its surface. A history that cannot be sealed is abandoned with its cause and never fails the stop.
+   * @param record - The chrome-extension run whose browser and debugger were released.
+   * @example await this.sealChromeExtensionHistory(record)
+   */
+  private async sealChromeExtensionHistory(record: StudyRecord): Promise<void> {
+    const history = record.chromeExtension?.history
+    if (!history) return
+    const view = record.chromeExtension?.run?.view()
+    await history.seal(
+      {
+        failureCode: view?.runFailure?.code,
+        observed: view?.observed,
+      },
+      this.chromeExtensionHistorySealBoundMs,
+    )
+    if (history.status === 'failed' && history.failure)
+      this.diagnose(
+        'HISTORY_SEAL_FAILED',
+        record,
+        new Error(history.failure),
+        history.failure,
+      )
   }
 
   /**

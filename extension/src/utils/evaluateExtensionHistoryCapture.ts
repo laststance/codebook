@@ -1,0 +1,118 @@
+import type {
+  ExtensionHistoryEntry,
+  ExtensionHistoryHeader,
+  ExtensionHistorySealReason,
+} from '../chromeExtensionHistorySchemas'
+import { EXTENSION_HISTORY_REASON_CODES as CODES } from '../constants'
+
+/** What only the writer knows when it seals, beside what the journal says. */
+export type ExtensionCaptureFacts = {
+  /** The first failed append: the entry before the gap and the failure's cause (already without private paths). */
+  appendFailure?: { lastEntry: string; cause: string }
+  /** Whether an entry or byte bound refused an entry. */
+  sizeLimitReached?: boolean
+  /** Whether a stream frame was dropped (a full queue) or could not be stored. */
+  filmstripIncomplete?: boolean
+  /** Whether the surface closed while the run lived. */
+  surfaceEnded?: boolean
+}
+
+/**
+ * Words an entry the way a reason names the last good entry of a broken history.
+ * @param entry - The entry.
+ * @returns `capture (entry 4)` or `result (entry 9)`.
+ * @example describeLastExtensionEntry(captureEntry) // => 'capture (entry 4)'
+ */
+export function describeLastExtensionEntry(
+  entry: ExtensionHistoryEntry,
+): string {
+  return `${entry.type} (entry ${entry.sequence})`
+}
+
+/**
+ * Decides which parts of a chrome-extension history are missing, from its journal and the facts only the writer knows; the seal keeps the result and an unsealed (interrupted) history is judged by it again on every read.
+ * 1a detects: declared stops never reached, pauses without a capture, captures without their source, no result, the surface ending, a bound reached, a failed append and a filmstrip with no frames or dropped ones. Pinned frames are judged by the lifecycle part of the cycle, not here.
+ * @param header - The history's header, whose declared stops say what had to be reached.
+ * @param entries - The verified entries.
+ * @param facts - What only the writer knows.
+ * @returns The reasons in a stable order; empty exactly when the capture is complete.
+ * @example evaluateExtensionHistoryCapture(header, entries, {}).map((reason) => reason.code) // => ['EXTENSION_HISTORY_RESULT_MISSING']
+ */
+export function evaluateExtensionHistoryCapture(
+  header: Pick<ExtensionHistoryHeader, 'declaredStops'>,
+  entries: readonly ExtensionHistoryEntry[],
+  facts: ExtensionCaptureFacts,
+): ExtensionHistorySealReason[] {
+  const reasons: ExtensionHistorySealReason[] = []
+  const opened = entries.filter((entry) => entry.type === 'pause-open')
+  const captures = entries.filter((entry) => entry.type === 'capture')
+  const reachedStops = new Set(opened.map((pause) => pause.stopIndex))
+  for (const declared of header.declaredStops)
+    if (!reachedStops.has(declared.index))
+      reasons.push({
+        code: CODES.stopNotReached,
+        params: { stop: declared.index },
+        text: `Declared stop ${declared.index} was not reached.`,
+      })
+  const capturedPauses = new Set(captures.map((capture) => capture.pauseId))
+  for (const pause of opened)
+    if (!capturedPauses.has(pause.pauseId))
+      reasons.push({
+        code: CODES.snapshotMissing,
+        params: { stop: pause.stopIndex },
+        text: `Stop ${pause.stopIndex} paused, but its values and source were not captured.`,
+      })
+  const stopOfPause = new Map(opened.map((pause) => [pause.pauseId, pause]))
+  for (const capture of captures)
+    if (capture.debuggerSnapshot.frames[0]?.source === undefined)
+      reasons.push({
+        code: CODES.sourceUnavailable,
+        params: { stop: stopOfPause.get(capture.pauseId)?.stopIndex ?? 0 },
+        text: `The executed source of stop ${stopOfPause.get(capture.pauseId)?.stopIndex ?? '?'} was not stored.`,
+      })
+  if (!entries.some((entry) => entry.type === 'result'))
+    reasons.push({
+      code: CODES.resultMissing,
+      params: {},
+      text: 'The result of the run was not recorded.',
+    })
+  if (
+    facts.surfaceEnded ||
+    entries.some(
+      (entry) =>
+        entry.type === 'pause-close' && entry.reason === 'surface-lost',
+    )
+  )
+    reasons.push({
+      code: CODES.surfaceEnded,
+      params: {},
+      text: 'The extension surface closed before the run ended.',
+    })
+  const hasStreamFrame = entries.some(
+    (entry) => entry.type === 'frame' && entry.kind === 'stream',
+  )
+  if (facts.filmstripIncomplete || !hasStreamFrame)
+    reasons.push({
+      code: CODES.filmstripMissing,
+      params: {},
+      text: hasStreamFrame
+        ? 'Some frames of the surface were not recorded.'
+        : 'No frame of the surface was recorded.',
+    })
+  if (facts.sizeLimitReached)
+    reasons.push({
+      code: CODES.sizeLimit,
+      params: {},
+      text: 'The history reached its size limit; the part recorded before it is kept.',
+    })
+  if (facts.appendFailure)
+    reasons.push({
+      code: CODES.appendFailed,
+      params: {
+        lastEntry: facts.appendFailure.lastEntry,
+        cause: facts.appendFailure.cause,
+      },
+      text: `Recording stopped after ${facts.appendFailure.lastEntry}: ${facts.appendFailure.cause}`,
+    })
+  return reasons
+}

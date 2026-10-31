@@ -678,6 +678,7 @@ export async function createEnvironment(
       return createOwnedChromeExtensionRun({
         ...input,
         workspace,
+        chromeVersion: chrome.version,
         ...(presentation?.createChromeExtensionViewport
           ? { createViewport: presentation.createChromeExtensionViewport }
           : {}),

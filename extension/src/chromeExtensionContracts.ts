@@ -1,4 +1,5 @@
 import type { ReplayDebugSnapshot } from './replayDebugSchemas'
+import type { ViewportRecordingObserver } from './runtimeSupport/browserViewport'
 
 /** The execution context a declared chrome-extension stop names: the surface page or the extension's service worker. */
 export type ExtensionStopContext = 'page' | 'service-worker'
@@ -60,6 +61,8 @@ export interface ResolvedExtensionRun {
   /** The id Chrome must answer for the root (path rule or manifest key). */
   extensionId: string
   manifestName: string
+  /** The manifest's `version`. */
+  manifestVersion: string
   permissions: readonly string[]
   hostPermissions: readonly string[]
   surface: { kind: ExtensionSurfaceKind; path: string }
@@ -210,8 +213,12 @@ export interface ChromeExtensionViewport {
   close(): void
 }
 
-/** Creates the Application view of a chrome-extension run, before its launch (the lease must exist before the first frame). */
+/**
+ * Creates the Application view of a chrome-extension run, before its launch (the lease must exist before the first frame).
+ * @param observer - When the run records a history, the observer that receives the surface's frames; the view only offers frames to it and never waits for it.
+ */
 export type ChromeExtensionViewportFactory = (
   runId: string,
   signal?: AbortSignal,
+  observer?: ViewportRecordingObserver,
 ) => Promise<ChromeExtensionViewport>

@@ -47,6 +47,7 @@ import type { StudyService } from './service'
 import { describeStudy } from './utils/describeStudy'
 import { omittedDetail } from './utils/omittedDetail'
 import { readBoundedFile } from './utils/readBoundedFile'
+import { readExtensionHistoryResource } from './utils/readExtensionHistoryResource'
 import { readJsonPage } from './utils/readJsonPage'
 import { readRecordingResource } from './utils/readRecordingResource'
 import { readRepositoryResource } from './utils/readRepositoryResource'
@@ -169,6 +170,12 @@ export async function readResource(
     const resolved = service.nodeHistoryRepository?.resolve(studyId)
     if (resolved?.profile === 'node-server')
       return readServerHistoryResource(
+        resolved.store,
+        studyId,
+        nodeHistoryMatch[2],
+      )
+    if (resolved?.profile === 'chrome-extension')
+      return readExtensionHistoryResource(
         resolved.store,
         studyId,
         nodeHistoryMatch[2],

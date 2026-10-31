@@ -2253,6 +2253,50 @@ export const PAUSED_SOURCE_MOVE_ATTEMPTS = 2
 export const CHROME_EXTENSION_START_ANSWER_MS = 40_000
 /** The oldest Codebook extension version that serves the chrome-extension profile, reported by `codebook_status`. */
 export const CHROME_EXTENSION_MINIMUM_EXTENSION_VERSION = '0.2.59'
+// Cycle 0069 lane A1: the chrome-extension history profile
+/** The folder of chrome-extension histories beside `node-tests.v1` and `node-servers.v1`; 0.2.69.0 builds no store for it, so a revert leaves its histories on disk, unlisted and never deleted. */
+export const CHROME_EXTENSION_HISTORY_DIRECTORY = 'chrome-extensions.v1'
+/** The `formatVersion` of a chrome-extension history's header and the `version` of its seal. */
+export const CHROME_EXTENSION_HISTORY_FORMAT_VERSION = 1
+/** The most entries one chrome-extension history holds. */
+export const EXTENSION_HISTORY_MAX_ENTRIES = 10_000
+/** The largest journal of a chrome-extension history (events, snapshots and sources; frame blobs are apart): as {@link NODE_SERVER_HISTORY_LIMIT_BYTES}. */
+export const EXTENSION_HISTORY_JOURNAL_LIMIT_BYTES = 8_388_608
+/** The largest seal of a chrome-extension history; it holds every partial reason uncut. */
+export const EXTENSION_HISTORY_SEAL_LIMIT_BYTES = 262_144
+/** How long a chrome-extension run waits for its history to start before it goes on unrecorded; as {@link NODE_SERVER_HISTORY_START_BOUND_MS}. */
+export const EXTENSION_HISTORY_START_BOUND_MS = 2_000
+/** How long a chrome-extension history may take to seal before its writer is abandoned (the folder then lists as interrupted). */
+export const EXTENSION_HISTORY_SEAL_BOUND_MS = 10_000
+/** The folder inside a chrome-extension history that holds its frame blobs, `frames/<sha256>.png`. */
+export const EXTENSION_HISTORY_FRAMES_DIRECTORY = 'frames'
+/** The execution contexts this build reads in a chrome-extension history; an entry naming another one makes the history unavailable (a later build adds its context without a format bump). */
+export const EXTENSION_HISTORY_KNOWN_CONTEXTS: readonly string[] = [
+  'page',
+  'service-worker',
+]
+/** How long a chrome-extension history waits at its end for the frames already queued before it seals; frames still queued then are dropped and the filmstrip reads incomplete. */
+export const EXTENSION_HISTORY_DRAIN_TIMEOUT_MS = 2_000
+/** The longest context, pause id, URL and path text an entry keeps. */
+export const EXTENSION_HISTORY_TEXT_LIMIT_CHARS = 2_048
+/** The stable codes of the parts a chrome-extension history can miss; each is listed in `captureMissing`. `formatNewer` and `frameDamaged` are listing and presentation reasons, never in `captureMissing`. */
+export const EXTENSION_HISTORY_REASON_CODES = {
+  filmstripMissing: 'EXTENSION_HISTORY_FILMSTRIP_MISSING',
+  pinnedFrameMissing: 'EXTENSION_HISTORY_PINNED_FRAME_MISSING',
+  snapshotMissing: 'EXTENSION_HISTORY_SNAPSHOT_MISSING',
+  sourceUnavailable: 'EXTENSION_HISTORY_SOURCE_UNAVAILABLE',
+  sizeLimit: 'EXTENSION_HISTORY_SIZE_LIMIT',
+  surfaceEnded: 'EXTENSION_HISTORY_SURFACE_ENDED',
+  stopNotReached: 'EXTENSION_HISTORY_STOP_NOT_REACHED',
+  resultMissing: 'EXTENSION_HISTORY_RESULT_MISSING',
+  appendFailed: 'EXTENSION_HISTORY_APPEND_FAILED',
+  formatNewer: 'EXTENSION_HISTORY_FORMAT_NEWER',
+  frameDamaged: 'EXTENSION_HISTORY_FRAME_DAMAGED',
+} as const
+/** What a listing says of a chrome-extension history one of whose entries names a context this build does not know. */
+export const EXTENSION_HISTORY_FORMAT_NEWER_TEXT =
+  'Recorded by a newer Codebook; update Codebook to open it.'
+
 /** What `codebook_explain`, `codebook_explain_node_history` and the Save command answer for a chrome-extension run: nothing of it is saved in this version (SR13, SR37). */
 export const CHROME_EXTENSION_SAVE_REFUSAL =
   'Saving an extension run is not available in this version; the live explanation stays in the chat.'

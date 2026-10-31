@@ -52,6 +52,7 @@ export function resolvedHarnessRun(
     root: '/repo/extension',
     extensionId: 'abcdefghijklmnopabcdefghijklmnop',
     manifestName: 'Harness extension',
+    manifestVersion: '1.0.0',
     permissions: ['storage'],
     hostPermissions: [],
     surface: { kind: 'popup', path: 'popup.html' },
