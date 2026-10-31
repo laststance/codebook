@@ -250,10 +250,11 @@
     {
       "finding": "env.kv",
       "paths": [
-        "extension/src/tests/readNextRouteManifests.test.ts"
+        "extension/src/tests/readNextRouteManifests.test.ts",
+        "extension/src/tests/resolveNextPagesEntry.test.ts"
       ],
-      "pattern": "/(?:login|about)/page",
-      "reason": "an App route manifest key named key in a route-manifest test; no secret value"
+      "pattern": "/(?:login|about|\\[slug\\])/page",
+      "reason": "an App route manifest key (key, appKey) in a route-manifest or Pages-entry test; no secret value"
     },
     {
       "finding": "env.kv",

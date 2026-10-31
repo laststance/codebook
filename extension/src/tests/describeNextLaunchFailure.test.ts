@@ -132,6 +132,7 @@ async function untilOutputHolds(
 ): Promise<void> {
   const deadline = Date.now() + 20_000
   while (!outputTail().includes(text)) {
+    // gstack-timing-ok: a poll with a deadline; the bound only ends a hung wait for the server's output, the assertion is on that output
     assert.ok(Date.now() < deadline, `timed out waiting for ${text}`)
     await new Promise((resolve) => setTimeout(resolve, 25))
   }
