@@ -8,7 +8,7 @@ import {
 /**
  * Gives a failure that Vitest itself caused before a node-test run's first stop a test-run recovery, so the run's error does not carry the browser-click wording of the general `RUNTIME_FAILED` recovery.
  *
- * Called by {@link OwnedNodeTestRun.prepare} on what its preparation threw. A failed listing ({@link VitestListingFailedError}) and a listing past its deadline ({@link VitestListingDeadlineError}) are worded here and keep Vitest's own text as the cause; any other failure, a {@link StudyError} included, is returned unchanged.
+ * Called by {@link OwnedNodeTestRun.prepare} on what its preparation threw, and by the study environment's pre-history check on what {@link planNodeTestExecution} threw (a root claim's Vitest listing that passed its deadline). A failed listing ({@link VitestListingFailedError}) and a listing past its deadline ({@link VitestListingDeadlineError}) are worded here and keep Vitest's own text as the cause; any other failure, a {@link StudyError} included, is returned unchanged.
  * @param failure - What the preparation threw.
  * @returns A `RUNTIME_FAILED` {@link StudyError} carrying {@link NODE_TEST_VITEST_FAILED_RECOVERY} for a listing failure, otherwise `failure` itself.
  * @example
