@@ -789,7 +789,7 @@ export const REPOSITORY_GIT_TIMEOUT_MS = 5_000
 
 /** The bound of the repository revision read a server history's header carries: a slow Git costs the header its revision (read as unknown), never the history. */
 export const REPOSITORY_REVISION_BOUND_MS = 500
-/** The `maxBuffer` of source discovery's Git commands: 32 MiB holds the NUL-separated `ls-files -z` listing of {@link REPOSITORY_MAX_TRACKED_FILES} entries even when each path is near {@link REPOSITORY_PATH_LIMIT_CHARS} characters, so the entry cap, not the buffer, refuses an oversized repository. */
+/** The `maxBuffer` of source discovery's Git commands: 32 MiB holds the NUL-separated `ls-files -z` listing of {@link REPOSITORY_MAX_TRACKED_FILES} entries even when each ASCII path is near {@link REPOSITORY_PATH_LIMIT_CHARS} characters, so the entry cap refuses an oversized repository of typical names; a listing of longer or multi-byte names overflows the buffer first and is refused the same way (`LIMIT_EXCEEDED`). */
 export const REPOSITORY_GIT_LIMIT_BYTES = 33_554_432
 
 /** The most tracked entries source discovery lists; a repository above it is refused whole, never returned partially. Names live in memory only (no per-file stat), so the bound guards memory, not I/O; real projects such as TanStack Query track 5,173. */

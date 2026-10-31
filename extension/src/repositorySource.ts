@@ -465,7 +465,21 @@ export class RepositorySourceService {
           'Git metadata must be a regular directory or worktree pointer.',
         )
       this.assertActive(control)
-      const result = await git(['ls-files', '--cached', '-z', '--'])
+      const result = await git(['ls-files', '--cached', '-z', '--']).catch(
+        (error: unknown) => {
+          // A listing past the output buffer is an oversized repository like one past the entry cap (long names reach it with fewer entries), not a missing Git.
+          if (
+            error instanceof Error &&
+            'code' in error &&
+            error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+          )
+            throw new StudyError(
+              'LIMIT_EXCEEDED',
+              `Repository's tracked file listing is larger than ${REPOSITORY_GIT_LIMIT_BYTES} bytes; no partial source catalog was returned.`,
+            )
+          throw error
+        },
+      )
       const paths = result.stdout.split('\0').filter(Boolean)
       if (paths.length > REPOSITORY_MAX_TRACKED_FILES)
         throw new StudyError(
