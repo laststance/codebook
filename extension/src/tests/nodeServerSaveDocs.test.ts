@@ -31,7 +31,7 @@ test('the bundled skill saves a server explanation only on API 1.9, claims saved
     /only when the run resource reads `nodeServer\.learningCoverage` `complete` and an empty `nodeServer\.captureMissing`/,
   )
   assert.match(paragraph, /codebook:\/\/help\/node-server/)
-  assert.ok(skill.includes('metadata:\n  version: "1.0.60"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.61"\n'))
 })
 
 // protects=the canonical save help keeps the version check true at API 1.10: an agent comparing 1.10 and 1.9 as decimals would refuse every server save; fails_when=the help's requires line drops the whole-number comparison; no_claim=how a model compares versions
