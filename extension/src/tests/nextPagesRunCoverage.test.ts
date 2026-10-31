@@ -3,7 +3,6 @@ import { test } from 'node:test'
 
 import { REPOSITORY_RUN_TIMEOUT_MS } from '../constants'
 import { StudyError } from '../errors'
-import { nextSetupDeadlineRecovery } from '../nextRefusals'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { refusalFailureOf } from '../utils/refusalFailureOf'
 
@@ -53,7 +52,8 @@ test('a Pages router that is seen but never ready ends the router wait itself at
       code: 'NEXT_SETUP_DEADLINE',
       message:
         'Repository setup deadline (1 s) exceeded while waiting for the page router to become ready before sending the declared input or click: the router did not become ready within 1 s. Codebook stopped the server it started; the browser Codebook opened was closed and no input or click was sent.',
-      recoveryOverride: nextSetupDeadlineRecovery('router-late'),
+      recoveryOverride:
+        'Start once more with a new key (the first compile of the page is warm after it); a second deadline means the page router does not become ready in time, so tell the learner. Recovery: one retry, then the learner. The browser Codebook opened was closed and no input or click was sent; Codebook stops the server it started (read resourcesReleased in the run resource). See codebook://help/repository-browser#NEXT_SETUP_DEADLINE.',
     },
   )
   assert.equal(harness.mouse.length, 0)

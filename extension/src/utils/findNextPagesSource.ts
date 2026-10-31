@@ -33,7 +33,7 @@ export type NextPagesSourceLookup =
  * @returns
  * - `found` with the first existing regular file and its folder
  * - `missing` with the folder and every candidate tried, and `otherExtension` when a file with a candidate's stem has another extension ({@link findNextSourceWithOtherExtension})
- * @throws When the compiled path is not a contained `pages/….js` path, so no candidate could leave the workspace; the abort reason when `signal` aborts before a candidate is looked up.
+ * @throws When the compiled path is not a contained `pages/….js` path, so no candidate could leave the workspace; the abort reason when `signal` aborts before or while a candidate is looked up.
  * @example
  * await findNextPagesSource('/repo', 'pages/posts.js')
  * // => { kind: 'found', path: 'src/pages/posts/index.tsx', folder: 'src/pages' } in a project whose page is src/pages/posts/index.tsx
@@ -52,8 +52,10 @@ export async function findNextPagesSource(
   )
   for (const candidate of tried) {
     signal?.throwIfAborted()
-    if (await isUnlinkedRegularFile(workspace, candidate))
-      return { kind: 'found', path: candidate, folder }
+    const isFound = await isUnlinkedRegularFile(workspace, candidate)
+    // A run cancelled while the candidate was looked up ends with its abort reason, not with an answer.
+    signal?.throwIfAborted()
+    if (isFound) return { kind: 'found', path: candidate, folder }
   }
   // Without a default-extension source, a file with a candidate's stem tells a custom pageExtensions apart from a gone page.
   for (const stem of stems) {

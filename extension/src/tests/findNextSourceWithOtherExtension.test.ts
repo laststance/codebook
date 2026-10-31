@@ -68,6 +68,8 @@ test('only style, declaration, map, test, spec and stories files with the stem a
   await writeStandIn(workspace, 'app/page.sass')
   await writeStandIn(workspace, 'app/page.less')
   await writeStandIn(workspace, 'app/page.d.ts')
+  await writeStandIn(workspace, 'app/page.d.mts')
+  await writeStandIn(workspace, 'app/page.d.cts')
   await writeStandIn(workspace, 'app/page.js.map')
   await writeStandIn(workspace, 'app/page.test.tsx')
   await writeStandIn(workspace, 'app/page.spec.ts')

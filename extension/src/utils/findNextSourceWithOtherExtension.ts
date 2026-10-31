@@ -1,13 +1,15 @@
 import { lstat, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
-/** Endings of files that can carry a page's stem but are never a page source: styles, declarations and source maps (`page.module.css`, `page.d.ts`, `page.js.map`). */
+/** Endings of files that can carry a page's stem but are never a page source: styles, declarations and source maps (`page.module.css`, `page.d.ts`, `page.d.mts`, `page.js.map`). */
 const NON_PAGE_ENDINGS = [
   '.css',
   '.scss',
   '.sass',
   '.less',
   '.d.ts',
+  '.d.mts',
+  '.d.cts',
   '.map',
 ] as const
 
@@ -21,7 +23,7 @@ const NON_PAGE_INFIXES = ['.test.', '.spec.', '.stories.'] as const
  * @param stem - The workspace-relative candidate without its extension, e.g. `app/about/page` or `src/pages/posts/index`.
  * @param signal - Ends the lookup with the abort reason when the run is cancelled.
  * @returns The workspace-relative path of the first such file in name order, e.g. `app/about/page.mdx`; `undefined` when none exists (only non-page files such as `page.module.css` carry the stem), its folder cannot be listed, or the stem is not a plain path.
- * @throws The abort reason when `signal` aborts before the folder is listed.
+ * @throws The abort reason when `signal` aborts before or while the folder is listed.
  * @example
  * await findNextSourceWithOtherExtension('/repo', 'app/about/page') // => 'app/about/page.mdx' in a project with app/about/page.mdx
  * await findNextSourceWithOtherExtension('/repo', 'pages/gone')     // => undefined when no pages/gone.* file exists
@@ -46,6 +48,8 @@ export async function findNextSourceWithOtherExtension(
   const entries = await readdir(join(workspace, folder), {
     withFileTypes: true,
   }).catch(() => [])
+  // A run cancelled while the folder was listed ends with its abort reason, not with an answer.
+  signal?.throwIfAborted()
   // A link or a folder with the stem's name is no source, nor is a style, test or other non-page file; the folder itself was reached without a link.
   const name = entries
     .filter(

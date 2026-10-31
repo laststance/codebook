@@ -28,6 +28,8 @@ export async function nextAppPageSourceKindOf(
 ): Promise<NextAppPageSourceKind> {
   if (await hasNextAppPageSource(workspace, appKey, signal)) return 'found'
   const folder = await findNextRouteFolder(workspace, 'app')
+  // A run cancelled while the App folder was looked up ends with its abort reason, never a stale `gone`.
+  signal?.throwIfAborted()
   if (!folder || !appKey.startsWith('/')) return 'gone'
   return (await findNextSourceWithOtherExtension(
     workspace,

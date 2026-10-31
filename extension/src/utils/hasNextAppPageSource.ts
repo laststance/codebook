@@ -12,7 +12,7 @@ import { isUnlinkedRegularFile } from './isUnlinkedRegularFile'
  * @param appKey - The App paths manifest key, e.g. `/page` or `/(shop)/cart/page`.
  * @param signal - Ends the lookup with the abort reason when the run is cancelled.
  * @returns `true` when `<app folder><appKey>.<ext>` exists for one of `.tsx`, `.ts`, `.jsx`, `.js`; `false` when none does, the project has no App folder, or the key is not a plain path.
- * @throws The abort reason when `signal` aborts before a candidate is looked up.
+ * @throws The abort reason when `signal` aborts before or while a candidate is looked up.
  * @example
  * await hasNextAppPageSource('/repo', '/page') // => true in a project with app/page.tsx
  */
@@ -32,10 +32,13 @@ export async function hasNextAppPageSource(
   if (!folder) return false
   for (const extension of NEXT_PAGES_SOURCE_EXTENSIONS) {
     signal?.throwIfAborted()
-    if (
-      await isUnlinkedRegularFile(workspace, `${folder}${appKey}.${extension}`)
+    const isFound = await isUnlinkedRegularFile(
+      workspace,
+      `${folder}${appKey}.${extension}`,
     )
-      return true
+    // A run cancelled while the candidate was looked up ends with its abort reason, not with an answer.
+    signal?.throwIfAborted()
+    if (isFound) return true
   }
   return false
 }
