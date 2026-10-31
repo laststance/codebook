@@ -6,7 +6,7 @@ import { redactedPairsOf } from './redactedPairsOf'
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/g
 
 /**
- * Writes an origin-less path for a Next Pages refusal: the pathname as given, every query and fragment value replaced by `<redacted>` with the names kept ({@link redactedPairsOf}), no control character, cut to {@link NEXT_MESSAGE_PATH_LIMIT_CHARS}.
+ * Writes an origin-less path for a Next Pages refusal: the pathname as given, every query and fragment value replaced by `<redacted>` with the names kept and a bare part replaced whole ({@link redactedPairsOf}), no control character, cut to {@link NEXT_MESSAGE_PATH_LIMIT_CHARS}.
  *
  * Why it exists: the service's sanitizer masks secret shapes (Bearer tokens, JWTs, provider keys) but no query value, and a redirect target such as `/login?token=…` carries one; so a path is redacted where the message is built. Called by {@link describeNextEntryResponse} for a same-origin `Location`, and by the Pages run for the entry path, the page's final path and the router routes it names.
  * @param path - A path with an optional query and fragment, without an origin.

@@ -146,6 +146,46 @@ test('quoted Next server output hides a bare query part of a logged URL whole', 
   ])
 })
 
+// Value: protects=a bare token of a URL the dev server logs is hidden whole also where it reads like a parameter name: with base64 `=` padding, or followed by a second `?`; fails_when=`dG9rZW4tc2VjcmV0` or `SECRET` is kept as a name before `=<redacted>`; why_new=Cycle 0066 task 48 (redactedPairsOf kept the text before the first `=` as a name); seam=none; no_claim=a real dev server's log format
+test('quoted Next server output hides a padded bare token and a token before a second question mark whole', () => {
+  // Act
+  const masked = [
+    maskNextServerOutput('GET /verify?dG9rZW4tc2VjcmV0== 200'),
+    maskNextServerOutput('GET /verify?dG9rZW4= 200'),
+    maskNextServerOutput('GET /a?SECRET?x=1 200'),
+  ]
+  // Assert
+  assert.deepEqual(masked, [
+    'GET /verify?<redacted> 200',
+    'GET /verify?<redacted> 200',
+    'GET /a?<redacted> 200',
+  ])
+})
+
+// Value: protects=a query part with an empty value is masked whole, since `name=` cannot be told from a token with one `=` of padding, while a part with a value keeps its name; fails_when=`debug=` keeps its name (the padded-token leak returns) or `tab=1` loses its name; why_new=Cycle 0066 task 48 (an empty value now marks a bare part); seam=none; no_claim=that the empty-valued name was a secret
+test('quoted Next server output masks an empty-valued query part whole and keeps the name of a valued one', () => {
+  // Act
+  const masked = maskNextServerOutput('GET /a?debug=&tab=1 200')
+  // Assert
+  assert.equal(masked, 'GET /a?<redacted>&tab=<redacted> 200')
+})
+
+// Value: protects=a quoted entry path or redirect target hides a padded bare token, a token before a second `?` and an empty-valued flag whole, in the query and the fragment; fails_when=any of them keeps the text before its first `=`; why_new=Cycle 0066 task 48 (redactNextEntryPath shares redactedPairsOf); seam=none; no_claim=the route Next resolves for such a path
+test('a quoted Next path hides a padded bare token, a token before a second question mark and an empty-valued flag whole', () => {
+  // Act
+  const redacted = [
+    redactNextEntryPath('/verify?dG9rZW4tc2VjcmV0=='),
+    redactNextEntryPath('/a?SECRET?x=1'),
+    redactNextEntryPath('/a?flag=&tab=1#dG9rZW4='),
+  ]
+  // Assert
+  assert.deepEqual(redacted, [
+    '/verify?<redacted>',
+    '/a?<redacted>',
+    '/a?<redacted>&tab=<redacted>#<redacted>',
+  ])
+})
+
 // Value: protects=code a compile error quotes keeps its optional chains readable, since a `?` without a `/` before it in its word is no URL query; fails_when=`user?.profile?.name` is masked; why_new=Cycle 0066 task 15 (bare parts are masked only in a logged URL); seam=none; no_claim=a word that is both a path and code
 test('quoted Next server output keeps an optional chain of quoted code readable', () => {
   // Act
