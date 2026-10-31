@@ -371,6 +371,28 @@ test('a missing constant and a doubled test assertion are refused naming the fil
   }
 })
 
+// protects=a CHANGELOG with no version heading is named as a pattern failure; fails_when=the refusal is E_PLACE_MISMATCH or a file is written; no_claim=headings that exist but are wrong (covered by the mismatch tests)
+test('a CHANGELOG with no version heading is refused with E_PATTERN naming CHANGELOG.md and nothing written', async () => {
+  await withRoot(
+    { changelog: '# Changelog\n\nNo releases yet.\n' },
+    async (root) => {
+      // Arrange
+      const before = await readFive(root)
+
+      // Act
+      const result = await runCli(['0.2.69.0'], { root })
+
+      // Assert
+      assert.equal(result.exitCode, 1)
+      assert.equal(
+        result.err[0],
+        'E_PATTERN: CHANGELOG.md: expected at least one "## [" heading, found 0',
+      )
+      assert.deepEqual(await readFive(root), before)
+    },
+  )
+})
+
 // protects=a version heading buried below another version is refused; fails_when=the bump leaves a tree --check rejects; no_claim=a heading above Unreleased (covered by the next test)
 test('a target heading buried below an older version heading is refused', async () => {
   const buried = CHANGELOG_68 + '\n## [0.2.69.0] - 2026-10-29\n\nMisplaced.\n'

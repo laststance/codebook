@@ -101,7 +101,7 @@ Error codes:
  * Splits a version string into its integer parts.
  *
  * Why: versions compare as integers left to right (`0.2.100.0` is greater than `0.2.99.0`), never as text.
- * Called by {@link compareVersionParts} users inside this file only.
+ * Called by {@link compareVersions} only.
  *
  * @param {string} version - A version such as `0.2.68` or `0.2.68.0`.
  * @returns {number[]} The parts as integers.
@@ -343,6 +343,14 @@ function planChangelog(text, headings, target, current, date) {
     }
     return undefined
   }
+  // A CHANGELOG with no heading at all is a pattern failure, caught before the mismatch check can mask it.
+  if (!topHeading) {
+    throw new CommandRefusal(
+      'E_PATTERN',
+      `${CHANGELOG_PATH}: expected at least one "## [" heading, found 0`,
+      { fix: 'restore the CHANGELOG headings' },
+    )
+  }
   // No heading for the target yet: the newest existing version heading must be the current VERSION (or lag it).
   const existing = firstVersionHeading?.version
   const isCurrent = existing === current
@@ -363,13 +371,6 @@ function planChangelog(text, headings, target, current, date) {
     // Rename the Unreleased heading in place, as `gstack-version-bump write` does.
     lines[topHeading.index] = newHeading
     return { oldValue: 'Unreleased', newValue: target, text: lines.join('\n') }
-  }
-  if (!topHeading) {
-    throw new CommandRefusal(
-      'E_PATTERN',
-      `${CHANGELOG_PATH}: expected at least one "## [" heading, found 0`,
-      { fix: 'restore the CHANGELOG headings' },
-    )
   }
   lines.splice(topHeading.index, 0, newHeading, '')
   return {
