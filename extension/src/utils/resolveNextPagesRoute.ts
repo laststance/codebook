@@ -1,8 +1,4 @@
-import { compareNextRoutePrecedence } from './compareNextRoutePrecedence'
-import {
-  nextRoutePrecedenceOf,
-  type SegmentPrecedence,
-} from './nextRoutePrecedenceOf'
+import { mostSpecificNextRouteOf } from './mostSpecificNextRouteOf'
 
 /** One entry of Next's Pages manifest (`.next/dev/server/pages-manifest.json`) that serves an entry path. */
 export type NextPagesRoute = {
@@ -27,7 +23,7 @@ const NON_ENTRY_ROUTES: ReadonlySet<string> = new Set([
 
 /**
  * Resolves an entry path against Next's Pages manifest the way Next's router does: per segment, deciding at the first differing segment (static before `[x]` before `[...x]` before `[[...x]]`).
- * Called by {@link readNextRouteManifests} on each read of the Pages manifest while it waits for the route after the readiness GET. Unlike {@link resolveNextClientManifest}'s additive score, a static segment wins wherever it differs, so `/a/[y]` beats `/[x]/b` for `/a/b`.
+ * Called by {@link readNextRouteManifests} on each read of the Pages manifest while it waits for the route after the readiness GET. A static segment wins wherever it differs first, so `/a/[y]` beats `/[x]/b` for `/a/b`; App routes are chosen by the same rule ({@link mostSpecificNextRouteOf}).
  * @param pagesManifest - The parsed `pages-manifest.json`: route keys to compiled page paths. Untrusted: a value is kept only when it is a safe `pages/….js` path.
  * @param entryPath - The configured entry path; its query, fragment and trailing slash are ignored and each segment is percent-decoded.
  * @returns
@@ -42,26 +38,17 @@ export function resolveNextPagesRoute(
   pagesManifest: Readonly<Record<string, string>>,
   entryPath: string,
 ): NextPagesRouteResolution {
-  let best:
-    | { route: string; compiledPath: string; precedence: SegmentPrecedence[] }
-    | undefined
-  let tied = false
-  for (const [route, compiledPath] of Object.entries(pagesManifest)) {
-    if (NON_ENTRY_ROUTES.has(route) || !isSafeCompiledPagePath(compiledPath))
-      continue
-    const precedence = nextRoutePrecedenceOf(route, entryPath)
-    if (!precedence) continue
-    const order = best
-      ? compareNextRoutePrecedence(precedence, best.precedence)
-      : -1
-    // A better route replaces the best and clears an earlier tie; an equal one leaves the choice open.
-    if (order < 0) {
-      best = { route, compiledPath, precedence }
-      tied = false
-    } else if (order === 0) tied = true
-  }
-  if (!best || tied) return { kind: 'unmatched' }
-  return { kind: 'matched', route: best.route, compiledPath: best.compiledPath }
+  const entryRoutes = Object.entries(pagesManifest)
+    .filter(
+      ([route, compiledPath]) =>
+        !NON_ENTRY_ROUTES.has(route) && isSafeCompiledPagePath(compiledPath),
+    )
+    .map(([route, compiledPath]): [string, NextPagesRoute] => [
+      route,
+      { route, compiledPath },
+    ])
+  const best = mostSpecificNextRouteOf(entryRoutes, entryPath)
+  return best ? { kind: 'matched', ...best } : { kind: 'unmatched' }
 }
 
 /**

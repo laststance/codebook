@@ -309,6 +309,44 @@ test('an App route and a Pages route of the same static path stay a conflict', a
   })
 })
 
+// Value: protects=the router contest compares the Pages route with the App route Next serves, so an equal pair stays the conflict Next refuses; fails_when=the contest takes the App route the additive score picked (/[x]/b) and lets the Pages catch-all win; why_new=Cycle 0066 task 19 (Codex adversarial review, Cycle 0065 pass 2); seam=none; no_claim=a real mixed project's dev server
+test('the router contest compares the Pages route with the App route Next serves, so an equal catch-all pair stays a conflict', async (context) => {
+  // Arrange
+  const workspace = await workspaceWithFolders(context, [
+    'app/a/[...r]',
+    'app/[x]/b',
+    'pages/a',
+  ])
+  await writeFile(
+    join(workspace, 'app/a/[...r]/page.tsx'),
+    'export default 1\n',
+  )
+  await writeFile(join(workspace, 'app/[x]/b/page.tsx'), 'export default 1\n')
+  await writeFile(join(workspace, 'pages/a/[...r].tsx'), 'export default 1\n')
+  const fake = scriptedManifests([
+    {
+      [ROUTES]: ROUTES_TEXT,
+      [APP]:
+        '{"/a/[...r]/page":"app/a/[...r]/page.js","/[x]/b/page":"app/[x]/b/page.js"}',
+      [PAGES]: '{"/a/[...r]":"pages/a/[...r].js"}',
+    },
+  ])
+  // Act
+  const manifests = await readNextRouteManifests({
+    workspace,
+    entryPath: '/a/b',
+    ...fake,
+  })
+  // Assert
+  assert.deepEqual(manifests, {
+    settings: {},
+    kind: 'conflict',
+    appKey: '/a/[...r]/page',
+    pagesRoute: '/a/[...r]',
+    pagesCompiledPath: 'pages/a/[...r].js',
+  })
+})
+
 test('an entry path neither manifest lists stays unresolved after the whole ten-second poll', async (context) => {
   // Arrange
   const workspace = await workspaceWithFolders(context, ['src/pages'])
@@ -452,7 +490,7 @@ test('a Pages manifest caught half-written in one round is read whole in the nex
   assert.deepEqual(fake.slept, [250])
 })
 
-test('an App Router entry path resolves on the unchanged App matcher', async (context) => {
+test('an App Router entry path resolves on the App matcher', async (context) => {
   // Arrange
   const workspace = await workspaceWithFolders(context, ['src/app'])
   const fake = scriptedManifests([

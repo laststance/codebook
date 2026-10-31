@@ -12,7 +12,7 @@ export type SegmentPrecedence =
 
 /**
  * Matches one route against an entry path and reads the precedence of each of its segments, the way Next's router orders routes, so the Pages and App resolvers and the router contest share one matcher.
- * Called by {@link resolveNextPagesRoute} for each Pages route and by {@link compareNextRouterMatches} for both sides of a path both routers match. The entry path's query, fragment, empty segments and trailing slash are ignored and each segment is percent-decoded. A catch-all must be the last segment and takes one or more requested segments; an optional catch-all takes zero or more, so it also matches its parent path.
+ * Called by {@link mostSpecificNextRouteOf} for each candidate route of either router and by {@link compareNextRouterMatches} for both sides of a path both routers match. The entry path's query, fragment, empty segments and trailing slash are ignored and each segment is percent-decoded. A catch-all must be the last segment and takes one or more requested segments; an optional catch-all takes zero or more, so it also matches its parent path.
  * @param route - A route in URL form, e.g. `/docs/[...slug]`: a Pages manifest key, or the segments {@link appRouteSegmentsOf} read from an App key.
  * @param entryPath - The configured entry path.
  * @returns The precedence of each route segment when the route matches, `undefined` otherwise.

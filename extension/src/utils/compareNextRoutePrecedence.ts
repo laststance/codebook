@@ -5,7 +5,7 @@ import {
 
 /**
  * Orders two routes that match the same entry path by their segments' precedence ({@link nextRoutePrecedenceOf}), deciding at the first position where they differ, as Next's router does.
- * Called by {@link resolveNextPagesRoute} to pick the Pages route and by {@link compareNextRouterMatches} to pick the router. A route that has run out of segments ranks as an optional catch-all there: two matching routes can differ in length only by a trailing `[[...x]]`, a pair Next refuses as equally specific.
+ * Called by {@link mostSpecificNextRouteOf} to pick a router's route and by {@link compareNextRouterMatches} to pick the router. A route that has run out of segments ranks as an optional catch-all there: two matching routes can differ in length only by a trailing `[[...x]]`, a pair Next refuses as equally specific.
  * @param left - Precedence of the first route's segments.
  * @param right - Precedence of the second route's segments.
  * @returns A negative number when `left` wins, a positive one when `right` wins, `0` when they are equal.

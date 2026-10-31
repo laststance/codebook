@@ -258,7 +258,7 @@ function settingsOf(
 }
 
 /**
- * Resolves the entry path among the App routes with the unchanged App matcher, whose refusal of no unique page means no App route; called by {@link readManifestRound}.
+ * Resolves the entry path among the App routes with the App matcher, which chooses the route Next serves by segment precedence and whose refusal of no unique page means no App route; called by {@link readManifestRound}.
  * @param routes - The parsed App paths manifest.
  * @param entryPath - The configured entry path.
  * @returns The App route, or `undefined` when none matches uniquely.
