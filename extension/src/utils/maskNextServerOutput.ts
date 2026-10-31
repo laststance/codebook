@@ -1,12 +1,16 @@
 import { NEXT_REDACTED_VALUE } from '../constants'
 
 import { isSecretName } from './isSecretName'
+import { redactedPairsOf } from './redactedPairsOf'
 
 /** A credential header and the rest of its line: `Set-Cookie:`, `Cookie:`, `Authorization:`, `Proxy-Authorization:`, also as a logged key (`'set-cookie': …`). */
 const CREDENTIAL_HEADER =
   /\b((?:set-cookie|cookie|proxy-authorization|authorization)["']?[ \t]*[:=][ \t]*)[^\r\n]*/gi
 
-/** A query parameter's value in a logged URL: after `?` or `&`, up to the next separator, blank or fragment. */
+/** The query of a logged URL: in a word with a `/` before its first `?` (a path such as `/reset?…` or an absolute URL), the text after that `?` up to a blank or a fragment. Only a word's start begins a match, so a long word is scanned once; `user?.name` (no `/`) is no URL. */
+const URL_QUERY = /(?<!\S)([^\s?#/]*\/[^\s?#]*\?)([^\s#]*)/g
+
+/** A query parameter's value anywhere else: after `?` or `&`, up to the next separator, blank or fragment. */
 const QUERY_VALUE = /([?&][^\s=&#?]+=)[^\s&#]*/g
 
 /** A whole run of name characters (`A-Z`, `a-z`, `0-9`, `_`, `.`, `-`) followed by `=`: it starts only where no name character comes before it, so a long dotted run without `=` is scanned once, not once per word in it. */
@@ -55,7 +59,7 @@ function maskSecretAssignments(text: string): string {
 }
 
 /**
- * Masks the values the shared redactor leaves in Next development-server output before a Pages refusal quotes it: credential header lines, query values in logged URLs, and assignments whose name is a secret's ({@link isSecretName}, e.g. `API_KEY=`).
+ * Masks the values the shared redactor leaves in Next development-server output before a Pages refusal quotes it: credential header lines, query values in logged URLs (a bare query part such as `/reset?3f9ac0…` whole, {@link redactedPairsOf}), and assignments whose name is a secret's ({@link isSecretName}, e.g. `API_KEY=`).
  *
  * Why it exists: {@link redactSecretText} masks Bearer tokens, JWTs, provider keys, URL passwords and PEM blocks, but no cookie value, no query value and no `NAME=value` pair, and a dev server prints all three. Called by the Pages run on the masked `outputTail()` it quotes in `NEXT_ROUTE_NOT_COMPILED`, and by the Next launcher on the output it journals for a workspace with a Pages folder. Only values are replaced; names stay so the learner can read what was printed. Every pattern runs in linear time, since the output is the server's and can hold any text.
  * @param text - Development-server output, already redacted by the shared redactor.
@@ -63,11 +67,17 @@ function maskSecretAssignments(text: string): string {
  * @example
  * maskNextServerOutput('Set-Cookie: s=SECRET; Path=/\nGET /login?token=SECRET 200\nAPI_KEY=SECRET')
  * // => 'Set-Cookie: <redacted>\nGET /login?token=<redacted> 200\nAPI_KEY=<redacted>'
+ * maskNextServerOutput('GET /reset?3f9ac0d1e2b4 200') // => 'GET /reset?<redacted> 200'
  */
 export function maskNextServerOutput(text: string): string {
   return maskSecretAssignments(
     text
       .replace(CREDENTIAL_HEADER, `$1${NEXT_REDACTED_VALUE}`)
+      .replace(
+        URL_QUERY,
+        (_query, beforeQuery: string, pairs: string) =>
+          `${beforeQuery}${redactedPairsOf(pairs)}`,
+      )
       .replace(QUERY_VALUE, `$1${NEXT_REDACTED_VALUE}`),
   )
 }

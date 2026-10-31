@@ -128,6 +128,34 @@ test('quoted Next server output hides cookie, authorization, query and secret-na
   )
 })
 
+// Value: protects=a bare query part of a URL the dev server logs, which may be a token itself, is hidden whole, beside the named values hidden as before; fails_when=`/reset?3f9ac0d1e2b4` or `?tok` is kept, the fragment changes, or an empty query gains a placeholder; why_new=Cycle 0066 task 15 (the query mask took only name=value parts); seam=none; no_claim=a real dev server's log format
+test('quoted Next server output hides a bare query part of a logged URL whole', () => {
+  // Act
+  const masked = [
+    maskNextServerOutput('GET /reset?3f9ac0d1e2b4 200'),
+    maskNextServerOutput('/verify?tok&x=1'),
+    maskNextServerOutput('/a?x=1#frag'),
+    maskNextServerOutput('/a?'),
+  ]
+  // Assert
+  assert.deepEqual(masked, [
+    'GET /reset?<redacted> 200',
+    '/verify?<redacted>&x=<redacted>',
+    '/a?x=<redacted>#frag',
+    '/a?',
+  ])
+})
+
+// Value: protects=code a compile error quotes keeps its optional chains readable, since a `?` without a `/` before it in its word is no URL query; fails_when=`user?.profile?.name` is masked; why_new=Cycle 0066 task 15 (bare parts are masked only in a logged URL); seam=none; no_claim=a word that is both a path and code
+test('quoted Next server output keeps an optional chain of quoted code readable', () => {
+  // Act
+  const masked = maskNextServerOutput(
+    '  12 |   const name = user?.profile?.name',
+  )
+  // Assert
+  assert.equal(masked, '  12 |   const name = user?.profile?.name')
+})
+
 // Value: protects=masking a long dotted run of server output ends in linear time, so a hostile output chunk cannot stall a Pages refusal or the launcher's journal; fails_when=the assignment pattern backtracks quadratically over the run (seconds on this input); why_new=Cycle 0066 task 3 (Cycle 0065 smoke QA measured about 1 s per 64 KB chunk); seam=none; no_claim=a real dev server's output
 test('masking a 256 KB dotted run of server output returns it unchanged within one second', () => {
   // Arrange
