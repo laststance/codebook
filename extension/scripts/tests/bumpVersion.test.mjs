@@ -639,3 +639,45 @@ test('a failed atomic rename removes its temporary file and a rerun leaves none'
     await rm(root, { recursive: true, force: true })
   }
 })
+
+// protects=value: a malformed VERSION stops the bump before any place is rewritten, so the five places never disagree on a half-read source; fails_when=a three-part or empty VERSION is treated as the current version, or any file changes; why_new=no other test reads a VERSION that is itself malformed (the format tests refuse the target argument); seam=none; no_claim=the real VERSION file (a temporary copy stands in)
+test('a VERSION that holds a three-part version is refused with E_PATTERN and nothing written', async () => {
+  await withRoot({ version: '0.2.68\n' }, async (root) => {
+    // Arrange
+    const before = await readFive(root)
+
+    // Act
+    const result = await runCli(['0.2.69.0'], { root })
+
+    // Assert
+    assert.equal(result.exitCode, 1)
+    assert.equal(
+      result.err[0],
+      'E_PATTERN: VERSION: expected one MAJOR.MINOR.PATCH.MICRO version, found "0.2.68"',
+    )
+    assert.deepEqual(await readFive(root), before)
+  })
+})
+
+// protects=value: a doubled target heading is refused instead of leaving a CHANGELOG that --check rejects; fails_when=the bump proceeds with two "## [0.2.69.0]" headings or writes a file; why_new=the buried and Unreleased tests cover single-heading cases only; seam=none; no_claim=which of the two headings the owner should keep
+test('a CHANGELOG with the target heading twice is refused with E_CHANGELOG and nothing written', async () => {
+  const doubled = CHANGELOG_68.replace(
+    '## [0.2.68.0]',
+    '## [0.2.69.0] - 2026-10-31\n\nx\n\n## [0.2.69.0] - 2026-10-31\n\ny\n\n## [0.2.68.0]',
+  )
+  await withRoot({ changelog: doubled }, async (root) => {
+    // Arrange
+    const before = await readFive(root)
+
+    // Act
+    const result = await runCli(['0.2.69.0'], { root })
+
+    // Assert
+    assert.equal(result.exitCode, 1)
+    assert.equal(
+      result.err[0],
+      'E_CHANGELOG: CHANGELOG.md: the heading "## [0.2.69.0]" appears 2 times',
+    )
+    assert.deepEqual(await readFive(root), before)
+  })
+})

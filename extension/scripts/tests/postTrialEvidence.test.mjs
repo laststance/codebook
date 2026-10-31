@@ -1232,3 +1232,70 @@ test('prints the confirm command with the located gstack-post path, quoted when 
     )
   })
 })
+
+// protects=value: a file name that shasum would escape (a backslash) is refused, so the manifest never holds an ambiguous line the owner cannot verify with shasum -c; fails_when=the name is hashed into the manifest, or a file is written or gstack-post is called; why_new=the other manifest refusals cover links, size and drift, not name characters; seam=none; no_claim=a newline in a name (filesystem-dependent), the same pattern covers it
+test('refuses an evidence file whose name holds a backslash with E_MANIFEST_NAME and no file written', async () => {
+  await withRepository(async (root) => {
+    // Arrange
+    const logPath = await writeLog(root, 'ok\n')
+    const evidence = await makeEvidence(root, { 'a\\b.png': 'alpha' })
+
+    // Act
+    const result = await run(root, [
+      logPath,
+      '--issue',
+      '172',
+      '--manifest',
+      'artifacts/x',
+    ])
+
+    // Assert
+    assert.equal(result.exitCode, 1)
+    assert.equal(
+      result.errors[0],
+      'E_MANIFEST_NAME: a file name holds a newline or a backslash',
+    )
+    assert.deepEqual(result.calls, [])
+    assert.deepEqual(await readdir(evidence), ['a\\b.png'])
+  })
+})
+
+// protects=value: an option the command does not know ends in a usage error before any gh or gstack-post call; fails_when=the option is ignored and a post happens, or the exit code is not 64; why_new=existing usage tests cover a bad --issue and a missing path only; seam=none; no_claim=Node's own wording after the E_USAGE prefix
+test('an unknown option exits 64 with E_USAGE and calls neither gh nor gstack-post', async () => {
+  await withRepository(async (root) => {
+    // Arrange
+    const logPath = await writeLog(root, 'ok\n')
+
+    // Act
+    const result = await run(root, [logPath, '--force'])
+
+    // Assert
+    assert.equal(result.exitCode, 64)
+    assert.match(result.errors[0], /^E_USAGE: .*--force/)
+    assert.deepEqual(result.calls, [])
+  })
+})
+
+// protects=value: gh printing something that is not JSON is reported as E_GH instead of posting to a guessed Issue; fails_when=an exception escapes as E_INTERNAL or the post proceeds; why_new=the E_GH test covers a failing gh status only; seam=none; no_claim=gh's real output formats
+test('reports a gh issue list that prints no JSON as E_GH and posts nothing', async () => {
+  await withRepository(async (root) => {
+    // Arrange
+    const logPath = await writeLog(root, 'ok\n')
+
+    // Act
+    const result = await run(root, [logPath], {
+      ghResult: { status: 0, stdout: 'not json', stderr: '' },
+    })
+
+    // Assert
+    assert.equal(result.exitCode, 1)
+    assert.deepEqual(result.errors, [
+      'E_GH: gh issue list printed output that is not JSON',
+      'Fix: gh auth status',
+    ])
+    assert.deepEqual(
+      result.calls.filter((call) => call.file !== 'gh'),
+      [],
+    )
+  })
+})
