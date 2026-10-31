@@ -576,3 +576,34 @@ test('the README lists exactly the dev script forms a Pages launch failure reads
     ),
   )
 })
+
+// Value: protects=an agent reading the help learns that a server stop in a Pages run is refused as NEXT_SERVER_ONLY_STOP, and that a counted predev depends on the package manager with a note when that is unknown; fails_when=the NEXT_SERVER_ONLY_STOP meaning, nextSupport.notStoppable or nextSupport.preparation keep the Cycle 0065 wording; why_new=Cycle 0066 integration (lane C changed tasks 7 and 9, whose help sentences went stale); seam=help resource text; no_claim=the run and the readiness decide so (nextPagesRun and repositoryAdapterReadiness tests)
+test('the help says a Pages server stop is refused as server-only and that a predev counts only when the package manager runs it', async (context) => {
+  // Arrange
+  const help = await readRepositoryBrowserHelp(context)
+  // Act
+  const meaning = help.nextRefusals?.NEXT_SERVER_ONLY_STOP?.meaning ?? ''
+  const notStoppable = help.nextSupport?.notStoppable?.[0] ?? ''
+  const preparation = help.nextSupport?.preparation ?? ''
+  // Assert
+  assert.ok(
+    meaning.endsWith(
+      "A server stop (participant server in a version 2 configuration) is refused with it in a Pages run too, because a Pages run observes only the page's client code.",
+    ),
+  )
+  assert.ok(
+    notStoppable.endsWith(
+      'A server stop (participant server) in a Pages run is refused with NEXT_SERVER_ONLY_STOP before the browser opens.',
+    ),
+  )
+  assert.ok(
+    preparation.includes(
+      'statements before next dev (and a predev script when the package manager of the project runs pre scripts: npm, Yarn 1, pnpm 9 or later, or pnpm 7 and 8 with enable-pre-post-scripts) are skipped,',
+    ),
+  )
+  assert.ok(
+    preparation.includes(
+      '(one more when a counted pre script may or may not run because the package manager or its version is unknown)',
+    ),
+  )
+})
