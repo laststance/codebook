@@ -172,6 +172,7 @@ test('a surface lost at an open pause seals partial naming the surface end and t
     history.seal?.reasons.map((reason) => reason.code),
     [
       'EXTENSION_HISTORY_STOP_NOT_REACHED',
+      'EXTENSION_HISTORY_RESULT_MISSING',
       'EXTENSION_HISTORY_SURFACE_ENDED',
       'EXTENSION_HISTORY_FILMSTRIP_MISSING',
     ],
@@ -401,4 +402,39 @@ test('a stalled summary read does not hold the seal past its bound and the seale
   // Assert
   assert.equal(begun.recorder.status, 'sealed')
   assert.equal(begun.recorder.sealed?.summary, undefined)
+})
+
+// protects=a run that ends (Save and stop) after every declared stop and frame but before its result was read keeps a terminal result entry and still names EXTENSION_HISTORY_RESULT_MISSING, so the capture reads partial; fails_when=the placeholder result the recorder appends counts as a recorded result and the capture reads complete; no_claim=a result that was observed and read as unavailable (that one is a recorded result)
+test('a run that ends before its result was read keeps a terminal event and names the result as missing', async (context) => {
+  // Arrange
+  const { recorder, store, header } = await recorderOver(context)
+  recorder.pauseOpened(PAGE_PAUSE)
+  recorder.captured(
+    PAGE_PAUSE.pauseId,
+    capturedStop({ stopIndex: 1, context: 'page' }),
+  )
+  streamFrame(recorder, 'surface')
+  recorder.pauseClosed(PAGE_PAUSE.pauseId, 'continue')
+  recorder.pauseOpened(WORKER_PAUSE)
+  recorder.captured(
+    WORKER_PAUSE.pauseId,
+    capturedStop({ stopIndex: 2, context: 'service-worker' }),
+  )
+  recorder.pauseClosed(WORKER_PAUSE.pauseId, 'continue')
+
+  // Act
+  await recorder.seal({}, 5_000)
+  const history = await store.read(header.studyId)
+  const summary = await store.summarize(header.studyId)
+
+  // Assert
+  assert.equal(
+    history.entries.some((entry) => entry.type === 'result'),
+    true,
+  )
+  assert.equal(summary?.status, 'partial')
+  assert.deepEqual(
+    summary?.captureMissing.map((reason) => reason.code),
+    ['EXTENSION_HISTORY_RESULT_MISSING'],
+  )
 })

@@ -3,7 +3,10 @@ import type {
   ExtensionHistoryHeader,
   ExtensionHistorySealReason,
 } from '../chromeExtensionHistorySchemas'
-import { EXTENSION_HISTORY_REASON_CODES as CODES } from '../constants'
+import {
+  EXTENSION_HISTORY_REASON_CODES as CODES,
+  EXTENSION_HISTORY_RESULT_UNREAD_CAUSE,
+} from '../constants'
 
 /** What only the writer knows when it seals, beside what the journal says. */
 export type ExtensionCaptureFacts = {
@@ -72,7 +75,18 @@ function endingReasons(
   facts: ExtensionCaptureFacts,
 ): ExtensionHistorySealReason[] {
   const reasons: ExtensionHistorySealReason[] = []
-  if (!entries.some((entry) => entry.type === 'result'))
+  // The terminal result a run that ended before its result was read gets is no recorded result: it ends the journal, and the capture still misses the result.
+  const hasReadResult = entries.some(
+    (entry) =>
+      entry.type === 'result' &&
+      !(
+        entry.outcome === 'unavailable' &&
+        entry.cause === EXTENSION_HISTORY_RESULT_UNREAD_CAUSE &&
+        entry.before === undefined &&
+        entry.after === undefined
+      ),
+  )
+  if (!hasReadResult)
     reasons.push({
       code: CODES.resultMissing,
       params: {},

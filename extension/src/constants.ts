@@ -2284,6 +2284,9 @@ export const EXTENSION_HISTORY_KNOWN_CONTEXTS: readonly string[] = [
   'page',
   'service-worker',
 ]
+/** The cause of the terminal result a chrome-extension history appends when its run ended before the result was read; the capture evaluation judges a result with this cause as no recorded result. */
+export const EXTENSION_HISTORY_RESULT_UNREAD_CAUSE =
+  'The run ended before its result was read.'
 /** How long a chrome-extension history waits at its end for the frames already queued before it seals; frames still queued then are dropped and the filmstrip reads incomplete. */
 export const EXTENSION_HISTORY_DRAIN_TIMEOUT_MS = 2_000
 /** The longest context, pause id, URL and path text an entry keeps. */

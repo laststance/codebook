@@ -112,6 +112,7 @@ test('the run resource reads recording while the run lives and sealed with its c
   assert.equal(ended.history, 'sealed')
   assert.deepEqual(ended.captureMissing, [
     'EXTENSION_HISTORY_STOP_NOT_REACHED',
+    'EXTENSION_HISTORY_RESULT_MISSING',
     'EXTENSION_HISTORY_FILMSTRIP_MISSING',
   ])
 })

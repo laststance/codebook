@@ -11,6 +11,7 @@ import { extensionObservationResult } from './chromeExtensionObservation'
 import {
   EXTENSION_HISTORY_DRAIN_TIMEOUT_MS,
   EXTENSION_HISTORY_REASON_CODES,
+  EXTENSION_HISTORY_RESULT_UNREAD_CAUSE,
   EXTENSION_HISTORY_START_BOUND_MS,
 } from './constants'
 import { HistoryLimitReachedError } from './nodeHistoryJournalWriter'
@@ -260,7 +261,7 @@ export class ChromeExtensionHistoryRecorder implements ChromeExtensionHistorySin
       this.write(
         this.writer.appendResult({
           outcome: 'unavailable',
-          cause: 'The run ended before its result was read.',
+          cause: EXTENSION_HISTORY_RESULT_UNREAD_CAUSE,
         }),
       )
     }
