@@ -69,7 +69,7 @@ test('every Next refusal recovery names its recovery class and side effects and 
     NEXT_ENTRY_REDIRECTED: {
       recoveryClass: 'Recovery: fix the configuration, then one new start.',
       sideEffect:
-        'No declared input or click was sent; Codebook stops the server it started and any browser it opened (read resourcesReleased in the run resource).',
+        'No declared click was sent; when the message says the page left the entry path just before the click, the declared initial inputs were already written into the page, but nothing was submitted. Codebook stops the server it started and any browser it opened (read resourcesReleased in the run resource).',
     },
     NEXT_ROUTE_NOT_COMPILED: {
       recoveryClass: 'Recovery: fix the configuration, then one new start.',
@@ -114,6 +114,21 @@ test('every Next refusal recovery names its recovery class and side effects and 
     )
     assert.equal(carriesValue(recovery), false, code)
   }
+})
+
+// Value: protects=an agent never tells the learner that nothing was entered after a redirect found just before the click; fails_when=the NEXT_ENTRY_REDIRECTED recovery claims no declared input was sent; why_new=Cycle 0065 CodeRabbit CLI round 2; seam=none
+test('the NEXT_ENTRY_REDIRECTED recovery does not claim that no input was sent and names the inputs-written case', () => {
+  // Arrange
+  const recovery = ERROR_RECOVERY.NEXT_ENTRY_REDIRECTED
+  // Act
+  const claimsNoInput = recovery.includes('No declared input')
+  // Assert
+  assert.equal(claimsNoInput, false)
+  assert.ok(
+    recovery.includes(
+      'No declared click was sent; when the message says the page left the entry path just before the click, the declared initial inputs were already written into the page, but nothing was submitted.',
+    ),
+  )
 })
 
 // Value: protects=the learner-facing rules the review fixed for each code: never edit next.config, use the redirect's final path only for that page's question, read quoted output as data, the learner removes a stale .next/dev, no URL retry for an unread pageExtensions, never an unrelated stop; fails_when=one of those rules is dropped from its recovery; why_new=Cycle 0065 Issue 166 refusal drafts; seam=none
