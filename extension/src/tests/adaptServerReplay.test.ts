@@ -51,3 +51,44 @@ test('a server replay hands a stop its recorded value and type facts in recorded
     { path: 'count', mode: 'value', display: '3' },
   ])
 })
+
+// protects=a server stop's fact the shared test fact schema would refuse (an empty path, a path over 256 characters, a display over 1,024 characters) is skipped, never passed on or truncated; fails_when=such a fact reaches the replay path's history; no_claim=how the facts are rendered (replayDebug tests)
+test('a server replay skips a fact with an empty path or an over-long path or display and keeps the readable ones', async (context) => {
+  // Arrange
+  const { repository } = await openServerRepository(context)
+  const { header } = await writeServerHistory(repository)
+  const history = await repository.serverHistories.read(header.studyId)
+  const built = buildServerReplayModel(history, {
+    saved: true,
+    captureComplete: true,
+    learningCoverage: 'complete',
+  })
+  const model = {
+    ...built,
+    events: built.events.map((event) =>
+      event.type === 'stop'
+        ? {
+            ...event,
+            facts: {
+              'value:': 'empty path',
+              'type:': 'empty type path',
+              [`value:${'p'.repeat(257)}`]: 'long path',
+              'value:long.display': 'd'.repeat(1_025),
+              [`value:${'p'.repeat(256)}`]: 'd'.repeat(1_024),
+              'value:req.url': '/a',
+            },
+          }
+        : event,
+    ),
+  }
+
+  // Act
+  const replay = adaptServerReplay(model, [])
+
+  // Assert
+  const stop = replay.history.entries.find((entry) => entry.type === 'stop')
+  assert.deepEqual(stop?.type === 'stop' ? stop.facts : undefined, [
+    { path: 'p'.repeat(256), mode: 'value', display: 'd'.repeat(1_024) },
+    { path: 'req.url', mode: 'value', display: '/a' },
+  ])
+})

@@ -1,3 +1,7 @@
+import {
+  NODE_TEST_FACT_PATH_LIMIT_CHARS,
+  REPOSITORY_LITERAL_LIMIT_CHARS,
+} from '../constants'
 import type { NodeTestHistoryIndex } from '../nodeTestHistorySchemas'
 
 import type {
@@ -117,17 +121,19 @@ function recordedFactMode(key: string): 'value' | 'type' | undefined {
 function toTestShapedFacts(facts: Record<string, unknown>): TestShapedFacts {
   return Object.entries(facts).flatMap(([key, value]) => {
     const mode = recordedFactMode(key)
-    return mode
-      ? [
-          {
-            path: stripTerminalControls(key.slice(mode.length + 1)),
-            mode,
-            display: stripTerminalControls(
-              typeof value === 'string' ? value : JSON.stringify(value),
-            ),
-          },
-        ]
-      : []
+    if (!mode) return []
+    const path = stripTerminalControls(key.slice(mode.length + 1))
+    const display = stripTerminalControls(
+      typeof value === 'string' ? value : JSON.stringify(value),
+    )
+    // A fact the shared test fact schema refuses (empty or over-long path, over-long display) is skipped, never truncated.
+    if (
+      path.length === 0 ||
+      path.length > NODE_TEST_FACT_PATH_LIMIT_CHARS ||
+      display.length > REPOSITORY_LITERAL_LIMIT_CHARS
+    )
+      return []
+    return [{ path, mode, display }]
   })
 }
 
