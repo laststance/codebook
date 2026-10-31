@@ -1894,6 +1894,11 @@ export const REPLAY_SCOPE_NOT_CAPTURED_TEXT =
 /** What the placeholder source of a caller frame says first: its executed text was never captured, so the replay shows no file text for it (the current checkout is never substituted). */
 export const REPLAY_FRAME_TEXT_NOT_RECORDED_TEXT =
   'Not recorded at this moment: the executed text of this frame was not captured.'
+/** The name of the synthetic read-only scope that lists a stop's recorded inspections (the values the run declared to inspect) beside the captured scopes, so a value outside them stays readable in the native Variables view. */
+export const REPLAY_RECORDED_INSPECTIONS_SCOPE_NAME = 'Recorded inspections'
+/** What a recorded inspection reads when only its type was recorded: the value was withheld at capture, never invented here. */
+export const REPLAY_RECORDED_INSPECTION_TYPE_ONLY_VALUE =
+  'Value not recorded (only its type was recorded)'
 /** The Call Stack label beside a caller frame whose location was recorded but whose executed text was not. */
 export const REPLAY_FRAME_TEXT_NOT_RECORDED_ORIGIN =
   'Executed text not recorded'

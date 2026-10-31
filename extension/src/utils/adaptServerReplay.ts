@@ -94,6 +94,35 @@ function sanitizeServerReplayModel(
   }
 }
 
+type TestShapedFacts = Extract<TestShapedEntry, { type: 'stop' }>['facts']
+
+/**
+ * Turns a server stop's recorded facts (a record keyed `<mode>:<path>`, written by the server history sink) into the fact list the shared replay path hands the native debugger, in recorded order; called by {@link toTestShapedHistory}.
+ * @param facts - The stop's recorded facts; a key without a known `value:` or `type:` mode is skipped, never guessed.
+ * @returns One fact per readable key; a displayed value that is not text is shown as its JSON.
+ * @example toTestShapedFacts({ 'value:req.url': '/a' }) // => [{ path: 'req.url', mode: 'value', display: '/a' }]
+ */
+function toTestShapedFacts(facts: Record<string, unknown>): TestShapedFacts {
+  return Object.entries(facts).flatMap(([key, value]) => {
+    const mode = key.startsWith('value:')
+      ? 'value'
+      : key.startsWith('type:')
+        ? 'type'
+        : undefined
+    return mode
+      ? [
+          {
+            path: stripTerminalControls(key.slice(mode.length + 1)),
+            mode,
+            display: stripTerminalControls(
+              typeof value === 'string' ? value : JSON.stringify(value),
+            ),
+          },
+        ]
+      : []
+  })
+}
+
 /**
  * Maps a model's learner events onto the entry types the workspace's replay path knows: a stop keeps its snapshot and position, an output keeps its channel and text, and the request, the withdrawal, the response and the failure are non-stop moments (`result` entries with no exit code), which every surface treats as the 4A moments they are.
  * Called by {@link adaptServerReplay} for the stored model and for the shown one.
@@ -124,7 +153,7 @@ function toTestShapedHistory(model: ServerReplayModel): NodeTestHistoryIndex {
           line: event.source.line,
           column: event.source.column,
         },
-        facts: [],
+        facts: toTestShapedFacts(event.facts),
         debuggerSnapshot: event.debuggerSnapshot,
       }
     return {

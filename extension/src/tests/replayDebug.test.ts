@@ -1891,3 +1891,117 @@ test('a placeholder source reference of an earlier moment is refused after anoth
   // Assert
   assert.equal(response.success, false)
 })
+
+/** Reads the variables of the top frame's scope named `scopeName`, as native Variables does; `undefined` when the scope is absent. @example readScope(request, 'Recorded inspections') */
+function readScope(
+  request: ReturnType<typeof harness>['request'],
+  scopeName: string,
+): DebugProtocol.Variable[] | undefined {
+  const frame = request('stackTrace', { threadId: 1 }).body.stackFrames[0]
+  const scope = request('scopes', { frameId: frame.id }).body.scopes.find(
+    (candidate: DebugProtocol.Scope) => candidate.name === scopeName,
+  )
+  return scope
+    ? request('variables', { variablesReference: scope.variablesReference })
+        .body.variables
+    : undefined
+}
+
+// Value: protects=a value the run recorded in a closure stays readable in the replay's native debugger; fails_when=the recorded inspection that is not in the captured scopes is missing from Variables; why_new=only the bounded top-frame scopes were served, so a closure fact was recorded but invisible; seam=none; no_claim=real Cursor Variables rendering
+test('a recorded inspection that lives in a closure is listed in the Recorded inspections scope', () => {
+  // Arrange
+  const { adapter, request } = harness()
+  adapter.select(recorded(), 'Recorded', undefined, [
+    {
+      path: 'type',
+      mode: 'value',
+      display: "'test/testReducer'",
+      type: 'string',
+    },
+  ])
+  request('configurationDone')
+
+  // Act
+  const variables = readScope(request, 'Recorded inspections')
+
+  // Assert
+  assert.deepEqual(variables, [
+    {
+      name: 'type',
+      value: "'test/testReducer'",
+      type: 'string',
+      variablesReference: 0,
+    },
+  ])
+})
+
+// Value: protects=a nested path deeper than the captured tree stays readable at the stop; fails_when=a recorded action.payload is missing from Variables; why_new=capture depth 2 drops nested paths, which only the recorded inspection holds; seam=none; no_claim=the capture limits themselves
+test('a recorded nested inspection deeper than the captured tree is listed with its full path', () => {
+  // Arrange
+  const { adapter, request } = harness()
+  adapter.select(recorded(), 'Recorded', undefined, [
+    {
+      path: 'action.type',
+      mode: 'value',
+      display: "'todos/add'",
+      type: 'string',
+    },
+    {
+      path: 'action.payload',
+      mode: 'value',
+      display: "'Run tests'",
+      type: 'string',
+    },
+  ])
+  request('configurationDone')
+
+  // Act
+  const variables = readScope(request, 'Recorded inspections')
+
+  // Assert
+  assert.deepEqual(
+    variables?.map(({ name, value }) => `${name} = ${value}`),
+    ["action.type = 'todos/add'", "action.payload = 'Run tests'"],
+  )
+})
+
+// Value: protects=a withheld recorded value is never shown as a value; fails_when=a type-only inspection displays its type as if it were the value; why_new=the replay never listed recorded inspections before; seam=none; no_claim=redaction rules of the capture
+test('an inspection recorded with only its type says its value was not recorded', () => {
+  // Arrange
+  const { adapter, request } = harness()
+  adapter.select(recorded(), 'Recorded', undefined, [
+    { path: 'token', mode: 'type', display: 'string' },
+  ])
+  request('configurationDone')
+
+  // Act
+  const variables = readScope(request, 'Recorded inspections')
+
+  // Assert
+  assert.deepEqual(variables, [
+    {
+      name: 'token',
+      value: 'Value not recorded (only its type was recorded)',
+      type: 'string',
+      variablesReference: 0,
+    },
+  ])
+})
+
+// Value: protects=a stop without recorded inspections shows no empty scope; fails_when=an extra scope appears for a stop that recorded no inspection; why_new=guards the new scope against always being added; seam=none; no_claim=none
+test('a stop without recorded inspections shows only its captured scopes', () => {
+  // Arrange
+  const { adapter, request } = harness()
+  adapter.select(recorded(), 'Recorded', undefined, [])
+  request('configurationDone')
+  const frame = request('stackTrace', { threadId: 1 }).body.stackFrames[0]
+
+  // Act
+  const scopes = request('scopes', { frameId: frame.id }).body.scopes
+
+  // Assert
+  assert.deepEqual(
+    scopes.map((scope: DebugProtocol.Scope) => scope.name),
+    ['Locals'],
+  )
+})

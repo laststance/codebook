@@ -3,6 +3,8 @@ import { z } from 'zod'
 
 import {
   REPLAY_DEBUG_NATIVE_STACK_PAGE_FRAMES,
+  REPLAY_RECORDED_INSPECTION_TYPE_ONLY_VALUE,
+  REPLAY_RECORDED_INSPECTIONS_SCOPE_NAME,
   REPLAY_FRAME_TEXT_NOT_RECORDED_ORIGIN,
   REPLAY_FRAME_TEXT_NOT_RECORDED_TEXT,
   REPLAY_DEBUG_THREAD_ID,
@@ -36,6 +38,13 @@ const stackArguments = z.object({
 })
 type RecordedFrame = ReplayDebugSnapshot['frames'][number]
 export type ReplaySourceDocument = { uri: string; hash: string }
+/** One value the run declared to inspect at a stop, as the history recorded it: `mode: 'value'` keeps the displayed value, `mode: 'type'` only its type (the value was withheld). Shown by {@link ReplayDebugAdapter} in the "Recorded inspections" scope. */
+export type ReplayRecordedInspection = {
+  path: string
+  mode: 'value' | 'type'
+  display: string
+  type?: string
+}
 /** What a closed adapter answers the view requests native Run and Debug still sends after its `disconnect`: a success without rows, so the editor has nothing to cancel. */
 const CLOSED_SESSION_ANSWERS: ReadonlyMap<string, unknown> = new Map([
   ['threads', { threads: [] }],
@@ -59,6 +68,8 @@ export class ReplayDebugAdapter {
   /** The text a placeholder source handle serves (a caller frame whose executed text was not recorded), by session handle; its frame's handle is in {@link frameSources}. */
   private placeholderTexts = new Map<number, string>()
   private frameScopes = new Map<number, DebugProtocol.Scope[]>()
+  /** The frame that carries the "Recorded inspections" scope of the current selection, when the stop recorded any. */
+  private inspectionsFrameId?: number
   private retiredFrameIds = new Set<number>()
   private configured = false
   private closed = false
@@ -151,7 +162,9 @@ export class ReplayDebugAdapter {
       !this.closed &&
       this.selectionValid &&
       inspectionFrameId !== undefined &&
-      this.frames.get(inspectionFrameId)?.scopes.length,
+      // The recorded inspections are recorded values, so a stop with only those still loads values.
+      (this.frames.get(inspectionFrameId)?.scopes.length ||
+        this.inspectionsFrameId === inspectionFrameId),
     )
   }
 
@@ -255,6 +268,7 @@ export class ReplayDebugAdapter {
    * @param value - The recorded stop to serve, or `undefined` for a moment without history to show.
    * @param label - What the thread and the stop description read: the recorded moment, or for `undefined` why no stack is shown ("Not recorded at this moment", or that the recorded application is covered).
    * @param sourceDocument - The captured source document the native editor opens for the stop's frames.
+   * @param inspections - The values the run recorded at this stop; listed read-only in one extra "Recorded inspections" scope of the top frame, so values outside the bounded captured scopes stay inspectable. Nothing is added when empty or absent.
    * @throws When the snapshot is invalid or its source hash does not match; the session then shows "Not recorded at this moment".
    * @example adapter.select(undefined, 'Not recorded at this moment')
    */
@@ -262,6 +276,7 @@ export class ReplayDebugAdapter {
     value: ReplayDebugSnapshot | undefined,
     label: string,
     sourceDocument?: ReplaySourceDocument,
+    inspections: readonly ReplayRecordedInspection[] = [],
   ): void {
     if (this.closed) return
     // Retire the editor's focused frame and cached Variables tree before replacing historical handles.
@@ -289,6 +304,7 @@ export class ReplayDebugAdapter {
     this.selectedAtMs = Date.now()
     this.stoppedAtMs = undefined
     this.snapshot = undefined
+    this.inspectionsFrameId = undefined
     this.clearRecordedHandles()
     this.label = 'Not recorded at this moment'
     try {
@@ -312,22 +328,12 @@ export class ReplayDebugAdapter {
           const frameId = ++this.nextHandle
           this.frames.set(frameId, frame)
           this.registerFrameSource(frameId, frame)
-          const scopes = frame.scopes.map((scope) => ({
-            name: scope.name,
-            expensive: false,
-            variablesReference: this.group(scope.variables, scope.unavailable),
-          }))
-          const limitations = [
-            frame.unavailable,
-            frame.sourceUnavailable,
-            ...snapshot.limitations,
-          ].filter((reason): reason is string => Boolean(reason))
-          if (limitations.length)
-            scopes.push({
-              name: 'Recording limitations',
-              expensive: false,
-              variablesReference: this.group([], limitations.join('\n')),
-            })
+          const scopes = this.buildFrameScopes(
+            frameId,
+            frame,
+            snapshot,
+            inspections,
+          )
           this.frameScopes.set(frameId, scopes)
         }
       }
@@ -578,6 +584,81 @@ export class ReplayDebugAdapter {
         // The error channel failed as well; neither error may enter the DAP stream.
       }
     }
+  }
+
+  /**
+   * Builds the native scopes of one recorded frame for {@link select}: its captured scopes, the stop's "Recorded inspections" on the top frame only, then the "Recording limitations" scope when something was not captured.
+   * @param frameId - The session-local handle of the frame.
+   * @param frame - The recorded frame.
+   * @param snapshot - The snapshot the frame belongs to; its limitations apply to every frame.
+   * @param inspections - The stop's recorded inspections; they are history, never evaluated.
+   * @returns The scopes in display order.
+   * @example this.buildFrameScopes(7, snapshot.frames[0], snapshot, []) // => [{ name: 'Locals', … }]
+   */
+  private buildFrameScopes(
+    frameId: number,
+    frame: RecordedFrame,
+    snapshot: ReplayDebugSnapshot,
+    inspections: readonly ReplayRecordedInspection[],
+  ): DebugProtocol.Scope[] {
+    const scopes: DebugProtocol.Scope[] = frame.scopes.map((scope) => ({
+      name: scope.name,
+      expensive: false,
+      variablesReference: this.group(scope.variables, scope.unavailable),
+    }))
+    // Only the stopped (top) frame carries the recorded inspections.
+    if (inspections.length && frameId === this.frames.keys().next().value) {
+      scopes.push({
+        name: REPLAY_RECORDED_INSPECTIONS_SCOPE_NAME,
+        expensive: false,
+        variablesReference: this.inspectionsGroup(inspections),
+      })
+      this.inspectionsFrameId = frameId
+    }
+    const limitations = [
+      frame.unavailable,
+      frame.sourceUnavailable,
+      ...snapshot.limitations,
+    ].filter((reason): reason is string => Boolean(reason))
+    if (limitations.length)
+      scopes.push({
+        name: 'Recording limitations',
+        expensive: false,
+        variablesReference: this.group([], limitations.join('\n')),
+      })
+    return scopes
+  }
+
+  /**
+   * Materializes the read-only rows of a stop's recorded inspections for {@link select}: `<path> = <display>` with its recorded type, in recorded order; a type-only inspection says its value was not recorded.
+   * @param inspections - The stop's recorded inspections.
+   * @returns The variables handle of the scope.
+   * @example this.inspectionsGroup([{ path: 'type', mode: 'value', display: "'a'", type: 'string' }])
+   */
+  private inspectionsGroup(
+    inspections: readonly ReplayRecordedInspection[],
+  ): number {
+    const handle = ++this.nextHandle
+    this.groups.set(
+      handle,
+      inspections.map((inspection) =>
+        // A type-only inspection holds its type in `display`; the value is never invented.
+        inspection.mode === 'type'
+          ? {
+              name: inspection.path,
+              value: REPLAY_RECORDED_INSPECTION_TYPE_ONLY_VALUE,
+              type: inspection.display,
+              variablesReference: 0,
+            }
+          : {
+              name: inspection.path,
+              value: inspection.display,
+              type: inspection.type,
+              variablesReference: 0,
+            },
+      ),
+    )
+    return handle
   }
 
   /** Materializes native variable groups from validated forward-only archive indices. @example this.group([0], undefined) */
