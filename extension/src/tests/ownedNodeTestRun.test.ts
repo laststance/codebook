@@ -12,10 +12,12 @@ import type { NodeTestConfiguration } from '../nodeTestConfigSchemas'
 import type * as OwnedNodeTestRunModule from '../ownedNodeTestRun'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
-import type {
-  ListVitestTestFilesRequest,
-  RetryVitestListingRelease,
-  VitestListingReleaseFailure,
+import {
+  VitestListingDeadlineError,
+  VitestListingFailedError,
+  type ListVitestTestFilesRequest,
+  type RetryVitestListingRelease,
+  type VitestListingReleaseFailure,
 } from '../utils/listVitestTestFiles'
 
 import { loadModule } from './utils/loadModule'
@@ -45,6 +47,7 @@ const LEARNER_BREAKPOINT_ID = 12
  * @param options.budgetMs - Replaces the 45 s per-phase budget so deadline behavior can be observed quickly.
  * @param options.acknowledgements - Uses the real breakpoint tracker instead of the stand-in: the adapter's registration reply for each owned breakpoint in the order they are armed, passed through the run's own tracker as the editor would send it.
  * @param options.listingNotReleased - The preparation asks the run for its Vitest listing, as the real one does, and the listing answers that its release failed with this report.
+ * @param options.listingFailure - The preparation asks the run for its Vitest listing, and the listing fails with this error.
  * @param options.listingRelease - The retry the failed listing hands to the run, which runs it at its release; without it the retry succeeds at once.
  * @param options.endsWhileFirstStopIsRevealed - Right after the first stop was captured, its test process exits, the owned session ends and the output tab cannot be shown, so the preparation fails after its stop.
  * @param options.launchListingMs - The preparation asks the run for its Vitest listing, which takes this long and ends early only when its signal aborts, as the real one does.
@@ -80,6 +83,7 @@ async function nodeRunHarness({
   bindingReportedLater,
   bindingReadUnanswered,
   listingNotReleased,
+  listingFailure,
   listingRelease = async () => undefined,
   endsWhileFirstStopIsRevealed = false,
   launchListingMs,
@@ -136,6 +140,8 @@ async function nodeRunHarness({
   /** The adapter never answers when it is asked where an owned breakpoint is bound. */
   bindingReadUnanswered?: boolean
   listingNotReleased?: VitestListingReleaseFailure
+  /** The preparation asks the run for its Vitest listing, and the listing fails with this error, as Vitest's own failure or deadline does. */
+  listingFailure?: Error
   listingRelease?: RetryVitestListingRelease
   endsWhileFirstStopIsRevealed?: boolean
   launchListingMs?: number
@@ -674,7 +680,11 @@ async function nodeRunHarness({
         ) => {
           launchPreparations += 1
           // Only a test of the listing asks for it; every other test gets its launch at once.
-          if (listingNotReleased || launchListingMs !== undefined)
+          if (
+            listingNotReleased ||
+            listingFailure ||
+            launchListingMs !== undefined
+          )
             await listTestFiles({
               program: 'vitest',
               vitestRoot: directory,
@@ -710,6 +720,7 @@ async function nodeRunHarness({
                 { once: true },
               )
             })
+          if (listingFailure) throw listingFailure
           if (listingNotReleased)
             request.onReleaseFailed?.(listingNotReleased, listingRelease)
           return []
@@ -1819,6 +1830,75 @@ test('a Vitest listing whose process group could not be released is journaled by
     await harness.run.stop()
     await harness.cleanup()
   }
+})
+
+// Value: protects=a node-test run that Vitest itself ends before its first stop (the cited-test listing fails or times out, or the test exits before stop 1) ending with RUNTIME_FAILED and a recovery for a test run, not the browser-click wording; fails_when=the recovery still says to read the terminal reason and not retry the click, or omits fixing Vitest's error in the Vitest root and starting anew deliberately; why_new=Cycle 0067 F5 (native VS Code run with an unresolvable jsdom); seam=a stand-in listing that fails or times out and a fake process that exits after the entry pause; no_claim=a real Vitest or the service's sanitizing of the text (service tests)
+test('a node-test run that Vitest ends before its first stop reports a recovery for a test run, not the click wording', async () => {
+  // Arrange
+  const listingExit = new VitestListingFailedError(
+    "Vitest could not list the cited test file (exit code 1): MISSING DEPENDENCY Cannot find dependency 'jsdom'",
+  )
+  const listingDeadline = new VitestListingDeadlineError(
+    'Vitest did not list its test files within 15000 ms.',
+  )
+  const described = async (
+    options: Parameters<typeof nodeRunHarness>[0],
+  ): Promise<unknown> => {
+    const harness = await nodeRunHarness(options)
+    try {
+      const failure = await harness.run.prepare().then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+      const described = (
+        failure as { describe?: () => object } | undefined
+      )?.describe?.()
+      const cause = (failure as { cause?: unknown } | undefined)?.cause
+      return cause === undefined
+        ? described
+        : { ...described, originalCause: String(cause) }
+    } finally {
+      await harness.run.stop()
+      await harness.cleanup()
+    }
+  }
+  const recovery =
+    "Vitest itself ended the run before the test's first stop; no stop was recorded and no learning was saved. Read the cause for Vitest's own error (after launch it is also in the Codebook test output) and fix what it names in the test's Vitest root, for example install the missing dependency, correct the config, or make testTitles name the cited test exactly. Then start a new run deliberately with a new key; never retry automatically."
+  const earlyExitMessage =
+    'Owned Node test exited with code 0 before declared stop 1. The first declared stop is reached only when the test runs its line; its output is in the Codebook test output. If Vitest skipped the cited test, check that testTitles names it exactly; see codebook://help/node-test.'
+
+  // Act
+  const listingFailed = await described({ listingFailure: listingExit })
+  const listingTimedOut = await described({ listingFailure: listingDeadline })
+  const exitedBeforeStop = await described({ exitAfterEntry: true })
+
+  // Assert
+  assert.deepEqual(listingFailed, {
+    code: 'RUNTIME_FAILED',
+    message:
+      'The node-test run ended before its first stop: Vitest could not list the cited test file.',
+    cause:
+      "Vitest could not list the cited test file (exit code 1): MISSING DEPENDENCY Cannot find dependency 'jsdom'",
+    recovery,
+    docs: 'codebook://help/errors',
+  })
+  assert.deepEqual(listingTimedOut, {
+    code: 'RUNTIME_FAILED',
+    message:
+      'The node-test run ended before its first stop: Vitest did not list the cited test file in time.',
+    cause: 'Vitest did not list its test files within 15000 ms.',
+    recovery,
+    docs: 'codebook://help/errors',
+  })
+  assert.deepEqual(exitedBeforeStop, {
+    code: 'RUNTIME_FAILED',
+    message: earlyExitMessage,
+    cause: `${earlyExitMessage} Original error: Owned Node debugger session terminated or was cancelled.`,
+    originalCause:
+      'Error: Owned Node debugger session terminated or was cancelled.',
+    recovery,
+    docs: 'codebook://help/errors',
+  })
 })
 
 // Value: protects=a test ended by a signal before its next declared stop being named by that signal and the stop it did not reach; fails_when=the signal branch of the early-exit sentence names a code or drops the stop number; why_new=Cycle 0054 hosted CodeRabbit review (the fixture's exit was always code 0, so the signal branch had no test); seam=the harness reports the process's exit with exitCode null and SIGKILL; no_claim=which signal a real run receives

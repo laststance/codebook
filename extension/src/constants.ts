@@ -12,7 +12,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.12'
-export const EXTENSION_VERSION = '0.2.67'
+export const EXTENSION_VERSION = '0.2.68'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -789,8 +789,11 @@ export const REPOSITORY_GIT_TIMEOUT_MS = 5_000
 
 /** The bound of the repository revision read a server history's header carries: a slow Git costs the header its revision (read as unknown), never the history. */
 export const REPOSITORY_REVISION_BOUND_MS = 500
-export const REPOSITORY_GIT_LIMIT_BYTES = 2_097_152
-export const REPOSITORY_MAX_TRACKED_FILES = 5_000
+/** The `maxBuffer` of source discovery's Git commands: 32 MiB holds the NUL-separated `ls-files -z` listing of {@link REPOSITORY_MAX_TRACKED_FILES} entries even when each ASCII path is near {@link REPOSITORY_PATH_LIMIT_CHARS} characters, so the entry cap refuses an oversized repository of typical names; a listing of longer or multi-byte names overflows the buffer first and is refused the same way (`LIMIT_EXCEEDED`). */
+export const REPOSITORY_GIT_LIMIT_BYTES = 33_554_432
+
+/** The most tracked entries source discovery lists; a repository above it is refused whole, never returned partially. Names live in memory only (no per-file stat), so the bound guards memory, not I/O; real projects such as TanStack Query track 5,173. */
+export const REPOSITORY_MAX_TRACKED_FILES = 50_000
 export const REPOSITORY_SOURCE_PAGE_SIZE = 100
 export const REPOSITORY_PATH_LIMIT_CHARS = 512
 export const REPOSITORY_SOURCE_LIMIT_BYTES = 262_144
@@ -1462,12 +1465,16 @@ export const TEST_OUTPUT_END_TOLERANCE_PX = 2
 export const TEST_OUTPUT_STATE_REPORT_INTERVAL_MS = 500
 /** Longest debugger type name a saved Node fact keeps; the type is supplementary, so a longer one is omitted rather than failing the run. */
 export const NODE_TEST_FACT_TYPE_LIMIT_CHARS = 256
+/** Longest path a saved Node fact keeps (the shared test fact schema's bound, also applied to a server stop's facts); a hop path ({@link DEBUGGER_PROXY_TARGET_NAME} named in it) longer than this is left unread. */
+export const NODE_TEST_FACT_PATH_LIMIT_CHARS = 256
 /**
  * Names of the variables in which Vitest's module runner holds a whole imported module: a test file that calls `vi.mock` binds `__vi_import_<n>__`, any other module `__vite_ssr_import_<n>__` (Vite 8, Vitest 5). An imported name such as `revalidatePath` has no variable of its own; its value is an export of one of these (Cycle 0052 task 5).
  */
 export const NODE_TEST_MODULE_BINDING_NAME = /^__vi(?:te_ssr)?_import_\d+__$/
 /** The debugger's name for the object a JavaScript Proxy wraps; a module that `vi.mock` replaces is a Proxy whose exports sit under it. */
 export const DEBUGGER_PROXY_TARGET_NAME = '[[Target]]'
+/** Most nested {@link DEBUGGER_PROXY_TARGET_NAME} levels one path step may be read through when a Proxy variable does not hold the step's name itself; a Proxy wrapped deeper leaves the step unread, so no chain is followed without bound. */
+export const DEBUGGER_PROXY_TARGET_MAX_DEPTH = 3
 /** Oldest Vitest major whose file listing, exclusion, name matching and JSON report were verified for exact node-test selection (4.1.11 and 5.0.2). */
 export const NODE_TEST_MINIMUM_VITEST_MAJOR = 4
 /** Deepest cited title path: enclosing `describe` titles plus the test title. */
@@ -1891,6 +1898,11 @@ export const REPLAY_SCOPE_NOT_CAPTURED_TEXT =
 /** What the placeholder source of a caller frame says first: its executed text was never captured, so the replay shows no file text for it (the current checkout is never substituted). */
 export const REPLAY_FRAME_TEXT_NOT_RECORDED_TEXT =
   'Not recorded at this moment: the executed text of this frame was not captured.'
+/** The name of the synthetic read-only scope that lists a stop's recorded inspections (the values the run declared to inspect) beside the captured scopes, so a value outside them stays readable in the native Variables view. */
+export const REPLAY_RECORDED_INSPECTIONS_SCOPE_NAME = 'Recorded inspections'
+/** What a recorded inspection reads when only its type was recorded: the value was withheld at capture, never invented here. */
+export const REPLAY_RECORDED_INSPECTION_TYPE_ONLY_VALUE =
+  'Value not recorded (only its type was recorded)'
 /** The Call Stack label beside a caller frame whose location was recorded but whose executed text was not. */
 export const REPLAY_FRAME_TEXT_NOT_RECORDED_ORIGIN =
   'Executed text not recorded'

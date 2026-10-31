@@ -13,6 +13,7 @@ import {
 import { ReplayDebuggerStartError } from './errors'
 import {
   ReplayDebugAdapter,
+  type ReplayRecordedInspection,
   type ReplaySourceDocument,
 } from './replayDebugAdapter'
 import type { ReplayDebugSnapshot } from './replayDebugSchemas'
@@ -59,6 +60,7 @@ export class ReplayDebugger {
     snapshot: ReplayDebugSnapshot | undefined
     label: string
     sourceUri?: string
+    inspections?: readonly ReplayRecordedInspection[]
   }
   /** The selection ({@link selected}) whose native model needs no more selecting: {@link runNativeInspectionModelSelection} settles it once the host accepted {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND} for it while it was still the shown selection, and {@link selectNativeInspectionModel} settles it when the host registers no such command. A refusal of the host leaves it unsettled, so the stop's next frame asks again (Cycle 0046 AD25). A later frame of a settled selection does not select it again ({@link hasSettledModelSelection}, asked at the frame's entry and again right before the command, Q1); a new selection is a new object and is selected once. */
   private modelSelectionSettledFor?: ReplayDebugger['selected']
@@ -441,6 +443,7 @@ export class ReplayDebugger {
    * @param label - Native thread label that identifies the recorded moment.
    * @param signal - Cancels this presentation without stopping the owned session.
    * @param sourceDocument - Captured source the native editor should open for the stop.
+   * @param inspections - The stop's recorded inspections, listed in one extra read-only native scope; pass the same array for the same stop so a repeated presentation is not re-selected.
    * @returns
    * - `'inspected'` when current stack, scopes and first values were retrieved
    * - `'uninspected'` when the grace elapsed first, or at once while Run and Debug still loads no values
@@ -454,6 +457,7 @@ export class ReplayDebugger {
     label: string,
     signal: AbortSignal,
     sourceDocument?: ReplaySourceDocument,
+    inspections?: readonly ReplayRecordedInspection[],
   ): Promise<ReplayInspection> {
     signal.throwIfAborted()
     if (this.closed || this.detached)
@@ -471,12 +475,18 @@ export class ReplayDebugger {
       !this.selected ||
       this.selected.snapshot !== snapshot ||
       this.selected.label !== label ||
-      this.selected.sourceUri !== sourceDocument?.uri
+      this.selected.sourceUri !== sourceDocument?.uri ||
+      this.selected.inspections !== inspections
     ) {
       // A select that throws must not leave this stop recorded as shown, so presenting it again selects it again.
       this.selected = undefined
-      adapter.select(snapshot, label, sourceDocument)
-      this.selected = { snapshot, label, sourceUri: sourceDocument?.uri }
+      adapter.select(snapshot, label, sourceDocument, inspections)
+      this.selected = {
+        snapshot,
+        label,
+        sourceUri: sourceDocument?.uri,
+        inspections,
+      }
     }
     // The editor can dispose the adapter just before it reports termination; a disposed adapter shows nothing, which is not "no values".
     this.assertAdapterAvailable(adapter)

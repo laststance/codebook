@@ -183,6 +183,26 @@ test('the node-test help tells refusals, the Vitest-root rule, failing tests and
   )
 })
 
+// Value: protects=the node-test help telling the agent that a test runs in the environment its Vitest root's config sets (jsdom or happy-dom), that Codebook passes no --environment and how a learner changes it, and which combinations were verified; fails_when=the help claims the package's own config unconditionally, names an environment, Vitest major or chat that no native run proved, or drops the escape hatch; why_new=Cycle 0067 task 2 (N67: jsdom and happy-dom runs); seam=none; no_claim=the native runs themselves (N67 evidence) and the README's matching sentence
+test('the node-test help says a test runs in the environment its Vitest root config sets and names only the verified combinations', async () => {
+  // Arrange / Act
+  const { body } = await servedNodeTestHelp()
+
+  // Assert
+  assert.match(
+    body.limits.vitest,
+    /The test runs in whatever environment that config sets \(jsdom or happy-dom included\) in Vitest's Node mode \(browser mode is not supported\)/,
+  )
+  assert.match(
+    body.limits.vitest,
+    /Codebook passes no --environment, so the environment changes only through that config or the test file's own \/\/ @vitest-environment comment\./,
+  )
+  assert.match(
+    body.limits.vitest,
+    /Verified on macOS: jsdom with Vitest 5 in VS Code Copilot Chat and Cursor Agent, jsdom with Vitest 4 and happy-dom with Vitest 5 in VS Code Copilot Chat; other combinations are not verified\./,
+  )
+})
+
 // Value: protects=the node-test help telling the agent, where it chooses stop lines, that additional stops are reached only in the order the test runs them, and, where it reads how a test is selected, that an unreached stop ends the run at the test's exit with an error naming the stop; fails_when=the walkthrough says nothing about stop order or testSelection says nothing about an unreached stop, so an agent declares a later stop on a line the test ran earlier and cannot tell why the run ended, as in N53; why_new=Cycle 0054 task 1 (N53-F1); seam=none; no_claim=the agent following it (N54 native check)
 test('the node-test help says additional stops are reached only in the order the test runs them', async () => {
   // Arrange / Act

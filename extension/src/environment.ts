@@ -49,6 +49,7 @@ import { createNodeServerRunUtilities } from './utils/createNodeServerRunUtiliti
 import { listVitestForRootClaim } from './utils/listVitestForRootClaim'
 import { nodeServerMachineGaps } from './utils/nodeServerMachineGaps'
 import type { NodeServerOrphanStore } from './utils/nodeServerOrphanRecords'
+import { nodeTestVitestFailure } from './utils/nodeTestVitestFailure'
 import {
   planNodeTestExecution,
   type NodeTestExecutionPlan,
@@ -577,6 +578,9 @@ export async function createEnvironment(
             now: control.now,
             onReleaseFailed: control.onListingNotReleased,
           }),
+      }).catch((failure: unknown) => {
+        // A Vitest listing that failed or passed its deadline before any run exists gets the test-run recovery, not the general RUNTIME_FAILED one worded for a browser click.
+        throw nodeTestVitestFailure(failure)
       })
     },
     async createNodeTestRun(

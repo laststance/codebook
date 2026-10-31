@@ -1677,3 +1677,355 @@ test('a Node pause reports a lazy value the debugger expands to no single value 
     { facts: [], unavailable: ['value:count', 'value:total'] },
   )
 })
+
+const PROXY_STATE_SCOPES = [
+  { name: 'Local', variablesReference: 1, expensive: false },
+]
+
+/**
+ * Builds the children js-debug lists for a Proxy variable.
+ * @param target - The variablesReference of the Proxy's `[[Target]]`.
+ * @returns `[[Handler]]`, `[[Target]]` and `[[IsRevoked]]` as the adapter names them.
+ * @example proxyChildren(41)
+ */
+function proxyChildren(target: number): DebugProtocol.Variable[] {
+  return [
+    { name: '[[Handler]]', value: 'Object', variablesReference: 90 },
+    { name: '[[Target]]', value: 'Object', variablesReference: target },
+    { name: '[[IsRevoked]]', value: 'false', variablesReference: 0 },
+  ]
+}
+
+// Value: protects=a required value that only a Proxy's [[Target]] holds is recorded under the path naming that hop and the declared path stays unavailable, because the Proxy's get trap may return another value than the target holds; fails_when=the walk records the target's value as the declared state.status (the trap could answer 'error' while the target holds 'idle') or leaves the target's value out of the facts (Cycle 0067 /ship pass 1, Codex P1); why_new=F6 recorded the target's value as the declared path's fact; seam=none; no_claim=the native adapter's own naming of [[Target]] (native trial)
+test('a Node pause records a value only a Proxy target holds under the hop path and names the declared path unavailable', async () => {
+  // Arrange
+  const session = sessionAnswering(
+    new Map<number, DebugProtocol.Variable[]>([
+      [1, [{ name: 'state', value: 'Proxy(Object)', variablesReference: 4 }]],
+      [4, proxyChildren(41)],
+      [
+        41,
+        [
+          {
+            name: 'status',
+            value: "'idle'",
+            type: 'string',
+            variablesReference: 0,
+          },
+        ],
+      ],
+    ]),
+  )
+
+  // Act
+  const result = await inspectNodeTestVariables(
+    session,
+    PROXY_STATE_SCOPES,
+    [{ path: 'state.status', mode: 'value', required: true }],
+    sourceImportBindings(''),
+    AbortSignal.timeout(1_000),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      facts: result.facts,
+      variables: result.variables.map(({ name, value }) => ({ name, value })),
+      unavailable: result.unavailable,
+    },
+    {
+      facts: [
+        {
+          path: 'state.[[Target]].status',
+          mode: 'value',
+          display: "'idle'",
+          type: 'string',
+        },
+      ],
+      variables: [{ name: 'status', value: "'idle'" }],
+      unavailable: ['value:state.status'],
+    },
+  )
+})
+
+// Value: protects=a nested path through a Proxy records every hop in the fact's path, whether the nested object is plain or itself a Proxy, and names each declared path unavailable; fails_when=a hop is left out of the recorded path, or a nested Proxy's own [[Target]] is ignored so the value is lost; why_new=the F6 required inspection value:state.error.message under the hop-path contract; seam=none; no_claim=Proxy traps beyond what expanding the variable runs
+test('a Node pause records a nested value through a Proxy and a nested Proxy with every hop named in the path', async () => {
+  // Arrange
+  const session = sessionAnswering(
+    new Map<number, DebugProtocol.Variable[]>([
+      [
+        1,
+        [
+          { name: 'state', value: 'Proxy(Object)', variablesReference: 4 },
+          { name: 'draft', value: 'Proxy(Object)', variablesReference: 5 },
+        ],
+      ],
+      [4, proxyChildren(41)],
+      [41, [{ name: 'error', value: 'Error', variablesReference: 42 }]],
+      [
+        42,
+        [
+          {
+            name: 'message',
+            value: "'boom'",
+            type: 'string',
+            variablesReference: 0,
+          },
+        ],
+      ],
+      [5, proxyChildren(51)],
+      [51, [{ name: 'user', value: 'Proxy(Object)', variablesReference: 6 }]],
+      [6, proxyChildren(61)],
+      [
+        61,
+        [
+          {
+            name: 'name',
+            value: "'Ada'",
+            type: 'string',
+            variablesReference: 0,
+          },
+        ],
+      ],
+    ]),
+  )
+
+  // Act
+  const result = await inspectNodeTestVariables(
+    session,
+    PROXY_STATE_SCOPES,
+    [
+      { path: 'state.error.message', mode: 'value', required: true },
+      { path: 'draft.user.name', mode: 'value', required: true },
+    ],
+    sourceImportBindings(''),
+    AbortSignal.timeout(1_000),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { facts: result.facts, unavailable: result.unavailable },
+    {
+      facts: [
+        {
+          path: 'state.[[Target]].error.message',
+          mode: 'value',
+          display: "'boom'",
+          type: 'string',
+        },
+        {
+          path: 'draft.[[Target]].user.[[Target]].name',
+          mode: 'value',
+          display: "'Ada'",
+          type: 'string',
+        },
+      ],
+      unavailable: ['value:state.error.message', 'value:draft.user.name'],
+    },
+  )
+})
+
+// Value: protects=a Proxy whose target lacks the asked segment still reports the required fact unavailable, so the fallback never invents a value; fails_when=the fallback returns the [[Target]] variable itself or another child for a missing segment; why_new=truthfulness bound of the F6 Proxy fallback; seam=none; no_claim=none
+test('a Node pause reports a required value unavailable when the Proxy target lacks the segment', async () => {
+  // Arrange
+  const session = sessionAnswering(
+    new Map<number, DebugProtocol.Variable[]>([
+      [1, [{ name: 'state', value: 'Proxy(Object)', variablesReference: 4 }]],
+      [4, proxyChildren(41)],
+      [41, [{ name: 'fetchStatus', value: "'idle'", variablesReference: 0 }]],
+    ]),
+  )
+
+  // Act
+  const result = await inspectNodeTestVariables(
+    session,
+    PROXY_STATE_SCOPES,
+    [{ path: 'state.status', mode: 'value', required: true }],
+    sourceImportBindings(''),
+    AbortSignal.timeout(1_000),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { facts: result.facts, unavailable: result.unavailable },
+    { facts: [], unavailable: ['value:state.status'] },
+  )
+})
+
+// Value: protects=a doubly wrapped Proxy is read through every [[Target]] level up to the depth limit and recorded under the path naming each hop; fails_when=only one [[Target]] level is tried, so the value of new Proxy(new Proxy({ status: 'ready' }, {}), {}) is lost; why_new=Codex adversarial Medium on the one-level walk; seam=none; no_claim=the native adapter's own naming of [[Target]] (native trial)
+test('a Node pause reads a value under a doubly wrapped Proxy and names both hops', async () => {
+  // Arrange
+  const session = sessionAnswering(
+    new Map<number, DebugProtocol.Variable[]>([
+      [1, [{ name: 'state', value: 'Proxy(Object)', variablesReference: 4 }]],
+      [4, proxyChildren(41)],
+      [41, proxyChildren(42)],
+      [
+        42,
+        [
+          {
+            name: 'status',
+            value: "'ready'",
+            type: 'string',
+            variablesReference: 0,
+          },
+        ],
+      ],
+    ]),
+  )
+
+  // Act
+  const result = await inspectNodeTestVariables(
+    session,
+    PROXY_STATE_SCOPES,
+    [{ path: 'state.status', mode: 'value', required: true }],
+    sourceImportBindings(''),
+    AbortSignal.timeout(1_000),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { facts: result.facts, unavailable: result.unavailable },
+    {
+      facts: [
+        {
+          path: 'state.[[Target]].[[Target]].status',
+          mode: 'value',
+          display: "'ready'",
+          type: 'string',
+        },
+      ],
+      unavailable: ['value:state.status'],
+    },
+  )
+})
+
+// Value: protects=a Proxy chain deeper than the depth limit leaves the value unread, so the walk never follows an unbounded chain; fails_when=the walk follows four [[Target]] levels or more; why_new=DEBUGGER_PROXY_TARGET_MAX_DEPTH bound of the hop contract; seam=none; no_claim=none
+test('a Node pause leaves a value unread when it sits under more Proxy levels than the depth limit', async () => {
+  // Arrange
+  const session = sessionAnswering(
+    new Map<number, DebugProtocol.Variable[]>([
+      [1, [{ name: 'state', value: 'Proxy(Object)', variablesReference: 4 }]],
+      [4, proxyChildren(41)],
+      [41, proxyChildren(42)],
+      [42, proxyChildren(43)],
+      [43, proxyChildren(44)],
+      [
+        44,
+        [
+          {
+            name: 'status',
+            value: "'ready'",
+            type: 'string',
+            variablesReference: 0,
+          },
+        ],
+      ],
+    ]),
+  )
+
+  // Act
+  const result = await inspectNodeTestVariables(
+    session,
+    PROXY_STATE_SCOPES,
+    [{ path: 'state.status', mode: 'value', required: true }],
+    sourceImportBindings(''),
+    AbortSignal.timeout(1_000),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { facts: result.facts, unavailable: result.unavailable },
+    { facts: [], unavailable: ['value:state.status'] },
+  )
+})
+
+// Value: protects=an optional inspection that only a Proxy's target holds records the hop fact and adds nothing to the unavailable list; fails_when=the optional path is recorded as the declared path, or reported unavailable; why_new=requirement 2 of the hop contract; seam=none; no_claim=none
+test('a Node pause records an optional value under the hop path without naming the declared path unavailable', async () => {
+  // Arrange
+  const session = sessionAnswering(
+    new Map<number, DebugProtocol.Variable[]>([
+      [1, [{ name: 'state', value: 'Proxy(Object)', variablesReference: 4 }]],
+      [4, proxyChildren(41)],
+      [
+        41,
+        [
+          {
+            name: 'status',
+            value: "'idle'",
+            type: 'string',
+            variablesReference: 0,
+          },
+        ],
+      ],
+    ]),
+  )
+
+  // Act
+  const result = await inspectNodeTestVariables(
+    session,
+    PROXY_STATE_SCOPES,
+    [{ path: 'state.status', mode: 'value', required: false }],
+    sourceImportBindings(''),
+    AbortSignal.timeout(1_000),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { facts: result.facts, unavailable: result.unavailable },
+    {
+      facts: [
+        {
+          path: 'state.[[Target]].status',
+          mode: 'value',
+          display: "'idle'",
+          type: 'string',
+        },
+      ],
+      unavailable: [],
+    },
+  )
+})
+
+// Value: protects=a secret-named step under a Proxy's target still reads [masked] in the fact and in the kept variable; fails_when=redaction looks at the declared path only or skips hop facts, so account.password's backing value reaches the chat; why_new=the hop path must stay under the redaction contract; seam=none; no_claim=none
+test('a Node pause masks a secret-named value read under a Proxy target', async () => {
+  // Arrange
+  const session = sessionAnswering(
+    new Map<number, DebugProtocol.Variable[]>([
+      [1, [{ name: 'account', value: 'Proxy(Object)', variablesReference: 4 }]],
+      [4, proxyChildren(41)],
+      [
+        41,
+        [
+          {
+            name: 'password',
+            value: "'hunter2'",
+            type: 'string',
+            variablesReference: 0,
+          },
+        ],
+      ],
+    ]),
+  )
+
+  // Act
+  const result = await inspectNodeTestVariables(
+    session,
+    PROXY_STATE_SCOPES,
+    [{ path: 'account.password', mode: 'value', required: true }],
+    sourceImportBindings(''),
+    AbortSignal.timeout(1_000),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      facts: result.facts.map(({ path, display }) => ({ path, display })),
+      variables: result.variables.map(({ value }) => value),
+    },
+    {
+      facts: [{ path: 'account.[[Target]].password', display: '[masked]' }],
+      variables: ['[masked]'],
+    },
+  )
+})

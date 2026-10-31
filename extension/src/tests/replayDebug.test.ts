@@ -3,7 +3,10 @@ import { test } from 'node:test'
 
 import type { DebugProtocol } from '@vscode/debugprotocol'
 
-import { REPLAY_DEBUG_MAX_VARIABLES } from '../constants'
+import {
+  REPLAY_DEBUG_MAX_VARIABLES,
+  REPLAY_DEBUG_NATIVE_STACK_PAGE_FRAMES,
+} from '../constants'
 import { ReplayDebugAdapter } from '../replayDebugAdapter'
 import {
   replayDebugSnapshotSchema,
@@ -1890,4 +1893,219 @@ test('a placeholder source reference of an earlier moment is refused after anoth
 
   // Assert
   assert.equal(response.success, false)
+})
+
+/** Reads the variables of the top frame's scope named `scopeName`, as native Variables does; `undefined` when the scope is absent. @example readScope(request, 'Recorded inspections') */
+function readScope(
+  request: ReturnType<typeof harness>['request'],
+  scopeName: string,
+): DebugProtocol.Variable[] | undefined {
+  const frame = request('stackTrace', { threadId: 1 }).body.stackFrames[0]
+  const scope = request('scopes', { frameId: frame.id }).body.scopes.find(
+    (candidate: DebugProtocol.Scope) => candidate.name === scopeName,
+  )
+  return scope
+    ? request('variables', { variablesReference: scope.variablesReference })
+        .body.variables
+    : undefined
+}
+
+// Value: protects=a value the run recorded in a closure stays readable in the replay's native debugger; fails_when=the recorded inspection that is not in the captured scopes is missing from Variables; why_new=only the bounded top-frame scopes were served, so a closure fact was recorded but invisible; seam=none; no_claim=real Cursor Variables rendering
+test('a recorded inspection that lives in a closure is listed in the Recorded inspections scope', () => {
+  // Arrange
+  const { adapter, request } = harness()
+  adapter.select(recorded(), 'Recorded', undefined, [
+    {
+      path: 'type',
+      mode: 'value',
+      display: "'test/testReducer'",
+      type: 'string',
+    },
+  ])
+  request('configurationDone')
+
+  // Act
+  const variables = readScope(request, 'Recorded inspections')
+
+  // Assert
+  assert.deepEqual(variables, [
+    {
+      name: 'type',
+      value: "'test/testReducer'",
+      type: 'string',
+      variablesReference: 0,
+    },
+  ])
+})
+
+// protects=the Recorded inspections rows in native Variables carry no bidirectional or terminal control, as the Study's display copy does; fails_when=a recorded path, display or type holding U+202E/U+202C reaches the Variables response and reorders the row; no_claim=the stored history (kept as recorded) and real editor rendering
+test('recorded inspections hide bidirectional controls from native Variables, as the Study does', () => {
+  // Arrange
+  const { adapter, request } = harness()
+  adapter.select(recorded(), 'Recorded', undefined, [
+    {
+      path: 'abc\u202Etxt\u202C',
+      mode: 'value',
+      display: "'abc\u202Etxt\u202C'",
+      type: 'str\u202Eing\u202C',
+    },
+    {
+      path: 'kind\u202E',
+      mode: 'type',
+      display: 'num\u202Cber',
+    },
+  ])
+  request('configurationDone')
+
+  // Act
+  const variables = readScope(request, 'Recorded inspections')
+
+  // Assert
+  assert.deepEqual(variables, [
+    {
+      name: 'abctxt',
+      value: "'abctxt'",
+      type: 'string',
+      variablesReference: 0,
+    },
+    {
+      name: 'kind',
+      value: 'Value not recorded (only its type was recorded)',
+      type: 'number',
+      variablesReference: 0,
+    },
+  ])
+})
+
+// Value: protects=a nested path deeper than the captured tree stays readable at the stop; fails_when=a recorded action.payload is missing from Variables; why_new=capture depth 2 drops nested paths, which only the recorded inspection holds; seam=none; no_claim=the capture limits themselves
+test('a recorded nested inspection deeper than the captured tree is listed with its full path', () => {
+  // Arrange
+  const { adapter, request } = harness()
+  adapter.select(recorded(), 'Recorded', undefined, [
+    {
+      path: 'action.type',
+      mode: 'value',
+      display: "'todos/add'",
+      type: 'string',
+    },
+    {
+      path: 'action.payload',
+      mode: 'value',
+      display: "'Run tests'",
+      type: 'string',
+    },
+  ])
+  request('configurationDone')
+
+  // Act
+  const variables = readScope(request, 'Recorded inspections')
+
+  // Assert
+  assert.deepEqual(
+    variables?.map(({ name, value }) => `${name} = ${value}`),
+    ["action.type = 'todos/add'", "action.payload = 'Run tests'"],
+  )
+})
+
+// Value: protects=the recorded inspections show in the Variables of the frame native Call Stack focuses when the top frame has no source; fails_when=the scope stays on the source-less top frame, so the focused frame's Variables never list the recorded values; why_new=CodeRabbit CLI round 1 (Cycle 0067); seam=none; no_claim=real VS Code focus rendering
+test('the recorded inspections sit on the first frame with source when the top frame has none', () => {
+  // Arrange
+  const { adapter, request } = harness()
+  const snapshot = recorded()
+  snapshot.variables.push({ name: 'queued', value: '1', children: [] })
+  snapshot.frames.unshift({
+    name: 'processTicksAndRejections',
+    line: 95,
+    column: 5,
+    scopes: [{ name: 'Internal', variables: [1] }],
+  })
+  adapter.select(snapshot, 'Recorded', undefined, [
+    { path: 'amount', mode: 'value', display: '120', type: 'number' },
+  ])
+  request('configurationDone')
+  const frames = request('stackTrace', { threadId: 1 }).body.stackFrames
+
+  // Act
+  const scopeNamesOf = (frameId: number) =>
+    request('scopes', { frameId }).body.scopes.map(
+      (scope: DebugProtocol.Scope) => scope.name,
+    )
+
+  // Assert
+  assert.deepEqual(scopeNamesOf(frames[0].id), ['Internal'])
+  assert.deepEqual(scopeNamesOf(frames[1].id), [
+    'Locals',
+    'Recorded inspections',
+  ])
+})
+
+// Value: protects=the recorded inspections stay readable when the first frame with source lies past the first Call Stack page; fails_when=the scope sits on that unloaded frame while native Variables shows the top frame, so the recorded values are unreachable; why_new=CodeRabbit CLI round 2 (Cycle 0067); seam=none; no_claim=real VS Code paging
+test('the recorded inspections sit on the top frame when the first frame with source lies past the first Call Stack page', () => {
+  // Arrange
+  const { adapter, request } = harness()
+  const snapshot = recorded()
+  const libraryFrames = Array.from(
+    { length: REPLAY_DEBUG_NATIVE_STACK_PAGE_FRAMES },
+    (_, index) => ({
+      name: `library${index}`,
+      line: 1,
+      column: 1,
+      scopes: [],
+    }),
+  )
+  snapshot.frames.unshift(...libraryFrames)
+  adapter.select(snapshot, 'Recorded', undefined, [
+    { path: 'amount', mode: 'value', display: '120', type: 'number' },
+  ])
+  request('configurationDone')
+  const frames = request('stackTrace', { threadId: 1 }).body.stackFrames
+
+  // Act
+  const scopeNames = request('scopes', {
+    frameId: frames[0].id,
+  }).body.scopes.map((scope: DebugProtocol.Scope) => scope.name)
+
+  // Assert
+  assert.ok(scopeNames.includes('Recorded inspections'))
+})
+
+// Value: protects=a withheld recorded value is never shown as a value; fails_when=a type-only inspection displays its type as if it were the value; why_new=the replay never listed recorded inspections before; seam=none; no_claim=redaction rules of the capture
+test('an inspection recorded with only its type says its value was not recorded', () => {
+  // Arrange
+  const { adapter, request } = harness()
+  adapter.select(recorded(), 'Recorded', undefined, [
+    { path: 'token', mode: 'type', display: 'string' },
+  ])
+  request('configurationDone')
+
+  // Act
+  const variables = readScope(request, 'Recorded inspections')
+
+  // Assert
+  assert.deepEqual(variables, [
+    {
+      name: 'token',
+      value: 'Value not recorded (only its type was recorded)',
+      type: 'string',
+      variablesReference: 0,
+    },
+  ])
+})
+
+// Value: protects=a stop without recorded inspections shows no empty scope; fails_when=an extra scope appears for a stop that recorded no inspection; why_new=guards the new scope against always being added; seam=none; no_claim=none
+test('a stop without recorded inspections shows only its captured scopes', () => {
+  // Arrange
+  const { adapter, request } = harness()
+  adapter.select(recorded(), 'Recorded', undefined, [])
+  request('configurationDone')
+  const frame = request('stackTrace', { threadId: 1 }).body.stackFrames[0]
+
+  // Act
+  const scopes = request('scopes', { frameId: frame.id }).body.scopes
+
+  // Assert
+  assert.deepEqual(
+    scopes.map((scope: DebugProtocol.Scope) => scope.name),
+    ['Locals'],
+  )
 })

@@ -1,3 +1,7 @@
+import {
+  NODE_TEST_FACT_PATH_LIMIT_CHARS,
+  REPOSITORY_LITERAL_LIMIT_CHARS,
+} from '../constants'
 import type { NodeTestHistoryIndex } from '../nodeTestHistorySchemas'
 
 import type {
@@ -94,6 +98,45 @@ function sanitizeServerReplayModel(
   }
 }
 
+type TestShapedFacts = Extract<TestShapedEntry, { type: 'stop' }>['facts']
+
+/**
+ * Reads the mode of a server fact key (`value:<path>` or `type:<path>`); called by {@link toTestShapedFacts} for each recorded fact.
+ * @param key - The recorded fact key.
+ * @returns `'value'`, `'type'`, or `undefined` for a key without a known mode.
+ * @example recordedFactMode('value:req.url') // => 'value'
+ */
+function recordedFactMode(key: string): 'value' | 'type' | undefined {
+  if (key.startsWith('value:')) return 'value'
+  if (key.startsWith('type:')) return 'type'
+  return undefined
+}
+
+/**
+ * Turns a server stop's recorded facts (a record keyed `<mode>:<path>`, written by the server history sink) into the fact list the shared replay path hands the native debugger, in recorded order; called by {@link toTestShapedHistory}.
+ * @param facts - The stop's recorded facts; a key without a known `value:` or `type:` mode is skipped, never guessed.
+ * @returns One fact per readable key; a displayed value that is not text is shown as its JSON.
+ * @example toTestShapedFacts({ 'value:req.url': '/a' }) // => [{ path: 'req.url', mode: 'value', display: '/a' }]
+ */
+function toTestShapedFacts(facts: Record<string, unknown>): TestShapedFacts {
+  return Object.entries(facts).flatMap(([key, value]) => {
+    const mode = recordedFactMode(key)
+    if (!mode) return []
+    const path = stripTerminalControls(key.slice(mode.length + 1))
+    const display = stripTerminalControls(
+      typeof value === 'string' ? value : JSON.stringify(value),
+    )
+    // A fact the shared test fact schema refuses (empty or over-long path, over-long display) is skipped, never truncated.
+    if (
+      path.length === 0 ||
+      path.length > NODE_TEST_FACT_PATH_LIMIT_CHARS ||
+      display.length > REPOSITORY_LITERAL_LIMIT_CHARS
+    )
+      return []
+    return [{ path, mode, display }]
+  })
+}
+
 /**
  * Maps a model's learner events onto the entry types the workspace's replay path knows: a stop keeps its snapshot and position, an output keeps its channel and text, and the request, the withdrawal, the response and the failure are non-stop moments (`result` entries with no exit code), which every surface treats as the 4A moments they are.
  * Called by {@link adaptServerReplay} for the stored model and for the shown one.
@@ -124,7 +167,7 @@ function toTestShapedHistory(model: ServerReplayModel): NodeTestHistoryIndex {
           line: event.source.line,
           column: event.source.column,
         },
-        facts: [],
+        facts: toTestShapedFacts(event.facts),
         debuggerSnapshot: event.debuggerSnapshot,
       }
     return {

@@ -27816,6 +27816,8 @@ export class StudyWorkspace {
           }),
           new AbortController().signal,
           { uri: slotUri.toString(), hash: verifiedStop.source.hash },
+          // The stop's recorded inspections, so values outside the captured scopes stay inspectable in the native debugger.
+          verifiedStop.facts,
         ),
     )
     if (this.isNodeHistoryRequestOutdated(request, isCurrent)) return false

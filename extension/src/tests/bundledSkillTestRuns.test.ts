@@ -24,12 +24,12 @@ test('the bundled skill routes a question about a test, or about library behavio
 })
 
 // Value: protects=the skill's version being the one the release names, in one place; fails_when=the skill text changes without its version moving, or the version moves without this pin; why_new=F86 (the version was pinned inside the routing test); seam=none; no_claim=the wording of the skill
-test('the bundled skill declares version 1.0.60 in its metadata', async () => {
+test('the bundled skill declares version 1.0.61 in its metadata', async () => {
   // Arrange / Act
   const skill = await readBundledSkill()
 
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.60"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.61"\n'))
 })
 
 // Value: protects=a test stop explained in chat, never through codebook_explain, which belongs to the browser profile; fails_when=the skill tells the chat to save every committed pause with codebook_explain, which refuses a test stop; why_new=1.0.45 said codebook_explain at every pause of any run (C49-7, AC9); seam=none; no_claim=the refusal codebook_explain gives a test stop (service tests)
@@ -145,6 +145,19 @@ test('the bundled skill sends a learner in a Copilot-harness chat to a Local cha
   assert.match(
     skill,
     /In a Copilot-harness chat[^\n]*cannot reach Codebook, tell the learner to open a Local chat session/,
+  )
+})
+
+// Value: protects=a chat summary or table of a test run labelling a value observed only when the run recorded it (a stop's captured facts or the test result), a value derived from test or source code staying source reasoning even inside a table of observed values; fails_when=the Test runs paragraph drops the rule, so a chat tabulates a mock's return value or an assertion's expected value as observed (Cycle 0067 F2, Cursor Agent Grok 4.6 High); why_new=skill 1.0.61 separated observed facts from source reasoning only in general, not for summaries and tables; seam=none; no_claim=model behavior (text pin only)
+test('the bundled skill labels a value observed in a test summary or table only when the run recorded it and derived values source reasoning', async () => {
+  // Arrange / Act
+  const skill = await readBundledSkill()
+
+  // Assert
+  assert.ok(
+    skill.includes(
+      "In a summary or a table, label a value observed only when it appears in a stop's captured facts or in the test result; a value you derived from source or test code (a mock's return value, an assertion's expected value, a consequence the run did not pause at) is source reasoning, labeled so even in a table of otherwise observed values.",
+    ),
   )
 })
 

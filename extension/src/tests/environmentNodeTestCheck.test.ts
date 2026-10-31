@@ -276,3 +276,51 @@ test('a start refused for an unreadable or outside Vitest is planned once the le
     ],
   )
 })
+
+// Value: protects=a package test start whose root-claim Vitest listing passes the preparation deadline ending with the test-run recovery, not the browser-click wording of RUNTIME_FAILED; fails_when=the pre-history check lets the listing's deadline error reach the generic RUNTIME_FAILED conversion, so the start answers "do not retry the click" with no history and no click; why_new=Cycle 0067 /ship pass 1 (the F5 recovery was applied only inside the owned run's prepare); seam=real repository files with a root config and a package config, the editor and its settings are fakes, the start's deadline has already passed; no_claim=a real Vitest listing, a failed (non-deadline) root listing, which goes on in the package
+test('a package test start whose root Vitest listing passes the preparation deadline names a test-run recovery, not the click wording', async (context) => {
+  // Arrange
+  const run = await environmentWithRepository(context, {
+    withProgram: true,
+    openDocuments: () => [],
+  })
+  const packageTest = 'packages/scheduler/src/job.test.ts'
+  await mkdir(join(run.workspace, 'packages/scheduler/src'), {
+    recursive: true,
+  })
+  await writeFile(
+    join(run.workspace, 'vitest.config.ts'),
+    'export default {}\n',
+  )
+  await writeFile(
+    join(run.workspace, 'packages/scheduler/vite.config.ts'),
+    'export default {}\n',
+  )
+  await writeFile(join(run.workspace, packageTest), TEST_TEXT)
+  const configuration: NodeTestConfiguration = {
+    ...run.configuration,
+    testFile: packageTest,
+    testHash: sha256(TEST_TEXT),
+  }
+  const expired = { ...CONTROL, deadlineAt: Date.now() - 1 }
+
+  // Act
+  const refusal = await run.environment
+    .checkNodeTestFiles?.(configuration, run.citedSources, expired)
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+  // Assert
+  assert.deepEqual((refusal as { describe(): unknown }).describe(), {
+    code: 'RUNTIME_FAILED',
+    message:
+      'The node-test run ended before its first stop: Vitest did not list the cited test file in time.',
+    cause:
+      "node-test's preparation deadline passed before Vitest could list packages/scheduler/src/job.test.ts from the repository root.",
+    recovery:
+      "Vitest itself ended the run before the test's first stop; no stop was recorded and no learning was saved. Read the cause for Vitest's own error (after launch it is also in the Codebook test output) and fix what it names in the test's Vitest root, for example install the missing dependency, correct the config, or make testTitles name the cited test exactly. Then start a new run deliberately with a new key; never retry automatically.",
+    docs: 'codebook://help/errors',
+  })
+})

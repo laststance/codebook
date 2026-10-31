@@ -790,3 +790,64 @@ test('source discovery runs no clean filter, textconv driver or external diff th
     { files: ['src/module.ts'], ran: [] },
   )
 })
+
+// Value: protects=the learner whose project tracks more than 5,000 names (TanStack Query tracks 5,173): source discovery lists it and pages its first 100 names instead of refusing the whole catalog; fails_when=the tracked-name cap sits below a real project's size, so discovery refuses with LIMIT_EXCEEDED and no Codebook feature can start there; why_new=Cycle 0067 F1 (observed natively on TanStack Query c9c00015); seam=none (real Git, 5,001 real tracked files made by one add of all files); no_claim=the speed of discovery on a repository near the new cap
+test('source discovery lists a repository of 5,001 tracked source files and pages its first 100 names', async (context) => {
+  // Arrange: 5,001 tracked eligible files, written with the filesystem and tracked by one add.
+  const { directory, sources } = await sourceHarness(context)
+  await mkdir(join(directory, 'src'), { recursive: true })
+  for (let index = 0; index <= 5_000; index += 1)
+    await writeFile(
+      join(directory, 'src', `f${String(index).padStart(4, '0')}.ts`),
+      'export const price = 24;\n',
+    )
+  await executeFile('git', ['add', '-A'], { cwd: directory })
+  // Act
+  const page = await sources.list()
+  // Assert
+  assert.equal(page.trackedCount, 5_001)
+  assert.equal(page.eligibleCount, 5_001)
+  assert.equal(page.files.length, 100)
+  assert.equal(page.files[0], 'src/f0000.ts')
+  assert.equal(page.files[99], 'src/f0099.ts')
+})
+
+// Value: protects=the learner whose repository tracks few but very long names, so Git's tracked listing outgrows its output buffer before the entry cap is reached: discovery refuses it as LIMIT_EXCEEDED like the entry cap, not as a missing Git; fails_when=a buffer overflow of the listing ends as PREREQUISITE_MISSING ("requires Git, a working-tree root and a bounded readable index"), which tells the learner to fix a Git that works; why_new=Cycle 0067 /ship pass 1 (red team: the buffer, not only the entry cap, can refuse an oversized repository); seam=none (real Git; 9,000 index entries of 4,000-character names added with update-index, no files on disk); no_claim=the speed of discovery near the buffer
+test('source discovery refuses a repository whose tracked listing outgrows the Git output buffer as over the limit, not as a missing Git', async (context) => {
+  // Arrange: 9,000 index-only entries of 4,000-character names, about 36 MB of NUL-separated listing, well under the 50,000-entry cap.
+  const { directory, sources } = await sourceHarness(context)
+  const emptyBlob = 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391'
+  await executeFile('git', ['hash-object', '-w', '/dev/null'], {
+    cwd: directory,
+  }).then(() => undefined)
+  const longName = 'a'.repeat(3_990)
+  const indexInfo = Array.from(
+    { length: 9_000 },
+    (_, index) =>
+      `100644 ${emptyBlob}\t${longName}${String(index).padStart(6, '0')}.ts\n`,
+  ).join('')
+  const updating = executeFile(
+    'git',
+    ['update-index', '--add', '--index-info'],
+    {
+      cwd: directory,
+      maxBuffer: 1_048_576,
+    },
+  )
+  updating.child.stdin?.end(indexInfo)
+  await updating
+
+  // Act
+  const refusal = await sources.list().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.ok(refusal instanceof StudyError)
+  assert.equal(refusal.code, 'LIMIT_EXCEEDED')
+  assert.equal(
+    refusal.message,
+    "Repository's tracked file listing is larger than 33554432 bytes; no partial source catalog was returned.",
+  )
+})

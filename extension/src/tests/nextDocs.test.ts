@@ -541,7 +541,7 @@ test('the bundled skill relays the recovery the run gives for NEXT_SETUP_DEADLIN
   assert.ok(meaning.includes('The recovery the run gives fits that step'))
   assert.ok(
     section.includes(
-      "- **What the bundled skill does (1.0.60).** The chat sends a question about a Pages Router page to `next-dev-webpack` as it does for an App Router page, tells you a refusal's code with the recovery of that code's section in the help (for `NEXT_SETUP_DEADLINE`, the recovery the run itself gives for the step it reached: one retry, a corrected `entryPath`, the input selector, or reading the captured history first),",
+      "- **What the bundled skill does (1.0.61).** The chat sends a question about a Pages Router page to `next-dev-webpack` as it does for an App Router page, tells you a refusal's code with the recovery of that code's section in the help (for `NEXT_SETUP_DEADLINE`, the recovery the run itself gives for the step it reached: one retry, a corrected `entryPath`, the input selector, or reading the captured history first),",
     ),
   )
 })

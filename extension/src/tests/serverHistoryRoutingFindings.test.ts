@@ -92,8 +92,8 @@ test('learning material saved for a server study id is kept with the server hist
   )
 })
 
-// protects=an event-detail URI of a test history answers the not-found shape the resources use for an unknown resource; fails_when=it answers an invalid-cursor error; no_claim=server histories' own event detail
-test('an event detail URI of a test history is answered as an unknown resource', async (context) => {
+// protects=a cumulative events URI (events/through/<n>), which only server histories serve, answers a test history with the not-found shape the resources use for an unknown resource; fails_when=it answers an invalid-cursor error or a page; no_claim=a test history's own events/<sequence> detail (nodeTestHistoryLeanEvents)
+test('a cumulative events URI of a test history is answered as an unknown resource', async (context) => {
   // Arrange
   const harness = await createHarness()
   context.after(() => harness.close())
@@ -103,19 +103,13 @@ test('an event detail URI of a test history is answered as an unknown resource',
   const { studyId } = await saveTwoStopNodeHistory(repository.testHistories)
 
   // Act
-  const refusals = await Promise.all(
-    [`events/3`, `events/through/3`].map((suffix) =>
-      readResource(
-        harness.service,
-        `codebook://node-history/${studyId}/${suffix}`,
-      ).catch((error: unknown) => error),
-    ),
-  )
+  const refusal = await readResource(
+    harness.service,
+    `codebook://node-history/${studyId}/events/through/3`,
+  ).catch((error: unknown) => error)
 
   // Assert
-  for (const refusal of refusals) {
-    assert.ok(refusal instanceof StudyError)
-    assert.equal(refusal.code, 'NOT_FOUND')
-    assert.equal(refusal.message, 'Unknown resource.')
-  }
+  assert.ok(refusal instanceof StudyError)
+  assert.equal(refusal.code, 'NOT_FOUND')
+  assert.equal(refusal.message, 'Unknown resource.')
 })

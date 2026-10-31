@@ -4,6 +4,7 @@ import { configuredDescriptorSchema } from './configuredStudySchemas'
 import {
   LEARNING_SUMMARY_LIMITS,
   MAX_EXPLANATION_CHARS,
+  NODE_TEST_FACT_PATH_LIMIT_CHARS,
   NODE_TEST_FACT_TYPE_LIMIT_CHARS,
   NODE_TEST_HISTORY_MAX_ENTRIES,
   NODE_TEST_HISTORY_HEADER_VERSION,
@@ -37,7 +38,7 @@ const source = z.strictObject({
   column: z.number().int().positive(),
 })
 const fact = z.strictObject({
-  path: z.string().min(1).max(256),
+  path: z.string().min(1).max(NODE_TEST_FACT_PATH_LIMIT_CHARS),
   mode: z.enum(['value', 'type']),
   display: z.string().max(REPOSITORY_LITERAL_LIMIT_CHARS),
   type: z.string().max(NODE_TEST_FACT_TYPE_LIMIT_CHARS).optional(),

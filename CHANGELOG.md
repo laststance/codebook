@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.2.68.0] - 2026-10-31 (development candidate)
+
+Cycle 0067 ([Issue #170](https://github.com/laststance/codebook/issues/170)), a feature cycle: a library test that renders or reads the DOM under **jsdom** (or **happy-dom**) is explained live from a natural `/codebook` question, saved and replayed, in VS Code and in Cursor. The native run-check on TanStack Query, Redux Toolkit, react-redux and nsx found six defects; each is fixed here with a test that fails without it.
+
+**A test runs in the environment its Vitest root config sets.** `node-test` passes no `--environment`, so a package's `jsdom` or `happy-dom` setting applies as with the package's own `vitest`; the environment changes only through that config or the test file's `// @vitest-environment` comment. Verified on macOS: jsdom with Vitest 5 in VS Code (Copilot Chat) and Cursor (Agent), jsdom with Vitest 4 and happy-dom with Vitest 5 in VS Code (Copilot Chat).
+
+**Large repositories open.** Source discovery lists up to 50,000 tracked entries (was 5,000), so a monorepo such as TanStack Query (5,173 tracked files) no longer refuses every run before it starts. A repository whose tracked names make Git's listing larger than 32 MiB is refused as over the limit, like one past the entry cap, instead of as a missing Git.
+
+**A big test replay saves.** A test history's events list is lean (sequence, path, line, source hash and facts per stop, never the executed source text), and `events/<sequence>` gives one entry in full, as server histories already do. A stop in a large test file no longer makes the history too long for the chat to read before it saves.
+
+**Values a Proxy holds are recorded under an honest name.** A declared step that only a Proxy's `[[Target]]` holds, such as a field of TanStack Query's tracked result, is now recorded under the path that names the hop (`state.[[Target]].status` for the declared `state.status`), up to three nested levels, instead of leaving the value out. Codebook never runs the Proxy's get trap, so the declared path itself is named among the stop's limitations and the history seals partial, because the program may read another value than the target holds.
+
+**Recorded values stay inspectable in the replay.** A test or server replay's native debugger lists the stop's recorded inspections in a read-only **Recorded inspections** scope, closure values and paths deeper than the captured tree included, on the frame Call Stack focuses; control characters are removed from those rows, as the Study's own display removes them.
+
+**A run that Vitest itself ends says what to fix.** A run whose cited test file Vitest could not list (a missing environment package, for example), whose listing timed out (the repository root's listing for a package test included), or whose test exited before its first stop now says so and gives a test-run recovery (fix what Vitest's own error names in the Vitest root, then start a new run deliberately) instead of the browser-click wording.
+
+**Skill 1.0.61.** In a summary or a table the chat labels a value observed only when the run recorded it; a value derived from source or test code (a mock's return value, an assertion's expected value) stays source reasoning.
+
+**Known limits.** Development trials only (no final-row credit): VS Code 1.144.0 and Cursor 3.27.22 on macOS 26, Vitest 4.1.11 and 5.0.x. A natural question can still declare an inspection path of more than four segments; the start refuses it with the field named and the chat corrects it. Copilot Chat may ask to continue iterating on a long run.
+
+**Compatibility.** MCP API 1.12 is unchanged; the test history events resource is now lean, and `events/<sequence>` is new. Saved studies and histories keep their formats. To update, install this VSIX, reopen the work window and, in Cursor, run **Codebook: Set Up AI Chat** so the managed skill updates to 1.0.61.
+
 ## [0.2.67.0] - 2026-10-31 (development candidate)
 
 Cycle 0066 ([Issue #168](https://github.com/laststance/codebook/issues/168)), a bug-fix cycle: it fixes every defect Cycle 0065 carried in the Next Pages Router runs, so refusals, routing, masking and help say and do the same thing. No new feature.
