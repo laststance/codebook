@@ -49,6 +49,26 @@ test('a Pages launch failure of a Turbopack dev script with a preparation step n
   ])
 })
 
+// Value: protects=a Pages launch or compile failure of a dev script that only sets an environment setting before next dev still names that setting, as the readiness notes do; fails_when=a none preparation drops its envSettings sentence at failure; why_new=Cycle 0066 task 45 (env-only dev script lost its unapplied-environment sentence); seam=temporary package.json; no_claim=the setting's value, which is never named
+test('a Pages launch failure of a dev script that only sets NODE_OPTIONS names the environment setting Codebook does not apply', async (context) => {
+  // Arrange
+  const workspace = await projectWithDevScript(context, {
+    dev: 'NODE_OPTIONS=--max-old-space-size=8192 next dev',
+  })
+  // Act
+  const notes = await describeNextLaunchFailure({
+    workspace,
+    nextVersion: '16.4.3',
+    port: 3000,
+  })
+  // Assert
+  assert.deepEqual(notes, [
+    'Codebook does not apply these environment settings from scripts.dev: NODE_OPTIONS.',
+    'Codebook runs your Next app with webpack (`next dev --webpack`) even when your dev script uses Turbopack. The page is built from the same source; a Turbopack-only loader or setting has no effect during the run.',
+    'Codebook ran Next 16.4.3 as `next dev --webpack --hostname 127.0.0.1 --port 3000`.',
+  ])
+})
+
 // Value: protects=a dev script that already asks for webpack and prepares nothing adds no note; fails_when=the compatibility sentence or a preparation sentence appears; why_new=Cycle 0065 Turbopack hint only without --webpack; seam=temporary package.json; no_claim=none
 test('a Pages launch failure of a plain webpack dev script adds no note', async (context) => {
   // Arrange
@@ -164,6 +184,7 @@ test('a secret passed in a dev script flag reaches no port refusal, readiness no
   ])
   assert.equal(JSON.stringify(readiness).includes('SECRET-VALUE'), false)
   assert.deepEqual(launchFailure, [
+    'Codebook does not apply these environment settings from scripts.dev: NEXT_TELEMETRY_DISABLED.',
     'Codebook runs your Next app with webpack (`next dev --webpack`) even when your dev script uses Turbopack. The page is built from the same source; a Turbopack-only loader or setting has no effect during the run.',
     'Codebook ran Next 16.0.1 as `next dev --webpack --hostname 127.0.0.1 --port 3000`.',
   ])
