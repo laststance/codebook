@@ -389,3 +389,22 @@ test('the bundled skill routes Pages Router pages to the Next adapter and re-rea
     ),
   )
 })
+
+// protects=the browser route forbidding edits of the learner's project to make a run reach its stops, not only to make it start; fails_when=the rule goes back to "to make a run start", which a chat read as allowing edits of page code and API constants once the run had started; why_new=N65 Cursor trial (Cycle 0065): Grok 4.6 High edited the page's padding and the API's page size so a declared click would land; no_claim=how a chat follows it
+test('the bundled skill forbids editing the project to make a browser run start or reach its stops', async () => {
+  // Arrange
+  const skill = await readFile(
+    join(__dirname, '..', '..', 'skills', 'codebook', 'SKILL.md'),
+    'utf8',
+  )
+  // Act
+  const paragraph =
+    skill.split('\n\n').find((part) => part.startsWith('**Browser runs.**')) ??
+    ''
+  // Assert
+  assert.ok(
+    paragraph.includes(
+      "Never edit the project's files, config or scripts to make a run start or reach its stops; when the page itself keeps the declared action from happening, tell the learner what blocks it.",
+    ),
+  )
+})
