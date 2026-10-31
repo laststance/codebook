@@ -68,10 +68,10 @@ async function readerWithRecordedLookups() {
   const loaded = await loadModule<typeof ReadNextRouteManifestsModule>(
     resolve(__dirname, '../utils/readNextRouteManifests.js'),
     {
-      './hasNextAppPageSource': {
-        hasNextAppPageSource: async (_workspace: string, appKey: string) => {
+      './nextAppPageSourceKindOf': {
+        nextAppPageSourceKindOf: async (_workspace: string, appKey: string) => {
           lookups.push(appKey)
-          return true
+          return 'found'
         },
       },
       './findNextPagesSource': {
@@ -340,6 +340,61 @@ test('a more specific Pages route whose source is gone stays a conflict with the
     appKey: '/[slug]/page',
     pagesRoute: '/about',
     pagesCompiledPath: 'pages/about.js',
+  })
+})
+
+// Value: protects=a more specific App route whose source has another extension (a custom pageExtensions) is told apart from a gone source, so it is not called a stale listing; fails_when=the page.mdx source reads as gone and the pair becomes a conflict; why_new=Cycle 0066 task 20 (Cycle 0065 fix-check 1); seam=none; no_claim=a real mixed project's dev server with pageExtensions
+test('a more specific App route whose source has another extension is no stale conflict but a custom pageExtensions case', async (context) => {
+  // Arrange
+  const workspace = await workspaceWithFolders(context, ['app/about', 'pages'])
+  await writeFile(join(workspace, 'app/about/page.mdx'), '# About\n')
+  await writeFile(join(workspace, 'pages/[...slug].tsx'), 'export default 1\n')
+  const fake = scriptedManifests([
+    {
+      [ROUTES]: ROUTES_TEXT,
+      [APP]: '{"/about/page":"app/about/page.js"}',
+      [PAGES]: '{"/[...slug]":"pages/[...slug].js"}',
+    },
+  ])
+  // Act
+  const manifests = await readNextRouteManifests({
+    workspace,
+    entryPath: '/about',
+    ...fake,
+  })
+  // Assert
+  assert.deepEqual(manifests, {
+    settings: {},
+    kind: 'appCustomExtension',
+    appKey: '/about/page',
+  })
+})
+
+// Value: protects=a more specific Pages route whose source has another extension (a custom pageExtensions) wins the contest, so the Pages run refuses it for that extension instead of calling it stale; fails_when=the about.mdx source reads as gone and the pair becomes a conflict; why_new=Cycle 0066 task 21 (Cycle 0065 fix-check 1); seam=none; no_claim=a real mixed project's dev server with pageExtensions
+test('a more specific Pages route whose source has another extension wins the contest instead of a stale conflict', async (context) => {
+  // Arrange
+  const workspace = await workspaceWithFolders(context, ['app/[slug]', 'pages'])
+  await writeFile(join(workspace, 'app/[slug]/page.tsx'), 'export default 1\n')
+  await writeFile(join(workspace, 'pages/about.mdx'), '# About\n')
+  const fake = scriptedManifests([
+    {
+      [ROUTES]: ROUTES_TEXT,
+      [APP]: '{"/[slug]/page":"app/[slug]/page.js"}',
+      [PAGES]: '{"/about":"pages/about.js"}',
+    },
+  ])
+  // Act
+  const manifests = await readNextRouteManifests({
+    workspace,
+    entryPath: '/about',
+    ...fake,
+  })
+  // Assert
+  assert.deepEqual(manifests, {
+    settings: {},
+    kind: 'pages',
+    route: '/about',
+    compiledPath: 'pages/about.js',
   })
 })
 

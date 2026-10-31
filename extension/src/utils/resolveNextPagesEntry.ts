@@ -16,9 +16,9 @@ import {
   findNextRouteFolder,
   type NextRouteFolder,
 } from './findNextRouteFolder'
-import { hasNextAppPageSource } from './hasNextAppPageSource'
 import { keepUtf8Tail } from './keepUtf8Tail'
 import { maskNextServerOutput } from './maskNextServerOutput'
+import { nextAppPageSourceKindOf } from './nextAppPageSourceKindOf'
 import { nextServerOnlyFileReason } from './nextServerOnlyFileReason'
 import type {
   NextRouteManifests,
@@ -69,7 +69,7 @@ export type NextPagesEntryFacts = {
  * Why it exists: every refusal must happen before the browser opens, so the run's cleanup only stops the owned server, and an agent reads the most actionable code first (a setting the learner decides on comes before a redirect, a redirect before a missing route, a resolved route's own source before the error its page answered). Called by the configured browser run after the structured entry check and {@link readNextRouteManifests}. Every path a message names is origin-less and redacted ({@link redactNextEntryPath}); quoted server output is masked ({@link maskNextServerOutput}); a `routes-manifest.json` redirect or rewrite source never enters a message.
  * @param facts - The entry path, the server's answer, the manifests' answer, the Next version and the output to quote.
  * @returns The Pages route, its compiled page, its source and its folder.
- * @throws A {@link nextRefusal}: `NEXT_UNSUPPORTED_SETTING`, `NEXT_ENTRY_REDIRECTED`, `NEXT_ROUTE_NOT_COMPILED`, `NEXT_ROUTE_CONFLICT` or `NEXT_ROUTE_NOT_FOUND`.
+ * @throws A {@link nextRefusal}: `NEXT_UNSUPPORTED_SETTING`, `NEXT_ENTRY_REDIRECTED`, `NEXT_ROUTE_NOT_COMPILED`, `NEXT_ROUTE_CONFLICT` or `NEXT_ROUTE_NOT_FOUND` (also for a more specific App route whose source has a custom `pageExtensions` extension).
  * @example
  * await resolveNextPagesEntry({ workspace, entryPath: '/', entry: { status: 200 }, manifests: { settings: {}, kind: 'pages', route: '/', compiledPath: 'pages/index.js' }, outputTail, compileFailureSentences })
  * // => { route: '/', compiledPath: 'pages/index.js', source: 'src/pages/index.tsx', folder: 'src/pages' }
@@ -92,6 +92,14 @@ export async function resolveNextPagesEntry(
     throw await conflictRefusal(facts.workspace, facts.entryPath, manifests)
   if (manifests.kind === 'unresolved')
     throw await unresolvedRefusal(facts, manifests.manifests.app)
+  // The App route Next serves exists only with another extension, which Codebook does not read.
+  if (manifests.kind === 'appCustomExtension')
+    throw customPageExtensionsRefusal(
+      'App',
+      manifests.appKey,
+      facts.entryPath,
+      (await findNextRouteFolder(facts.workspace, 'app')) ?? 'app',
+    )
   const resolved = await pagesEntryOf(
     facts.workspace,
     facts.entryPath,
@@ -208,7 +216,7 @@ async function serverOutputSentences(
 }
 
 /**
- * Refuses an entry path both route manifests list, saying "stale" when one of the two pages has no source any more; called by {@link resolveNextPagesEntry}.
+ * Refuses an entry path both route manifests list, saying "stale" when one of the two pages has no source any more (no file with its stem: a source with another extension, a custom `pageExtensions`, still exists); called by {@link resolveNextPagesEntry}.
  * @param workspace - The opened workspace.
  * @param entryPath - The configured entry path.
  * @param conflict - The App key and the Pages route both listing it.
@@ -222,15 +230,14 @@ async function conflictRefusal(
   entryPath: string,
   conflict: Extract<NextPagesManifests, { kind: 'conflict' }>,
 ): Promise<StudyError> {
-  const [pagesSource, appSourceExists] = await Promise.all([
+  const [pagesSource, appSource] = await Promise.all([
     findNextPagesSource(workspace, conflict.pagesCompiledPath),
-    hasNextAppPageSource(workspace, conflict.appKey),
+    nextAppPageSourceKindOf(workspace, conflict.appKey),
   ])
-  const goneSide = !appSourceExists
-    ? 'App'
-    : pagesSource.kind === 'missing'
-      ? 'Pages'
-      : undefined
+  const isPagesSourceGone =
+    pagesSource.kind === 'missing' && !pagesSource.otherExtension
+  const goneSide =
+    appSource === 'gone' ? 'App' : isPagesSourceGone ? 'Pages' : undefined
   const listing = `Both route manifests in .next/dev list the entry path ${redactNextEntryPath(entryPath)}: the App Router as ${redactNextEntryPath(conflict.appKey)} and the Pages Router as ${redactNextEntryPath(conflict.pagesRoute)}.`
   const advice = goneSide
     ? `The ${goneSide} source is gone, so the listing is stale: stop next dev and remove .next/dev yourself, then start again; Codebook never deletes it.`
@@ -280,9 +287,11 @@ async function pagesEntryOf(
 ): Promise<NextPagesEntry> {
   const lookup = await findNextPagesSource(workspace, resolved.compiledPath)
   if (lookup.kind === 'missing')
-    throw nextRefusal(
-      'NEXT_ROUTE_NOT_FOUND',
-      `The Pages route manifest lists ${redactNextEntryPath(resolved.compiledPath)} for the entry path ${redactNextEntryPath(entryPath)}, but no source file was found under ${lookup.folder} with ${EXTENSIONS_TRIED}; a custom pageExtensions is not read.`,
+    throw customPageExtensionsRefusal(
+      'Pages',
+      resolved.compiledPath,
+      entryPath,
+      lookup.folder,
     )
   // An API route answers requests but renders no page the browser could open.
   if (nextServerOnlyFileReason(lookup.path, lookup.folder) === 'api-route')
@@ -296,6 +305,29 @@ async function pagesEntryOf(
     source: lookup.path,
     folder: lookup.folder,
   }
+}
+
+/**
+ * Refuses a listed route without a `.tsx`, `.ts`, `.jsx` or `.js` source, the sign of a custom `pageExtensions` that Codebook does not read, so the learner knows another URL does not help; called by {@link pagesEntryOf} for the Pages route and by {@link resolveNextPagesEntry} for a more specific App route whose source has another extension.
+ * @param router - Which route manifest lists the route.
+ * @param listed - What that manifest lists: the compiled page of a Pages route (`pages/index.js`) or the App key (`/about/page`).
+ * @param entryPath - The configured entry path.
+ * @param folder - The router's folder that was searched, e.g. `src/pages` or `app`.
+ * @returns The `NEXT_ROUTE_NOT_FOUND` refusal.
+ * @example
+ * customPageExtensionsRefusal('App', '/about/page', '/about', 'app').message
+ * // => 'The App route manifest lists /about/page for the entry path /about, but no source file was found under app with .tsx, .ts, .jsx, .js; a custom pageExtensions is not read.'
+ */
+function customPageExtensionsRefusal(
+  router: 'App' | 'Pages',
+  listed: string,
+  entryPath: string,
+  folder: string,
+): StudyError {
+  return nextRefusal(
+    'NEXT_ROUTE_NOT_FOUND',
+    `The ${router} route manifest lists ${redactNextEntryPath(listed)} for the entry path ${redactNextEntryPath(entryPath)}, but no source file was found under ${folder} with ${EXTENSIONS_TRIED}; a custom pageExtensions is not read.`,
+  )
 }
 
 /**

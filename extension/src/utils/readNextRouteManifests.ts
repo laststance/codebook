@@ -11,7 +11,7 @@ import {
 import { compareNextRouterMatches } from './compareNextRouterMatches'
 import { findNextPagesSource } from './findNextPagesSource'
 import { findNextRouteFolder } from './findNextRouteFolder'
-import { hasNextAppPageSource } from './hasNextAppPageSource'
+import { nextAppPageSourceKindOf } from './nextAppPageSourceKindOf'
 import { nextManifestError, parseNextManifest } from './parseNextManifest'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
 import { resolveNextClientManifest } from './resolveNextClientManifest'
@@ -46,8 +46,16 @@ export type NextRouteManifests = { settings: NextRouteSettings } & (
       /** The Pages manifest value of the route, e.g. `pages/index.js`, so the conflict can ask whether the Pages source still exists. */
       pagesCompiledPath: string
     }
+  | {
+      /** The more specific App route serves the entry path, but its source has another extension than Next's defaults (a custom `pageExtensions`, which Codebook does not read), so the Pages run refuses it with `NEXT_ROUTE_NOT_FOUND`. */
+      kind: 'appCustomExtension'
+      appKey: string
+    }
   | { kind: 'unresolved'; manifests: { pages: boolean; app: boolean } }
 )
+
+/** What {@link contestedWinnerOf} decided for an entry path both route manifests match. */
+type ContestedWinner = 'app' | 'pages' | 'equal' | 'appCustomExtension'
 
 /**
  * Reads one manifest's text for {@link readNextRouteManifests}.
@@ -90,7 +98,7 @@ type ManifestRound = {
  * Reads Next's route manifests after the readiness GET of the entry path and says which router serves it, waiting for a cold compile to write them.
  * Called by the Next run between the readiness GET and sealing, so the run takes the App path, the Pages path or a refusal. It reads `.next/dev/routes-manifest.json` (settings), `.next/dev/server/app-paths-manifest.json` (absent in a project without App routes) and `.next/dev/server/pages-manifest.json`, again every {@link NEXT_MANIFEST_POLL_INTERVAL_MS} until the entry path resolves or {@link NEXT_MANIFEST_POLL_MS} passes. In a project with both an App and a Pages folder it waits until both manifests are readable, then judges a conflict once, at the end.
  * @param request - The workspace, entry path, abort signal and test seams.
- * @returns The settings, and `app`, `pages`, `conflict` or `unresolved` (with which manifests were readable).
+ * @returns The settings, and `app`, `pages`, `conflict`, `appCustomExtension` (a more specific App route whose source has a custom extension) or `unresolved` (with which manifests were readable).
  * @throws {@link nextManifestError} when a manifest is still unreadable or unparsable when the poll ends; the abort reason when the signal aborts.
  * @example
  * await readNextRouteManifests({ workspace: '/repo', entryPath: '/' })
@@ -319,24 +327,26 @@ function throwFailedRead(round: ManifestRound): void {
 }
 
 /**
- * Decides which router serves an entry path both route manifests match, for {@link classifyRound}: the more specific route as Next decides ({@link compareNextRouterMatches}), but only while its source still exists, so a stale listing left in `.next/dev` stays a conflict whose refusal names it as stale. Called by {@link readNextRouteManifests} once {@link throwFailedRead} found every read whole.
+ * Decides which router serves an entry path both route manifests match, for {@link classifyRound}: the more specific route as Next decides ({@link compareNextRouterMatches}), but only while its source still exists, so a stale listing left in `.next/dev` stays a conflict whose refusal names it as stale. A source with another extension (a custom `pageExtensions`) is no stale listing: the route wins and the Pages run refuses it for that extension. Called by {@link readNextRouteManifests} once {@link throwFailedRead} found every read whole.
  * @param round - The last round.
  * @param entryPath - The configured entry path.
  * @param workspace - The opened workspace, where the winning source is looked up.
  * @param signal - Ends the source lookups with the abort reason when the run is cancelled.
  * @returns
  * - `undefined` when at most one router matches
- * - `'app'` or `'pages'` for the more specific route whose source exists
- * - `'equal'` for an equally specific pair, or a more specific route whose source is gone
+ * - `'app'` or `'pages'` for the more specific route whose source exists; `'pages'` also when that source has another extension
+ * - `'appCustomExtension'` for a more specific App route whose source has another extension
+ * - `'equal'` for an equally specific pair, or a more specific route without any file of its source's stem (gone)
  * @example
  * await contestedWinnerOf(round, '/about', '/repo') // => 'app' for app/about/page.tsx beside pages/[...slug].tsx
+ * await contestedWinnerOf(round, '/about', '/repo') // => 'appCustomExtension' for app/about/page.mdx beside pages/[...slug].tsx
  */
 async function contestedWinnerOf(
   round: ManifestRound,
   entryPath: string,
   workspace: string,
   signal?: AbortSignal,
-): Promise<'app' | 'pages' | 'equal' | undefined> {
+): Promise<ContestedWinner | undefined> {
   const { appRoute, pagesRoute } = round
   if (!appRoute || pagesRoute.kind !== 'matched') return undefined
   const winner = compareNextRouterMatches(
@@ -344,22 +354,32 @@ async function contestedWinnerOf(
     pagesRoute.route,
     entryPath,
   )
-  if (winner === 'app')
-    return (await hasNextAppPageSource(workspace, appRoute.key, signal))
-      ? 'app'
-      : 'equal'
-  if (winner === 'pages')
-    return (
-      await findNextPagesSource(workspace, pagesRoute.compiledPath, signal)
-    ).kind === 'missing'
+  if (winner === 'app') {
+    const source = await nextAppPageSourceKindOf(
+      workspace,
+      appRoute.key,
+      signal,
+    )
+    if (source === 'otherExtension') return 'appCustomExtension'
+    return source === 'found' ? 'app' : 'equal'
+  }
+  if (winner === 'pages') {
+    const lookup = await findNextPagesSource(
+      workspace,
+      pagesRoute.compiledPath,
+      signal,
+    )
+    // A source with another extension wins too: the Pages run refuses it for its custom pageExtensions.
+    return lookup.kind === 'missing' && !lookup.otherExtension
       ? 'equal'
       : 'pages'
+  }
   return winner
 }
 
 /**
  * Turns the last round of the poll, every read of it whole ({@link throwFailedRead}), into the answer, judging a conflict once, here; called by {@link readNextRouteManifests}.
- * When both routers match, the route {@link contestedWinnerOf} names serves the entry path; an equally specific pair, or a winner whose source is gone, is a conflict.
+ * When both routers match, the route {@link contestedWinnerOf} names serves the entry path; an equally specific pair, or a winner whose source is gone, is a conflict; a more specific App route whose source has another extension is `appCustomExtension`.
  * @param round - The last round.
  * @param winner - What {@link contestedWinnerOf} decided for a path both routers match.
  * @returns The settings and what the manifests say about the entry path.
@@ -368,10 +388,12 @@ async function contestedWinnerOf(
  */
 function classifyRound(
   round: ManifestRound,
-  winner: 'app' | 'pages' | 'equal' | undefined,
+  winner: ContestedWinner | undefined,
 ): NextRouteManifests {
   const settings = round.settings.state === 'read' ? round.settings.value : {}
   const { appRoute, pagesRoute } = round
+  if (appRoute && winner === 'appCustomExtension')
+    return { settings, kind: 'appCustomExtension', appKey: appRoute.key }
   if (appRoute && pagesRoute.kind === 'matched' && winner === 'equal')
     return {
       settings,

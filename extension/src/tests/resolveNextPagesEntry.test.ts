@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { StudyError } from '../errors'
+import { readNextRouteManifests } from '../utils/readNextRouteManifests'
 import {
   resolveNextPagesEntry,
   type NextPagesEntryFacts,
@@ -205,6 +206,143 @@ test('an entry path both route manifests list with both sources present asks to 
   assert.match(
     refusal.message,
     /Both sources exist; remove or rename one of the two pages/,
+  )
+})
+
+// Value: protects=an equally specific pair whose App source has another extension (a custom pageExtensions) is not called stale, since that source exists; fails_when=the page.mdx source reads as gone and the refusal says stale; why_new=Cycle 0066 task 20 (gone told apart from another extension); seam=none; no_claim=none
+test('an entry path both route manifests list with an App source of another extension is not called stale', async (context) => {
+  // Arrange
+  const workspace = await projectWith(context, [
+    'app/about/page.mdx',
+    'pages/about.tsx',
+  ])
+  // Act
+  const refusal = await refusalOf({
+    workspace,
+    entryPath: '/about',
+    entry: { status: 200 },
+    manifests: {
+      settings: {},
+      kind: 'conflict',
+      appKey: '/about/page',
+      pagesRoute: '/about',
+      pagesCompiledPath: 'pages/about.js',
+    },
+    outputTail: () => '',
+    compileFailureSentences: async () => [],
+  })
+  // Assert
+  assert.equal(refusal.code, 'NEXT_ROUTE_CONFLICT')
+  assert.equal(
+    refusal.message,
+    'Both route manifests in .next/dev list the entry path /about: the App Router as /about/page and the Pages Router as /about. Both sources exist; remove or rename one of the two pages, since Next serves only one of them.',
+  )
+})
+
+// Value: protects=an equally specific pair whose Pages source has another extension (a custom pageExtensions) is not called stale, since that source exists; fails_when=the about.mdx source reads as gone and the refusal says stale; why_new=Cycle 0066 task 21 (gone told apart from another extension); seam=none; no_claim=none
+test('an entry path both route manifests list with a Pages source of another extension is not called stale', async (context) => {
+  // Arrange
+  const workspace = await projectWith(context, [
+    'app/about/page.tsx',
+    'pages/about.mdx',
+  ])
+  // Act
+  const refusal = await refusalOf({
+    workspace,
+    entryPath: '/about',
+    entry: { status: 200 },
+    manifests: {
+      settings: {},
+      kind: 'conflict',
+      appKey: '/about/page',
+      pagesRoute: '/about',
+      pagesCompiledPath: 'pages/about.js',
+    },
+    outputTail: () => '',
+    compileFailureSentences: async () => [],
+  })
+  // Assert
+  assert.equal(refusal.code, 'NEXT_ROUTE_CONFLICT')
+  assert.equal(
+    refusal.message,
+    'Both route manifests in .next/dev list the entry path /about: the App Router as /about/page and the Pages Router as /about. Both sources exist; remove or rename one of the two pages, since Next serves only one of them.',
+  )
+})
+
+// Value: protects=a more specific App route whose only source has another extension (app/about/page.mdx beside a Pages catch-all) is refused for its custom pageExtensions, from the manifests through the refusal; fails_when=the listing is called stale (NEXT_ROUTE_CONFLICT) or the run takes the App page; why_new=Cycle 0066 task 20 (Cycle 0065 fix-check 1); seam=a scripted manifest reader on a real workspace; no_claim=a real mixed project's dev server with pageExtensions
+test('a more specific App page whose source has a custom pageExtensions extension is refused for that extension, not called stale', async (context) => {
+  // Arrange
+  const workspace = await projectWith(context, [
+    'app/about/page.mdx',
+    'pages/[...slug].tsx',
+  ])
+  const manifestTexts: Readonly<Record<string, string>> = {
+    '.next/dev/routes-manifest.json': '{"basePath":""}',
+    '.next/dev/server/app-paths-manifest.json':
+      '{"/about/page":"app/about/page.js"}',
+    '.next/dev/server/pages-manifest.json':
+      '{"/[...slug]":"pages/[...slug].js"}',
+  }
+  const manifests = await readNextRouteManifests({
+    workspace,
+    entryPath: '/about',
+    now: () => 0,
+    sleep: async () => {},
+    readText: async (path) => manifestTexts[path],
+  })
+  if (manifests.kind === 'app') assert.fail('the App route was taken')
+  // Act
+  const refusal = await refusalOf({
+    workspace,
+    entryPath: '/about',
+    entry: { status: 200 },
+    manifests,
+    outputTail: () => '',
+    compileFailureSentences: async () => [],
+  })
+  // Assert
+  assert.equal(refusal.code, 'NEXT_ROUTE_NOT_FOUND')
+  assert.equal(
+    refusal.message,
+    'The App route manifest lists /about/page for the entry path /about, but no source file was found under app with .tsx, .ts, .jsx, .js; a custom pageExtensions is not read.',
+  )
+})
+
+// Value: protects=a more specific Pages route whose only source has another extension (pages/about.mdx beside an App dynamic route) is refused for its custom pageExtensions, from the manifests through the refusal; fails_when=the listing is called stale (NEXT_ROUTE_CONFLICT); why_new=Cycle 0066 task 21 (Cycle 0065 fix-check 1); seam=a scripted manifest reader on a real workspace; no_claim=a real mixed project's dev server with pageExtensions
+test('a more specific Pages page whose source has a custom pageExtensions extension is refused for that extension, not called stale', async (context) => {
+  // Arrange
+  const workspace = await projectWith(context, [
+    'app/[slug]/page.tsx',
+    'pages/about.mdx',
+  ])
+  const manifestTexts: Readonly<Record<string, string>> = {
+    '.next/dev/routes-manifest.json': '{"basePath":""}',
+    '.next/dev/server/app-paths-manifest.json':
+      '{"/[slug]/page":"app/[slug]/page.js"}',
+    '.next/dev/server/pages-manifest.json': '{"/about":"pages/about.js"}',
+  }
+  const manifests = await readNextRouteManifests({
+    workspace,
+    entryPath: '/about',
+    now: () => 0,
+    sleep: async () => {},
+    readText: async (path) => manifestTexts[path],
+  })
+  if (manifests.kind === 'app') assert.fail('the App route was taken')
+  // Act
+  const refusal = await refusalOf({
+    workspace,
+    entryPath: '/about',
+    entry: { status: 200 },
+    manifests,
+    outputTail: () => '',
+    compileFailureSentences: async () => [],
+  })
+  // Assert
+  assert.equal(refusal.code, 'NEXT_ROUTE_NOT_FOUND')
+  assert.equal(
+    refusal.message,
+    'The Pages route manifest lists pages/about.js for the entry path /about, but no source file was found under pages with .tsx, .ts, .jsx, .js; a custom pageExtensions is not read.',
   )
 })
 
