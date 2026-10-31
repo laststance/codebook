@@ -27196,10 +27196,8 @@ export class StudyWorkspace {
     const entry = position === undefined ? undefined : history.entries[position]
     if (!entry || position === undefined)
       throw new Error('The requested event of this test replay is unavailable.')
-    const { extension, verifiedStop, isStopMoment } = this.stopOfNodeMoment(
-      history,
-      entry,
-    )
+    const { extension, verifiedStop, isStopMoment, hasDebuggerStop } =
+      this.stopOfNodeMoment(history, entry)
     if (isStopMoment && !verifiedStop && requireDebugger)
       throw new Error(
         'The selected stop of this test replay has no matching verified captured source for native debugging.',
@@ -27207,12 +27205,9 @@ export class StudyWorkspace {
     // Only an explicit learner selection restarts a debugger the learner stopped; seek and Play report why they stopped.
     const debuggerStopped = this.replayDebuggers.current?.available === false
     const nativeUnchanged = this.keepsNativeMoment(extension, requireDebugger)
-    // An Extension replay's partial stop (source or capture missing) is a stop moment too: a seek must not restart a debugger the learner stopped there either.
-    const isStoppedDebuggerStop =
-      Boolean(verifiedStop) || extension?.stop !== undefined
     if (
       !nativeUnchanged &&
-      isStoppedDebuggerStop &&
+      hasDebuggerStop &&
       debuggerStopped &&
       !publish &&
       !keepStoppedDebugger
@@ -27248,11 +27243,7 @@ export class StudyWorkspace {
       this.resetNodeSourceSlotText()
       this.selectedNodeHistoryDebugAvailable = false
       this.selectedNodeHistoryValuesUninspected = false
-    } else if (
-      isStoppedDebuggerStop &&
-      debuggerStopped &&
-      keepStoppedDebugger
-    ) {
+    } else if (hasDebuggerStop && debuggerStopped && keepStoppedDebugger) {
       // The learner's stopped debugger stays stopped (Retry); the moment commits without a stop in it.
       this.selectedNodeHistoryDebugAvailable = false
       this.selectedNodeHistoryValuesUninspected = false
@@ -27306,31 +27297,10 @@ export class StudyWorkspace {
       this.nodeSourceSlot = { ...this.nodeSourceSlot, stop: verifiedStop }
     this.decorateNodeSourceSlot(true)
     // A chosen step stays only with its own moment: a selection that lands on another event without a choice of its own (a seek, Play, Inspect) shows that event's first step (DS21).
-    // Inside one Extension stop interval the moment is the stop's, so its chosen step stays while the playhead moves over frames and inner closes.
-    const stepMomentOf = (sequence: number): number =>
-      this.extensionStopEntryAt(history, sequence)?.sequence ?? sequence
-    const shownStopSequence =
-      this.selectedNodeHistorySequence === undefined
-        ? undefined
-        : this.extensionStopEntryAt(history, this.selectedNodeHistorySequence)
-            ?.sequence
-    // An event's own control without a step of its own (no stepId) keeps the chosen step while the stop does not change.
-    const isStopUnchanged =
-      shownStopSequence !== undefined &&
-      shownStopSequence ===
-        this.extensionStopEntryAt(history, entry.sequence)?.sequence
-    this.selectedNodeHistoryStepId = nextNodeHistoryStepId(
-      stepChoice?.stepId === undefined && isStopUnchanged
-        ? undefined
-        : stepChoice,
-      {
-        sequence:
-          this.selectedNodeHistorySequence === undefined
-            ? undefined
-            : stepMomentOf(this.selectedNodeHistorySequence),
-        stepId: this.selectedNodeHistoryStepId,
-      },
-      stepMomentOf(entry.sequence),
+    this.selectedNodeHistoryStepId = this.nextStepIdAtMoment(
+      history,
+      entry.sequence,
+      stepChoice,
     )
     this.selectedNodeHistorySequence = entry.sequence
     this.selectedNodeHistoryPage = Math.floor(
@@ -27375,6 +27345,8 @@ export class StudyWorkspace {
     extension: ExtensionMomentPresentation | undefined
     verifiedStop: NodeTestHistoryStop | undefined
     isStopMoment: boolean
+    /** Whether presenting this moment would restart a debugger the learner stopped: a verified stop, or an Extension replay's partial stop (source or capture missing). */
+    hasDebuggerStop: boolean
   } {
     const extension = this.extensionMomentOf(history, entry.sequence)
     if (extension)
@@ -27382,14 +27354,15 @@ export class StudyWorkspace {
         extension,
         verifiedStop: extension.verifiedStop,
         isStopMoment: extension.stop !== undefined,
+        hasDebuggerStop: extension.stop !== undefined,
       }
+    const verifiedStop =
+      entry.type === 'stop' && nodeStopSourceMatches(entry) ? entry : undefined
     return {
       extension,
-      verifiedStop:
-        entry.type === 'stop' && nodeStopSourceMatches(entry)
-          ? entry
-          : undefined,
+      verifiedStop,
       isStopMoment: entry.type === 'stop',
+      hasDebuggerStop: verifiedStop !== undefined,
     }
   }
 
@@ -27410,6 +27383,35 @@ export class StudyWorkspace {
       extension.nativeKey === this.extensionNativeShown &&
       this.nodeSurfacesSequence !== undefined &&
       this.nodeSourceSlot,
+    )
+  }
+
+  /**
+   * Chooses the step shown with a selected event. A chosen step stays only with its own moment; inside one Extension stop interval the moment is the stop's, so the step also stays while the playhead moves over frames and inner closes without a step of its own.
+   * @param history - The selected replay's test-shaped history.
+   * @param sequence - The event being selected.
+   * @param stepChoice - The step the selection names; `{ stepId: undefined }` for an event's own control.
+   * @returns The step id to commit, or `undefined` for the event's first step.
+   * @example this.nextStepIdAtMoment(history, 3, { stepId: undefined }) // => 'second' for a frame inside the stop whose 'second' step is chosen
+   */
+  private nextStepIdAtMoment(
+    history: NodeTestHistoryIndex,
+    sequence: number,
+    stepChoice: { stepId: string | undefined } | undefined,
+  ): string | undefined {
+    const stopOf = (at: number): number | undefined =>
+      this.extensionStopEntryAt(history, at)?.sequence
+    const current = this.selectedNodeHistorySequence
+    const currentMoment =
+      current === undefined ? undefined : (stopOf(current) ?? current)
+    const isInsideShownStop =
+      stopOf(sequence) !== undefined && stopOf(sequence) === currentMoment
+    return nextNodeHistoryStepId(
+      stepChoice?.stepId === undefined && isInsideShownStop
+        ? undefined
+        : stepChoice,
+      { sequence: currentMoment, stepId: this.selectedNodeHistoryStepId },
+      stopOf(sequence) ?? sequence,
     )
   }
 

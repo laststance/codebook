@@ -344,6 +344,23 @@ function stepActionLabels(
 }
 
 /**
+ * Names the event whose steps a moment shows: inside a stop interval the stop's open, whatever event (a frame, an inner close) the playhead is on, else the selected event itself.
+ * @param moment - The moment at the selected event.
+ * @param selectedSequence - The selected event's sequence.
+ * @returns The event reference {@link momentSteps} reads; `undefined` with no selection.
+ * @example stepEventOf(momentInsideStopOpenedAt2, 5) // => { sequence: 2 }
+ */
+function stepEventOf(
+  moment: ExtensionReplayMoment | undefined,
+  selectedSequence: number | undefined,
+): { sequence: number } | undefined {
+  if (moment?.stop) return { sequence: moment.stop.openSequence }
+  return selectedSequence === undefined
+    ? undefined
+    : { sequence: selectedSequence }
+}
+
+/**
  * Words the Study pane's section for an Extension replay with the extension catalog: status, locator, the not-recorded lines for a moment without a stop or with a partial one, the capture reasons and the stop moves. It has the shape of {@link NodeTestSectionView}, so the pane's one section renderer draws it.
  * @param input - The replay and the selection.
  * @returns The section's view.
@@ -365,12 +382,7 @@ function projectExtensionSection(
   const steps = input.pending
     ? { sameMomentStepIds: [] as string[] }
     : momentSteps(
-        // Inside a stop interval the stop's own steps apply, whatever event (a frame, an inner close) the playhead is on.
-        moment?.stop
-          ? { sequence: moment.stop.openSequence }
-          : input.selectedSequence === undefined
-            ? undefined
-            : { sequence: input.selectedSequence },
+        stepEventOf(moment, input.selectedSequence),
         learning,
         input.chosenStepId,
       )

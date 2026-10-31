@@ -171,6 +171,7 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
   }
 
   /** Whether the seal removed this history's folder because it held nothing to replay, so no resource for it answers; read by the recorder to tell a removed history from a sealed one. @example writer.wasRemovedAsEmpty */
+  // fallow-ignore-next-line unused-class-member
   get wasRemovedAsEmpty(): boolean {
     return this.removedAsEmpty
   }
