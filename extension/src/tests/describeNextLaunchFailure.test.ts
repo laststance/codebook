@@ -172,8 +172,12 @@ test('a secret passed in a dev script flag reaches no port refusal, readiness no
     undefined,
     maskNextServerOutput,
   )
-  await untilOutputHolds(() => app.outputTail(), '--port 3000')
-  await app.close()
+  // The stand-in server is closed even when the wait fails, so no child process outlives the test.
+  try {
+    await untilOutputHolds(() => app.outputTail(), '--port 3000')
+  } finally {
+    await app.close()
+  }
   // Assert
   assert.ok(refusal instanceof Error)
   assert.equal(
