@@ -137,3 +137,25 @@ test('the help, skill and MCP instructions carry no refusal phrase and name the 
   assert.equal(skill.includes('**Saving an extension run.**'), true)
   assert.equal(skill.includes('`chromeExtension.historyUri`'), true)
 })
+
+// protects=AC3: the live Application view no longer labels an extension run as live only, and the help, skill and MCP text do not either; fails_when=the old provenance label returns to the view's words or to any packaged text; no_claim=the header the view actually paints (viewport tests) and README text
+test('no packaged text or view word still labels an extension run live only with replay unavailable', () => {
+  // Arrange
+  const oldLabel = 'Live only · replay unavailable'
+  const packagedTexts = {
+    help: JSON.stringify(chromeExtensionHelp()),
+    skill: readPackageFile('skills', 'codebook', 'SKILL.md'),
+    protocol: readPackageFile('src', 'protocol.ts'),
+    constants: readPackageFile('src', 'constants.ts'),
+    contracts: readPackageFile('src', 'chromeExtensionContracts.ts'),
+    viewport: readPackageFile('src', 'chromeExtensionViewport.ts'),
+  }
+
+  // Act
+  const offenders = Object.entries(packagedTexts)
+    .filter(([, text]) => text.includes(oldLabel))
+    .map(([name]) => name)
+
+  // Assert
+  assert.deepEqual(offenders, [])
+})
