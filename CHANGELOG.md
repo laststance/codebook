@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.69.0] - 2026-11-01 (development candidate)
+
+Cycle 0068 ([Issue #172](https://github.com/laststance/codebook/issues/172)), an owner-directed process cycle: the extension behaves as 0.2.68.0 for learners (no feature, no fix of product behavior). The replay debugger's lifecycle moved out of `studyWorkspace.ts` into its own module with the same behavior, verified by a native replay regression in VS Code and Cursor, and four repository commands now run the delivery steps that were done by hand.
+
+**The replay debugger keeps its behavior after the move.** Reopening a saved test replay, seeking across its recorded stops and a moment with no stop (**Not recorded at this moment**), stopping the replay debug session and inspecting a stop again, and reopening a saved browser replay all work as in 0.2.68.0. Native regression evidence: VS Code 1.144.0 and Cursor 3.27.22 on macOS 26.5.2, candidate `89a5a255`, recorded in [Issue #172](https://github.com/laststance/codebook/issues/172).
+
+**Repository commands for contributors** (not part of the VSIX; `--help` lists each command's prerequisites, exit codes and error codes):
+
+- `node extension/scripts/bump-version.mjs <version>` writes the release version into the three three-part places after `/ship` writes `VERSION` and the CHANGELOG heading; `--check` verifies that all five places agree (CI runs it in `test:package`).
+- `node extension/scripts/qa-candidate.mjs` builds the native-trial VSIX of a clean commit, records its SHA-256 and starts a background Codex review of it against `origin/main`; `--status` and `--clean` read and tidy review attempts.
+- `node extension/scripts/post-trial-evidence.mjs <run-log.md> --manifest artifacts/<cycle>/<host>-<run>` posts a trial's run log to the open cycle Issue through `gstack-post`, with the hashed manifest of its evidence folder, and refuses private home paths and `file://` URLs before any network call.
+- `node extension/scripts/merge-pr.mjs <pr>` merges a PR with `--squash --match-head-commit` only when this checkout is at the PR head, its exact-HEAD gate summary passed, every check of the head passed and every workflow that runs on each pull request has a successful run, then fast-forwards the local `main`.
+
+**Compatibility.** MCP API, skill (1.0.61), saved studies and histories are unchanged. To update, install this VSIX and reopen the work window.
+
 ## [0.2.68.0] - 2026-10-31 (development candidate)
 
 Cycle 0067 ([Issue #170](https://github.com/laststance/codebook/issues/170)), a feature cycle: a library test that renders or reads the DOM under **jsdom** (or **happy-dom**) is explained live from a natural `/codebook` question, saved and replayed, in VS Code and in Cursor. The native run-check on TanStack Query, Redux Toolkit, react-redux and nsx found six defects; each is fixed here with a test that fails without it.
