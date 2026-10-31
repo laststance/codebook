@@ -2,6 +2,7 @@ import {
   MILLISECONDS_PER_SECOND,
   NEXT_MANIFEST_POLL_MS,
   NEXT_PAGES_SOURCE_EXTENSIONS,
+  NEXT_WEBPACK_COMPATIBILITY_SENTENCE,
   REPOSITORY_SETUP_TIMEOUT_MS,
 } from './constants'
 import { ERROR_RECOVERY } from './errors'
@@ -10,13 +11,6 @@ import {
   nextHelpAnchor,
   type NextRefusalCode,
 } from './nextRefusals'
-
-/**
- * The compatibility-mode sentence, word for word the one the README and the help state, so a learner reads the same promise wherever they meet it.
- * The help serves it as `nextSupport.compatibility`; a test holds the help's and the README's copies to the same words.
- */
-const NEXT_WEBPACK_COMPATIBILITY_SENTENCE =
-  'Codebook runs your Next app with webpack (`next dev --webpack`) even when your dev script uses Turbopack. The page is built from the same source; a Turbopack-only loader or setting has no effect during the run.'
 
 /** The Pages source extensions Codebook tries, as the help names them: `.tsx, .ts, .jsx, .js`. */
 const PAGES_SOURCE_EXTENSIONS_TEXT = NEXT_PAGES_SOURCE_EXTENSIONS.map(
@@ -99,7 +93,7 @@ const NEXT_REFUSAL_MEANINGS: Record<NextRefusalCode, string> = {
   NEXT_SERVER_ONLY_STOP:
     "The stop is in code established to run only on the server: _document, a file under pages/api, or a line that maps in the page's server compile and in none of its client chunks (getServerSideProps or getStaticProps, for example).",
   NEXT_STOP_NOT_SEALED:
-    'Codebook could not verify the browser code of the stop before the browser opened: there is no verified browser mapping for its line (which does not establish that the code is server-only), its module is loaded later (next/dynamic, for example), or its module kind is not supported.',
+    'Codebook could not verify the browser code of the stop before the browser opened: there is no verified browser mapping for its line (which does not establish that the code is server-only), or its module is loaded later (next/dynamic, for example).',
   NEXT_SETUP_DEADLINE: `A Pages Router run did not get ready within the ${REPOSITORY_SETUP_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s setup budget; the message names the step it reached and whether a browser was opened. The recovery the run gives fits that step: one retry before the browser or for a router that was late, a corrected entryPath for a page without a Next router, the input selector at the input step, and reading the captured history first when an input may have been written.`,
 }
 

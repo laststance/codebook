@@ -833,9 +833,9 @@ test('the server reports API 1.11 and its instructions say that since API 1.7 co
       z
         .object({ data: z.object({ apiVersion: z.string() }) })
         .parse(status.structuredContent).data.apiVersion,
-      '1.11',
+      '1.12',
     )
-    assert.equal(harness.endpoint.descriptor.apiVersion, '1.11')
+    assert.equal(harness.endpoint.descriptor.apiVersion, '1.12')
     assert.equal(
       instructions.startsWith(
         "API 1.11. Call codebook_status first. To learn repository source, discover sources, read exact files, publish structured cited articles and open the retained book; no runtime is required. Since API 1.7 codebook_source, and codebook_read_resource for a book's cited source, answer the source's lines as numberedText and no longer as text; an MCP resources/read of a cited source's URI still answers its exact text. Authored relations are source interpretation.",
