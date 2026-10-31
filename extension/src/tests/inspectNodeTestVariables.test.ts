@@ -1677,3 +1677,172 @@ test('a Node pause reports a lazy value the debugger expands to no single value 
     { facts: [], unavailable: ['value:count', 'value:total'] },
   )
 })
+
+const PROXY_STATE_SCOPES = [
+  { name: 'Local', variablesReference: 1, expensive: false },
+]
+
+/**
+ * Builds the children js-debug lists for a Proxy variable.
+ * @param target - The variablesReference of the Proxy's `[[Target]]`.
+ * @returns `[[Handler]]`, `[[Target]]` and `[[IsRevoked]]` as the adapter names them.
+ * @example proxyChildren(41)
+ */
+function proxyChildren(target: number): DebugProtocol.Variable[] {
+  return [
+    { name: '[[Handler]]', value: 'Object', variablesReference: 90 },
+    { name: '[[Target]]', value: 'Object', variablesReference: target },
+    { name: '[[IsRevoked]]', value: 'false', variablesReference: 0 },
+  ]
+}
+
+// Value: protects=a required fact under a Proxy root (a library's tracked query result, an Immer draft) is read from the Proxy's [[Target]] as the Variables view shows it, so a stop inside such a component keeps its facts and the history does not seal partial; fails_when=the path walk looks only at a Proxy's [[Handler]]/[[Target]]/[[IsRevoked]] children, so state.status is unavailable (Cycle 0067 F6, TanStack Query useQuery); why_new=the walk had no Proxy fallback, only moduleExport did; seam=none; no_claim=the native adapter's own naming of [[Target]] (native trial)
+test('a Node pause reads a required value under a Proxy root through its target', async () => {
+  // Arrange
+  const session = sessionAnswering(
+    new Map<number, DebugProtocol.Variable[]>([
+      [1, [{ name: 'state', value: 'Proxy(Object)', variablesReference: 4 }]],
+      [4, proxyChildren(41)],
+      [
+        41,
+        [
+          {
+            name: 'status',
+            value: "'error'",
+            type: 'string',
+            variablesReference: 0,
+          },
+        ],
+      ],
+    ]),
+  )
+
+  // Act
+  const result = await inspectNodeTestVariables(
+    session,
+    PROXY_STATE_SCOPES,
+    [{ path: 'state.status', mode: 'value', required: true }],
+    sourceImportBindings(''),
+    AbortSignal.timeout(1_000),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { facts: result.facts, unavailable: result.unavailable },
+    {
+      facts: [
+        {
+          path: 'state.status',
+          mode: 'value',
+          display: "'error'",
+          type: 'string',
+        },
+      ],
+      unavailable: [],
+    },
+  )
+})
+
+// Value: protects=a nested required path through a Proxy is read for each segment, whether the nested object is plain or itself a Proxy; fails_when=only the first Proxy hop is unwrapped or the nested Proxy's own [[Target]] is ignored, so state.error.message is unavailable; why_new=the F6 required inspection value:state.error.message; seam=none; no_claim=Proxy traps beyond what expanding the variable runs
+test('a Node pause reads a nested required value through a Proxy whose property is a plain object or another Proxy', async () => {
+  // Arrange
+  const session = sessionAnswering(
+    new Map<number, DebugProtocol.Variable[]>([
+      [
+        1,
+        [
+          { name: 'state', value: 'Proxy(Object)', variablesReference: 4 },
+          { name: 'draft', value: 'Proxy(Object)', variablesReference: 5 },
+        ],
+      ],
+      [4, proxyChildren(41)],
+      [41, [{ name: 'error', value: 'Error', variablesReference: 42 }]],
+      [
+        42,
+        [
+          {
+            name: 'message',
+            value: "'boom'",
+            type: 'string',
+            variablesReference: 0,
+          },
+        ],
+      ],
+      [5, proxyChildren(51)],
+      [51, [{ name: 'user', value: 'Proxy(Object)', variablesReference: 6 }]],
+      [6, proxyChildren(61)],
+      [
+        61,
+        [
+          {
+            name: 'name',
+            value: "'Ada'",
+            type: 'string',
+            variablesReference: 0,
+          },
+        ],
+      ],
+    ]),
+  )
+
+  // Act
+  const result = await inspectNodeTestVariables(
+    session,
+    PROXY_STATE_SCOPES,
+    [
+      { path: 'state.error.message', mode: 'value', required: true },
+      { path: 'draft.user.name', mode: 'value', required: true },
+    ],
+    sourceImportBindings(''),
+    AbortSignal.timeout(1_000),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { facts: result.facts, unavailable: result.unavailable },
+    {
+      facts: [
+        {
+          path: 'state.error.message',
+          mode: 'value',
+          display: "'boom'",
+          type: 'string',
+        },
+        {
+          path: 'draft.user.name',
+          mode: 'value',
+          display: "'Ada'",
+          type: 'string',
+        },
+      ],
+      unavailable: [],
+    },
+  )
+})
+
+// Value: protects=a Proxy whose target lacks the asked segment still reports the required fact unavailable, so the fallback never invents a value; fails_when=the fallback returns the [[Target]] variable itself or another child for a missing segment; why_new=truthfulness bound of the F6 Proxy fallback; seam=none; no_claim=none
+test('a Node pause reports a required value unavailable when the Proxy target lacks the segment', async () => {
+  // Arrange
+  const session = sessionAnswering(
+    new Map<number, DebugProtocol.Variable[]>([
+      [1, [{ name: 'state', value: 'Proxy(Object)', variablesReference: 4 }]],
+      [4, proxyChildren(41)],
+      [41, [{ name: 'fetchStatus', value: "'idle'", variablesReference: 0 }]],
+    ]),
+  )
+
+  // Act
+  const result = await inspectNodeTestVariables(
+    session,
+    PROXY_STATE_SCOPES,
+    [{ path: 'state.status', mode: 'value', required: true }],
+    sourceImportBindings(''),
+    AbortSignal.timeout(1_000),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { facts: result.facts, unavailable: result.unavailable },
+    { facts: [], unavailable: ['value:state.status'] },
+  )
+})

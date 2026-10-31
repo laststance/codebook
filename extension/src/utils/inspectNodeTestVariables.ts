@@ -25,7 +25,7 @@ export type NodeTestFact = {
 
 /**
  * Reads only the declared debugger paths of a Node test stop through native DAP scopes, never evaluating an expression or retaining other local values; called by {@link OwnedNodeTestRun} at an owned source stop.
- * A path's root is the scope variable of that name, or, when none has it, a name the stopped source imports, read as the export it stands for in its own declaration's module binding ({@link sourceImportBindings}, {@link importedName}): Vitest binds each imported module whole ({@link NODE_TEST_MODULE_BINDING_NAME}), a mocked one as a Proxy whose exports sit under {@link DEBUGGER_PROXY_TARGET_NAME}, an unmocked one as a namespace of getters that the debugger shows lazily. A lazy value on the path (a getter, such as a Vitest spy's `mock`) is expanded once, which runs that getter in the test process as the Variables view does when the learner expands it (Cycle 0052 task 5).
+ * A path's root is the scope variable of that name, or, when none has it, a name the stopped source imports, read as the export it stands for in its own declaration's module binding ({@link sourceImportBindings}, {@link importedName}): Vitest binds each imported module whole ({@link NODE_TEST_MODULE_BINDING_NAME}), a mocked one as a Proxy whose exports sit under {@link DEBUGGER_PROXY_TARGET_NAME}, an unmocked one as a namespace of getters that the debugger shows lazily. A step through a Proxy (a library's tracked result, an Immer draft) is read under its {@link DEBUGGER_PROXY_TARGET_NAME} ({@link childOrProxyTarget}). A lazy value on the path (a getter, such as a Vitest spy's `mock`) is expanded once, which runs that getter in the test process as the Variables view does when the learner expands it (Cycle 0052 task 5).
  * @param debugSession - Verified native debug session.
  * @param scopes - Scopes of its checked source frame.
  * @param inspections - Validated requested facts.
@@ -208,9 +208,7 @@ async function readDeclaredPath(
       variable &&
       (await settledLazy(
         read,
-        (await read(variable.variablesReference)).find(
-          (candidate) => candidate.name === segment,
-        ),
+        await childOrProxyTarget(read, variable, segment),
       ))
   return variable
 }
@@ -306,6 +304,32 @@ async function moduleBindingsInScope(
 }
 
 /**
+ * Reads one named child of a variable: a direct child, or, when the variable is a Proxy (its children include {@link DEBUGGER_PROXY_TARGET_NAME}), the child of that name under its target, which is how the Variables view shows a mocked module, a library's tracked result or an Immer draft; called by {@link readDeclaredPath} for each path segment and by {@link moduleExport}. Reading the target only expands a variable the debugger already lists; no expression is evaluated.
+ * @param read - The pass's variable reader.
+ * @param parent - The variable whose child is wanted.
+ * @param name - The child's name.
+ * @returns The child's variable, or `undefined` when neither the variable nor its Proxy target has it.
+ * @example await childOrProxyTarget(read, { name: 'state', value: 'Proxy(Object)', variablesReference: 4 }, 'status') // => { name: 'status', value: "'error'", ... }
+ */
+async function childOrProxyTarget(
+  read: DebuggerVariableReader,
+  parent: DebugProtocol.Variable,
+  name: string,
+): Promise<DebugProtocol.Variable | undefined> {
+  const children = await read(parent.variablesReference)
+  const direct = children.find((child) => child.name === name)
+  if (direct) return direct
+  const target = children.find(
+    (child) => child.name === DEBUGGER_PROXY_TARGET_NAME,
+  )
+  return target
+    ? (await read(target.variablesReference)).find(
+        (child) => child.name === name,
+      )
+    : undefined
+}
+
+/**
  * Reads one export of a module binding: a child of that name, or, for a mocked module's Proxy, the child of that name under its target; called by {@link importedName} for the name and for the checks of each declaration's exports.
  * @param read - The pass's variable reader.
  * @param binding - The module binding.
@@ -318,17 +342,7 @@ async function moduleExport(
   binding: DebugProtocol.Variable,
   name: string,
 ): Promise<DebugProtocol.Variable | undefined> {
-  const children = await read(binding.variablesReference)
-  const direct = children.find((child) => child.name === name)
-  if (direct) return direct
-  const target = children.find(
-    (child) => child.name === DEBUGGER_PROXY_TARGET_NAME,
-  )
-  return target
-    ? (await read(target.variablesReference)).find(
-        (child) => child.name === name,
-      )
-    : undefined
+  return childOrProxyTarget(read, binding, name)
 }
 
 /**
