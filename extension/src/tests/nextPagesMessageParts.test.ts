@@ -204,6 +204,22 @@ test('quoted Next server output masks a quote inside a query value and keeps a q
   ])
 })
 
+// Value: protects=a quote followed by a comma or bracket inside a logged query value is masked with the rest of the value, as the base did, and only the closers at the very end stay readable; fails_when=a quote plus closer ends the value and leaves its tail (`,cd`, `SECRET`) visible; why_new=Cycle 0066 /ship pass 2 fix-check (a quote stop un-hid what the base hid); seam=none; no_claim=a real dev server's log format
+test('quoted Next server output masks the tail of a query value after a quote and a closer', () => {
+  // Act
+  const masked = [
+    maskNextServerOutput('GET /a?x=ab",cd 200'),
+    maskNextServerOutput('GET /a?x=abc",SECRET","next":"y"} 200'),
+    maskNextServerOutput('(see /a?x=1)'),
+  ]
+  // Assert
+  assert.deepEqual(masked, [
+    'GET /a?x=<redacted> 200',
+    'GET /a?x=<redacted>"} 200',
+    '(see /a?x=<redacted>)',
+  ])
+})
+
 // Value: protects=a secret-named assignment inside another assignment's value (a forwarded flag) is masked; fails_when=the outer non-secret name's value is skipped whole, so API_TOKEN's or NPM_TOKEN's value survives; why_new=Cycle 0066 native adversarial review (the base pattern leaked it too); seam=none; no_claim=a real dev server's log format
 test('quoted Next server output hides a secret-named assignment inside a forwarded flag', () => {
   // Act

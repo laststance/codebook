@@ -7,18 +7,14 @@ import { redactedPairsOf } from './redactedPairsOf'
 const CREDENTIAL_HEADER =
   /\b((?:set-cookie|cookie|proxy-authorization|authorization)["']?[ \t]*[:=][ \t]*)[^\r\n]*/gi
 
-/**
- * The query of a logged URL: in a word with a `/` before its first `?` (a path such as `/reset?…` or an absolute URL), the text after that `?` up to a blank or a fragment.
- * A quote or backtick followed by a blank, the end, or a closing bracket or punctuation closes the text around the URL (`"…/reset?x"`, `{"url":"/a?x"}`) and ends the query; any other one is part of a value (`?token="SECRET"`, `?code=a"b`). Only a word's start begins a match and each character is read with one character of look-ahead, so a long word is scanned once; `user?.name` (no `/`) is no URL.
- */
-const URL_QUERY =
-  /(?<!\S)([^\s?#/]*\/[^\s?#]*\?)((?:[^\s#"'`]|["'`](?![\s)\]},;:.]|$))*)/g
+/** The query of a logged URL: in a word with a `/` before its first `?` (a path such as `/reset?…` or an absolute URL), the text after that `?` up to a blank or a fragment. Only a word's start begins a match, so a long word is scanned once; `user?.name` (no `/`) is no URL. */
+const URL_QUERY = /(?<!\S)([^\s?#/]*\/[^\s?#]*\?)([^\s#]*)/g
 
-/** Closing brackets and punctuation a log puts right after a URL (`(see /a?x)`, `/a?x,`): kept out of the query's last part, so a padded token before them is still read as bare. */
-const URL_TRAILING_CLOSERS = ')]},;.'
+/** Quotes, closing brackets and punctuation that log or JSON syntax puts right after a URL or a query value (`"…/reset?x"`, `{"url":"/a?x"}`, `(see /a?x)`): put back after the masked query or value, so a quoted secret around a URL keeps its closing quote and a padded token before them is still read as bare. Only the run at the very end is split off; a quote inside a value is masked with it. */
+const TRAILING_CLOSERS = `"'\`)]},;.`
 
-/** A query parameter's value anywhere else: after `?` or `&`, up to the next separator, blank or fragment, or a quote that closes the text around it, read as in {@link URL_QUERY}, so a quoted secret value keeps its closing quote. */
-const QUERY_VALUE = /([?&][^\s=&#?]+=)(?:[^\s&#"'`]|["'`](?![\s)\]},;:.]|$))*/g
+/** A query parameter's value anywhere else: after `?` or `&`, up to the next separator, blank or fragment. */
+const QUERY_VALUE = /([?&][^\s=&#?]+=)([^\s&#]*)/g
 
 /** A whole run of name characters (`A-Z`, `a-z`, `0-9`, `_`, `.`, `-`) followed by `=`: it starts only where no name character comes before it, so a long dotted run without `=` is scanned once, not once per word in it. */
 const NAME_RUN_BEFORE_EQUALS = /(?<![\w.-])([\w.-]+)=/g
@@ -66,18 +62,18 @@ function maskSecretAssignments(text: string): string {
 }
 
 /**
- * Splits the closing brackets and punctuation that end a logged URL's query ({@link URL_TRAILING_CLOSERS}) off its pairs, so `?dG9rZW4=)` reads as the padded token `dG9rZW4=` before `)`; called by {@link maskNextServerOutput} for each logged URL's query.
+ * Splits the quotes, closing brackets and punctuation that end a logged URL's query or a query value ({@link TRAILING_CLOSERS}) off it, so `?dG9rZW4=")` reads as the padded token `dG9rZW4=` before `")`; called by {@link maskNextServerOutput} for each logged URL's query and each other query value.
  * A loop from the end, not a pattern, so a long run of such characters costs linear time.
- * @param pairs - The query text after a logged URL's `?`.
- * @returns The pairs without their trailing closers, then those closers.
+ * @param pairs - The query text after a logged URL's `?`, or a query value.
+ * @returns The text without its trailing closers, then those closers.
  * @example
- * splitTrailingClosers('dG9rZW4=)') // => ['dG9rZW4=', ')']
+ * splitTrailingClosers('dG9rZW4=")') // => ['dG9rZW4=', '")']
  * splitTrailingClosers('a=1')       // => ['a=1', '']
  */
 function splitTrailingClosers(pairs: string): [string, string] {
   let pairsEnd = pairs.length
   // Each trailing closer is peeled once, from the end.
-  while (pairsEnd > 0 && URL_TRAILING_CLOSERS.includes(pairs[pairsEnd - 1]!))
+  while (pairsEnd > 0 && TRAILING_CLOSERS.includes(pairs[pairsEnd - 1]!))
     pairsEnd -= 1
   return [pairs.slice(0, pairsEnd), pairs.slice(pairsEnd)]
 }
@@ -102,6 +98,10 @@ export function maskNextServerOutput(text: string): string {
         const [pairs, trailingClosers] = splitTrailingClosers(query)
         return `${beforeQuery}${redactedPairsOf(pairs)}${trailingClosers}`
       })
-      .replace(QUERY_VALUE, `$1${NEXT_REDACTED_VALUE}`),
+      .replace(
+        QUERY_VALUE,
+        (_part, name: string, value: string) =>
+          `${name}${NEXT_REDACTED_VALUE}${splitTrailingClosers(value)[1]}`,
+      ),
   )
 }
