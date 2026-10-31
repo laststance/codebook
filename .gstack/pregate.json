@@ -252,7 +252,7 @@
       "paths": [
         "extension/src/tests/readNextRouteManifests.test.ts"
       ],
-      "pattern": "/login/page",
+      "pattern": "/(?:login|about)/page",
       "reason": "an App route manifest key named key in a route-manifest test; no secret value"
     },
     {
