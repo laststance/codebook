@@ -11,22 +11,21 @@ export type SegmentPrecedence =
   (typeof SEGMENT_PRECEDENCE)[keyof typeof SEGMENT_PRECEDENCE]
 
 /**
- * Matches one route against an entry path and reads the precedence of each of its segments, the way Next's router orders routes, so the Pages and App resolvers and the router contest share one matcher.
- * Called by {@link mostSpecificNextRouteOf} for each candidate route of either router and by {@link compareNextRouterMatches} for both sides of a path both routers match. The entry path's query, fragment, empty segments and trailing slash are ignored and each segment is percent-decoded. A catch-all must be the last segment and takes one or more requested segments; an optional catch-all takes zero or more, so it also matches its parent path.
+ * Matches one route against an entry path's segments and reads the precedence of each of its segments, the way Next's router orders routes, so the Pages and App resolvers and the router contest share one matcher.
+ * Called by {@link mostSpecificNextRouteOf} for each candidate route of either router and by {@link compareNextRouterMatches} for both sides of a path both routers match; each caller parses the entry path once ({@link nextRequestedSegmentsOf}) and passes the same segments for every route. A catch-all must be the last segment and takes one or more requested segments; an optional catch-all takes zero or more, so it also matches its parent path.
  * @param route - A route in URL form, e.g. `/docs/[...slug]`: a Pages manifest key, or the segments {@link appRouteSegmentsOf} read from an App key.
- * @param entryPath - The configured entry path.
+ * @param requested - The entry path's decoded segments, without query, fragment, empty segments or trailing slash ({@link nextRequestedSegmentsOf}).
  * @returns The precedence of each route segment when the route matches, `undefined` otherwise.
  * @example
- * nextRoutePrecedenceOf('/docs/[...slug]', '/docs/a/b') // => [0, 2]
- * nextRoutePrecedenceOf('/[[...slug]]', '/')            // => [3]
- * nextRoutePrecedenceOf('/docs/[...slug]', '/docs')     // => undefined
+ * nextRoutePrecedenceOf('/docs/[...slug]', ['docs', 'a', 'b']) // => [0, 2]
+ * nextRoutePrecedenceOf('/[[...slug]]', [])                    // => [3]
+ * nextRoutePrecedenceOf('/docs/[...slug]', ['docs'])           // => undefined
  */
 export function nextRoutePrecedenceOf(
   route: string,
-  entryPath: string,
+  requested: readonly string[],
 ): SegmentPrecedence[] | undefined {
   if (!route.startsWith('/')) return undefined
-  const requested = requestedSegmentsOf(entryPath)
   const segments = route === '/' ? [] : route.slice(1).split('/')
   const precedence: SegmentPrecedence[] = []
   for (const [index, segment] of segments.entries()) {
@@ -44,20 +43,6 @@ export function nextRoutePrecedenceOf(
       return undefined
   }
   return segments.length === requested.length ? precedence : undefined
-}
-
-/**
- * Splits an entry path into the decoded path segments a route is matched against; called by {@link nextRoutePrecedenceOf}.
- * @param entryPath - The configured entry path.
- * @returns The segments without query, fragment, empty segments or trailing slash; `/` has none.
- * @example
- * requestedSegmentsOf('/posts/caf%C3%A9/?tab=1') // => ['posts', 'café']
- */
-function requestedSegmentsOf(entryPath: string): string[] {
-  return new URL(entryPath, 'http://codebook.invalid').pathname
-    .split('/')
-    .filter(Boolean)
-    .map(decodeURIComponent)
 }
 
 /**

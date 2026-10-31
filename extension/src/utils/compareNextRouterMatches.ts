@@ -1,10 +1,11 @@
 import { appRouteSegmentsOf } from './appRouteSegmentsOf'
 import { compareNextRoutePrecedence } from './compareNextRoutePrecedence'
+import { nextRequestedSegmentsOf } from './nextRequestedSegmentsOf'
 import { nextRoutePrecedenceOf } from './nextRoutePrecedenceOf'
 
 /**
  * Orders an App route and a Pages route that both match an entry path by Next's segment precedence, so a project with both routers is refused as conflicting only when the two are equally specific; called by {@link readNextRouteManifests}.
- * The App key is read by {@link appRouteSegmentsOf}: only a key with a terminal `/page` names a page, and route groups (`(marketing)`) are dropped, as Next drops them.
+ * The App key is read by {@link appRouteSegmentsOf}: only a key with a terminal `/page` names a page, and route groups (`(marketing)`) are dropped, as Next drops them. The entry path is parsed once ({@link nextRequestedSegmentsOf}) for both sides.
  * @param appKey - The App manifest key, e.g. `/about/page` or `/(site)/about/page`.
  * @param pagesRoute - The Pages manifest key, e.g. `/[...slug]`.
  * @param entryPath - The entry path both routes match.
@@ -22,10 +23,11 @@ export function compareNextRouterMatches(
   pagesRoute: string,
   entryPath: string,
 ): 'app' | 'pages' | 'equal' {
+  const requested = nextRequestedSegmentsOf(entryPath)
   const appSegments = appRouteSegmentsOf(appKey)
   const appPrecedence =
-    appSegments && nextRoutePrecedenceOf(`/${appSegments.join('/')}`, entryPath)
-  const pagesPrecedence = nextRoutePrecedenceOf(pagesRoute, entryPath)
+    appSegments && nextRoutePrecedenceOf(`/${appSegments.join('/')}`, requested)
+  const pagesPrecedence = nextRoutePrecedenceOf(pagesRoute, requested)
   // A side the shared matcher cannot read keeps the pair a conflict, as before.
   if (!appPrecedence || !pagesPrecedence) return 'equal'
   const order = compareNextRoutePrecedence(appPrecedence, pagesPrecedence)

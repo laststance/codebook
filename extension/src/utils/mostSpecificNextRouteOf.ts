@@ -1,4 +1,5 @@
 import { compareNextRoutePrecedence } from './compareNextRoutePrecedence'
+import { nextRequestedSegmentsOf } from './nextRequestedSegmentsOf'
 import {
   nextRoutePrecedenceOf,
   type SegmentPrecedence,
@@ -6,7 +7,7 @@ import {
 
 /**
  * Picks the route Next serves for an entry path among candidate routes: the one matching route of highest segment precedence, as Next's router orders routes, so the Pages and the App router choose by the same rule.
- * Called by {@link resolveNextPagesRoute} for the Pages manifest and by {@link resolveNextClientManifest} for the App paths manifest.
+ * Called by {@link resolveNextPagesRoute} for the Pages manifest and by {@link resolveNextClientManifest} for the App paths manifest. The entry path is parsed once ({@link nextRequestedSegmentsOf}) and its segments are matched against every candidate.
  * @param candidates - Each route in URL form (e.g. `/posts/[id]`) with the value the caller keeps for it.
  * @param entryPath - The configured entry path.
  * @returns
@@ -20,10 +21,11 @@ export function mostSpecificNextRouteOf<Kept>(
   candidates: Iterable<readonly [route: string, kept: Kept]>,
   entryPath: string,
 ): Kept | undefined {
+  const requested = nextRequestedSegmentsOf(entryPath)
   let best: { kept: Kept; precedence: SegmentPrecedence[] } | undefined
   let tied = false
   for (const [route, kept] of candidates) {
-    const precedence = nextRoutePrecedenceOf(route, entryPath)
+    const precedence = nextRoutePrecedenceOf(route, requested)
     if (!precedence) continue
     const order = best
       ? compareNextRoutePrecedence(precedence, best.precedence)
