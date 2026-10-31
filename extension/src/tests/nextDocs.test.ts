@@ -432,7 +432,7 @@ test('the bundled skill forbids editing the project to make a browser run start 
   // Assert
   assert.ok(
     paragraph.includes(
-      "Never edit the project's files, config or scripts to make a run start or reach its stops; when the page itself keeps the declared action from happening, tell the learner what blocks it.",
+      "Never edit the project's files, config or scripts to make a run start or reach its stops, not even temporarily or with a plan to restore them, and not after the learner agrees to continue; when the page itself keeps the declared action from happening (an automatic load that races the click, for example), tell the learner what blocks it and offer only choices that change no project file: another declared action or stop, another page, or explaining what the run did observe.",
     ),
   )
 })
@@ -541,7 +541,7 @@ test('the bundled skill relays the recovery the run gives for NEXT_SETUP_DEADLIN
   assert.ok(meaning.includes('The recovery the run gives fits that step'))
   assert.ok(
     section.includes(
-      "- **What the bundled skill does (1.0.59).** The chat sends a question about a Pages Router page to `next-dev-webpack` as it does for an App Router page, tells you a refusal's code with the recovery of that code's section in the help (for `NEXT_SETUP_DEADLINE`, the recovery the run itself gives for the step it reached: one retry, a corrected `entryPath`, the input selector, or reading the captured history first),",
+      "- **What the bundled skill does (1.0.60).** The chat sends a question about a Pages Router page to `next-dev-webpack` as it does for an App Router page, tells you a refusal's code with the recovery of that code's section in the help (for `NEXT_SETUP_DEADLINE`, the recovery the run itself gives for the step it reached: one retry, a corrected `entryPath`, the input selector, or reading the captured history first),",
     ),
   )
 })
@@ -604,6 +604,36 @@ test('the help says a Pages server stop is refused as server-only and that a pre
   assert.ok(
     preparation.includes(
       '(one more when a counted pre script may or may not run because the package manager or its version is unknown)',
+    ),
+  )
+})
+
+// Value: protects=a chat whose run the page itself blocks (an automatic load racing the click) never edits a project file, not temporarily and not after the learner says continue, and offers only choices that change no project file; fails_when=the skill or the README keeps the 1.0.59 wording that a Cursor agent read as allowing a temporary edit; why_new=Cycle 0066 task 35 (N66: Grok 4.6 High disabled the page's auto-load in src/pages/index.tsx after 「はい、続けて」); seam=skill and README text; no_claim=that a chat obeys it (the N66 Cursor retest)
+test('the bundled skill and the README forbid temporary project edits, also after the learner agrees to continue', async () => {
+  // Arrange
+  const skill = await readFile(
+    join(__dirname, '..', '..', 'skills', 'codebook', 'SKILL.md'),
+    'utf8',
+  )
+  const section = await readNextReadmeSection()
+  // Act
+  const paragraph =
+    skill.split('\n\n').find((part) => part.startsWith('**Browser runs.**')) ??
+    ''
+  // Assert
+  assert.ok(
+    paragraph.includes(
+      'not even temporarily or with a plan to restore them, and not after the learner agrees to continue',
+    ),
+  )
+  assert.ok(
+    paragraph.includes(
+      'offer only choices that change no project file: another declared action or stop, another page, or explaining what the run did observe.',
+    ),
+  )
+  assert.ok(
+    section.includes(
+      "never edits the project's files, config or scripts to make a run start or reach its stops, not even temporarily or after you agree to continue (when the page itself keeps the declared action from happening, such as an automatic load that races the click, it tells you what blocks it and offers only choices that change no project file)",
     ),
   )
 })
