@@ -104,7 +104,7 @@ test('an event detail URI of a test history is answered as an unknown resource',
 
   // Act
   const refusals = await Promise.all(
-    [`events/3`, `events/through/3`].map((suffix) =>
+    [`events/through/3`].map((suffix) =>
       readResource(
         harness.service,
         `codebook://node-history/${studyId}/${suffix}`,
