@@ -3,6 +3,7 @@ import type { BundleSource } from './repositoryBundle'
 import type { RepositoryConfiguration } from './repositoryConfigSchemas'
 import type { PortCheckOptions } from './utils/assertDevelopmentPortFree'
 import type { DevelopmentLockIdentity } from './utils/assertDevelopmentWorkspace'
+import type { NextPagesDiscoveryCache } from './utils/createNextPagesDiscoveryCache'
 import type { launchDevelopmentServer } from './utils/launchDevelopmentServer'
 import type { DeclaredDevelopmentPort } from './utils/readDeclaredDevelopmentPort'
 
@@ -37,6 +38,8 @@ export type DevelopmentServerStart = {
   onDeclaredPort: (declared: DeclaredDevelopmentPort) => void
   /** Hands the started server to the run the moment it exists, so cleanup closes it even when a later step fails. */
   onApp: (app: DevelopmentApp) => void
+  /** Masks values the shared redaction leaves in the server output the run journals and quotes (cookie, query and secret-named values); a Next run in a workspace with a Pages folder passes {@link maskNextServerOutput}. The Vite adapter has its own mask and ignores it. */
+  outputMask?: (text: string) => string
 }
 
 /** What {@link DevelopmentServerAdapter.readBundle} needs to seal one declared stop. */
@@ -51,6 +54,8 @@ export type DevelopmentBundleRequest = {
   ownedOrigin: string
   /** Appends to the run's evidence journal. */
   record: (type: string, detail?: unknown) => unknown
+  /** The Pages route a Next run on the Pages path resolved, with the run's one discovery cache; a browser stop is then sealed from the page's entry chunks ({@link readPagesDevelopmentBundle}). Absent for every other run. */
+  nextRoute?: { route: string; cache: NextPagesDiscoveryCache }
 }
 
 /** The sealed module of one stop with what the discovery measured, as {@link readDevelopmentBundle} returns it. */

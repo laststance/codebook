@@ -6,6 +6,7 @@ import { test, type TestContext } from 'node:test'
 
 import { StudyError } from '../errors'
 import { assessViteWorkspace } from '../utils/assessViteWorkspace'
+import { readNextDevPreparation } from '../utils/readNextDevPreparation'
 import { readNodeVersion } from '../utils/readNodeVersion'
 import { readRepositoryAdapterReadiness } from '../utils/readRepositoryAdapterReadiness'
 
@@ -71,10 +72,15 @@ test('a Next workspace reports next-dev-webpack ready and vite-dev missing the v
     SIGNAL,
   )
   // Assert
+  // Cycle 0065: an installed Next also carries its router kind; this fixture has no route folder, which is a note, not a gap.
   assert.deepEqual(readiness['next-dev-webpack'], {
     ready: true,
+    routerKind: 'none',
     missing: [],
     version: '16.0.1',
+    notes: [
+      'No Next route folder was found (looked for app, src/app, pages, src/pages).',
+    ],
   })
   assert.equal(readiness['vite-dev'].ready, false)
   assert.equal(readiness['vite-dev'].installed, false)
@@ -155,6 +161,14 @@ test('a Yarn Plug-n-Play workspace reports yarnPnp and the PnP sentence', async 
     /^Yarn Plug-n-Play without node_modules/,
   )
 })
+
+/** Replaces the workspace's `package.json` scripts with the ones a test reads. */
+async function writeScripts(
+  root: string,
+  scripts: Record<string, string>,
+): Promise<void> {
+  await writeFile(join(root, 'package.json'), JSON.stringify({ scripts }))
+}
 
 // protects=the real environment carries the adapter report inside the repository-browser profile without changing its own ready/missing; fails_when=adapters is absent from the profile; no_claim=the Node version of the stub environment
 test('the environment reports both adapters under the repository-browser profile', async (context) => {
@@ -264,4 +278,356 @@ test('reads the version of one Node executable once and answers the second read 
   // Assert
   assert.equal(first, 'v1.2.3')
   assert.equal(second, 'v1.2.3')
+})
+
+// Value: protects=codebook_status labels a workspace with a root app folder as App Router before a start, without a gap; fails_when=routerKind is absent or not app, or the label adds a missing sentence; why_new=Cycle 0065 adds the router kind label; seam=none; no_claim=which route the run resolves
+test('a Next workspace with an app folder reports router kind app and stays ready', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await mkdir(join(root, 'app'))
+  // Act
+  const readiness = await readRepositoryAdapterReadiness(
+    root,
+    process.execPath,
+    SIGNAL,
+  )
+  // Assert
+  assert.equal(readiness['next-dev-webpack'].routerKind, 'app')
+  assert.equal(readiness['next-dev-webpack'].ready, true)
+  assert.deepEqual(readiness['next-dev-webpack'].missing, [])
+  assert.equal(readiness['next-dev-webpack'].notes, undefined)
+})
+
+// Value: protects=an App Router under src/ is found as Next finds it; fails_when=only the root app folder counts; why_new=Cycle 0065 router kind; seam=none; no_claim=root-over-src precedence of a run
+test('a Next workspace with a src/app folder reports router kind app', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await mkdir(join(root, 'src/app'), { recursive: true })
+  // Act
+  const readiness = await readRepositoryAdapterReadiness(
+    root,
+    process.execPath,
+    SIGNAL,
+  )
+  // Assert
+  assert.equal(readiness['next-dev-webpack'].routerKind, 'app')
+})
+
+// Value: protects=a Pages Router app is labeled pages before a start, so an agent knows the Pages run applies; fails_when=a root pages folder reads none or app; why_new=Cycle 0065 Pages Router support; seam=none; no_claim=route resolution
+test('a Next workspace with a pages folder reports router kind pages and stays ready', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await mkdir(join(root, 'pages'))
+  // Act
+  const readiness = await readRepositoryAdapterReadiness(
+    root,
+    process.execPath,
+    SIGNAL,
+  )
+  // Assert
+  assert.equal(readiness['next-dev-webpack'].routerKind, 'pages')
+  assert.equal(readiness['next-dev-webpack'].ready, true)
+  assert.deepEqual(readiness['next-dev-webpack'].missing, [])
+})
+
+// Value: protects=the P02 form (src/pages) is labeled pages; fails_when=only the root pages folder counts; why_new=Cycle 0065 Pages Router support; seam=none; no_claim=route resolution
+test('a Next workspace with a src/pages folder reports router kind pages', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await mkdir(join(root, 'src/pages'), { recursive: true })
+  // Act
+  const readiness = await readRepositoryAdapterReadiness(
+    root,
+    process.execPath,
+    SIGNAL,
+  )
+  // Assert
+  assert.equal(readiness['next-dev-webpack'].routerKind, 'pages')
+})
+
+// Value: protects=a workspace that holds both routers says so instead of naming one; fails_when=either router hides the other; why_new=Cycle 0065 router kind; seam=none; no_claim=which router a given entry path resolves to
+test('a Next workspace with an app and a pages folder reports router kind both', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await mkdir(join(root, 'app'))
+  await mkdir(join(root, 'pages'))
+  // Act
+  const readiness = await readRepositoryAdapterReadiness(
+    root,
+    process.execPath,
+    SIGNAL,
+  )
+  // Assert
+  assert.equal(readiness['next-dev-webpack'].routerKind, 'both')
+})
+
+// Value: protects=a workspace without route folders names the folders searched as a note and stays ready, since the label is no gap; fails_when=the sentence is missing, differs, or goes to missing (which the environment turns into not ready); why_new=Cycle 0065 router kind none; seam=none; no_claim=a custom pageExtensions or a run's own refusal
+test('a Next workspace without a route folder reports router kind none with the searched folders and stays ready', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  // Act
+  const readiness = await readRepositoryAdapterReadiness(
+    root,
+    process.execPath,
+    SIGNAL,
+  )
+  // Assert
+  assert.equal(readiness['next-dev-webpack'].routerKind, 'none')
+  assert.deepEqual(readiness['next-dev-webpack'].notes, [
+    'No Next route folder was found (looked for app, src/app, pages, src/pages).',
+  ])
+  assert.equal(readiness['next-dev-webpack'].ready, true)
+  assert.deepEqual(readiness['next-dev-webpack'].missing, [])
+})
+
+// Value: protects=a plain next dev reports no preparation, so status stays quiet when Codebook skips nothing; fails_when=a preparation entry or note appears for plain next dev; why_new=Cycle 0065 preparation states; seam=none; no_claim=next dev flags
+test('a plain next dev script reports no skipped preparation', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await mkdir(join(root, 'app'))
+  await writeScripts(root, { dev: 'next dev --turbopack' })
+  // Act
+  const preparation = await readNextDevPreparation(root)
+  const readiness = await readRepositoryAdapterReadiness(
+    root,
+    process.execPath,
+    SIGNAL,
+  )
+  // Assert
+  assert.deepEqual(preparation, { status: 'none' })
+  assert.equal(readiness['next-dev-webpack'].preparation, undefined)
+  assert.equal(readiness['next-dev-webpack'].notes, undefined)
+})
+
+// Value: protects=a preparation step before next dev, which Codebook does not run, is counted and named before a start; fails_when=the step is missed, miscounted, or the sentence differs, or ready changes; why_new=Cycle 0065 preparation states (P01 runs a step before next dev); seam=none; no_claim=whether the step was done
+test('a statement before next dev in scripts.dev is reported as one skipped preparation statement', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await mkdir(join(root, 'src/pages'), { recursive: true })
+  await writeScripts(root, { dev: 'prisma generate && next dev' })
+  // Act
+  const readiness = await readRepositoryAdapterReadiness(
+    root,
+    process.execPath,
+    SIGNAL,
+  )
+  // Assert
+  assert.deepEqual(readiness['next-dev-webpack'].preparation, {
+    status: 'skipped',
+    statements: 1,
+  })
+  assert.deepEqual(readiness['next-dev-webpack'].notes, [
+    'Codebook starts Next with --webpack and skips 1 statement(s) before `next dev` in package.json scripts.dev. Whether that preparation is done has not been checked.',
+  ])
+  assert.equal(readiness['next-dev-webpack'].ready, true)
+  assert.deepEqual(readiness['next-dev-webpack'].missing, [])
+})
+
+// Value: protects=a predev script, which the package manager runs before dev, counts as skipped preparation; fails_when=predev is ignored; why_new=Cycle 0065 preparation states; seam=none; no_claim=package managers that skip pre scripts
+test('a predev script is reported as one skipped preparation statement', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await writeScripts(root, { predev: 'prisma generate', dev: 'next dev' })
+  // Act
+  const preparation = await readNextDevPreparation(root)
+  // Assert
+  assert.deepEqual(preparation, { status: 'skipped', statements: 1 })
+})
+
+// Value: protects=next build before next dev is preparation even though it is the next program; fails_when=any next command is taken for next dev; why_new=Cycle 0065 preparation states; seam=none; no_claim=none
+test('a next build statement before next dev is reported as skipped preparation', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await writeScripts(root, { dev: 'next build && next dev' })
+  // Act
+  const preparation = await readNextDevPreparation(root)
+  // Assert
+  assert.deepEqual(preparation, { status: 'skipped', statements: 1 })
+})
+
+// Value: protects=an env assignment before next dev is no preparation but an environment setting Codebook does not apply, named only; fails_when=it counts as a statement or its name is missing; why_new=Cycle 0065 preparation parsing; seam=none; no_claim=the port a PORT assignment gives
+test('an env assignment before next dev is reported as an unapplied environment setting, not as preparation', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await mkdir(join(root, 'app'))
+  await writeScripts(root, { dev: 'A=1 next dev' })
+  // Act
+  const readiness = await readRepositoryAdapterReadiness(
+    root,
+    process.execPath,
+    SIGNAL,
+  )
+  // Assert
+  assert.deepEqual(readiness['next-dev-webpack'].preparation, {
+    status: 'none',
+    envSettings: ['A'],
+  })
+  assert.deepEqual(readiness['next-dev-webpack'].notes, [
+    'Codebook does not apply these environment settings from scripts.dev: A.',
+  ])
+})
+
+// Value: protects=a cross-env prefix, NODE_OPTIONS included, is an unapplied environment setting, not preparation; fails_when=cross-env counts as a statement, or NODE_OPTIONS makes the script unknown as it does for the port; why_new=Cycle 0065 preparation parsing; seam=none; no_claim=the effect of NODE_OPTIONS
+test('a cross-env prefix before next dev is reported as an unapplied environment setting, not as preparation', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await writeScripts(root, { dev: 'cross-env NODE_OPTIONS=x next dev' })
+  // Act
+  const preparation = await readNextDevPreparation(root)
+  // Assert
+  assert.deepEqual(preparation, {
+    status: 'none',
+    envSettings: ['NODE_OPTIONS'],
+  })
+})
+
+// Value: protects=a PORT assignment is not named as unapplied, since Codebook starts the app on the declared port; fails_when=PORT appears in envSettings or a note says Codebook does not apply it; why_new=Cycle 0065 parent decision on unapplied env names; seam=none; no_claim=the port the run uses
+test('a PORT assignment before next dev reports no unapplied environment setting', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await mkdir(join(root, 'app'))
+  await writeScripts(root, { dev: 'PORT=4000 next dev' })
+  // Act
+  const preparation = await readNextDevPreparation(root)
+  const readiness = await readRepositoryAdapterReadiness(
+    root,
+    process.execPath,
+    SIGNAL,
+  )
+  // Assert
+  assert.deepEqual(preparation, { status: 'none' })
+  assert.equal(readiness['next-dev-webpack'].preparation, undefined)
+  assert.equal(readiness['next-dev-webpack'].notes, undefined)
+})
+
+// Value: protects=PORT is left out while the other unapplied names stay listed; fails_when=PORT is listed beside NODE_OPTIONS or NODE_OPTIONS is lost with it; why_new=Cycle 0065 parent decision on unapplied env names; seam=none; no_claim=the port the run uses
+test('a PORT assignment beside NODE_OPTIONS reports only NODE_OPTIONS as unapplied', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await writeScripts(root, { dev: 'PORT=4000 NODE_OPTIONS=x next dev' })
+  // Act
+  const preparation = await readNextDevPreparation(root)
+  // Assert
+  assert.deepEqual(preparation, {
+    status: 'none',
+    envSettings: ['NODE_OPTIONS'],
+  })
+})
+
+// Value: protects=concurrently cannot be read for preparation, so status says it was not checked instead of claiming none; fails_when=the reading is none or skipped, or the sentence differs; why_new=Cycle 0065 preparation states; seam=none; no_claim=the port reader's own concurrently grammar
+test('a concurrently dev script reports preparation unknown with the could-not-read sentence', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await mkdir(join(root, 'app'))
+  await writeScripts(root, { dev: 'concurrently "a" "next dev"' })
+  // Act
+  const readiness = await readRepositoryAdapterReadiness(
+    root,
+    process.execPath,
+    SIGNAL,
+  )
+  // Assert
+  assert.deepEqual(readiness['next-dev-webpack'].preparation, {
+    status: 'unknown',
+  })
+  assert.deepEqual(readiness['next-dev-webpack'].notes, [
+    'Codebook starts Next with --webpack and could not read package.json scripts.dev; whether it runs preparation before `next dev` has not been checked.',
+  ])
+  assert.equal(readiness['next-dev-webpack'].ready, true)
+})
+
+// Value: protects=a parallel runner before next dev makes the reading unknown, since whether next dev runs after it cannot be read; fails_when=run-p counts as one skipped statement; why_new=Cycle 0065 preparation states; seam=none; no_claim=none
+test('a run-p statement before next dev reports preparation unknown', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await writeScripts(root, { dev: 'run-p build:css && next dev' })
+  // Act
+  const preparation = await readNextDevPreparation(root)
+  // Assert
+  assert.deepEqual(preparation, { status: 'unknown' })
+})
+
+// Value: protects=a script outside the shared tokenizer's grammar reads unknown, never none; fails_when=a pipe is read as plain next dev; why_new=Cycle 0065 preparation states; seam=none; no_claim=none
+test('an unparsable dev script reports preparation unknown', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await writeScripts(root, { dev: 'next dev | tee dev.log' })
+  // Act
+  const preparation = await readNextDevPreparation(root)
+  // Assert
+  assert.deepEqual(preparation, { status: 'unknown' })
+})
+
+// Value: protects=a delegation the grammar resolves is followed to next dev and the statements before it there are counted; fails_when=the delegation is counted as preparation or read unknown; why_new=Cycle 0065 reuses the port reader's delegations; seam=none; no_claim=deeper nesting than the shared limit
+test('a delegated script is followed to next dev and its statements before next dev are counted', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await writeScripts(root, {
+    dev: 'pnpm run dev:next',
+    'dev:next': 'prisma generate && next dev',
+  })
+  // Act
+  const preparation = await readNextDevPreparation(root)
+  // Assert
+  assert.deepEqual(preparation, { status: 'skipped', statements: 1 })
+})
+
+// Value: protects=the pre script of a delegated script, which npm runs before it, counts like predev; fails_when=the pre script is ignored; why_new=Cycle 0065 preparation states; seam=none; no_claim=package managers that skip pre scripts
+test('the pre script of a delegated script that runs next dev counts as one skipped statement', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await writeScripts(root, {
+    dev: 'npm run start:web',
+    'prestart:web': 'node scripts/seed.js',
+    'start:web': 'next dev',
+  })
+  // Act
+  const preparation = await readNextDevPreparation(root)
+  // Assert
+  assert.deepEqual(preparation, { status: 'skipped', statements: 1 })
+})
+
+// Value: protects=a delegation to a script the project does not have is not resolved, so the reading is unknown; fails_when=it counts as one skipped statement or none; why_new=Cycle 0065 preparation states; seam=none; no_claim=none
+test('a delegation to a script the project does not have reports preparation unknown', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await writeScripts(root, { dev: 'npm run seed && next dev' })
+  // Act
+  const preparation = await readNextDevPreparation(root)
+  // Assert
+  assert.deepEqual(preparation, { status: 'unknown' })
+})
+
+// Value: protects=the script is read with the meaning of the shell that runs it: under cmd an assignment prefix is a command, so the reading is unknown; fails_when=the Windows reading claims none with an env setting; why_new=Cycle 0065 reuses the port reader's shells; seam=platform argument; no_claim=a real cmd run
+test('an env assignment prefix read for Windows reports preparation unknown', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await writeScripts(root, { dev: 'A=1 next dev' })
+  // Act
+  const preparation = await readNextDevPreparation(root, 'win32')
+  // Assert
+  assert.deepEqual(preparation, { status: 'unknown' })
+})
+
+// Value: protects=env values never reach codebook_status: only names are reported for exports, prefixes and cross-env; fails_when=a seeded value appears anywhere in the readiness or a name is lost; why_new=Cycle 0065 secrets rule for preparation; seam=none; no_claim=server output masking
+test('the readiness names environment settings without any of their values', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await mkdir(join(root, 'src/pages'), { recursive: true })
+  await writeScripts(root, {
+    dev: 'export SESSION_KEY=SECRET123 && prisma generate --schema=SECRET123 && API_TOKEN=SECRET123 cross-env NODE_OPTIONS=--title=SECRET123 next dev',
+  })
+  // Act
+  const readiness = await readRepositoryAdapterReadiness(
+    root,
+    process.execPath,
+    SIGNAL,
+  )
+  // Assert
+  assert.deepEqual(readiness['next-dev-webpack'].preparation, {
+    status: 'skipped',
+    statements: 1,
+    envSettings: ['SESSION_KEY', 'API_TOKEN', 'NODE_OPTIONS'],
+  })
+  assert.equal(JSON.stringify(readiness).includes('SECRET123'), false)
 })

@@ -1,0 +1,35 @@
+{
+  "synthetic": "Hand-written Pages manifests for the route resolver's precedence table; not measured from a Next run. The required projects' Next examples have no dynamic or catch-all Pages routes.",
+  "manifests": {
+    "precedence": {
+      "/_app": "pages/_app.js",
+      "/_document": "pages/_document.js",
+      "/_error": "pages/_error.js",
+      "/404": "pages/404.js",
+      "/500": "pages/500.js",
+      "/": "pages/index.js",
+      "/a/[y]": "pages/a/[y].js",
+      "/[x]/b": "pages/[x]/b.js",
+      "/posts/new": "pages/posts/new.js",
+      "/posts/[id]": "pages/posts/[id].js",
+      "/posts/[...rest]": "pages/posts/[...rest].js",
+      "/docs/[[...slug]]": "pages/docs/[[...slug]].js",
+      "/café": "pages/café.js",
+      "/unsafe": "pages/../../outside.js",
+      "/backslash": "pages\\backslash.js",
+      "/elsewhere": "server/elsewhere.js"
+    },
+    "dynamicBeforeOptionalCatchAll": {
+      "/shop/[id]": "pages/shop/[id].js",
+      "/shop/[[...all]]": "pages/shop/[[...all]].js"
+    },
+    "rootOptionalCatchAll": {
+      "/_app": "pages/_app.js",
+      "/[[...slug]]": "pages/[[...slug]].js"
+    },
+    "equalPrecedence": {
+      "/[first]": "pages/[first].js",
+      "/[second]": "pages/[second].js"
+    }
+  }
+}

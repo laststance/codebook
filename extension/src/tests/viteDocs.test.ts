@@ -39,8 +39,9 @@ test('the repository-browser help has one anchor section for every Vite refusal 
   const help: Record<string, unknown> = JSON.parse(
     'text' in resource ? resource.text : '{}',
   )
-  // Assert: the Vite quick start comes first.
-  assert.deepEqual(Object.keys(help).slice(0, 4), [
+  // Assert: the Vite quick start comes first, after the one start-here sentence (Cycle 0065).
+  assert.deepEqual(Object.keys(help).slice(0, 5), [
+    'startHere',
     'viteQuickStart',
     'viteSupport',
     'viteFirstRun',

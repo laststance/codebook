@@ -17,6 +17,7 @@ import type { RepositoryConfiguration } from '../repositoryConfigSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { viteRefusal } from '../viteRefusals'
 
+import { readCappedBody } from './readCappedBody'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
 import { viteModuleUrl, type ViteModuleAddress } from './viteModuleUrl'
 
@@ -35,27 +36,6 @@ const servedMapSchema = z.object({
 
 /** Ends a seal with the `VITE_SEAL_FAILED` refusal that names the stop, the reason and the fix; the optional way out replaces the generic advice for a refusal that has its own. */
 type Refuse = (reason: string, wayOut?: string) => never
-
-/** Reads a response body whole, ending the read as soon as it passes the byte cap. */
-async function readCappedBody(
-  response: Response,
-  limit: number,
-): Promise<string | undefined> {
-  const reader = response.body?.getReader()
-  const chunks: Uint8Array[] = []
-  let total = 0
-  while (reader) {
-    const { done, value } = await reader.read()
-    if (done) break
-    total += value.byteLength
-    if (total > limit) {
-      await reader.cancel()
-      return undefined
-    }
-    chunks.push(value)
-  }
-  return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks))
-}
 
 /** Resolves one entry of a served map's `sources` to an absolute path of the package, or an absolute address for another origin; a malformed escape ends the seal through `refuse`. */
 async function absoluteSourceOf(

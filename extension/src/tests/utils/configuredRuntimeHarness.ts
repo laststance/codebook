@@ -18,9 +18,17 @@ import type { ProfileLeft } from '../../runtimeSupport/hostBrowser'
 import { sha256 } from '../../runtimeSupport/utils/sha256'
 import { WaitTimeoutError } from '../../runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
+import { citationContext } from '../../utils/citationContext'
 import { configuredDomExpression } from '../../utils/configuredDomExpression'
 import { createBundleVerifier } from '../../utils/createBundleVerifier'
+import type { NextPagesDiscoveryCache } from '../../utils/createNextPagesDiscoveryCache'
+import {
+  describeNextEntryResponse,
+  type NextEntryResponse,
+} from '../../utils/describeNextEntryResponse'
 import { maskEnvValues, maskKnownValues } from '../../utils/maskKnownValues'
+import { NEXT_PAGES_STATE_EXPRESSION } from '../../utils/readNextPagesState'
+import { readPagesDevelopmentBundle } from '../../utils/readPagesDevelopmentBundle'
 import * as viteDevAdapter from '../../viteDevAdapter'
 
 import {
@@ -38,6 +46,11 @@ import {
   type RuntimeConstantOverrides,
 } from './loadConstantsWith'
 import { loadModule } from './loadModule'
+import {
+  writeNextPagesWorkspace,
+  type NextPagesHarnessOptions,
+  type NextPagesPageState,
+} from './nextPagesWorkspace'
 import { repositoryHarness } from './repositoryHarness'
 import { sourceBreakpointRequest } from './sourceBreakpointRequest'
 
@@ -52,6 +65,23 @@ interface BeforeFailure {
 
 /** The source of a fixture that gives none: one statement on line 1 and an empty line 2, declared with `var` so that the stop on line 1, which requires value:nextTheme, stays on its declared line. */
 const FIXTURE_SOURCE = 'var nextTheme = "dark";\n'
+
+/**
+ * Moves the first cited source of a configured study, and the stop declared in it, to another workspace-relative path, keeping its text and hash.
+ * @param reference - The study {@link createConfiguredStudy} made; changed in place.
+ * @param path - The new path, such as `src/pages/api/hello.ts`.
+ * @example relocateFirstSource(reference, 'src/pages/_document.tsx')
+ */
+function relocateFirstSource(
+  reference: ReturnType<typeof createConfiguredStudy>,
+  path: string,
+): void {
+  const descriptor = reference.descriptor!
+  reference.configuration.source.path = path
+  descriptor.anchors[0]!.path = path
+  descriptor.sources[0]!.path = path
+  descriptor.citationContext = citationContext(descriptor.anchors)
+}
 
 /** Drives the product coordinator with real Git/source/evidence and controlled native protocol events, never claiming actual-editor proof. @example const harness = await configuredRuntimeHarness(context); await harness.run.prepare() */
 export async function configuredRuntimeHarness(
@@ -84,7 +114,7 @@ export async function configuredRuntimeHarness(
     adapter?: 'vite-dev'
     /** Makes the Vite stand-in refuse to seal with this sentence, as a missing served module does. */
     sealFailure?: string
-    /** Makes the Vite stand-in never finish reading the served module, as a server that stops answering does while a stop is sealed. */
+    /** Makes the stand-in seal (the Vite served-module read, or the Next `.next/dev` read) never finish, as a server that stops answering does while a stop is sealed. */
     sealHangs?: boolean
     /** The executed module's text instead of the default one-statement module, such as a Vite module with an inlined env value. */
     moduleJavascript?: string
@@ -96,6 +126,20 @@ export async function configuredRuntimeHarness(
     capturedValue?: string
     /** Makes the Vite stand-in reload the page, serving changed module bytes, right after the entry page was requested and before the run waits for the page to settle. */
     reloadDuringEntryLoad?: boolean
+    /** Runs the Next configuration in a workspace with a Pages folder: the stand-in server answers the structured entry check, the `.next/dev` build is written around the cited source, and the page reports `window.next.router` ({@link NextPagesHarnessOptions}). */
+    nextPages?: NextPagesHarnessOptions
+    /** Moves the first cited source, and the stop declared in it, to this workspace-relative path (such as a file under `src/pages`). */
+    sourcePath?: string
+    /** The configuration's initial inputs; the stand-in page has one editable control for each selector. */
+    initialInputs?: RepositoryConfiguration['initialInputs']
+    /** Makes the stand-in page never answer the text insert of an initial input, as a page whose reply is lost. */
+    holdInputInsert?: boolean
+    /** Makes the stand-in server's readiness check (`ready` and `readyEntry`) reject with this message, as a server that exits before it listens does. */
+    launchFailure?: string
+    /** Makes the stand-in server's structured entry check (`readyEntry`) never answer until the run is cancelled, as a first compile that is still running does. */
+    entryHangs?: boolean
+    /** Makes the stand-in page never answer a screenshot until the run is cancelled, so the run stays at the end of its setup, after the inputs were written. */
+    holdScreenshot?: boolean
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
@@ -117,13 +161,34 @@ export async function configuredRuntimeHarness(
     reference.configuration.source.line = fixture.declaredLine
   if (fixture?.declaredColumn)
     reference.configuration.source.column = fixture.declaredColumn
+  if (options.sourcePath) relocateFirstSource(reference, options.sourcePath)
+  if (options.nextPages?.entryPath)
+    reference.configuration.entryPath = options.nextPages.entryPath
+  if (options.initialInputs)
+    reference.configuration.initialInputs = options.initialInputs
   // Each of these changes makes the frozen intent hash stale.
-  if (additionalStops.length || options.before || fixture || options.adapter)
+  if (
+    additionalStops.length ||
+    options.before ||
+    fixture ||
+    options.adapter ||
+    options.sourcePath ||
+    options.nextPages?.entryPath ||
+    options.initialInputs
+  )
     reference.configurationHash = sha256(
       JSON.stringify(reference.configuration),
     )
   for (const source of reference.descriptor!.sources)
     await repository.track(source.path, source.text)
+  // A Pages project around the cited source: its Pages folder, Next, the `.next/dev` build and the module the page executes.
+  const pagesBuild = options.nextPages
+    ? await writeNextPagesWorkspace(
+        repository.directory,
+        reference.descriptor!.sources[0]!,
+        options.nextPages,
+      )
+    : undefined
   const definition = configuredDefinitionSchema.parse({
     configuration: reference.configuration,
     configurationHash: reference.configurationHash,
@@ -137,9 +202,10 @@ export async function configuredRuntimeHarness(
       definition.configuration.source.path,
     ),
     source = reference.descriptor!.sources[0]!.text,
-    // With a fixture the executed module mirrors the source line for line, so a pause can be placed on any of its lines.
+    // With a fixture the executed module mirrors the source line for line, so a pause can be placed on any of its lines; a Pages page executes the eval module of its chunk.
     javascript =
       options.moduleJavascript ??
+      pagesBuild?.moduleJavascript ??
       (fixture ? source : 'const nextTheme = "dark";')
   const bundle: BundleSource = {
     sourcePath,
@@ -156,7 +222,9 @@ export async function configuredRuntimeHarness(
     mapSource: sourcePath,
     scriptUrl: options.adapter
       ? 'http://127.0.0.1:4321/src/theme.ts'
-      : 'webpack-internal:///(app-pages-browser)/./src/theme.ts',
+      : options.nextPages
+        ? `webpack-internal:///(pages-dir-browser)/./${definition.configuration.source.path}`
+        : 'webpack-internal:///(app-pages-browser)/./src/theme.ts',
     chunkPath: join(repository.directory, '.next/dev/chunk.js'),
     chunkHash: '0'.repeat(64),
   }
@@ -182,6 +250,39 @@ export async function configuredRuntimeHarness(
   // The wait bounds the run passed to the stand-in, and the way to end a wait as the launcher's own wait does at its bound.
   const settledTimeoutsMs: number[] = []
   let expireOptimizerWait = (): void => {}
+  // The router states the Pages page reports, one per read, the last repeating; {@link setPagesState} replaces them.
+  let pagesStates: NextPagesPageState[] = options.nextPages?.pageStates ?? [
+    {
+      pathname: options.nextPages?.entryPath ?? '/',
+      routerSeen: true,
+      isReady: true,
+      route: '/',
+    },
+  ]
+  let pagesStateReads = 0
+  /** Answers one read of the Pages router state: the next scripted state, the last one repeating. */
+  const nextPagesState = (): NextPagesPageState => {
+    const state =
+      pagesStates[Math.min(pagesStateReads, pagesStates.length - 1)]!
+    pagesStateReads += 1
+    return state
+  }
+  // Every Pages seal the run asked for, with the run's discovery cache and the bytes it had read before and after.
+  const pagesSeals: {
+    cache: NextPagesDiscoveryCache
+    readBytesBefore: number
+    readBytesAfter?: number
+  }[] = []
+  // The entry path of each structured entry check the run asked the stand-in server for.
+  const entryChecks: string[] = []
+  // The text of each initial input the run sent to the page, in order.
+  const insertedTexts: string[] = []
+  let screenshotCount = 0
+  // Ends a held insert of an initial input when the page's transport closes.
+  let rejectHeldInsert = (_error: Error): void => {}
+  let rejectHeldScreenshot = (_error: Error): void => {}
+  // The answers an App replay of the structured entry check was asked to judge.
+  const appEntryConfirmations: NextEntryResponse[] = []
   let emitInputPause = true,
     emitPreparationResume = false,
     stopAtStartupBreakpoint = false,
@@ -406,6 +507,7 @@ export async function configuredRuntimeHarness(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII='
   /** Answers what the page evaluates: its location, and the configured DOM conditions, of which the after conditions hold only once the input was sent. */
   const pageEvaluation = (expression: string | undefined): unknown => {
+    if (expression === NEXT_PAGES_STATE_EXPRESSION) return nextPagesState()
     if (expression === 'location.href') return 'about:blank'
     if (expression === 'location.origin') return pageOrigin
     if (
@@ -447,6 +549,8 @@ export async function configuredRuntimeHarness(
       this.closed = true
       releases.push('cdp')
       inputReject(new Error('CDP disconnected'))
+      rejectHeldInsert(new Error('CDP disconnected'))
+      rejectHeldScreenshot(new Error('CDP disconnected'))
       rejectContinuation(new Error('DAP disconnected'))
       onClose()
     },
@@ -458,6 +562,7 @@ export async function configuredRuntimeHarness(
         type?: string
         start?: ScriptPlace
         end?: ScriptPlace
+        text?: string
       },
       timeout?: number,
     ) {
@@ -489,6 +594,24 @@ export async function configuredRuntimeHarness(
             },
           }
         }
+      }
+      // The initial inputs: one editable control per selector, focused and verified, whose insert answers unless it is held.
+      if (
+        method === 'Runtime.evaluate' &&
+        parameters?.expression?.startsWith('(function selectInput')
+      )
+        return { result: { subtype: 'node', objectId: 'input-control' } }
+      if (method === 'Runtime.callFunctionOn')
+        return { result: { value: { ready: true } } }
+      if (method === 'Runtime.releaseObject') return {}
+      if (method === 'Input.insertText') {
+        insertedTexts.push(String(parameters?.text))
+        // A held insert is answered only by the transport closing, as a lost reply is.
+        if (options.holdInputInsert)
+          return new Promise<never>((_resolve, reject) => {
+            rejectHeldInsert = reject
+          })
+        return {}
       }
       if (method === 'Runtime.evaluate')
         return { result: { value: pageEvaluation(parameters?.expression) } }
@@ -558,7 +681,15 @@ export async function configuredRuntimeHarness(
           }
         }
       }
-      if (method === 'Page.captureScreenshot') return { data: screenshot }
+      if (method === 'Page.captureScreenshot') {
+        screenshotCount += 1
+        // A held capture is answered only by the transport closing, as a lost reply is.
+        if (options.holdScreenshot)
+          return new Promise<never>((_resolve, reject) => {
+            rejectHeldScreenshot = reject
+          })
+        return { data: screenshot }
+      }
       if (method === 'Input.dispatchMouseEvent') {
         mouse.push({ type: parameters?.type, timeout })
         if (parameters?.type === 'mousePressed') return {}
@@ -694,11 +825,45 @@ export async function configuredRuntimeHarness(
       constructor(readonly location: unknown) {}
     },
   }
+  // The entry path the run passed to each readiness check of the stand-in server, in order.
+  const readyEntryPaths: (string | undefined)[] = []
   const fakeApplication = {
-    ready: async () => {
+    ready: async (_signal: AbortSignal, entryPath?: string) => {
+      readyEntryPaths.push(entryPath)
+      if (options.launchFailure) throw new Error(options.launchFailure)
       releases.push('application acquired')
       return 'http://127.0.0.1:4321'
     },
+    // The structured entry check of a Pages-capable run: the scripted answer, described by the real code, never fetched.
+    readyEntry: async (signal: AbortSignal, entryPath: string) => {
+      entryChecks.push(entryPath)
+      // A first compile that has not finished answers only when the run is cancelled.
+      if (options.entryHangs)
+        await new Promise<never>((_resolve, reject) =>
+          signal.addEventListener('abort', () => reject(signal.reason)),
+        )
+      if (options.launchFailure) throw new Error(options.launchFailure)
+      releases.push('application acquired')
+      const origin = 'http://127.0.0.1:4321',
+        answer = options.nextPages?.entry ?? { status: 200 }
+      return {
+        origin,
+        entry: describeNextEntryResponse(
+          answer.status,
+          answer.location ?? null,
+          `${origin}${entryPath}`,
+          origin,
+        ),
+      }
+    },
+    confirmAppEntry: async (
+      _signal: AbortSignal,
+      _entryPath: string,
+      entry: NextEntryResponse,
+    ): Promise<void> => {
+      appEntryConfirmations.push(entry)
+    },
+    outputTail: () => options.nextPages?.outputTail ?? '',
     close: async (): Promise<void> => {
       releases.push('application')
     },
@@ -778,8 +943,46 @@ export async function configuredRuntimeHarness(
         },
       },
       './utils/readDevelopmentBundle': {
-        readDevelopmentBundle: async () => ({ bundle, discovery: {} }),
+        readDevelopmentBundle: async (
+          _workspace: string,
+          _source: unknown,
+          signal: AbortSignal,
+        ) => {
+          // A hung `.next/dev` read ends only when the run is cancelled.
+          if (options.sealHangs)
+            await new Promise<never>((_resolve, reject) =>
+              signal.addEventListener('abort', () => reject(signal.reason)),
+            )
+          return { bundle, discovery: {} }
+        },
       },
+      // The real Pages seal over the written build, with every request and its cache's bytes recorded.
+      './utils/readPagesDevelopmentBundle': {
+        readPagesDevelopmentBundle: async (
+          request: Parameters<typeof readPagesDevelopmentBundle>[0],
+        ) => {
+          const seal: (typeof pagesSeals)[number] = {
+            cache: request.cache,
+            readBytesBefore: request.cache.readBytes,
+          }
+          pagesSeals.push(seal)
+          const result = await readPagesDevelopmentBundle(request)
+          seal.readBytesAfter = request.cache.readBytes
+          return result
+        },
+      },
+      // A scripted manifest answer or failure replaces the reader's poll; without one the real reader reads the written manifests.
+      ...(options.nextPages?.manifests || options.nextPages?.manifestFailure
+        ? {
+            './utils/readNextRouteManifests': {
+              readNextRouteManifests: async () => {
+                const failure = options.nextPages?.manifestFailure
+                if (failure) throw new Error(failure)
+                return options.nextPages?.manifests
+              },
+            },
+          }
+        : {}),
       './utils/assertDevelopmentWorkspace': {
         assertDevelopmentWorkspace: async () => undefined,
       },
@@ -987,6 +1190,26 @@ export async function configuredRuntimeHarness(
     },
     /** Every URL the run navigated the page to, in order. */
     navigations,
+    /** The entry path the run passed to each readiness check of the stand-in server (`app.ready`), in order. */
+    readyEntryPaths,
+    /** The entry path of each structured entry check (`app.readyEntry`) of a Pages-capable run, in order. */
+    entryChecks,
+    /** The text of each initial input the run sent to the page (`Input.insertText`), in order. */
+    insertedTexts,
+    /** How many screenshots the run asked the stand-in page for. */
+    screenshotRequests: () => screenshotCount,
+    /** The answers the run asked the stand-in server to judge the App way (`app.confirmAppEntry`), in order. */
+    appEntryConfirmations,
+    /** Every Pages seal the run asked for, with its discovery cache and the bytes read before and after. */
+    pagesSeals,
+    /** The `.next/dev/build-manifest.json` text written for a Pages run. */
+    pagesBuildManifest: pagesBuild?.buildManifest,
+    /** How many times the run read the Pages router state. */
+    pagesStateReads: (): number => pagesStateReads,
+    /** Makes every later read of the Pages router state answer this state, as a client redirect or a late router does. @example harness.setPagesState({ pathname: '/login', routerSeen: true, isReady: true, route: '/login' }) */
+    setPagesState(state: NextPagesPageState): void {
+      pagesStates = [state]
+    },
     /** The configuration of each browser the run launched, in order. */
     launchConfigurations,
     /** Reports another main-frame page load, as a Vite dependency-optimizer reload or a click's navigation does. @example harness.reloadPage() */

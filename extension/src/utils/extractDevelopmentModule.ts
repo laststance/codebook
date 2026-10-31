@@ -18,20 +18,66 @@ export function extractDevelopmentModule(
   scriptUrl: string,
   deadline = performance.now() + REPOSITORY_DISCOVERY_TIMEOUT_MS,
 ): BundleSource | undefined {
+  // The generator decodes one literal at a time, so each module is read right after its own literal, as before the split.
+  return selectEvaluatedModule(
+    evaluatedModuleTexts(chunk, deadline),
+    { sourcePath, source, chunkPath, chunkHash: sha256(chunk) },
+    scriptUrl,
+    deadline,
+  )
+}
+
+/**
+ * Decodes every webpack eval literal of a built chunk into the module text it would evaluate, without executing any of it.
+ * Called by {@link extractDevelopmentModule} for one stop, and by {@link readNextChunkModules}, which keeps a Pages chunk's decoded modules for every stop of a run.
+ * @param chunk - The built chunk's text.
+ * @param deadline - The `performance.now()` time after which decoding stops.
+ * @returns The module texts, one per eval literal, in chunk order (lazily, as a generator).
+ * @throws When the chunk exceeds {@link REPOSITORY_CHUNK_LIMIT_BYTES}, a literal is no JSON string, or the deadline passes.
+ * @example
+ * [...evaluatedModuleTexts('eval("work();");', performance.now() + 1000)] // => ['work();']
+ */
+export function* evaluatedModuleTexts(
+  chunk: string,
+  deadline: number,
+): Generator<string> {
   if (Buffer.byteLength(chunk) > REPOSITORY_CHUNK_LIMIT_BYTES)
     throw new Error('Application chunk exceeds byte limit')
-  const candidates: BundleSource[] = []
   // Scan the two webpack eval literal forms without recursive regexp matching on large chunks.
-  const literals = webpackEvalLiterals(chunk),
-    chunkHash = sha256(chunk)
-  for (const literal of literals) {
+  for (const literal of webpackEvalLiterals(chunk)) {
     if (performance.now() >= deadline)
       throw new Error('Module discovery deadline exceeded')
-    const bundle = bundleOfEvaluatedModule(
-      JSON.parse(literal),
-      { sourcePath, source, chunkPath, chunkHash },
-      scriptUrl,
-    )
+    yield JSON.parse(literal)
+  }
+}
+
+/**
+ * Picks the one evaluated module that carries a script address, as the sealed bundle of a cited original.
+ * Called by {@link extractDevelopmentModule} and by the Pages readers ({@link readPagesDevelopmentBundle}, {@link readNextServerOnlyReason}) over a chunk's decoded modules.
+ * @param moduleTexts - The decoded modules of one chunk ({@link evaluatedModuleTexts}).
+ * @param identity - The cited original and the chunk the modules came from, as {@link bundleOfEvaluatedModule} takes it.
+ * @param scriptUrl - The script address the module must carry as its effective `sourceURL`.
+ * @param deadline - The `performance.now()` time after which the search stops.
+ * @returns The sealed bundle, or `undefined` when no module of the chunk carries the address.
+ * @throws When two modules carry the address, a module's identity or map is malformed, or the deadline passes.
+ * @example
+ * selectEvaluatedModule(texts, { sourcePath, source, chunkPath, chunkHash }, 'webpack-internal:///(pages-dir-browser)/./src/pages/index.tsx', deadline)?.scriptUrl
+ * // => 'webpack-internal:///(pages-dir-browser)/./src/pages/index.tsx'
+ */
+export function selectEvaluatedModule(
+  moduleTexts: Iterable<string>,
+  identity: Pick<
+    BundleSource,
+    'sourcePath' | 'source' | 'chunkPath' | 'chunkHash'
+  >,
+  scriptUrl: string,
+  deadline: number,
+): BundleSource | undefined {
+  const candidates: BundleSource[] = []
+  for (const javascript of moduleTexts) {
+    if (performance.now() >= deadline)
+      throw new Error('Module discovery deadline exceeded')
+    const bundle = bundleOfEvaluatedModule(javascript, identity, scriptUrl)
     if (bundle) candidates.push(bundle)
   }
   if (performance.now() >= deadline)

@@ -5,13 +5,14 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.12 is additive: Next Pages Router pages on the `next-dev-webpack` adapter (the `next-dev-webpack` readiness gains `routerKind`, `preparation` and `notes`, the repository-browser profile names its `nextRouters`, a Next run's resource names its `nextRoute`, the `NEXT_*` refusal codes and `SOURCE_CHANGED` for a Pages module replaced during the run, and `codebook://help/repository-browser` gains `startHere`, the Next quick start, the Pages support table and the Next refusal anchors); App Router and Vite runs are unchanged.
  * 1.11 is additive: the `vite-dev` adapter of the `repository-browser` profile (the adapter enum of the configuration, `codebook_status` adapter readiness under `profiles[].prerequisites.adapters`, the optional `viteVersion` of a Vite run manifest and resource, the `ADAPTER_MISROUTE` and `VITE_*` refusal codes, the Vite quick start and refusal anchors of `codebook://help/repository-browser`); a Vite study is saved in study format 5.
  * 1.10 is additive: the `chrome-extension` profile (the `extension-click` action, the `extension` participant of `codebook_continue`, the `chromeExtension` block and `claimable` of the run resource, `codebook://help/chrome-extension`); a chrome-extension run is not saved in this version.
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.11'
-export const EXTENSION_VERSION = '0.2.65'
+export const API_VERSION = '1.12'
+export const EXTENSION_VERSION = '0.2.66'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -1592,6 +1593,12 @@ export const REPOSITORY_STORAGE_KEY_LIMIT_CHARS = 128
 export const REPOSITORY_STORAGE_VALUE_LIMIT_CHARS = 2_048
 export const REPOSITORY_STORAGE_LIMIT_BYTES = 16_384
 export const REPOSITORY_SETUP_TIMEOUT_MS = 90_000
+/** How long {@link readNextRouteManifests} waits, after the readiness GET of the entry path, for the route to appear in Next's route manifests. A cold first compile writes them shortly after it answers; the wait counts against {@link REPOSITORY_SETUP_TIMEOUT_MS}. */
+export const NEXT_MANIFEST_POLL_MS = 10_000
+/** How often {@link readNextRouteManifests} reads the route manifests again while it waits within {@link NEXT_MANIFEST_POLL_MS}. */
+export const NEXT_MANIFEST_POLL_INTERVAL_MS = 250
+/** The source extensions Next tries for a Pages Router page, in its own order (its default `pageExtensions`); a custom `pageExtensions` is not read. */
+export const NEXT_PAGES_SOURCE_EXTENSIONS = ['tsx', 'ts', 'jsx', 'js'] as const
 export const REPOSITORY_PAUSE_HOLD_TIMEOUT_MS = 300_000
 /** The longest private observation hold a native Node test trial accepts (`CODEBOOK_NODE_TEST_HOLD_MS`, `CODEBOOK_NODE_TEST_HOLD_AFTER_MS`), so a recording can show the state the trial reached. */
 export const NATIVE_TRIAL_HOLD_LIMIT_MS = 60_000
@@ -2264,6 +2271,9 @@ export const HTTP_REDIRECT_STATUS_MIN = 300
 /** The first HTTP status after the redirect class (the client-error class starts here), so a redirect status is below it. */
 export const HTTP_REDIRECT_STATUS_END = 400
 
+/** The first HTTP status of the server-error class (5xx); a Next Pages entry answered with one is refused as a page that failed on the server, a client error (4xx) below it as a page that does not serve the path. */
+export const HTTP_SERVER_ERROR_STATUS_MIN = 500
+
 /** The one host Codebook owns for a Vite dev server; the launcher passes it inline and the parent refuses a resolved `server.host` that differs (a plugin can widen it to every interface). */
 export const VITE_LOOPBACK_HOST = '127.0.0.1'
 
@@ -2349,6 +2359,49 @@ export const VITE_SETUP_STEPS = {
 /** One setup step of {@link VITE_SETUP_STEPS}. */
 export type ViteSetupStep =
   (typeof VITE_SETUP_STEPS)[keyof typeof VITE_SETUP_STEPS]
+
+/**
+ * The setup steps of a Next Pages run, named once for the configured browser run's step setter and the `NEXT_SETUP_DEADLINE` sentence.
+ * A deadline names the step the run had reached, and the step chooses the static recovery, so a renamed step cannot fall through to the wrong sentence or the wrong recovery.
+ */
+export const NEXT_SETUP_STEPS = {
+  validatingProject: 'validating the project',
+  startingNext: 'starting Next',
+  waitingForServer: 'waiting for the server to answer the entry page',
+  readingManifests: 'reading the route manifests',
+  sealingStops: 'sealing the declared stops',
+  openingBrowser: 'opening the browser',
+  loadingEntryPage: 'loading the entry page',
+  waitingForRouter:
+    'waiting for the page router to become ready before sending the declared input or click',
+  writingInputs: 'writing the initial inputs',
+  armingFirstStop: 'arming the first stop',
+} as const
+
+/** One setup step of {@link NEXT_SETUP_STEPS}. */
+export type NextSetupStep =
+  (typeof NEXT_SETUP_STEPS)[keyof typeof NEXT_SETUP_STEPS]
+
+// The Next Pages run sequence (Cycle 0065 lane C): the entry check, the page router wait and the redacted message parts.
+
+/** What a Next Pages refusal shows in place of a query or fragment value of a path, and of a value it masks in quoted development-server output. */
+export const NEXT_REDACTED_VALUE = '<redacted>'
+
+/** The first HTTP success status (2xx); a success status is below {@link HTTP_REDIRECT_STATUS_MIN}, as `Response.ok` reads it. */
+export const HTTP_SUCCESS_STATUS_MIN = 200
+
+/** The longest path a Next Pages refusal quotes (characters, after redaction); a longer one is cut with an ellipsis. */
+export const NEXT_MESSAGE_PATH_LIMIT_CHARS = 256
+
+/** The most of the development server's last output a `NEXT_ROUTE_NOT_COMPILED` refusal quotes (UTF-8 bytes, the newest kept). */
+export const NEXT_QUOTED_OUTPUT_LIMIT_BYTES = 2_048
+
+/** How often a Pages run reads `window.next.router` while it waits for the page router to become ready, within the remaining setup budget. */
+export const NEXT_ROUTER_POLL_INTERVAL_MS = 100
+
+/** The sentence a Next launch or compile failure on the Pages path adds when the project's own `dev` script does not ask for webpack (Next 16 runs Turbopack by default). */
+export const NEXT_WEBPACK_COMPATIBILITY_SENTENCE =
+  'Codebook runs your Next app with webpack (`next dev --webpack`) even when your dev script uses Turbopack. The page is built from the same source; a Turbopack-only loader or setting has no effect during the run.'
 
 /** The most reloads before the inputs the run tolerates (a dependency optimizer reloads once or twice). */
 export const VITE_PAGE_GENERATION_LIMIT = 4

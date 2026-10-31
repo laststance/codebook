@@ -5,21 +5,37 @@ import { z } from 'zod'
 
 import { VITE_SUPPORTED_MAJOR } from '../constants'
 
+import { describeNextDevPreparation } from './describeNextDevPreparation'
 import { hasNextExecutable } from './hasNextExecutable'
+import {
+  readNextDevPreparation,
+  type NextDevPreparation,
+} from './readNextDevPreparation'
+import {
+  NEXT_ROUTE_FOLDER_NOT_FOUND_NOTE,
+  readNextRouterKind,
+  type NextRouterKind,
+} from './readNextRouterKind'
 import { readNodeVersion } from './readNodeVersion'
 import {
   readViteWorkspaceGaps,
   type ViteDevScriptReadiness,
 } from './readViteWorkspaceGaps'
 
-export type { ViteDevScriptReadiness }
+export type { NextDevPreparation, NextRouterKind, ViteDevScriptReadiness }
 
 /** The Next prerequisite of one workspace. */
 export type NextAdapterReadiness = {
   ready: boolean
+  /** Which routers the workspace's route folders hold ({@link readNextRouterKind}); a label that never changes `ready`. Present when Next is installed. */
+  routerKind?: NextRouterKind
+  /** What Codebook leaves out of `scripts.dev` ({@link readNextDevPreparation}); present when Next is installed and the reading is not a plain `none`. */
+  preparation?: NextDevPreparation
   /** The `next` package version, when it is installed and readable. */
   version?: string
   missing: string[]
+  /** Sentences to tell the learner that never change `ready`: the folders searched for router kind `none`, skipped or unread preparation, unapplied environment settings by name. Present when there is one. */
+  notes?: string[]
 }
 
 /** The Vite prerequisite of one workspace. */
@@ -48,13 +64,28 @@ export type RepositoryAdapterReadiness = {
 
 const nextPackageSchema = z.object({ version: z.string() })
 
-/** Reads the `next` readiness: its executable present, its version when readable. */
-async function readNextReadiness(
-  workspace: string,
-): Promise<NextAdapterReadiness> {
+/**
+ * Reads the `next` installation: its executable present, its version when readable.
+ *
+ * Called by {@link readNextReadiness}, which adds the router kind and preparation labels of an installed Next, and by the configured browser run, which names the Next version in a Pages refusal or launch failure.
+ *
+ * @param workspace - The package root.
+ * @returns
+ * - `installed: false` with the install sentence when the executable is missing
+ * - `installed: true` with `ready: false` and the reinstall sentence when `node_modules/next/package.json` does not parse
+ * - `installed: true`, `ready: true` and the version when it is readable
+ * @example
+ * await readNextInstallation('/repo') // => { installed: true, ready: true, missing: [], version: '16.4.3' }
+ */
+export async function readNextInstallation(workspace: string): Promise<
+  Pick<NextAdapterReadiness, 'ready' | 'version' | 'missing'> & {
+    installed: boolean
+  }
+> {
   const installed = await hasNextExecutable(workspace)
   if (!installed)
     return {
+      installed: false,
       ready: false,
       missing: [
         'Install the selected workspace dependencies, including Next, before using next-dev-webpack.',
@@ -64,7 +95,7 @@ async function readNextReadiness(
     join(workspace, 'node_modules/next/package.json'),
     'utf8',
   ).catch(() => undefined)
-  if (text === undefined) return { ready: true, missing: [] }
+  if (text === undefined) return { installed: true, ready: true, missing: [] }
   // A manifest that does not parse is Next's failure alone: it never rejects the whole report
   const manifest = (() => {
     try {
@@ -75,12 +106,56 @@ async function readNextReadiness(
   })()
   if (!manifest)
     return {
+      installed: true,
       ready: false,
       missing: [
         'node_modules/next/package.json is not a valid package manifest. Reinstall the workspace dependencies before using next-dev-webpack.',
       ],
     }
-  return { ready: true, missing: [], version: manifest.version }
+  return {
+    installed: true,
+    ready: true,
+    missing: [],
+    version: manifest.version,
+  }
+}
+
+/**
+ * Reads the `next` readiness: the installation, then, for an installed Next, the router kind and the preparation of `scripts.dev` as labels with their notes.
+ *
+ * Called by {@link readRepositoryAdapterReadiness}. Without Next the adapter cannot start, so no label is read and the report stays the install sentence. The labels never change `ready`: their sentences go to `notes`, never to `missing`, because the environment turns every `missing` sentence into not ready.
+ *
+ * @param workspace - The package root.
+ * @returns The Next report, keyed `ready`, `routerKind`, `preparation` (only when it is not a plain `none`), `version`, `missing`, `notes` (only when there is a note).
+ * @example
+ * await readNextReadiness('/repo')
+ * // => { ready: true, routerKind: 'pages', preparation: { status: 'skipped', statements: 1 }, version: '16.4.3', missing: [], notes: ['Codebook starts Next with --webpack and skips 1 statement(s) …'] }
+ */
+async function readNextReadiness(
+  workspace: string,
+): Promise<NextAdapterReadiness> {
+  const { installed, ...installation } = await readNextInstallation(workspace)
+  if (!installed) return installation
+  const [routerKind, preparation] = await Promise.all([
+    readNextRouterKind(workspace),
+    readNextDevPreparation(workspace),
+  ])
+  const notes = [
+    ...(routerKind === 'none' ? [NEXT_ROUTE_FOLDER_NOT_FOUND_NOTE] : []),
+    ...describeNextDevPreparation(preparation),
+  ]
+  // A plain `next dev` with no environment setting leaves nothing out, so it is not reported.
+  const reportsPreparation =
+    preparation.status !== 'none' || preparation.envSettings !== undefined
+  const { ready, version, missing } = installation
+  return {
+    ready,
+    routerKind,
+    ...(reportsPreparation ? { preparation } : {}),
+    ...(version === undefined ? {} : { version }),
+    missing,
+    ...(notes.length > 0 ? { notes } : {}),
+  }
 }
 
 /** Reads the `vite` readiness against the configured Node from the same gaps a start refuses with. */
@@ -119,7 +194,7 @@ async function readViteReadiness(
 }
 
 /**
- * Reports, for the current workspace, whether each repository-browser adapter could start: its package, version, supported major, Vite's `engines.node` against the configured Node, the `dev` script form and Yarn Plug-n-Play.
+ * Reports, for the current workspace, whether each repository-browser adapter could start: its package, version, supported major, Vite's `engines.node` against the configured Node, the `dev` script form and Yarn Plug-n-Play; for an installed Next also the router kind and what Codebook leaves out of `scripts.dev`, as labels that never change `ready`.
  *
  * Why it exists: an agent that reads `codebook_status` picks the adapter that reports ready instead of guessing. Called by the environment's `prerequisites` for `profiles['repository-browser'].adapters`. It reuses the start's own gate sentences ({@link viteScriptMessage} and the others) and checks nothing that needs the launcher; unsupported config settings appear only at a start.
  *

@@ -1,0 +1,8 @@
+{
+  "measured": "Next 16.4.3 dev server (next dev --webpack) of TanStack/query c9c00015 examples/react/nextjs, after the readiness GET of /; Cycle 0065 Task 0. The manifests beside this file are its .next/dev/build-manifest.json, .next/dev/routes-manifest.json and .next/dev/server/pages-manifest.json; there was no app-paths-manifest.json.",
+  "pagesFiles": [
+    "src/pages/_app.tsx",
+    "src/pages/client-only.tsx",
+    "src/pages/index.tsx"
+  ]
+}
