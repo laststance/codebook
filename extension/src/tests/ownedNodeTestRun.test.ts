@@ -1857,7 +1857,7 @@ test('a node-test run that Vitest ends before its first stop reports a recovery 
     }
   }
   const recovery =
-    "Vitest itself ended the run before the test's first stop; nothing ran past that point and nothing was saved. Read the cause for Vitest's own error (after launch it is also in the Codebook test output) and fix what it names in the test's Vitest root, for example install the missing dependency, correct the config, or make testTitles name the cited test exactly. Then start a new run deliberately with a new key; never retry automatically."
+    "Vitest itself ended the run before the test's first stop; no stop was recorded and no learning was saved. Read the cause for Vitest's own error (after launch it is also in the Codebook test output) and fix what it names in the test's Vitest root, for example install the missing dependency, correct the config, or make testTitles name the cited test exactly. Then start a new run deliberately with a new key; never retry automatically."
   const earlyExitMessage =
     'Owned Node test exited with code 0 before declared stop 1. The first declared stop is reached only when the test runs its line; its output is in the Codebook test output. If Vitest skipped the cited test, check that testTitles names it exactly; see codebook://help/node-test.'
 
