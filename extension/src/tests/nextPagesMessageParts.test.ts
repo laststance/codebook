@@ -191,6 +191,19 @@ test('a page path and its entry path compare without query, trailing slash or en
   assert.deepEqual(normalized, ['/posts', '/café', '/', '/%E0%A4%A'])
 })
 
+// Value: protects=a page whose path holds an encoded slash is another page than the path with a real slash, so the Pages path checks refuse a client navigation to another route; fails_when=`/posts/a%2Fb` compares equal to `/posts/a/b`, the hex case of an encoded slash matters, `café` stops matching its encoding, or a literal `%2F` text (`%252F`) reads as an encoded slash; why_new=Cycle 0066 task 16 (every escape was decoded, `%2F` included); seam=none; no_claim=the route Next resolves for an encoded slash
+test('a page path with an encoded slash is another page than the path with a real slash', () => {
+  // Act
+  const comparedEqual = [
+    nextPathnameOf('/posts/a%2Fb') === nextPathnameOf('/posts/a/b'),
+    nextPathnameOf('/posts/a%2fb') === nextPathnameOf('/posts/a%2Fb'),
+    nextPathnameOf('/posts/caf%C3%A9') === nextPathnameOf('/posts/café'),
+    nextPathnameOf('/posts/a%252Fb') === nextPathnameOf('/posts/a%2Fb'),
+  ]
+  // Assert
+  assert.deepEqual(comparedEqual, [false, true, true, false])
+})
+
 // Value: protects=a Fast Refresh hot-update chunk is told apart from a sealed module address; fails_when=a hot-update chunk with a query is missed or a webpack-internal module is taken for one; why_new=Cycle 0065 (a *.hot-update.js never binds as a sealed module); seam=none; no_claim=none
 test('a hot-update chunk address is told apart from a module address', () => {
   // Act
