@@ -226,7 +226,13 @@ export function createExtensionStorageDescriptor(options?: {
           captureMissing: reasons,
           learningCoverage: learning.coverage,
           learningMissing: learning.missing,
-          ...(materialContent ? { title: materialContent.title } : {}),
+          // The saved material's question replaces the header's provisional one; without material the header's stands.
+          ...(materialContent
+            ? {
+                title: materialContent.title,
+                question: materialContent.question,
+              }
+            : {}),
           materialRevision: materialRevision ?? 0,
         },
       }

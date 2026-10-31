@@ -372,3 +372,23 @@ test('the old extension save refusal appears nowhere in the shipped source or th
   // Assert
   assert.deepEqual(offenders, [])
 })
+
+// protects=after the learning material is saved, the history's summary asks the material's question and Saved studies words its row with it, until then the header's provisional question stands; fails_when=Saved studies keeps the provisional "Extension run: <name>" question beside the saved material; no_claim=the Study pane's drawing
+test('the summary of a saved extension history asks the question of its learning material', async (context) => {
+  // Arrange
+  const { service, studyId, events, repository } = await sealedRun(context)
+  const before = await repository.extensionHistories.summarize(studyId)
+  const content = extensionMaterial(events)
+
+  // Act
+  await service.explainNodeHistory({
+    studyId,
+    expectedRevision: 0,
+    content: { ...content, question: 'What does Press Ping change?' },
+  })
+  const after = await repository.extensionHistories.summarize(studyId)
+
+  // Assert
+  assert.equal(before?.question.startsWith('Extension run:'), true)
+  assert.equal(after?.question, 'What does Press Ping change?')
+})
