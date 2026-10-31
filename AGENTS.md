@@ -87,10 +87,10 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 
 **Delivery parameters.**
 
-- Merge: `gh pr merge <n> --squash --match-head-commit <sha>`.
+- Merge: `node extension/scripts/merge-pr.mjs <n>` after the exact-HEAD gate in this checkout: it merges with `--squash --match-head-commit <head>` only when the gate summary (`Checkout: clean`, every check `exit=0`, `GATE: pass on <head>`) and every workflow run, check run and status of that head passed (`CodeRabbit` never gates), then fast-forwards the local `main`. Hand fallback, only for a defect of the script itself (named in the PR): `gh pr merge <n> --squash --match-head-commit <sha>`.
 - `/ship` documentation candidate (`gstack-docs-candidate snapshot`) `--docs` roots: AGENTS.md, CHANGELOG.md, PRODUCT_GOAL.md, README.md, `extension/README.md`, `extension/skills/codebook/SKILL.md`, the v9 PNG.
 - CI packages via `node extension/scripts/package.mjs --out artifacts/packages/codebook.vsix`, checks via `node extension/scripts/check-package.mjs artifacts/packages/codebook.vsix` (`package.yml`).
-- Release commit: besides version files and CHANGELOG.md, one test line (expected version in `extension/scripts/tests/package.test.mjs`); `/ship` Step 16 counts it as release metadata, not a reviewed-tree change.
+- Release commit: besides version files and CHANGELOG.md, one test line (expected version in `extension/scripts/tests/package.test.mjs`); `/ship` Step 16 counts it as release metadata, not a reviewed-tree change. Order: `/ship` Step 12 writes `VERSION` and the CHANGELOG heading, `node extension/scripts/bump-version.mjs <VERSION>` writes the three three-part places, Step 13 writes the entry, `bump-version.mjs --check` exits 0 (`test:package` fails any commit whose five places disagree).
 
 **Pre-gate (owner, 2026-10-22):** `/ship` pre-gate = Stage 1 only: `gstack-pregate --stage preflight --allow-repo-commands`, secrets scan every time. Test lanes (Stage 2) = `pnpm --dir extension test` on the final tree + required CI.
 
@@ -227,6 +227,15 @@ Standing rules, stated as rules (no decision log); delivery chain and ship limit
 
 Node as `.node-version` pins it (mirrored in `extension/.node-version`, since a version manager's shim reads the nearest package's `engines` there), pnpm as the extension's `packageManager` pins it, and Bun as `.bun-version` pins it (`pnpm install` does not provide it; install that version, e.g. `curl -fsSL https://bun.com/install | bash -s "bun-v$(cat .bun-version)"`, or the commit hook and the format check fail); put that Node's own `bin` first in `PATH`; run from the repo root.
 
+Delivery commands (each prints usage, exit codes 0/1/2/3/4/64 and `E_…` codes with `--help`; a refusal's first line is its code, its last line `Fix:`):
+
+| Command | When |
+| --- | --- |
+| `node extension/scripts/bump-version.mjs <v>` / `--check` | release commit, after `/ship` Step 12 |
+| `node extension/scripts/qa-candidate.mjs` (`--status`, `--clean`) | on the clean commit a native trial installs |
+| `node extension/scripts/post-trial-evidence.mjs <run-log.md> --manifest artifacts/<cycle>/<host>-<run>` | after a native trial, once the candidate review is read |
+| `node extension/scripts/merge-pr.mjs <n>` (`--dry-run`) | merge, after CI and the exact-HEAD gate |
+
 Formatting: `pnpm --dir extension format` / `format:check` and the lint-staged hook run `bun fmt` (the Bun of `.bun-version` on `PATH`, which `format.yml` installs and the gate checks; it reads `.prettierrc.json` and `.prettierignore`, and gives the Prettier 3.9.8 result on this tree, Cycle 0062 task 24). Never format a README with it: hand-edit README sentences.
 
 **Gate and focused runs.**
@@ -298,6 +307,7 @@ Formatting: `pnpm --dir extension format` / `format:check` and the lint-staged h
 ## Native QA
 
 - Observing a native trial (state checks, screenshots, evidence stills): [docs/agents/native-trial-observation.md](docs/agents/native-trial-observation.md).
+- Candidate and evidence: build the trial VSIX with `qa-candidate.mjs` (its background Codex review runs while the trial is prepared); recorded runs start once the review ended or hit its limit, and a Critical/Major/P0/P1 finding on the trial path is fixed first (new commit, new candidate). Post each run's log with `post-trial-evidence.mjs --manifest` after reading the review, quoting its exit line and triage; a review that did not start is named as missing coverage.
 - UI changes: view the PNG again; compare real screenshots with its region at the normal desktop baseline; record differences and interaction.
 - Motion needs recorded interaction + inspected frames; generated pixels or renderer assertions prove no native behavior.
 
