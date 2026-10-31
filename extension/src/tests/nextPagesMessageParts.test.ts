@@ -170,6 +170,49 @@ test('quoted Next server output masks an empty-valued query part whole and keeps
   assert.equal(masked, 'GET /a?<redacted>&tab=<redacted> 200')
 })
 
+// Value: protects=a logged URL inside quotes or brackets hides its token whole and leaves the quote for the assignment masking; fails_when=the query swallows the closing quote or bracket, so a padded token keeps its body as a name or a quoted secret value is masked only up to its first blank; why_new=Cycle 0066 Codex adversarial review (URL_QUERY took quotes into the query); seam=none; no_claim=a real dev server's log format
+test('quoted Next server output hides a token of a URL inside quotes or brackets and keeps a quoted secret value masked whole', () => {
+  // Act
+  const masked = [
+    maskNextServerOutput('{"url":"/verify?c2Vzc2lvbi1zZWNyZXQ="}'),
+    maskNextServerOutput('(see /verify?dG9rZW4=)'),
+    maskNextServerOutput('PASSWORD="correct horse /reset?opaque"'),
+  ]
+  // Assert
+  assert.deepEqual(masked, [
+    '{"url":"/verify?<redacted>"}',
+    '(see /verify?<redacted>)',
+    'PASSWORD=<redacted>',
+  ])
+})
+
+// Value: protects=a secret-named assignment inside another assignment's value (a forwarded flag) is masked; fails_when=the outer non-secret name's value is skipped whole, so API_TOKEN's or NPM_TOKEN's value survives; why_new=Cycle 0066 native adversarial review (the base pattern leaked it too); seam=none; no_claim=a real dev server's log format
+test('quoted Next server output hides a secret-named assignment inside a forwarded flag', () => {
+  // Act
+  const masked = maskNextServerOutput(
+    '--env=API_TOKEN=abc123 --build-arg=NPM_TOKEN=x a=b=c',
+  )
+  // Assert
+  assert.equal(
+    masked,
+    '--env=API_TOKEN=<redacted> --build-arg=NPM_TOKEN=<redacted> a=b=c',
+  )
+})
+
+// Value: protects=masking a long run of plain assignments ends in linear time, since a plain name's value is searched again for assignments; fails_when=each plain name rescans its value to the end of the word (seconds on this input); why_new=Cycle 0066 native adversarial review fix (plain values are searched); seam=none; no_claim=a real dev server's output
+test('masking a 256 KB run of plain assignments returns it unchanged within one second', () => {
+  // Arrange
+  const output = 'a='.repeat(131_072)
+  // Act
+  const startedAt = performance.now()
+  const masked = maskNextServerOutput(output)
+  const elapsedMs = performance.now() - startedAt
+  // Assert
+  assert.equal(masked, output)
+  // gstack-timing-ok: an explicit bound, since a node:test timeout cannot stop a synchronous body; a linear scan takes milliseconds here, a rescan of each value takes seconds
+  assert.ok(elapsedMs < 1_000, `masking took ${elapsedMs} ms`)
+})
+
 // Value: protects=a quoted entry path or redirect target hides a padded bare token, a token before a second `?` and an empty-valued flag whole, in the query and the fragment; fails_when=any of them keeps the text before its first `=`; why_new=Cycle 0066 task 48 (redactNextEntryPath shares redactedPairsOf); seam=none; no_claim=the route Next resolves for such a path
 test('a quoted Next path hides a padded bare token, a token before a second question mark and an empty-valued flag whole', () => {
   // Act

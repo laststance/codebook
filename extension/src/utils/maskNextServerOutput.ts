@@ -7,8 +7,11 @@ import { redactedPairsOf } from './redactedPairsOf'
 const CREDENTIAL_HEADER =
   /\b((?:set-cookie|cookie|proxy-authorization|authorization)["']?[ \t]*[:=][ \t]*)[^\r\n]*/gi
 
-/** The query of a logged URL: in a word with a `/` before its first `?` (a path such as `/reset?…` or an absolute URL), the text after that `?` up to a blank or a fragment. Only a word's start begins a match, so a long word is scanned once; `user?.name` (no `/`) is no URL. */
-const URL_QUERY = /(?<!\S)([^\s?#/]*\/[^\s?#]*\?)([^\s#]*)/g
+/** The query of a logged URL: in a word with a `/` before its first `?` (a path such as `/reset?…` or an absolute URL), the text after that `?` up to a blank, a fragment, or a quote, backtick or angle bracket that log or JSON syntax puts around a URL (a server logs those percent-encoded inside a query). Only a word's start begins a match, so a long word is scanned once; `user?.name` (no `/`) is no URL. */
+const URL_QUERY = /(?<!\S)([^\s?#/]*\/[^\s?#]*\?)([^\s#"'`<>]*)/g
+
+/** Closing brackets and punctuation a log puts right after a URL (`(see /a?x)`, `/a?x,`): kept out of the query's last part, so a padded token before them is still read as bare. */
+const URL_TRAILING_CLOSERS = ')]},;.'
 
 /** A query parameter's value anywhere else: after `?` or `&`, up to the next separator, blank or fragment. */
 const QUERY_VALUE = /([?&][^\s=&#?]+=)[^\s&#]*/g
@@ -25,12 +28,13 @@ const ASSIGNMENT_VALUE = /"[^"\r\n]*"|'[^'\r\n]*'|[^\s&;,]*/y
 /**
  * Replaces the value of each `NAME=value` assignment whose name is a secret's ({@link isSecretName}) in one pass over the text, keeping the name; called by {@link maskNextServerOutput}.
  *
- * The scan takes each run of name characters once, so a long dotted run without `=` (`a.a.a…`) costs linear time; the name is the run from its first word-boundary letter, as `\bNAME=` would find it, and each value is consumed, so `a=b=c` holds one assignment.
+ * The scan takes each run of name characters once, so a long dotted run without `=` (`a.a.a…`) costs linear time; the name is the run from its first word-boundary letter, as `\bNAME=` would find it. A secret's value is consumed whole, `=` included; a plain name's value is searched on, so a secret assignment a flag forwards (`--env=API_TOKEN=…`) is hidden too, and no value is read twice.
  * @param text - Development-server output.
  * @returns The text with secret-named values replaced by {@link NEXT_REDACTED_VALUE}.
  * @example
  * maskSecretAssignments('API_KEY=SECRET NODE_ENV=development') // => 'API_KEY=<redacted> NODE_ENV=development'
  * maskSecretAssignments('--token=SECRET')                      // => '--token=<redacted>'
+ * maskSecretAssignments('--env=API_TOKEN=SECRET')              // => '--env=API_TOKEN=<redacted>'
  */
 function maskSecretAssignments(text: string): string {
   const pieces: string[] = []
@@ -42,20 +46,36 @@ function maskSecretAssignments(text: string): string {
     run = NAME_RUN_BEFORE_EQUALS.exec(text)
   ) {
     const name = ASSIGNMENT_NAME.exec(run[1]!)?.[1]
-    // A run with no name start (`9a=`) assigns nothing, so the text after its `=` is still searched for assignments.
-    if (name === undefined) continue
+    // A run with no name start (`9a=`) or a plain name hides nothing, so the text after its `=` is still searched for assignments.
+    if (name === undefined || !isSecretName(name)) continue
     const valueStart = NAME_RUN_BEFORE_EQUALS.lastIndex
     ASSIGNMENT_VALUE.lastIndex = valueStart
     ASSIGNMENT_VALUE.exec(text)
     const valueEnd = ASSIGNMENT_VALUE.lastIndex
-    // The value is consumed whatever the name, so an `=` inside it starts no second assignment.
+    // A secret's value is hidden whole, so an `=` inside it starts no second assignment.
     NAME_RUN_BEFORE_EQUALS.lastIndex = valueEnd
-    if (!isSecretName(name)) continue
     pieces.push(text.slice(copiedUpTo, valueStart), NEXT_REDACTED_VALUE)
     copiedUpTo = valueEnd
   }
   pieces.push(text.slice(copiedUpTo))
   return pieces.join('')
+}
+
+/**
+ * Splits the closing brackets and punctuation that end a logged URL's query ({@link URL_TRAILING_CLOSERS}) off its pairs, so `?dG9rZW4=)` reads as the padded token `dG9rZW4=` before `)`; called by {@link maskNextServerOutput} for each logged URL's query.
+ * A loop from the end, not a pattern, so a long run of such characters costs linear time.
+ * @param pairs - The query text after a logged URL's `?`.
+ * @returns The pairs without their trailing closers, then those closers.
+ * @example
+ * splitTrailingClosers('dG9rZW4=)') // => ['dG9rZW4=', ')']
+ * splitTrailingClosers('a=1')       // => ['a=1', '']
+ */
+function splitTrailingClosers(pairs: string): [string, string] {
+  let pairsEnd = pairs.length
+  // Each trailing closer is peeled once, from the end.
+  while (pairsEnd > 0 && URL_TRAILING_CLOSERS.includes(pairs[pairsEnd - 1]!))
+    pairsEnd -= 1
+  return [pairs.slice(0, pairsEnd), pairs.slice(pairsEnd)]
 }
 
 /**
@@ -68,16 +88,16 @@ function maskSecretAssignments(text: string): string {
  * maskNextServerOutput('Set-Cookie: s=SECRET; Path=/\nGET /login?token=SECRET 200\nAPI_KEY=SECRET')
  * // => 'Set-Cookie: <redacted>\nGET /login?token=<redacted> 200\nAPI_KEY=<redacted>'
  * maskNextServerOutput('GET /reset?3f9ac0d1e2b4 200') // => 'GET /reset?<redacted> 200'
+ * maskNextServerOutput('{"url":"/verify?dG9rZW4="}')  // => '{"url":"/verify?<redacted>"}'
  */
 export function maskNextServerOutput(text: string): string {
   return maskSecretAssignments(
     text
       .replace(CREDENTIAL_HEADER, `$1${NEXT_REDACTED_VALUE}`)
-      .replace(
-        URL_QUERY,
-        (_query, beforeQuery: string, pairs: string) =>
-          `${beforeQuery}${redactedPairsOf(pairs)}`,
-      )
+      .replace(URL_QUERY, (_query, beforeQuery: string, query: string) => {
+        const [pairs, trailingClosers] = splitTrailingClosers(query)
+        return `${beforeQuery}${redactedPairsOf(pairs)}${trailingClosers}`
+      })
       .replace(QUERY_VALUE, `$1${NEXT_REDACTED_VALUE}`),
   )
 }
