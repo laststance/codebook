@@ -140,3 +140,30 @@ test('a Pages page with initial inputs that leaves its entry path before the cli
   assert.deepEqual(harness.insertedTexts, ['learner@example.invalid'])
   assert.equal(harness.mouse.length, 0)
 })
+
+// --- Fast Refresh after the click ---
+
+// Value: protects=a Fast Refresh of the sealed module after the click was sent ends a Pages run with SOURCE_CHANGED that also says the click's result was not verified, so the agent claims no result for it; fails_when=the click-unverified suffix is dropped or not chosen for a sent and unverified click; why_new=Cycle 0066 task 28 (only the before-click text had a run test); seam=suppressInputPause keeps the stop from pausing after the click, and announceSealedModule re-announces the module under a new script id; no_claim=a real Fast Refresh
+test('a Fast Refresh of the sealed module after the click was sent ends a Pages run saying the click result was not verified', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    nextPages: {},
+  })
+  harness.suppressInputPause()
+  await harness.run.prepare()
+  harness.run.action('click', 'repository-click')
+  await waitUntil(() => harness.mouse.length === 2, 'the click sent')
+  // Act
+  harness.announceSealedModule('refreshed')
+  await waitUntil(
+    () => harness.run.view().failures.length > 0,
+    'the source change',
+  )
+  // Assert
+  assert.deepEqual(refusalFailureOf(harness.run.view().failures[0] ?? ''), {
+    code: 'SOURCE_CHANGED',
+    message:
+      "src/theme.ts changed during the run, so Codebook stopped it. Earlier captured observations remain readable. The click's result was not verified.",
+  })
+  assert.equal(harness.run.view().operation?.inputDispatched, true)
+})
