@@ -1944,15 +1944,15 @@ test('recorded inspections hide bidirectional controls from native Variables, as
   const { adapter, request } = harness()
   adapter.select(recorded(), 'Recorded', undefined, [
     {
-      path: 'abc‮txt‬',
+      path: 'abc\u202Etxt\u202C',
       mode: 'value',
-      display: "'abc‮txt‬'",
-      type: 'str‮ing‬',
+      display: "'abc\u202Etxt\u202C'",
+      type: 'str\u202Eing\u202C',
     },
     {
-      path: 'kind‮',
+      path: 'kind\u202E',
       mode: 'type',
-      display: 'num‬ber',
+      display: 'num\u202Cber',
     },
   ])
   request('configurationDone')
