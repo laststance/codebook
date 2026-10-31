@@ -1850,7 +1850,13 @@ test('a node-test run that Vitest ends before its first stop reports a recovery 
         () => undefined,
         (error: unknown) => error,
       )
-      return (failure as { describe?: () => unknown } | undefined)?.describe?.()
+      const described = (
+        failure as { describe?: () => object } | undefined
+      )?.describe?.()
+      const cause = (failure as { cause?: unknown } | undefined)?.cause
+      return cause === undefined
+        ? described
+        : { ...described, originalCause: String(cause) }
     } finally {
       await harness.run.stop()
       await harness.cleanup()
@@ -1887,7 +1893,9 @@ test('a node-test run that Vitest ends before its first stop reports a recovery 
   assert.deepEqual(exitedBeforeStop, {
     code: 'RUNTIME_FAILED',
     message: earlyExitMessage,
-    cause: earlyExitMessage,
+    cause: `${earlyExitMessage} Original error: Owned Node debugger session terminated or was cancelled.`,
+    originalCause:
+      'Error: Owned Node debugger session terminated or was cancelled.',
     recovery,
     docs: 'codebook://help/errors',
   })

@@ -191,8 +191,10 @@ export class StudyError extends Error {
     readonly causeDetail = message,
     /** The recovery for this failure when the code's general one would mislead (a learning material's revision conflict is no idempotency-key matter). */
     readonly recoveryOverride?: string,
+    /** The failure this error words, kept as `cause` for code that reads it. */
+    cause?: unknown,
   ) {
-    super(message)
+    super(message, cause === undefined ? undefined : { cause })
   }
   /** Produces a token-free error contract for clients after a tool fails. @example error.describe().recovery */
   describe() {

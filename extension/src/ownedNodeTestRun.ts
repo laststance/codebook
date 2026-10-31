@@ -976,8 +976,10 @@ export class OwnedNodeTestRun {
       ? new StudyError(
           'RUNTIME_FAILED',
           message,
-          message,
+          // The exit sentence first, then what the run had failed with, so the cause shows more than the message does.
+          `${message} Original error: ${error instanceof Error ? error.message : String(error)}`,
           NODE_TEST_VITEST_FAILED_RECOVERY,
+          error,
         )
       : new Error(message, { cause: error })
   }
