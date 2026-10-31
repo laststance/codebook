@@ -90,3 +90,27 @@ test('nested pauses merge, an unclosed pause lasts to the end and a stop without
     recordedPoints: [100, 200, 800],
   })
 })
+
+// protects=an unrecorded stop opened inside a recorded one marks its own span as unrecorded, because the replay shows that inner stop as not recorded there; fails_when=the timeline unions the recorded stops' intervals and hides the nested gap; no_claim=the slider's drawing
+test('an unrecorded stop nested in a recorded stop leaves its span unrecorded on the timeline', () => {
+  // Arrange
+  const model = modelOf(600, [
+    pause('outer', 100, 500),
+    pause('inner-unrecorded', 200, 300, false),
+  ])
+
+  // Act
+  const timeline = projectExtensionHistoryTimeline(model)
+
+  // Assert
+  assert.deepEqual(timeline, {
+    startMs: 0,
+    endMs: 600,
+    gaps: [
+      { startMs: 0, endMs: 100 },
+      { startMs: 200, endMs: 300 },
+      { startMs: 500, endMs: 600 },
+    ],
+    recordedPoints: [100],
+  })
+})
