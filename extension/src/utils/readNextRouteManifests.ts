@@ -13,6 +13,7 @@ import { nextManifestError, parseNextManifest } from './parseNextManifest'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
 import { resolveNextClientManifest } from './resolveNextClientManifest'
 import {
+  compareNextRouterMatches,
   resolveNextPagesRoute,
   type NextPagesRoute,
   type NextPagesRouteResolution,
@@ -114,7 +115,7 @@ export async function readNextRouteManifests(
       request.signal,
     )
     if (isSettledRound(round, routers) || now() >= deadline)
-      return classifyRound(round)
+      return classifyRound(round, request.entryPath)
     await sleep(
       Math.min(NEXT_MANIFEST_POLL_INTERVAL_MS, Math.max(0, deadline - now())),
       request.signal,
@@ -307,18 +308,28 @@ function isSettledRound(
 
 /**
  * Turns the last round of the poll into the answer, judging a conflict once, here; called by {@link readNextRouteManifests}.
+ * When both routers match, the more specific route serves the entry path, as Next decides ({@link compareNextRouterMatches}); only an equally specific pair is a conflict.
  * @param round - The last round.
+ * @param entryPath - The configured entry path.
  * @returns The settings and what the manifests say about the entry path.
  * @throws The first manifest failure the round still has.
  * @example
- * classifyRound(round) // => { settings: {}, kind: 'conflict', appKey: '/page', pagesRoute: '/', pagesCompiledPath: 'pages/index.js' } when both list `/`
+ * classifyRound(round, '/') // => { settings: {}, kind: 'conflict', appKey: '/page', pagesRoute: '/', pagesCompiledPath: 'pages/index.js' } when both list `/`
  */
-function classifyRound(round: ManifestRound): NextRouteManifests {
+function classifyRound(
+  round: ManifestRound,
+  entryPath: string,
+): NextRouteManifests {
   for (const read of [round.settings, round.app, round.pages])
     if (read.state === 'failed') throw read.error
   const settings = round.settings.state === 'read' ? round.settings.value : {}
   const { appRoute, pagesRoute } = round
-  if (appRoute && pagesRoute.kind === 'matched')
+  // Both routers match: the more specific route serves the path; an equally specific pair is the conflict Next refuses.
+  const winner =
+    appRoute && pagesRoute.kind === 'matched'
+      ? compareNextRouterMatches(appRoute.key, pagesRoute.route, entryPath)
+      : undefined
+  if (appRoute && pagesRoute.kind === 'matched' && winner === 'equal')
     return {
       settings,
       kind: 'conflict',
@@ -326,7 +337,8 @@ function classifyRound(round: ManifestRound): NextRouteManifests {
       pagesRoute: pagesRoute.route,
       pagesCompiledPath: pagesRoute.compiledPath,
     }
-  if (appRoute) return { settings, kind: 'app', route: appRoute }
+  if (appRoute && winner !== 'pages')
+    return { settings, kind: 'app', route: appRoute }
   if (pagesRoute.kind === 'matched')
     return {
       settings,

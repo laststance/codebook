@@ -157,6 +157,84 @@ test('a route both manifests list is a conflict, judged at the end of the poll t
   })
 })
 
+// Value: protects=an App Router run in a project that also has a Pages catch-all keeps working on the static App route Next serves; fails_when=any path both manifests match is refused as NEXT_ROUTE_CONFLICT; why_new=Codex review in /ship pass 1 (Cycle 0065), an App behavior regression; seam=none; no_claim=a real mixed project's dev server
+test('a static App route wins over a Pages catch-all that also matches its path, as Next serves it, instead of a conflict', async (context) => {
+  // Arrange
+  const workspace = await workspaceWithFolders(context, ['app', 'pages'])
+  const fake = scriptedManifests([
+    {
+      [ROUTES]: ROUTES_TEXT,
+      [APP]: '{"/about/page":"app/about/page.js"}',
+      [PAGES]: '{"/[...slug]":"pages/[...slug].js"}',
+    },
+  ])
+  // Act
+  const manifests = await readNextRouteManifests({
+    workspace,
+    entryPath: '/about',
+    ...fake,
+  })
+  // Assert
+  assert.equal(manifests.kind, 'app')
+  assert.deepEqual(
+    manifests.kind === 'app' && manifests.route.key,
+    '/about/page',
+  )
+})
+
+// Value: protects=a static Pages route wins over a dynamic App route that also matches its path, so the Pages run is taken; fails_when=the pair is refused as a conflict or the App route is taken; why_new=Codex review in /ship pass 1 (Cycle 0065); seam=none; no_claim=a real mixed project's dev server
+test('a static Pages route wins over a dynamic App route that also matches its path instead of a conflict', async (context) => {
+  // Arrange
+  const workspace = await workspaceWithFolders(context, ['app', 'pages'])
+  const fake = scriptedManifests([
+    {
+      [ROUTES]: ROUTES_TEXT,
+      [APP]: '{"/[slug]/page":"app/[slug]/page.js"}',
+      [PAGES]: '{"/about":"pages/about.js"}',
+    },
+  ])
+  // Act
+  const manifests = await readNextRouteManifests({
+    workspace,
+    entryPath: '/about',
+    ...fake,
+  })
+  // Assert
+  assert.deepEqual(manifests, {
+    settings: {},
+    kind: 'pages',
+    route: '/about',
+    compiledPath: 'pages/about.js',
+  })
+})
+
+// Value: protects=two equally specific routes, one per router, stay the conflict Next refuses, also behind a route group; fails_when=the comparison picks one router for an equal pair; why_new=Codex review in /ship pass 1 (Cycle 0065); seam=none; no_claim=none beyond protects
+test('an App route in a route group and a Pages route of the same path stay a conflict', async (context) => {
+  // Arrange
+  const workspace = await workspaceWithFolders(context, ['app', 'pages'])
+  const fake = scriptedManifests([
+    {
+      [ROUTES]: ROUTES_TEXT,
+      [APP]: '{"/(site)/about/page":"app/(site)/about/page.js"}',
+      [PAGES]: '{"/about":"pages/about.js"}',
+    },
+  ])
+  // Act
+  const manifests = await readNextRouteManifests({
+    workspace,
+    entryPath: '/about',
+    ...fake,
+  })
+  // Assert
+  assert.deepEqual(manifests, {
+    settings: {},
+    kind: 'conflict',
+    appKey: '/(site)/about/page',
+    pagesRoute: '/about',
+    pagesCompiledPath: 'pages/about.js',
+  })
+})
+
 test('an entry path neither manifest lists stays unresolved after the whole ten-second poll', async (context) => {
   // Arrange
   const workspace = await workspaceWithFolders(context, ['src/pages'])

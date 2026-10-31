@@ -176,6 +176,46 @@ function isCatchAllMatch(
 }
 
 /**
+ * Orders an App route and a Pages route that both match an entry path by Next's segment precedence, so a project with both routers is refused as conflicting only when the two are equally specific; called by {@link readNextRouteManifests}.
+ * Route groups (`(marketing)`) name no URL segment and are dropped from the App key, as Next drops them.
+ * @param appKey - The App manifest key, e.g. `/about/page` or `/(site)/about/page`.
+ * @param pagesRoute - The Pages manifest key, e.g. `/[...slug]`.
+ * @param entryPath - The entry path both routes match.
+ * @returns
+ * - `'app'` when the App route is more specific
+ * - `'pages'` when the Pages route is more specific
+ * - `'equal'` when neither is, the pair Next refuses as a conflict
+ * @example
+ * compareNextRouterMatches('/about/page', '/[...slug]', '/about') // => 'app'
+ * compareNextRouterMatches('/[slug]/page', '/about', '/about')    // => 'pages'
+ * compareNextRouterMatches('/about/page', '/about', '/about')     // => 'equal'
+ */
+export function compareNextRouterMatches(
+  appKey: string,
+  pagesRoute: string,
+  entryPath: string,
+): 'app' | 'pages' | 'equal' {
+  const requested = requestedSegmentsOf(entryPath)
+  const appSegments = appKey
+    .slice(0, -'/page'.length)
+    .split('/')
+    .filter(
+      (segment) =>
+        segment && !(segment.startsWith('(') && segment.endsWith(')')),
+    )
+  const appPrecedence = matchedPrecedenceOf(
+    `/${appSegments.join('/')}`,
+    requested,
+  )
+  const pagesPrecedence = matchedPrecedenceOf(pagesRoute, requested)
+  // A side the shared matcher cannot read keeps the pair a conflict, as before.
+  if (!appPrecedence || !pagesPrecedence) return 'equal'
+  const order = comparePrecedence(appPrecedence, pagesPrecedence)
+  if (order < 0) return 'app'
+  return order > 0 ? 'pages' : 'equal'
+}
+
+/**
  * Orders two matching routes by their segments' precedence, deciding at the first position where they differ; called by {@link resolveNextPagesRoute}.
  * A route that has run out of segments ranks as an optional catch-all there: two matching routes can differ in length only by a trailing `[[...x]]`, a pair Next refuses as equally specific.
  * @param left - Precedence of the first route's segments.
