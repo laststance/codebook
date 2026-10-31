@@ -1,3 +1,5 @@
+import { appRouteSegmentsOf } from './appRouteSegmentsOf'
+
 /** Finds the selected Next page in its generated route map without evaluating manifests or inventing a source route. @example resolveNextClientManifest({'/login/page':'app/login/page.js'}, '/login').key // '/login/page' */
 export function resolveNextClientManifest(
   routes: Record<string, string>,
@@ -9,21 +11,15 @@ export function resolveNextClientManifest(
     .map(decodeURIComponent)
   const candidates: { key: string; path: string; score: number }[] = []
   for (const [key, path] of Object.entries(routes)) {
+    const segments = appRouteSegmentsOf(key)
     if (
-      !key.endsWith('/page') ||
+      !segments ||
       !path.startsWith('app/') ||
       !path.endsWith('/page.js') ||
       path.includes('\\') ||
       path.split('/').some((segment) => segment === '..' || segment === '.')
     )
       continue
-    const segments = key
-      .slice(0, -'/page'.length)
-      .split('/')
-      .filter(
-        (segment) =>
-          segment && !(segment.startsWith('(') && segment.endsWith(')')),
-      )
     let offset = 0,
       score = 0,
       matched = true

@@ -8,6 +8,7 @@ import {
   REPOSITORY_JAVASCRIPT_LIMIT_BYTES,
 } from '../constants'
 
+import { compareNextRouterMatches } from './compareNextRouterMatches'
 import { findNextPagesSource } from './findNextPagesSource'
 import { findNextRouteFolder } from './findNextRouteFolder'
 import { hasNextAppPageSource } from './hasNextAppPageSource'
@@ -15,7 +16,6 @@ import { nextManifestError, parseNextManifest } from './parseNextManifest'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
 import { resolveNextClientManifest } from './resolveNextClientManifest'
 import {
-  compareNextRouterMatches,
   resolveNextPagesRoute,
   type NextPagesRoute,
   type NextPagesRouteResolution,
