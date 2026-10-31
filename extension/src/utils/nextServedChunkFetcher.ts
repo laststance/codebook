@@ -1,4 +1,5 @@
 import { readCappedBody } from './readCappedBody'
+import { redactNextEntryPath } from './redactNextEntryPath'
 import type { NextPagesChunkFetcher } from './spendNextPagesDiscovery'
 
 /**
@@ -24,7 +25,7 @@ export function nextServedChunkFetcher(
     if (!response.ok) {
       await response.body?.cancel()
       throw new Error(
-        `Declared chunk ${chunkPath} is absent from the selected build (the server answered status ${response.status})`,
+        `Declared chunk ${redactNextEntryPath(chunkPath)} is absent from the selected build (the server answered status ${response.status})`,
       )
     }
     const text = await readCappedBody(response, limitBytes)

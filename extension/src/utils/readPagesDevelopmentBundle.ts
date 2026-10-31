@@ -17,6 +17,7 @@ import { selectEvaluatedModule } from './extractDevelopmentModule'
 import { parseNextManifest } from './parseNextManifest'
 import type { readDevelopmentBundle } from './readDevelopmentBundle'
 import { readNextChunkModules } from './readNextChunkModules'
+import { redactNextEntryPath } from './redactNextEntryPath'
 import type { NextPagesRoute } from './resolveNextPagesRoute'
 import {
   spendNextPagesDiscovery,
@@ -156,7 +157,7 @@ function initialPageChunksOf(
  * @param candidates - The entry chunks to search.
  * @param original - The source's absolute path and its verified text.
  * @returns The sealed module of the first chunk that carries it, or `undefined` when none does.
- * @throws `Declared chunk … is absent from the selected build` without a fallback; `Ambiguous application source chunk` for differing copies.
+ * @throws `Declared chunk … is absent from the selected build` without a fallback (the name is cleaned by {@link redactNextEntryPath}: no control character, length capped); `Ambiguous application source chunk` for differing copies.
  * @example
  * await sealFromChunks(step, request, ['static/chunks/pages/index.js'], { sourcePath, source }) // => BundleSource
  */
@@ -177,7 +178,7 @@ async function sealFromChunks(
     )
     if (!chunk)
       throw new Error(
-        `Declared chunk ${candidate} is absent from the selected build`,
+        `Declared chunk ${redactNextEntryPath(candidate)} is absent from the selected build`,
       )
     const bundle = selectEvaluatedModule(
       chunk.moduleTexts,
