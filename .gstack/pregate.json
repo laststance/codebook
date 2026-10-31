@@ -260,7 +260,7 @@
       "paths": [
         "extension/src/tests/nextPagesMessageParts.test.ts"
       ],
-      "pattern": "sid=SECRET",
+      "pattern": "theme=dark; sid=SECRET",
       "reason": "the dummy cookie value a Next output-masking test seeds to prove it never reaches a message; never a credential"
     }
   ]
