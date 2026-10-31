@@ -128,7 +128,7 @@ const CANDIDATE_START =
 
 /**
  * A character before a start that makes it part of a longer word or URL path (`https://example.com/home/a`, `artifacts/Users/a`), so it is no candidate; anything else (`.`, `-`, `_`, `:`, `,`, `=`, …) fails closed.
- * The exemption holds only inside a relative path or a URL: a token that starts with `/` and holds no `://` before the start is an absolute path (`/Volumes/disk/Users/bob`, `//Users/bob`), where the start is a real home.
+ * The exemption holds only inside a relative path or a URL: a token or list segment (after `:`, `,`, `;`, `|` or `=`) that starts with `/` in a token holding no `://` before the start is an absolute path (`/Volumes/disk/Users/bob`, `//Users/bob`, `PATH=/System/Volumes/Data/Users/bob`), where the start is a real home.
  */
 const WORD_OR_PATH_CHARACTER = /[A-Za-z0-9/]/
 
@@ -200,7 +200,7 @@ function splitLines(text) {
  *
  * Why: the Issue is world-readable, so a run log must not name the owner's home directories, QA profiles or other projects (D4).
  * Called by {@link postTrialEvidence} on the run log (and the manifest text), before any network call.
- * The rule works on the text as written: a candidate starts at a home form (case-insensitive) unless a letter, digit or `/` precedes it inside a relative path or a URL (a token that starts with `/` and holds no `://` before the candidate is an absolute path, so a home form inside it is refused), and ends at whitespace, a backtick, a quote, a parenthesis, a bracket, an angle bracket or the line end.
+ * The rule works on the text as written: a candidate starts at a home form (case-insensitive) unless a letter, digit or `/` precedes it inside a relative path or a URL (a token or list segment that starts with `/`, in a token holding no `://` before the candidate, is an absolute path, so a home form inside it is refused), and ends at whitespace, a backtick, a quote, a parenthesis, a bracket, an angle bracket or the line end.
  *
  * @param {string} text - Decoded text.
  * @returns {{ line: number, token: string }[]} One entry per refused token, in order; `line` starts at 1. The line itself is never returned.
@@ -214,9 +214,10 @@ export function findPrivatePaths(text) {
     // The end of the token being scanned, cached so rescanning inside a public token stays linear.
     let tokenEnd = -1
     let tokenStart = -1
-    // Where the surrounding token began (after the last terminator) and whether it started with `/` or held `://` so far, tracked as the position advances.
+    // Where the surrounding token began (after the last terminator), whether it held `://` so far, and whether its current list segment (after the last `:`, `,`, `;`, `|` or `=`) started with `/`, tracked as the position advances.
     let surroundingTokenStart = 0
-    let surroundingIsAbsolute = false
+    let segmentStart = 0
+    let segmentIsAbsolute = false
     let surroundingHasScheme = false
     let advancedTo = 0
     while (position < line.length) {
@@ -224,11 +225,16 @@ export function findPrivatePaths(text) {
         const character = line[advancedTo]
         if (CANDIDATE_END.test(character)) {
           surroundingTokenStart = advancedTo + 1
-          surroundingIsAbsolute = false
+          segmentStart = advancedTo + 1
+          segmentIsAbsolute = false
           surroundingHasScheme = false
+        } else if (LIST_SEPARATOR.test(character)) {
+          // `PATH=/Volumes/disk/Users/bob` and `a:/System/Volumes/Data/Users/bob` start an absolute path after the separator.
+          segmentStart = advancedTo + 1
+          segmentIsAbsolute = false
         } else {
-          if (advancedTo === surroundingTokenStart) {
-            surroundingIsAbsolute = character === '/'
+          if (advancedTo === segmentStart) {
+            segmentIsAbsolute = character === '/'
           }
           if (
             character === '/' &&
@@ -248,7 +254,7 @@ export function findPrivatePaths(text) {
       const isInsidePublicToken = position > tokenStart && position < tokenEnd
       const isInsideAbsolutePath =
         followsWordOrPath &&
-        surroundingIsAbsolute &&
+        segmentIsAbsolute &&
         !surroundingHasScheme &&
         !isInsidePublicToken
       CANDIDATE_START.lastIndex = position

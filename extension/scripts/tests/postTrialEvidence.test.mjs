@@ -280,7 +280,7 @@ test('refuses a home path after a dot, dash or underscore but keeps URL forms al
   ])
 })
 
-// protects=a home path inside an absolute path or after extra leading slashes is refused while URL and relative forms stay allowed; fails_when=`//Users/bob/x`, `///home/bob/x`, `/Volumes/disk/Users/bob/x` or `/System/Volumes/Data/Users/bob/x` passes, or `artifacts/Users/a` / `https://example.com/x/home/a` is refused; no_claim=a home path after `=` or `:` inside a relative-looking token
+// protects=a home path inside an absolute path, after extra leading slashes or in an absolute list segment (after `=`) is refused while URL and relative forms stay allowed; fails_when=`//Users/bob/x`, `///home/bob/x`, `/Volumes/disk/Users/bob/x`, `/System/Volumes/Data/Users/bob/x`, `PATH=/System/Volumes/Data/Users/bob/bin` or `HOME=//Users/bob` passes, or `artifacts/Users/a` / `https://example.com/x/home/a` (alone or in a list) is refused; no_claim=a non-home absolute path such as `/opt/home/x` is refused too (fail closed), not tested here
 test('refuses a home path hidden in an absolute path or behind extra slashes but keeps URL and relative forms allowed', () => {
   // Arrange
   const text = [
@@ -288,8 +288,11 @@ test('refuses a home path hidden in an absolute path or behind extra slashes but
     'artifact: ///home/bob/x',
     'disk /Volumes/Backup/Users/bob/x',
     'disk /System/Volumes/Data/Users/bob/x',
+    'PATH=/System/Volumes/Data/Users/bob/bin',
+    'HOME=//Users/bob',
     'artifacts/Users/a',
     'https://example.com/x/home/a',
+    'links=artifacts/Users/a,https://example.com/x/home/a',
   ].join('\n')
 
   // Act
@@ -301,6 +304,8 @@ test('refuses a home path hidden in an absolute path or behind extra slashes but
     { line: 2, token: '/home/bob/x' },
     { line: 3, token: '/Users/bob/x' },
     { line: 4, token: '/Users/bob/x' },
+    { line: 5, token: '/Users/bob/bin' },
+    { line: 6, token: '/Users/bob' },
   ])
 })
 
