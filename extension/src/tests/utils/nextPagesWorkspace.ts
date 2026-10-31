@@ -25,12 +25,16 @@ export type NextPagesHarnessOptions = {
   entry?: { status: number; location?: string }
   /** What the route manifests say: the reader is replaced by this answer. Without it the real reader reads the `.next/dev` manifests the harness wrote (route `/` → `pages/index.js`). */
   manifests?: NextRouteManifests
+  /** Makes the replaced reader reject with this message, as a manifest that cannot be read does. */
+  manifestFailure?: string
   /** Fields merged into the written `routes-manifest.json` (Next 16's measured one by default), such as `basePath` or a redirect source. */
   routesManifest?: Record<string, unknown>
   /** The page's router states, one per read; the last repeats. A ready router on route `/` at the entry path when absent. */
   pageStates?: NextPagesPageState[]
   /** Whether the page and `_app` chunks are written; `true` by default. Without them any chunk read fails. */
   chunks?: boolean
+  /** Whether the page chunk carries the cited source's module; `true` by default. Without it the module is in no chunk the page loads at start (a module loaded later). */
+  citedInPageChunk?: boolean
   /** How many lines, from line 1, the browser module of the cited source maps; 1 by default. */
   mappedLines?: number
   /** Writes the page's server compile, whose `(pages-dir-node)` module of the cited source maps every line. */
@@ -108,7 +112,12 @@ export async function writeNextPagesWorkspace(
   if (options.chunks ?? true) {
     await write(
       '.next/dev/static/chunks/pages/index.js',
-      browserChunk('pages/index', { [`./${cited.path}`]: moduleJavascript }),
+      browserChunk(
+        'pages/index',
+        (options.citedInPageChunk ?? true)
+          ? { [`./${cited.path}`]: moduleJavascript }
+          : {},
+      ),
     )
     await write(
       '.next/dev/static/chunks/pages/_app.js',

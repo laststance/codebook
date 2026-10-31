@@ -1402,12 +1402,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * throw this.manifestReadFailure(new Error('Next route manifest .next/dev/server/pages-manifest.json could not be read: it is not valid JSON'))
    */
   private manifestReadFailure(error: unknown): unknown {
-    if (
-      !(error instanceof Error) ||
-      !error.message.startsWith('Next route manifest ')
-    )
+    const reason = thrownMessage(error)
+    // Only the reader's own failure names a manifest; a cancelled run passes on as it is.
+    if (this.abort.signal.aborted || !reason.startsWith('Next route manifest '))
       return error
-    const message = `${withFinalPeriod(error.message)} Codebook stopped the server it started before opening the browser; the run's journal is at the run resource's eventsUri.`
+    const message = `${withFinalPeriod(reason)} Codebook stopped the server it started before opening the browser; the run's journal is at the run resource's eventsUri.`
     return new StudyError('RUNTIME_FAILED', message, message)
   }
 

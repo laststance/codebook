@@ -130,6 +130,12 @@ export async function configuredRuntimeHarness(
     nextPages?: NextPagesHarnessOptions
     /** Moves the first cited source, and the stop declared in it, to this workspace-relative path (such as a file under `src/pages`). */
     sourcePath?: string
+    /** The configuration's initial inputs; the stand-in page has one editable control for each selector. */
+    initialInputs?: RepositoryConfiguration['initialInputs']
+    /** Makes the stand-in page never answer the text insert of an initial input, as a page whose reply is lost. */
+    holdInputInsert?: boolean
+    /** Makes the stand-in server's readiness check (`ready` and `readyEntry`) reject with this message, as a server that exits before it listens does. */
+    launchFailure?: string
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
@@ -154,6 +160,8 @@ export async function configuredRuntimeHarness(
   if (options.sourcePath) relocateFirstSource(reference, options.sourcePath)
   if (options.nextPages?.entryPath)
     reference.configuration.entryPath = options.nextPages.entryPath
+  if (options.initialInputs)
+    reference.configuration.initialInputs = options.initialInputs
   // Each of these changes makes the frozen intent hash stale.
   if (
     additionalStops.length ||
@@ -161,7 +169,8 @@ export async function configuredRuntimeHarness(
     fixture ||
     options.adapter ||
     options.sourcePath ||
-    options.nextPages?.entryPath
+    options.nextPages?.entryPath ||
+    options.initialInputs
   )
     reference.configurationHash = sha256(
       JSON.stringify(reference.configuration),
@@ -262,6 +271,10 @@ export async function configuredRuntimeHarness(
   }[] = []
   // The entry path of each structured entry check the run asked the stand-in server for.
   const entryChecks: string[] = []
+  // The text of each initial input the run sent to the page, in order.
+  const insertedTexts: string[] = []
+  // Ends a held insert of an initial input when the page's transport closes.
+  let rejectHeldInsert = (_error: Error): void => {}
   // The answers an App replay of the structured entry check was asked to judge.
   const appEntryConfirmations: NextEntryResponse[] = []
   let emitInputPause = true,
@@ -530,6 +543,7 @@ export async function configuredRuntimeHarness(
       this.closed = true
       releases.push('cdp')
       inputReject(new Error('CDP disconnected'))
+      rejectHeldInsert(new Error('CDP disconnected'))
       rejectContinuation(new Error('DAP disconnected'))
       onClose()
     },
@@ -541,6 +555,7 @@ export async function configuredRuntimeHarness(
         type?: string
         start?: ScriptPlace
         end?: ScriptPlace
+        text?: string
       },
       timeout?: number,
     ) {
@@ -572,6 +587,24 @@ export async function configuredRuntimeHarness(
             },
           }
         }
+      }
+      // The initial inputs: one editable control per selector, focused and verified, whose insert answers unless it is held.
+      if (
+        method === 'Runtime.evaluate' &&
+        parameters?.expression?.startsWith('(function selectInput')
+      )
+        return { result: { subtype: 'node', objectId: 'input-control' } }
+      if (method === 'Runtime.callFunctionOn')
+        return { result: { value: { ready: true } } }
+      if (method === 'Runtime.releaseObject') return {}
+      if (method === 'Input.insertText') {
+        insertedTexts.push(String(parameters?.text))
+        // A held insert is answered only by the transport closing, as a lost reply is.
+        if (options.holdInputInsert)
+          return new Promise<never>((_resolve, reject) => {
+            rejectHeldInsert = reject
+          })
+        return {}
       }
       if (method === 'Runtime.evaluate')
         return { result: { value: pageEvaluation(parameters?.expression) } }
@@ -782,12 +815,14 @@ export async function configuredRuntimeHarness(
   const fakeApplication = {
     ready: async (_signal: AbortSignal, entryPath?: string) => {
       readyEntryPaths.push(entryPath)
+      if (options.launchFailure) throw new Error(options.launchFailure)
       releases.push('application acquired')
       return 'http://127.0.0.1:4321'
     },
     // The structured entry check of a Pages-capable run: the scripted answer, described by the real code, never fetched.
     readyEntry: async (_signal: AbortSignal, entryPath: string) => {
       entryChecks.push(entryPath)
+      if (options.launchFailure) throw new Error(options.launchFailure)
       releases.push('application acquired')
       const origin = 'http://127.0.0.1:4321',
         answer = options.nextPages?.entry ?? { status: 200 }
@@ -916,11 +951,15 @@ export async function configuredRuntimeHarness(
           return result
         },
       },
-      // A scripted manifest answer replaces the reader's poll; without one the real reader reads the written manifests.
-      ...(options.nextPages?.manifests
+      // A scripted manifest answer or failure replaces the reader's poll; without one the real reader reads the written manifests.
+      ...(options.nextPages?.manifests || options.nextPages?.manifestFailure
         ? {
             './utils/readNextRouteManifests': {
-              readNextRouteManifests: async () => options.nextPages!.manifests,
+              readNextRouteManifests: async () => {
+                const failure = options.nextPages?.manifestFailure
+                if (failure) throw new Error(failure)
+                return options.nextPages?.manifests
+              },
             },
           }
         : {}),
@@ -1135,6 +1174,8 @@ export async function configuredRuntimeHarness(
     readyEntryPaths,
     /** The entry path of each structured entry check (`app.readyEntry`) of a Pages-capable run, in order. */
     entryChecks,
+    /** The text of each initial input the run sent to the page (`Input.insertText`), in order. */
+    insertedTexts,
     /** The answers the run asked the stand-in server to judge the App way (`app.confirmAppEntry`), in order. */
     appEntryConfirmations,
     /** Every Pages seal the run asked for, with its discovery cache and the bytes read before and after. */

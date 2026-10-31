@@ -317,6 +317,98 @@ test('a Pages router that turns ready late lets the run reach ready', async (con
   assert.equal(harness.pagesStateReads(), 4)
 })
 
+// Value: protects=a client redirect that lands after the router was ready and before the first initial input ends the run before any input is written; fails_when=the input is written on the other page; why_new=Cycle 0065 step 10 (pathname re-check right before the first input); seam=scripted router states (the third read is the re-check); no_claim=the timing of a real router.push
+test('a Pages page that leaves its entry path before the first initial input receives no input', async (context) => {
+  // Arrange
+  const atEntry = { pathname: '/', routerSeen: true, isReady: true, route: '/' }
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    initialInputs: [{ selector: '#email', text: 'learner@example.invalid' }],
+    nextPages: {
+      pageStates: [
+        atEntry,
+        atEntry,
+        {
+          pathname: '/login',
+          routerSeen: true,
+          isReady: true,
+          route: '/login',
+        },
+      ],
+    },
+  })
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  assert.ok(failure instanceof StudyError, String(failure))
+  assert.equal(failure.code, 'NEXT_ENTRY_REDIRECTED')
+  assert.equal(
+    failure.message,
+    'The page left the entry path / for /login before the first input was written (a client redirect), so Codebook sent no input or click; the browser Codebook opened is closed with the run.',
+  )
+  assert.deepEqual(harness.insertedTexts, [])
+})
+
+// Value: protects=a Pages setup deadline that expires while an initial input's text was sent and not answered names that input and gives the read-never-resend recovery; fails_when=the deadline reads as the plain inputs variant (retry) or names no input; why_new=Cycle 0065 NEXT_SETUP_DEADLINE input-outcome-unknown (prepareRepositoryInputs reports the insert in flight); seam=holdInputInsert keeps the page's answer away; no_claim=a real lost CDP reply
+test('a Pages setup deadline while an input text is unanswered names the input and says it may have been written', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    initialInputs: [{ selector: '#email', text: 'learner@example.invalid' }],
+    holdInputInsert: true,
+    nextPages: {},
+  })
+  const preparing = harness.run.prepare().catch(() => undefined)
+  await waitUntil(
+    () => harness.insertedTexts.length === 1,
+    'the input text sent',
+  )
+  // Act
+  harness.advance(REPOSITORY_SETUP_TIMEOUT_MS)
+  await preparing
+  // Assert
+  const refusal = refusalFailureOf(harness.run.view().failures[0] ?? '')
+  assert.deepEqual(refusal, {
+    code: 'NEXT_SETUP_DEADLINE',
+    message: nextSetupDeadlineSentence(
+      NEXT_SETUP_STEPS.writingInputs,
+      REPOSITORY_SETUP_TIMEOUT_MS,
+      'late',
+      '#email',
+    ),
+    recoveryOverride: nextSetupDeadlineRecovery('input-outcome-unknown'),
+  })
+  assert.equal(harness.mouse.length, 0)
+})
+
+// Value: protects=an entry path the manifests resolve as an App route in a workspace with both routers continues on today's App path: the App verdict judges the entry answer, the App seal is used and no Pages check runs; fails_when=the run takes the Pages path or skips the App verdict; why_new=Cycle 0065 step 5 (kind app continues unchanged); seam=scripted manifests; no_claim=the App verdict's own texts (nextEntryReadiness tests)
+test('an entry path resolved as an App route in a workspace with both routers continues on the App path', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    nextPages: {
+      withAppFolder: true,
+      manifests: {
+        settings: {},
+        kind: 'app',
+        route: {
+          key: '/page',
+          path: '.next/dev/server/app/page_client-reference-manifest.js',
+        },
+      },
+    },
+  })
+  // Act
+  await harness.run.prepare()
+  // Assert
+  assert.equal(harness.run.view().status, 'ready')
+  assert.deepEqual(harness.appEntryConfirmations, [{ status: 200 }])
+  assert.equal(harness.pagesSeals.length, 0)
+  assert.equal(harness.pagesStateReads(), 0)
+  // The run lives in its own module realm, so its object is compared by value.
+  assert.deepEqual(JSON.parse(JSON.stringify(harness.run.view().nextRoute)), {
+    router: 'app',
+    route: '/page',
+  })
+})
+
 // --- Pages checks after the load ---
 
 // Value: protects=a Pages page that already sits on another path once it loaded is refused before any input; fails_when=the final path is not compared; why_new=Cycle 0065 step 9 (final path); seam=scripted router state; no_claim=none
@@ -420,6 +512,62 @@ test('two stops in one Pages chunk share the run discovery cache and read the ch
     Buffer.byteLength(harness.definition.descriptor.sources[0]!.text) +
       Buffer.byteLength(harness.pagesBuildManifest!),
   )
+})
+
+// Value: protects=a server that exits before it listens in a workspace with a Pages folder fails with the launcher's text plus the skipped-preparation note and the webpack compatibility note with the Next version and the command Codebook ran; fails_when=either note is missing or the launcher's text is lost; why_new=Cycle 0065 (skipped preparation and Turbopack hint at a launch failure); seam=launchFailure makes the stand-in readiness reject; the workspace has no package.json, so its dev script is unread; no_claim=a real Turbopack-only failure
+test('a Pages-capable run whose server exits before listening adds the preparation and webpack notes to the launcher text', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    launchFailure: 'Application exited: 1: boom',
+    nextPages: {},
+  })
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  // The run lives in its own module realm, so its error is read by its message.
+  assert.equal(
+    Reflect.get(Object(failure), 'message'),
+    'Application exited: 1: boom. Codebook starts Next with --webpack and could not read package.json scripts.dev; whether it runs preparation before `next dev` has not been checked. Codebook runs your Next app with webpack (`next dev --webpack`) even when your dev script uses Turbopack. The page is built from the same source; a Turbopack-only loader or setting has no effect during the run. Codebook ran Next 16.4.3 as `next dev --webpack --hostname 127.0.0.1 --port 4321`.',
+  )
+})
+
+// Value: protects=a route manifest that cannot be read ends the run as RUNTIME_FAILED naming the manifest, the reason and where the run journal is, before any browser opens; fails_when=the raw reader error reaches the agent or the journal is not named; why_new=Cycle 0065 unexpected manifest failure; seam=manifestFailure replaces the reader; no_claim=the reader's own wording (readNextRouteManifests tests)
+test('a Pages-capable run whose route manifest cannot be read fails as RUNTIME_FAILED naming the manifest and the run journal', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    nextPages: {
+      manifestFailure:
+        'Next route manifest .next/dev/server/pages-manifest.json could not be read: it is not valid JSON',
+    },
+  })
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  assert.ok(failure instanceof StudyError, String(failure))
+  assert.equal(failure.code, 'RUNTIME_FAILED')
+  assert.equal(
+    failure.message,
+    "Next route manifest .next/dev/server/pages-manifest.json could not be read: it is not valid JSON. Codebook stopped the server it started before opening the browser; the run's journal is at the run resource's eventsUri.",
+  )
+  assert.equal(harness.launchConfigurations.length, 0)
+})
+
+// Value: protects=a Pages stop in a module no entry chunk of the page holds (loaded later, e.g. through next/dynamic) is refused as not sealed before the browser opens; fails_when=it is refused uncoded or the run opens the browser; why_new=Cycle 0065 NEXT_STOP_NOT_SEALED (lazily loaded chunk); seam=a page chunk without the cited module; no_claim=a real next/dynamic chunk
+test('a Pages stop in a module the page does not load at start is refused as not sealed before any browser opens', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    nextPages: { citedInPageChunk: false },
+  })
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  assert.ok(failure instanceof StudyError, String(failure))
+  assert.equal(failure.code, 'NEXT_STOP_NOT_SEALED')
+  assert.equal(
+    failure.message,
+    'src/theme.ts is not in the code the page / loads at start; a module loaded later (for example through next/dynamic) cannot be sealed before input.',
+  )
+  assert.equal(harness.launchConfigurations.length, 0)
 })
 
 // --- Pages unmapped line ---

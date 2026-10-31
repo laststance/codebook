@@ -40,6 +40,24 @@ test('an App-only Next run whose setup budget expires fails with the uncoded Rep
   )
 })
 
+// Value: protects=an App-only Next run whose server exits before it listens keeps the launcher's failure text word for word, with no preparation or webpack note; fails_when=the Pages-path launch notes reach a workspace without a Pages folder; why_new=Cycle 0065 (App launch-failure text unchanged without a Pages folder); seam=launchFailure makes the stand-in readiness reject; no_claim=the launcher's own text (configuredApplication tests)
+test('an App-only Next run whose server exits before listening fails with the launcher text alone', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    launchFailure: 'Application exited: 1: boom',
+  })
+  // Act
+  const failure = await harness.run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.equal(
+    Reflect.get(Object(failure), 'message'),
+    'Application exited: 1: boom',
+  )
+})
+
 // Value: protects=an App module parsed again under another script id after sealing keeps today's uncoded failure; fails_when=an App run reports SOURCE_CHANGED or another text; why_new=Cycle 0065 pt1 App characterization (Pages runs fail with SOURCE_CHANGED instead); seam=announceSealedModule re-announces the sealed module; no_claim=the Pages Fast Refresh case (nextPagesRun tests)
 test('an App module parsed again after sealing fails the run with Selected module changed after sealing', async (context) => {
   // Arrange
