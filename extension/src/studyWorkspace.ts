@@ -14804,10 +14804,16 @@ export class StudyWorkspace {
       pendingNodeHistoryIndex === undefined
         ? undefined
         : selectedNodeHistory?.entries[pendingNodeHistoryIndex]
+    // An Extension replay's frame inside a stop interval presents that stop's inspection state.
     const selectedNodeHistoryStop =
       selectedNodeHistoryEvent?.type === 'stop'
         ? selectedNodeHistoryEvent
-        : undefined
+        : selectedNodeHistory && selectedNodeHistoryEvent
+          ? this.extensionStopEntryAt(
+              selectedNodeHistory,
+              selectedNodeHistoryEvent.sequence,
+            )
+          : undefined
     const studyCatalog: StudyCatalogEntry[] = [
       ...this.catalog,
       ...[
@@ -25595,7 +25601,8 @@ export class StudyWorkspace {
         throw new Error(this.replayRefusal('selectSavedBeforeInspecting'))
       if (
         history.entries.find((entry) => entry.sequence === message.sequence)
-          ?.type !== 'stop'
+          ?.type !== 'stop' &&
+        !this.extensionStopEntryAt(history, message.sequence)
       )
         throw new Error(this.replayRefusal('eventNotAStop'))
       await this.requestNodeHistoryEvent(history, message.sequence, {
@@ -27386,6 +27393,25 @@ export class StudyWorkspace {
       this.nodeSurfacesSequence !== undefined &&
       this.nodeSourceSlot,
     )
+  }
+
+  /**
+   * Finds the stop an Extension replay's event lies in, recorded or partial: a frame or an inner close inside a stop interval presents that stop's inspection state and accepts Inspect.
+   * @param history - The selected replay's test-shaped history.
+   * @param sequence - The event.
+   * @returns The stop's test-shaped entry; `undefined` for another replay or a moment with no stop.
+   * @example this.extensionStopEntryAt(history, 3)?.sequence // => 1 for a frame inside the first stop
+   */
+  private extensionStopEntryAt(
+    history: NodeTestHistoryIndex,
+    sequence: number,
+  ): NodeTestHistoryStop | undefined {
+    const replay = this.selectedExtensionReplay
+    if (replay?.history !== history) return undefined
+    const position = this.nodeHistoryEventPosition(history, sequence)
+    const stop =
+      position === undefined ? undefined : replay.model.moments[position]?.stop
+    return stop && replay.stopEntries.get(stop.pauseId)
   }
 
   /**

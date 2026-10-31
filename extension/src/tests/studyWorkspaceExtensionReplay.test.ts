@@ -764,6 +764,51 @@ test('reselecting the shown extension stop after the learner ends the replay deb
   }
 })
 
+// protects=a frame event inside a stop keeps the stop's inspection state (source available, debugger available) and accepts Inspect; fails_when=the frame inside the stop drops sourceAvailable and debuggerAvailable, or node-history-stop rejects the frame's sequence; no_claim=the debugger's drawing
+test('a frame inside a stop keeps the stop inspection state and accepts Inspect', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await writeExtensionHistoryFor(harness, [
+      { at: 10, type: 'open', pauseId: 'p1', stopIndex: 1, context: 'page' },
+      {
+        at: 11,
+        type: 'capture',
+        pauseId: 'p1',
+        stopIndex: 1,
+        context: 'page',
+      },
+      { at: 15, type: 'frame', kind: 'stream', salt: 'inside' },
+      { at: 30, type: 'close', pauseId: 'p1' },
+    ])
+    await openExtensionReplay(harness, history.studyId)
+    const FRAME_INSIDE_STOP = 3
+
+    // Act
+    await selectExtensionEvent(harness, history.studyId, FRAME_INSIDE_STOP)
+    const inside = lastView(harness)?.nodeHistoryPosition
+    harness.receiveContext({
+      type: 'node-history-stop',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      sequence: FRAME_INSIDE_STOP,
+    })
+    await waitUntil(
+      () => lastView(harness)?.nodeHistoryPosition?.pending !== true,
+      'the Inspect request settles',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(inside?.sequence, FRAME_INSIDE_STOP)
+    assert.equal(inside?.sourceAvailable, true)
+    assert.equal(inside?.debuggerAvailable, true)
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
 // protects=a seek onto a stop whose source is not recorded never starts a debugger the learner ended, so only an explicit reselection restarts it; fails_when=the seek presents the partial stop in a new debugger and debuggerAvailable returns to true; no_claim=the debugger's drawing or Play
 test('seeking to a partial stop after the learner ends the replay debugger starts no new debugger', async () => {
   // Arrange
