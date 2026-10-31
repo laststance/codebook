@@ -379,6 +379,73 @@ test('a Pages setup deadline while an input text is unanswered names the input a
   assert.equal(harness.mouse.length, 0)
 })
 
+// Value: protects=a Pages-folder workspace whose first compile is still running at the setup budget ends with NEXT_SETUP_DEADLINE and the before-browser recovery, not the uncoded text; fails_when=a deadline before the entry resolved reads as the plain App text; why_new=Cycle 0065 CodeRabbit round 1 (early Pages steps had no code); seam=entryHangs keeps the structured entry check open until cancelled; no_claim=a real slow compile
+test('a Pages-folder workspace whose server has not answered at the setup deadline ends with the before-browser recovery', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    entryHangs: true,
+    nextPages: {},
+  })
+  const preparing = harness.run.prepare().catch(() => undefined)
+  await waitUntil(() => harness.entryChecks.length === 1, 'the entry check')
+  // Act
+  harness.advance(REPOSITORY_SETUP_TIMEOUT_MS)
+  await preparing
+  // Assert
+  assert.deepEqual(refusalFailureOf(harness.run.view().failures[0] ?? ''), {
+    code: 'NEXT_SETUP_DEADLINE',
+    message: nextSetupDeadlineSentence(
+      NEXT_SETUP_STEPS.waitingForServer,
+      REPOSITORY_SETUP_TIMEOUT_MS,
+    ),
+    recoveryOverride: nextSetupDeadlineRecovery('before-browser'),
+  })
+})
+
+// Value: protects=a deadline that expires after every initial input was written, while the first stop is armed, names that step and the arming recovery, not the input selector advice; fails_when=the step stays at writing the initial inputs; why_new=Cycle 0065 CodeRabbit round 1 (inputs variant while the first stop is armed); seam=holdScreenshot keeps the first capture open; no_claim=a real debugger
+test('a Pages setup deadline after the initial inputs were written ends with the arming recovery', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    initialInputs: [{ selector: '#email', text: 'learner@example.invalid' }],
+    holdScreenshot: true,
+    nextPages: {},
+  })
+  const preparing = harness.run.prepare().catch(() => undefined)
+  await waitUntil(() => harness.insertedTexts.length === 1, 'the input text')
+  await waitUntil(() => harness.screenshotRequests() >= 1, 'the first capture')
+  // Act
+  harness.advance(REPOSITORY_SETUP_TIMEOUT_MS)
+  await preparing
+  // Assert
+  assert.deepEqual(refusalFailureOf(harness.run.view().failures[0] ?? ''), {
+    code: 'NEXT_SETUP_DEADLINE',
+    message: nextSetupDeadlineSentence(
+      NEXT_SETUP_STEPS.armingFirstStop,
+      REPOSITORY_SETUP_TIMEOUT_MS,
+    ),
+    recoveryOverride: nextSetupDeadlineRecovery('arming'),
+  })
+})
+
+// Value: protects=a Pages-folder workspace with no initial input that expires while the first stop is armed ends with the arming recovery; fails_when=the no-input run reads as the inputs variant; why_new=Cycle 0065 CodeRabbit round 1; seam=holdScreenshot; no_claim=a real debugger
+test('a Pages setup deadline with no initial inputs ends with the arming recovery', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    holdScreenshot: true,
+    nextPages: {},
+  })
+  const preparing = harness.run.prepare().catch(() => undefined)
+  await waitUntil(() => harness.screenshotRequests() >= 1, 'the first capture')
+  // Act
+  harness.advance(REPOSITORY_SETUP_TIMEOUT_MS)
+  await preparing
+  // Assert
+  assert.equal(
+    refusalFailureOf(harness.run.view().failures[0] ?? '')?.recoveryOverride,
+    nextSetupDeadlineRecovery('arming'),
+  )
+})
+
 // Value: protects=an entry path the manifests resolve as an App route in a workspace with both routers continues on today's App path: the App verdict judges the entry answer, the App seal is used and no Pages check runs; fails_when=the run takes the Pages path or skips the App verdict; why_new=Cycle 0065 step 5 (kind app continues unchanged); seam=scripted manifests; no_claim=the App verdict's own texts (nextEntryReadiness tests)
 test('an entry path resolved as an App route in a workspace with both routers continues on the App path', async (context) => {
   // Arrange

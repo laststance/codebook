@@ -136,6 +136,10 @@ export async function configuredRuntimeHarness(
     holdInputInsert?: boolean
     /** Makes the stand-in server's readiness check (`ready` and `readyEntry`) reject with this message, as a server that exits before it listens does. */
     launchFailure?: string
+    /** Makes the stand-in server's structured entry check (`readyEntry`) never answer until the run is cancelled, as a first compile that is still running does. */
+    entryHangs?: boolean
+    /** Makes the stand-in page never answer a screenshot until the run is cancelled, so the run stays at the end of its setup, after the inputs were written. */
+    holdScreenshot?: boolean
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
@@ -273,8 +277,10 @@ export async function configuredRuntimeHarness(
   const entryChecks: string[] = []
   // The text of each initial input the run sent to the page, in order.
   const insertedTexts: string[] = []
+  let screenshotCount = 0
   // Ends a held insert of an initial input when the page's transport closes.
   let rejectHeldInsert = (_error: Error): void => {}
+  let rejectHeldScreenshot = (_error: Error): void => {}
   // The answers an App replay of the structured entry check was asked to judge.
   const appEntryConfirmations: NextEntryResponse[] = []
   let emitInputPause = true,
@@ -544,6 +550,7 @@ export async function configuredRuntimeHarness(
       releases.push('cdp')
       inputReject(new Error('CDP disconnected'))
       rejectHeldInsert(new Error('CDP disconnected'))
+      rejectHeldScreenshot(new Error('CDP disconnected'))
       rejectContinuation(new Error('DAP disconnected'))
       onClose()
     },
@@ -674,7 +681,15 @@ export async function configuredRuntimeHarness(
           }
         }
       }
-      if (method === 'Page.captureScreenshot') return { data: screenshot }
+      if (method === 'Page.captureScreenshot') {
+        screenshotCount += 1
+        // A held capture is answered only by the transport closing, as a lost reply is.
+        if (options.holdScreenshot)
+          return new Promise<never>((_resolve, reject) => {
+            rejectHeldScreenshot = reject
+          })
+        return { data: screenshot }
+      }
       if (method === 'Input.dispatchMouseEvent') {
         mouse.push({ type: parameters?.type, timeout })
         if (parameters?.type === 'mousePressed') return {}
@@ -820,8 +835,13 @@ export async function configuredRuntimeHarness(
       return 'http://127.0.0.1:4321'
     },
     // The structured entry check of a Pages-capable run: the scripted answer, described by the real code, never fetched.
-    readyEntry: async (_signal: AbortSignal, entryPath: string) => {
+    readyEntry: async (signal: AbortSignal, entryPath: string) => {
       entryChecks.push(entryPath)
+      // A first compile that has not finished answers only when the run is cancelled.
+      if (options.entryHangs)
+        await new Promise<never>((_resolve, reject) =>
+          signal.addEventListener('abort', () => reject(signal.reason)),
+        )
       if (options.launchFailure) throw new Error(options.launchFailure)
       releases.push('application acquired')
       const origin = 'http://127.0.0.1:4321',
@@ -1176,6 +1196,8 @@ export async function configuredRuntimeHarness(
     entryChecks,
     /** The text of each initial input the run sent to the page (`Input.insertText`), in order. */
     insertedTexts,
+    /** How many screenshots the run asked the stand-in page for. */
+    screenshotRequests: () => screenshotCount,
     /** The answers the run asked the stand-in server to judge the App way (`app.confirmAppEntry`), in order. */
     appEntryConfirmations,
     /** Every Pages seal the run asked for, with its discovery cache and the bytes read before and after. */

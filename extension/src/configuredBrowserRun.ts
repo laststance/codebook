@@ -622,6 +622,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private nextSetupStep: NextSetupStep = NEXT_SETUP_STEPS.validatingProject
   /** The Pages route of a Next run on the Pages path, with the run's one discovery cache; set once the entry path resolved as a Pages route. The setup-deadline text, the seal and the Pages-only checks read it; every other run leaves it unset. */
   private pagesRun?: NextPagesEntry & { cache: NextPagesDiscoveryCache }
+  /** True once the workspace is known to have a Pages folder, before its entry resolved: a setup deadline then names `NEXT_SETUP_DEADLINE` unless the entry resolved as an App route ({@link setupDeadlineText}). */
+  private pagesCapable = false
   /** The route a Next run in a workspace with a Pages folder resolved its entry path to, for the run resource. */
   private nextRoute?: ConfiguredRuntimeView['nextRoute']
   /** What the router wait of a Pages run saw: `absent` until `window.next.router` exists, `late` once it was seen; the setup-deadline text reads it. */
@@ -776,6 +778,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
     // Only a Next workspace with a Pages folder takes the structured entry check and the route manifests; every other run keeps today's readiness.
     const hasPagesFolder = await this.hasNextPagesFolder(adapter)
+    this.pagesCapable = hasPagesFolder
     this.alive()
     this.nextSetupStep = NEXT_SETUP_STEPS.startingNext
     // The app runs on the port the project declares (its auth origin points there); a busy port refuses the start instead of moving the app.
@@ -907,6 +910,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.alive()
     if (inputs.length)
       this.evidence.record('inputs.prepared', { count: inputs.length })
+    // Every declared input is written: a deadline from here names arming the first stop, not an input.
+    this.nextSetupStep = NEXT_SETUP_STEPS.armingFirstStop
     // Only the next expected stop is armed: a later stop's line may run before its turn and must not pause then. {@link continue} arms each later stop.
     await this.armStop(this.stops[0]!)
     // A later browser stop is armed only in its turn, but a module that is already loaded can be compared with its sealed bundle now, before any application effect.
@@ -1249,8 +1254,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private setupDeadlineText(budgetMs: number): string {
     if (this.definition.configuration.adapter === 'vite-dev')
       return viteSetupDeadlineText(this.setupStep, budgetMs)
-    // Only a run on the Pages path names a code; an App run's text stays as it was.
-    if (!this.pagesRun) return 'Repository setup deadline exceeded'
+    // A run on the Pages path, or one in a Pages-capable workspace whose entry is not yet resolved as App, names a code; an App run's text stays as it was.
+    const mayTakePagesPath =
+      this.pagesRun !== undefined ||
+      (this.pagesCapable && this.nextRoute?.router !== 'app')
+    if (!mayTakePagesPath) return 'Repository setup deadline exceeded'
     return formatRefusalFailure(
       'NEXT_SETUP_DEADLINE',
       nextSetupDeadlineSentence(

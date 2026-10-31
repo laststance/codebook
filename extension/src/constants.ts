@@ -2371,7 +2371,8 @@ export const NEXT_SETUP_STEPS = {
   loadingEntryPage: 'loading the entry page',
   waitingForRouter:
     'waiting for the page router to become ready before sending the declared input or click',
-  writingInputs: 'writing the initial inputs and arming the first stop',
+  writingInputs: 'writing the initial inputs',
+  armingFirstStop: 'arming the first stop',
 } as const
 
 /** One setup step of {@link NEXT_SETUP_STEPS}. */

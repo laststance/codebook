@@ -94,7 +94,7 @@ const NEXT_REFUSAL_MEANINGS: Record<NextRefusalCode, string> = {
     "The stop is in code established to run only on the server: _document, a file under pages/api, or a line that maps in the page's server compile and in none of its client chunks (getServerSideProps or getStaticProps, for example).",
   NEXT_STOP_NOT_SEALED:
     'Codebook could not verify the browser code of the stop before the browser opened: there is no verified browser mapping for its line (which does not establish that the code is server-only), or its module is loaded later (next/dynamic, for example).',
-  NEXT_SETUP_DEADLINE: `A Pages Router run did not get ready within the ${REPOSITORY_SETUP_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s setup budget; the message names the step it reached and whether a browser was opened. The recovery the run gives fits that step: one retry before the browser or for a router that was late, a corrected entryPath for a page without a Next router, the input selector at the input step, and reading the captured history first when an input may have been written.`,
+  NEXT_SETUP_DEADLINE: `A Pages Router run did not get ready within the ${REPOSITORY_SETUP_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s setup budget; the message names the step it reached and whether a browser was opened. The recovery the run gives fits that step: one retry before the browser or for a router that was late, a corrected entryPath for a page without a Next router, the input selector at the input step, one retry when the deadline came after every input was written and the first stop was being armed, and reading the captured history first when an input may have been written.`,
 }
 
 /**

@@ -40,6 +40,38 @@ test('an App-only Next run whose setup budget expires fails with the uncoded Rep
   )
 })
 
+// Value: protects=a workspace with both routers whose entry resolved as an App route keeps the uncoded deadline text when the budget expires; fails_when=a Pages-capable workspace gains NEXT_SETUP_DEADLINE for an App entry; why_new=Cycle 0065 CodeRabbit round 1 (the early-step code must not reach App runs); seam=sealHangs after the manifests resolved the entry as App; no_claim=the Pages deadline (nextPagesRun tests)
+test('a both-routers run whose entry resolved as App keeps the uncoded Repository setup deadline exceeded', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    sealHangs: true,
+    nextPages: {
+      withAppFolder: true,
+      manifests: {
+        settings: {},
+        kind: 'app',
+        route: {
+          key: '/page',
+          path: '.next/dev/server/app/page_client-reference-manifest.js',
+        },
+      },
+    },
+  })
+  const preparing = harness.run.prepare().catch(() => undefined)
+  await waitUntil(
+    () => harness.appEntryConfirmations.length === 1,
+    'the App verdict',
+  )
+  // Act
+  harness.advance(REPOSITORY_SETUP_TIMEOUT_MS)
+  await preparing
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Repository setup deadline exceeded',
+  )
+})
+
 // Value: protects=an App-only Next run whose server exits before it listens keeps the launcher's failure text word for word, with no preparation or webpack note; fails_when=the Pages-path launch notes reach a workspace without a Pages folder; why_new=Cycle 0065 (App launch-failure text unchanged without a Pages folder); seam=launchFailure makes the stand-in readiness reject; no_claim=the launcher's own text (configuredApplication tests)
 test('an App-only Next run whose server exits before listening fails with the launcher text alone', async (context) => {
   // Arrange

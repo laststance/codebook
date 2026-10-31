@@ -76,6 +76,7 @@ const NEXT_SETUP_DEADLINE_RECOVERIES = {
   'router-absent': `Tell the learner the page at entryPath is not a Next Pages page: it exposes no Next router. Set entryPath to the Pages page the question is about, then one new start; never retry with the same entryPath. Recovery: fix the configuration, then one new start. ${BROWSER_CLOSED_NOTHING_SENT} ${SETUP_DEADLINE_ANCHOR}`,
   'router-late': `Start once more with a new key (the first compile of the page is warm after it); a second deadline means the page router does not become ready in time, so tell the learner. Recovery: one retry, then the learner. ${BROWSER_CLOSED_NOTHING_SENT} ${SETUP_DEADLINE_ANCHOR}`,
   inputs: `Check the input selector the message names against the entry page, then start once more with a new key; a second deadline means the page does not take that input in time, so tell the learner. Recovery: one retry, then the learner. The inputs before the one the message names were written and no click was sent; the browser Codebook opened was closed and Codebook stops the server it started (read resourcesReleased in the run resource). ${SETUP_DEADLINE_ANCHOR}`,
+  arming: `Start once more with a new key (the first compile of the page is warm after it); a second deadline means the page does not get ready in time to arm the first stop, so tell the learner. Recovery: one retry, then the learner. Every declared initial input was written (or there were none) and no click was sent; the browser Codebook opened was closed and Codebook stops the server it started (read resourcesReleased in the run resource). ${SETUP_DEADLINE_ANCHOR}`,
   'input-outcome-unknown': `Read the run's captured history before any new start: the reply to the input the message names was lost, so that input may have been written. Tell the learner, and start a new run only if the learner asks. Recovery: read, never resend. An input may have been written and no click was sent; the browser Codebook opened was closed and Codebook stops the server it started (read resourcesReleased in the run resource). ${SETUP_DEADLINE_ANCHOR}`,
 } as const
 
@@ -102,7 +103,8 @@ export function nextSetupDeadlineRecovery(variant: string): string | undefined {
 }
 
 /** Where a setup step stands relative to the browser and the page, the part of the deadline's variant the step alone decides. */
-type NextSetupStage = 'before-browser' | 'browser-opened' | 'router' | 'inputs'
+type NextSetupStage =
+  'before-browser' | 'browser-opened' | 'router' | 'inputs' | 'arming'
 
 /** What a setup deadline says about the browser per step, and the stage that chooses its variant. A record, so a new step cannot be added without choosing both. */
 const NEXT_SETUP_STEP_FACTS: Record<
@@ -149,6 +151,11 @@ const NEXT_SETUP_STEP_FACTS: Record<
       'the browser Codebook opened was closed and no click was sent',
     stage: 'inputs',
   },
+  [NEXT_SETUP_STEPS.armingFirstStop]: {
+    browserState:
+      'the browser Codebook opened was closed and no click was sent',
+    stage: 'arming',
+  },
 }
 
 /**
@@ -163,6 +170,7 @@ const NEXT_SETUP_STEP_FACTS: Record<
  * - `browser-opened` while opening the browser or loading the entry page
  * - `router-absent` or `router-late` at the router step
  * - `inputs`, or `input-outcome-unknown` when an input's outcome is unknown, at the input step
+ * - `arming` once every input was written, while the first stop is armed
  * @example
  * nextSetupDeadlineVariantOf(NEXT_SETUP_STEPS.sealingStops) // => 'before-browser'
  * nextSetupDeadlineVariantOf(NEXT_SETUP_STEPS.waitingForRouter, 'late') // => 'router-late'

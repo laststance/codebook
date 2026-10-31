@@ -186,7 +186,8 @@ test('the Next setup steps read as the deadline sentence quotes them', () => {
     loadingEntryPage: 'loading the entry page',
     waitingForRouter:
       'waiting for the page router to become ready before sending the declared input or click',
-    writingInputs: 'writing the initial inputs and arming the first stop',
+    writingInputs: 'writing the initial inputs',
+    armingFirstStop: 'arming the first stop',
   })
 })
 
@@ -202,7 +203,8 @@ test('the Next setup deadline sentence names the budget, the step and the browse
     'Repository setup deadline (90 s) exceeded while opening the browser. Codebook stopped the server it started; the browser Codebook was opening was closed and no input or click was sent.',
     'Repository setup deadline (90 s) exceeded while loading the entry page. Codebook stopped the server it started; the browser Codebook opened was closed and no input or click was sent.',
     'Repository setup deadline (90 s) exceeded while waiting for the page router to become ready before sending the declared input or click. Codebook stopped the server it started; the browser Codebook opened was closed and no input or click was sent.',
-    'Repository setup deadline (90 s) exceeded while writing the initial inputs and arming the first stop. Codebook stopped the server it started; the browser Codebook opened was closed and no click was sent.',
+    'Repository setup deadline (90 s) exceeded while writing the initial inputs. Codebook stopped the server it started; the browser Codebook opened was closed and no click was sent.',
+    'Repository setup deadline (90 s) exceeded while arming the first stop. Codebook stopped the server it started; the browser Codebook opened was closed and no click was sent.',
   ]
   // Act
   const sentences = Object.values(NEXT_SETUP_STEPS).map((step) =>
@@ -247,7 +249,7 @@ test('the Next setup deadline sentence tells an absent router from a late one an
   )
   assert.equal(
     pendingInput,
-    'Repository setup deadline (90 s) exceeded while writing the initial inputs and arming the first stop, at the input #email (the inputs before it were written). Codebook stopped the server it started; the browser Codebook opened was closed and no click was sent.',
+    'Repository setup deadline (90 s) exceeded while writing the initial inputs, at the input #email (the inputs before it were written). Codebook stopped the server it started; the browser Codebook opened was closed and no click was sent.',
   )
   assert.equal(
     routerStateOutsideItsStep,
@@ -271,6 +273,7 @@ test('each Next setup step chooses the deadline variant that fits what had alrea
     [NEXT_SETUP_STEPS.waitingForRouter, undefined, false, 'router-absent'],
     [NEXT_SETUP_STEPS.writingInputs, undefined, false, 'inputs'],
     [NEXT_SETUP_STEPS.writingInputs, undefined, true, 'input-outcome-unknown'],
+    [NEXT_SETUP_STEPS.armingFirstStop, undefined, false, 'arming'],
     [NEXT_SETUP_STEPS.sealingStops, 'late', true, 'before-browser'],
   ] as const
   for (const [step, routerState, inputOutcomeUnknown, variant] of cases)
@@ -310,6 +313,11 @@ test('every Next setup deadline variant has a static recovery with its class, it
       recoveryClass: 'Recovery: one retry, then the learner.',
       sideEffect:
         'The inputs before the one the message names were written and no click was sent; the browser Codebook opened was closed and Codebook stops the server it started (read resourcesReleased in the run resource).',
+    },
+    arming: {
+      recoveryClass: 'Recovery: one retry, then the learner.',
+      sideEffect:
+        'Every declared initial input was written (or there were none) and no click was sent; the browser Codebook opened was closed and Codebook stops the server it started (read resourcesReleased in the run resource).',
     },
     'input-outcome-unknown': {
       recoveryClass: 'Recovery: read, never resend.',
