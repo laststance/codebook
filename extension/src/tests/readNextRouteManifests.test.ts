@@ -315,6 +315,34 @@ test('a more specific App route whose source is gone stays a conflict with the l
   })
 })
 
+// Value: protects=a more specific Pages route whose source is gone (a stale listing left in .next/dev) stays a conflict, so its refusal names the listing as stale; fails_when=the stale Pages route wins and the run takes a page that no longer exists; why_new=Cycle 0066 task 23 (the contest's Pages-side stale guard had no test); seam=none; no_claim=a real leftover .next/dev
+test('a more specific Pages route whose source is gone stays a conflict with the live dynamic App route', async (context) => {
+  // Arrange
+  const workspace = await workspaceWithFolders(context, ['app/[slug]', 'pages'])
+  await writeFile(join(workspace, 'app/[slug]/page.tsx'), 'export default 1\n')
+  const fake = scriptedManifests([
+    {
+      [ROUTES]: ROUTES_TEXT,
+      [APP]: '{"/[slug]/page":"app/[slug]/page.js"}',
+      [PAGES]: '{"/about":"pages/about.js"}',
+    },
+  ])
+  // Act
+  const manifests = await readNextRouteManifests({
+    workspace,
+    entryPath: '/about',
+    ...fake,
+  })
+  // Assert
+  assert.deepEqual(manifests, {
+    settings: {},
+    kind: 'conflict',
+    appKey: '/[slug]/page',
+    pagesRoute: '/about',
+    pagesCompiledPath: 'pages/about.js',
+  })
+})
+
 // Value: protects=two equally specific routes, one per router, stay the conflict Next refuses; fails_when=the comparison picks one router for an equal pair; why_new=Codex review in /ship pass 1 (Cycle 0065); seam=none; no_claim=none beyond protects
 test('an App route and a Pages route of the same static path stay a conflict', async (context) => {
   // Arrange
