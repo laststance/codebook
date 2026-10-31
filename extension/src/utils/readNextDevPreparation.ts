@@ -14,6 +14,11 @@ import {
   readProjectFile,
 } from './readDeclaredDevelopmentPort'
 import {
+  readPreScriptRules,
+  type PreScriptRules,
+  type PreScriptRun,
+} from './readPreScriptRules'
+import {
   tokenizeDevelopmentScript,
   UnreadScriptError,
 } from './tokenizeDevelopmentScript'
@@ -22,7 +27,7 @@ import {
  * What Codebook leaves out of the project's own `dev` script when it starts `next dev --webpack` itself.
  *
  * - `none`: the script runs `next dev` with nothing before it.
- * - `skipped`: `statements` statements run before `next dev` (a `predev` script counts as one); Codebook runs none of them.
+ * - `skipped`: `statements` statements run before `next dev` (a `predev` or `pre<name>` script counts as one when the package manager that runs it runs pre scripts, or when Codebook cannot tell; {@link readPreScriptRules}); Codebook runs none of them.
  * - `unknown`: the script could not be read, so whether it prepares anything before `next dev` was not checked.
  *
  * `envSettings` names, never values, the environment settings the script gives `next dev` (`A=1 next dev`, `cross-env X=1 next dev`, `export X=1`) that Codebook does not apply; `PORT` is never listed, since Codebook starts the app on the declared port ({@link readDeclaredDevelopmentPort}).
@@ -32,10 +37,21 @@ export type NextDevPreparation =
   | { status: 'skipped'; statements: number; envSettings?: string[] }
   | { status: 'unknown' }
 
-/** The preparation of a script that could not be read; frozen, since every caller receives this one object. */
-const UNKNOWN_PREPARATION: NextDevPreparation = Object.freeze({
-  status: 'unknown',
+/** One reading of {@link readNextDevPreparation}: what `codebook_status` reports as `preparation`, and whether a pre script it counts may not run. */
+export type NextDevPreparationReading = {
+  preparation: NextDevPreparation
+  /** Whether a counted pre script's package manager (or its version) is unknown, so the script may or may not run; {@link describeNextDevPreparation} words it as a note, never as a field. */
+  preScriptUncertain: boolean
+}
+
+/** The reading of a script that could not be read; frozen, since every caller receives this one object. */
+const UNKNOWN_READING: NextDevPreparationReading = Object.freeze({
+  preparation: Object.freeze({ status: 'unknown' }),
+  preScriptUncertain: false,
 })
+
+/** The pre-script rules of one read and whether a pre script was counted under an unknown rule; one object shared by every line of the read. */
+type PreScriptTally = { rules: PreScriptRules; uncertain: boolean }
 
 /** Programs that run other commands in parallel or by pattern: whether `next dev` runs after them, or inside them, cannot be read. */
 const COMMAND_RUNNER_PROGRAMS: ReadonlySet<string> = new Set([
@@ -130,26 +146,50 @@ function readExportNames(words: readonly string[], scope: LineScope): string[] {
 }
 
 /**
- * Reads a delegated script (`npm run dev:next`) one level deeper; a `pre<name>` script, which npm and Yarn 1 run first, counts as one more statement before a `next dev` it reaches.
+ * Counts a pre script as one skipped statement when the package manager that runs it runs pre scripts, or when its rule is unknown, which the tally remembers for the readiness note.
+ * Called by {@link readDelegatedLine} for a `pre<name>` script and by {@link readNextDevPreparation} for `predev`.
+ * @param tally - The read's rules and its uncertainty mark.
+ * @param run - The rule of the manager that runs the script.
+ * @param hasScript - Whether the project has the pre script.
+ * @returns `1` when the script counts, else `0`.
+ * @example
+ * countPreScript(tally, 'skips', true)   // => 0 (pnpm 8, Yarn 2 and later)
+ * countPreScript(tally, 'unknown', true) // => 1, and tally.uncertain is now true
+ */
+function countPreScript(
+  tally: PreScriptTally,
+  run: PreScriptRun,
+  hasScript: boolean,
+): number {
+  if (!hasScript || run === 'skips') return 0
+  // A script that may run is counted rather than hidden, and the note says it may not.
+  if (run === 'unknown') tally.uncertain = true
+  return 1
+}
+
+/**
+ * Reads a delegated script (`npm run dev:next`) one level deeper; its `pre<name>` script counts as one more statement before a `next dev` it reaches when the delegating manager runs pre scripts ({@link countPreScript}).
  *
  * @returns What the delegated script runs.
  * @throws {@link UnreadScriptError} When {@link enterDelegation} cannot resolve the delegation or the script leaves the grammar.
  * @example
- * readDelegatedLine('dev:next', 'pnpm', scope) // => { runsNextDev: true, statementsBefore: 1, environmentNames: [] } for "prisma generate && next dev"
+ * readDelegatedLine('dev:next', 'npm', scope, tally) // => { runsNextDev: true, statementsBefore: 2, environmentNames: [] } for "prisma generate && next dev" with a predev:next script
  */
 function readDelegatedLine(
   name: string,
   manager: string,
   scope: LineScope,
+  tally: PreScriptTally,
 ): LineReading {
   const delegation = enterDelegation(name, manager, scope)
-  const reading = readLine(delegation.script, delegation.scope)
+  const reading = readLine(delegation.script, delegation.scope, tally)
   if (!reading.runsNextDev) return reading
-  const hasPreScript = typeof scope.scripts?.[`pre${name}`] === 'string'
-  return {
-    ...reading,
-    statementsBefore: reading.statementsBefore + (hasPreScript ? 1 : 0),
-  }
+  const preScript = countPreScript(
+    tally,
+    tally.rules.byManager.get(manager) ?? 'unknown',
+    typeof scope.scripts?.[`pre${name}`] === 'string',
+  )
+  return { ...reading, statementsBefore: reading.statementsBefore + preScript }
 }
 
 /**
@@ -157,12 +197,13 @@ function readDelegatedLine(
  *
  * @throws {@link UnreadScriptError} For a command runner ({@link COMMAND_RUNNER_PROGRAMS}) and for every form the shared grammar cannot read.
  * @example
- * readStatement(['prisma', 'generate'], scope) // => { kind: 'preparation' }
- * readStatement(['A=1', 'next', 'dev'], scope) // => { kind: 'next-dev', statementsBefore: 0, environmentNames: ['A'] }
+ * readStatement(['prisma', 'generate'], scope, tally) // => { kind: 'preparation' }
+ * readStatement(['A=1', 'next', 'dev'], scope, tally) // => { kind: 'next-dev', statementsBefore: 0, environmentNames: ['A'] }
  */
 function readStatement(
   words: readonly string[],
   scope: LineScope,
+  tally: PreScriptTally,
 ): StatementReading {
   if (words[0] === 'export')
     return { kind: 'environment', names: readExportNames(words, scope) }
@@ -183,7 +224,7 @@ function readStatement(
     throw new UnreadScriptError()
   const name = delegatedScriptName(prefix.program)
   if (name === undefined) return { kind: 'preparation' }
-  const delegated = readDelegatedLine(name, prefix.program[0]!, scope)
+  const delegated = readDelegatedLine(name, prefix.program[0]!, scope, tally)
   // A delegation that never reaches `next dev` is one preparation statement of this line.
   if (!delegated.runsNextDev) return { kind: 'preparation' }
   return {
@@ -198,9 +239,13 @@ function readStatement(
  *
  * @throws {@link UnreadScriptError} When the tokenizer refuses the line, a statement leaves the grammar or the shared statement budget runs out (F550).
  * @example
- * readLine('prisma generate && A=1 next dev', scope) // => { runsNextDev: true, statementsBefore: 1, environmentNames: ['A'] }
+ * readLine('prisma generate && A=1 next dev', scope, tally) // => { runsNextDev: true, statementsBefore: 1, environmentNames: ['A'] }
  */
-function readLine(line: string, scope: LineScope): LineReading {
+function readLine(
+  line: string,
+  scope: LineScope,
+  tally: PreScriptTally,
+): LineReading {
   const statements = tokenizeDevelopmentScript(
     line,
     scope.windows,
@@ -212,7 +257,7 @@ function readLine(line: string, scope: LineScope): LineReading {
   const environmentNames: string[] = []
   // Statements after the first `next dev` never run before it, so the walk ends there.
   for (const words of statements) {
-    const statement = readStatement(words, scope)
+    const statement = readStatement(words, scope, tally)
     if (statement.kind === 'environment')
       environmentNames.push(...statement.names)
     else if (statement.kind === 'preparation') statementsBefore += 1
@@ -227,29 +272,30 @@ function readLine(line: string, scope: LineScope): LineReading {
 }
 
 /**
- * Reads what Codebook leaves out of the project's own `dev` script when it starts `next dev --webpack` itself: the statements before `next dev`, a `predev` script, and the environment settings given to `next dev`.
+ * Reads what Codebook leaves out of the project's own `dev` script when it starts `next dev --webpack` itself: the statements before `next dev`, the pre scripts the package manager runs before them (`predev`, a delegated script's `pre<name>`), and the environment settings given to `next dev`.
  *
- * Why it exists: Codebook never runs the dev script, so a preparation step (`prisma generate && next dev`) or an environment setting (`NODE_OPTIONS=… next dev`) the project relies on is silently missing from Codebook's run; `codebook_status` names it before a start. Called by {@link readRepositoryAdapterReadiness}.
- * The script is read as text, never run, with the grammar of {@link readDeclaredDevelopmentPort}: the same tokenizer, launchers, delegations, shells and statement budget. Statements before `next dev` that the port grammar does not read (`prisma generate`) are counted, not refused; `concurrently`, `npm-run-all`, `run-p`, `run-s`, an unresolved delegation, a script that never reaches `next dev` and any form the tokenizer refuses make the reading `unknown`. Environment values are never kept.
+ * Why it exists: Codebook never runs the dev script, so a preparation step (`prisma generate && next dev`) or an environment setting (`NODE_OPTIONS=… next dev`) the project relies on is silently missing from Codebook's run; `codebook_status` names it before a start. Called by {@link readRepositoryAdapterReadiness} and {@link describeNextLaunchFailure}.
+ * The script is read as text, never run, with the grammar of {@link readDeclaredDevelopmentPort}: the same tokenizer, launchers, delegations, shells and statement budget. Statements before `next dev` that the port grammar does not read (`prisma generate`) are counted, not refused; `concurrently`, `npm-run-all`, `run-p`, `run-s`, an unresolved delegation, a script that never reaches `next dev` and any form the tokenizer refuses make the reading `unknown`. A pre script counts only when the manager that runs it runs pre scripts, by {@link readPreScriptRules}: the project's manager for `predev`, the delegating program for a `pre<name>`. Environment values are never kept.
  *
  * @param workspace - The workspace root that holds `package.json`.
  * @param platform - The platform whose shell runs the script (`cmd` on `win32`, `sh` elsewhere); tests set it to read the Windows meaning on any host.
- * @returns
+ * @returns The preparation and whether a counted pre script may not run:
  * - `{ status: 'none' }` for a plain `next dev`, or no `dev` script
- * - `{ status: 'skipped', statements: n }` when `n` statements (a `predev` script counts as one) run before `next dev`
+ * - `{ status: 'skipped', statements: n }` when `n` statements (each counted pre script as one) run before `next dev`, with `preScriptUncertain` when a counted pre script's manager or its version is unknown
  * - `{ status: 'unknown' }` when `package.json` or the script could not be read
  * - `envSettings` beside `none` or `skipped` when `next dev` is given environment settings Codebook does not apply, by name only (`PORT` is applied, so never listed)
  * @example
- * await readNextDevPreparation('/repo') // => { status: 'skipped', statements: 1 } for "prisma generate && next dev"
- * await readNextDevPreparation('/repo') // => { status: 'none', envSettings: ['NODE_OPTIONS'] } for "cross-env NODE_OPTIONS=x next dev"
+ * await readNextDevPreparation('/repo') // => { preparation: { status: 'skipped', statements: 1 }, preScriptUncertain: false } for "prisma generate && next dev"
+ * await readNextDevPreparation('/repo') // => { preparation: { status: 'none' }, preScriptUncertain: false } for a predev script and "next dev" in a pnpm 8 project
+ * await readNextDevPreparation('/repo') // => { preparation: { status: 'skipped', statements: 1 }, preScriptUncertain: true } for the same scripts with no packageManager and no lockfile
  */
 export async function readNextDevPreparation(
   workspace: string,
   platform: NodeJS.Platform = process.platform,
-): Promise<NextDevPreparation> {
+): Promise<NextDevPreparationReading> {
   const file = await readProjectFile(join(workspace, 'package.json'))
   // An absent, unreadable, oversized or irregular package.json cannot be read.
-  if (typeof file !== 'string') return UNKNOWN_PREPARATION
+  if (typeof file !== 'string') return UNKNOWN_READING
   const manifest = (() => {
     try {
       return packageManifestSchema.safeParse(JSON.parse(file))
@@ -257,33 +303,52 @@ export async function readNextDevPreparation(
       return undefined
     }
   })()
-  if (!manifest?.success) return UNKNOWN_PREPARATION
+  if (!manifest?.success) return UNKNOWN_READING
   const { scripts, packageManager } = manifest.data
   const dev = scripts?.dev
   // Without a dev script there is nothing Codebook leaves out.
-  if (typeof dev !== 'string' || dev.trim() === '') return { status: 'none' }
+  if (typeof dev !== 'string' || dev.trim() === '')
+    return { preparation: { status: 'none' }, preScriptUncertain: false }
   const folders = await projectMarkerFolders(workspace)
   const yarnBerry = await isYarnBerryProject(folders, packageManager)
   const bun = await isBunProject(folders, packageManager)
   const win32 = platform === 'win32'
   // A Bun project runs its scripts with Bun Shell on Windows, whatever the script says (D75).
-  if (win32 && !yarnBerry && bun) return UNKNOWN_PREPARATION
+  if (win32 && !yarnBerry && bun) return UNKNOWN_READING
+  const tally: PreScriptTally = {
+    rules: await readPreScriptRules(folders, packageManager),
+    uncertain: false,
+  }
   let reading: LineReading
   try {
-    reading = readLine(dev, devScriptScope(scripts, bun, win32, yarnBerry))
+    reading = readLine(
+      dev,
+      devScriptScope(scripts, bun, win32, yarnBerry),
+      tally,
+    )
   } catch (error) {
-    if (error instanceof UnreadScriptError) return UNKNOWN_PREPARATION
+    if (error instanceof UnreadScriptError) return UNKNOWN_READING
     throw error
   }
-  if (!reading.runsNextDev) return UNKNOWN_PREPARATION
+  if (!reading.runsNextDev) return UNKNOWN_READING
+  // The project's own manager runs `predev` when the learner starts `dev`.
   const statements =
-    reading.statementsBefore + (typeof scripts?.predev === 'string' ? 1 : 0)
+    reading.statementsBefore +
+    countPreScript(
+      tally,
+      tally.rules.project,
+      typeof scripts?.predev === 'string',
+    )
   // Only settings Codebook really does not apply are listed; PORT decides the port Codebook starts the app on.
   const envSettings = [...new Set(reading.environmentNames)].filter(
     (name) => name !== APPLIED_ENVIRONMENT_NAME,
   )
   const environment = envSettings.length > 0 ? { envSettings } : {}
-  return statements > 0
-    ? { status: 'skipped', statements, ...environment }
-    : { status: 'none', ...environment }
+  return {
+    preparation:
+      statements > 0
+        ? { status: 'skipped', statements, ...environment }
+        : { status: 'none', ...environment },
+    preScriptUncertain: tally.uncertain,
+  }
 }

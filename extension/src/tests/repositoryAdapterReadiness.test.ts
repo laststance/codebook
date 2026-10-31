@@ -387,7 +387,7 @@ test('a plain next dev script reports no skipped preparation', async (context) =
   await mkdir(join(root, 'app'))
   await writeScripts(root, { dev: 'next dev --turbopack' })
   // Act
-  const preparation = await readNextDevPreparation(root)
+  const { preparation } = await readNextDevPreparation(root)
   const readiness = await readRepositoryAdapterReadiness(
     root,
     process.execPath,
@@ -429,7 +429,7 @@ test('a predev script is reported as one skipped preparation statement', async (
   const root = await createNextRepository(context)
   await writeScripts(root, { predev: 'prisma generate', dev: 'next dev' })
   // Act
-  const preparation = await readNextDevPreparation(root)
+  const { preparation } = await readNextDevPreparation(root)
   // Assert
   assert.deepEqual(preparation, { status: 'skipped', statements: 1 })
 })
@@ -440,7 +440,7 @@ test('a next build statement before next dev is reported as skipped preparation'
   const root = await createNextRepository(context)
   await writeScripts(root, { dev: 'next build && next dev' })
   // Act
-  const preparation = await readNextDevPreparation(root)
+  const { preparation } = await readNextDevPreparation(root)
   // Assert
   assert.deepEqual(preparation, { status: 'skipped', statements: 1 })
 })
@@ -473,7 +473,7 @@ test('a cross-env prefix before next dev is reported as an unapplied environment
   const root = await createNextRepository(context)
   await writeScripts(root, { dev: 'cross-env NODE_OPTIONS=x next dev' })
   // Act
-  const preparation = await readNextDevPreparation(root)
+  const { preparation } = await readNextDevPreparation(root)
   // Assert
   assert.deepEqual(preparation, {
     status: 'none',
@@ -488,7 +488,7 @@ test('a PORT assignment before next dev reports no unapplied environment setting
   await mkdir(join(root, 'app'))
   await writeScripts(root, { dev: 'PORT=4000 next dev' })
   // Act
-  const preparation = await readNextDevPreparation(root)
+  const { preparation } = await readNextDevPreparation(root)
   const readiness = await readRepositoryAdapterReadiness(
     root,
     process.execPath,
@@ -506,7 +506,7 @@ test('a PORT assignment beside NODE_OPTIONS reports only NODE_OPTIONS as unappli
   const root = await createNextRepository(context)
   await writeScripts(root, { dev: 'PORT=4000 NODE_OPTIONS=x next dev' })
   // Act
-  const preparation = await readNextDevPreparation(root)
+  const { preparation } = await readNextDevPreparation(root)
   // Assert
   assert.deepEqual(preparation, {
     status: 'none',
@@ -542,7 +542,7 @@ test('a run-p statement before next dev reports preparation unknown', async (con
   const root = await createNextRepository(context)
   await writeScripts(root, { dev: 'run-p build:css && next dev' })
   // Act
-  const preparation = await readNextDevPreparation(root)
+  const { preparation } = await readNextDevPreparation(root)
   // Assert
   assert.deepEqual(preparation, { status: 'unknown' })
 })
@@ -553,7 +553,7 @@ test('an unparsable dev script reports preparation unknown', async (context) => 
   const root = await createNextRepository(context)
   await writeScripts(root, { dev: 'next dev | tee dev.log' })
   // Act
-  const preparation = await readNextDevPreparation(root)
+  const { preparation } = await readNextDevPreparation(root)
   // Assert
   assert.deepEqual(preparation, { status: 'unknown' })
 })
@@ -567,7 +567,7 @@ test('a delegated script is followed to next dev and its statements before next 
     'dev:next': 'prisma generate && next dev',
   })
   // Act
-  const preparation = await readNextDevPreparation(root)
+  const { preparation } = await readNextDevPreparation(root)
   // Assert
   assert.deepEqual(preparation, { status: 'skipped', statements: 1 })
 })
@@ -582,7 +582,7 @@ test('the pre script of a delegated script that runs next dev counts as one skip
     'start:web': 'next dev',
   })
   // Act
-  const preparation = await readNextDevPreparation(root)
+  const { preparation } = await readNextDevPreparation(root)
   // Assert
   assert.deepEqual(preparation, { status: 'skipped', statements: 1 })
 })
@@ -593,7 +593,7 @@ test('a delegation to a script the project does not have reports preparation unk
   const root = await createNextRepository(context)
   await writeScripts(root, { dev: 'npm run seed && next dev' })
   // Act
-  const preparation = await readNextDevPreparation(root)
+  const { preparation } = await readNextDevPreparation(root)
   // Assert
   assert.deepEqual(preparation, { status: 'unknown' })
 })
@@ -604,7 +604,7 @@ test('an env assignment prefix read for Windows reports preparation unknown', as
   const root = await createNextRepository(context)
   await writeScripts(root, { dev: 'A=1 next dev' })
   // Act
-  const preparation = await readNextDevPreparation(root, 'win32')
+  const { preparation } = await readNextDevPreparation(root, 'win32')
   // Assert
   assert.deepEqual(preparation, { status: 'unknown' })
 })
@@ -630,4 +630,238 @@ test('the readiness names environment settings without any of their values', asy
     envSettings: ['SESSION_KEY', 'API_TOKEN', 'NODE_OPTIONS'],
   })
   assert.equal(JSON.stringify(readiness).includes('SECRET123'), false)
+})
+
+// Value: protects=a predev script that pnpm 7 and 8 do not run is not reported as preparation Codebook skips; fails_when=predev counts whatever the package manager runs; why_new=Cycle 0066 task 9 (package-manager pre-script rule, pnpm); seam=none; no_claim=pnpm's own run
+test('a predev script in a pnpm 8 project, which pnpm 8 does not run, is not reported as skipped preparation', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await mkdir(join(root, 'src/pages'), { recursive: true })
+  await writeFile(
+    join(root, 'package.json'),
+    JSON.stringify({
+      packageManager: 'pnpm@8.15.9',
+      scripts: { predev: 'prisma generate', dev: 'next dev' },
+    }),
+  )
+  // Act
+  const readiness = await readRepositoryAdapterReadiness(
+    root,
+    process.execPath,
+    SIGNAL,
+  )
+  // Assert
+  assert.equal(readiness['next-dev-webpack'].preparation, undefined)
+  assert.equal(readiness['next-dev-webpack'].notes, undefined)
+})
+
+// Value: protects=a delegated script's pre script that pnpm 8 does not run is not counted; fails_when=a pre<name> script counts under pnpm 8; why_new=Cycle 0066 task 9 (package-manager pre-script rule, pnpm delegation); seam=none; no_claim=pnpm's own run
+test('the pre script of a script pnpm 8 runs through a delegation is not reported as skipped preparation', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await writeFile(
+    join(root, 'package.json'),
+    JSON.stringify({
+      packageManager: 'pnpm@8.15.9',
+      scripts: {
+        dev: 'pnpm run start:web',
+        'prestart:web': 'node scripts/seed.js',
+        'start:web': 'next dev',
+      },
+    }),
+  )
+  // Act
+  const { preparation } = await readNextDevPreparation(root)
+  // Assert
+  assert.deepEqual(preparation, { status: 'none' })
+})
+
+// Value: protects=pnpm 7 and 8 run pre scripts when an .npmrc sets enable-pre-post-scripts=true, so predev counts again, with no uncertainty note; fails_when=the setting is not read or the uncertainty note appears; why_new=Cycle 0066 task 9 (pnpm's enable-pre-post-scripts); seam=none; no_claim=other pnpm configuration
+test('a predev script in a pnpm 8 project whose .npmrc enables pre scripts is reported as one skipped statement', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await mkdir(join(root, 'src/pages'), { recursive: true })
+  await writeFile(
+    join(root, 'package.json'),
+    JSON.stringify({
+      packageManager: 'pnpm@8.15.9',
+      scripts: { predev: 'prisma generate', dev: 'next dev' },
+    }),
+  )
+  await writeFile(
+    join(root, '.npmrc'),
+    'auto-install-peers=true\nenable-pre-post-scripts=true\n',
+  )
+  // Act
+  const readiness = await readRepositoryAdapterReadiness(
+    root,
+    process.execPath,
+    SIGNAL,
+  )
+  // Assert
+  assert.deepEqual(readiness['next-dev-webpack'].preparation, {
+    status: 'skipped',
+    statements: 1,
+  })
+  assert.deepEqual(readiness['next-dev-webpack'].notes, [
+    'Codebook starts Next with --webpack and skips 1 statement(s) before `next dev` in package.json scripts.dev. Whether that preparation is done has not been checked.',
+  ])
+})
+
+// Value: protects=pnpm 9 and later run pre scripts by default (pnpm 9.0.0 turned enable-pre-post-scripts on), so predev counts there; fails_when=every pnpm project is read as one that skips pre scripts; why_new=Cycle 0066 task 9 (pnpm's default by major); seam=none; no_claim=a pnpm 9 project that turns the setting off
+test('a predev script in a pnpm 9 project is reported as one skipped statement', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await writeFile(
+    join(root, 'package.json'),
+    JSON.stringify({
+      packageManager: 'pnpm@9.15.0',
+      scripts: { predev: 'prisma generate', dev: 'next dev' },
+    }),
+  )
+  // Act
+  const reading = await readNextDevPreparation(root)
+  // Assert
+  assert.deepEqual(reading, {
+    preparation: { status: 'skipped', statements: 1 },
+    preScriptUncertain: false,
+  })
+})
+
+// Value: protects=a predev script that Yarn 2 and later do not run is not reported as preparation Codebook skips, the Yarn version read from yarn.lock's __metadata key; fails_when=a Yarn Berry lockfile counts predev; why_new=Cycle 0066 task 9 (package-manager pre-script rule, Yarn Berry); seam=none; no_claim=Yarn's own run
+test('a predev script in a project whose yarn.lock is written by Yarn 2 or later is not reported as skipped preparation', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await mkdir(join(root, 'src/pages'), { recursive: true })
+  await writeScripts(root, { predev: 'prisma generate', dev: 'next dev' })
+  await writeFile(
+    join(root, 'yarn.lock'),
+    '# This file is generated by running "yarn install" inside your project.\n# Manual changes might be lost - proceed with caution!\n\n__metadata:\n  version: 8\n  cacheKey: 10c0\n\n"next@npm:16.0.1":\n  version: 16.0.1\n',
+  )
+  // Act
+  const readiness = await readRepositoryAdapterReadiness(
+    root,
+    process.execPath,
+    SIGNAL,
+  )
+  // Assert
+  assert.equal(readiness['next-dev-webpack'].preparation, undefined)
+  assert.equal(readiness['next-dev-webpack'].notes, undefined)
+})
+
+// Value: protects=a predev script Yarn 1 runs still counts when yarn.lock has no __metadata key; fails_when=every yarn.lock is read as Yarn Berry; why_new=Cycle 0066 task 9 (package-manager pre-script rule, Yarn 1); seam=none; no_claim=Yarn's own run
+test('a predev script in a project whose yarn.lock is written by Yarn 1 is reported as one skipped statement', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await writeScripts(root, { predev: 'prisma generate', dev: 'next dev' })
+  await writeFile(
+    join(root, 'yarn.lock'),
+    '# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.\n# yarn lockfile v1\n\n\nnext@16.0.1:\n  version "16.0.1"\n',
+  )
+  // Act
+  const reading = await readNextDevPreparation(root)
+  // Assert
+  assert.deepEqual(reading, {
+    preparation: { status: 'skipped', statements: 1 },
+    preScriptUncertain: false,
+  })
+})
+
+// Value: protects=a predev script whose package manager Codebook cannot tell still counts, and the readiness notes say it may or may not run; fails_when=the note is missing or the script is dropped; why_new=Cycle 0066 task 9 (unknown package manager note); seam=none; no_claim=which manager the learner uses
+test('a predev script in a project with no packageManager and no lockfile is counted with a note that it may or may not run', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await mkdir(join(root, 'src/pages'), { recursive: true })
+  await writeScripts(root, { predev: 'prisma generate', dev: 'next dev' })
+  // Act
+  const readiness = await readRepositoryAdapterReadiness(
+    root,
+    process.execPath,
+    SIGNAL,
+  )
+  // Assert
+  assert.deepEqual(readiness['next-dev-webpack'].preparation, {
+    status: 'skipped',
+    statements: 1,
+  })
+  assert.deepEqual(readiness['next-dev-webpack'].notes, [
+    'Codebook starts Next with --webpack and skips 1 statement(s) before `next dev` in package.json scripts.dev. Whether that preparation is done has not been checked.',
+    'Codebook could not tell which package manager, or which version of it, runs these scripts, so a pre script counted among the skipped statements (such as predev) may or may not run.',
+  ])
+  assert.equal(readiness['next-dev-webpack'].ready, true)
+})
+
+// Value: protects=lockfiles of two managers leave the manager unknown, so predev counts with the note; fails_when=one of the lockfiles is taken as the manager; why_new=Cycle 0066 task 9 (several lockfiles); seam=none; no_claim=none
+test('a predev script in a project with lockfiles of two package managers is counted with the may-or-may-not-run note', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await writeScripts(root, { predev: 'prisma generate', dev: 'next dev' })
+  await writeFile(join(root, 'package-lock.json'), '{}\n')
+  await writeFile(join(root, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\n")
+  // Act
+  const reading = await readNextDevPreparation(root)
+  // Assert
+  assert.deepEqual(reading, {
+    preparation: { status: 'skipped', statements: 1 },
+    preScriptUncertain: true,
+  })
+})
+
+// Value: protects=a pnpm-lock.yaml alone does not tell pnpm 7 or 8 (no pre scripts) from pnpm 9 and later (pre scripts on), so predev counts with the note; fails_when=a pnpm lockfile alone drops predev or claims it runs; why_new=Cycle 0066 task 9 (pnpm version unknown without packageManager); seam=none; no_claim=the lockfile's own version field
+test('a predev script in a project with only a pnpm lockfile is counted with the may-or-may-not-run note', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await writeScripts(root, { predev: 'prisma generate', dev: 'next dev' })
+  await writeFile(join(root, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\n")
+  // Act
+  const reading = await readNextDevPreparation(root)
+  // Assert
+  assert.deepEqual(reading, {
+    preparation: { status: 'skipped', statements: 1 },
+    preScriptUncertain: true,
+  })
+})
+
+// Value: protects=a delegation names the program that runs the delegated script, so npm's pre script counts in a pnpm 8 project too; fails_when=the project's manager decides a delegated script's pre script; why_new=Cycle 0066 task 9 (the delegating program runs the pre<name> script); seam=none; no_claim=none
+test('the pre script of a script npm runs through a delegation in a pnpm 8 project is reported as one skipped statement', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await writeFile(
+    join(root, 'package.json'),
+    JSON.stringify({
+      packageManager: 'pnpm@8.15.9',
+      scripts: {
+        dev: 'npm run start:web',
+        'prestart:web': 'node scripts/seed.js',
+        'start:web': 'next dev',
+      },
+    }),
+  )
+  // Act
+  const reading = await readNextDevPreparation(root)
+  // Assert
+  assert.deepEqual(reading, {
+    preparation: { status: 'skipped', statements: 1 },
+    preScriptUncertain: false,
+  })
+})
+
+// Value: protects=Bun runs a script's pre script, so predev counts in a Bun project without the note; fails_when=a Bun project is read as an unknown manager; why_new=Cycle 0066 task 9 (Bun runs pre<name>); seam=none; no_claim=Bun's own run
+test('a predev script in a Bun project is reported as one skipped statement without the may-or-may-not-run note', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await writeFile(
+    join(root, 'package.json'),
+    JSON.stringify({
+      packageManager: 'bun@1.2.21',
+      scripts: { predev: 'prisma generate', dev: 'next dev' },
+    }),
+  )
+  // Act
+  const reading = await readNextDevPreparation(root)
+  // Assert
+  assert.deepEqual(reading, {
+    preparation: { status: 'skipped', statements: 1 },
+    preScriptUncertain: false,
+  })
 })

@@ -30,10 +30,12 @@ export type NextLaunchFailureFacts = {
 export async function describeNextLaunchFailure(
   facts: NextLaunchFailureFacts,
 ): Promise<string[]> {
-  const preparation = await readNextDevPreparation(facts.workspace)
+  const reading = await readNextDevPreparation(facts.workspace)
   // A plain `next dev` leaves nothing out, so a failure says nothing about preparation.
   const sentences =
-    preparation.status === 'none' ? [] : describeNextDevPreparation(preparation)
+    reading.preparation.status === 'none'
+      ? []
+      : describeNextDevPreparation(reading)
   if (await devScriptRequestsWebpack(facts.workspace)) return sentences
   const command = ['next', ...nextDevArguments(facts.port)].join(' ')
   return [

@@ -1740,6 +1740,10 @@ export const DEVELOPMENT_BUN_LOCKFILE_SEARCH_MAX_FOLDERS = 16
 export const DEVELOPMENT_YARN_BERRY_CONFIG = '.yarnrc.yml'
 /** The first major version of Yarn that runs scripts in the portable shell (Yarn 2, "Berry"); Yarn 1 runs them with `sh` (F523). */
 export const DEVELOPMENT_YARN_BERRY_MIN_MAJOR = 2
+/** The first pnpm major that runs a script's `pre<name>` script by default: pnpm 9.0.0 turned `enable-pre-post-scripts` on, pnpm 7 and 8 left it off ({@link readPreScriptRules}). */
+export const DEVELOPMENT_PNPM_PRE_SCRIPTS_DEFAULT_MAJOR = 9
+/** How much of a `yarn.lock` is read, from its start, for the `__metadata:` key that Yarn 2 and later write below its two comment lines; Yarn 1 never writes it (bytes). */
+export const DEVELOPMENT_YARN_LOCKFILE_HEAD_BYTES = 4096
 /** The reason the `applicationPortSource` gives when the `dev` script of a Yarn Berry project has a form that Yarn 2+'s portable shell reads differently from `sh` (`export`, which it lacks; a `;;` or a `;` followed by blanks at the end of the line, which it rejects; D75, F515, F519); the quoted statement follows it. */
 export const DEVELOPMENT_YARN_SHELL_UNREAD_REASON =
   "Next's default port, taken because Yarn 2 and later runs scripts in its own portable shell, which reads this form differently from sh, so it can mean different things"
