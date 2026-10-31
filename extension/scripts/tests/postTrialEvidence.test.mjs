@@ -6,12 +6,13 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  rename,
   rm,
   symlink,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, win32 } from 'node:path'
 import { test } from 'node:test'
 
 import {
@@ -19,6 +20,7 @@ import {
   createDefaultSeams,
   findPrivatePaths,
   postTrialEvidence,
+  relativeInside,
 } from '../post-trial-evidence.mjs'
 import { runCommandLine } from '../utils/commandContract.mjs'
 import { openWithoutFollowing } from '../utils/openWithoutFollowing.mjs'
@@ -468,7 +470,7 @@ test('maps a gstack-post MEDIUM result to exit 11 and prints the confirm command
     ])
     assert.equal(
       result.errors.at(-1),
-      `Fix: gstack-post issue-comment 172 --body-file ${copyPath} --confirm abc123`,
+      `Fix: ${FAKE_GSTACK_POST} issue-comment 172 --body-file ${copyPath} --confirm abc123`,
     )
     assert.equal(result.calls[0].args.includes('--confirm'), false)
     assert.deepEqual(await readFile(copyPath), Buffer.from('ok\n'))
@@ -1037,5 +1039,89 @@ test('every refusal starts with its E_ code and ends with a Fix line', async () 
     // Assert
     assert.match(result.errors[0], /^E_PRIVATE_PATH: /)
     assert.match(result.errors.at(-1), /^Fix: /)
+  })
+})
+
+// protects=a folder on another Windows drive or UNC share is never treated as inside artifacts/; fails_when=an absolute relative() result passes the containment check; no_claim=real Windows file systems (win32 path semantics are injected)
+test('relativeInside refuses another drive and a UNC share with win32 paths', () => {
+  // Arrange
+  const artifacts = 'C:\\repo\\artifacts'
+
+  // Act
+  const results = [
+    relativeInside(artifacts, 'D:\\evidence\\x', win32),
+    relativeInside(artifacts, '\\\\server\\share\\x', win32),
+    relativeInside(artifacts, 'C:\\repo\\artifacts\\c68\\x', win32),
+  ]
+
+  // Assert
+  assert.deepEqual(results, [undefined, undefined, 'c68\\x'])
+})
+
+// protects=a file renamed over the path while hashing is refused; fails_when=the old open file's unchanged size and mtime let a stale hash through; no_claim=a replacement that reuses the same inode
+test('refuses with E_MANIFEST_CHANGED when another file is renamed over the path during hashing', async () => {
+  await withRepository(async (root) => {
+    // Arrange
+    const directory = await makeEvidence(root, { 'recording.webm': 'frames' })
+    const logPath = await writeLog(root, 'ok\n')
+    const defaults = createDefaultSeams().fileSystem
+    const replacingFileSystem = {
+      ...defaults,
+      openFile: async (path) => {
+        const file = await openWithoutFollowing(path)
+        let statCalls = 0
+        return {
+          stat: async (options) => {
+            statCalls += 1
+            if (statCalls === 2) {
+              // A new file with the same size takes the name.
+              await writeFile(`${path}.new`, 'frames')
+              await rename(`${path}.new`, path)
+            }
+            return file.stat(options)
+          },
+          createReadStream: (options) => file.createReadStream(options),
+          close: () => file.close(),
+        }
+      },
+    }
+
+    // Act
+    const result = await run(
+      root,
+      [logPath, '--issue', '172', '--manifest', 'artifacts/x'],
+      { overrides: { fileSystem: replacingFileSystem } },
+    )
+
+    // Assert
+    assert.equal(result.exitCode, 1)
+    assert.equal(
+      result.errors[0],
+      'E_MANIFEST_CHANGED: the file changed while it was hashed: recording.webm',
+    )
+    assert.deepEqual(await readdir(directory), ['recording.webm'])
+  })
+})
+
+// protects=the printed confirm command starts with the gstack-post that was found, quoted when needed; fails_when=the bare name gstack-post is printed; no_claim=the shell that runs it
+test('prints the confirm command with the located gstack-post path, quoted when it holds a space', async () => {
+  await withRepository(async (root) => {
+    // Arrange
+    const logPath = await writeLog(root, 'ok\n')
+    const spaced = '/opt/my tools/gstack-post'
+
+    // Act
+    const result = await run(root, [logPath, '--issue', '172'], {
+      environment: { GSTACK_POST: spaced },
+      overrides: { isExecutable: async (path) => path === spaced },
+      postResult: { status: 2, stdout: 'TOKEN: abc123\n', stderr: '' },
+    })
+
+    // Assert
+    const copyPath = result.calls[0].args[3]
+    assert.equal(
+      result.errors.at(-1),
+      `Fix: '/opt/my tools/gstack-post' issue-comment 172 --body-file ${copyPath} --confirm abc123`,
+    )
   })
 })

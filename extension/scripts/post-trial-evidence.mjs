@@ -19,7 +19,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { delimiter, dirname, join, relative, resolve, sep } from 'node:path'
+import nodePath, { delimiter, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 
@@ -291,6 +291,28 @@ function assertBodyWithinLimit(text) {
 }
 
 /**
+ * Returns the path of `child` below `parent`, or `undefined` when `child` is not strictly inside it.
+ *
+ * Why: `relative` returns an absolute path for another Windows drive or a UNC share, which `resolve` then treats as the answer; the check must refuse it.
+ * Called by {@link resolveManifestDirectory}.
+ *
+ * @param {string} parent - The containing folder (real path).
+ * @param {string} child - The candidate (real path).
+ * @param {Pick<typeof nodePath, 'relative' | 'isAbsolute' | 'sep'>} [pathApi] - Path flavor; tests pass `path.win32`.
+ * @returns {string | undefined} The relative path, or `undefined` for the folder itself, `..`, or another drive.
+ * @example relativeInside('C:\\r\\artifacts', 'D:\\x', path.win32) // undefined
+ */
+export function relativeInside(parent, child, pathApi = nodePath) {
+  const fromParent = pathApi.relative(parent, child)
+  const isInside =
+    fromParent !== '' &&
+    fromParent !== '..' &&
+    !fromParent.startsWith(`..${pathApi.sep}`) &&
+    !pathApi.isAbsolute(fromParent)
+  return isInside ? fromParent : undefined
+}
+
+/**
  * Resolves and validates the `--manifest` folder against the repository's `artifacts/` by real path.
  *
  * Why: a symlink in `artifacts/` or a `..` must not lead the manifest (and its hashing of every file) outside the evidence area.
@@ -318,13 +340,8 @@ async function resolveManifestDirectory(directory, repositoryRoot, fileSystem) {
   } catch {
     throw refuse('the evidence folder does not exist or is not readable')
   }
-  const fromArtifacts = relative(realArtifacts, realDirectory)
-  // Strictly inside: the folder itself, `..` and another drive all fail this.
-  const isInside =
-    fromArtifacts !== '' &&
-    fromArtifacts !== '..' &&
-    !fromArtifacts.startsWith(`..${sep}`) &&
-    resolve(realArtifacts, fromArtifacts) === realDirectory
+  const fromArtifacts = relativeInside(realArtifacts, realDirectory)
+  const isInside = fromArtifacts !== undefined
   if (!isInside) {
     throw refuse(
       "the evidence folder is not inside the repository's artifacts/",
@@ -438,10 +455,20 @@ async function hashStableFile(path, name, fileSystem) {
       bytesRead += BigInt(chunk.length)
     }
     const after = await file.stat({ bigint: true })
+    // The path itself may now name another file (renamed over); the open handle cannot tell.
+    let current
+    try {
+      current = await fileSystem.lstat(path, { bigint: true })
+    } catch {
+      current = undefined
+    }
     const isStable =
       before.size === after.size &&
       before.mtimeNs === after.mtimeNs &&
-      bytesRead === before.size
+      bytesRead === before.size &&
+      current?.isFile() === true &&
+      current.dev === before.dev &&
+      current.ino === before.ino
     if (!isStable) {
       throw new CommandRefusal(
         'E_MANIFEST_CHANGED',
@@ -598,6 +625,22 @@ async function resolveIssue(requested, runCommand, environment) {
 }
 
 /**
+ * Quotes a value for a POSIX shell only when it holds characters the shell would split or expand.
+ *
+ * Why: the printed confirm command names the exact executable that was found, which may contain spaces.
+ * Called by {@link mapPostResult}.
+ *
+ * @param {string} value - A path or argument.
+ * @returns {string} The value, single-quoted if needed.
+ * @example shellQuote("/opt/my tools/gstack-post") // '/opt/my tools/gstack-post' (quoted)
+ */
+function shellQuote(value) {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(value)
+    ? value
+    : `'${value.replaceAll("'", "'\\''")}'`
+}
+
+/**
  * Turns `gstack-post`'s documented results into this command's exit codes.
  *
  * Why: `gstack-post` exits 1 (HIGH refused), 2 (MEDIUM needs confirmation) and 3 (`gh` failed); they would collide with this command's own 1 and 2 and 3, so they map to 10, 11 and 12.
@@ -609,7 +652,7 @@ async function resolveIssue(requested, runCommand, environment) {
  * @throws {CommandRefusal} `E_POST_HIGH`, `E_POST_MEDIUM`, `E_POST_GH` or `E_POST_UNKNOWN`.
  * @example mapPostResult({ status: 0, stdout: 'https://github.com/o/r/issues/1#issuecomment-2\n', stderr: '' }, context)
  */
-function mapPostResult(result, { issue, copyPath, environment }) {
+function mapPostResult(result, { issue, copyPath, gstackPost, environment }) {
   const stderrLines = redactSecrets(result.stderr ?? '', environment)
     .split('\n')
     .map((line) => line.trim())
@@ -647,7 +690,7 @@ function mapPostResult(result, { issue, copyPath, environment }) {
           'To accept the findings, run:',
         ],
         // Never passed by this command: the caller decides to accept a finding.
-        fix: `gstack-post issue-comment ${issue} --body-file ${copyPath} --confirm ${token ?? '<token>'}`,
+        fix: `${shellQuote(gstackPost)} issue-comment ${issue} --body-file ${copyPath} --confirm ${token ?? '<token>'}`,
       },
     )
   }
@@ -931,6 +974,7 @@ export async function postTrialEvidence(
       const { url } = mapPostResult(result, {
         issue,
         copyPath,
+        gstackPost,
         environment: seams.environment,
       })
       seams.print(url)
@@ -952,7 +996,7 @@ export async function postTrialEvidence(
  * @typedef {{
  *   realpath: (path: string) => Promise<string>,
  *   stat: (path: string) => Promise<import('node:fs').Stats>,
- *   lstat: (path: string) => Promise<import('node:fs').Stats>,
+ *   lstat: (path: string, options?: { bigint: true }) => Promise<import('node:fs').Stats | import('node:fs').BigIntStats>,
  *   readdir: (path: string) => Promise<string[]>,
  *   openFile: (path: string) => Promise<import('node:fs/promises').FileHandle>,
  * }} FileSystemSeams
