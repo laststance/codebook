@@ -2271,6 +2271,9 @@ export const HTTP_REDIRECT_STATUS_MIN = 300
 /** The first HTTP status after the redirect class (the client-error class starts here), so a redirect status is below it. */
 export const HTTP_REDIRECT_STATUS_END = 400
 
+/** The first HTTP status of the server-error class (5xx); a Next Pages entry answered with one is refused as a page that failed on the server, a client error (4xx) below it as a page that does not serve the path. */
+export const HTTP_SERVER_ERROR_STATUS_MIN = 500
+
 /** The one host Codebook owns for a Vite dev server; the launcher passes it inline and the parent refuses a resolved `server.host` that differs (a plugin can widen it to every interface). */
 export const VITE_LOOPBACK_HOST = '127.0.0.1'
 

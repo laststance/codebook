@@ -1547,7 +1547,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Refuses a Pages page whose pathname, normalized like the entry path ({@link nextPathnameOf}), is no longer the entry path.
-   * Called by {@link confirmPagesEntryAfterLoad} and {@link refusePagesPathLeft}.
+   * Called by {@link confirmPagesEntryAfterLoad}, {@link refusePagesPathLeft} and {@link refusePagesPathLeftAfterWait}.
    * @param state - What the page reported.
    * @param moment - When it was read, for the message.
    * @throws `NEXT_ENTRY_REDIRECTED` naming both paths, redacted.
@@ -1580,6 +1580,21 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const state = await readNextPagesState(this.requireCdp())
     this.alive()
     this.refuseLeftEntryPath(state, moment)
+  }
+
+  /**
+   * Reads a Pages page's pathname after its before conditions did not hold in time and refuses when it left the entry path, so a client redirect that lands before the conditions hold ends as `NEXT_ENTRY_REDIRECTED` instead of a condition timeout.
+   * Called by {@link waitForDom} on the timeout of the before wait of a Pages run; a page that cannot be read keeps the timeout, which the caller then throws.
+   * @throws `NEXT_ENTRY_REDIRECTED` naming both paths, as a page that ended at another path once it loaded.
+   * @example
+   * await this.refusePagesPathLeftAfterWait()
+   */
+  private async refusePagesPathLeftAfterWait(): Promise<void> {
+    const state = await readNextPagesState(this.requireCdp()).catch(
+      () => undefined,
+    )
+    this.alive()
+    if (state) this.refuseLeftEntryPath(state, 'after-load')
   }
 
   /**
@@ -6982,9 +6997,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         this.abort.signal,
       )
     } catch (error) {
+      if (!(error instanceof WaitTimeoutError)) throw error
+      // A Pages page that left its entry path while its before conditions were awaited is refused as the redirect it is, not as a missing condition.
+      if (phase === 'before' && this.pagesRun)
+        await this.refusePagesPathLeftAfterWait()
       // Only the wait's own timeout is completed with the condition the page named last; the type says so, whatever the wait's sentence is.
-      if (!(error instanceof WaitTimeoutError) || !lastResult?.failure)
-        throw error
+      if (!lastResult?.failure) throw error
       throw new Error(this.conditionTimeoutText(phase, lastResult.failure))
     }
     this.journalTextReadings(phase, lastResult?.textReadings)

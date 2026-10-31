@@ -534,6 +534,52 @@ test('a Pages page that ended on another path once it loaded is refused as redir
   )
 })
 
+// Value: protects=a client redirect that lands before the before conditions hold ends with NEXT_ENTRY_REDIRECTED and its recovery; fails_when=the before wait's timeout is reported as a missing condition, so the agent hunts for a selector instead of the redirect; why_new=Codex structured review P2, /ship round 3 (Cycle 0065); seam=pageStates stands in for the redirected page, failBeforeWith for its DOM without the before element; no_claim=the timing of a real router.push
+test('a Pages page that redirects before its before conditions hold is refused as redirected, not as a condition timeout', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    nextPages: {
+      pageStates: [
+        {
+          pathname: '/login',
+          routerSeen: true,
+          isReady: true,
+          route: '/login',
+        },
+      ],
+    },
+  })
+  harness.failBeforeWith({ conditionIndex: 0, reason: 'not-visible' })
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  assert.ok(failure instanceof StudyError, String(failure))
+  assert.equal(failure.code, 'NEXT_ENTRY_REDIRECTED')
+  assert.equal(
+    failure.message,
+    'The page left the entry path / for /login once the page loaded (a redirect in the page), so Codebook sent no input or click; the browser Codebook opened is closed with the run.',
+  )
+  assert.equal(harness.mouse.length, 0)
+})
+
+// Value: protects=a Pages page that stays at its entry path but never meets its before conditions keeps the condition timeout text, so the redirect check names no redirect that did not happen; fails_when=every before timeout of a Pages run turns into NEXT_ENTRY_REDIRECTED; why_new=Codex structured review P2 fix, its control (Cycle 0065); seam=failBeforeWith stands in for the page's DOM; no_claim=none
+test('a Pages page at its entry path whose before conditions never hold ends with the condition timeout', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    nextPages: {},
+  })
+  harness.failBeforeWith({ conditionIndex: 0, reason: 'not-visible' })
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert: the run's plain error comes from its own module context, so it is read by its text, not by `instanceof Error`.
+  assert.equal(failure instanceof StudyError, false)
+  assert.match(
+    String(failure),
+    /^Error: Timed out waiting for configured before conditions: condition 1 /,
+  )
+  assert.equal(harness.mouse.length, 0)
+})
+
 // Value: protects=a Pages page whose router reports another route than the resolved one (a rewrite or middleware) is refused naming both routes; fails_when=the route is not compared; why_new=Cycle 0065 step 9 (router.route match); seam=scripted router state; no_claim=none
 test('a Pages page whose router reports another route than the resolved one is refused naming both routes', async (context) => {
   // Arrange

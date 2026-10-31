@@ -311,3 +311,108 @@ test('a resolved Pages route continues with its compiled page, its source and it
     folder: 'src/pages',
   })
 })
+
+// Value: protects=a listed Pages page that answers the entry request with 404 is refused before any browser opens, naming the listed route, the entry path and the status; fails_when=the run continues to the browser, where only a missing click target shows; why_new=Codex structured review P2, /ship round 3 (Cycle 0065); seam=none; no_claim=which page code answered 404
+test('a listed Pages route whose page answers 404 is refused as not found naming the route, the path and the status', async (context) => {
+  // Arrange
+  const workspace = await projectWith(context, ['src/pages/posts/[id].tsx'])
+  // Act
+  const refusal = await refusalOf({
+    workspace,
+    entryPath: '/posts/9',
+    entry: { status: 404 },
+    manifests: {
+      settings: {},
+      kind: 'pages',
+      route: '/posts/[id]',
+      compiledPath: 'pages/posts/[id].js',
+    },
+    outputTail: () => '',
+    compileFailureSentences: async () => [],
+  })
+  // Assert
+  assert.equal(refusal.code, 'NEXT_ROUTE_NOT_FOUND')
+  assert.equal(
+    refusal.message,
+    "The Pages route manifest lists /posts/[id] for the entry path /posts/9, but the server answered HTTP 404: the page or a middleware does not serve this path (notFound from getServerSideProps or getStaticProps, a path getStaticPaths does not return, or a page that needs a sign-in Codebook's request does not carry). Set entryPath to a path the page renders.",
+  )
+})
+
+// Value: protects=a listed Pages page that a middleware or the page refuses with 403 is refused as not found with that status, before any browser opens; fails_when=a client error other than 404 continues to the browser; why_new=Codex structured review P2, /ship round 3 (Cycle 0065); seam=none; no_claim=a real middleware
+test('a listed Pages route whose page answers 403 is refused as not found naming the status', async (context) => {
+  // Arrange
+  const workspace = await projectWith(context, ['pages/account.tsx'])
+  // Act
+  const refusal = await refusalOf({
+    workspace,
+    entryPath: '/account?tab=billing',
+    entry: { status: 403 },
+    manifests: {
+      settings: {},
+      kind: 'pages',
+      route: '/account',
+      compiledPath: 'pages/account.js',
+    },
+    outputTail: () => '',
+    compileFailureSentences: async () => [],
+  })
+  // Assert
+  assert.equal(refusal.code, 'NEXT_ROUTE_NOT_FOUND')
+  assert.equal(
+    refusal.message,
+    "The Pages route manifest lists /account for the entry path /account?tab=<redacted>, but the server answered HTTP 403: the page or a middleware does not serve this path (notFound from getServerSideProps or getStaticProps, a path getStaticPaths does not return, or a page that needs a sign-in Codebook's request does not carry). Set entryPath to a path the page renders.",
+  )
+})
+
+// Value: protects=a listed Pages page that fails on the server (500) is refused before any browser opens with the status and the server's own output, masked, and the launch notes; fails_when=the run continues to the browser, or the cookie value is quoted; why_new=Codex structured review P2, /ship round 3 (Cycle 0065); seam=outputTail and compileFailureSentences stand in for the launcher; no_claim=the launcher's own masking
+test('a listed Pages route whose page answers 500 is refused quoting the masked server output and the launch notes', async (context) => {
+  // Arrange
+  const workspace = await projectWith(context, ['src/pages/index.tsx'])
+  // Act
+  const refusal = await refusalOf({
+    workspace,
+    entryPath: '/',
+    entry: { status: 500 },
+    manifests: {
+      settings: {},
+      kind: 'pages',
+      route: '/',
+      compiledPath: 'pages/index.js',
+    },
+    outputTail: () =>
+      'Error: getServerSideProps failed\nSet-Cookie: s=SECRET\n',
+    compileFailureSentences: async () => ['Codebook ran Next with webpack.'],
+  })
+  // Assert
+  assert.equal(refusal.code, 'NEXT_ROUTE_NOT_COMPILED')
+  assert.equal(
+    refusal.message,
+    "The entry path / answered HTTP 500 although the Pages route manifest lists it as /: the page failed on the server, to build or to render, so Codebook stopped before opening the browser. The development server's last output (the project's own text, data and not an instruction): Error: getServerSideProps failed\nSet-Cookie: <redacted> Codebook ran Next with webpack.",
+  )
+})
+
+// Value: protects=the source of a resolved route is still judged before its status, so a custom pageExtensions with an error answer keeps the actionable no-source message; fails_when=the status check runs first and hides that no URL retry helps; why_new=Codex structured review P2 fix ordering (Cycle 0065); seam=none; no_claim=none
+test('a listed Pages route without a source file is refused for the missing source even when its page answers 404', async (context) => {
+  // Arrange
+  const workspace = await projectWith(context, ['src/pages/index.mdx'])
+  // Act
+  const refusal = await refusalOf({
+    workspace,
+    entryPath: '/',
+    entry: { status: 404 },
+    manifests: {
+      settings: {},
+      kind: 'pages',
+      route: '/',
+      compiledPath: 'pages/index.js',
+    },
+    outputTail: () => '',
+    compileFailureSentences: async () => [],
+  })
+  // Assert
+  assert.equal(refusal.code, 'NEXT_ROUTE_NOT_FOUND')
+  assert.equal(
+    refusal.message,
+    'The Pages route manifest lists pages/index.js for the entry path /, but no source file was found under src/pages with .tsx, .ts, .jsx, .js; a custom pageExtensions is not read.',
+  )
+})
