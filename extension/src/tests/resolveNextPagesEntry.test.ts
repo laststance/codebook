@@ -346,6 +346,75 @@ test('a more specific Pages page whose source has a custom pageExtensions extens
   )
 })
 
+// Value: protects=an equally specific pair whose App source is gone is still refused as stale when a style file carries the page's name (app/page.module.css), so the learner is told to remove the leftover .next/dev; fails_when=page.module.css counts as a custom pageExtensions source and the refusal says both sources exist; why_new=Cycle 0066 task 37 (OCR medium: the lookup counted non-page siblings); seam=none; no_claim=a real leftover .next/dev
+test('an entry path both route manifests list is refused as stale when only a style file is left beside the gone App page', async (context) => {
+  // Arrange
+  const workspace = await projectWith(context, [
+    'app/page.module.css',
+    'pages/index.tsx',
+  ])
+  // Act
+  const refusal = await refusalOf({
+    workspace,
+    entryPath: '/',
+    entry: { status: 200 },
+    manifests: {
+      settings: {},
+      kind: 'conflict',
+      appKey: '/page',
+      pagesRoute: '/',
+      pagesCompiledPath: 'pages/index.js',
+    },
+    outputTail: () => '',
+    compileFailureSentences: async () => [],
+  })
+  // Assert
+  assert.equal(refusal.code, 'NEXT_ROUTE_CONFLICT')
+  assert.equal(
+    refusal.message,
+    'Both route manifests in .next/dev list the entry path /: the App Router as /page and the Pages Router as /. The App source is gone, so the listing is stale: stop next dev and remove .next/dev yourself, then start again; Codebook never deletes it.',
+  )
+})
+
+// Value: protects=a more specific App route whose source is gone stays a stale conflict when only a test file carries the page's name (app/about/page.test.tsx beside a Pages catch-all), from the manifests through the refusal; fails_when=page.test.tsx counts as a custom pageExtensions source and the run is refused with NEXT_ROUTE_NOT_FOUND; why_new=Cycle 0066 task 37 (OCR medium: the lookup counted non-page siblings); seam=a scripted manifest reader on a real workspace; no_claim=a real leftover .next/dev
+test('a more specific App page whose source is gone is refused as stale when only a test file is left beside it', async (context) => {
+  // Arrange
+  const workspace = await projectWith(context, [
+    'app/about/page.test.tsx',
+    'pages/[...slug].tsx',
+  ])
+  const manifestTexts: Readonly<Record<string, string>> = {
+    '.next/dev/routes-manifest.json': '{"basePath":""}',
+    '.next/dev/server/app-paths-manifest.json':
+      '{"/about/page":"app/about/page.js"}',
+    '.next/dev/server/pages-manifest.json':
+      '{"/[...slug]":"pages/[...slug].js"}',
+  }
+  const manifests = await readNextRouteManifests({
+    workspace,
+    entryPath: '/about',
+    now: () => 0,
+    sleep: async () => {},
+    readText: async (path) => manifestTexts[path],
+  })
+  if (manifests.kind === 'app') assert.fail('the App route was taken')
+  // Act
+  const refusal = await refusalOf({
+    workspace,
+    entryPath: '/about',
+    entry: { status: 200 },
+    manifests,
+    outputTail: () => '',
+    compileFailureSentences: async () => [],
+  })
+  // Assert
+  assert.equal(refusal.code, 'NEXT_ROUTE_CONFLICT')
+  assert.equal(
+    refusal.message,
+    'Both route manifests in .next/dev list the entry path /about: the App Router as /about/page and the Pages Router as /[...slug]. The App source is gone, so the listing is stale: stop next dev and remove .next/dev yourself, then start again; Codebook never deletes it.',
+  )
+})
+
 // Value: protects=a wrong entry path (404, listed by no manifest) is refused naming what was searched, the Pages folder and the extensions; fails_when=the code differs or the searched manifests, folder or extensions are missing; why_new=Cycle 0065 NEXT_ROUTE_NOT_FOUND; seam=none; no_claim=none
 test('an entry path no manifest lists is refused naming the manifests searched, the Pages folder and the extensions', async (context) => {
   // Arrange

@@ -59,6 +59,39 @@ test('a folder with the stem name or a file of another stem is no source with an
   assert.equal(found, undefined)
 })
 
+// Value: protects=a style, declaration, source map, test, spec or stories file that carries a gone page's stem is no page source, so the listing is still called stale; fails_when=page.module.css, page.test.tsx or another such file counts as a custom pageExtensions source; why_new=Cycle 0066 task 37 (OCR medium: the lookup counted non-page siblings); seam=none; no_claim=a custom pageExtensions that really lists such an extension
+test('only style, declaration, map, test, spec and stories files with the stem are no source with another extension', async (context) => {
+  // Arrange
+  const workspace = await temporaryWorkspace(context)
+  await writeStandIn(workspace, 'app/page.module.css')
+  await writeStandIn(workspace, 'app/page.scss')
+  await writeStandIn(workspace, 'app/page.sass')
+  await writeStandIn(workspace, 'app/page.less')
+  await writeStandIn(workspace, 'app/page.d.ts')
+  await writeStandIn(workspace, 'app/page.js.map')
+  await writeStandIn(workspace, 'app/page.test.tsx')
+  await writeStandIn(workspace, 'app/page.spec.ts')
+  await writeStandIn(workspace, 'app/page.stories.tsx')
+  // Act
+  const found = await findNextSourceWithOtherExtension(workspace, 'app/page')
+  // Assert
+  assert.equal(found, undefined)
+})
+
+// Value: protects=only the name after the stem is judged, so a page whose own name holds .test. keeps its custom pageExtensions source; fails_when=the whole file name is searched for .test. and pages/a.test.mdx reads as a test file; why_new=Cycle 0066 task 37 (non-page siblings are ignored by their name after the stem); seam=none; no_claim=none
+test('a stem whose own name holds .test. still finds its source with another extension', async (context) => {
+  // Arrange
+  const workspace = await temporaryWorkspace(context)
+  await writeStandIn(workspace, 'pages/a.test.mdx')
+  // Act
+  const found = await findNextSourceWithOtherExtension(
+    workspace,
+    'pages/a.test',
+  )
+  // Assert
+  assert.equal(found, 'pages/a.test.mdx')
+})
+
 // Value: protects=an untrusted stem that would leave its folder is never looked at; fails_when=a .. stem lists a folder outside the route folder; why_new=Cycle 0066 task 20 (the App key behind the stem is manifest data); seam=none; no_claim=none
 test('a stem with a .. segment is never looked at, though a matching file stands where it points', async (context) => {
   // Arrange
