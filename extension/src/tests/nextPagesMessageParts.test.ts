@@ -197,7 +197,7 @@ test('quoted Next server output masks a quote inside a query value and keeps a q
   ]
   // Assert
   assert.deepEqual(masked, [
-    'GET /search?q=<redacted> 200',
+    'GET /search?q=<redacted>" 200',
     'GET /cb?code=<redacted> 200',
     'PASSWORD=<redacted>',
     'GET /search?q=<redacted> 200',
