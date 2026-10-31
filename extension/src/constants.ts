@@ -2377,6 +2377,27 @@ export const NEXT_SETUP_STEPS = {
 export type NextSetupStep =
   (typeof NEXT_SETUP_STEPS)[keyof typeof NEXT_SETUP_STEPS]
 
+// The Next Pages run sequence (Cycle 0065 lane C): the entry check, the page router wait and the redacted message parts.
+
+/** What a Next Pages refusal shows in place of a query or fragment value of a path, and of a value it masks in quoted development-server output. */
+export const NEXT_REDACTED_VALUE = '<redacted>'
+
+/** The first HTTP success status (2xx); a success status is below {@link HTTP_REDIRECT_STATUS_MIN}, as `Response.ok` reads it. */
+export const HTTP_SUCCESS_STATUS_MIN = 200
+
+/** The longest path a Next Pages refusal quotes (characters, after redaction); a longer one is cut with an ellipsis. */
+export const NEXT_MESSAGE_PATH_LIMIT_CHARS = 256
+
+/** The most of the development server's last output a `NEXT_ROUTE_NOT_COMPILED` refusal quotes (UTF-8 bytes, the newest kept). */
+export const NEXT_QUOTED_OUTPUT_LIMIT_BYTES = 2_048
+
+/** How often a Pages run reads `window.next.router` while it waits for the page router to become ready, within the remaining setup budget. */
+export const NEXT_ROUTER_POLL_INTERVAL_MS = 100
+
+/** The sentence a Next launch or compile failure on the Pages path adds when the project's own `dev` script does not ask for webpack (Next 16 runs Turbopack by default). */
+export const NEXT_WEBPACK_COMPATIBILITY_SENTENCE =
+  'Codebook runs your Next app with webpack (`next dev --webpack`) even when your dev script uses Turbopack. The page is built from the same source; a Turbopack-only loader or setting has no effect during the run.'
+
 /** The most reloads before the inputs the run tolerates (a dependency optimizer reloads once or twice). */
 export const VITE_PAGE_GENERATION_LIMIT = 4
 

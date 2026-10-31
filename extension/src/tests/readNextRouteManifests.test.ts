@@ -153,6 +153,7 @@ test('a route both manifests list is a conflict, judged at the end of the poll t
     kind: 'conflict',
     appKey: '/page',
     pagesRoute: '/',
+    pagesCompiledPath: 'pages/index.js',
   })
 })
 

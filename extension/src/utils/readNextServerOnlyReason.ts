@@ -1,10 +1,10 @@
-import { NEXT_PAGES_SOURCE_EXTENSIONS } from '../constants'
 import type { BundleSource } from '../repositoryBundle'
 
 import { createBundleVerifier } from './createBundleVerifier'
 import type { NextPagesDiscoveryCache } from './createNextPagesDiscoveryCache'
 import { selectEvaluatedModule } from './extractDevelopmentModule'
 import type { NextRouteFolder } from './findNextRouteFolder'
+import { nextServerOnlyFileReason } from './nextServerOnlyFileReason'
 import { readNextChunkModules } from './readNextChunkModules'
 import type { NextPagesRoute } from './resolveNextPagesRoute'
 import { spendNextPagesDiscovery } from './spendNextPagesDiscovery'
@@ -49,7 +49,7 @@ export type NextServerOnlyRequest = {
 export async function readNextServerOnlyReason(
   request: NextServerOnlyRequest,
 ): Promise<NextServerOnlyReason> {
-  const byFile = serverOnlyFileReason(request.path, request.folder)
+  const byFile = nextServerOnlyFileReason(request.path, request.folder)
   if (byFile) return { kind: 'server-only', reason: byFile }
   const { clientBundle } = request
   // Without a sealed browser module, absence from the browser is not established (the module may load lazily).
@@ -94,30 +94,6 @@ export async function readNextServerOnlyReason(
   return serverMapsLine
     ? { kind: 'server-only', reason: 'server-compile' }
     : { kind: 'unknown' }
-}
-
-/**
- * Applies Next's file rules for Pages files that never run in the browser; called by {@link readNextServerOnlyReason}.
- * @param path - The stop's workspace-relative source.
- * @param folder - The Pages folder.
- * @returns `document` for `<folder>/_document.<ext>`, `api-route` for an API route (`<folder>/api.<ext>` or under `<folder>/api/`), else `undefined`.
- * @example
- * serverOnlyFileReason('src/pages/api/posts.ts', 'src/pages') // => 'api-route'
- * serverOnlyFileReason('src/pages/index.tsx', 'src/pages')    // => undefined
- */
-function serverOnlyFileReason(
-  path: string,
-  folder: NextRouteFolder<'pages'>,
-): 'document' | 'api-route' | undefined {
-  const pageFiles = (name: string) =>
-    NEXT_PAGES_SOURCE_EXTENSIONS.map(
-      (extension) => `${folder}/${name}.${extension}`,
-    )
-  if (pageFiles('_document').includes(path)) return 'document'
-  // Next serves `/api` and everything under it as API routes.
-  if (pageFiles('api').includes(path) || path.startsWith(`${folder}/api/`))
-    return 'api-route'
-  return undefined
 }
 
 /**

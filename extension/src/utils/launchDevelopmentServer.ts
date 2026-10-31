@@ -3,6 +3,9 @@ import { join } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 
 import {
+  HTTP_REDIRECT_STATUS_END,
+  HTTP_REDIRECT_STATUS_MIN,
+  HTTP_SUCCESS_STATUS_MIN,
   REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS,
   REPOSITORY_APPLICATION_LOG_LIMIT_BYTES,
   DEVELOPMENT_SERVER_MESSAGE_QUEUE_LIMIT,
@@ -15,9 +18,14 @@ import { isEndpointClosed } from '../runtimeSupport/utils/isEndpointClosed'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { createOutputRedactor } from './createOutputRedactor'
+import {
+  describeNextEntryResponse,
+  type NextEntryResponse,
+} from './describeNextEntryResponse'
 import { buildDevelopmentServerEnvironment } from './developmentServerEnvironment'
 import { isProcessGroupGone } from './isProcessGroupGone'
 import { keepUtf8Tail } from './keepUtf8Tail'
+import { nextDevArguments } from './nextDevArguments'
 import {
   beginReleaseOfOwnedDevelopmentPort,
   claimOwnedDevelopmentPort,
@@ -47,7 +55,12 @@ export type DevelopmentLaunchSpec = {
   afterClose?: () => Promise<void>
 }
 
-/** Acquires one owned process group synchronously for {@link ConfiguredBrowserRun}, exposing cancellable readiness and bounded shutdown. @param inspectServer - Whether to open the native server inspector. @param port - The project's own port ({@link readDeclaredDevelopmentPort}); required, so no caller can skip the lookup and the app is never started on another port. @example const app = launchDevelopmentServer(target, node, record, false, 3165); await app.ready(signal) */
+/** Tells whether an HTTP status is a success (2xx), as `Response.ok` does. @example isSuccessStatus(204) // true */
+function isSuccessStatus(status: number): boolean {
+  return status >= HTTP_SUCCESS_STATUS_MIN && status < HTTP_REDIRECT_STATUS_MIN
+}
+
+/** Acquires one owned process group synchronously for {@link ConfiguredBrowserRun}, exposing cancellable readiness and bounded shutdown. @param inspectServer - Whether to open the native server inspector. @param port - The project's own port ({@link readDeclaredDevelopmentPort}); required, so no caller can skip the lookup and the app is never started on another port. @param outputMask - For the Next server only (no `spec`): masks values the shared redactor leaves in the output it journals and quotes, such as cookie and query values ({@link maskNextServerOutput}); a Next run passes it for a workspace with a Pages folder. @example const app = launchDevelopmentServer(target, node, record, false, 3165); await app.ready(signal) */
 export function launchDevelopmentServer(
   target: string,
   node: string,
@@ -55,17 +68,15 @@ export function launchDevelopmentServer(
   inspectServer: boolean,
   port: number,
   spec?: DevelopmentLaunchSpec,
+  outputMask?: (text: string) => string,
 ) {
   const environment = spec?.environment ?? buildDevelopmentServerEnvironment()
   const arguments_ = spec?.arguments ?? [
     join(target, 'node_modules/next/dist/bin/next'),
-    'dev',
-    '--webpack',
-    '--hostname',
-    '127.0.0.1',
-    '--port',
-    String(port),
+    ...nextDevArguments(port),
   ]
+  // A launcher's own mask wins; the Next server takes the caller's output mask.
+  const mask = spec?.mask ?? outputMask
   if (inspectServer && !spec) arguments_.push('--inspect', '127.0.0.1:0')
   const serverName = spec?.name ?? 'Next'
   const child = spawn(node, arguments_, {
@@ -113,12 +124,12 @@ export function launchDevelopmentServer(
   // The settled text is cut back to its byte limit only once it has doubled, so a chatty server pays no copy of the whole tail per chunk.
   const publish = (text: string): void => {
     if (!text) return
-    if (!spec?.mask) {
+    if (!mask) {
       publishedLog += text
     } else {
       // Masking the whole pending text matches every value inside it; its last characters stay pending so a value that crosses this chunk's end is matched with the next chunk.
-      const masked = spec.mask(pendingLog + text)
-      const holdback = Math.max(0, (spec.maskHoldback?.() ?? 0) - 1)
+      const masked = mask(pendingLog + text)
+      const holdback = Math.max(0, (spec?.maskHoldback?.() ?? 0) - 1)
       const settledEnd = Math.max(0, masked.length - holdback)
       publishedLog += masked.slice(0, settledEnd)
       pendingLog = masked.slice(settledEnd)
@@ -132,9 +143,7 @@ export function launchDevelopmentServer(
   // The whole tail is masked again at each read: a value the launcher reported after some output was already settled (its env values arrive on the IPC channel, output on a pipe, in no fixed order) is then masked in the journal and the refusals too.
   const publishedTail = (): string =>
     keepUtf8Tail(
-      spec?.mask
-        ? spec.mask(publishedLog + pendingLog)
-        : publishedLog + pendingLog,
+      mask ? mask(publishedLog + pendingLog) : publishedLog + pendingLog,
       REPOSITORY_APPLICATION_LOG_LIMIT_BYTES,
     )
   // Each channel is redacted statefully, so a credential the server prints across chunks is masked before it is kept for publication.
@@ -173,6 +182,57 @@ export function launchDevelopmentServer(
   // A launcher with an IPC channel learns its port from the config it resolves, so it claims the port later ({@link declarePort}).
   let declaredPort: number | undefined = spec?.ipc ? undefined : port
   let claim = spec?.ipc ? undefined : claimOwnedDevelopmentPort(port)
+  /**
+   * Waits for the owned listener on the declared port and keeps its origin; the first step of every readiness check (`ready`, `readyEntry`).
+   * @param signal - Ends the wait when the run is cancelled.
+   * @returns The origin `http://127.0.0.1:<port>`.
+   * @throws When no port was declared, the process exits first (the message carries the masked output tail) or the wait times out.
+   */
+  const waitForListener = async (signal: AbortSignal): Promise<string> => {
+    if (declaredPort === undefined)
+      throw new Error('The launcher declared no port')
+    const listening = await waitUntil(
+      () => {
+        if (error || child.exitCode !== null)
+          throw (
+            error ??
+            new Error(
+              `Application exited: ${child.exitCode}: ${publishedTail()}`,
+            )
+          )
+        // A launcher with an IPC channel reports its verified listening port before `ready` is called, so its origin never depends on printed URLs (a project's logLevel can silence them).
+        if (spec?.ipc) return `http://127.0.0.1:${declaredPort}`
+        // Process chunks may split a port; only a received delimiter proves its complete value. Only the declared port counts: another local URL in the log (an API, a proxy) is not the app's origin (F552).
+        return new RegExp(`http://127\\.0\\.0\\.1:${declaredPort}(?=\\D)`).exec(
+          log.toString('utf8'),
+        )?.[0]
+      },
+      `owned ${serverName} listener`,
+      REPOSITORY_SETUP_TIMEOUT_MS,
+      signal,
+    )
+    origin = listening
+    return listening
+  }
+  /**
+   * Asks the root page the way the root readiness check always has: redirects followed, the body discarded; for `ready` and for a redirected root in `confirmAppEntry`.
+   * @param listening - The origin {@link waitForListener} returned.
+   * @param signal - Ends the request when the run is cancelled.
+   * @returns The final response.
+   */
+  const rootAnswer = async (
+    listening: string,
+    signal: AbortSignal,
+  ): Promise<Response> => {
+    const response = await fetch(listening, {
+      signal: AbortSignal.any([
+        signal,
+        AbortSignal.timeout(REPOSITORY_SETUP_TIMEOUT_MS),
+      ]),
+    })
+    await response.body?.cancel()
+    return response
+  }
   record('application.acquired', {
     pid: child.pid,
     node,
@@ -286,43 +346,16 @@ export function launchDevelopmentServer(
     /** Waits for the listener on the declared port, then proves readiness through the configured entry page (the root page only when entryPath is "/"); called during preparation. @param entryPath - Configured first page; a non-root entry must answer 200 without a redirect. @example await app.ready(signal, '/login') */
     async ready(signal: AbortSignal, entryPath = '/') {
       repositoryEntryPathSchema.parse(entryPath)
-      if (declaredPort === undefined)
-        throw new Error('The launcher declared no port')
-      origin = await waitUntil(
-        () => {
-          if (error || child.exitCode !== null)
-            throw (
-              error ??
-              new Error(
-                `Application exited: ${child.exitCode}: ${publishedTail()}`,
-              )
-            )
-          // A launcher with an IPC channel reports its verified listening port before `ready` is called, so its origin never depends on printed URLs (a project's logLevel can silence them).
-          if (spec?.ipc) return `http://127.0.0.1:${declaredPort}`
-          // Process chunks may split a port; only a received delimiter proves its complete value. Only the declared port counts: another local URL in the log (an API, a proxy) is not the app's origin (F552).
-          return new RegExp(
-            `http://127\\.0\\.0\\.1:${declaredPort}(?=\\D)`,
-          ).exec(log.toString('utf8'))?.[0]
-        },
-        `owned ${serverName} listener`,
-        REPOSITORY_SETUP_TIMEOUT_MS,
-        signal,
-      )
+      const listening = await waitForListener(signal)
       // A selected non-root entry proves readiness itself; an application without a root page is still usable through it.
       if (entryPath === '/') {
-        const response = await fetch(origin, {
-          signal: AbortSignal.any([
-            signal,
-            AbortSignal.timeout(REPOSITORY_SETUP_TIMEOUT_MS),
-          ]),
-        })
-        await response.body?.cancel()
+        const response = await rootAnswer(listening, signal)
         if (!response.ok)
           throw new Error(
             `Application root failed: ${response.status}: ${publishedTail()}`,
           )
       } else {
-        const entry = await fetch(`${origin}${entryPath}`, {
+        const entry = await fetch(`${listening}${entryPath}`, {
           redirect: 'manual',
           signal: AbortSignal.any([
             signal,
@@ -335,8 +368,81 @@ export function launchDevelopmentServer(
             `Selected application page failed or redirected: ${entry.status}. Select the actual entry path and prerequisites.`,
           )
       }
+      record('application.ready', { pid: child.pid, origin: listening })
+      return listening
+    },
+    /**
+     * Waits for the listener, then asks the entry path once without following a redirect and describes the answer, for a Next run in a workspace with a Pages folder.
+     *
+     * Why it exists: such a run decides from the route manifests whether the App or the Pages path serves the entry, so a 3xx or a 404 is kept as data for that decision ({@link resolveNextPagesEntry}) instead of failing here. Only a redacted same-origin path, or the fact of another origin, is kept from a `Location` ({@link describeNextEntryResponse}); a cross-origin target is never fetched. Called by {@link ConfiguredBrowserRun} instead of `ready`.
+     * @param signal - Ends the wait and the request when the run is cancelled.
+     * @param entryPath - The configured entry path.
+     * @returns The origin and the structured answer.
+     * @throws What the listener wait throws (an exit before listening carries the masked output tail), and a failed request.
+     * @example
+     * await app.readyEntry(signal, '/dashboard') // => { origin: 'http://127.0.0.1:3000', entry: { status: 307, location: { sameOrigin: true, path: '/login' } } }
+     */
+    async readyEntry(
+      signal: AbortSignal,
+      entryPath: string,
+    ): Promise<{ origin: string; entry: NextEntryResponse }> {
+      repositoryEntryPathSchema.parse(entryPath)
+      const listening = await waitForListener(signal),
+        requestUrl = `${listening}${entryPath}`
+      const response = await fetch(requestUrl, {
+        redirect: 'manual',
+        signal: AbortSignal.any([
+          signal,
+          AbortSignal.timeout(REPOSITORY_SETUP_TIMEOUT_MS),
+        ]),
+      })
+      await response.body?.cancel()
+      const entry = describeNextEntryResponse(
+        response.status,
+        response.headers.get('location'),
+        requestUrl,
+        listening,
+      )
+      // Only the status and the redacted target are journaled; the raw Location never leaves this method.
+      record('application.entry-answered', {
+        pid: child.pid,
+        origin: listening,
+        ...entry,
+      })
+      return { origin: listening, entry }
+    },
+    /**
+     * Applies today's App readiness verdict (`ready`) to an answer `readyEntry` read, for a run whose entry the route manifests resolved as an App route: `/` follows its redirects and must answer ok; another entry must answer ok without a redirect.
+     * @param signal - Ends a repeated root request when the run is cancelled.
+     * @param entryPath - The configured entry path.
+     * @param entry - The answer `readyEntry` read.
+     * @throws `Application root failed: <status>: <output>` or `Selected application page failed or redirected: <status>. …`, exactly as `ready` throws them.
+     * @example
+     * await app.confirmAppEntry(signal, '/', { status: 307, location: { sameOrigin: true, path: '/en' } }) // asks / again, following the redirect
+     */
+    async confirmAppEntry(
+      signal: AbortSignal,
+      entryPath: string,
+      entry: NextEntryResponse,
+    ): Promise<void> {
+      if (origin === undefined)
+        throw new Error('The owned listener was not awaited')
+      if (entryPath === '/') {
+        // The root check always followed redirects, so a redirected root is asked again that way.
+        const status =
+          entry.status >= HTTP_REDIRECT_STATUS_MIN &&
+          entry.status < HTTP_REDIRECT_STATUS_END
+            ? (await rootAnswer(origin, signal)).status
+            : entry.status
+        if (!isSuccessStatus(status))
+          throw new Error(
+            `Application root failed: ${status}: ${publishedTail()}`,
+          )
+      } else if (!isSuccessStatus(entry.status))
+        throw new Error(
+          `Selected application page failed or redirected: ${entry.status}. Select the actual entry path and prerequisites.`,
+        )
       record('application.ready', { pid: child.pid, origin })
-      return origin
     },
     /** Stops only the acquired process group and verifies its listener; cleanup calls this even after failed readiness. @example await app.close() */
     async close(): Promise<void> {

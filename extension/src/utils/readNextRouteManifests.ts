@@ -36,7 +36,13 @@ export type NextRouteSettings = { basePath?: string; i18n?: true }
 export type NextRouteManifests = { settings: NextRouteSettings } & (
   | { kind: 'app'; route: ReturnType<typeof resolveNextClientManifest> }
   | ({ kind: 'pages' } & NextPagesRoute)
-  | { kind: 'conflict'; appKey: string; pagesRoute: string }
+  | {
+      kind: 'conflict'
+      appKey: string
+      pagesRoute: string
+      /** The Pages manifest value of the route, e.g. `pages/index.js`, so the conflict can ask whether the Pages source still exists. */
+      pagesCompiledPath: string
+    }
   | { kind: 'unresolved'; manifests: { pages: boolean; app: boolean } }
 )
 
@@ -305,7 +311,7 @@ function isSettledRound(
  * @returns The settings and what the manifests say about the entry path.
  * @throws The first manifest failure the round still has.
  * @example
- * classifyRound(round) // => { settings: {}, kind: 'conflict', appKey: '/page', pagesRoute: '/' } when both list `/`
+ * classifyRound(round) // => { settings: {}, kind: 'conflict', appKey: '/page', pagesRoute: '/', pagesCompiledPath: 'pages/index.js' } when both list `/`
  */
 function classifyRound(round: ManifestRound): NextRouteManifests {
   for (const read of [round.settings, round.app, round.pages])
@@ -318,6 +324,7 @@ function classifyRound(round: ManifestRound): NextRouteManifests {
       kind: 'conflict',
       appKey: appRoute.key,
       pagesRoute: pagesRoute.route,
+      pagesCompiledPath: pagesRoute.compiledPath,
     }
   if (appRoute) return { settings, kind: 'app', route: appRoute }
   if (pagesRoute.kind === 'matched')
