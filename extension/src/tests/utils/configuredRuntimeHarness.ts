@@ -248,6 +248,8 @@ export async function configuredRuntimeHarness(
   let requestSequence = 0
   const bindingWaitBudgetsMs: (number | undefined)[] = []
   const navigations: string[] = []
+  // Every expression the run evaluated in the owned page, in order.
+  const evaluatedExpressions: string[] = []
   const launchConfigurations: DebugSession['configuration'][] = []
   const setupSteps: string[] = []
   // The text of the module the Vite stand-in serves now; {@link serveChangedModule} replaces it, as a dependency-optimizer reload does.
@@ -578,6 +580,8 @@ export async function configuredRuntimeHarness(
       },
       timeout?: number,
     ) {
+      if (method === 'Runtime.evaluate')
+        evaluatedExpressions.push(parameters?.expression ?? '')
       // After the input, the after conditions answer the failure a test chose, and every read of them is counted.
       if (
         method === 'Runtime.evaluate' &&
@@ -1156,6 +1160,8 @@ export async function configuredRuntimeHarness(
     userBreakpoint,
     mouse,
     commands,
+    /** Every expression the run evaluated in the owned page, in order. */
+    evaluatedExpressions,
     releases,
     emitPause,
     emitCdpPause,

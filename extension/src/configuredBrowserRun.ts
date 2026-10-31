@@ -126,6 +126,7 @@ import {
 } from './utils/completeBindingPlace'
 import { configuredConditionHint } from './utils/configuredConditionHint'
 import { configuredDomExpression } from './utils/configuredDomExpression'
+import { configuredScrollExpression } from './utils/configuredScrollExpression'
 import { configuredStopFields } from './utils/configuredStopFields'
 import { configuredStops } from './utils/configuredStops'
 import { continuationReceipts } from './utils/continuationReceipts'
@@ -5024,7 +5025,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Reads the page right before the input, for {@link dispatchInput}: the before conditions with the click target, then the after conditions, which must not hold yet.
+   * Reads the page right before the input, for {@link dispatchInput}: it scrolls a click target outside the viewport into view once ({@link scrollClickTargetIntoView}), then reads the before conditions with the click target, then the after conditions, which must not hold yet.
    * @returns The center of the unique enabled click target, in viewport coordinates.
    * @throws When the before conditions do not hold or name no point ({@link clickPoint}), and when the after conditions already hold: a result that is true before the click cannot prove this operation caused it.
    * @example
@@ -5033,6 +5034,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * ```
    */
   private async clickPointBeforeInput(): Promise<{ x: number; y: number }> {
+    await this.scrollClickTargetIntoView()
     const target = await this.readDom('before')
     this.alive()
     const point = this.clickPoint(target)
@@ -5080,9 +5082,34 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private clickPoint(
     target: Awaited<ReturnType<ConfiguredBrowserRun['readDom']>>,
   ): { x: number; y: number } {
-    if (!target.ready || target.x === undefined || target.y === undefined)
+    if (!target.ready)
       throw new Error('Click target or before conditions changed before input')
+    // A target that holds without a point is still outside the viewport after its scroll, so no point can be hit-tested.
+    if (target.x === undefined || target.y === undefined)
+      throw new Error(
+        'Click target stayed outside the viewport after Codebook scrolled it into view',
+      )
     return { x: target.x, y: target.y }
+  }
+
+  /**
+   * Scrolls the click target to the middle of the viewport when its centre lies outside it ({@link configuredScrollExpression}), after the page's origin is verified.
+   * Called by {@link clickPointBeforeInput} once per read of the click point, right before that read, so the condition reads ({@link readDom}) stay reads. The page's answer is not judged here: the read that follows names a missing, hidden or obscured target.
+   * @throws When the page left its owned application origin, or the run is no longer alive.
+   * @example
+   * ```ts
+   * await this.scrollClickTargetIntoView() // a "Load Newer" button below a long list now sits in the middle of the viewport
+   * ```
+   */
+  private async scrollClickTargetIntoView(): Promise<void> {
+    const cdp = await this.ownedPageCdp()
+    await cdp.request('Runtime.evaluate', {
+      expression: configuredScrollExpression(
+        this.definition.configuration.action.selector,
+      ),
+      returnByValue: true,
+    })
+    this.alive()
   }
 
   /**
@@ -6827,8 +6854,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     return this.savingCompletion
   }
 
-  /** Evaluates owned DOM data only after origin verification; invalid selectors/conditions never dispatch input. @example await this.readDom('before') */
-  private async readDom(phase: 'before' | 'after') {
+  /**
+   * Verifies that the selected page is still at the owned application origin before Codebook evaluates anything in it.
+   * Called by {@link readDom} for every condition read and by {@link scrollClickTargetIntoView} before the click's scroll.
+   * @returns The selected page's channel.
+   * @throws When the page left its owned application origin, or the run is no longer alive.
+   * @example
+   * ```ts
+   * const cdp = await this.ownedPageCdp()
+   * ```
+   */
+  private async ownedPageCdp(): Promise<Cdp> {
     const cdp = this.requireCdp(),
       identity = await cdp.request('Runtime.evaluate', {
         expression: 'location.origin',
@@ -6844,6 +6880,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
     )
       throw new Error('Selected page left its owned application origin')
+    return cdp
+  }
+
+  /** Evaluates owned DOM data only after origin verification; it only reads the page, and invalid selectors/conditions never dispatch input. @example await this.readDom('before') */
+  private async readDom(phase: 'before' | 'after') {
+    const cdp = await this.ownedPageCdp()
     const action = this.definition.configuration.action
     const response = await cdp.request('Runtime.evaluate', {
       expression: configuredDomExpression(

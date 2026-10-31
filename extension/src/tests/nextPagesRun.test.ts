@@ -14,6 +14,8 @@ import { RepositoryBookStore } from '../repositoryBook'
 import { readResource } from '../resources'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { StudyService } from '../service'
+import { configuredDomExpression } from '../utils/configuredDomExpression'
+import { configuredScrollExpression } from '../utils/configuredScrollExpression'
 import { refusalFailureOf } from '../utils/refusalFailureOf'
 
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
@@ -604,6 +606,34 @@ test('a Pages page whose router reports another route than the resolved one is r
   assert.match(
     failure.message,
     /reports the Pages route \/\[slug\], not \/, the route the entry path resolved to/,
+  )
+})
+
+// Value: protects=the click step scrolls the click target into view once, right before it reads the click point, and the preparation's condition reads never scroll; fails_when=the scroll runs inside a condition read, runs again for every read, or comes after the point was read; why_new=Cycle 0066 task 13 (the scroll leaves the read-only DOM expression); seam=the harness records every expression the run evaluates in the page; no_claim=a real page's scroll (configuredAdapter tests evaluate the expressions)
+test('a Pages run scrolls its click target into view once, right before it reads the click point, and never while it reads conditions', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    nextPages: {},
+  })
+  const { action } = harness.definition.configuration
+  const scrollExpression = configuredScrollExpression(action.selector)
+  const beforeRead = configuredDomExpression(action.before, action.selector)
+  await harness.run.prepare()
+  const preparationExpressions = [...harness.evaluatedExpressions]
+  // Act
+  harness.run.action('click', 'repository-click')
+  await waitUntil(() => harness.mouse.length > 0, 'the click')
+  // Assert
+  assert.equal(preparationExpressions.includes(beforeRead), true)
+  assert.equal(preparationExpressions.includes(scrollExpression), false)
+  assert.deepEqual(
+    harness.evaluatedExpressions
+      .slice(preparationExpressions.length)
+      .filter(
+        (expression) =>
+          expression === scrollExpression || expression === beforeRead,
+      ),
+    [scrollExpression, beforeRead],
   )
 })
 

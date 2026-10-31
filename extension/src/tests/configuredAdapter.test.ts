@@ -26,6 +26,7 @@ import { assertConfiguredSourceDocuments } from '../utils/assertConfiguredSource
 import { assertDevelopmentWorkspace } from '../utils/assertDevelopmentWorkspace'
 import type * as AssertDevelopmentWorkspaceModule from '../utils/assertDevelopmentWorkspace'
 import { configuredDomExpression } from '../utils/configuredDomExpression'
+import { configuredScrollExpression } from '../utils/configuredScrollExpression'
 import { createBundleVerifier } from '../utils/createBundleVerifier'
 import { inspectConfiguredValues } from '../utils/inspectConfiguredValues'
 import { readDevelopmentBundle } from '../utils/readDevelopmentBundle'
@@ -647,6 +648,7 @@ test('DOM configuration compares literal text and attributes and refuses duplica
 })
 
 // Value: protects=a declared click on a button below the fold (a "Load Newer" button under a long list) being sent at the button's scrolled centre; fails_when=the click target is hit-tested where it lies before scrolling, so every target below the viewport reads click-target-obscured; why_new=N65 Cursor trial on the TanStack Query load-more Pages example (Cycle 0065); seam=none
+// Cycle 0066 task 13: the click step runs the scroll expression once and then reads the point, so this test runs the two in that order.
 test('a click target below the visible page is scrolled to the middle of the viewport and clicked there instead of being refused as obscured', () => {
   // Arrange: a 1280 × 720 viewport and a button whose centre starts 1,500 px down; the page answers a point only inside the viewport, as a browser does.
   const viewport = { width: 1280, height: 720 }
@@ -692,11 +694,17 @@ test('a click target below the visible page is scrolled to the middle of the vie
   )
 
   // Act
+  const scroll = JSON.parse(
+    JSON.stringify(
+      runInNewContext(configuredScrollExpression('#load-newer'), environment),
+    ),
+  )
   const result = JSON.parse(
     JSON.stringify(runInNewContext(expression, environment)),
   )
 
   // Assert
+  assert.deepEqual(scroll, { scrolled: true })
   assert.deepEqual(result, { ready: true, x: 160, y: 360 })
   // The options object comes from the page's realm, so it is compared as plain data.
   assert.deepEqual(JSON.parse(JSON.stringify(scrollRequests)), [
@@ -704,7 +712,57 @@ test('a click target below the visible page is scrolled to the middle of the vie
   ])
 })
 
+// Value: protects=reading the before and after conditions only reads the page, so a target below the fold is never scrolled while the run waits for its before conditions or reads its after conditions; fails_when=a condition read scrolls the page (and fires its scroll or visibility handlers) on every read; why_new=Cycle 0066 task 13 (the scroll leaves the read-only DOM expression); seam=none; no_claim=a real browser's layout
+test('reading the before and after conditions never scrolls the page, and a click target below the visible page holds without a click point', () => {
+  // Arrange: a 1280 × 720 viewport and a button whose centre lies 1,500 px down.
+  const scrollRequests: unknown[] = []
+  const button = {
+    isConnected: true,
+    textContent: 'Load Newer',
+    getAttribute: () => null,
+    matches: () => false,
+    contains: () => false,
+    getBoundingClientRect: () => ({ x: 100, y: 1500, width: 120, height: 30 }),
+    scrollIntoView: (options: unknown) => scrollRequests.push(options),
+  }
+  const environment = {
+    innerWidth: 1280,
+    innerHeight: 720,
+    document: {
+      querySelectorAll: (input: string) =>
+        input === '#load-newer' ? [button] : [],
+      elementFromPoint: () => null,
+    },
+    getComputedStyle: () => ({
+      display: 'block',
+      visibility: 'visible',
+      opacity: '1',
+    }),
+  }
+  const beforeRead = configuredDomExpression(
+    [{ kind: 'visible', selector: '#load-newer' }],
+    '#load-newer',
+  )
+  const afterRead = configuredDomExpression([
+    { kind: 'text', selector: '#load-newer', equals: 'Load Newer' },
+  ])
+
+  // Act
+  const before = JSON.parse(
+    JSON.stringify(runInNewContext(beforeRead, environment)),
+  )
+  const after = JSON.parse(
+    JSON.stringify(runInNewContext(afterRead, environment)),
+  )
+
+  // Assert
+  assert.deepEqual(before, { ready: true })
+  assert.deepEqual(after, { ready: true })
+  assert.deepEqual(scrollRequests, [])
+})
+
 // Value: protects=a click target already inside the viewport being clicked where it is, with no scroll that could fire the page's own scroll or visibility handlers; fails_when=every click target is scrolled before the click; why_new=the below-the-fold fix scrolls only targets outside the viewport (Cycle 0065, N65); seam=none
+// Cycle 0066 task 13: the click step's scroll expression runs before the read, as in a run.
 test('a click target already inside the viewport is clicked where it is, without scrolling the page', () => {
   // Arrange: a 1280 × 720 viewport and a button fully inside it.
   const scrollRequests: unknown[] = []
@@ -737,11 +795,17 @@ test('a click target already inside the viewport is clicked where it is, without
   )
 
   // Act
+  const scroll = JSON.parse(
+    JSON.stringify(
+      runInNewContext(configuredScrollExpression('#load-older'), environment),
+    ),
+  )
   const result = JSON.parse(
     JSON.stringify(runInNewContext(expression, environment)),
   )
 
   // Assert
+  assert.deepEqual(scroll, { scrolled: false })
   assert.deepEqual(result, { ready: true, x: 70, y: 95 })
   assert.deepEqual(scrollRequests, [])
 })
