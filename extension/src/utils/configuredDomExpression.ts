@@ -161,6 +161,21 @@ function inspectDom(
     element.getAttribute('aria-disabled') === 'true'
   )
     return { ready: false, failure: { reason: 'click-target-disabled' } }
+  const before = element.getBoundingClientRect(),
+    centreX = before.x + before.width / 2,
+    centreY = before.y + before.height / 2
+  // A target whose centre lies outside the viewport is scrolled to the middle first, as a learner scrolls before clicking: the hit test reads viewport points only, so a button below the fold read as obscured.
+  if (
+    centreX < 0 ||
+    centreY < 0 ||
+    centreX >= innerWidth ||
+    centreY >= innerHeight
+  )
+    element.scrollIntoView({
+      block: 'center',
+      inline: 'center',
+      behavior: 'instant',
+    })
   const rect = element.getBoundingClientRect(),
     x = rect.x + rect.width / 2,
     y = rect.y + rect.height / 2,

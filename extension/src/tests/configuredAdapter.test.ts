@@ -583,6 +583,8 @@ test('DOM configuration compares literal text and attributes and refuses duplica
   }
   const selector = 'button[title="literal; globalThis.injected = true"]'
   const environment = {
+    innerWidth: 1280,
+    innerHeight: 720,
     document: {
       querySelectorAll: (input: string) =>
         input === selector ? (duplicates ? [element, element] : [element]) : [],
@@ -642,6 +644,106 @@ test('DOM configuration compares literal text and attributes and refuses duplica
     ready: false,
     failure: { conditionIndex: 2, reason: 'attribute-mismatch' },
   })
+})
+
+// Value: protects=a declared click on a button below the fold (a "Load Newer" button under a long list) being sent at the button's scrolled centre; fails_when=the click target is hit-tested where it lies before scrolling, so every target below the viewport reads click-target-obscured; why_new=N65 Cursor trial on the TanStack Query load-more Pages example (Cycle 0065); seam=none
+test('a click target below the visible page is scrolled to the middle of the viewport and clicked there instead of being refused as obscured', () => {
+  // Arrange: a 1280 × 720 viewport and a button whose centre starts 1,500 px down; the page answers a point only inside the viewport, as a browser does.
+  const viewport = { width: 1280, height: 720 }
+  let buttonTop = 1500
+  const scrollRequests: unknown[] = []
+  const button = {
+    isConnected: true,
+    textContent: 'Load Newer',
+    getAttribute: () => null,
+    matches: () => false,
+    contains: () => false,
+    getBoundingClientRect: () => ({
+      x: 100,
+      y: buttonTop,
+      width: 120,
+      height: 30,
+    }),
+    scrollIntoView: (options: unknown): void => {
+      scrollRequests.push(options)
+      buttonTop = 345
+    },
+  }
+  const environment = {
+    innerWidth: viewport.width,
+    innerHeight: viewport.height,
+    document: {
+      querySelectorAll: (input: string) =>
+        input === '#load-newer' ? [button] : [],
+      elementFromPoint: (x: number, y: number) =>
+        x >= 0 && y >= 0 && x < viewport.width && y < viewport.height
+          ? button
+          : null,
+    },
+    getComputedStyle: () => ({
+      display: 'block',
+      visibility: 'visible',
+      opacity: '1',
+    }),
+  }
+  const expression = configuredDomExpression(
+    [{ kind: 'text', selector: '#load-newer', equals: 'Load Newer' }],
+    '#load-newer',
+  )
+
+  // Act
+  const result = JSON.parse(
+    JSON.stringify(runInNewContext(expression, environment)),
+  )
+
+  // Assert
+  assert.deepEqual(result, { ready: true, x: 160, y: 360 })
+  // The options object comes from the page's realm, so it is compared as plain data.
+  assert.deepEqual(JSON.parse(JSON.stringify(scrollRequests)), [
+    { block: 'center', inline: 'center', behavior: 'instant' },
+  ])
+})
+
+// Value: protects=a click target already inside the viewport being clicked where it is, with no scroll that could fire the page's own scroll or visibility handlers; fails_when=every click target is scrolled before the click; why_new=the below-the-fold fix scrolls only targets outside the viewport (Cycle 0065, N65); seam=none
+test('a click target already inside the viewport is clicked where it is, without scrolling the page', () => {
+  // Arrange: a 1280 × 720 viewport and a button fully inside it.
+  const scrollRequests: unknown[] = []
+  const button = {
+    isConnected: true,
+    textContent: 'Load Older',
+    getAttribute: () => null,
+    matches: () => false,
+    contains: () => false,
+    getBoundingClientRect: () => ({ x: 20, y: 80, width: 100, height: 30 }),
+    scrollIntoView: (options: unknown) => scrollRequests.push(options),
+  }
+  const environment = {
+    innerWidth: 1280,
+    innerHeight: 720,
+    document: {
+      querySelectorAll: (input: string) =>
+        input === '#load-older' ? [button] : [],
+      elementFromPoint: () => button,
+    },
+    getComputedStyle: () => ({
+      display: 'block',
+      visibility: 'visible',
+      opacity: '1',
+    }),
+  }
+  const expression = configuredDomExpression(
+    [{ kind: 'visible', selector: '#load-older' }],
+    '#load-older',
+  )
+
+  // Act
+  const result = JSON.parse(
+    JSON.stringify(runInNewContext(expression, environment)),
+  )
+
+  // Assert
+  assert.deepEqual(result, { ready: true, x: 70, y: 95 })
+  assert.deepEqual(scrollRequests, [])
 })
 
 // Value: protects=a text condition an agent derives from JSX holding on the first run although the element's text carries the whitespace JSX keeps beside a child element; fails_when=the comparison goes back to exact textContent, or collapses only one side; why_new=the exact comparison ended a natural run on the dashboard's "Log in " button (Cycle 0039, N8-a); seam=none
