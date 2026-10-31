@@ -186,25 +186,21 @@ test('quoted Next server output hides a token of a URL inside quotes or brackets
   ])
 })
 
-// Value: protects=a quote inside a logged URL's query value is masked with the value, while a quote that closes the text around the URL still ends the query; fails_when=the query stops at every quote (`?token="SECRET"` keeps SECRET) or a valued part swallows the closing quote of a quoted secret (`horse` survives); why_new=Cycle 0066 /ship pass 2 red team and parent probe (the first quote fix stopped at every quote, and QUERY_VALUE swallowed the closing quote, in the base too); seam=none; no_claim=a real dev server's log format
+// Value: protects=a quote inside a logged URL's query value is masked with the value, while a quote that closes the text around the URL still ends the query; fails_when=the query stops at every quote (`?q="SECRET"` keeps SECRET) or a valued part swallows the closing quote of a quoted secret (`horse` survives); why_new=Cycle 0066 /ship pass 2 red team and parent probe (the first quote fix stopped at every quote, and QUERY_VALUE swallowed the closing quote, in the base too); seam=none; no_claim=a real dev server's log format
 test('quoted Next server output masks a quote inside a query value and keeps a quote that closes the text around the URL', () => {
   // Act
   const masked = [
-    // eslint-disable-next-line browser-security/no-credentials-in-query-params -- a seeded test secret that must stay out of every message.
-    maskNextServerOutput('GET /login?token="SECRET" 200'),
+    maskNextServerOutput('GET /search?q="SECRET" 200'),
     maskNextServerOutput('GET /cb?code=abc"def 200'),
     maskNextServerOutput('PASSWORD="correct horse /reset?a=b"'),
-    // eslint-disable-next-line browser-security/no-credentials-in-query-params -- a seeded test secret that must stay out of every message.
-    maskNextServerOutput(maskNextServerOutput('GET /login?token=x 200')),
+    maskNextServerOutput(maskNextServerOutput('GET /search?q=x 200')),
   ]
   // Assert
   assert.deepEqual(masked, [
-    // eslint-disable-next-line browser-security/no-credentials-in-query-params -- a seeded test secret that must stay out of every message.
-    'GET /login?token=<redacted> 200',
+    'GET /search?q=<redacted> 200',
     'GET /cb?code=<redacted> 200',
     'PASSWORD=<redacted>',
-    // eslint-disable-next-line browser-security/no-credentials-in-query-params -- a seeded test secret that must stay out of every message.
-    'GET /login?token=<redacted> 200',
+    'GET /search?q=<redacted> 200',
   ])
 })
 
