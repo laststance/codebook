@@ -682,7 +682,7 @@ test('treats an undocumented gstack-post exit as an unknown outcome', async () =
 
 // protects=a gh or gstack-post call that stops answering ends at its limit as a failed call instead of hanging the command; fails_when=the call never returns or returns as an exit 0; no_claim=the production limit's length (a short limit and a sleeping Node child stand in for a stalled network)
 test(
-  'ends a program that outlives its time limit with SIGTERM and no exit status',
+  'ends a program that outlives its time limit with SIGKILL and no exit status',
   { timeout: 10_000 },
   async () => {
     // Arrange
@@ -693,7 +693,36 @@ test(
 
     // Assert
     assert.equal(result.status, null)
-    assert.equal(result.signal, 'SIGTERM')
+    assert.equal(result.signal, 'SIGKILL')
+  },
+)
+
+// protects=the limit holds when the program leaves a grandchild that keeps the output pipes open (a credential helper, a gstack-post subprocess); fails_when=the call waits for the pipes to close and never returns; no_claim=which real programs leave such grandchildren (a Node grandchild sharing the pipes stands in)
+test(
+  'ends a program at its time limit even when a grandchild still holds its output pipes',
+  { timeout: 10_000 },
+  async () => {
+    // Arrange
+    const parentWithGrandchild = [
+      '-e',
+      "const grandchild = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'inherit' }); console.log(grandchild.pid); process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)",
+    ]
+
+    // Act
+    const result = await runProgram(
+      process.execPath,
+      parentWithGrandchild,
+      tmpdir(),
+      500,
+    )
+    const grandchildPid = Number(result.stdout.trim())
+    // The grandchild outlives the killed program by design; end it so the test leaves nothing running.
+    if (grandchildPid > 0) process.kill(grandchildPid, 'SIGKILL')
+
+    // Assert
+    assert.equal(result.status, null)
+    assert.equal(result.signal, 'SIGKILL')
+    assert.ok(grandchildPid > 0, `grandchild pid printed: ${result.stdout}`)
   },
 )
 

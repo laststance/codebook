@@ -794,7 +794,7 @@ const PROGRAM_TIMEOUT_MS = 120_000
  * Runs a program with an argument array (no shell) and collects its output.
  *
  * Why: the production command runner behind the `runCommand` seam, used for `gh` and `gstack-post`.
- * Called through {@link createDefaultSeams}; a call past its limit is ended with SIGTERM and returns `status: null` with that signal, which the callers report as a failed `gh` call or an unknown post outcome (`E_POST_UNKNOWN`, exit 4).
+ * Called through {@link createDefaultSeams}; a call past its limit is killed (SIGKILL), its pipes are closed and it returns `status: null` with that signal, also when a grandchild still holds the pipes, which the callers report as a failed `gh` call or an unknown post outcome (`E_POST_UNKNOWN`, exit 4).
  *
  * @param {string} file - Program to run.
  * @param {string[]} args - Its arguments.
@@ -805,26 +805,31 @@ const PROGRAM_TIMEOUT_MS = 120_000
  */
 export function runProgram(file, args, cwd, timeoutMs = PROGRAM_TIMEOUT_MS) {
   return new Promise((resolvePromise) => {
-    const child = spawn(file, args, {
-      cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: timeoutMs,
-    })
+    const child = spawn(file, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] })
     let stdout = ''
     let stderr = ''
     child.stdout.setEncoding('utf8').on('data', (chunk) => (stdout += chunk))
     child.stderr.setEncoding('utf8').on('data', (chunk) => (stderr += chunk))
-    child.on('error', (error) =>
+    // Past the limit the call settles on this timer, not on `close`: a child ignoring SIGTERM or a grandchild still holding the pipes would keep `close` from firing.
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL')
+      child.stdout.destroy()
+      child.stderr.destroy()
+      resolvePromise({ status: null, signal: 'SIGKILL', stdout, stderr })
+    }, timeoutMs)
+    child.on('error', (error) => {
+      clearTimeout(timer)
       resolvePromise({
         status: null,
         signal: null,
         stdout,
         stderr: error.message,
-      }),
-    )
-    child.on('close', (status, signal) =>
-      resolvePromise({ status, signal, stdout, stderr }),
-    )
+      })
+    })
+    child.on('close', (status, signal) => {
+      clearTimeout(timer)
+      resolvePromise({ status, signal, stdout, stderr })
+    })
   })
 }
 
