@@ -367,3 +367,38 @@ test('a recorder names no missing part while it writes and names the surface end
     'EXTENSION_HISTORY_APPEND_FAILED',
   )
 })
+
+// protects=a summary read that never answers does not hold the seal: Stop settles within the bound, the published seal stays sealed and the summary reads as not read yet; fails_when=seal() waits for the summary read after the writer sealed; no_claim=the real store's summary read
+test('a stalled summary read does not hold the seal past its bound and the sealed history keeps an unread summary', async (context) => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-extension-summary-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const header = parseExtensionHistoryHeader({
+    ...extensionHistoryHeader(EXTENSION_WORKSPACE_KEY),
+    formatVersion: 1,
+  })
+  const begun = await ChromeExtensionHistoryRecorder.begin({
+    start: async () =>
+      new ChromeExtensionHistoryWriter(
+        directory,
+        header,
+        () => undefined,
+        String,
+      ),
+    describeCause: String,
+    summarize: () => new Promise<undefined>(() => undefined),
+  })
+  assert.ok('recorder' in begun)
+  let didSettle = false
+
+  // Act
+  const sealing = begun.recorder.seal({}, 50).then(() => {
+    didSettle = true
+  })
+  await waitUntil(() => didSettle, 'the seal to settle', 5_000)
+  await sealing
+
+  // Assert
+  assert.equal(begun.recorder.status, 'sealed')
+  assert.equal(begun.recorder.sealed?.summary, undefined)
+})

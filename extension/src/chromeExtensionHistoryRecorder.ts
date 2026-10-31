@@ -276,22 +276,34 @@ export class ChromeExtensionHistoryRecorder implements ChromeExtensionHistorySin
         return this.abandon(
           'Learning replay could not be saved: the seal timed out.',
         )
-      await this.markSealed(hash)
+      await this.markSealed(hash, deadline.passed)
     } catch (error) {
       // A seal published before the fault is never abandoned either.
       const publishedHash = this.writer.publishedSealHash
       if (publishedHash === undefined)
         this.abandon(this.input.describeCause(error))
-      else await this.markSealed(publishedHash)
+      else await this.markSealed(publishedHash, deadline.passed)
     } finally {
       deadline.cancel()
     }
   }
 
-  /** Records the sealed state with the summary the store reads of it. */
-  private async markSealed(hash: string | undefined): Promise<void> {
+  /**
+   * Records the sealed state with the summary the store reads of it.
+   * Why: a stalled summary read must never hold Stop, Save or the next run; past the seal's deadline the published seal stands and the summary reads as not read yet.
+   * @param hash - The published seal's journal hash.
+   * @param deadline - Settles when the seal's bound is over; it bounds the summary read too.
+   */
+  private async markSealed(
+    hash: string | undefined,
+    deadline: Promise<unknown>,
+  ): Promise<void> {
     this.status = 'sealed'
-    this.sealed = { summary: await this.readSummary(), hash }
+    const summary = await Promise.race([
+      this.readSummary(),
+      deadline.then(() => undefined),
+    ])
+    this.sealed = { summary, hash }
   }
 
   /** Why a still-open pause closed when the run ended: its worker went away, the surface was lost, or the run simply ended. */
