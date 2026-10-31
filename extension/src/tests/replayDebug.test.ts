@@ -1965,6 +1965,38 @@ test('a recorded nested inspection deeper than the captured tree is listed with 
   )
 })
 
+// Value: protects=the recorded inspections show in the Variables of the frame native Call Stack focuses when the top frame has no source; fails_when=the scope stays on the source-less top frame, so the focused frame's Variables never list the recorded values; why_new=CodeRabbit CLI round 1 (Cycle 0067); seam=none; no_claim=real VS Code focus rendering
+test('the recorded inspections sit on the first frame with source when the top frame has none', () => {
+  // Arrange
+  const { adapter, request } = harness()
+  const snapshot = recorded()
+  snapshot.variables.push({ name: 'queued', value: '1', children: [] })
+  snapshot.frames.unshift({
+    name: 'processTicksAndRejections',
+    line: 95,
+    column: 5,
+    scopes: [{ name: 'Internal', variables: [1] }],
+  })
+  adapter.select(snapshot, 'Recorded', undefined, [
+    { path: 'amount', mode: 'value', display: '120', type: 'number' },
+  ])
+  request('configurationDone')
+  const frames = request('stackTrace', { threadId: 1 }).body.stackFrames
+
+  // Act
+  const scopeNamesOf = (frameId: number) =>
+    request('scopes', { frameId }).body.scopes.map(
+      (scope: DebugProtocol.Scope) => scope.name,
+    )
+
+  // Assert
+  assert.deepEqual(scopeNamesOf(frames[0].id), ['Internal'])
+  assert.deepEqual(scopeNamesOf(frames[1].id), [
+    'Locals',
+    'Recorded inspections',
+  ])
+})
+
 // Value: protects=a withheld recorded value is never shown as a value; fails_when=a type-only inspection displays its type as if it were the value; why_new=the replay never listed recorded inspections before; seam=none; no_claim=redaction rules of the capture
 test('an inspection recorded with only its type says its value was not recorded', () => {
   // Arrange

@@ -323,8 +323,13 @@ export class ReplayDebugAdapter {
         this.snapshot = snapshot
         this.label = label
         this.sourceDocument = sourceDocument
+        // The recorded inspections go on the frame native Call Stack focuses: the first focusable frame, else the top frame, as {@link inspectionFrameId} picks it.
+        const focusedIndex = Math.max(
+          0,
+          snapshot.frames.findIndex((frame) => this.isFocusableFrame(frame)),
+        )
         // Saved indices become session-local handles that are never reused across seeks.
-        for (const frame of snapshot.frames) {
+        for (const [index, frame] of snapshot.frames.entries()) {
           const frameId = ++this.nextHandle
           this.frames.set(frameId, frame)
           this.registerFrameSource(frameId, frame)
@@ -332,7 +337,7 @@ export class ReplayDebugAdapter {
             frameId,
             frame,
             snapshot,
-            inspections,
+            index === focusedIndex ? inspections : [],
           )
           this.frameScopes.set(frameId, scopes)
         }
@@ -587,11 +592,11 @@ export class ReplayDebugAdapter {
   }
 
   /**
-   * Builds the native scopes of one recorded frame for {@link select}: its captured scopes, the stop's "Recorded inspections" on the top frame only, then the "Recording limitations" scope when something was not captured.
+   * Builds the native scopes of one recorded frame for {@link select}: its captured scopes, the stop's "Recorded inspections" when {@link select} hands them to this frame (the one native Call Stack focuses), then the "Recording limitations" scope when something was not captured.
    * @param frameId - The session-local handle of the frame.
    * @param frame - The recorded frame.
    * @param snapshot - The snapshot the frame belongs to; its limitations apply to every frame.
-   * @param inspections - The stop's recorded inspections; they are history, never evaluated.
+   * @param inspections - The stop's recorded inspections for this frame (empty for every other frame); they are history, never evaluated.
    * @returns The scopes in display order.
    * @example this.buildFrameScopes(7, snapshot.frames[0], snapshot, []) // => [{ name: 'Locals', … }]
    */
@@ -606,8 +611,8 @@ export class ReplayDebugAdapter {
       expensive: false,
       variablesReference: this.group(scope.variables, scope.unavailable),
     }))
-    // Only the stopped (top) frame carries the recorded inspections.
-    if (inspections.length && frameId === this.frames.keys().next().value) {
+    // Only the frame the caller chose (the one native Call Stack focuses) receives the recorded inspections.
+    if (inspections.length) {
       scopes.push({
         name: REPLAY_RECORDED_INSPECTIONS_SCOPE_NAME,
         expensive: false,
