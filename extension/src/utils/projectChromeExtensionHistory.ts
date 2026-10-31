@@ -1,5 +1,6 @@
 import type { ChromeExtensionHistoryRecorder } from '../chromeExtensionHistoryRecorder'
 import type { ExtensionHistorySummary } from '../chromeExtensionHistoryTypes'
+import { EXTENSION_HISTORY_EMPTY_MESSAGE } from '../constants'
 
 /** What {@link projectChromeExtensionHistory} reads of an extension run's history. */
 export type ChromeExtensionHistoryProjectionInput = {
@@ -57,6 +58,18 @@ export function projectChromeExtensionHistory(
             },
           }
         : {}),
+    }
+  // A history sealed with no stop was removed with its folder: no URI answers, and a normal "nothing recorded" end is no failure.
+  if (recorder.isRemovedAsEmpty)
+    return {
+      history: 'unavailable',
+      historyIssue: {
+        code: 'HISTORY_UNAVAILABLE',
+        message: EXTENSION_HISTORY_EMPTY_MESSAGE,
+        preserved:
+          'The run ended before any declared stop paused, so nothing was recorded for a replay.',
+        next: 'Tell the learner no stop was reached; do not claim a saved replay.',
+      },
     }
   const appendFailure = recorder.appendFailure
   const historyIssue: ChromeExtensionHistoryIssue | undefined =

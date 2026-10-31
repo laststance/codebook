@@ -2287,6 +2287,9 @@ export const EXTENSION_HISTORY_KNOWN_CONTEXTS: readonly string[] = [
 /** The cause of the terminal result a chrome-extension history appends when its run ended before the result was read; the capture evaluation judges a result with this cause as no recorded result. */
 export const EXTENSION_HISTORY_RESULT_UNREAD_CAUSE =
   'The run ended before its result was read.'
+/** What the run resource and a save answer for a chrome-extension run that ended before any declared stop paused: its empty history was removed at the seal. */
+export const EXTENSION_HISTORY_EMPTY_MESSAGE =
+  'No declared stop was reached, so nothing was recorded.'
 /** How long a chrome-extension history waits at its end for the frames already queued before it seals; frames still queued then are dropped and the filmstrip reads incomplete. */
 export const EXTENSION_HISTORY_DRAIN_TIMEOUT_MS = 2_000
 /** The longest context, pause id, URL and path text an entry keeps. */

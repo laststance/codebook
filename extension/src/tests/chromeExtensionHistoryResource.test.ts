@@ -117,6 +117,29 @@ test('the run resource reads recording while the run lives and sealed with its c
   ])
 })
 
+// protects=a run that ends before any declared stop pauses removed its empty history at the seal, so the resource names no URI that answers NOT_FOUND and says nothing was recorded; fails_when=historyUri is returned for the removed history or the history reads sealed; no_claim=the save refusal text
+test('a run that ends before any stop reports its removed empty history as unavailable with no history URI', async (context) => {
+  // Arrange
+  const { harness, record } = await startRecordedRun(context)
+  const runUri = harness.service.uri(record.id)
+
+  // Act
+  await harness.service.stop({
+    instanceId: harness.service.instanceId,
+    runId: record.id,
+  })
+  const ended = (await readJson(harness, runUri)).chromeExtension
+
+  // Assert
+  assert.equal(ended.history, 'unavailable')
+  assert.equal(ended.historyUri, undefined)
+  assert.equal(ended.historyIssue.code, 'HISTORY_UNAVAILABLE')
+  assert.equal(
+    ended.historyIssue.message,
+    'No declared stop was reached, so nothing was recorded.',
+  )
+})
+
 // protects=the history's events resource lists the journal without debugger snapshots, source text or absolute paths, and one entry's detail returns it whole; fails_when=the list carries a snapshot, the learning-storage path, or the detail is missing; no_claim=frame bytes (the history holds none in this run)
 test('the history events resource is lean and carries no snapshot or storage path', async (context) => {
   // Arrange

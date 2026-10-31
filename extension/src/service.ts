@@ -28,6 +28,7 @@ import {
   CHROME_EXTENSION_FAILED_STATE_CODES,
   CHROME_EXTENSION_PROFILE,
   CHROME_EXTENSION_EXPLAIN_REDIRECT,
+  EXTENSION_HISTORY_EMPTY_MESSAGE,
   EXTENSION_HISTORY_STILL_RECORDING_TEXT,
   CHROME_EXTENSION_START_ANSWER_MS,
   CONTINUE_ANSWER_CALL_BUDGET_MS,
@@ -2580,6 +2581,14 @@ export class StudyService {
           'This extension run recorded no history, so there is nothing to save.',
         undefined,
         'Tell the learner the cause; do not claim a saved replay.',
+      )
+    // A history removed as empty at the seal has nothing to save.
+    if (history.isRemovedAsEmpty)
+      throw new StudyError(
+        'EVIDENCE_UNAVAILABLE',
+        EXTENSION_HISTORY_EMPTY_MESSAGE,
+        undefined,
+        'Tell the learner no stop was reached; do not claim a saved replay.',
       )
     if (history.status === 'failed')
       throw new StudyError(

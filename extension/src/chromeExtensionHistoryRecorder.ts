@@ -77,6 +77,8 @@ export class ChromeExtensionHistoryRecorder implements ChromeExtensionHistorySin
     summary: ExtensionHistorySummary | undefined
     hash: string | undefined
   }
+  /** Whether the seal removed the history because no declared stop was reached, so nothing is left to open or save. */
+  isRemovedAsEmpty = false
   readonly frameObserver: ViewportRecordingObserver
   private readonly frames: ExtensionHistoryFrameWriter
   private readonly openPauses = new Map<string, ExtensionHistoryPause>()
@@ -300,6 +302,7 @@ export class ChromeExtensionHistoryRecorder implements ChromeExtensionHistorySin
     deadline: Promise<unknown>,
   ): Promise<void> {
     this.status = 'sealed'
+    this.isRemovedAsEmpty = this.writer.wasRemovedAsEmpty
     const summary = await Promise.race([
       this.readSummary(),
       deadline.then(() => undefined),

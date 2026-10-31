@@ -43,6 +43,8 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
   private finishOperation?: Promise<string | undefined>
   /** The SHA-256 of the journal this writer sealed; `undefined` before the seal and after an abandoned one. */
   private sealedHash?: string
+  /** Set when the seal removed the folder because the history held nothing to replay. */
+  private removedAsEmpty = false
   /** Set once the store was told that this writer closed ({@link NodeHistoryJournalWriter.reportClosed}). */
   private closedReported = false
 
@@ -103,6 +105,7 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
         ))
       ) {
         this.sealedHash = sha256(journal)
+        this.removedAsEmpty = true
         this.closed = true
         this.reportClosed()
         return this.sealedHash
@@ -165,6 +168,11 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
   // fallow-ignore-next-line unused-class-member
   get publishedSealHash(): string | undefined {
     return this.abandoned ? undefined : this.sealedHash
+  }
+
+  /** Whether the seal removed this history's folder because it held nothing to replay, so no resource for it answers; read by the recorder to tell a removed history from a sealed one. @example writer.wasRemovedAsEmpty */
+  get wasRemovedAsEmpty(): boolean {
+    return this.removedAsEmpty
   }
 
   /** The first failure that ended the timeline, if any; read by the run's resource to report a history that is failing while the run lives. @example writer.appendFailure?.message */
