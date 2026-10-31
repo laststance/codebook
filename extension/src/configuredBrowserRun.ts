@@ -1462,14 +1462,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     compiledPath: string
     cache: NextPagesDiscoveryCache
   }): Promise<void> {
-    // Every browser stop is checked, not only one no later line can bind: a server-only line (getServerSideProps above the component) is never moved to the client code after it.
+    // Every stop is checked, not only one no later line can bind: a server-only line (getServerSideProps above the component) is never moved to the client code after it. Each is a browser stop, as the seal refused every server stop of a Pages run ({@link refuseServerOnlyPagesStop}).
     for (const stop of this.stops) {
       // A blank, comment or type-only line holds no code to run on either side, so it binds to the next mapped line without a server read.
-      if (
-        stop.participant !== 'browser' ||
-        isBlankOrCommentLine(stop.bundle.source, stop.source.line)
-      )
-        continue
+      if (isBlankOrCommentLine(stop.bundle.source, stop.source.line)) continue
       const established = await readNextServerOnlyReason({
         workspace: this.options.workspace,
         path: stop.source.path,
@@ -1488,7 +1484,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         )
     }
     const unmapped = this.unbindableStop()
-    if (!unmapped || unmapped.participant !== 'browser') return
+    if (!unmapped) return
     throw nextRefusal(
       'NEXT_STOP_NOT_SEALED',
       `Codebook could not verify a browser source mapping for ${this.declaredAt(unmapped)}. This does not establish that the code is server-only.`,
