@@ -128,6 +128,28 @@ test('quoted Next server output hides cookie, authorization, query and secret-na
   )
 })
 
+// Value: protects=masking a long dotted run of server output ends in linear time, so a hostile output chunk cannot stall a Pages refusal or the launcher's journal; fails_when=the assignment pattern backtracks quadratically over the run (seconds on this input); why_new=Cycle 0066 task 3 (Cycle 0065 smoke QA measured about 1 s per 64 KB chunk); seam=none; no_claim=a real dev server's output
+test('masking a 256 KB dotted run of server output returns it unchanged within one second', () => {
+  // Arrange
+  const output = 'a.'.repeat(131_072)
+  // Act
+  const startedAt = performance.now()
+  const masked = maskNextServerOutput(output)
+  const elapsedMs = performance.now() - startedAt
+  // Assert
+  assert.equal(masked, output)
+  // gstack-timing-ok: an explicit bound, since a node:test timeout cannot stop a synchronous body; a linear scan takes milliseconds here, the quadratic pattern took seconds
+  assert.ok(elapsedMs < 1_000, `masking took ${elapsedMs} ms`)
+})
+
+// Value: protects=the linear assignment scan keeps today's masking: a secret-named value and a secret-named flag value hidden, a dotted plain name kept; fails_when=TOKEN's or --token's value survives, or a.b=c is masked; why_new=Cycle 0066 task 3 (the assignment pattern was rewritten); seam=none; no_claim=none
+test('quoted Next server output still hides secret-named assignments and keeps a dotted plain one', () => {
+  // Act
+  const masked = maskNextServerOutput('TOKEN=abc a.b=c --token=abc')
+  // Assert
+  assert.equal(masked, 'TOKEN=<redacted> a.b=c --token=<redacted>')
+})
+
 // Value: protects=the Pages path checks compare paths the way the entry path is resolved (query dropped, trailing slash dropped, segments decoded); fails_when=`/posts/` or `/caf%C3%A9` read as another page than `/posts` or `/café`; why_new=Cycle 0065 final-path and pathname checks; seam=none; no_claim=none
 test('a page path and its entry path compare without query, trailing slash or encoding', () => {
   // Act
