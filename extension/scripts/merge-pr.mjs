@@ -27,6 +27,9 @@ const BASE_BRANCH = 'main'
 /** Output limit of one `gh`/`git` call (bytes): a paginated check-run list is large. */
 const COMMAND_OUTPUT_LIMIT_BYTES = 64 * 1024 * 1024
 
+/** Time limit of one `gh`/`git` call (ms): a stalled network or prompt must end as a failed call, not hang. */
+const COMMAND_TIMEOUT_MS = 120_000
+
 /** Conclusions that count as a pass for a workflow run, a check run or a commit status. */
 const PASSING_CONCLUSIONS = ['success', 'neutral', 'skipped']
 
@@ -89,18 +92,32 @@ Error codes:
  *
  * @param {string} cwd - The directory the commands run in (the repository root).
  * @param {NodeJS.ProcessEnv} environment - The caller's environment, passed through unchanged (`GH_TOKEN` as given).
+ * @param {number} [timeoutMs] - Time limit of one call; a call over it is killed and reported as status 127. `git` also runs with `GIT_TERMINAL_PROMPT=0`.
  * @returns {CommandRunner} A runner resolving to `{ status, stdout, stderr }`; a missing program is status 127.
  * @example
  * const run = createCommandRunner('/work/codebook', process.env)
  * await run('git', ['rev-parse', 'main']) // => { status: 0, stdout: '…\n', stderr: '' }
  */
-export function createCommandRunner(cwd, environment) {
+export function createCommandRunner(
+  cwd,
+  environment,
+  timeoutMs = COMMAND_TIMEOUT_MS,
+) {
   return (command, args) =>
     new Promise((resolveResult) => {
       execFile(
         command,
         args,
-        { cwd, env: environment, maxBuffer: COMMAND_OUTPUT_LIMIT_BYTES },
+        {
+          cwd,
+          // A fetch or pull must fail instead of waiting on a credential prompt after the merge.
+          env:
+            command === 'git'
+              ? { ...environment, GIT_TERMINAL_PROMPT: '0' }
+              : environment,
+          maxBuffer: COMMAND_OUTPUT_LIMIT_BYTES,
+          timeout: timeoutMs,
+        },
         (error, stdout, stderr) => {
           if (error === null) {
             resolveResult({ status: 0, stdout, stderr })
@@ -482,7 +499,7 @@ export async function mergeAndConfirm(run, pr, head, environment) {
   if (merge.status !== 0)
     throw new CommandRefusal(
       'E_MERGE_FAILED',
-      `gh pr merge failed and PR ${pr} is still ${after.state}: ${firstStderrLine(merge.stderr, environment)}`,
+      `gh pr merge failed and PR ${pr} ${after.state === 'OPEN' ? 'is still OPEN' : `reads ${after.state}`}: ${firstStderrLine(merge.stderr, environment)}`,
       { fix: `gh pr view ${pr}`, exitCode: EXIT.FAILED },
     )
   // Exit 0 but not merged: the repository uses no merge queue, so this is unexplained.

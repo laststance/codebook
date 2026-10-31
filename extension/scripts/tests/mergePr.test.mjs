@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { GATE_CHECKS, runGate } from '../gate.mjs'
-import { HELP_TEXT, main } from '../merge-pr.mjs'
+import { createCommandRunner, HELP_TEXT, main } from '../merge-pr.mjs'
 import { runCommandLine } from '../utils/commandContract.mjs'
 
 const PR = '173'
@@ -566,8 +566,8 @@ test('reads every page of workflow runs and check runs and finds a failure on th
   ])
 })
 
-// protects=CI is read for the head of step 1 although the PR head moves afterwards; fails_when=the CI calls use a later headRefOid; no_claim=a real push race
-test('reads the CI of the head seen first even when the PR head moves on a later read', async () => {
+// protects=CI and the merge use the head of step 1 although a later PR view would name another head; fails_when=the script re-reads the PR head for the CI calls or the merge call; no_claim=a real push race; the fake answers OTHER_HEAD to every PR view after the first
+test('reads the CI and merges the head seen first even when a later PR view reports another head', async () => {
   // Arrange
   let views = 0
   const responses = {
@@ -578,13 +578,12 @@ test('reads the CI of the head seen first even when the PR head moves on a later
   }
 
   // Act
-  const { exit, calls } = await runCommand({
-    argv: [PR, '--dry-run'],
-    responses,
-  })
+  const { exit, calls } = await runCommand({ responses })
 
   // Assert
   assert.equal(exit, 0)
+  assert.equal(views, 1)
+  assert.deepEqual(mergeCalls(calls), [KEY_MERGE])
   assert.ok(calls.includes(KEY_CHECK_RUNS(HEAD)))
   assert.ok(!calls.some((call) => call.includes(OTHER_HEAD)))
 })
@@ -859,4 +858,56 @@ test('an unexpected exception after the merge started exits 4 with E_INTERNAL', 
   assert.equal(exit, 4)
   assert.equal(err[0], 'E_INTERNAL: disk gone')
   assert.equal(err[1], 'Stage: sync the local main')
+})
+
+// protects=a failed merge call on a PR that reads CLOSED is not reported as still open; fails_when=the message says "still CLOSED"; no_claim=GitHub's reasons
+test('words E_MERGE_FAILED by the actual state when the PR reads CLOSED after a failed merge call', async () => {
+  // Arrange
+  const responses = {
+    [KEY_MERGE]: failed('Pull request is closed'),
+    [KEY_REREAD]: json({ state: 'CLOSED', headRefOid: HEAD }),
+  }
+
+  // Act
+  const { exit, err } = await runCommand({ responses })
+
+  // Assert
+  assert.equal(exit, 2)
+  assert.equal(
+    err[0],
+    'E_MERGE_FAILED: gh pr merge failed and PR 173 reads CLOSED: Pull request is closed',
+  )
+})
+
+// protects=a stalled external call ends as a failed call; fails_when=the runner waits past its time limit; no_claim=the 120 s production limit; a 200 ms limit and a node child stand in
+test('createCommandRunner ends a call that exceeds its time limit with a failure status', async () => {
+  // Arrange
+  const run = createCommandRunner(tmpdir(), process.env, 200)
+
+  // Act
+  const startedAt = Date.now()
+  const result = await run(process.execPath, [
+    '-e',
+    'setTimeout(() => {}, 10000)',
+  ])
+
+  // Assert
+  assert.equal(result.status, 127)
+  assert.ok(Date.now() - startedAt < 5000)
+})
+
+// protects=git never waits on a credential prompt; fails_when=git runs without GIT_TERMINAL_PROMPT=0; no_claim=a real prompt; a git alias echoing the variable stands in
+test('createCommandRunner runs git with GIT_TERMINAL_PROMPT=0', async () => {
+  // Arrange
+  const run = createCommandRunner(tmpdir(), { PATH: process.env.PATH })
+
+  // Act
+  const result = await run('git', [
+    '-c',
+    'alias.show-prompt=!echo $GIT_TERMINAL_PROMPT',
+    'show-prompt',
+  ])
+
+  // Assert
+  assert.equal(result.stdout, '0\n')
 })

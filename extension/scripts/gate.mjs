@@ -321,7 +321,7 @@ export async function runGate({
   const headBefore = await readHead()
   const changesAtStart = await listChanges()
   const changesBefore = changesAtStart.join('\n')
-  // First summary line: tells a real gate from an --allow-dirty trial run that writes the same folder.
+  // First line runGate prints: tells a real gate from an --allow-dirty trial run that writes the same folder.
   print(describeGateCheckout(changesAtStart))
   const results = []
   for (const check of checks) {

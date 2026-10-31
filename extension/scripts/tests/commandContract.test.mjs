@@ -195,3 +195,22 @@ test('a command that returns no exit code is reported as an internal error', asy
     'E_INTERNAL: the command returned undefined instead of an exit code',
   )
 })
+
+// protects=a multi-line error message is not repeated as stack frames; fails_when=a message continuation line is printed as its own line; no_claim=the exact frames
+test('an unexpected multi-line error prints only stack frame lines after the stage', async () => {
+  // Arrange
+  const printed = []
+
+  // Act
+  await runCommandLine(
+    async () => {
+      throw new Error('first line\nsecond line')
+    },
+    { printError: (line) => printed.push(line), environment: {} },
+  )
+
+  // Assert
+  assert.equal(printed[0], 'E_INTERNAL: first line\nsecond line')
+  assert.ok(!printed.includes('second line'))
+  assert.ok(printed.slice(2, -1).every((line) => /^\s+at /.test(line)))
+})

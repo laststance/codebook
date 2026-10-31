@@ -179,7 +179,8 @@ export async function runCommandLine(
     const lines = [
       `E_INTERNAL: ${message}`,
       `Stage: ${progress.stage}`,
-      ...stack.split('\n').slice(1),
+      // Frame lines only: a multi-line message must not repeat its continuation lines as frames.
+      ...stack.split('\n').filter((line) => /^\s+at /.test(line)),
       `Fix: ${fix}`,
     ]
     for (const line of lines) printError(redactSecrets(line, environment))
