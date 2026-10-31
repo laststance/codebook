@@ -752,6 +752,51 @@ test('a predev script in a pnpm 9 project whose .npmrc turns pre scripts off is 
   assert.equal(readiness['next-dev-webpack'].notes, undefined)
 })
 
+// Value: protects=an .npmrc that sets enable-pre-post-scripts twice is read as npm's ini parser reads it, the last line winning, so a pnpm 8 predev that pnpm runs is counted; fails_when=the first enable-pre-post-scripts line decides; why_new=Cycle 0066 task 40 (first .npmrc line read instead of the last); seam=none; no_claim=.npmrc sections, comments or pnpm's own run
+test('a predev script in a pnpm 8 project whose .npmrc turns pre scripts off and then on is reported as one skipped statement', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await writeFile(
+    join(root, 'package.json'),
+    JSON.stringify({
+      packageManager: 'pnpm@8.15.9',
+      scripts: { predev: 'prisma generate', dev: 'next dev' },
+    }),
+  )
+  await writeFile(
+    join(root, '.npmrc'),
+    'enable-pre-post-scripts=false\nauto-install-peers=true\nenable-pre-post-scripts=true\n',
+  )
+  // Act
+  const reading = await readNextDevPreparation(root)
+  // Assert
+  assert.deepEqual(reading, {
+    preparation: { status: 'skipped', statements: 1 },
+    preScriptUncertain: false,
+  })
+})
+
+// Value: protects=a quoted enable-pre-post-scripts value is read as npm's ini parser reads it, quotes stripped, so a pnpm 8 predev that pnpm runs is counted; fails_when="true" in quotes reads as false; why_new=Cycle 0066 task 40 (quoted .npmrc value read as false); seam=none; no_claim=other quoting or escape forms
+test('a predev script in a pnpm 8 project whose .npmrc enables pre scripts with a quoted "true" is reported as one skipped statement', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await writeFile(
+    join(root, 'package.json'),
+    JSON.stringify({
+      packageManager: 'pnpm@8.15.9',
+      scripts: { predev: 'prisma generate', dev: 'next dev' },
+    }),
+  )
+  await writeFile(join(root, '.npmrc'), 'enable-pre-post-scripts="true"\n')
+  // Act
+  const reading = await readNextDevPreparation(root)
+  // Assert
+  assert.deepEqual(reading, {
+    preparation: { status: 'skipped', statements: 1 },
+    preScriptUncertain: false,
+  })
+})
+
 // Value: protects=a predev script that Yarn 2 and later do not run is not reported as preparation Codebook skips, the Yarn version read from yarn.lock's __metadata key; fails_when=a Yarn Berry lockfile counts predev; why_new=Cycle 0066 task 9 (package-manager pre-script rule, Yarn Berry); seam=none; no_claim=Yarn's own run
 test('a predev script in a project whose yarn.lock is written by Yarn 2 or later is not reported as skipped preparation', async (context) => {
   // Arrange

@@ -28,9 +28,12 @@ type ScriptManager = 'npm' | 'pnpm' | 'yarn' | 'bun'
 const PACKAGE_MANAGER_FIELD =
   /^(npm|pnpm|yarn|bun)@(\d+)\.\d+\.\d+(?:[-+][\w.+-]*)?$/
 
-/** The `.npmrc` line that turns pnpm 7 and 8's pre scripts on; the first `.npmrc` (nearest folder first) that sets the key decides. */
+/** The `.npmrc` line that turns pnpm 7 and 8's pre scripts on; the first `.npmrc` (nearest folder first) that sets the key decides, and its last such line wins, as npm's ini parser keeps the last. */
 const PNPM_PRE_POST_SETTING =
-  /^[ \t]*enable-pre-post-scripts[ \t]*=[ \t]*(\S*)/m
+  /^[ \t]*enable-pre-post-scripts[ \t]*=[ \t]*(\S*)/gm
+
+/** An `.npmrc` value wrapped in a matching pair of single or double quotes, which npm's ini parser strips. */
+const QUOTED_NPMRC_VALUE = /^(["'])(.*)\1$/
 
 /** The key Yarn 2 and later write into `yarn.lock` and Yarn 1 never does. */
 const YARN_BERRY_LOCKFILE_KEY = /^__metadata:/m
@@ -127,10 +130,11 @@ async function nearestLockfiles(
  * Reads what an `.npmrc` says about pnpm's pre scripts, so an explicit setting can override pnpm's default for its version; called by {@link readPreScriptRules}.
  * @param folders - The folders from {@link projectMarkerFolders}, the opened one first.
  * @returns
- * - `true` or `false` as the first `.npmrc` that sets `enable-pre-post-scripts` sets it (any value other than `true` reads as `false`)
+ * - `true` or `false` as the first `.npmrc` that sets `enable-pre-post-scripts` sets it: its last such line, with one pair of surrounding quotes stripped (any value other than `true` reads as `false`), as npm's ini parser reads it
  * - `undefined` when no `.npmrc` sets it
  * @example
  * await pnpmPreScriptsSetting(['/repo']) // => false for an .npmrc line "enable-pre-post-scripts=false"
+ * await pnpmPreScriptsSetting(['/repo']) // => true for the lines "enable-pre-post-scripts=false" then "enable-pre-post-scripts=\"true\""
  */
 async function pnpmPreScriptsSetting(
   folders: readonly string[],
@@ -139,10 +143,11 @@ async function pnpmPreScriptsSetting(
     const text = await readProjectFile(join(folder, '.npmrc'))
     const value =
       typeof text === 'string'
-        ? PNPM_PRE_POST_SETTING.exec(text)?.[1]
+        ? [...text.matchAll(PNPM_PRE_POST_SETTING)].at(-1)?.[1]
         : undefined
     // A nearer `.npmrc` that sets the key wins over one further up.
-    if (value !== undefined) return value === 'true'
+    if (value !== undefined)
+      return (QUOTED_NPMRC_VALUE.exec(value)?.[2] ?? value) === 'true'
   }
   return undefined
 }
