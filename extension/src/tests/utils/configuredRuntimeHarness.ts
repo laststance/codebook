@@ -7,7 +7,10 @@ import type { DebugSession } from 'vscode'
 import type { ConfiguredBrowserRun } from '../../configuredBrowserRun'
 import type * as ConfiguredBrowserRunModule from '../../configuredBrowserRun'
 import { configuredDefinitionSchema } from '../../configuredStudySchemas'
-import { REPOSITORY_LITERAL_LIMIT_CHARS } from '../../constants'
+import {
+  CROSS_RUNTIME_CONFIG_VERSION,
+  REPOSITORY_LITERAL_LIMIT_CHARS,
+} from '../../constants'
 import { StudyError } from '../../errors'
 import type * as OwnedRepositoryBreakpointModule from '../../ownedRepositoryBreakpoint'
 import type { BundleSource } from '../../repositoryBundle'
@@ -130,6 +133,8 @@ export async function configuredRuntimeHarness(
     nextPages?: NextPagesHarnessOptions
     /** Moves the first cited source, and the stop declared in it, to this workspace-relative path (such as a file under `src/pages`). */
     sourcePath?: string
+    /** Declares the first stop for this participant in a version 2 (cross-runtime) configuration, as a start that names `participant` does; only without additional stops, whose version 2 form differs. */
+    participant?: 'browser' | 'server'
     /** The configuration's initial inputs; the stand-in page has one editable control for each selector. */
     initialInputs?: RepositoryConfiguration['initialInputs']
     /** Makes the stand-in page never answer the text insert of an initial input, as a page whose reply is lost. */
@@ -166,6 +171,14 @@ export async function configuredRuntimeHarness(
     reference.configuration.entryPath = options.nextPages.entryPath
   if (options.initialInputs)
     reference.configuration.initialInputs = options.initialInputs
+  // A version 2 configuration names the first stop's participant; its other fields are the version 1 ones.
+  const configuration = options.participant
+    ? {
+        ...reference.configuration,
+        version: CROSS_RUNTIME_CONFIG_VERSION,
+        participant: options.participant,
+      }
+    : reference.configuration
   // Each of these changes makes the frozen intent hash stale.
   if (
     additionalStops.length ||
@@ -174,11 +187,10 @@ export async function configuredRuntimeHarness(
     options.adapter ||
     options.sourcePath ||
     options.nextPages?.entryPath ||
-    options.initialInputs
+    options.initialInputs ||
+    options.participant
   )
-    reference.configurationHash = sha256(
-      JSON.stringify(reference.configuration),
-    )
+    reference.configurationHash = sha256(JSON.stringify(configuration))
   for (const source of reference.descriptor!.sources)
     await repository.track(source.path, source.text)
   // A Pages project around the cited source: its Pages folder, Next, the `.next/dev` build and the module the page executes.
@@ -190,7 +202,7 @@ export async function configuredRuntimeHarness(
       )
     : undefined
   const definition = configuredDefinitionSchema.parse({
-    configuration: reference.configuration,
+    configuration,
     configurationHash: reference.configurationHash,
     descriptor: reference.descriptor,
   })
@@ -1138,7 +1150,7 @@ export async function configuredRuntimeHarness(
   return {
     ...repository,
     run,
-    definition: { ...definition, configuration: reference.configuration },
+    definition: { ...definition, configuration },
     documents,
     breakpoints,
     userBreakpoint,

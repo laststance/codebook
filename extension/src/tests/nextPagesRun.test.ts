@@ -840,6 +840,26 @@ test('a Pages stop in an API route is refused as server-only before any chunk is
   assert.equal(harness.pagesSeals.length, 0)
 })
 
+// Value: protects=a stop declared with participant "server" in a Pages run is refused with NEXT_SERVER_ONLY_STOP before any chunk is read and before the browser opens, saying a Pages run observes only the page's client code; fails_when=the server stop is sealed through the App reader, the run opens the browser, or another code answers; why_new=Cycle 0066 task 7 (server-participant stop in a Pages run); seam=the harness's participant option declares a version 2 server stop; no_claim=a real Next server inspector
+test('a server stop in a Pages run is refused as server-only before any chunk is read or the browser opens', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    participant: 'server',
+    nextPages: {},
+  })
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  assert.ok(failure instanceof StudyError, String(failure))
+  assert.equal(failure.code, 'NEXT_SERVER_ONLY_STOP')
+  assert.equal(
+    failure.message,
+    'Declared stop src/theme.ts:1 is a server stop (participant "server"), but a Pages Router run observes only the page\'s client code in the browser; Codebook does not pause the Next server in a Pages run. Move the stop to the client code of the page that serves the same question, with participant "browser".',
+  )
+  assert.equal(harness.pagesSeals.length, 0)
+  assert.equal(harness.launchConfigurations.length, 0)
+})
+
 // --- Fast Refresh ---
 
 // Value: protects=a Fast Refresh of a sealed module during a Pages run ends it with SOURCE_CHANGED, its static recovery reaching the agent through the run resource; fails_when=the run resource shows RUNTIME_FAILED or the App text; why_new=Cycle 0065 mid-run module replacement through lane B's registry; seam=announceSealedModule re-announces the module under a new script id; no_claim=a real Fast Refresh

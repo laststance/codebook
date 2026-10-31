@@ -950,8 +950,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     ownedOrigin: string,
     generation?: number,
   ): Promise<PreparedStop> {
-    // A Pages `_document` or API route never runs in the browser, so it is refused before any chunk is read.
-    if (this.pagesRun) this.refuseServerOnlyPagesFile(stop, this.pagesRun)
+    // A Pages run observes only the page's client code: a server stop, a `_document` or an API route never runs there, so it is refused before any chunk is read.
+    if (this.pagesRun) this.refuseServerOnlyPagesStop(stop, this.pagesRun)
     const acquired = await adapter.readBundle({
       workspace: this.options.workspace,
       source: stop.source,
@@ -1419,27 +1419,30 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Refuses a declared browser stop of a Pages run in a file Next never runs in the browser (`_document`, an API route), before any chunk is read.
-   * Called by {@link sealDeclaredStop} for each stop of a Pages run; a server stop is left to the seal.
+   * Refuses a declared stop of a Pages run that cannot pause in the page's client code, before any chunk is read and before the browser opens: a server stop, since a Pages run observes only the page's client code in the browser, or a browser stop in a file Next never runs in the browser (`_document`, an API route).
+   * Called by {@link sealDeclaredStop} for each stop of a Pages run.
    * @param stop - The declared stop.
    * @param pagesRun - The resolved Pages route, whose folder the file rule reads.
-   * @throws `NEXT_SERVER_ONLY_STOP` naming the reason.
+   * @throws `NEXT_SERVER_ONLY_STOP` naming the server stop, or the file's reason.
    * @example
-   * this.refuseServerOnlyPagesFile(stop, this.pagesRun) // throws for src/pages/api/hello.ts
+   * this.refuseServerOnlyPagesStop(stop, this.pagesRun) // throws for src/pages/api/hello.ts, and for any stop with participant "server"
    */
-  private refuseServerOnlyPagesFile(
+  private refuseServerOnlyPagesStop(
     stop: ReturnType<typeof configuredStops>[number],
     pagesRun: NextPagesEntry,
   ): void {
-    if (stop.participant !== 'browser') return
+    const place = `${stop.source.path}:${stop.source.line}`
+    // A Pages run debugs the browser only, so a server stop is refused wherever its file is.
+    if (stop.participant !== 'browser')
+      throw nextRefusal(
+        'NEXT_SERVER_ONLY_STOP',
+        `Declared stop ${place} is a server stop (participant "server"), but a Pages Router run observes only the page's client code in the browser; Codebook does not pause the Next server in a Pages run. Move the stop to the client code of the page that serves the same question, with participant "browser".`,
+      )
     const reason = nextServerOnlyFileReason(stop.source.path, pagesRun.folder)
     if (reason)
       throw nextRefusal(
         'NEXT_SERVER_ONLY_STOP',
-        nextServerOnlyStopMessage(
-          `${stop.source.path}:${stop.source.line}`,
-          reason,
-        ),
+        nextServerOnlyStopMessage(place, reason),
       )
   }
 
