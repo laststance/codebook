@@ -100,7 +100,10 @@ export async function readNextRouteManifests(
   request: NextRouteManifestsRequest,
 ): Promise<NextRouteManifests> {
   const now = request.now ?? (() => performance.now())
-  const sleep = request.sleep ?? sleepFor
+  const sleep =
+    request.sleep ??
+    ((milliseconds: number, signal?: AbortSignal) =>
+      delay(milliseconds, undefined, { signal }))
   const readText =
     request.readText ?? workspaceManifestReader(request.workspace)
   const routers = {
@@ -126,21 +129,6 @@ export async function readNextRouteManifests(
       request.signal,
     )
   }
-}
-
-/**
- * Waits between two rounds of the poll; the production `sleep` of {@link readNextRouteManifests}.
- * @param milliseconds - How long to wait.
- * @param signal - Ends the wait early with the abort reason.
- * @returns After the wait.
- * @example
- * await sleepFor(250)
- */
-async function sleepFor(
-  milliseconds: number,
-  signal?: AbortSignal,
-): Promise<void> {
-  await delay(milliseconds, undefined, { signal })
 }
 
 /**
