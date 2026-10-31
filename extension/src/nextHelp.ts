@@ -123,7 +123,7 @@ export function nextHelp() {
       prerequisites: [
         "Stop your own next dev for this workspace first: Codebook starts its own, and a .next/dev/lock another process holds refuses the start with PREREQUISITE_MISSING (Codebook never removes another process's lock).",
         'The dependencies are installed (node_modules/next); Codebook installs nothing.',
-        'When the next-dev-webpack readiness reports preparation skipped (statements before next dev in package.json scripts.dev, or a predev script), the learner runs that preparation from the workspace root before the start: Codebook never runs it. The environment settings its notes name are not applied either.',
+        'When the next-dev-webpack readiness reports preparation skipped (statements before next dev in package.json scripts.dev, a predev script, or the pre<name> script of a script that dev runs), the learner runs that preparation from the workspace root before the start: Codebook never runs it. The environment settings its notes name are not applied either.',
       ],
       configuration: NEXT_QUICK_START_CONFIGURATION,
       copyFrom: NEXT_QUICK_START_COPY_FROM,
@@ -153,7 +153,7 @@ export function nextHelp() {
       ],
       compatibility: NEXT_WEBPACK_COMPATIBILITY_SENTENCE,
       preparation:
-        'Codebook starts next dev --webpack itself and never runs scripts.dev: statements before next dev (and a predev script when the package manager of the project runs pre scripts: npm, Yarn 1, pnpm 9 or later, or pnpm 7 and 8 with enable-pre-post-scripts) are skipped, and environment settings the script gives next dev are not applied (a PORT assignment only sets the port). codebook_status reports both on the next-dev-webpack readiness, only when there is something to report: preparation.status skipped with the statements count, or unknown for a script it could not read, preparation.envSettings with the names of the settings it does not apply, and notes that say the same in sentences (one more when a counted pre script may or may not run because the package manager or its version is unknown); values are never reported.',
+        'Codebook starts next dev --webpack itself and never runs scripts.dev: statements before next dev (and a predev script, or the pre<name> script of a script that dev runs through npm run, pnpm, yarn or bun run, when the package manager that runs it runs pre scripts: npm, Yarn 1 and Bun do, pnpm 9 or later by default, pnpm 7 and 8 only with enable-pre-post-scripts=true in an .npmrc, and Yarn 2 and later never) are skipped, and environment settings the script gives next dev are not applied (a PORT assignment only sets the port). codebook_status reports both on the next-dev-webpack readiness, only when there is something to report: preparation.status skipped with the statements count, or unknown for a script it could not read, preparation.envSettings with the names of the settings it does not apply, and notes that say the same in sentences (one more when a counted pre script may or may not run because the package manager or its version is unknown); values are never reported.',
       unsupported: [
         'basePath or i18n routing in next.config: refused with NEXT_UNSUPPORTED_SETTING; Codebook never edits next.config.',
         'A custom distDir: Codebook reads the default .next/dev output, so the route reads as not compiled (NEXT_ROUTE_NOT_COMPILED).',
