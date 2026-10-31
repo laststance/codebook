@@ -2,6 +2,7 @@ import {
   MILLISECONDS_PER_SECOND,
   NEXT_MANIFEST_POLL_MS,
   NEXT_PAGES_SOURCE_EXTENSIONS,
+  NEXT_SETUP_STEPS,
   NEXT_WEBPACK_COMPATIBILITY_SENTENCE,
   REPOSITORY_SETUP_TIMEOUT_MS,
 } from './constants'
@@ -16,6 +17,12 @@ import {
 const PAGES_SOURCE_EXTENSIONS_TEXT = NEXT_PAGES_SOURCE_EXTENSIONS.map(
   (extension) => `.${extension}`,
 ).join(', ')
+
+/**
+ * When a setup deadline answers `NEXT_SETUP_DEADLINE`, as {@link ConfiguredBrowserRun} decides it when its setup budget expires: a Next run in a workspace with a Pages folder, at the steps before its route is known (named as the deadline message names them) and at every step of a Pages route.
+ * The help's `NEXT_SETUP_DEADLINE` meaning and `nextSupport.setupBudget` both carry it, so neither can say only a Pages Router run answers that code.
+ */
+const NEXT_SETUP_DEADLINE_SCOPE = `at its early steps (${NEXT_SETUP_STEPS.startingNext}, ${NEXT_SETUP_STEPS.waitingForServer}, ${NEXT_SETUP_STEPS.readingManifests}), before its route is known, and at every step once its entry path resolved as a Pages route`
 
 /**
  * The first key of `codebook://help/repository-browser`: one sentence that sends an agent from `codebook_status` to the quick start of its app's adapter.
@@ -94,7 +101,7 @@ const NEXT_REFUSAL_MEANINGS: Record<NextRefusalCode, string> = {
     "The stop is in code established to run only on the server: _document, a file under pages/api, or a line that maps in the page's server compile and in none of its client chunks (getServerSideProps or getStaticProps, for example).",
   NEXT_STOP_NOT_SEALED:
     'Codebook could not verify the browser code of the stop before the browser opened: there is no verified browser mapping for its line (which does not establish that the code is server-only), or its module is loaded later (next/dynamic, for example).',
-  NEXT_SETUP_DEADLINE: `A Pages Router run did not get ready within the ${REPOSITORY_SETUP_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s setup budget; the message names the step it reached and whether a browser was opened. The recovery the run gives fits that step: one retry before the browser or for a router that was late, a corrected entryPath for a page without a Next router, the input selector at the input step, one retry when the deadline came after every input was written and the first stop was being armed, and reading the captured history first when an input may have been written.`,
+  NEXT_SETUP_DEADLINE: `A Next run in a workspace with a Pages folder (pages/ or src/pages/) did not get ready within the ${REPOSITORY_SETUP_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s setup budget, ${NEXT_SETUP_DEADLINE_SCOPE}; once its entry path resolved as an App route, as in a workspace without a Pages folder, the deadline carries no Next code (the failure reads Repository setup deadline exceeded). The message names the step it reached and whether a browser was opened. The recovery the run gives fits that step: one retry before the browser or for a router that was late, a corrected entryPath for a page without a Next router, the input selector at the input step, one retry when the deadline came after every input was written and the first stop was being armed, and reading the captured history first when an input may have been written.`,
 }
 
 /**
@@ -154,7 +161,7 @@ export function nextHelp() {
       ],
       fastRefresh:
         'Saving a change to a loaded module during a run (Fast Refresh) ends the run with SOURCE_CHANGED; the observations before it stay readable.',
-      setupBudget: `Preparation has ${setupSeconds} s in all, with no override: starting Next, the entry page, the route manifests, sealing the stops, the browser and the page router. A Pages Router run past it is refused with NEXT_SETUP_DEADLINE.`,
+      setupBudget: `Preparation has ${setupSeconds} s in all, with no override: starting Next, the entry page, the route manifests, sealing the stops, the browser and the page router. A Next run in a workspace with a Pages folder (pages/ or src/pages/) past it is refused with NEXT_SETUP_DEADLINE ${NEXT_SETUP_DEADLINE_SCOPE}; any other Next run past it fails with Repository setup deadline exceeded, with no Next code.`,
     },
     nextRefusals: Object.fromEntries(
       NEXT_REFUSAL_CODES.map((code) => [

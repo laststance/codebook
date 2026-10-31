@@ -487,3 +487,32 @@ test('the API 1.12 note in the README and the API_VERSION doc name nextRoute onl
     [],
   )
 })
+
+// Value: protects=an agent reading the help or the README learns that a Next run in a workspace with a Pages folder answers NEXT_SETUP_DEADLINE at its early steps, before its route is known, not only a Pages Router run, and that an App-resolved run's deadline has no Next code; fails_when=the help's NEXT_SETUP_DEADLINE meaning, nextSupport.setupBudget or the README bullet says only a Pages Router run answers that code; why_new=Cycle 0066 task 6 (Cycle 0065 review: setupDeadlineText names the code for a Pages-capable run whose entry is not yet resolved as App); seam=help resource and README text; no_claim=the run decides so (nextPagesRun tests)
+test('the help and the README say a Next run in a workspace with a Pages folder answers NEXT_SETUP_DEADLINE at its early steps, before its route is known', async (context) => {
+  // Arrange
+  const help = await readRepositoryBrowserHelp(context)
+  const section = await readNextReadmeSection()
+  // Act
+  const meaning = help.nextRefusals?.NEXT_SETUP_DEADLINE?.meaning ?? ''
+  const setupBudget = help.nextSupport?.setupBudget ?? ''
+  const readmeBullet =
+    section
+      .split('\n')
+      .find((line) => line.startsWith('- `NEXT_SETUP_DEADLINE`: ')) ?? ''
+  // Assert
+  assert.ok(
+    meaning.startsWith(
+      'A Next run in a workspace with a Pages folder (pages/ or src/pages/) did not get ready within the 90 s setup budget, at its early steps (starting Next, waiting for the server to answer the entry page, reading the route manifests), before its route is known, and at every step once its entry path resolved as a Pages route; once its entry path resolved as an App route, as in a workspace without a Pages folder, the deadline carries no Next code (the failure reads Repository setup deadline exceeded). The message names the step it reached',
+    ),
+  )
+  assert.equal(
+    setupBudget,
+    'Preparation has 90 s in all, with no override: starting Next, the entry page, the route manifests, sealing the stops, the browser and the page router. A Next run in a workspace with a Pages folder (pages/ or src/pages/) past it is refused with NEXT_SETUP_DEADLINE at its early steps (starting Next, waiting for the server to answer the entry page, reading the route manifests), before its route is known, and at every step once its entry path resolved as a Pages route; any other Next run past it fails with Repository setup deadline exceeded, with no Next code.',
+  )
+  assert.ok(
+    readmeBullet.startsWith(
+      '- `NEXT_SETUP_DEADLINE`: a Next run in a workspace with a Pages folder (`pages/` or `src/pages/`) did not get ready within 90 s, at its early steps (starting Next, waiting for the server to answer the entry page, reading the route manifests), before its route is known, or at any step once its entry path resolved as a Pages route (once it resolved as an App route, as in a workspace without a Pages folder, the run fails with "Repository setup deadline exceeded" and no Next code), and the message names the step it reached',
+    ),
+  )
+})
