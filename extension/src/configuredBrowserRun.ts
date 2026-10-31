@@ -1444,7 +1444,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Refuses a sealed browser stop of a Pages run whose line can never bind, with what is established about the line: server-only when the page's server compile maps it and the browser module does not, otherwise not sealed, which says it is not thereby server-only.
+   * Refuses a sealed browser stop of a Pages run whose declared line is established as server-only (the page's server compile maps it and the browser module does not), also when a later line of its citation could bind; then a stop whose line can never bind as not sealed, which says it is not thereby server-only.
    * Called by {@link prepareOwned} after the seal and before {@link freezeSealedStops}, which keeps the general refusal for every other stop.
    * @param pagesRun - The resolved Pages route and the run's discovery cache.
    * @throws `NEXT_SERVER_ONLY_STOP` or `NEXT_STOP_NOT_SEALED`.
@@ -1456,29 +1456,32 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     compiledPath: string
     cache: NextPagesDiscoveryCache
   }): Promise<void> {
+    // Every browser stop is checked, not only one no later line can bind: a server-only line (getServerSideProps above the component) is never moved to the client code after it.
+    for (const stop of this.stops) {
+      if (stop.participant !== 'browser') continue
+      const established = await readNextServerOnlyReason({
+        workspace: this.options.workspace,
+        path: stop.source.path,
+        line: stop.source.line,
+        folder: pagesRun.folder,
+        compiledPath: pagesRun.compiledPath,
+        clientBundle: stop.bundle,
+        signal: this.abort.signal,
+        cache: pagesRun.cache,
+      })
+      this.alive()
+      if (established.kind === 'server-only')
+        throw nextRefusal(
+          'NEXT_SERVER_ONLY_STOP',
+          nextServerOnlyStopMessage(this.declaredAt(stop), established.reason),
+        )
+    }
     const unmapped = this.unbindableStop()
     if (!unmapped || unmapped.participant !== 'browser') return
-    const established = await readNextServerOnlyReason({
-      workspace: this.options.workspace,
-      path: unmapped.source.path,
-      line: unmapped.source.line,
-      folder: pagesRun.folder,
-      compiledPath: pagesRun.compiledPath,
-      clientBundle: unmapped.bundle,
-      signal: this.abort.signal,
-      cache: pagesRun.cache,
-    })
-    this.alive()
-    const place = this.declaredAt(unmapped)
-    throw established.kind === 'server-only'
-      ? nextRefusal(
-          'NEXT_SERVER_ONLY_STOP',
-          nextServerOnlyStopMessage(place, established.reason),
-        )
-      : nextRefusal(
-          'NEXT_STOP_NOT_SEALED',
-          `Codebook could not verify a browser source mapping for ${place}. This does not establish that the code is server-only.`,
-        )
+    throw nextRefusal(
+      'NEXT_STOP_NOT_SEALED',
+      `Codebook could not verify a browser source mapping for ${this.declaredAt(unmapped)}. This does not establish that the code is server-only.`,
+    )
   }
 
   /**

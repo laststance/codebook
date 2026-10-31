@@ -688,6 +688,31 @@ test('a Pages stop on a line only the server compile maps is refused as server-o
   assert.equal(harness.launchConfigurations.length, 0)
 })
 
+// Value: protects=a stop on a getServerSideProps line above the component is refused as server-only instead of moving to the component's client line after it; fails_when=the stop binds to the later client line and the run pauses in other code than the declared line; why_new=Codex structured review P1 in /ship (Cycle 0065); seam=a browser map that leaves line 1 unmapped; no_claim=a real Next server compile
+test('a Pages stop on a server-only line above client code is refused as server-only, not moved to the later client line', async (context) => {
+  // Arrange
+  const source =
+    'export const getServerSideProps = () => ({ props: {} })\n' +
+    'export default function Home() {\n' +
+    "  const label = 'Show more'\n" +
+    '  return label\n' +
+    '}\n'
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    fixture: { source, citationEndLine: 5, declaredLine: 1 },
+    nextPages: { mappedLines: [2, 3, 4], serverCompile: true },
+  })
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  assert.ok(failure instanceof StudyError, String(failure))
+  assert.equal(failure.code, 'NEXT_SERVER_ONLY_STOP')
+  assert.match(
+    failure.message,
+    /^Declared stop src\/theme\.ts:1 cannot pause in the browser/,
+  )
+  assert.equal(harness.launchConfigurations.length, 0)
+})
+
 // Value: protects=an unmapped Pages line without server evidence is refused as not sealed, saying it is not thereby server-only; fails_when=it is called server-only or stays uncoded; why_new=Cycle 0065 NEXT_STOP_NOT_SEALED (no verified browser mapping); seam=a build without a server compile; no_claim=none
 test('a Pages stop on an unmapped line without server evidence is refused as not sealed, not as server-only', async (context) => {
   // Arrange

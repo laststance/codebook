@@ -35,8 +35,8 @@ export type NextPagesHarnessOptions = {
   chunks?: boolean
   /** Whether the page chunk carries the cited source's module; `true` by default. Without it the module is in no chunk the page loads at start (a module loaded later). */
   citedInPageChunk?: boolean
-  /** How many lines, from line 1, the browser module of the cited source maps; 1 by default. */
-  mappedLines?: number
+  /** How many lines, from line 1, the browser module of the cited source maps, or the ascending lines it maps; 1 by default. */
+  mappedLines?: number | readonly number[]
   /** Writes the page's server compile, whose `(pages-dir-node)` module of the cited source maps every line. */
   serverCompile?: boolean
   /** Adds an App folder (`src/app/page.tsx`), so the workspace has both routers. */

@@ -32,13 +32,17 @@ const MEASURED_BUILD_MANIFEST = join(
   '../../../src/tests/fixtures/next-pages/nextjs/build-manifest.json',
 )
 
+/** Base64 VLQ digits; a small non-negative value v is the single digit at index 2v. */
+const VLQ_DIGITS =
+  'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+
 /**
  * Builds the text of one webpack eval module as Next 16's `eval-source-map` emits it: generated code, an inline map whose `sources` names the absolute original and whose `sourcesContent` is the whole file, and the module's `sourceURL`.
  * @param workspace - The workspace whose absolute path the map names.
  * @param path - The original's workspace-relative path.
  * @param source - The original's text.
  * @param layer - The webpack layer: `pages-dir-browser` (browser) or `pages-dir-node` (server compile).
- * @param mappedLines - How many original lines, from line 1, the map maps (one generated line each).
+ * @param mappedLines - How many original lines, from line 1, the map maps (one generated line each), or the ascending 1-based original lines it maps, so a line can be left unmapped between mapped ones.
  * @returns The module text.
  * @example pagesEvalModule('/repo', 'src/pages/index.tsx', PAGE_SOURCE, 'pages-dir-browser', 4)
  */
@@ -47,20 +51,26 @@ export function pagesEvalModule(
   path: string,
   source: string,
   layer: 'pages-dir-browser' | 'pages-dir-node',
-  mappedLines: number,
+  mappedLines: number | readonly number[],
 ): string {
-  const code = Array.from(
-    { length: mappedLines },
-    (_, index) => `work${index + 1}();`,
-  ).join('\n')
+  const originalLines =
+    typeof mappedLines === 'number'
+      ? Array.from({ length: mappedLines }, (_, index) => index + 1)
+      : mappedLines
+  const code = originalLines.map((line) => `work${line}();`).join('\n')
   const map = {
     version: 3,
     file: '',
     sources: [join(workspace, path)],
     sourcesContent: [source],
     names: [],
-    // One segment per generated line, each one original line further.
-    mappings: ['AAAA', ...Array(mappedLines - 1).fill('AACA')].join(';'),
+    // One segment per generated line; its third field is the step to the next original line (a single base64 VLQ digit for steps below 16).
+    mappings: originalLines
+      .map(
+        (line, index) =>
+          `AA${VLQ_DIGITS[(line - (originalLines[index - 1] ?? 1)) * 2]}A`,
+      )
+      .join(';'),
     ignoreList: [],
     sourceRoot: '',
   }
