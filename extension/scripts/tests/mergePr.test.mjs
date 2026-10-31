@@ -539,8 +539,39 @@ test('refuses with E_CHECKS_MISSING naming the workflow file that has no run, an
   // Assert
   assert.equal(exit, 1)
   assert.deepEqual(err, [
-    `E_CHECKS_MISSING: 1 expected workflow(s) have no run on ${HEAD}`,
+    `E_CHECKS_MISSING: 1 expected workflow(s) have no successful run on ${HEAD}`,
     'missing: .github/workflows/build.yml',
+    'Fix: check that each workflow is enabled and triggered (gh workflow list, gh pr checks 173), or rerun it, then rerun this command',
+  ])
+  assert.deepEqual(mergeCalls(calls), [])
+})
+
+// protects=an expected workflow whose whole run was skipped does not count as having run; fails_when=a run with conclusion skipped satisfies the expected set and the merge proceeds; no_claim=GitHub's own reasons for skipping a run (the run object stands in)
+test('refuses with E_CHECKS_MISSING when an expected workflow only has a run skipped as a whole, and makes no merge call', async () => {
+  // Arrange
+  const responses = {
+    [KEY_RUNS(HEAD)]: json([
+      {
+        workflow_runs: [
+          workflowRun('Format', 'format.yml'),
+          { ...workflowRun('Build', 'build.yml'), conclusion: 'skipped' },
+        ],
+      },
+    ]),
+  }
+  const workflows = {
+    'build.yml': UNFILTERED_WORKFLOW,
+    'format.yml': UNFILTERED_WORKFLOW,
+  }
+
+  // Act
+  const { exit, err, calls } = await runCommand({ responses, workflows })
+
+  // Assert
+  assert.equal(exit, 1)
+  assert.deepEqual(err, [
+    `E_CHECKS_MISSING: 1 expected workflow(s) have no successful run on ${HEAD}`,
+    'no successful run: .github/workflows/build.yml (skipped)',
     'Fix: check that each workflow is enabled and triggered (gh workflow list, gh pr checks 173), or rerun it, then rerun this command',
   ])
   assert.deepEqual(mergeCalls(calls), [])

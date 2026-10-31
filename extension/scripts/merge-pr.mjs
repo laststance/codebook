@@ -57,7 +57,7 @@ Merges pull request <pr> with "gh pr merge <pr> --squash --match-head-commit <he
   - artifacts/gate/<first 8 of head>/summary.txt (this checkout) holds "Checkout: clean",
     "GATE: pass on <head>" and one "<name> exit=0" line per gate check;
   - every workflow run, check run and commit status of that head passed (a check named CodeRabbit is listed, never gating);
-  - every workflow of this checkout's .github/workflows that triggers on pull_request without a paths or paths-ignore filter has a run on that head.
+  - every workflow of this checkout's .github/workflows that triggers on pull_request without a paths or paths-ignore filter has a successful run on that head (a run skipped as a whole does not count).
 Then it fast-forwards the local main to origin/main.
 A PR that is already merged resumes at the local main step, so rerunning after exit 3 or 4 is safe.
 
@@ -453,7 +453,7 @@ export async function readExpectedWorkflows(source) {
  * @param {(line: string) => void} print - Where the non-gating CodeRabbit lines go.
  * @param {WorkflowSource} workflowSource - Where this checkout's workflow files are read (the expected set).
  * @returns {Promise<string>} A one-line summary of what passed.
- * @throws {CommandRefusal} `E_CHECKS_FAILED`, `E_CHECKS_PENDING` or `E_CHECKS_NONE` (no workflow run, no check run, or only `CodeRabbit`); `E_CHECKS_MISSING` when an expected workflow has no run on the head; `E_WORKFLOWS_UNREADABLE`; `E_GH` when `gh` fails.
+ * @throws {CommandRefusal} `E_CHECKS_FAILED`, `E_CHECKS_PENDING` or `E_CHECKS_NONE` (no workflow run, no check run, or only `CodeRabbit`); `E_CHECKS_MISSING` when an expected workflow has no successful run on the head (none, or only skipped or neutral ones); `E_WORKFLOWS_UNREADABLE`; `E_GH` when `gh` fails.
  * @example await checkChecks(run, '9f2c…', '173', {}, console.log, workflowSource)
  */
 export async function checkChecks(
@@ -550,18 +550,26 @@ export async function checkChecks(
         : `no check run other than ${NON_GATING_CHECK_NAME} exists for ${head}`,
       { fix: `gh pr checks ${pr} --watch, then rerun this command` },
     )
-  // Last: a workflow that never started leaves nothing failed or pending, so the expected set is compared with the runs.
+  // Last: a workflow that never started, or whose whole run was skipped, leaves nothing failed or pending, so each expected workflow needs a run that succeeded.
   const expectedPaths = await readExpectedWorkflows(workflowSource)
-  const missingPaths = expectedPaths.filter(
-    (path) => !workflowRuns.some((workflowRun) => workflowRun.path === path),
-  )
-  if (missingPaths.length > 0)
+  const unprovenWorkflows = expectedPaths.flatMap((path) => {
+    const runs = workflowRuns.filter((workflowRun) => workflowRun.path === path)
+    if (runs.some((workflowRun) => workflowRun.conclusion === 'success'))
+      return []
+    // Failed and pending runs refused above, so a run left here concluded skipped or neutral and ran no required job.
+    return [
+      runs.length === 0
+        ? `missing: ${path}`
+        : `no successful run: ${path} (${runs.map((workflowRun) => workflowRun.conclusion).join(', ')})`,
+    ]
+  })
+  if (unprovenWorkflows.length > 0)
     throw new CommandRefusal(
       'E_CHECKS_MISSING',
-      `${missingPaths.length} expected workflow(s) have no run on ${head}`,
+      `${unprovenWorkflows.length} expected workflow(s) have no successful run on ${head}`,
       {
         fix: `check that each workflow is enabled and triggered (gh workflow list, gh pr checks ${pr}), or rerun it, then rerun this command`,
-        details: missingPaths.map((path) => `missing: ${path}`),
+        details: unprovenWorkflows,
       },
     )
   return `checks pass at ${head} (${workflowRuns.length} workflow runs, ${gatingCheckRuns.length} check runs, ${statuses.length} statuses)`
