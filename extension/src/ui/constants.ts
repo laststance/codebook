@@ -314,3 +314,11 @@ body.test-output{height:100vh;padding:0;overflow:hidden}body.test-output main{di
 /* Compact replay keeps its empty header spacing; a disclosed layout notice uses the shared gap. */
 @media(max-width:420px){#learning-title{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}#learning-title:focus,body[data-replay=true] .learning-header h1:focus{display:block;overflow:visible}body[data-replay=true]{padding-top:8px;padding-left:12px;padding-right:12px}body[data-replay=true] .learning-header{margin-bottom:4px}body[data-replay=true] #reader-kind{display:none}body[data-replay=true] .learning-header h1{font-size:16px;margin:0 0 4px;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}body[data-replay=true] #reader-options{margin-bottom:4px}body[data-replay=true] #reader-options:has(+ #presentation-status:not(:empty)){margin-bottom:8px}body[data-replay=true] #reader-options>summary{font-size:13px}body[data-replay=true] #learning-material h2{margin:0 0 4px}body[data-replay=true] #learning-material p{margin:4px 0 8px}body[data-replay=true] #learning-material p.muted{font-size:12px;line-height:1.35}}
 `
+
+/**
+ * The Application pane's layout of an Extension replay's recorded frame, added to {@link STUDY_STYLES} for that profile only.
+ * Why: the pane's body never scrolls, so the figure takes the height left under the header and the image shrinks into it (contain, no stretch) while the caption keeps its own line; the pane's script sets the image's recorded size, which this never upscales.
+ * Used by {@link testOutputHtml}.
+ */
+export const EXTENSION_FRAME_STYLES =
+  '.extension-frame{flex:1 1 auto;min-height:0;min-width:0;margin:4px 0;display:flex;flex-direction:column;align-items:flex-start;overflow:hidden}.extension-frame img{flex:0 1 auto;min-height:0;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;object-position:left top}.extension-frame figcaption{flex:none;max-width:100%;overflow-wrap:anywhere}'

@@ -119,3 +119,39 @@ test('a cut standard-error line shows its end without the mark of its start', ()
   )
   assert.equal(html.includes('class="stderr-mark"'), false)
 })
+
+// Value: protects=the recorded frame of an Extension replay is fitted into the Application pane's remaining height with its caption on its own line, so a tall frame in a short pane is not clipped by the pane that never scrolls; fails_when=the figure is not a shrinkable flex column, the image is not contained within the figure's height, the caption can shrink away, or an inline style (which the pane's policy blocks) sizes the image; why_new=a 720x640 frame in a 720x400 pane ended at 647 px under overflow hidden; seam=none; no_claim=the browser's layout, which the headless-Chrome measurement of the task covers
+test('the Application document of an Extension replay fits the recorded frame into the pane height and keeps its caption visible', () => {
+  // Arrange
+  const view: NodeTestApplicationView = {
+    ...hostileView,
+    profile: 'chrome-extension',
+    lines: [],
+    frame: {
+      src: 'data:image/png;base64,AAAA',
+      label: 'Recorded frame captured at this stop',
+      width: 720,
+      height: 640,
+    },
+  }
+
+  // Act
+  const html = testOutputHtml(view, 'fixed-nonce', 'study_1')
+  const serverHtml = testOutputHtml(
+    { ...hostileView, profile: 'node-server' },
+    'fixed-nonce',
+    'study_1',
+  )
+
+  // Assert
+  assert.ok(
+    html.includes(
+      '.extension-frame{flex:1 1 auto;min-height:0;min-width:0;margin:4px 0;display:flex;flex-direction:column;',
+    ),
+  )
+  assert.ok(html.includes('max-height:100%'))
+  assert.ok(html.includes('object-fit:contain'))
+  assert.ok(html.includes('.extension-frame figcaption{flex:none;'))
+  assert.equal(html.includes('style="max-width:100%;height:auto"'), false)
+  assert.equal(serverHtml.includes('.extension-frame'), false)
+})
