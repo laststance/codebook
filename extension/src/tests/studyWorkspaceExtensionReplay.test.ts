@@ -809,6 +809,114 @@ test('a frame inside a stop keeps the stop inspection state and accepts Inspect'
   }
 })
 
+/** Material with the given steps, each citing the page capture at sequence 2 of a history that opens with one page stop. */
+function pageStopMaterial(stepIds: string[]) {
+  return {
+    ...runMaterial(),
+    steps: stepIds.map((id) => ({
+      id,
+      from: 'extension',
+      to: 'extension',
+      label: `Step ${id}`,
+      explanation: `Explains ${id}.`,
+      evidence: 'observed' as const,
+      reference: {
+        type: 'stop' as const,
+        sequence: 2,
+        sourceHash: sha256(POPUP_SOURCE_TEXT),
+        context: 'page',
+      },
+    })),
+  } satisfies ChromeExtensionLearningMaterialContent
+}
+
+// protects=a frame inside an explained stop keeps the stop's explanation and the learner's chosen step; fails_when=advancing to a frame event resolves the explanation with the frame's own sequence and drops the stop's explanation or the chosen step; no_claim=the webview's drawing
+test('a frame inside an explained stop keeps the stop explanation and the chosen step', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await writeExtensionHistoryFor(harness, [
+      { at: 10, type: 'open', pauseId: 'p1', stopIndex: 1, context: 'page' },
+      {
+        at: 11,
+        type: 'capture',
+        pauseId: 'p1',
+        stopIndex: 1,
+        context: 'page',
+      },
+      { at: 15, type: 'frame', kind: 'stream', salt: 'inside' },
+      { at: 30, type: 'close', pauseId: 'p1' },
+    ])
+    await repositoryOf(harness).extensionHistories.saveLearningMaterial(
+      history.studyId,
+      0,
+      pageStopMaterial(['first', 'second']),
+    )
+    await openExtensionReplay(harness, history.studyId)
+    await chooseStep(harness, history.studyId, 'second')
+
+    // Act
+    await selectExtensionEvent(harness, history.studyId, 3)
+    const section = lastView(harness)?.nodeHistorySection
+
+    // Assert
+    assert.equal(section?.explanation, 'Explains second.')
+    assert.equal(section?.selectedStepId, 'second')
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=when an inner stop closes while the outer stop continues, the outer stop's explanation shows; fails_when=the close event of the inner stop resolves no explanation for the outer stop; no_claim=the webview's drawing
+test('the outer stop explanation returns when an inner stop closes inside it', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await writeExtensionHistoryFor(harness, [
+      { at: 10, type: 'open', pauseId: 'outer', stopIndex: 1, context: 'page' },
+      {
+        at: 11,
+        type: 'capture',
+        pauseId: 'outer',
+        stopIndex: 1,
+        context: 'page',
+      },
+      {
+        at: 20,
+        type: 'open',
+        pauseId: 'inner',
+        stopIndex: 2,
+        context: 'service-worker',
+      },
+      {
+        at: 21,
+        type: 'capture',
+        pauseId: 'inner',
+        stopIndex: 2,
+        context: 'service-worker',
+      },
+      { at: 30, type: 'close', pauseId: 'inner' },
+      { at: 40, type: 'close', pauseId: 'outer' },
+    ])
+    await repositoryOf(harness).extensionHistories.saveLearningMaterial(
+      history.studyId,
+      0,
+      pageStopMaterial(['outer-stop']),
+    )
+    await openExtensionReplay(harness, history.studyId)
+
+    // Act
+    await selectExtensionEvent(harness, history.studyId, 5)
+    const section = lastView(harness)?.nodeHistorySection
+
+    // Assert
+    assert.equal(section?.explanation, 'Explains outer-stop.')
+    assert.equal(section?.selectedStepId, 'outer-stop')
+  } finally {
+    await harness.close()
+  }
+})
+
 // protects=a seek onto a stop whose source is not recorded never starts a debugger the learner ended, so only an explicit reselection restarts it; fails_when=the seek presents the partial stop in a new debugger and debuggerAvailable returns to true; no_claim=the debugger's drawing or Play
 test('seeking to a partial stop after the learner ends the replay debugger starts no new debugger', async () => {
   // Arrange

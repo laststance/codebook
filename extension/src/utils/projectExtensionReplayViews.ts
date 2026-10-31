@@ -316,7 +316,7 @@ function momentExplanation(
 ): { explanation?: string } {
   if (!hasMaterial || pending || !moment) return {}
   if (steps.selectedStep) return { explanation: steps.selectedStep.explanation }
-  if (moment.event.type === 'pause-open')
+  if (moment.stop)
     return { explanation: NODE_EXTENSION_REPLAY_TEXT.noStepForStop }
   return moment.event.type === 'result'
     ? { explanation: NODE_EXTENSION_REPLAY_TEXT.noStepForResult }
@@ -365,9 +365,12 @@ function projectExtensionSection(
   const steps = input.pending
     ? { sameMomentStepIds: [] as string[] }
     : momentSteps(
-        input.selectedSequence === undefined
-          ? undefined
-          : { sequence: input.selectedSequence },
+        // Inside a stop interval the stop's own steps apply, whatever event (a frame, an inner close) the playhead is on.
+        moment?.stop
+          ? { sequence: moment.stop.openSequence }
+          : input.selectedSequence === undefined
+            ? undefined
+            : { sequence: input.selectedSequence },
         learning,
         input.chosenStepId,
       )

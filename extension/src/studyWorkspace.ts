@@ -27306,13 +27306,31 @@ export class StudyWorkspace {
       this.nodeSourceSlot = { ...this.nodeSourceSlot, stop: verifiedStop }
     this.decorateNodeSourceSlot(true)
     // A chosen step stays only with its own moment: a selection that lands on another event without a choice of its own (a seek, Play, Inspect) shows that event's first step (DS21).
+    // Inside one Extension stop interval the moment is the stop's, so its chosen step stays while the playhead moves over frames and inner closes.
+    const stepMomentOf = (sequence: number): number =>
+      this.extensionStopEntryAt(history, sequence)?.sequence ?? sequence
+    const shownStopSequence =
+      this.selectedNodeHistorySequence === undefined
+        ? undefined
+        : this.extensionStopEntryAt(history, this.selectedNodeHistorySequence)
+            ?.sequence
+    // An event's own control without a step of its own (no stepId) keeps the chosen step while the stop does not change.
+    const isStopUnchanged =
+      shownStopSequence !== undefined &&
+      shownStopSequence ===
+        this.extensionStopEntryAt(history, entry.sequence)?.sequence
     this.selectedNodeHistoryStepId = nextNodeHistoryStepId(
-      stepChoice,
+      stepChoice?.stepId === undefined && isStopUnchanged
+        ? undefined
+        : stepChoice,
       {
-        sequence: this.selectedNodeHistorySequence,
+        sequence:
+          this.selectedNodeHistorySequence === undefined
+            ? undefined
+            : stepMomentOf(this.selectedNodeHistorySequence),
         stepId: this.selectedNodeHistoryStepId,
       },
-      entry.sequence,
+      stepMomentOf(entry.sequence),
     )
     this.selectedNodeHistorySequence = entry.sequence
     this.selectedNodeHistoryPage = Math.floor(
