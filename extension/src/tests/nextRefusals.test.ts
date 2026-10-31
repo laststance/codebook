@@ -156,22 +156,18 @@ test('each Next refusal recovery keeps the rule the learner relies on for that c
     assert.ok(ERROR_RECOVERY[code].includes(rules[code]), code)
 })
 
-// Value: protects=a refusal thrown before input reaches the agent with its code, the message's values and the static recovery of errors.ts; fails_when=nextRefusal drops the cause or answers another recovery; why_new=Cycle 0065 Next refusals; seam=none
-test('a Next refusal carries its message and cause and answers the static recovery of its code', () => {
+// Value: protects=a refusal thrown before input reaches the agent with its code, the message's values as message and cause, and the static recovery of errors.ts; fails_when=nextRefusal drops the cause or answers another recovery; why_new=Cycle 0065 Next refusals; seam=none
+test('a Next refusal carries its message as message and cause and answers the static recovery of its code', () => {
   // Arrange
   const message =
     "This Next 16.4.3 project sets basePath (/docs); Codebook's browser run does not support basePath or i18n routing."
   // Act
-  const described = nextRefusal(
-    'NEXT_UNSUPPORTED_SETTING',
-    message,
-    'routes-manifest.json basePath /docs',
-  ).describe()
+  const described = nextRefusal('NEXT_UNSUPPORTED_SETTING', message).describe()
   // Assert
   assert.deepEqual(described, {
     code: 'NEXT_UNSUPPORTED_SETTING',
     message,
-    cause: 'routes-manifest.json basePath /docs',
+    cause: message,
     recovery: ERROR_RECOVERY.NEXT_UNSUPPORTED_SETTING,
     docs: 'codebook://help/errors',
   })
