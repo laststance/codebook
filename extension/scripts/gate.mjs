@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 
 import { createResettingTimer } from './utils/createResettingTimer.mjs'
+import { describeGateCheckout } from './utils/describeGateCheckout.mjs'
 import { endChildrenOnSignal } from './utils/endChildrenOnSignal.mjs'
 import { endProcessTree } from './utils/endProcessTree.mjs'
 import { isRunAsScript } from './utils/isRunAsScript.mjs'
@@ -318,7 +319,10 @@ export async function runGate({
   print,
 }) {
   const headBefore = await readHead()
-  const changesBefore = (await listChanges()).join('\n')
+  const changesAtStart = await listChanges()
+  const changesBefore = changesAtStart.join('\n')
+  // First line runGate prints: tells a real gate from an --allow-dirty trial run that writes the same folder.
+  print(describeGateCheckout(changesAtStart))
   const results = []
   for (const check of checks) {
     const startedAt = Date.now()

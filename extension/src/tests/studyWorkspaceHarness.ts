@@ -5401,9 +5401,12 @@ export async function workspaceHarness(
     './runtimeSupport/browserViewport': { BrowserViewport: WorkspaceViewport },
     './replayDebugger': { ReplayDebugger: TestReplayDebugger },
   }
+  // The slot runs in the reader's own context, as every module shares one realm in the editor: a promise from another realm costs the reader's await extra microtask turns, which would reorder races the reader's tests pin.
   const boundary = await loadModule<typeof StudyWorkspaceModule>(
     resolve(__dirname, '../studyWorkspace.js'),
     editorDependencies,
+    {},
+    { './replayDebuggerSlot': resolve(__dirname, '../replayDebuggerSlot.js') },
   )
   const repositoryBoundary = await loadModule<typeof RepositoryReaderModule>(
     resolve(__dirname, '../repositoryReader.js'),
@@ -9061,13 +9064,15 @@ export function readerSeams(harness: {
     readSavedArchive: (studyId: string) => reader['readSavedArchive'](studyId),
     saveSelection: (): Promise<void> => reader['saveSelection'](),
     /** The reader's step that starts or replaces the historical debugger before a recording load; a test replaces it to hold or fail that load. */
-    get debuggerReplacement(): WorkspaceReader['replaceUnavailableReplayDebugger'] {
-      return reader['replaceUnavailableReplayDebugger'].bind(reader)
+    get debuggerReplacement(): WorkspaceReader['replayDebuggers']['replaceUnavailable'] {
+      return reader['replayDebuggers'].replaceUnavailable.bind(
+        reader['replayDebuggers'],
+      )
     },
     set debuggerReplacement(
-      step: WorkspaceReader['replaceUnavailableReplayDebugger'],
+      step: WorkspaceReader['replayDebuggers']['replaceUnavailable'],
     ) {
-      reader['replaceUnavailableReplayDebugger'] = step
+      reader['replayDebuggers'].replaceUnavailable = step
     },
     /** The reader's retirement of a shown Node test history; a test replaces it to hold a saved-study choice between its read and its showing. */
     get nodeHistoryRetirement(): () => Promise<void> {

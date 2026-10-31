@@ -98,6 +98,36 @@ test('a run during which HEAD moved or the checkout changed fails although every
   assert.ok(changedTree.lines.includes('the checkout changed during the run.'))
 })
 
+// protects=merge-pr.mjs can tell a real gate from an --allow-dirty trial run (Cycle 0068 D13): the summary's first line says the checkout was clean; fails_when=runGate drops the Checkout line or prints it after the checks; no_claim=the summary file itself (main collects the printed lines); injected listChanges stands in for git
+test('a gate started on a clean checkout prints "Checkout: clean" as its first line', async () => {
+  // Arrange
+  const codes = { '01-a': 0 }
+
+  // Act
+  const { lines } = await gateOver(codes, { changes: [[], []] })
+
+  // Assert
+  assert.deepEqual(lines, [
+    'Checkout: clean',
+    '01-a exit=0 seconds=0',
+    'GATE: pass on abc',
+  ])
+})
+
+// protects=a trial run on a changed checkout is marked so it never counts as the gate; fails_when=a changed checkout prints "Checkout: clean"; no_claim=the summary file itself; injected listChanges stands in for git
+test('a gate started on a changed checkout prints "Checkout: changed (--allow-dirty trial run)" as its first line', async () => {
+  // Arrange
+  const codes = { '01-a': 0 }
+
+  // Act
+  const { lines } = await gateOver(codes, {
+    changes: [[' M README.md'], [' M README.md']],
+  })
+
+  // Assert
+  assert.equal(lines[0], 'Checkout: changed (--allow-dirty trial run)')
+})
+
 // Value: protects=the gate on the pinned toolchain only (Cycle 0058: a version manager's shim ran the suite on Node 24.22.1 under extension/ while .node-version pinned 24.21.0, and an editor's own Node is another); fails_when=a Node or pnpm that differs from its pin passes the check, or the sentence does not name both versions; why_new=Cycle 0058 retro; seam=none; no_claim=how the running pnpm version is read
 test('a Node or pnpm that differs from its pin is named with both versions', () => {
   // Arrange

@@ -176,6 +176,10 @@ import {
   type ReplayDebuggerChange,
   type ReplayInspection,
 } from './replayDebugger'
+import {
+  presentNodeHistoryMoment,
+  ReplayDebuggerSlot,
+} from './replayDebuggerSlot'
 import type { ReplayDebugSnapshot } from './replayDebugSchemas'
 import type {
   RepositoryFocusTarget,
@@ -938,9 +942,14 @@ export class StudyWorkspace {
   /** The retired test replay's recorded-source tabs, held as the editor's tab objects with the address each had, that were left open because the editor area was hidden when a saved study was chosen over it: a close of the tab a group shows brings the area back, so they close once the area is shown again or the wait for it ends ({@link closeSlotTabsAwaitingArea}, Cycle 0052 task 15). A tab object the editor rebuilt (Cursor) matches by its address; a test replay entry ends the record, so a slot tab of a replay opened later is never among them. */
   private nodeSourceSlotTabsAwaitingArea?: ReadonlyMap<vscode.Tab, string>
   private playback?: PlaybackController
-  private replayDebugger?: ReplayDebugger
-  /** The disposal of replaced historical debuggers that is still running; the editor accepts the next owner only once it has settled. */
-  private replayDebuggerRetirement?: Promise<void>
+  /** The one historical debugger and the serialized disposal of the owners it replaced; the editor accepts the next owner only once that disposal has settled. */
+  private readonly replayDebuggers = new ReplayDebuggerSlot(
+    () => this.createReplayDebugger(),
+    (error) => this.report('replay-debugger-disposal', error),
+    () => {
+      if (this.errors.delete('replay-debugger-disposal')) this.publish()
+    },
+  )
   private recordingActive = false
   /** The study whose same-study Reload is loading its recording again: from the Reload's leave until {@link loadPlayback} makes the recording active again or a newer departure supersedes it ({@link leavePlayback}, {@link close}); a failed load keeps it. While it is set the summary composition still shows that browser replay, so the Reload's loading, error and retry messages reach its Learning summary (Cycle 0052 tasks 3 and 18). */
   private recordingReloadStudyId?: string
@@ -9725,9 +9734,9 @@ export class StudyWorkspace {
       this.nodeHistoryPlaybackController?.dispose()
       this.nodeHistoryPlaybackController = undefined
       // A replacement may still be stopping an earlier owner: the reader is closed only once no historical debugger is left.
-      if (this.replayDebugger)
-        void this.retireReplayDebugger(this.replayDebugger)
-      await this.replayDebuggerRetirement
+      const closingDebugger = this.replayDebuggers.current
+      if (closingDebugger) void this.replayDebuggers.retire(closingDebugger)
+      await this.replayDebuggers.retired()
       await this.rendering
       await this.outlineRendering
       await settledWithin(
@@ -11247,9 +11256,10 @@ export class StudyWorkspace {
         readerOpen: () => this.replayReaderOpen,
         // A debugger that was never created is started by the next presentation; only one that ended needs the reload.
         presentable: () =>
-          this.replayReaderOpen && this.replayDebugger?.available !== false,
+          this.replayReaderOpen &&
+          this.replayDebuggers.current?.available !== false,
         invalidate: (keepPixels, next) => {
-          this.replayDebugger?.invalidate(
+          this.replayDebuggers.current?.invalidate(
             this.replayApplicationCovered ? REPLAY_COVERED_LABEL : undefined,
           )
           // The stopped line and its end-of-line label leave together (D29, F410); the next commit's render draws both again.
@@ -12873,7 +12883,7 @@ export class StudyWorkspace {
       this.pendingNodeHistoryStudyId = studyId
       this.loading = true
       this.publish()
-      await this.replaceUnavailableReplayDebugger()
+      await this.replayDebuggers.replaceUnavailable()
       const opening = await this.readNodeHistoryOpening(
         studyId,
         request,
@@ -12889,7 +12899,7 @@ export class StudyWorkspace {
         serverReplay,
       } = opening
       this.nodeHistoryPlaybackController?.dispose()
-      this.replayDebugger?.invalidate()
+      this.replayDebuggers.current?.invalidate()
       this.selectedNodeHistoryRequest++
       // The reading of another replay is not kept: only the shown replay's is.
       if (this.selectedNodeHistory?.header.studyId !== history.header.studyId)
@@ -13231,7 +13241,7 @@ export class StudyWorkspace {
     // An agent's open reaches this loader without openRecording; the same study on its way to the Trash is refused here too.
     this.assertStudyNotMoving(studyId)
     this.replayLoadAwaitingReady = true
-    await this.replaceUnavailableReplayDebugger(signal)
+    await this.replayDebuggers.replaceUnavailable(signal)
     signal.throwIfAborted()
     // A recording that loads retires a selected test replay, as choosing a browser study does: the pane then shows the recording's own pages (D20).
     // Only a selected replay is retired, so a load with none selected adds no wait before the recording becomes active.
@@ -13319,91 +13329,6 @@ export class StudyWorkspace {
     await this.ensureReplayViewport(signal)
     signal.throwIfAborted()
     return { index, context, contextHash, contextReason, preferredPositionMs }
-  }
-
-  /**
-   * Replaces a historical debugger the learner stopped or that gave up after a bound.
-   *
-   * Only explicit replay/history opens and explicit Node stop selections call this, so playback never relaunches it silently.
-   * It also waits for a replacement that an earlier request started: {@link PlaybackController} lets an aborted load leave
-   * while the editor is still stopping the old owner.
-   *
-   * @param signal - The waiting request's cancellation; it never cancels the shared disposal.
-   * @throws The signal's reason once it aborts.
-   * @example await this.replaceUnavailableReplayDebugger(signal)
-   */
-  private async replaceUnavailableReplayDebugger(
-    signal?: AbortSignal,
-  ): Promise<void> {
-    const current = this.replayDebugger
-    if (current && !current.available) void this.retireReplayDebugger(current)
-    await this.replayDebuggerRetired(signal)
-  }
-
-  /**
-   * Disposes one historical debugger as part of the shared retirement that {@link replayDebuggerRetired} waits for.
-   *
-   * {@link replaceUnavailableReplayDebugger} and {@link close} call it. The owner leaves its field at once, so no caller
-   * presents through it again; its descriptor factory stays registered until the editor has stopped its session.
-   *
-   * @param owner - The historical debugger to stop; a disposal failure is reported to the reader, never thrown.
-   * @returns The shared retirement, settled once this owner and every earlier one is disposed.
-   * @example void this.retireReplayDebugger(current)
-   */
-  private retireReplayDebugger(owner: ReplayDebugger): Promise<void> {
-    if (this.replayDebugger === owner) this.replayDebugger = undefined
-    const earlier = this.replayDebuggerRetirement
-    const retirement: Promise<void> = (async () => {
-      await earlier
-      try {
-        await owner.dispose()
-        // A later owner stopped cleanly, so an earlier failed disposal no longer describes the debugger.
-        if (this.errors.delete('replay-debugger-disposal')) this.publish()
-      } catch (error) {
-        // Its own key: a later values-loaded or session-ended notification clears only notification failures.
-        this.report('replay-debugger-disposal', error)
-      }
-    })().finally(() => {
-      if (this.replayDebuggerRetirement === retirement)
-        this.replayDebuggerRetirement = undefined
-    })
-    this.replayDebuggerRetirement = retirement
-    return retirement
-  }
-
-  /**
-   * Waits for a historical debugger still being disposed before a moment without a recorded stop presents the debugger, and tells whether the selection is still current: the disposed owner's descriptor factory stays registered until its disposal ends, so an owner made meanwhile would register the same debug type twice (F275). Only a retirement in progress is waited for; an owner the learner stopped is not replaced, so it stays stopped. Called by {@link presentNodeHistoryDebugger}.
-   * @param request - The selection's request token.
-   * @returns `true` when no retirement runs or the selection is still current after it; `false` when a newer selection took over meanwhile.
-   * @example if (!(await this.isCurrentAfterReplayDebuggerRetirement(request))) return false
-   */
-  private async isCurrentAfterReplayDebuggerRetirement(
-    request: number,
-  ): Promise<boolean> {
-    if (!this.replayDebuggerRetirement) return true
-    await this.replayDebuggerRetired()
-    return request === this.selectedNodeHistoryRequest
-  }
-
-  /**
-   * Waits until no replaced historical debugger is still being disposed, before a caller creates the next one.
-   *
-   * The editor accepts one descriptor factory per debug type, so {@link presentPlayback} and {@link selectNodeHistoryEvent}
-   * wait here, then check that they are still current, and only then create the owner synchronously.
-   *
-   * @param signal - The waiting request's cancellation; it never cancels the shared disposal.
-   * @throws The signal's reason once it aborts.
-   * @example
-   * ```ts
-   * await this.replayDebuggerRetired(signal)
-   * signal.throwIfAborted()
-   * this.replayDebugger ??= this.createReplayDebugger()
-   * ```
-   */
-  private async replayDebuggerRetired(signal?: AbortSignal): Promise<void> {
-    const retirement = this.replayDebuggerRetirement
-    if (!retirement) return
-    await (signal ? untilAborted(retirement, signal) : retirement)
   }
 
   /** Whether the replay reader's panes exist, for {@link PlaybackController}'s reload and control guards and for {@link showSavedStudy} before it asks whether the editor area is hidden: open and not closing. @example this.replayReaderOpen */
@@ -13512,7 +13437,10 @@ export class StudyWorkspace {
     for (const record of this.service?.records.values() ?? [])
       record.runtime?.renewPauseHold?.()
     // Retire the previous native Variables tree before publishing another recorded source or frame.
-    await this.replayDebugger?.retire(bundle.projection.debugger, signal)
+    await this.replayDebuggers.current?.retire(
+      bundle.projection.debugger,
+      signal,
+    )
     signal.throwIfAborted()
     this.playbackPending = bundle
     this.playbackPresentingReady = false
@@ -13543,13 +13471,12 @@ export class StudyWorkspace {
       bundle.context?.study.observations.some(
         (observation) => observation.debugger,
       ) ||
-      this.replayDebugger
+      this.replayDebuggers.current
     ) {
       // An owner replaced by an earlier request may still be stopping; this presentation creates the next one only while it is current.
-      await this.replayDebuggerRetired(signal)
+      await this.replayDebuggers.retired(signal)
       signal.throwIfAborted()
-      this.replayDebugger ??= this.createReplayDebugger()
-      inspection = await this.replayDebugger.present(
+      inspection = await this.replayDebuggers.ensure().present(
         bundle.projection.debugger,
         bundle.projection.debugger
           ? `Recorded pause · ${((bundle.projection.observation?.elapsedMs ?? bundle.projection.positionMs) / MILLISECONDS_PER_SECOND).toFixed(2)} s`
@@ -13845,7 +13772,7 @@ export class StudyWorkspace {
     this.selectedNodeHistoryStepId = undefined
     this.selectedNodeHistoryDebugAvailable = false
     this.selectedNodeHistoryValuesUninspected = false
-    this.replayDebugger?.invalidate()
+    this.replayDebuggers.current?.invalidate()
     // The retired replay's reader-position and learning-material rows belong to it and go with it (F178).
     const removedRows = [
       this.errors.delete('history-position'),
@@ -21006,7 +20933,7 @@ export class StudyWorkspace {
       // In Cursor the summary shares its side bar with Run and Debug, which the focus command just put in its place; the learner is told how to keep both.
       if (wasSummaryVisible && !this.summaryView?.visible)
         this.offerSummaryPlacement('summary-displaced')
-      const debuggerView = this.replayDebugger
+      const debuggerView = this.replayDebuggers.current
       // Until Variables asked for this stop's scopes its tree holds no row of it; the bound covers a view that never asks.
       await debuggerView?.awaitRetrieval(
         'scopes',
@@ -26857,7 +26784,7 @@ export class StudyWorkspace {
   /**
    * Creates the shared historical debugger that browser replay and saved Node stops present through.
    * @returns A {@link ReplayDebugger} whose notifications reach {@link replayDebuggerChanged} and whose listener failures reach the reader's errors.
-   * @example this.replayDebugger ??= this.createReplayDebugger()
+   * @example this.replayDebuggers.ensure() // the slot calls it as its factory
    */
   private createReplayDebugger(): ReplayDebugger {
     return new ReplayDebugger(
@@ -26869,7 +26796,7 @@ export class StudyWorkspace {
 
   /**
    * Drops a stale Run and Debug hint when {@link ReplayDebugger} reports loaded values or an ended session; the next presentation re-evaluates it.
-   * An ended session also re-enables Node Inspect, which restarts the debugger through {@link replaceUnavailableReplayDebugger}.
+   * An ended session also re-enables Node Inspect, which restarts the debugger through {@link ReplayDebuggerSlot.replaceUnavailable}.
    * @param reason - Whether native Run and Debug loaded values or the learner ended the owned session.
    * @example this.replayDebuggerChanged('session-ended')
    */
@@ -26920,7 +26847,7 @@ export class StudyWorkspace {
   /**
    * Selects one moment of a test replay on every surface in the browser replay's order (EN8); called by {@link requestNodeHistoryEvent}, which the Study pane's moves, step actions and Inspect, Play, seeks and the replay's open call.
    *
-   * (1) Every surface leaves the earlier moment at once: the replay debugger shows no stop and the recorded-source slot drops the earlier stop's line, label and text ({@link leaveNodeHistoryMoment}); (2) the slot's bytes for this moment are confirmed in its document ({@link showNodeSourceSlot}); (3) the debugger is presented at the slot ({@link presentNodeHistoryDebugger}); (4) the slot's line and label, the Study position and the Application view commit together; the reader position is written after the commit. Every step re-checks that no newer selection took over.
+   * (1) Every surface leaves the earlier moment at once: the replay debugger shows no stop and the recorded-source slot drops the earlier stop's line, label and text ({@link leaveNodeHistoryMoment}); (2) the slot's bytes for this moment are confirmed in its document ({@link showNodeSourceSlot}); (3) the debugger is presented at the slot ({@link presentNodeHistoryMoment}); (4) the slot's line and label, the Study position and the Application view commit together; the reader position is written after the commit. Every step re-checks that no newer selection took over.
    * The selection commits the step it shows with its moment ({@link nextNodeHistoryStepId}): a refused, failed or superseded selection leaves the learner's chosen step as it was.
    * @param history - The selected test replay.
    * @param sequence - The event to select.
@@ -26952,7 +26879,7 @@ export class StudyWorkspace {
         'The selected stop of this test replay has no matching verified captured source for native debugging.',
       )
     // Only an explicit learner selection restarts a debugger the learner stopped; seek and Play report why they stopped.
-    const debuggerStopped = this.replayDebugger?.available === false
+    const debuggerStopped = this.replayDebuggers.current?.available === false
     if (verifiedStop && debuggerStopped && !publish && !keepStoppedDebugger)
       throw new Error(
         'The replay debugger was stopped. Select this stop or use Inspect in native debugger to restart it.',
@@ -26972,7 +26899,7 @@ export class StudyWorkspace {
     if (slot === 'failed') {
       this.nodeHistoryPlaybackController?.pause()
       // A reselect of the moment already shown skipped the leave step, so the debugger and the slot's bytes are taken off the moment here: late bytes of the failed show must not appear undecorated beside the failure row (F170).
-      this.replayDebugger?.invalidate()
+      this.replayDebuggers.current?.invalidate()
       this.resetNodeSourceSlotText()
       this.selectedNodeHistoryDebugAvailable = false
       this.selectedNodeHistoryValuesUninspected = false
@@ -27121,7 +27048,7 @@ export class StudyWorkspace {
     request: number,
     presentDebugger = false,
   ): Promise<NodeMomentReturn> {
-    this.replayDebugger?.invalidate()
+    this.replayDebuggers.current?.invalidate()
     this.selectedNodeHistoryDebugAvailable = false
     this.selectedNodeHistoryValuesUninspected = false
     // The Study position and the Application header go back to the committed moment the slot and the debugger return to.
@@ -27145,7 +27072,7 @@ export class StudyWorkspace {
     // A debugger the learner stopped is restarted only by the learner's own selection.
     if (
       presentDebugger &&
-      this.replayDebugger?.available !== false &&
+      this.replayDebuggers.current?.available !== false &&
       !(await this.presentNodeHistoryDebuggerOrKeepOpen(
         stop,
         slot,
@@ -27212,7 +27139,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Presents a moment in the replay debugger as {@link presentNodeHistoryDebugger} does; when the debugger cannot start and the selection is the open's landing, the open still completes on that moment and the failure goes to the `replay-debugger` row with its restart hint (D13); called by {@link selectNodeHistoryEvent}.
+   * Presents a moment in the replay debugger through {@link presentNodeHistoryMoment}, then commits its two flags once the selection is still current; when the debugger cannot start and the selection is the open's landing, the open still completes on that moment and the failure goes to the `replay-debugger` row with its restart hint (D13); called by {@link selectNodeHistoryEvent}.
    * A declined workspace trust or the capture timeout used to fail the whole open while the pane already showed the replay, and every retry of the open failed the same way. Now the pane stays open and Retry (or Select this stop, or Inspect) presents the debugger again.
    * @param verifiedStop - The stop whose source verifies, or `undefined`.
    * @param slotUri - The slot the stop's frames open.
@@ -27231,20 +27158,31 @@ export class StudyWorkspace {
     isCurrent?: () => boolean,
   ): Promise<boolean> {
     try {
-      const presented = await this.presentNodeHistoryDebugger(
+      const moment = await presentNodeHistoryMoment(this.replayDebuggers, {
         verifiedStop,
-        slotUri,
+        slotUri: slotUri.toString(),
         request,
-        isCurrent,
-      )
+        isRequestCurrent: (token) => token === this.selectedNodeHistoryRequest,
+        serverStopThread: (stop) => this.serverStopThread(stop),
+      })
+      // The final check and both flag writes share one synchronous block: a request superseded, closed or withdrawn while the result travelled back commits nothing.
+      let presented = false
+      if (
+        moment.presented &&
+        !this.isNodeHistoryRequestOutdated(request, isCurrent)
+      ) {
+        this.selectedNodeHistoryDebugAvailable = moment.debugAvailable
+        this.selectedNodeHistoryValuesUninspected = moment.valuesUninspected
+        presented = true
+      }
       // A presentation that worked retires the row of an earlier failure to start.
       if (presented) this.errors.delete('replay-debugger')
       return presented
     } catch (error) {
       if (!keepOpenWithoutDebugger) throw error
       // The owner that failed to start is retired and waited for, so the next presentation (Retry) creates a new one and starts it instead of finding this object, invalidating it and reporting success.
-      if (this.replayDebugger)
-        await this.retireReplayDebugger(this.replayDebugger)
+      const failedDebugger = this.replayDebuggers.current
+      if (failedDebugger) await this.replayDebuggers.retire(failedDebugger)
       // A newer selection (another event, Retry) or a close took over while the owner was disposed: only the current selection reports the failure and commits.
       if (request !== this.selectedNodeHistoryRequest) return false
       this.selectedNodeHistoryDebugAvailable = false
@@ -27267,7 +27205,7 @@ export class StudyWorkspace {
    * @example this.leaveNodeHistoryMoment(4)
    */
   private leaveNodeHistoryMoment(sequence: number): void {
-    this.replayDebugger?.invalidate()
+    this.replayDebuggers.current?.invalidate()
     // The moment shown so far is left on the Study and Application panes, unless the replay shows no moment yet (the open's first selection) or the selection returns to the committed moment, which those panes still show.
     const leavesShownMoment =
       this.selectedNodeHistorySequence !== undefined &&
@@ -27746,7 +27684,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether a selection is outdated: a newer selection took its request token, or its caller no longer wants it (a newer seek abandoned a Play step or a seek that was presenting); called by {@link presentNodeHistoryDebugger}.
+   * Says whether a selection is outdated: a newer selection took its request token, or its caller no longer wants it (a newer seek abandoned a Play step or a seek that was presenting); called by {@link presentNodeHistoryDebuggerOrKeepOpen}.
    * @param request - The selection's request token.
    * @param isCurrent - The caller's answer, absent when the caller never abandons.
    * @returns `true` when the selection must commit nothing.
@@ -27759,93 +27697,6 @@ export class StudyWorkspace {
     return (
       request !== this.selectedNodeHistoryRequest || isCurrent?.() === false
     )
-  }
-
-  /**
-   * Presents a test replay's moment in the replay debugger at the recorded-source slot (EN8 step 3): a verified stop's recorded frames and values on the thread `Recorded test stop <n> · <path>:<line>`, otherwise the thread "Not recorded at this moment" with no frames, which also starts the session when the replay opens on such a moment; called by {@link selectNodeHistoryEvent}.
-   * @param verifiedStop - The stop whose source verifies, or `undefined`.
-   * @param slotUri - The slot the stop's frames open.
-   * @param request - The selection's request token.
-   * @param isCurrent - Whether the caller still wants the selection; a no ends it like a newer selection.
-   * @returns `true` once the debugger shows the moment; `false` when a newer selection took over.
-   * @throws The debugger's failure for the current selection.
-   * @example await this.presentNodeHistoryDebugger(stop, slotUri, request) // => true
-   */
-  private async presentNodeHistoryDebugger(
-    verifiedStop: NodeTestHistoryStop | undefined,
-    slotUri: vscode.Uri,
-    request: number,
-    isCurrent?: () => boolean,
-  ): Promise<boolean> {
-    if (!verifiedStop) {
-      if (!(await this.isCurrentAfterReplayDebuggerRetirement(request)))
-        return false
-      // A debugger that has not started yet starts on the "Not recorded" thread; a running one was emptied by the selection's leave step, also when this moment is the committed one and a newer selection presented its stop meanwhile (4A, F191); one the learner stopped stays stopped.
-      if (!this.replayDebugger)
-        await this.presentReplayDebuggerFor(request, async (debuggerView) => {
-          await debuggerView.present(
-            undefined,
-            NODE_RECORDED_SOURCE_TEXT.notRecordedThread,
-            new AbortController().signal,
-          )
-        })
-      if (this.isNodeHistoryRequestOutdated(request, isCurrent)) return false
-      this.selectedNodeHistoryDebugAvailable = false
-      this.selectedNodeHistoryValuesUninspected = false
-      return true
-    }
-    if (
-      this.replayDebugger?.available === false ||
-      this.replayDebuggerRetirement
-    ) {
-      await this.replaceUnavailableReplayDebugger()
-      // The reader may have closed or selected another stop meanwhile; only the current selection creates the next owner.
-      if (request !== this.selectedNodeHistoryRequest) return false
-    }
-    const inspection = await this.presentReplayDebuggerFor(
-      request,
-      (debuggerView) =>
-        debuggerView.present(
-          verifiedStop.debuggerSnapshot,
-          describeNodeRecordedSource({
-            kind: 'thread',
-            stop: verifiedStop.index + 1,
-            path: verifiedStop.source.path,
-            line: verifiedStop.frame.line,
-            ...this.serverStopThread(verifiedStop),
-          }),
-          new AbortController().signal,
-          { uri: slotUri.toString(), hash: verifiedStop.source.hash },
-          // The stop's recorded inspections, so values outside the captured scopes stay inspectable in the native debugger.
-          verifiedStop.facts,
-        ),
-    )
-    if (this.isNodeHistoryRequestOutdated(request, isCurrent)) return false
-    this.selectedNodeHistoryDebugAvailable = true
-    this.selectedNodeHistoryValuesUninspected = inspection === 'uninspected'
-    return true
-  }
-
-  /**
-   * Runs one presentation of the test replay's debugger, creating the owner when there is none, and lets a newer selection's supersession end it quietly; called by {@link presentNodeHistoryDebugger}.
-   * @param request - The selection's request token.
-   * @param present - The presentation.
-   * @returns The presentation's result; `undefined` when a newer selection superseded it.
-   * @throws The presentation's failure while this selection is still the current one.
-   * @example await this.presentReplayDebuggerFor(request, (debuggerView) => debuggerView.present(undefined, 'Not recorded at this moment', signal))
-   */
-  private async presentReplayDebuggerFor<Result>(
-    request: number,
-    present: (debuggerView: ReplayDebugger) => Promise<Result>,
-  ): Promise<Result | undefined> {
-    this.replayDebugger ??= this.createReplayDebugger()
-    try {
-      return await present(this.replayDebugger)
-    } catch (error) {
-      // A newer learner selection supersedes this moment's native presentation; only the current request reports failures.
-      if (request !== this.selectedNodeHistoryRequest) return undefined
-      throw error
-    }
   }
 
   /**

@@ -4676,12 +4676,12 @@ test('a historical debugger that failed to stop stays reported after native valu
   try {
     await harness.reader.openRecording(harness.studyId)
     await harness.controller.settle()
-    const owner = harness.reader['replayDebugger']
+    const owner = harness.reader['replayDebuggers'].current
     assert.ok(owner)
     owner.dispose = async (): Promise<void> => {
       throw new Error('The historical debugger did not stop.')
     }
-    await harness.reader['retireReplayDebugger'](owner)
+    await harness.reader['replayDebuggers'].retire(owner)
     const afterFailure = harness.reader.inspect().view!.errors
 
     // Act
@@ -4712,14 +4712,14 @@ test('a historical debugger that failed to stop is reported without offering Ret
     await harness.reader.openRecording(harness.studyId)
     await harness.controller.settle()
     readerSeams(harness).dropErrorOfKind('layout')
-    const owner = harness.reader['replayDebugger']
+    const owner = harness.reader['replayDebuggers'].current
     assert.ok(owner)
     owner.dispose = async (): Promise<void> => {
       throw new Error('The historical debugger did not stop.')
     }
 
     // Act
-    await harness.reader['retireReplayDebugger'](owner)
+    await harness.reader['replayDebuggers'].retire(owner)
 
     // Assert: the one line shown is one Retry cannot answer, which is what keeps the pane from offering Retry.
     const posted = harness.postedMessages().at(-1)!
