@@ -1,0 +1,531 @@
+import assert from 'node:assert/strict'
+import { rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import { before, test } from 'node:test'
+
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+
+import { workspaceHarness } from './studyWorkspaceHarness'
+import {
+  POPUP_SOURCE_TEXT,
+  WORKER_SOURCE_TEXT,
+} from './utils/chromeExtensionHistoryFixture'
+import {
+  openExtensionReplay,
+  selectExtensionEvent,
+  shownExtensionMoment,
+  writeExtensionHistoryFor,
+} from './utils/extensionWorkspaceHarness'
+import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
+import { realProcessStart } from './utils/realProcessStart'
+import type { ExtensionScriptStep } from './utils/sealedExtensionHistory'
+import { repositoryOf } from './utils/serverWorkspaceHarness'
+import { shownApplicationView } from './utils/shownTestOutput'
+import { lastView } from './utils/twoStopNodeHistory'
+
+before(async () => {
+  await realProcessStart(process.pid)
+})
+
+/**
+ * A run of one page stop with a pinned frame, a gap with two stream frames of different sizes, then a service-worker stop with no pin: sequences 1 to 11 in script order.
+ * The worker stop opens 1.2 s after the last stream frame was received.
+ */
+const RUN: ExtensionScriptStep[] = [
+  { at: 10, type: 'frame', kind: 'stream', salt: 'a' },
+  { at: 100, type: 'open', pauseId: 'p1', stopIndex: 1, context: 'page' },
+  { at: 101, type: 'capture', pauseId: 'p1', stopIndex: 1, context: 'page' },
+  { at: 110, type: 'frame', kind: 'pin', pauseId: 'p1', salt: 'pin' },
+  { at: 200, type: 'close', pauseId: 'p1' },
+  {
+    at: 300,
+    type: 'frame',
+    kind: 'stream',
+    salt: 'b',
+    width: 400,
+    height: 300,
+  },
+  {
+    at: 350,
+    type: 'frame',
+    kind: 'stream',
+    salt: 'c',
+    width: 800,
+    height: 500,
+  },
+  {
+    at: 1550,
+    type: 'open',
+    pauseId: 'p2',
+    stopIndex: 2,
+    context: 'service-worker',
+  },
+  {
+    at: 1551,
+    type: 'capture',
+    pauseId: 'p2',
+    stopIndex: 2,
+    context: 'service-worker',
+  },
+  { at: 1700, type: 'close', pauseId: 'p2' },
+  { at: 1800, type: 'result' },
+]
+const [OPEN1, CLOSE1, B, C, OPEN2, CLOSE2] = [2, 5, 6, 7, 8, 10]
+
+// protects=Saved studies lists a saved extension run as an Extension replay with its question, the extension's name and version, the surface and the capture state; fails_when=the row reads as a test or server replay, or omits the extension, surface or capture state; no_claim=the webview's drawing of the row
+test('Saved studies lists a sealed extension run as an Extension replay with its extension, surface and capture state', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await writeExtensionHistoryFor(harness, RUN, {
+      question: 'Why does Save fail?',
+    })
+
+    // A run whose editor closed mid-way leaves a journal with no seal.
+    const interrupted = await writeExtensionHistoryFor(
+      harness,
+      RUN.slice(0, 3),
+      {
+        seal: false,
+        question: 'Why did the worker stop?',
+      },
+    )
+
+    // Act
+    await harness.reader.action('retry')
+    const view = harness.reader.inspect().view
+    const interruptedRow = view?.studies.find(
+      (study) => study.id === interrupted.studyId,
+    )
+    const entry = view?.nodeExtensionHistoryCatalog?.find(
+      (summary) => summary.studyId === history.studyId,
+    )
+    const listed = view?.studies.find((study) => study.id === history.studyId)
+
+    // Assert
+    assert.equal(entry?.extensionName, 'Bookmark Notes')
+    assert.equal(entry?.surfaceKind, 'popup')
+    assert.equal(
+      listed?.outcome,
+      'Why does Save fail? · Extension replay · Bookmark Notes 1.2.0 · popup · capture complete',
+    )
+    assert.equal(listed?.profile, 'chrome-extension')
+    assert.equal(
+      interruptedRow?.outcome,
+      'Why did the worker stop? · Extension replay · Bookmark Notes 1.2.0 · popup · capture interrupted',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=opening an Extension replay lands on its first recorded stop with the stop's pinned frame in the Application pane, the executed source in the slot and the thread "Recorded page stop 1"; fails_when=the replay opens on a frame, shows another frame, drops the Application pane or names a test stop; no_claim=the native editor's drawing of the slot
+test('Open replay of an extension run lands on its first page stop with the pinned frame, the recorded source and the page thread', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await writeExtensionHistoryFor(harness, RUN)
+
+    // Act
+    await openExtensionReplay(harness, history.studyId)
+    const shown = shownExtensionMoment(harness)
+    const presented = harness.historicalDebugPresentations.at(-1)
+
+    // Assert
+    assert.equal(lastView(harness)?.nodeReplayProfile, 'chrome-extension')
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, OPEN1)
+    assert.equal(shown.position, 'Page stop 1 · 0.10 s')
+    assert.equal(shown.frameLabel, 'Recorded frame captured at this stop')
+    assert.equal(shown.hasFrameImage, true)
+    assert.equal(shown.lastThread, 'Recorded page stop 1 · popup.js:2')
+    assert.equal(
+      harness.documentTextOf(presented!.sourceDocument!.uri),
+      POPUP_SOURCE_TEXT,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=seeking to the service-worker stop presents it under its own thread with its frame labeled by its distance, and seeking into a no-stop interval shows the "Not recorded at this moment" thread with no frames while the stream frame still advances; fails_when=the worker stop keeps the page thread, a no-stop moment keeps a stop or its line, or the frame stops advancing; no_claim=native frame correspondence
+test('seeking to a service-worker stop and then into a gap shows the worker stop with a labeled frame and then no stop while frames advance', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await writeExtensionHistoryFor(harness, RUN)
+    await openExtensionReplay(harness, history.studyId)
+
+    // Act
+    await selectExtensionEvent(harness, history.studyId, OPEN2)
+    const atWorker = shownExtensionMoment(harness)
+    const workerSource = harness.documentTextOf(
+      harness.historicalDebugPresentations.at(-1)!.sourceDocument!.uri,
+    )
+    await selectExtensionEvent(harness, history.studyId, CLOSE2)
+    const inGap = shownExtensionMoment(harness)
+    await selectExtensionEvent(harness, history.studyId, B)
+    await selectExtensionEvent(harness, history.studyId, C)
+    const laterInGap = shownExtensionMoment(harness)
+
+    // Assert
+    assert.equal(
+      atWorker.lastThread,
+      'Recorded service worker stop 2 · worker.js:2',
+    )
+    assert.equal(
+      atWorker.frameLabel,
+      'Recorded frame from 1.2 s before this stop',
+    )
+    assert.equal(workerSource, WORKER_SOURCE_TEXT)
+    // The gap empties the debugger on the "Not recorded" thread and presents no stop, line or source.
+    assert.equal(inGap.emptiedAs, 'Not recorded at this moment')
+    assert.equal(inGap.emptyings, atWorker.emptyings + 1)
+    assert.equal(inGap.presentations, atWorker.presentations)
+    assert.equal(laterInGap.emptyings, inGap.emptyings)
+    assert.equal(laterInGap.frameLabel, 'Recorded frame')
+    assert.equal(
+      lastView(harness)?.nodeHistorySection?.notRecorded,
+      'Source and debugger not recorded at this moment.',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=moments inside one stop or one no-stop stretch repaint nothing natively (only the Application frame changes), and moving through the same events again in any order shows identical state and starts no new debugger; fails_when=a frame event re-presents the debugger or a repeated interval differs from the first visit; no_claim=that no Chrome is started (the replay holds no launcher; the code path has no Chrome import)
+test('stepping across a gap and back shows identical moments and presents the debugger only when the stop changes', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await writeExtensionHistoryFor(harness, RUN)
+    await openExtensionReplay(harness, history.studyId)
+    await selectExtensionEvent(harness, history.studyId, CLOSE1)
+    const afterClose = shownExtensionMoment(harness)
+
+    // Act
+    await selectExtensionEvent(harness, history.studyId, B)
+    await selectExtensionEvent(harness, history.studyId, C)
+    const insideGap = shownExtensionMoment(harness)
+    await selectExtensionEvent(harness, history.studyId, B)
+    const backInGap = shownExtensionMoment(harness)
+    await selectExtensionEvent(harness, history.studyId, CLOSE1)
+    const againAfterClose = shownExtensionMoment(harness)
+
+    // Assert
+    assert.deepEqual(againAfterClose, afterClose)
+    assert.equal(insideGap.presentations, afterClose.presentations)
+    assert.equal(backInGap.presentations, afterClose.presentations)
+    assert.equal(backInGap.frameLabel, 'Recorded frame')
+    assert.equal(insideGap.hasFrameImage, true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=a stop with neither a pinned frame nor an earlier stream frame shows the labeled no-frame state, and a frame whose blob is damaged shows it for that frame only while the next moment shows its own frame; fails_when=another moment's frame stands in, a damaged blob breaks the replay, or the damage spreads; no_claim=a real disk fault
+test('a stop with no frame and a damaged blob show the no-frame state for those moments only', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await writeExtensionHistoryFor(harness, [
+      { at: 100, type: 'open', pauseId: 'p1', stopIndex: 1, context: 'page' },
+      {
+        at: 110,
+        type: 'capture',
+        pauseId: 'p1',
+        stopIndex: 1,
+        context: 'page',
+      },
+      { at: 200, type: 'close', pauseId: 'p1' },
+      { at: 300, type: 'frame', kind: 'stream', salt: 'broken' },
+      { at: 400, type: 'frame', kind: 'stream', salt: 'fine' },
+    ])
+    await openExtensionReplay(harness, history.studyId)
+    const noFrame = shownExtensionMoment(harness)
+
+    // Act
+    await rm(join(history.directory, 'frames', `${history.hashes.get(3)}.png`))
+    await selectExtensionEvent(harness, history.studyId, 4)
+    const damaged = shownExtensionMoment(harness)
+    const damagedFrame = shownApplicationView(harness)?.frame
+    await selectExtensionEvent(harness, history.studyId, 5)
+    const intact = shownExtensionMoment(harness)
+
+    // Assert
+    assert.equal(noFrame.frameLabel, 'No recorded frame at this moment')
+    assert.equal(noFrame.hasFrameImage, false)
+    assert.equal(damaged.frameLabel, 'No recorded frame at this moment')
+    assert.equal(damagedFrame?.reason, 'EXTENSION_HISTORY_FRAME_DAMAGED')
+    assert.equal(damaged.hasFrameImage, false)
+    assert.equal(intact.frameLabel, 'Recorded frame')
+    assert.equal(intact.hasFrameImage, true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=frames of changing size replay at their recorded size; fails_when=a frame is drawn at the size of another; no_claim=pixels
+test('frames of different sizes are shown at their recorded size', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await writeExtensionHistoryFor(harness, RUN)
+    await openExtensionReplay(harness, history.studyId)
+
+    // Act
+    await selectExtensionEvent(harness, history.studyId, B)
+    const small = shownApplicationView(harness)?.frame
+    await selectExtensionEvent(harness, history.studyId, C)
+    const large = shownApplicationView(harness)?.frame
+
+    // Assert
+    assert.deepEqual([small?.width, small?.height], [400, 300])
+    assert.deepEqual([large?.width, large?.height], [800, 500])
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=a pause opened inside another shows its own stop thread from its open to its close and the outer stop returns after it; fails_when=the inner stop never replaces the outer thread or the outer thread does not return; no_claim=the live run's pause set
+test('a pause opened inside another shows the inner stop and then the outer stop again', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await writeExtensionHistoryFor(harness, [
+      { at: 10, type: 'open', pauseId: 'outer', stopIndex: 1, context: 'page' },
+      {
+        at: 11,
+        type: 'capture',
+        pauseId: 'outer',
+        stopIndex: 1,
+        context: 'page',
+      },
+      {
+        at: 20,
+        type: 'open',
+        pauseId: 'inner',
+        stopIndex: 2,
+        context: 'service-worker',
+      },
+      {
+        at: 21,
+        type: 'capture',
+        pauseId: 'inner',
+        stopIndex: 2,
+        context: 'service-worker',
+      },
+      { at: 30, type: 'close', pauseId: 'inner' },
+      { at: 40, type: 'close', pauseId: 'outer' },
+    ])
+    await openExtensionReplay(harness, history.studyId)
+
+    // Act
+    await selectExtensionEvent(harness, history.studyId, 3)
+    const inner = harness.historicalDebugPresentations.at(-1)?.label
+    await selectExtensionEvent(harness, history.studyId, 5)
+    const outerAgain = harness.historicalDebugPresentations.at(-1)?.label
+    await selectExtensionEvent(harness, history.studyId, 6)
+    const none = shownExtensionMoment(harness)
+
+    // Assert
+    assert.equal(inner, 'Recorded service worker stop 2 · worker.js:2')
+    assert.equal(outerAgain, 'Recorded page stop 1 · popup.js:2')
+    assert.equal(none.emptiedAs, 'Not recorded at this moment')
+    assert.equal(none.lastThread, 'Recorded page stop 1 · popup.js:2')
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=a stop whose captured source cannot be proven is presented under its thread labeled by what is missing and never as a moment without a stop; fails_when=a partial stop reads "Not recorded at this moment" or hides which part is missing; no_claim=the debugger's drawing
+test('a stop whose source is not recorded is labeled by what is missing and is not a moment without a stop', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await writeExtensionHistoryFor(harness, [
+      { at: 10, type: 'open', pauseId: 'p1', stopIndex: 1, context: 'page' },
+      {
+        at: 11,
+        type: 'capture',
+        pauseId: 'p1',
+        stopIndex: 1,
+        context: 'page',
+        staleSource: true,
+      },
+      {
+        at: 20,
+        type: 'open',
+        pauseId: 'p2',
+        stopIndex: 2,
+        context: 'service-worker',
+      },
+    ])
+
+    // Act
+    await openExtensionReplay(harness, history.studyId)
+    const sourceMissing = harness.historicalDebugPresentations.at(-1)
+    await selectExtensionEvent(harness, history.studyId, 3)
+    const nothingCaptured = harness.historicalDebugPresentations.at(-1)
+
+    // Assert
+    assert.equal(
+      sourceMissing?.label,
+      'Recorded page stop 1 · popup.js:2 · source not recorded',
+    )
+    assert.equal(sourceMissing?.sourceDocument, undefined)
+    assert.equal(sourceMissing?.snapshot !== undefined, true)
+    assert.equal(
+      nothingCaptured?.label,
+      'Recorded service worker stop 2 · worker.js:2 · source and values not recorded',
+    )
+    assert.equal(nothingCaptured?.snapshot, undefined)
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=the playhead is saved as a journal sequence, so a frame inside a no-stop interval reopens exactly there with no stop and its own frame, and a first open without a saved position lands on the first stop; fails_when=a restart lands on the first stop or on another frame of the gap; no_claim=an editor restart (the saved position is written and the replay opened again)
+test('a replay reopens at the saved frame inside a no-stop interval', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await writeExtensionHistoryFor(harness, RUN)
+    await repositoryOf(harness).extensionHistories.saveReaderPosition(
+      history.studyId,
+      B,
+    )
+
+    // Act
+    await openExtensionReplay(harness, history.studyId)
+    const reopened = shownExtensionMoment(harness)
+
+    // Assert
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, B)
+    assert.equal(reopened.lastThread, 'Not recorded at this moment')
+    assert.equal(reopened.position, 'Frame · 0.30 s')
+    assert.equal(reopened.frameLabel, 'Recorded frame')
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=selecting a moment writes its journal sequence as the reader position; fails_when=the position stays on the opening stop; no_claim=the file's format
+test('moving the playhead saves its journal sequence for the next open', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await writeExtensionHistoryFor(harness, RUN)
+    await openExtensionReplay(harness, history.studyId)
+
+    // Act
+    await selectExtensionEvent(harness, history.studyId, C)
+
+    // Assert
+    await waitUntil(
+      async () =>
+        (await repositoryOf(harness).extensionHistories.readReaderPosition(
+          history.studyId,
+        )) === C,
+      'the position is saved',
+      READER_RESULT_BOUND_MS,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=rapid selections whose frame loads finish out of order commit only the last selected moment; fails_when=a slow earlier frame overwrites the later moment's frame; no_claim=real disk timing (the first load is held)
+test('a slow frame load of an earlier selection never replaces the later moment', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await writeExtensionHistoryFor(harness, RUN)
+    await openExtensionReplay(harness, history.studyId)
+    const cache = harness.reader['extensionFrames']!
+    const load = cache.load.bind(cache)
+    let releaseFirst = (): void => {}
+    const held = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    let heldOne = false
+    context.mock.method(
+      cache,
+      'load',
+      async (frame: Parameters<typeof load>[0]) => {
+        // The frame of the first selection below (stream b) is held until the second selection has committed.
+        if (!heldOne && frame.hash === history.hashes.get(5)) {
+          heldOne = true
+          await held
+        }
+        return load(frame)
+      },
+    )
+
+    // Act
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      sequence: B,
+    })
+    await selectExtensionEvent(harness, history.studyId, C)
+    releaseFirst()
+    await waitUntil(
+      () => heldOne,
+      'the held load was reached',
+      READER_RESULT_BOUND_MS,
+    )
+    const finalMoment = shownExtensionMoment(harness)
+    const finalFrame = shownApplicationView(harness)?.frame
+
+    // Assert
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, C)
+    assert.equal(finalMoment.position, 'Frame · 0.35 s')
+    assert.deepEqual([finalFrame?.width, finalFrame?.height], [800, 500])
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// protects=Previous event and Next stop move by the timeline, so a frame received before a pause but appended after it is visited before the stop; fails_when=stepping follows journal sequence and visits the frame after the stop; no_claim=Play pacing
+test('Next event follows the timeline order when a frame was appended after the pause it was received before', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await writeExtensionHistoryFor(harness, [
+      { at: 10, type: 'frame', kind: 'stream', salt: 'first' },
+      { at: 100, type: 'open', pauseId: 'p1', stopIndex: 1, context: 'page' },
+      {
+        at: 105,
+        type: 'frame',
+        kind: 'stream',
+        salt: 'late',
+        capturedAtMs: 60,
+      },
+      { at: 200, type: 'close', pauseId: 'p1' },
+    ])
+    await openExtensionReplay(harness, history.studyId)
+    await selectExtensionEvent(harness, history.studyId, 1)
+
+    // Act
+    harness.receiveContext({
+      type: 'node-history-step',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      direction: 'next',
+      unit: 'event',
+    })
+    await waitUntil(
+      () => lastView(harness)?.nodeHistoryPosition?.sequence === 3,
+      'the late frame is next',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 3)
+    assert.equal(lastView(harness)?.nodeHistorySection?.nextStop, true)
+  } finally {
+    await harness.close()
+  }
+})

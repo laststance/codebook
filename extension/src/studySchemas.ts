@@ -42,7 +42,8 @@ export const learnerDecisionSchema = z.strictObject({
 export interface StudyCatalogEntry {
   id: string
   savedAt: string
-  profile?: 'repository-browser' | 'node-test' | 'node-server'
+  profile?:
+    'repository-browser' | 'node-test' | 'node-server' | 'chrome-extension'
   /**
    * `newer` marks a study a newer Codebook saved in a format this one cannot read: it is listed and counted, never opened, repaired or deleted here, and its `reason` is the sentence that says so.
    * `archive-missing` marks what is left of a study whose archive is gone (a catalog sidecar, a recording), as after its files were removed by hand in part: it is listed so that the rest can be removed, never opened or repaired, and it has no `reason`.

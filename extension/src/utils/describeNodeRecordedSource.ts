@@ -15,6 +15,9 @@ export const NODE_RECORDED_SOURCE_TEXT = {
   /** The placeholder of a server replay's slot: the same as the test replay's, naming the server journal. */
   serverPlaceholder:
     '// Recorded source · Not recorded at this moment\n// The server journal holds no source state for this moment.\n',
+  /** The placeholder of an Extension replay's slot: the same, naming the extension journal. */
+  extensionPlaceholder:
+    '// Recorded source · Not recorded at this moment\n// The extension journal holds no source state for this moment.\n',
   loading: '// Loading recorded source…\n',
   notRecordedThread: 'Not recorded at this moment',
 } as const

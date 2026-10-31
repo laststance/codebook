@@ -2294,6 +2294,14 @@ export const EXTENSION_HISTORY_REASON_CODES = {
   formatNewer: 'EXTENSION_HISTORY_FORMAT_NEWER',
   frameDamaged: 'EXTENSION_HISTORY_FRAME_DAMAGED',
 } as const
+/** The most decoded frames an Extension replay keeps in memory; a frame is loaded lazily by its hash and the least recently shown one leaves first. */
+export const EXTENSION_REPLAY_FRAME_CACHE_SIZE = 8
+/** Why an Extension replay cannot be removed from Saved studies in this version, as a window with a Trash and one without word it (the removal operation of the extension profile is a later part of the cycle). */
+export const STUDY_REMOVAL_EXTENSION_HISTORY_REFUSAL = {
+  withTrash: 'Extension replays cannot be deleted here yet.',
+  withoutTrash:
+    'Codebook cannot list the files of an Extension replay for removal by hand yet.',
+} as const
 /** What a listing says of a chrome-extension history one of whose entries names a context this build does not know. */
 export const EXTENSION_HISTORY_FORMAT_NEWER_TEXT =
   'Recorded by a newer Codebook; update Codebook to open it.'

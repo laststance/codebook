@@ -116,8 +116,8 @@ export class NodeHistoryRepository {
    * @example (await repository.list()).map((summary) => summary.profile) // => ['node-server', 'node-test']
    */
   async list(): Promise<NodeHistorySummary[]> {
-    const { tests, servers } = await this.listByProfile()
-    return [...tests, ...servers].sort((left, right) =>
+    const { tests, servers, extensions } = await this.listByProfile()
+    return [...tests, ...servers, ...extensions].sort((left, right) =>
       right.createdAt === left.createdAt
         ? left.studyId.localeCompare(right.studyId)
         : right.createdAt.localeCompare(left.createdAt),

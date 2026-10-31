@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
+import type { ExtensionHistorySummary } from '../chromeExtensionHistoryTypes'
 import type { NodeServerHistorySummary } from '../nodeServerHistoryTypes'
 import type {
   NodeTestHistoryIndex,
@@ -117,11 +118,15 @@ export interface StudyViewMessage {
   nodeHistoryCatalog?: NodeTestHistorySummary[]
   /** The saved server replays, beside {@link nodeHistoryCatalog}. */
   nodeServerHistoryCatalog?: NodeServerHistorySummary[]
+  /** The saved Extension replays, beside {@link nodeHistoryCatalog}. */
+  nodeExtensionHistoryCatalog?: ExtensionHistorySummary[]
   nodeHistory?: NodeTestHistoryIndex
-  /** `node-server` while a server replay is shown, which switches the pane's fixed words to the server catalog; absent for a test replay. */
-  nodeReplayProfile?: 'node-server'
+  /** `node-server` or `chrome-extension` while a server or an Extension replay is shown, which switches the pane's fixed words to that catalog; absent for a test replay. */
+  nodeReplayProfile?: 'node-server' | 'chrome-extension'
   /** The words of each event of the page `nodeHistory` holds, for a server replay: its heading and body, by journal sequence. */
   nodeServerEvents?: { sequence: number; heading: string; body: string }[]
+  /** The same for an Extension replay. */
+  nodeExtensionEvents?: { sequence: number; heading: string; body: string }[]
   nodeHistoryPage?: number
   nodeHistoryPageCount?: number
   nodeHistoryEventCount?: number
@@ -1379,8 +1384,16 @@ function studyClient(
     const refusals: [applies: boolean, sentence: string][] = [
       [
         chosen.format === 'node-test-history' &&
-          chosen.profile !== 'node-server',
+          chosen.profile !== 'node-server' &&
+          chosen.profile !== 'chrome-extension',
         sentences.nodeHistory,
+      ],
+      [
+        chosen.format === 'node-test-history' &&
+          chosen.profile === 'chrome-extension',
+        message.removalWithoutTrash
+          ? options.extensionHistoryRefusal.withoutTrash
+          : options.extensionHistoryRefusal.withTrash,
       ],
       [
         chosen.format === 'node-test-history' &&
@@ -2524,9 +2537,11 @@ function studyClient(
       !message.nodeHistoryCatalog?.length &&
       Boolean(message.nodeServerHistoryCatalog?.length)
     replayWords =
-      message.nodeReplayProfile === 'node-server' || onlyServerReplays
-        ? options.serverReplay
-        : options.testReplay
+      message.nodeReplayProfile === 'chrome-extension'
+        ? options.extensionReplay
+        : message.nodeReplayProfile === 'node-server' || onlyServerReplays
+          ? options.serverReplay
+          : options.testReplay
     text('node-history-heading', replayWords.heading)
     element('node-learning-sequence').setAttribute(
       'aria-label',
@@ -2578,6 +2593,16 @@ function studyClient(
       (entry) => entry.studyId === studyId,
     )
     if (serverSummary) return serverSummary.title ?? serverSummary.question
+    // An Extension replay's header names its question, extension, surface and capture state.
+    const extensionSummary = message.nodeExtensionHistoryCatalog?.find(
+      (entry) => entry.studyId === studyId,
+    )
+    if (extensionSummary)
+      return `${extensionSummary.question} · ${extensionSummary.extensionName} ${extensionSummary.extensionVersion} · ${extensionSummary.surfaceKind} · ${
+        extensionSummary.status === 'recording'
+          ? 'recording'
+          : `capture ${extensionSummary.status}`
+      }`
     const summary = message.nodeHistoryCatalog?.find(
       (entry) => entry.studyId === studyId,
     )
@@ -2630,7 +2655,8 @@ function studyClient(
     const idle = suppressed
       ? ''
       : message.nodeHistoryCatalog?.length ||
-          message.nodeServerHistoryCatalog?.length
+          message.nodeServerHistoryCatalog?.length ||
+          message.nodeExtensionHistoryCatalog?.length
         ? replayWords.chooseReplay
         : replayWords.noReplay
     renderTestReplayLines(section, idle)
@@ -2932,7 +2958,9 @@ function studyClient(
     playheadInput.title =
       current?.nodeReplayProfile === 'node-server'
         ? options.serverReplayTimelineTitle
-        : options.testReplayTimelineTitle
+        : current?.nodeReplayProfile === 'chrome-extension'
+          ? options.extensionReplayTimelineTitle
+          : options.testReplayTimelineTitle
     playheadInput.setAttribute(
       'aria-keyshortcuts',
       options.testReplayTimelineKeys,
@@ -3351,6 +3379,7 @@ function studyClient(
     return [
       message.nodeHistory?.entries ?? [],
       message.nodeServerEvents ?? [],
+      message.nodeExtensionEvents ?? [],
       replaying,
       position.sequence,
       Boolean(position.pending),
@@ -3401,7 +3430,7 @@ function studyClient(
     row.className = 'node-history-event'
     // A server replay's host words each of its events; a test replay's are worded here.
     const words =
-      message.nodeServerEvents?.find(
+      (message.nodeServerEvents ?? message.nodeExtensionEvents)?.find(
         (event) => event.sequence === entry.sequence,
       ) ?? testReplayEventWords(entry, section)
     heading.textContent = words.heading

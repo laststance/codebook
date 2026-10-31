@@ -13,9 +13,11 @@ import {
   PRESENTATION_FOCUS_ACTIONS,
   STUDY_REMOVAL_REFUSALS,
   STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH,
+  STUDY_REMOVAL_EXTENSION_HISTORY_REFUSAL,
   STUDY_REMOVAL_SERVER_HISTORY_REFUSAL,
   STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE,
 } from '../constants'
+import { NODE_EXTENSION_REPLAY_TEXT } from '../utils/describeExtensionReplay'
 import { NODE_SERVER_REPLAY_TEXT } from '../utils/describeNodeServerReplay'
 import { NODE_TEST_REPLAY_TEXT } from '../utils/describeNodeTestReplay'
 import type { ShortcutHelpEntry } from '../utils/installShortcutHelp'
@@ -163,6 +165,8 @@ export const STUDY_UI_OPTIONS = {
   testReplay: NODE_TEST_REPLAY_TEXT,
   /** A server replay's fixed words, with the same keys; the pane switches to them while a server replay is shown. */
   serverReplay: NODE_SERVER_REPLAY_TEXT,
+  /** An Extension replay's fixed words, with the same keys; the pane switches to them while an Extension replay is shown. */
+  extensionReplay: NODE_EXTENSION_REPLAY_TEXT,
   /** The words of both transports' coverage strips. */
   coverage: TIMELINE_COVERAGE_TEXT,
   sequence: STUDY_SEQUENCE_LAYOUT,
@@ -222,6 +226,13 @@ export const STUDY_UI_OPTIONS = {
   serverReplayTimelineTitle: SERVER_REPLAY_TIMELINE_SHORTCUTS.map(
     (entry) => `${entry.action} — ${entry.keys} (${entry.context})`,
   ).join('; '),
+  // The same tooltip while the slider shows an Extension replay: its own name for the context.
+  extensionReplayTimelineTitle: TEST_REPLAY_TIMELINE_SHORTCUTS.map(
+    (entry) =>
+      `${entry.action} — ${entry.keys} (Focused Extension replay timeline)`,
+  ).join('; '),
+  // Why an Extension replay cannot be deleted yet, in the words of a window with a Trash and of one without.
+  extensionHistoryRefusal: STUDY_REMOVAL_EXTENSION_HISTORY_REFUSAL,
   // The shared slider's keyboard shortcuts while it shows a test replay, for its `aria-keyshortcuts`.
   testReplayTimelineKeys:
     'ArrowLeft ArrowRight ArrowUp ArrowDown PageUp PageDown Home End',

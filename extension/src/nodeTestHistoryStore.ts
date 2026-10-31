@@ -1286,6 +1286,17 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
     return events
   }
 
+  /**
+   * Gives the folder of a history, for a profile whose replay reads files beside the journal (an Extension replay's frame blobs).
+   * @param studyId - The history's study id.
+   * @returns The folder's path.
+   * @throws When the id is no history identity.
+   * @example store.historyDirectory(studyId) // => '<learning>/chrome-extensions.v1/<studyId>'
+   */
+  historyDirectory(studyId: string): string {
+    return this.path(studyId)
+  }
+
   private path(studyId: string): string {
     if (!isNodeHistoryIdentity(studyId))
       throw new Error('Invalid Node history identity.')
