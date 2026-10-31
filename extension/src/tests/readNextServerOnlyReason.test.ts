@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
-import { createNextPagesDiscoveryCache } from '../utils/createNextPagesDiscoveryCache'
+import { REPOSITORY_DISCOVERY_LIMIT_BYTES } from '../constants'
+import {
+  createNextPagesDiscoveryCache,
+  type NextPagesChunkModules,
+} from '../utils/createNextPagesDiscoveryCache'
+import { DiscoveryBudgetError } from '../utils/discoveryBudgetError'
 import { readNextServerOnlyReason } from '../utils/readNextServerOnlyReason'
 import { readPagesDevelopmentBundle } from '../utils/readPagesDevelopmentBundle'
 
@@ -247,4 +252,59 @@ test('an aborted run still rejects while the server compile is read', async (con
   })
   // Assert
   await assert.rejects(outcome, { name: 'AbortError' })
+})
+
+/** A run's chunk map whose lookup fails with an unrelated error that only carries the discovery budget's words, as a failure of any other read could. */
+class BudgetWordedChunkLookup extends Map<string, NextPagesChunkModules> {
+  override get(): NextPagesChunkModules | undefined {
+    throw new Error('Build discovery resource limit exceeded')
+  }
+}
+
+// Value: protects=only the run's own discovery budget ends the run from a server compile read, told by its type; fails_when=an unrelated error whose message reads like the budget is taken as budget exhaustion and ends the run; why_new=Cycle 0066 task 1 (typed discovery-budget marker); seam=a chunk map whose lookup throws; no_claim=which reads can throw that message in practice
+test('an unrelated server compile failure that carries the budget’s words establishes nothing instead of ending the run', async (context) => {
+  // Arrange
+  const { build, clientBundle } = await sealedPageWithServerCompile(context, 5)
+  const cache = {
+    readBytes: 0,
+    spentMs: 0,
+    chunks: new BudgetWordedChunkLookup(),
+  }
+  // Act
+  const reason = await readNextServerOnlyReason({
+    workspace: build.workspace,
+    path: 'src/pages/index.tsx',
+    line: 5,
+    folder: 'src/pages',
+    compiledPath: 'pages/index.js',
+    clientBundle,
+    cache,
+  })
+  // Assert
+  assert.deepEqual(reason, { kind: 'unknown' })
+})
+
+// Value: protects=a server compile larger than what the run's discovery budget has left still ends the run as budget exhaustion; fails_when=the budget refusal of the shared discovery step is not the typed marker and is swallowed as an unreadable compile; why_new=Cycle 0066 task 1 (typed discovery-budget marker); seam=the run's cache with all but 64 bytes spent; no_claim=the time budget
+test('a server compile larger than the run’s remaining discovery bytes ends the run with the budget refusal', async (context) => {
+  // Arrange
+  const { build, clientBundle } = await sealedPageWithServerCompile(context, 5)
+  const cache = createNextPagesDiscoveryCache()
+  // As if the run's earlier stops had read all but 64 bytes of the budget.
+  cache.readBytes = REPOSITORY_DISCOVERY_LIMIT_BYTES - 64
+  // Act
+  const outcome = readNextServerOnlyReason({
+    workspace: build.workspace,
+    path: 'src/pages/index.tsx',
+    line: 5,
+    folder: 'src/pages',
+    compiledPath: 'pages/index.js',
+    clientBundle,
+    cache,
+  })
+  // Assert
+  await assert.rejects(outcome, (error) => {
+    assert.ok(error instanceof DiscoveryBudgetError)
+    assert.equal(error.message, 'Build discovery resource limit exceeded')
+    return true
+  })
 })

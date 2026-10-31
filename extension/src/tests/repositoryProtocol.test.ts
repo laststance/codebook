@@ -855,6 +855,25 @@ test('the server reports API 1.12 and its instructions say that since API 1.7 co
   }
 })
 
+// Value: protects=an agent connecting to API 1.12 learning from the server's instructions that next-dev-webpack serves Pages Router pages as well as App Router pages, so it configures a Pages page instead of refusing one; fails_when=the API 1.12 clause of the repository-browser profile leaves the instructions or loses its version; why_new=Cycle 0066 task 30 (the instructions were pinned only by their version prefix); seam=none; no_claim=what a Pages run does (nextPagesRun tests)
+test('the server instructions say that since API 1.12 next-dev-webpack serves Pages Router pages as well as App Router pages', async () => {
+  // Arrange
+  const harness = await repositoryProtocolHarness()
+  try {
+    // Act
+    const instructions = harness.client.getInstructions() ?? ''
+    // Assert
+    assert.equal(
+      instructions.includes(
+        'repository-browser (since API 1.11 its adapters are next-dev-webpack and vite-dev: configure the one that codebook_status reports ready under profiles[].prerequisites.adapters; since API 1.12 next-dev-webpack serves Pages Router pages as well as App Router pages) uses codebook://help/repository-browser;',
+      ),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 /**
  * Takes the client example out of the packaged README, so the test below runs the code a reader copies and the README cannot drift from what is tested.
  * A checkout whose Git settings give text files CRLF line ends (the default on Windows) holds the same README with other line ends, so the example is found under either and returned with line feeds.

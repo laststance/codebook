@@ -136,13 +136,14 @@ async function readNextReadiness(
 ): Promise<NextAdapterReadiness> {
   const { installed, ...installation } = await readNextInstallation(workspace)
   if (!installed) return installation
-  const [routerKind, preparation] = await Promise.all([
+  const [routerKind, reading] = await Promise.all([
     readNextRouterKind(workspace),
     readNextDevPreparation(workspace),
   ])
+  const { preparation } = reading
   const notes = [
     ...(routerKind === 'none' ? [NEXT_ROUTE_FOLDER_NOT_FOUND_NOTE] : []),
-    ...describeNextDevPreparation(preparation),
+    ...describeNextDevPreparation(reading),
   ]
   // A plain `next dev` with no environment setting leaves nothing out, so it is not reported.
   const reportsPreparation =

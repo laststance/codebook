@@ -126,6 +126,7 @@ import {
 } from './utils/completeBindingPlace'
 import { configuredConditionHint } from './utils/configuredConditionHint'
 import { configuredDomExpression } from './utils/configuredDomExpression'
+import { configuredScrollExpression } from './utils/configuredScrollExpression'
 import { configuredStopFields } from './utils/configuredStopFields'
 import { configuredStops } from './utils/configuredStops'
 import { continuationReceipts } from './utils/continuationReceipts'
@@ -478,6 +479,8 @@ type Continuation = {
   cdp: boolean
   afterStarted: boolean
 }
+// The click step's scroll answers only whether it scrolled; any other answer reads as no scroll.
+const scrollResultSchema = z.object({ scrolled: z.boolean() })
 const domResultSchema = z.object({
   ready: z.boolean(),
   x: z.number().finite().optional(),
@@ -950,8 +953,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     ownedOrigin: string,
     generation?: number,
   ): Promise<PreparedStop> {
-    // A Pages `_document` or API route never runs in the browser, so it is refused before any chunk is read.
-    if (this.pagesRun) this.refuseServerOnlyPagesFile(stop, this.pagesRun)
+    // A Pages run observes only the page's client code: a server stop, a `_document` or an API route never runs there, so it is refused before its own chunks are read.
+    if (this.pagesRun) this.refuseServerOnlyPagesStop(stop, this.pagesRun)
     const acquired = await adapter.readBundle({
       workspace: this.options.workspace,
       source: stop.source,
@@ -1349,9 +1352,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     })
     this.alive()
     if (manifests.kind === 'app') {
+      // The route is known once the manifests resolved it, so it is recorded before the App verdict: a setup deadline during that verdict keeps an App run's uncoded text ({@link setupDeadlineText}).
+      this.nextRoute = { router: 'app', route: manifests.route.key }
       // An App route keeps today's readiness verdict, judged on the answer already read.
       await this.app!.confirmAppEntry(this.abort.signal, entryPath, entry)
-      this.nextRoute = { router: 'app', route: manifests.route.key }
       return origin
     }
     const nextVersion = (await readNextInstallation(workspace)).version
@@ -1419,27 +1423,30 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Refuses a declared browser stop of a Pages run in a file Next never runs in the browser (`_document`, an API route), before any chunk is read.
-   * Called by {@link sealDeclaredStop} for each stop of a Pages run; a server stop is left to the seal.
+   * Refuses a declared stop of a Pages run that cannot pause in the page's client code, before its own chunks are read and before the browser opens: a server stop, since a Pages run observes only the page's client code in the browser, or a browser stop in a file Next never runs in the browser (`_document`, an API route).
+   * Called by {@link sealDeclaredStop} for each stop of a Pages run.
    * @param stop - The declared stop.
    * @param pagesRun - The resolved Pages route, whose folder the file rule reads.
-   * @throws `NEXT_SERVER_ONLY_STOP` naming the reason.
+   * @throws `NEXT_SERVER_ONLY_STOP` naming the server stop, or the file's reason.
    * @example
-   * this.refuseServerOnlyPagesFile(stop, this.pagesRun) // throws for src/pages/api/hello.ts
+   * this.refuseServerOnlyPagesStop(stop, this.pagesRun) // throws for src/pages/api/hello.ts, and for any stop with participant "server"
    */
-  private refuseServerOnlyPagesFile(
+  private refuseServerOnlyPagesStop(
     stop: ReturnType<typeof configuredStops>[number],
     pagesRun: NextPagesEntry,
   ): void {
-    if (stop.participant !== 'browser') return
+    const place = `${stop.source.path}:${stop.source.line}`
+    // A Pages run debugs the browser only, so a server stop is refused wherever its file is.
+    if (stop.participant !== 'browser')
+      throw nextRefusal(
+        'NEXT_SERVER_ONLY_STOP',
+        `Declared stop ${place} is a server stop (participant "server"), but a Pages Router run observes only the page's client code in the browser; Codebook does not pause the Next server in a Pages run. Move the stop to the client code of the page that serves the same question, with participant "browser".`,
+      )
     const reason = nextServerOnlyFileReason(stop.source.path, pagesRun.folder)
     if (reason)
       throw nextRefusal(
         'NEXT_SERVER_ONLY_STOP',
-        nextServerOnlyStopMessage(
-          `${stop.source.path}:${stop.source.line}`,
-          reason,
-        ),
+        nextServerOnlyStopMessage(place, reason),
       )
   }
 
@@ -1456,14 +1463,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     compiledPath: string
     cache: NextPagesDiscoveryCache
   }): Promise<void> {
-    // Every browser stop is checked, not only one no later line can bind: a server-only line (getServerSideProps above the component) is never moved to the client code after it.
+    // Every stop is checked, not only one no later line can bind: a server-only line (getServerSideProps above the component) is never moved to the client code after it. Each is a browser stop, as the seal refused every server stop of a Pages run ({@link refuseServerOnlyPagesStop}).
     for (const stop of this.stops) {
       // A blank, comment or type-only line holds no code to run on either side, so it binds to the next mapped line without a server read.
-      if (
-        stop.participant !== 'browser' ||
-        isBlankOrCommentLine(stop.bundle.source, stop.source.line)
-      )
-        continue
+      if (isBlankOrCommentLine(stop.bundle.source, stop.source.line)) continue
       const established = await readNextServerOnlyReason({
         workspace: this.options.workspace,
         path: stop.source.path,
@@ -1482,7 +1485,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         )
     }
     const unmapped = this.unbindableStop()
-    if (!unmapped || unmapped.participant !== 'browser') return
+    if (!unmapped) return
     throw nextRefusal(
       'NEXT_STOP_NOT_SEALED',
       `Codebook could not verify a browser source mapping for ${this.declaredAt(unmapped)}. This does not establish that the code is server-only.`,
@@ -5021,7 +5024,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Reads the page right before the input, for {@link dispatchInput}: the before conditions with the click target, then the after conditions, which must not hold yet.
+   * Reads the page right before the input, for {@link dispatchInput}: it scrolls a click target outside the viewport into view once ({@link scrollClickTargetIntoView}), then reads the before conditions with the click target, then the after conditions, which must not hold yet.
    * @returns The center of the unique enabled click target, in viewport coordinates.
    * @throws When the before conditions do not hold or name no point ({@link clickPoint}), and when the after conditions already hold: a result that is true before the click cannot prove this operation caused it.
    * @example
@@ -5030,9 +5033,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * ```
    */
   private async clickPointBeforeInput(): Promise<{ x: number; y: number }> {
+    const scrolled = await this.scrollClickTargetIntoView()
     const target = await this.readDom('before')
     this.alive()
-    const point = this.clickPoint(target)
+    const point = this.clickPoint(target, scrolled)
     // A result predicate already true before the click cannot prove this operation caused the result.
     const priorResult = await this.readDom('after')
     this.alive()
@@ -5067,19 +5071,54 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /**
    * Takes the point of the one mouse sequence from what the page answered for the before conditions, for {@link dispatchInput} right after that read.
    * @param target - The answer of the page for the `before` phase.
+   * @param scrolled - Whether the click step's scroll right before that read scrolled the page ({@link scrollClickTargetIntoView}).
    * @returns The center of the unique enabled click target, in viewport coordinates.
-   * @throws When the before conditions no longer hold or the page named no point.
+   * @throws When the before conditions no longer hold or the page named no point: a target outside the viewport after a real scroll stayed there, and one that left the viewport without a scroll changed before input.
    * @example
    * ```ts
-   * this.clickPoint({ ready: true, x: 120, y: 48 }) // { x: 120, y: 48 }
+   * this.clickPoint({ ready: true, x: 120, y: 48 }, false) // { x: 120, y: 48 }
+   * this.clickPoint({ ready: true }, true)                // throws 'Click target stayed outside the viewport after Codebook scrolled it into view'
    * ```
    */
   private clickPoint(
     target: Awaited<ReturnType<ConfiguredBrowserRun['readDom']>>,
+    scrolled: boolean,
   ): { x: number; y: number } {
-    if (!target.ready || target.x === undefined || target.y === undefined)
+    if (!target.ready)
       throw new Error('Click target or before conditions changed before input')
+    // A target that holds without a point lies outside the viewport, so no point can be hit-tested: after a real scroll it stayed there; without one, it moved out after the scroll found it inside.
+    if (target.x === undefined || target.y === undefined)
+      throw new Error(
+        scrolled
+          ? 'Click target stayed outside the viewport after Codebook scrolled it into view'
+          : 'Click target or before conditions changed before input',
+      )
     return { x: target.x, y: target.y }
+  }
+
+  /**
+   * Scrolls the click target to the middle of the viewport when its centre lies outside it ({@link configuredScrollExpression}), after the page's origin is verified.
+   * Called by {@link clickPointBeforeInput} once per read of the click point, right before that read, so the condition reads ({@link readDom}) stay reads. Only whether the page scrolled is read here, so {@link clickPoint} names a target outside the viewport truthfully; the read that follows names a missing, hidden or obscured target.
+   * @returns `true` when the page answered that it scrolled; `false` for a target it left in place, and for any other answer.
+   * @throws When the page left its owned application origin, or the run is no longer alive.
+   * @example
+   * ```ts
+   * await this.scrollClickTargetIntoView() // => true: a "Load Newer" button below a long list now sits in the middle of the viewport
+   * ```
+   */
+  private async scrollClickTargetIntoView(): Promise<boolean> {
+    const cdp = await this.ownedPageCdp()
+    const response = await cdp.request('Runtime.evaluate', {
+      expression: configuredScrollExpression(
+        this.definition.configuration.action.selector,
+      ),
+      returnByValue: true,
+    })
+    this.alive()
+    return (
+      scrollResultSchema.safeParse(response.result.value).data?.scrolled ===
+      true
+    )
   }
 
   /**
@@ -6824,8 +6863,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     return this.savingCompletion
   }
 
-  /** Evaluates owned DOM data only after origin verification; invalid selectors/conditions never dispatch input. @example await this.readDom('before') */
-  private async readDom(phase: 'before' | 'after') {
+  /**
+   * Verifies that the selected page is still at the owned application origin before Codebook evaluates anything in it.
+   * Called by {@link readDom} for every condition read and by {@link scrollClickTargetIntoView} before the click's scroll.
+   * @returns The selected page's channel.
+   * @throws When the page left its owned application origin, or the run is no longer alive.
+   * @example
+   * ```ts
+   * const cdp = await this.ownedPageCdp()
+   * ```
+   */
+  private async ownedPageCdp(): Promise<Cdp> {
     const cdp = this.requireCdp(),
       identity = await cdp.request('Runtime.evaluate', {
         expression: 'location.origin',
@@ -6841,6 +6889,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
     )
       throw new Error('Selected page left its owned application origin')
+    return cdp
+  }
+
+  /** Evaluates owned DOM data only after origin verification; it only reads the page, and invalid selectors/conditions never dispatch input. @example await this.readDom('before') */
+  private async readDom(phase: 'before' | 'after') {
+    const cdp = await this.ownedPageCdp()
     const action = this.definition.configuration.action
     const response = await cdp.request('Runtime.evaluate', {
       expression: configuredDomExpression(

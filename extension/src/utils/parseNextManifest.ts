@@ -2,7 +2,7 @@ import type { z } from 'zod'
 
 /**
  * Builds the error of a Next manifest that could not be read, naming the manifest file and the reason, never the manifest's content.
- * Called by {@link parseNextManifest} and by the Pages readers ({@link readNextRouteManifests}, {@link readPagesDevelopmentBundle}) for a failed read.
+ * Called by {@link parseNextManifest} for text it cannot parse, and by the route-manifest poll of {@link readNextRouteManifests} for a manifest it cannot read.
  * @param file - The manifest's workspace-relative path, e.g. `.next/dev/server/pages-manifest.json`.
  * @param reason - Why it could not be read; never text quoted from the manifest.
  * @returns The error, for the run to report as an unexpected manifest failure.

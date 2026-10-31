@@ -7,6 +7,7 @@ import {
 } from '../constants'
 
 import type { NextPagesDiscoveryCache } from './createNextPagesDiscoveryCache'
+import { DiscoveryBudgetError } from './discoveryBudgetError'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
 
 /**
@@ -45,7 +46,7 @@ export type NextPagesDiscoveryStep = {
  * @param signal - Ends the step with the run.
  * @param work - The step, given its byte access and deadline.
  * @returns What the step returns.
- * @throws `Build discovery resource limit exceeded` when the run's budget is spent before or during the step; whatever the step throws.
+ * @throws {@link DiscoveryBudgetError} when the run's budget is spent before or during the step; whatever the step throws.
  * @example
  * await spendNextPagesDiscovery(cache, '/repo', signal, (step) => step.readBuildText('.next/dev/build-manifest.json', limit))
  */
@@ -64,7 +65,7 @@ export async function spendNextPagesDiscovery<Result>(
       performance.now() >= deadline ||
       cache.readBytes >= REPOSITORY_DISCOVERY_LIMIT_BYTES
     )
-      throw new Error('Build discovery resource limit exceeded')
+      throw new DiscoveryBudgetError()
     const timeout = AbortSignal.timeout(
       Math.max(1, Math.ceil(deadline - performance.now())),
     )
@@ -83,7 +84,7 @@ export async function spendNextPagesDiscovery<Result>(
       async readBuildText(path, limitBytes) {
         const { remainingBytes, readSignal } = takeBudget()
         if ((await lstat(resolve(root, path))).size > remainingBytes)
-          throw new Error('Build discovery resource limit exceeded')
+          throw new DiscoveryBudgetError()
         const text = await readRepositoryBuildText(
           root,
           path,
@@ -101,8 +102,7 @@ export async function spendNextPagesDiscovery<Result>(
         })
         const bytes = Buffer.byteLength(text)
         // The fetcher is told the bound; served bytes past it are refused all the same.
-        if (bytes > remainingBytes)
-          throw new Error('Build discovery resource limit exceeded')
+        if (bytes > remainingBytes) throw new DiscoveryBudgetError()
         if (bytes > limitBytes)
           throw new Error('Served build text exceeds byte limit')
         cache.readBytes += bytes

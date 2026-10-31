@@ -149,6 +149,60 @@ for (const compiledPath of [
     })
   })
 
+// Value: protects=a page whose only source has another extension (a custom pageExtensions) is missing with that file named, so the router contest does not call the listing stale; fails_when=the about.mdx file is not named; why_new=Cycle 0066 task 21 (gone told apart from another extension); seam=none; no_claim=which extensions Next's pageExtensions holds
+test('a page whose only source has another extension is missing with that file named', async (context) => {
+  // Arrange
+  const workspace = await temporaryWorkspace(context)
+  await writeStandIn(workspace, 'pages/about.mdx')
+  // Act
+  const lookup = await findNextPagesSource(workspace, 'pages/about.js')
+  // Assert
+  assert.deepEqual(lookup, {
+    kind: 'missing',
+    folder: 'pages',
+    tried: [
+      'pages/about.tsx',
+      'pages/about/index.tsx',
+      'pages/about.ts',
+      'pages/about/index.ts',
+      'pages/about.jsx',
+      'pages/about/index.jsx',
+      'pages/about.js',
+      'pages/about/index.js',
+    ],
+    otherExtension: 'pages/about.mdx',
+  })
+})
+
+// Value: protects=a folder index page whose only source has another extension is named too, so the second stem Next tries is probed as well; fails_when=only the page file's stem is probed; why_new=Cycle 0066 task 21 (gone told apart from another extension); seam=none; no_claim=none
+test('a folder index page whose only source has another extension is missing with that file named', async (context) => {
+  // Arrange
+  const workspace = await temporaryWorkspace(context)
+  await writeStandIn(workspace, 'src/pages/docs/index.mdx')
+  // Act
+  const lookup = await findNextPagesSource(workspace, 'pages/docs.js')
+  // Assert
+  assert.equal(lookup.kind, 'missing')
+  assert.equal(
+    lookup.kind === 'missing' && lookup.otherExtension,
+    'src/pages/docs/index.mdx',
+  )
+})
+
+// Value: protects=a cancelled run ends the Pages source lookup with its abort reason instead of finishing it; fails_when=the signal is ignored and the lookup answers found; why_new=Cycle 0066 task 22 (the router contest's lookups ran without the abort signal); seam=an already aborted signal; no_claim=cancel timing between two candidates
+test('a cancelled run ends the Pages source lookup with its abort reason', async (context) => {
+  // Arrange
+  const workspace = await temporaryWorkspace(context)
+  await writeStandIn(workspace, 'pages/index.tsx')
+  const controller = new AbortController()
+  controller.abort(new Error('Run cancelled'))
+  // Act / Assert
+  await assert.rejects(
+    findNextPagesSource(workspace, 'pages/index.js', controller.signal),
+    { message: 'Run cancelled' },
+  )
+})
+
 test('a page source that is a link out of the workspace is not followed and not found', async (context) => {
   // Arrange
   const workspace = await temporaryWorkspace(context)

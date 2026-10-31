@@ -5,14 +5,14 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
- * 1.12 is additive: Next Pages Router pages on the `next-dev-webpack` adapter (the `next-dev-webpack` readiness gains `routerKind`, `preparation` and `notes`, the repository-browser profile names its `nextRouters`, a Next run's resource names its `nextRoute`, the `NEXT_*` refusal codes and `SOURCE_CHANGED` for a Pages module replaced during the run, and `codebook://help/repository-browser` gains `startHere`, the Next quick start, the Pages support table and the Next refusal anchors); App Router and Vite runs are unchanged.
+ * 1.12 is additive: Next Pages Router pages on the `next-dev-webpack` adapter (the `next-dev-webpack` readiness gains `routerKind`, `preparation` and `notes`, the repository-browser profile names its `nextRouters`, the resource of a Next run in a workspace with a Pages folder names its `nextRoute` (not a Next run in a workspace without one), the `NEXT_*` refusal codes and `SOURCE_CHANGED` for a Pages module replaced during the run, and `codebook://help/repository-browser` gains `startHere`, the Next quick start, the Pages support table and the Next refusal anchors). It also changes the click of every `repository-browser` run, App Router and Vite runs included: a click target whose centre lies outside the viewport is first scrolled to the middle of the viewport, where 1.11 read it as obscured (`click-target-obscured`); App Router and Vite runs are otherwise unchanged.
  * 1.11 is additive: the `vite-dev` adapter of the `repository-browser` profile (the adapter enum of the configuration, `codebook_status` adapter readiness under `profiles[].prerequisites.adapters`, the optional `viteVersion` of a Vite run manifest and resource, the `ADAPTER_MISROUTE` and `VITE_*` refusal codes, the Vite quick start and refusal anchors of `codebook://help/repository-browser`); a Vite study is saved in study format 5.
  * 1.10 is additive: the `chrome-extension` profile (the `extension-click` action, the `extension` participant of `codebook_continue`, the `chromeExtension` block and `claimable` of the run resource, `codebook://help/chrome-extension`); a chrome-extension run is not saved in this version.
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.12'
-export const EXTENSION_VERSION = '0.2.66'
+export const EXTENSION_VERSION = '0.2.67'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -1740,6 +1740,10 @@ export const DEVELOPMENT_BUN_LOCKFILE_SEARCH_MAX_FOLDERS = 16
 export const DEVELOPMENT_YARN_BERRY_CONFIG = '.yarnrc.yml'
 /** The first major version of Yarn that runs scripts in the portable shell (Yarn 2, "Berry"); Yarn 1 runs them with `sh` (F523). */
 export const DEVELOPMENT_YARN_BERRY_MIN_MAJOR = 2
+/** The first pnpm major that runs a script's `pre<name>` script by default: pnpm 9.0.0 turned `enable-pre-post-scripts` on, pnpm 7 and 8 left it off ({@link readPreScriptRules}). */
+export const DEVELOPMENT_PNPM_PRE_SCRIPTS_DEFAULT_MAJOR = 9
+/** How much of a `yarn.lock` is read, from its start, for the `__metadata:` key that Yarn 2 and later write below its two comment lines; Yarn 1 never writes it (bytes). */
+export const DEVELOPMENT_YARN_LOCKFILE_HEAD_BYTES = 4096
 /** The reason the `applicationPortSource` gives when the `dev` script of a Yarn Berry project has a form that Yarn 2+'s portable shell reads differently from `sh` (`export`, which it lacks; a `;;` or a `;` followed by blanks at the end of the line, which it rejects; D75, F515, F519); the quoted statement follows it. */
 export const DEVELOPMENT_YARN_SHELL_UNREAD_REASON =
   "Next's default port, taken because Yarn 2 and later runs scripts in its own portable shell, which reads this form differently from sh, so it can mean different things"

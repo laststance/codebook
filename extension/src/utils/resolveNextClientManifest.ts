@@ -1,70 +1,68 @@
-/** Finds the selected Next page in its generated route map without evaluating manifests or inventing a source route. @example resolveNextClientManifest({'/login/page':'app/login/page.js'}, '/login').key // '/login/page' */
+import { appRouteSegmentsOf } from './appRouteSegmentsOf'
+import { mostSpecificNextRouteOf } from './mostSpecificNextRouteOf'
+
+/** The App page an entry path resolves to: its App paths manifest key and its generated client reference manifest. */
+type NextClientManifest = {
+  /** The App paths manifest key, e.g. `/login/page`. */
+  key: string
+  /** The client reference manifest, workspace-relative, e.g. `.next/dev/server/app/login/page_client-reference-manifest.js`. */
+  path: string
+}
+
+/**
+ * Finds the App page Next serves for an entry path in its generated App paths manifest, and that page's client reference manifest, without evaluating manifests or inventing a source route.
+ * Called by {@link readNextRouteManifests} to know whether an App route serves the entry path, and by {@link readDevelopmentBundle} for the App run's page. The route is chosen by Next's segment precedence ({@link mostSpecificNextRouteOf}), the rule {@link resolveNextPagesRoute} applies to Pages routes, so `/a/[y]` beats `/[x]/b` for `/a/b`. Manifest data is untrusted: an entry is kept only for a key with a terminal `/page` ({@link appRouteSegmentsOf}) and a contained `app/…/page.js` value.
+ * @param routes - The parsed `app-paths-manifest.json`: keys to compiled page paths.
+ * @param entryPath - The configured entry path; its query, fragment and trailing slash are ignored and each segment is percent-decoded.
+ * @returns The App page's manifest key and its client reference manifest.
+ * @throws When no App page matches the entry path, or two match with equal precedence (a pair Next refuses when it builds).
+ * @example
+ * resolveNextClientManifest({ '/a/[y]/page': 'app/a/[y]/page.js', '/[x]/b/page': 'app/[x]/b/page.js' }, '/a/b')
+ * // => { key: '/a/[y]/page', path: '.next/dev/server/app/a/[y]/page_client-reference-manifest.js' }
+ */
 export function resolveNextClientManifest(
   routes: Record<string, string>,
   entryPath: string,
-): { key: string; path: string } {
-  const requested = new URL(entryPath, 'http://codebook.invalid').pathname
-    .split('/')
-    .filter(Boolean)
-    .map(decodeURIComponent)
-  const candidates: { key: string; path: string; score: number }[] = []
-  for (const [key, path] of Object.entries(routes)) {
-    if (
-      !key.endsWith('/page') ||
-      !path.startsWith('app/') ||
-      !path.endsWith('/page.js') ||
-      path.includes('\\') ||
-      path.split('/').some((segment) => segment === '..' || segment === '.')
-    )
-      continue
-    const segments = key
-      .slice(0, -'/page'.length)
-      .split('/')
-      .filter(
-        (segment) =>
-          segment && !(segment.startsWith('(') && segment.endsWith(')')),
-      )
-    let offset = 0,
-      score = 0,
-      matched = true
-    for (const segment of segments) {
-      if (segment.startsWith('[[...') && segment.endsWith(']]')) {
-        offset = requested.length
-        score -= 2
-        break
-      }
-      if (segment.startsWith('[...') && segment.endsWith(']')) {
-        matched = offset < requested.length
-        offset = requested.length
-        score--
-        break
-      }
-      if (segment.startsWith('[') && segment.endsWith(']')) {
-        if (offset >= requested.length) {
-          matched = false
-          break
-        }
-        offset++
-        continue
-      }
-      if (segment !== requested[offset++]) {
-        matched = false
-        break
-      }
-      score++
-    }
-    if (matched && offset === requested.length)
-      candidates.push({
-        key,
-        path: `.next/dev/server/${path.slice(0, -'.js'.length)}_client-reference-manifest.js`,
-        score,
-      })
-  }
-  candidates.sort((left, right) => right.score - left.score)
-  const first = candidates[0]
-  if (!first || candidates[1]?.score === first.score)
+): NextClientManifest {
+  const pages = Object.entries(routes).flatMap(
+    ([key, path]): [string, NextClientManifest][] => {
+      const segments = appRouteSegmentsOf(key)
+      // A key that names no page, or a value outside app/…/page.js, is never followed.
+      if (!segments || !isSafeCompiledAppPagePath(path)) return []
+      return [
+        [
+          `/${segments.join('/')}`,
+          {
+            key,
+            path: `.next/dev/server/${path.slice(0, -'.js'.length)}_client-reference-manifest.js`,
+          },
+        ],
+      ]
+    },
+  )
+  const page = mostSpecificNextRouteOf(pages, entryPath)
+  if (!page)
     throw new Error(
       'Selected route has no unique compiled Next page. Check its path and redirects.',
     )
-  return { key: first.key, path: first.path }
+  return page
+}
+
+/**
+ * Says whether an App paths manifest value is a compiled page Codebook may follow: under `app/`, ending in `/page.js`, without `..` or `.` segments or backslashes. Called by {@link resolveNextClientManifest} for every manifest entry.
+ * @param compiledPath - A value of the App paths manifest.
+ * @returns Whether the value is safe to keep.
+ * @example
+ * isSafeCompiledAppPagePath('app/login/page.js')            // => true
+ * isSafeCompiledAppPagePath('app/../../elsewhere/page.js')  // => false
+ */
+function isSafeCompiledAppPagePath(compiledPath: string): boolean {
+  return (
+    compiledPath.startsWith('app/') &&
+    compiledPath.endsWith('/page.js') &&
+    !compiledPath.includes('\\') &&
+    compiledPath
+      .split('/')
+      .every((segment) => segment !== '..' && segment !== '.')
+  )
 }

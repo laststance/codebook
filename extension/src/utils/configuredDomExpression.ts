@@ -9,12 +9,12 @@ export function configuredDomExpression(
 }
 
 /**
- * Evaluates the declared DOM conditions and an optional hittable click center inside the owned page, for every read of before and after conditions by {@link ConfiguredBrowserRun}; it is serialized with `toString()`, so everything it calls is declared inside it.
+ * Evaluates the declared DOM conditions and an optional hittable click center inside the owned page, for every read of before and after conditions by {@link ConfiguredBrowserRun}; it only reads the page (the click step scrolls with {@link configuredScrollExpression}), and it is serialized with `toString()`, so everything it calls is declared inside it.
  * Text is compared on textContent trimmed with whitespace runs collapsed, attributes exactly. A `text` condition holds when one of the elements its selector matches reads the expected text; a `visible` or `attribute` condition and the click target need exactly one element.
  * @param conditions - The declared conditions of one phase.
  * @param selector - The click target's selector, before input only.
  * @returns Counts and reasons only, never page text or attribute values:
- * - Every condition holds: `ready: true`, the click center when a selector was given, and `textReadings` when a text condition's selector matched several elements (how many matched and how many read the text)
+ * - Every condition holds: `ready: true`, the click center when a selector was given and that center lies inside the viewport (a target outside it holds without a center, since the hit test reads viewport points only), and `textReadings` when a text condition's selector matched several elements (how many matched and how many read the text)
  * - Otherwise: `ready: false` and the first failure; a text condition whose several matched elements all read other text fails as `text-mismatch` with `matchedElements`
  * @example
  * inspectDom([{ kind: 'visible', selector: 'button' }], 'button').ready // => true
@@ -161,25 +161,13 @@ function inspectDom(
     element.getAttribute('aria-disabled') === 'true'
   )
     return { ready: false, failure: { reason: 'click-target-disabled' } }
-  const before = element.getBoundingClientRect(),
-    centreX = before.x + before.width / 2,
-    centreY = before.y + before.height / 2
-  // A target whose centre lies outside the viewport is scrolled to the middle first, as a learner scrolls before clicking: the hit test reads viewport points only, so a button below the fold read as obscured.
-  if (
-    centreX < 0 ||
-    centreY < 0 ||
-    centreX >= innerWidth ||
-    centreY >= innerHeight
-  )
-    element.scrollIntoView({
-      block: 'center',
-      inline: 'center',
-      behavior: 'instant',
-    })
   const rect = element.getBoundingClientRect(),
     x = rect.x + rect.width / 2,
-    y = rect.y + rect.height / 2,
-    hit = document.elementFromPoint(x, y)
+    y = rect.y + rect.height / 2
+  // A centre outside the viewport cannot be hit-tested where it lies (a button below the fold would read as obscured): the target holds without a point, and the click step scrolls it into view before it reads the point.
+  if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight)
+    return { ready: true, ...held }
+  const hit = document.elementFromPoint(x, y)
   return hit && (hit === element || element.contains(hit))
     ? { ready: true, x, y, ...held }
     : { ready: false, failure: { reason: 'click-target-obscured' } }

@@ -2,6 +2,7 @@ import {
   MILLISECONDS_PER_SECOND,
   NEXT_MANIFEST_POLL_MS,
   NEXT_PAGES_SOURCE_EXTENSIONS,
+  NEXT_SETUP_STEPS,
   NEXT_WEBPACK_COMPATIBILITY_SENTENCE,
   REPOSITORY_SETUP_TIMEOUT_MS,
 } from './constants'
@@ -16,6 +17,12 @@ import {
 const PAGES_SOURCE_EXTENSIONS_TEXT = NEXT_PAGES_SOURCE_EXTENSIONS.map(
   (extension) => `.${extension}`,
 ).join(', ')
+
+/**
+ * When a setup deadline answers `NEXT_SETUP_DEADLINE`, as {@link ConfiguredBrowserRun} decides it when its setup budget expires: a Next run in a workspace with a Pages folder, at the steps before its route is known (named as the deadline message names them) and at every step of a Pages route.
+ * The help's `NEXT_SETUP_DEADLINE` meaning and `nextSupport.setupBudget` both carry it, so neither can say only a Pages Router run answers that code.
+ */
+const NEXT_SETUP_DEADLINE_SCOPE = `at its early steps (${NEXT_SETUP_STEPS.startingNext}, ${NEXT_SETUP_STEPS.waitingForServer}, ${NEXT_SETUP_STEPS.readingManifests}), before its route is known, and at every step once its entry path resolved as a Pages route`
 
 /**
  * The first key of `codebook://help/repository-browser`: one sentence that sends an agent from `codebook_status` to the quick start of its app's adapter.
@@ -91,10 +98,10 @@ const NEXT_REFUSAL_MEANINGS: Record<NextRefusalCode, string> = {
     'Both the App and the Pages route manifests list the entry path with equally specific routes (a more specific route serves the path, as Next decides), or the more specific one has lost its source file; the message says stale when the source file of one of them is gone (a leftover .next/dev).',
   NEXT_ROUTE_NOT_FOUND: `No route matches the entry path, or the Pages route the manifest lists for it answered the entry request with a client error (HTTP 4xx: notFound, a path getStaticPaths does not return, or a page that needs a sign-in). The message names what was searched (Pages, App or both), the folders and the extensions tried (${PAGES_SOURCE_EXTENSIONS_TEXT}); a route the manifest lists with no source file means a custom pageExtensions, which Codebook does not read.`,
   NEXT_SERVER_ONLY_STOP:
-    "The stop is in code established to run only on the server: _document, a file under pages/api, or a line that maps in the page's server compile and in none of its client chunks (getServerSideProps or getStaticProps, for example).",
+    "The stop is in code established to run only on the server: _document, a file under pages/api, or a line that maps in the page's server compile and in none of its client chunks (getServerSideProps or getStaticProps, for example). A server stop (participant server in a version 2 configuration) is refused with it in a Pages run too, because a Pages run observes only the page's client code.",
   NEXT_STOP_NOT_SEALED:
     'Codebook could not verify the browser code of the stop before the browser opened: there is no verified browser mapping for its line (which does not establish that the code is server-only), or its module is loaded later (next/dynamic, for example).',
-  NEXT_SETUP_DEADLINE: `A Pages Router run did not get ready within the ${REPOSITORY_SETUP_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s setup budget; the message names the step it reached and whether a browser was opened. The recovery the run gives fits that step: one retry before the browser or for a router that was late, a corrected entryPath for a page without a Next router, the input selector at the input step, one retry when the deadline came after every input was written and the first stop was being armed, and reading the captured history first when an input may have been written.`,
+  NEXT_SETUP_DEADLINE: `A Next run in a workspace with a Pages folder (pages/ or src/pages/) did not get ready within the ${REPOSITORY_SETUP_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s setup budget, ${NEXT_SETUP_DEADLINE_SCOPE}; once its entry path resolved as an App route, as in a workspace without a Pages folder, the deadline carries no Next code (the failure reads Repository setup deadline exceeded). The message names the step it reached and whether a browser was opened. The recovery the run gives fits that step: one retry before the browser or for a router that was late, a corrected entryPath for a page without a Next router, the input selector at the input step, one retry when the deadline came after every input was written and the first stop was being armed, and reading the captured history first when an input may have been written.`,
 }
 
 /**
@@ -116,7 +123,7 @@ export function nextHelp() {
       prerequisites: [
         "Stop your own next dev for this workspace first: Codebook starts its own, and a .next/dev/lock another process holds refuses the start with PREREQUISITE_MISSING (Codebook never removes another process's lock).",
         'The dependencies are installed (node_modules/next); Codebook installs nothing.',
-        'When the next-dev-webpack readiness reports preparation skipped (statements before next dev in package.json scripts.dev, or a predev script), the learner runs that preparation from the workspace root before the start: Codebook never runs it. The environment settings its notes name are not applied either.',
+        'When the next-dev-webpack readiness reports preparation skipped (statements before next dev in package.json scripts.dev, a predev script, or the pre<name> script of a script that dev runs), the learner runs that preparation from the workspace root before the start: Codebook never runs it. The environment settings its notes name are not applied either.',
       ],
       configuration: NEXT_QUICK_START_CONFIGURATION,
       copyFrom: NEXT_QUICK_START_COPY_FROM,
@@ -140,13 +147,13 @@ export function nextHelp() {
         '_app (pages/_app or src/pages/_app).',
       ],
       notStoppable: [
-        "Server-side code of a Pages page: getServerSideProps, getStaticProps, API routes (pages/api) and _document. A stop there is refused with NEXT_SERVER_ONLY_STOP when Codebook establishes that it runs only on the server (the file is _document or under pages/api, or the line maps in the page's server compile and in none of its client chunks, also when client code follows the line, which the stop is never moved to), otherwise with NEXT_STOP_NOT_SEALED.",
+        "Server-side code of a Pages page: getServerSideProps, getStaticProps, API routes (pages/api) and _document. A stop there is refused with NEXT_SERVER_ONLY_STOP when Codebook establishes that it runs only on the server (the file is _document or under pages/api, or the line maps in the page's server compile and in none of its client chunks, also when client code follows the line, which the stop is never moved to), otherwise with NEXT_STOP_NOT_SEALED. A server stop (participant server) in a Pages run is refused with NEXT_SERVER_ONLY_STOP before the browser opens.",
         'A module loaded later, for example through next/dynamic: it is not in the chunks Codebook seals before the browser opens (NEXT_STOP_NOT_SEALED).',
         'Server components of the App Router: they run only on the server.',
       ],
       compatibility: NEXT_WEBPACK_COMPATIBILITY_SENTENCE,
       preparation:
-        'Codebook starts next dev --webpack itself and never runs scripts.dev: statements before next dev (and a predev script) are skipped, and environment settings the script gives next dev are not applied (a PORT assignment only sets the port). codebook_status reports both on the next-dev-webpack readiness, only when there is something to report: preparation.status skipped with the statements count, or unknown for a script it could not read, preparation.envSettings with the names of the settings it does not apply, and notes that say the same in sentences; values are never reported.',
+        'Codebook starts next dev --webpack itself and never runs scripts.dev: statements before next dev (and a predev script, or the pre<name> script of a script that dev runs through npm run, pnpm, yarn or bun run, when the package manager that runs it runs pre scripts: npm, Yarn 1 and Bun do, pnpm 9 or later by default, pnpm 7 and 8 only with enable-pre-post-scripts=true in an .npmrc, and Yarn 2 and later never) are skipped, and environment settings the script gives next dev are not applied (a PORT assignment only sets the port). codebook_status reports both on the next-dev-webpack readiness, only when there is something to report: preparation.status skipped with the statements count, or unknown for a script it could not read, preparation.envSettings with the names of the settings it does not apply, and notes that say the same in sentences (one more when a counted pre script may or may not run because the package manager or its version is unknown); values are never reported.',
       unsupported: [
         'basePath or i18n routing in next.config: refused with NEXT_UNSUPPORTED_SETTING; Codebook never edits next.config.',
         'A custom distDir: Codebook reads the default .next/dev output, so the route reads as not compiled (NEXT_ROUTE_NOT_COMPILED).',
@@ -154,7 +161,7 @@ export function nextHelp() {
       ],
       fastRefresh:
         'Saving a change to a loaded module during a run (Fast Refresh) ends the run with SOURCE_CHANGED; the observations before it stay readable.',
-      setupBudget: `Preparation has ${setupSeconds} s in all, with no override: starting Next, the entry page, the route manifests, sealing the stops, the browser and the page router. A Pages Router run past it is refused with NEXT_SETUP_DEADLINE.`,
+      setupBudget: `Preparation has ${setupSeconds} s in all, with no override: starting Next, the entry page, the route manifests, sealing the stops, the browser and the page router. A Next run in a workspace with a Pages folder (pages/ or src/pages/) past it is refused with NEXT_SETUP_DEADLINE ${NEXT_SETUP_DEADLINE_SCOPE}; any other Next run past it fails with Repository setup deadline exceeded, with no Next code.`,
     },
     nextRefusals: Object.fromEntries(
       NEXT_REFUSAL_CODES.map((code) => [

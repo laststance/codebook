@@ -98,15 +98,44 @@ test('ambiguous or escaped generated route paths never select an arbitrary sourc
   )
 })
 
-// Characterization (Cycle 0065 pt1): App route matching is unchanged; its additive score still ties these two routes, a later candidate for pt2 (the Pages matcher decides per segment instead).
-test('the App route matcher still finds no unique page when /a/[y] and /[x]/b both match /a/b', () => {
+// Value: protects=an App run takes the page Next serves when two App routes match, the static first segment winning; fails_when=the pair is refused as no unique page or /[x]/b is taken; why_new=Cycle 0066 task 17 (this test pinned the old additive score's tie as no unique page, but Next serves /a/[y], so the expectation changed with task 19's segment precedence); seam=none; no_claim=a real App dev server
+test('the App route matcher takes /a/[y] over /[x]/b for /a/b, the page Next serves', () => {
   // Arrange
   const routes = {
     '/a/[y]/page': 'app/a/[y]/page.js',
     '/[x]/b/page': 'app/[x]/b/page.js',
   }
+  // Act
+  const page = resolveNextClientManifest(routes, '/a/b')
+  // Assert
+  assert.deepEqual(page, {
+    key: '/a/[y]/page',
+    path: '.next/dev/server/app/a/[y]/page_client-reference-manifest.js',
+  })
+})
+
+// Value: protects=an App catch-all with a static first segment wins over a dynamic first segment followed by a static one, as Next serves it; fails_when=the additive score picks /[x]/b because it counts more static segments; why_new=Cycle 0066 task 19 (resolveNextClientManifest's additive score differed from Next's segment precedence); seam=none; no_claim=a real App dev server
+test('the App route matcher takes /a/[...r] over /[x]/b for /a/b, deciding at the first differing segment', () => {
+  // Arrange
+  const routes = {
+    '/a/[...r]/page': 'app/a/[...r]/page.js',
+    '/[x]/b/page': 'app/[x]/b/page.js',
+  }
+  // Act
+  const page = resolveNextClientManifest(routes, '/a/b')
+  // Assert
+  assert.equal(page.key, '/a/[...r]/page')
+})
+
+// Value: protects=two App routes of equal precedence, a pair Next refuses, are refused instead of one being picked; fails_when=the matcher picks the page, as the additive score did, or the optional catch-all; why_new=Cycle 0066 task 19 (a pair Next refuses is refused under segment precedence); seam=none; no_claim=none
+test('the App route matcher refuses a page beside an optional catch-all that also matches its path, as Next does', () => {
+  // Arrange
+  const routes = {
+    '/help/page': 'app/help/page.js',
+    '/help/[[...slug]]/page': 'app/help/[[...slug]]/page.js',
+  }
   // Act / Assert
-  assert.throws(() => resolveNextClientManifest(routes, '/a/b'), {
+  assert.throws(() => resolveNextClientManifest(routes, '/help'), {
     message:
       'Selected route has no unique compiled Next page. Check its path and redirects.',
   })

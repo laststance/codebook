@@ -14,6 +14,8 @@ import { RepositoryBookStore } from '../repositoryBook'
 import { readResource } from '../resources'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { StudyService } from '../service'
+import { configuredDomExpression } from '../utils/configuredDomExpression'
+import { configuredScrollExpression } from '../utils/configuredScrollExpression'
 import { refusalFailureOf } from '../utils/refusalFailureOf'
 
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
@@ -607,6 +609,34 @@ test('a Pages page whose router reports another route than the resolved one is r
   )
 })
 
+// Value: protects=the click step scrolls the click target into view once, right before it reads the click point, and the preparation's condition reads never scroll; fails_when=the scroll runs inside a condition read, runs again for every read, or comes after the point was read; why_new=Cycle 0066 task 13 (the scroll leaves the read-only DOM expression); seam=the harness records every expression the run evaluates in the page; no_claim=a real page's scroll (configuredAdapter tests evaluate the expressions)
+test('a Pages run scrolls its click target into view once, right before it reads the click point, and never while it reads conditions', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    nextPages: {},
+  })
+  const { action } = harness.definition.configuration
+  const scrollExpression = configuredScrollExpression(action.selector)
+  const beforeRead = configuredDomExpression(action.before, action.selector)
+  await harness.run.prepare()
+  const preparationExpressions = [...harness.evaluatedExpressions]
+  // Act
+  harness.run.action('click', 'repository-click')
+  await waitUntil(() => harness.mouse.length > 0, 'the click')
+  // Assert
+  assert.equal(preparationExpressions.includes(beforeRead), true)
+  assert.equal(preparationExpressions.includes(scrollExpression), false)
+  assert.deepEqual(
+    harness.evaluatedExpressions
+      .slice(preparationExpressions.length)
+      .filter(
+        (expression) =>
+          expression === scrollExpression || expression === beforeRead,
+      ),
+    [scrollExpression, beforeRead],
+  )
+})
+
 // --- Pages seal ---
 
 // Value: protects=a Pages stop is sealed from the page's entry chunk before the browser opens, so the page's parse of its module binds it; fails_when=the seal happens after the navigation or the parsed module is not bound; why_new=Cycle 0065 step 7 (seal before navigation); seam=the real Pages seal over a written build; no_claim=a native debugger binding
@@ -838,6 +868,26 @@ test('a Pages stop in an API route is refused as server-only before any chunk is
   assert.equal(failure.code, 'NEXT_SERVER_ONLY_STOP')
   assert.match(failure.message, /it is in an API route/)
   assert.equal(harness.pagesSeals.length, 0)
+})
+
+// Value: protects=a stop declared with participant "server" in a Pages run is refused with NEXT_SERVER_ONLY_STOP before any chunk is read and before the browser opens, saying a Pages run observes only the page's client code; fails_when=the server stop is sealed through the App reader, the run opens the browser, or another code answers; why_new=Cycle 0066 task 7 (server-participant stop in a Pages run); seam=the harness's participant option declares a version 2 server stop; no_claim=a real Next server inspector
+test('a server stop in a Pages run is refused as server-only before any chunk is read or the browser opens', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    participant: 'server',
+    nextPages: {},
+  })
+  // Act
+  const failure = await preparationFailure(harness)
+  // Assert
+  assert.ok(failure instanceof StudyError, String(failure))
+  assert.equal(failure.code, 'NEXT_SERVER_ONLY_STOP')
+  assert.equal(
+    failure.message,
+    'Declared stop src/theme.ts:1 is a server stop (participant "server"), but a Pages Router run observes only the page\'s client code in the browser; Codebook does not pause the Next server in a Pages run. Move the stop to the client code of the page that serves the same question, with participant "browser".',
+  )
+  assert.equal(harness.pagesSeals.length, 0)
+  assert.equal(harness.launchConfigurations.length, 0)
 })
 
 // --- Fast Refresh ---

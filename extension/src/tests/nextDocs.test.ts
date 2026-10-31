@@ -13,6 +13,7 @@ import {
 import { readResource } from '../resources'
 
 import { createHarness } from './helpers'
+import { DEV_SCRIPT_WEBPACK_FORMS } from './utils/devScriptWebpackForms'
 
 /** The compatibility-mode sentence of Issue 166, word for word; the help and the README must both carry it. */
 const COMPATIBILITY_SENTENCE =
@@ -76,6 +77,33 @@ async function readNextReadmeSection(): Promise<string> {
   if (start === -1) return ''
   const end = readme.indexOf('\n## ', start + 1)
   return readme.slice(start + 1, end === -1 ? undefined : end)
+}
+
+/**
+ * Reads the packaged README's API 1.12 compatibility note: from "API 1.12 is additive" to the API 1.11 note after it.
+ * @returns The note, or an empty text when either end is missing.
+ * @example
+ * await readApi112ReadmeNote() // => 'API 1.12 is additive: it adds Next Pages Router pages to the `next-dev-webpack` adapter …'
+ */
+async function readApi112ReadmeNote(): Promise<string> {
+  const readme = await readFile(join(__dirname, '../../README.md'), 'utf8')
+  const start = readme.indexOf('API 1.12 is additive')
+  const end = readme.indexOf('API 1.11 was additive', start)
+  return start === -1 || end === -1 ? '' : readme.slice(start, end)
+}
+
+/**
+ * Reads the 1.12 line of the `API_VERSION` doc comment in `src/constants.ts` (tests run from `dist/tests`).
+ * @returns The line, or an empty text when the doc has no 1.12 line.
+ * @example
+ * await readApi112VersionDoc() // => ' * 1.12 is additive: Next Pages Router pages on the `next-dev-webpack` adapter …'
+ */
+async function readApi112VersionDoc(): Promise<string> {
+  const constants = await readFile(
+    join(__dirname, '../../src/constants.ts'),
+    'utf8',
+  )
+  return constants.split('\n').find((line) => line.startsWith(' * 1.12 ')) ?? ''
 }
 
 // protects=the Next quick start's configuration is valid for the public schema, so an agent that copies it and fills the placeholders is not refused for its shape; fails_when=the schema changes a field and the help keeps the old example, or the example loses its Pages citation or entryPath; no_claim=that the placeholders name real sources
@@ -404,7 +432,214 @@ test('the bundled skill forbids editing the project to make a browser run start 
   // Assert
   assert.ok(
     paragraph.includes(
-      "Never edit the project's files, config or scripts to make a run start or reach its stops; when the page itself keeps the declared action from happening, tell the learner what blocks it.",
+      "Never edit the project's files, config or scripts to make a run start or reach its stops, not even temporarily or with a plan to restore them, and not after the learner agrees to continue; when the page itself keeps the declared action from happening (an automatic load that races the click, for example), tell the learner what blocks it and offer only choices that change no project file: another declared action or stop, another page, or explaining what the run did observe.",
+    ),
+  )
+})
+
+// Value: protects=a client or skill reading the API 1.12 note learns that every repository-browser click, App Router and Vite runs included, now scrolls a target outside the viewport to its middle before the click (1.11 read it as obscured); fails_when=the README note or the API_VERSION doc says App Router and Vite runs are unchanged, or stops naming the scroll; why_new=Cycle 0066 task 4 (Cycle 0065 review and CodeRabbit CLI round 5: the note contradicted the click step); seam=README and constants.ts text; no_claim=the run scrolls so (configuredDomExpression tests)
+test('the API 1.12 note in the README and the API_VERSION doc names the below-the-fold scroll of every repository-browser click', async () => {
+  // Arrange
+  const readmeNote = await readApi112ReadmeNote()
+  const versionDoc = await readApi112VersionDoc()
+  // Act
+  const notes = [readmeNote, versionDoc]
+  // Assert
+  assert.ok(
+    readmeNote.includes(
+      "API 1.12 also changes the click of every `repository-browser` run, App Router and Vite runs included: a click target whose centre lies outside the visible page is first scrolled to the middle of the viewport before the click, so the page's own scroll and visibility handlers run before it, where API 1.11 read such a target as obscured (`click-target-obscured`); App Router and Vite runs are otherwise unchanged.",
+    ),
+  )
+  assert.ok(
+    versionDoc.includes(
+      'It also changes the click of every `repository-browser` run, App Router and Vite runs included: a click target whose centre lies outside the viewport is first scrolled to the middle of the viewport, where 1.11 read it as obscured (`click-target-obscured`); App Router and Vite runs are otherwise unchanged.',
+    ),
+  )
+  assert.deepEqual(
+    notes.filter((note) =>
+      note.includes('App Router and Vite runs are unchanged'),
+    ),
+    [],
+  )
+})
+
+// Value: protects=a client reading the API 1.12 note expects nextRoute only where the runtime sets it, for a Next run in a workspace with a Pages folder, and not for a Next run without one; fails_when=the README note or the API_VERSION doc says every Next run's resource names its nextRoute; why_new=Cycle 0066 task 5 (Cycle 0065 review: runtime.ts documents nextRoute absent without a Pages folder; D4, the docs follow the runtime); seam=README and constants.ts text; no_claim=the run resource omits it (run tests)
+test('the API 1.12 note in the README and the API_VERSION doc name nextRoute only for a Next run in a workspace with a Pages folder', async () => {
+  // Arrange
+  const readmeNote = await readApi112ReadmeNote()
+  const versionDoc = await readApi112VersionDoc()
+  // Act
+  const notes = [readmeNote, versionDoc]
+  // Assert
+  assert.ok(
+    readmeNote.includes(
+      'the resource of a Next run in a workspace with a Pages folder (`pages/` or `src/pages/`) names its `nextRoute` once its entry path is resolved (router, route and, for a Pages route, its source file), while a Next run in a workspace without a Pages folder has no `nextRoute`',
+    ),
+  )
+  assert.ok(
+    versionDoc.includes(
+      'the resource of a Next run in a workspace with a Pages folder names its `nextRoute` (not a Next run in a workspace without one)',
+    ),
+  )
+  assert.deepEqual(
+    notes.filter((note) =>
+      note.includes("a Next run's resource names its `nextRoute`"),
+    ),
+    [],
+  )
+})
+
+// Value: protects=an agent reading the help or the README learns that a Next run in a workspace with a Pages folder answers NEXT_SETUP_DEADLINE at its early steps, before its route is known, not only a Pages Router run, and that an App-resolved run's deadline has no Next code; fails_when=the help's NEXT_SETUP_DEADLINE meaning, nextSupport.setupBudget or the README bullet says only a Pages Router run answers that code; why_new=Cycle 0066 task 6 (Cycle 0065 review: setupDeadlineText names the code for a Pages-capable run whose entry is not yet resolved as App); seam=help resource and README text; no_claim=the run decides so (nextPagesRun tests)
+test('the help and the README say a Next run in a workspace with a Pages folder answers NEXT_SETUP_DEADLINE at its early steps, before its route is known', async (context) => {
+  // Arrange
+  const help = await readRepositoryBrowserHelp(context)
+  const section = await readNextReadmeSection()
+  // Act
+  const meaning = help.nextRefusals?.NEXT_SETUP_DEADLINE?.meaning ?? ''
+  const setupBudget = help.nextSupport?.setupBudget ?? ''
+  const readmeBullet =
+    section
+      .split('\n')
+      .find((line) => line.startsWith('- `NEXT_SETUP_DEADLINE`: ')) ?? ''
+  // Assert
+  assert.ok(
+    meaning.startsWith(
+      'A Next run in a workspace with a Pages folder (pages/ or src/pages/) did not get ready within the 90 s setup budget, at its early steps (starting Next, waiting for the server to answer the entry page, reading the route manifests), before its route is known, and at every step once its entry path resolved as a Pages route; once its entry path resolved as an App route, as in a workspace without a Pages folder, the deadline carries no Next code (the failure reads Repository setup deadline exceeded). The message names the step it reached',
+    ),
+  )
+  assert.equal(
+    setupBudget,
+    'Preparation has 90 s in all, with no override: starting Next, the entry page, the route manifests, sealing the stops, the browser and the page router. A Next run in a workspace with a Pages folder (pages/ or src/pages/) past it is refused with NEXT_SETUP_DEADLINE at its early steps (starting Next, waiting for the server to answer the entry page, reading the route manifests), before its route is known, and at every step once its entry path resolved as a Pages route; any other Next run past it fails with Repository setup deadline exceeded, with no Next code.',
+  )
+  assert.ok(
+    readmeBullet.startsWith(
+      '- `NEXT_SETUP_DEADLINE`: a Next run in a workspace with a Pages folder (`pages/` or `src/pages/`) did not get ready within 90 s, at its early steps (starting Next, waiting for the server to answer the entry page, reading the route manifests), before its route is known, or at any step once its entry path resolved as a Pages route (once it resolved as an App route, as in a workspace without a Pages folder, the run fails with "Repository setup deadline exceeded" and no Next code), and the message names the step it reached',
+    ),
+  )
+})
+
+// Value: protects=a chat whose Pages run hit the setup deadline tells the learner the recovery the run gave for the step it reached (a retry, a corrected entryPath, the input selector, or reading the history first), as the help's NEXT_SETUP_DEADLINE meaning says, not the section's general retry; fails_when=skill 1.0.59's browser paragraph or the README's skill bullet stops naming the run's own recovery for NEXT_SETUP_DEADLINE; why_new=Cycle 0066 task 8 (Cycle 0065 review: the skill worded the deadline recovery differently from the help's per-step recovery); seam=SKILL.md, help resource and README text; no_claim=how a chat follows it
+test('the bundled skill relays the recovery the run gives for NEXT_SETUP_DEADLINE, the per-step recovery the help names', async (context) => {
+  // Arrange
+  const skill = await readFile(
+    join(__dirname, '..', '..', 'skills', 'codebook', 'SKILL.md'),
+    'utf8',
+  )
+  const help = await readRepositoryBrowserHelp(context)
+  const section = await readNextReadmeSection()
+  // Act
+  const paragraph =
+    skill.split('\n\n').find((part) => part.startsWith('**Browser runs.**')) ??
+    ''
+  const meaning = help.nextRefusals?.NEXT_SETUP_DEADLINE?.meaning ?? ''
+  // Assert
+  assert.ok(
+    paragraph.includes(
+      "For `NEXT_SETUP_DEADLINE`, relay the `recovery` of the run resource's `error` instead, word for word: the run words it for the step it reached (one retry, a corrected `entryPath`, the input selector, or reading the captured history before any new start).",
+    ),
+  )
+  assert.ok(meaning.includes('The recovery the run gives fits that step'))
+  assert.ok(
+    section.includes(
+      "- **What the bundled skill does (1.0.60).** The chat sends a question about a Pages Router page to `next-dev-webpack` as it does for an App Router page, tells you a refusal's code with the recovery of that code's section in the help (for `NEXT_SETUP_DEADLINE`, the recovery the run itself gives for the step it reached: one retry, a corrected `entryPath`, the input selector, or reading the captured history first),",
+    ),
+  )
+})
+
+// Value: protects=a learner reading when a Pages launch or compile failure adds the webpack-compatibility sentence finds exactly the dev script forms devScriptRequestsWebpack reads, as asking or as not asking for webpack; fails_when=the README's condition lists a form the table-driven devScriptRequestsWebpack test does not prove, misses one, or puts one on the wrong side; why_new=Cycle 0066 task 12 (Cycle 0065 red team: "has no --webpack" covered quoted, ";"-ended and delegated forms the function does not read); seam=README text and the shared form table; no_claim=the function's answers (devScriptRequestsWebpack test)
+test('the README lists exactly the dev script forms a Pages launch failure reads as asking, or not asking, Next for webpack', async () => {
+  // Arrange
+  const section = await readNextReadmeSection()
+  const codeSpansOf = (text: string): string[] =>
+    [...text.matchAll(/`([^`]+)`/g)].map((match) => match[1] ?? '')
+  // Act
+  const condition =
+    section
+      .split('\n')
+      .find((line) =>
+        line.includes("Codebook reads only the `dev` script's own text"),
+      ) ?? ''
+  const listStart = condition.indexOf("the script's end after it: ")
+  const listed = listStart === -1 ? '' : condition.slice(listStart)
+  const [asking = '', notAsking = ''] = listed.split(' ask for webpack; ')
+  // Assert
+  assert.deepEqual(
+    codeSpansOf(asking),
+    DEV_SCRIPT_WEBPACK_FORMS.filter((form) => form.asksForWebpack).map(
+      (form) => form.devScript,
+    ),
+  )
+  assert.deepEqual(
+    codeSpansOf(notAsking.split(' do not.')[0] ?? ''),
+    DEV_SCRIPT_WEBPACK_FORMS.filter((form) => !form.asksForWebpack).map(
+      (form) => form.devScript,
+    ),
+  )
+})
+
+// Value: protects=an agent reading the help learns that a server stop in a Pages run is refused as NEXT_SERVER_ONLY_STOP, and that a counted predev or delegated pre<name> script depends on the package manager that runs it (npm, Yarn 1, Bun, pnpm by version and .npmrc setting, never Yarn 2 and later) with a note when that is unknown; fails_when=the NEXT_SERVER_ONLY_STOP meaning, nextSupport.notStoppable or nextSupport.preparation keep the Cycle 0065 wording, or the preparation sentence omits Bun, a delegated script's pre<name>, the pnpm default or the value of the .npmrc setting; why_new=Cycle 0066 integration (lane C changed tasks 7 and 9, whose help sentences went stale) and task 46 (the sentence named neither Bun nor a delegated pre<name>); seam=help resource text; no_claim=the run and the readiness decide so (nextPagesRun and repositoryAdapterReadiness tests)
+test('the help says a Pages server stop is refused as server-only and that a predev or a delegated pre script counts only when the package manager that runs it runs pre scripts', async (context) => {
+  // Arrange
+  const help = await readRepositoryBrowserHelp(context)
+  // Act
+  const meaning = help.nextRefusals?.NEXT_SERVER_ONLY_STOP?.meaning ?? ''
+  const notStoppable = help.nextSupport?.notStoppable?.[0] ?? ''
+  const preparation = help.nextSupport?.preparation ?? ''
+  const quickStartPreparation = help.nextQuickStart?.prerequisites[2] ?? ''
+  // Assert
+  assert.ok(
+    meaning.endsWith(
+      "A server stop (participant server in a version 2 configuration) is refused with it in a Pages run too, because a Pages run observes only the page's client code.",
+    ),
+  )
+  assert.ok(
+    notStoppable.endsWith(
+      'A server stop (participant server) in a Pages run is refused with NEXT_SERVER_ONLY_STOP before the browser opens.',
+    ),
+  )
+  assert.ok(
+    preparation.includes(
+      'statements before next dev (and a predev script, or the pre<name> script of a script that dev runs through npm run, pnpm, yarn or bun run, when the package manager that runs it runs pre scripts: npm, Yarn 1 and Bun do, pnpm 9 or later by default, pnpm 7 and 8 only with enable-pre-post-scripts=true in an .npmrc, and Yarn 2 and later never) are skipped,',
+    ),
+  )
+  assert.ok(
+    preparation.includes(
+      '(one more when a counted pre script may or may not run because the package manager or its version is unknown)',
+    ),
+  )
+  assert.ok(
+    quickStartPreparation.includes(
+      '(statements before next dev in package.json scripts.dev, a predev script, or the pre<name> script of a script that dev runs)',
+    ),
+  )
+})
+
+// Value: protects=a chat whose run the page itself blocks (an automatic load racing the click) never edits a project file, not temporarily and not after the learner says continue, and offers only choices that change no project file; fails_when=the skill or the README keeps the 1.0.59 wording that a Cursor agent read as allowing a temporary edit; why_new=Cycle 0066 task 35 (N66: Grok 4.6 High disabled the page's auto-load in src/pages/index.tsx after 「はい、続けて」); seam=skill and README text; no_claim=that a chat obeys it (the N66 Cursor retest)
+test('the bundled skill and the README forbid temporary project edits, also after the learner agrees to continue', async () => {
+  // Arrange
+  const skill = await readFile(
+    join(__dirname, '..', '..', 'skills', 'codebook', 'SKILL.md'),
+    'utf8',
+  )
+  const section = await readNextReadmeSection()
+  // Act
+  const paragraph =
+    skill.split('\n\n').find((part) => part.startsWith('**Browser runs.**')) ??
+    ''
+  // Assert
+  assert.ok(
+    paragraph.includes(
+      'not even temporarily or with a plan to restore them, and not after the learner agrees to continue',
+    ),
+  )
+  assert.ok(
+    paragraph.includes(
+      'offer only choices that change no project file: another declared action or stop, another page, or explaining what the run did observe.',
+    ),
+  )
+  assert.ok(
+    section.includes(
+      "never edits the project's files, config or scripts to make a run start or reach its stops, not even temporarily or after you agree to continue (when the page itself keeps the declared action from happening, such as an automatic load that races the click, it tells you what blocks it and offers only choices that change no project file)",
     ),
   )
 })

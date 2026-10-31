@@ -38,6 +38,8 @@ Read the archived docs before the work each governs (other records, prompts, ext
 
 Fix every carried defect in the next cycle. Sole exception: the [ship review limit](#delivery) (owner, 2026-10-23). No planning choice, review outcome or skill default overrides this, so a feature cycle starts clean.
 
+- **Defect** = a Critical or Major finding (a review marks it critical, major, high, blocking, P0 or P1) or a failed gate, CI or native check. Medium, Minor, Low and informational findings, test gaps and doc debt are no defects: fixed when cheap and in scope, else answered Skip and named once in the PR or a short later-candidate list; they never start a bug-fix cycle (owner, 2026-10-31: 「レビューツールを複数回して、全部持ち越して直すっていうのが過剰」).
+
 - **Feature cycle**: an increment of the final product. Starts only with nothing carried in; planned from the final product alone (`/spec` + plan reviews, from PRODUCT_GOAL.md and the gap audit). Defects it leaves unfixed are carried.
 - **Bug-fix cycle**: follows any cycle that left a defect; fixes those, nothing else.
   - Issue: each defect a task (source: cycle + finding label; closing fix or evidence; the test failing without the fix). No increment; nothing selected, dropped or reduced.
@@ -45,7 +47,7 @@ Fix every carried defect in the next cycle. Sole exception: the [ship review lim
   - Closes when every carried and found defect is closed → feature cycle, or another bug-fix cycle for defects that limit recorded.
 - A defect closes by a fix + a test failing without it, or recorded evidence it is no defect / no longer applies.
 - Carried defects live in the bug-fix cycle's Issue as tasks; a TODOS file, backlog or ledger of them is forbidden (a list that only records lets work end at the recording). Later candidate increments: a short list at most, never holding a carried defect.
-- Delivery: feature cycle fixes critical findings before merge, carries all others (review, delegated review, native trial, audit); bug-fix cycle fixes every finding before merge, except as the ship review limit allows.
+- Delivery: feature cycle fixes Critical findings before merge, carries Major ones (review, delegated review, native trial, audit); bug-fix cycle fixes every Critical/Major finding before merge, except as the ship review limit allows.
 
 ## Working loop
 
@@ -101,10 +103,10 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 **Ship review limit (owner, 2026-10-18; 2026-10-23).**
 
 - Installed `/ship`: max three fixing cycles; no fourth, no counter reset after a handoff, no round relabeled a repair.
-- Third cycle still has findings (`converged:false`) → the owner's 2026-10-23 rule, feature and bug-fix cycles alike: fix every last-round finding, Minor and below included (Critical always fixed before merge, per the delivery rules); record only still-open Critical/Major defects in a GitHub Issue (next cycle's tasks); merge after required CI + exact-HEAD gate, reporting `converged:false` in the PR. This overrides no-carry for those recorded defects only.
+- Third cycle still has findings (`converged:false`) → the owner's 2026-10-23 rule, feature and bug-fix cycles alike, with the 2026-10-31 defect rule: fix every last-round Critical/Major finding (Critical always fixed before merge, per the delivery rules) and the lower ones that are cheap and in scope, the rest answered Skip and named once in the PR; record only still-open Critical/Major defects in a GitHub Issue (next cycle's tasks); merge after required CI + exact-HEAD gate, reporting `converged:false` in the PR. This overrides no-carry for those recorded defects only.
 - The limit is `/ship`'s alone (owner, 2026-10-23): one round is long; full convergence would stall delivery. It records defects of `/ship` rounds the PR cannot close (e.g. a Major finding whose fix/proof needs an unknown root cause or a native check).
 - A Critical finding never merges open: one the PR cannot close holds the merge until fixed (cycle + delivery rules).
-- Local CodeRabbit CLI: no round limit; its findings follow the cycle rule at every review, as do gate, CI and native-check failures.
+- Local CodeRabbit CLI and OCR delegate: their Critical/Major findings follow the cycle rule, as do gate, CI and native-check failures; findings below Major per the defect rule. CodeRabbit CLI: once on the PR's final range, more only after a fix it must recheck.
 
 **Skills** (read each installed SKILL.md at invocation; this map guides, copies no workflow):
 
@@ -128,9 +130,9 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 
 - `/spec`: plans a feature increment from PRODUCT_GOAL.md + gap audit, or writes a bug-fix Issue from the previous closing comment (one task + acceptance criterion per carried defect, nothing ranked or selected).
 - Plan reviews may change how a carried defect is fixed; never remove, merge away or defer one.
-- `/review`, `/ship` review steps: feature cycle answers non-critical findings Skip, no automatic fixes of informational findings; bug-fix cycle answers none Skip.
+- `/review`, `/ship` review steps: Critical fixed; Major fixed in a bug-fix cycle, carried from a feature cycle; findings below Major per the defect rule in both kinds (fixed when cheap and in scope, else answered Skip; no automatic fixes of informational findings).
 - `/ship`: commit the coverage audit's tests; plan completion audit counts an open bug-fix task NOT DONE and stops (no ship anyway, defer or drop); TODOS step writes no TODOS.md; fix documentation-audit blockers before commit.
-- Test gap, deferral, non-blocking doc debt, skill follow-up: carried in a feature cycle; fixed before merge in a bug-fix cycle.
+- Test gap, deferral, non-blocking doc debt, skill follow-up: later candidates, no carried defects.
 - Closing comment: feature cycle names every carried defect (bug-fix Issue comes before other work); bug-fix cycle states nothing is carried (`/spec` starts a feature cycle); defects recorded by the ship review limit → named, next cycle is bug-fix.
 
 **Invocation.**

@@ -1,0 +1,9 @@
+{
+  "measured": "Next 16.4.3 dev server (next dev --webpack on Node 24.22.1, dependencies installed with pnpm 12.15.0) of TanStack/query c9c00015 examples/react/load-more-infinite-scroll, after one GET of /; Cycle 0066 task 32. The manifests beside this file are its .next/dev/build-manifest.json, .next/dev/routes-manifest.json and .next/dev/server/pages-manifest.json; there was no app-paths-manifest.json.",
+  "pagesFiles": [
+    "src/pages/_app.tsx",
+    "src/pages/about.tsx",
+    "src/pages/api/projects.ts",
+    "src/pages/index.tsx"
+  ]
+}

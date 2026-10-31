@@ -18,6 +18,7 @@ import { repositoryEntryPathSchema } from '../repositoryConfigSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
 import { createBundleVerifier } from './createBundleVerifier'
+import { DiscoveryBudgetError } from './discoveryBudgetError'
 import { extractDevelopmentModule } from './extractDevelopmentModule'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
 import { resolveNextClientManifest } from './resolveNextClientManifest'
@@ -48,7 +49,7 @@ export async function readDevelopmentBundle(
       performance.now() >= deadline ||
       readBytes >= REPOSITORY_DISCOVERY_LIMIT_BYTES
     )
-      throw new Error('Build discovery resource limit exceeded')
+      throw new DiscoveryBudgetError()
     const timeout = AbortSignal.timeout(
       Math.max(1, Math.ceil(deadline - performance.now())),
     )
@@ -101,8 +102,7 @@ export async function readDevelopmentBundle(
         'Selected server action is absent from the selected route executable modules; an SSR reference is not a server implementation',
       )
     createBundleVerifier(bundle)
-    if (performance.now() >= deadline)
-      throw new Error('Build discovery resource limit exceeded')
+    if (performance.now() >= deadline) throw new DiscoveryBudgetError()
     signal?.throwIfAborted()
     return {
       bundle,
@@ -154,8 +154,7 @@ export async function readDevelopmentBundle(
     // Yield between bounded chunks so state/stop remain responsive during preparation.
     await setImmediate(undefined, { signal })
   }
-  if (performance.now() >= deadline)
-    throw new Error('Build discovery resource limit exceeded')
+  if (performance.now() >= deadline) throw new DiscoveryBudgetError()
   signal?.throwIfAborted()
   // An unchanged tracked file may still belong to a route outside the launched page: the stop is armed before input, in the code the launched page loads, so the refusal names that page and where a stop can go (Cycle 0052 task 7b).
   if (bundles.length !== 1)

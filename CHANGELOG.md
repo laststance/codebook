@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.2.67.0] - 2026-10-31 (development candidate)
+
+Cycle 0066 ([Issue #168](https://github.com/laststance/codebook/issues/168)), a bug-fix cycle: it fixes every defect Cycle 0065 carried in the Next Pages Router runs, so refusals, routing, masking and help say and do the same thing. No new feature.
+
+**A project with both routers runs the App route Next serves.** The App route is chosen by Next's own segment precedence, so `/a/[y]` runs for `/a/b` beside `/[x]/b` instead of being refused as a tie, and the contest with a Pages route compares the route Next really serves. A page whose source has a custom `pageExtensions` extension (`app/about/page.mdx`, `pages/about.mdx`) is refused with the custom `pageExtensions` sentence of `NEXT_ROUTE_NOT_FOUND` instead of being called a stale listing; style, test, declaration and stories files beside a gone page do not count as its source.
+
+**A Pages run refuses a server stop before the browser opens.** A stop on the server participant in a Pages Router run ends with `NEXT_SERVER_ONLY_STOP` and says that a Pages run observes only the page's client code.
+
+**Secrets stay masked in more of the server's output.** A bare query token in a logged URL (`/reset?3f9ac0d1e2b4`), a padded token, a part after a second question mark and an empty-valued part are masked whole, also when quotes or brackets surround the URL; a secret-named assignment that a flag forwards (`--env=API_TOKEN=…`) is masked; and an argument flag value of the dev script never reaches a message. Masking takes linear time, so hostile output no longer costs about a second per 64 KB.
+
+**Paths keep their encoded slashes.** `/posts/a%2Fb` no longer equals `/posts/a/b`, so a click is not followed into a client navigation to another route; Codebook's request for a compiled chunk refuses a `.` or `..` segment, so it never leaves `/_next/`.
+
+**The click scroll is its own step.** A click target below the visible page is scrolled once, right before its click point is read; reading a before or after condition never scrolls the page. A target that leaves the viewport without Codebook scrolling it is reported as "Click target or before conditions changed before input".
+
+**`preparation` counts the pre scripts the package manager runs.** npm, Yarn 1, pnpm 9 and later, and Bun run `predev` and a delegated script's `pre<name>`; pnpm 7 and 8 run them only with `enable-pre-post-scripts=true`; Yarn 2 and later do not; an explicit `enable-pre-post-scripts` in `.npmrc` wins over pnpm's default. When the manager is unknown, the readiness notes say a pre script may or may not run.
+
+**Refusals and help agree with the run.** A launch failure of a dev script that only sets environment variables keeps the note about the environment Codebook does not apply. A setup deadline while an App route is confirmed keeps the App run's uncoded text. The help's `NEXT_SETUP_DEADLINE`, `NEXT_SERVER_ONLY_STOP` and `preparation` sentences, the README's API 1.12 note (the scroll changes every `repository-browser` click, App Router and Vite runs included; `nextRoute` is absent in a workspace without a Pages folder) and the webpack forms the README names now match the code.
+
+**Skill 1.0.60.** For `NEXT_SETUP_DEADLINE` the chat relays the run's own recovery text. The chat never edits the project's files, config or scripts to make a run start or reach its stops, not even temporarily or after you agree to continue; when the page itself keeps the declared action from happening, it offers only choices that change no project file.
+
+**Known limits.** A page whose own code acts on the declared click target as soon as it scrolls into view (an automatic load on view, for example) can still race the click; the run then ends truthfully and the chat offers another action. Development trials ran on TanStack Query's Next 16.4.3 Pages examples and `nextjs-dashboard` in VS Code 1.144.0 and Cursor 3.27.22 on macOS 26.
+
+**Compatibility.** MCP API 1.12 is unchanged. To update, install this VSIX, reopen the work window and, in Cursor, run **Codebook: Set Up AI Chat** so the managed skill updates to 1.0.60.
+
 ## [0.2.66.0] - 2026-10-31 (development candidate)
 
 Cycle 0065 ([Issue #166](https://github.com/laststance/codebook/issues/166)), a feature cycle: the chat explains a click in a **Next Pages Router** page (`pages/` or `src/pages/`) live and saves it as a learning replay, in VS Code and in Cursor, as it already did for App Router pages.

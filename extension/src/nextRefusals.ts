@@ -44,8 +44,7 @@ export function nextHelpAnchor(code: NextRefusalCode): string {
  *
  * Why it exists: the recovery never carries a value, because a recovery override reaches MCP unsanitized; every dynamic value (the entry path, a setting, the step, a file, quoted development-server output) goes into the message and the cause, which the service sanitizes and bounds. Called by the configured browser run before input, where a thrown refusal reaches the service's preparation error with its code.
  * @param code - The refusal code.
- * @param message - What was refused, naming the path, file, setting or value, ending with the fix or the limit.
- * @param cause - The redacted cause, when the message does not carry it.
+ * @param message - What was refused, naming the path, file, setting or value, ending with the fix or the limit; it is the cause as well.
  * @returns The error to throw.
  * @example
  * throw nextRefusal('NEXT_UNSUPPORTED_SETTING', 'This Next 16.4.3 project sets basePath (/docs); Codebook\'s browser run does not support basePath or i18n routing.')
@@ -53,9 +52,8 @@ export function nextHelpAnchor(code: NextRefusalCode): string {
 export function nextRefusal(
   code: NextRefusalCode,
   message: string,
-  cause = message,
 ): StudyError {
-  return new StudyError(code, message, cause)
+  return new StudyError(code, message)
 }
 
 /** The side-effect sentence of a Pages setup deadline once the browser Codebook opened was closed: no input and no click went out. */

@@ -2,6 +2,7 @@ import type { BundleSource } from '../repositoryBundle'
 
 import { createBundleVerifier } from './createBundleVerifier'
 import type { NextPagesDiscoveryCache } from './createNextPagesDiscoveryCache'
+import { DiscoveryBudgetError } from './discoveryBudgetError'
 import { selectEvaluatedModule } from './extractDevelopmentModule'
 import type { NextRouteFolder } from './findNextRouteFolder'
 import { nextServerOnlyFileReason } from './nextServerOnlyFileReason'
@@ -41,7 +42,7 @@ export type NextServerOnlyRequest = {
  * - `server-only` with `document` for `<folder>/_document.<ext>`, `api-route` for `<folder>/api.<ext>` or a file under `<folder>/api/`
  * - `server-only` with `server-compile` when the `(pages-dir-node)` module of the page's server compile maps the line and the sealed browser module's complete map does not
  * - `unknown` otherwise, also when the server compile is absent, does not carry the module, or carries another original
- * @throws When the run is aborted or its discovery budget is spent; a server compile that is unreadable, replaced during the read or ambiguous establishes nothing (`unknown`).
+ * @throws When the run is aborted, or a {@link DiscoveryBudgetError} when its discovery budget is spent; a server compile that is unreadable, replaced during the read or ambiguous establishes nothing (`unknown`), also when its error carries the budget's words.
  * @example
  * await readNextServerOnlyReason({ workspace, path: 'src/pages/index.tsx', line: 17, folder: 'src/pages', compiledPath: 'pages/index.js', clientBundle, cache })
  * // => { kind: 'server-only', reason: 'server-compile' } for a getStaticProps body line
@@ -84,14 +85,10 @@ export async function readNextServerOnlyReason(
           lineMappingOf(serverBundle, request.line) === 'mapped',
         )
       } catch (error) {
-        // A server module that is ambiguous, stale, unreadable or names another original establishes nothing; only the run's own limits end the run.
+        // A server module that is ambiguous, stale, unreadable or names another original establishes nothing; only the run's own limits end the run, told by type, never by message.
         request.signal?.throwIfAborted()
-        if (
-          performance.now() >= step.deadline ||
-          (error instanceof Error &&
-            error.message === 'Build discovery resource limit exceeded')
-        )
-          throw new Error('Build discovery resource limit exceeded')
+        if (error instanceof DiscoveryBudgetError) throw error
+        if (performance.now() >= step.deadline) throw new DiscoveryBudgetError()
         return false
       }
     },

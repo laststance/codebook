@@ -7,7 +7,10 @@ import type { DebugSession } from 'vscode'
 import type { ConfiguredBrowserRun } from '../../configuredBrowserRun'
 import type * as ConfiguredBrowserRunModule from '../../configuredBrowserRun'
 import { configuredDefinitionSchema } from '../../configuredStudySchemas'
-import { REPOSITORY_LITERAL_LIMIT_CHARS } from '../../constants'
+import {
+  CROSS_RUNTIME_CONFIG_VERSION,
+  REPOSITORY_LITERAL_LIMIT_CHARS,
+} from '../../constants'
 import { StudyError } from '../../errors'
 import type * as OwnedRepositoryBreakpointModule from '../../ownedRepositoryBreakpoint'
 import type { BundleSource } from '../../repositoryBundle'
@@ -20,6 +23,7 @@ import { WaitTimeoutError } from '../../runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
 import { citationContext } from '../../utils/citationContext'
 import { configuredDomExpression } from '../../utils/configuredDomExpression'
+import { configuredScrollExpression } from '../../utils/configuredScrollExpression'
 import { createBundleVerifier } from '../../utils/createBundleVerifier'
 import type { NextPagesDiscoveryCache } from '../../utils/createNextPagesDiscoveryCache'
 import {
@@ -130,6 +134,8 @@ export async function configuredRuntimeHarness(
     nextPages?: NextPagesHarnessOptions
     /** Moves the first cited source, and the stop declared in it, to this workspace-relative path (such as a file under `src/pages`). */
     sourcePath?: string
+    /** Declares the first stop for this participant in a version 2 (cross-runtime) configuration, as a start that names `participant` does; only without additional stops, whose version 2 form differs. */
+    participant?: 'browser' | 'server'
     /** The configuration's initial inputs; the stand-in page has one editable control for each selector. */
     initialInputs?: RepositoryConfiguration['initialInputs']
     /** Makes the stand-in page never answer the text insert of an initial input, as a page whose reply is lost. */
@@ -138,6 +144,8 @@ export async function configuredRuntimeHarness(
     launchFailure?: string
     /** Makes the stand-in server's structured entry check (`readyEntry`) never answer until the run is cancelled, as a first compile that is still running does. */
     entryHangs?: boolean
+    /** Makes the stand-in server's App verdict (`confirmAppEntry`) record its answer and then never settle until the run is cancelled, as a redirected root whose second request does not answer. */
+    appEntryConfirmationHangs?: boolean
     /** Makes the stand-in page never answer a screenshot until the run is cancelled, so the run stays at the end of its setup, after the inputs were written. */
     holdScreenshot?: boolean
   } = {},
@@ -166,6 +174,14 @@ export async function configuredRuntimeHarness(
     reference.configuration.entryPath = options.nextPages.entryPath
   if (options.initialInputs)
     reference.configuration.initialInputs = options.initialInputs
+  // A version 2 configuration names the first stop's participant; its other fields are the version 1 ones.
+  const configuration = options.participant
+    ? {
+        ...reference.configuration,
+        version: CROSS_RUNTIME_CONFIG_VERSION,
+        participant: options.participant,
+      }
+    : reference.configuration
   // Each of these changes makes the frozen intent hash stale.
   if (
     additionalStops.length ||
@@ -174,11 +190,10 @@ export async function configuredRuntimeHarness(
     options.adapter ||
     options.sourcePath ||
     options.nextPages?.entryPath ||
-    options.initialInputs
+    options.initialInputs ||
+    options.participant
   )
-    reference.configurationHash = sha256(
-      JSON.stringify(reference.configuration),
-    )
+    reference.configurationHash = sha256(JSON.stringify(configuration))
   for (const source of reference.descriptor!.sources)
     await repository.track(source.path, source.text)
   // A Pages project around the cited source: its Pages folder, Next, the `.next/dev` build and the module the page executes.
@@ -190,12 +205,15 @@ export async function configuredRuntimeHarness(
       )
     : undefined
   const definition = configuredDefinitionSchema.parse({
-    configuration: reference.configuration,
+    configuration,
     configurationHash: reference.configurationHash,
     descriptor: reference.descriptor,
   })
   const afterExpression = configuredDomExpression(
     definition.configuration.action.after,
+  )
+  const scrollExpression = configuredScrollExpression(
+    definition.configuration.action.selector,
   )
   const sourcePath = join(
       repository.directory,
@@ -236,6 +254,8 @@ export async function configuredRuntimeHarness(
   let requestSequence = 0
   const bindingWaitBudgetsMs: (number | undefined)[] = []
   const navigations: string[] = []
+  // Every expression the run evaluated in the owned page, in order.
+  const evaluatedExpressions: string[] = []
   const launchConfigurations: DebugSession['configuration'][] = []
   const setupSteps: string[] = []
   // The text of the module the Vite stand-in serves now; {@link serveChangedModule} replaces it, as a dependency-optimizer reload does.
@@ -503,6 +523,9 @@ export async function configuredRuntimeHarness(
       body: { threadId: 1, reason: 'breakpoint' },
     })
   }
+  // Whether the page answers held conditions without a click point, and whether the click step's scroll answers that it scrolled; {@link answerWithoutClickPoint} sets both.
+  let clickTargetWithoutPoint = false
+  let clickTargetScrolled = false
   let screenshot =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII='
   /** Answers what the page evaluates: its location, and the configured DOM conditions, of which the after conditions hold only once the input was sent. */
@@ -510,6 +533,8 @@ export async function configuredRuntimeHarness(
     if (expression === NEXT_PAGES_STATE_EXPRESSION) return nextPagesState()
     if (expression === 'location.href') return 'about:blank'
     if (expression === 'location.origin') return pageOrigin
+    if (expression === scrollExpression)
+      return { scrolled: clickTargetScrolled }
     if (
       expression === afterExpression &&
       !run.view().operation?.inputDispatched
@@ -518,9 +543,10 @@ export async function configuredRuntimeHarness(
         ready: false,
         failure: { conditionIndex: 0, reason: 'not-visible' },
       }
-    return ready
-      ? { ready: true, x: 12, y: 18 }
-      : { ready: false, failure: beforeFailure }
+    if (!ready) return { ready: false, failure: beforeFailure }
+    return clickTargetWithoutPoint
+      ? { ready: true }
+      : { ready: true, x: 12, y: 18 }
   }
   /** Gives the required inspection's path its value at the pause: a theme name, or what a test asked for instead. */
   const requiredInspectionValue = (): unknown => {
@@ -566,6 +592,8 @@ export async function configuredRuntimeHarness(
       },
       timeout?: number,
     ) {
+      if (method === 'Runtime.evaluate')
+        evaluatedExpressions.push(parameters?.expression ?? '')
       // After the input, the after conditions answer the failure a test chose, and every read of them is counted.
       if (
         method === 'Runtime.evaluate' &&
@@ -857,11 +885,16 @@ export async function configuredRuntimeHarness(
       }
     },
     confirmAppEntry: async (
-      _signal: AbortSignal,
+      signal: AbortSignal,
       _entryPath: string,
       entry: NextEntryResponse,
     ): Promise<void> => {
       appEntryConfirmations.push(entry)
+      // A root request that does not answer settles only when the run is cancelled.
+      if (options.appEntryConfirmationHangs)
+        await new Promise<never>((_resolve, reject) =>
+          signal.addEventListener('abort', () => reject(signal.reason)),
+        )
     },
     outputTail: () => options.nextPages?.outputTail ?? '',
     close: async (): Promise<void> => {
@@ -1138,12 +1171,14 @@ export async function configuredRuntimeHarness(
   return {
     ...repository,
     run,
-    definition: { ...definition, configuration: reference.configuration },
+    definition: { ...definition, configuration },
     documents,
     breakpoints,
     userBreakpoint,
     mouse,
     commands,
+    /** Every expression the run evaluated in the owned page, in order. */
+    evaluatedExpressions,
     releases,
     emitPause,
     emitCdpPause,
@@ -1374,6 +1409,13 @@ export async function configuredRuntimeHarness(
     },
     setReady(value: boolean): void {
       ready = value
+    },
+    /** Makes every later DOM read answer that the conditions hold without a click point, as the owned page does for a click target outside the viewport, and the click step's scroll answer `{ scrolled }`: by default it scrolled and the target stayed outside; `{ scrolled: false }` stands for a target the scroll found inside the viewport and that left it before the read. @example harness.answerWithoutClickPoint({ scrolled: false }) */
+    answerWithoutClickPoint({
+      scrolled = true,
+    }: { scrolled?: boolean } = {}): void {
+      clickTargetWithoutPoint = true
+      clickTargetScrolled = scrolled
     },
     /** Makes every later DOM read answer this failure, as the owned page would for a before condition that never holds. */
     failBeforeWith(failure: BeforeFailure): void {
