@@ -290,7 +290,8 @@ test('scans a long chain of public paths in linear time', () => {
 
   // Assert
   assert.deepEqual(refused, [])
-  assert.ok(elapsedMilliseconds < 2000, `took ${elapsedMilliseconds} ms`)
+  // gstack-timing-ok: the bound is the contract (linear scan); the linear scan takes milliseconds, a quadratic rescan took about 24 s, so 5 s separates them under CI coverage load.
+  assert.ok(elapsedMilliseconds < 5000, `took ${elapsedMilliseconds} ms`)
 })
 
 // protects=the command refuses a chained private path before any network call; fails_when=E_PRIVATE_PATH is skipped for a token that starts public; no_claim=gstack-post is never reached, nothing fake stands in

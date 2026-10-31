@@ -1124,8 +1124,10 @@ test('an asynchronous spawn error is logged as an error exit line and the worktr
   const append = runner.seams.appendState
   runner.seams.appendState = async (text) => {
     await append(text)
-    if (text.startsWith('CODEX_REVIEW_CHILD'))
+    if (text.startsWith('CODEX_REVIEW_CHILD')) {
+      // gstack-timing-ok: the wait only keeps the CHILD write pending; the error is queued by setImmediate before this timer, so the order does not depend on load.
       await new Promise((resolve) => setTimeout(resolve, 20))
+    }
   }
 
   // Act

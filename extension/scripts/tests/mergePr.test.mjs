@@ -893,6 +893,7 @@ test('createCommandRunner ends a call that exceeds its time limit with a failure
 
   // Assert
   assert.equal(result.status, 127)
+  // gstack-timing-ok: the bound is the contract (the 10 s child is ended near the 200 ms limit); 5 s is far above any load delay and far below 10 s.
   assert.ok(Date.now() - startedAt < 5000)
 })
 
