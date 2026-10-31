@@ -953,6 +953,59 @@ test('when the branch reset fails the runner logs CODEX_REVIEW_EXIT error with t
   assert.ok(
     runner.gitCalls.some((call) => call.startsWith('worktree remove --force')),
   )
+  assert.deepEqual(runner.ended, [])
+})
+
+// protects=a runner error after codex started ends codex's tree before the error exit line and the cleanup; fails_when=the detached codex keeps running in the removed worktree (endTree never called); no_claim=a real process tree (endTree is a fake)
+test('when the CHILD state line cannot be written the runner ends codex once, then logs the error exit line and cleans up', async () => {
+  // Arrange
+  const runner = makeRunnerHarness()
+  const append = runner.seams.appendState
+  runner.seams.appendState = async (text) => {
+    if (text.startsWith('CODEX_REVIEW_CHILD')) throw new Error('ENOSPC')
+    await append(text)
+  }
+  const endTree = runner.seams.endTree
+  runner.seams.endTree = async (target) => {
+    runner.log.push('TREE_ENDED\n')
+    await endTree(target)
+  }
+
+  // Act
+  await runCandidateReview(RUNNER_OPTIONS, runner.seams)
+
+  // Assert
+  assert.deepEqual(runner.ended, [CODEX_PID])
+  assert.deepEqual(runner.log, [
+    'CODEX_REVIEW_PID 777\n',
+    'TREE_ENDED\n',
+    'CODEX_REVIEW_EXIT error ENOSPC 2026-11-01T12:00:00.000Z\n',
+    'CODEX_REVIEW_CLEANED\n',
+  ])
+})
+
+// protects=a failing tree end is named in the error exit line and cleanup still runs; fails_when=the tree-end failure is swallowed silently or skips cleanup; no_claim=a real process tree
+test('when ending codex fails after a state-write error the exit line names both failures and cleanup still runs', async () => {
+  // Arrange
+  const runner = makeRunnerHarness()
+  const append = runner.seams.appendState
+  runner.seams.appendState = async (text) => {
+    if (text.startsWith('CODEX_REVIEW_CHILD')) throw new Error('ENOSPC')
+    await append(text)
+  }
+  runner.seams.endTree = async () => {
+    throw new Error('kill denied')
+  }
+
+  // Act
+  await runCandidateReview(RUNNER_OPTIONS, runner.seams)
+
+  // Assert
+  assert.equal(
+    runner.log[1],
+    "CODEX_REVIEW_EXIT error ENOSPC (ending codex's process tree failed: kill denied) 2026-11-01T12:00:00.000Z\n",
+  )
+  assert.equal(runner.log.at(-1), 'CODEX_REVIEW_CLEANED\n')
 })
 
 // protects=a codex that cannot start is an error line; fails_when=a spawn error leaves no exit line; no_claim=none beyond protects

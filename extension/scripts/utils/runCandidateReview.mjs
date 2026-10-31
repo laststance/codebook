@@ -110,6 +110,7 @@ function errorMessage(error) {
  * Runs inside the detached runner process that `qa-candidate.mjs` spawns; tests call it with fakes.
  *
  * State-file lines, in order: `CODEX_REVIEW_PID <runner pid>`, `CODEX_REVIEW_CHILD <codex pid>`, `CODEX_REVIEW_EXIT <code|timeout|error <message>> <ISO time>`, `CODEX_REVIEW_CLEANED` (or `CODEX_REVIEW_CLEANUP_FAILED <message>` so `--clean` retries).
+ * A runner error after codex started (for example a failed `CODEX_REVIEW_CHILD` write) ends codex's tree first; a failing tree end is named in the error exit line.
  * On SIGTERM, SIGINT or SIGHUP codex's tree is ended first ({@link endChildrenOnSignal}) and an `error` exit line is written; the worktree and branch stay for `--clean`.
  *
  * @param {{ repository: string, short: string, attempt: string, base: string }} options - `base` is the full sha the base branch is reset to.
@@ -138,6 +139,8 @@ export async function runCandidateReview(
   let ended = false
   // Set the moment the limit passes, before the tree end: a `close` the end itself causes must not pass for codex's own exit.
   let timedOut = false
+  // True once codex has closed or failed to spawn, so a later runner error has no tree left to end.
+  let codexDone = false
   try {
     // Reset a branch an interrupted run left behind; the pinned base keeps the reviewed diff reproducible.
     await seams.git(['branch', '-f', names.branch, base])
@@ -147,8 +150,14 @@ export async function runCandidateReview(
     })
     // Listeners and the exit promise exist before any await, so an asynchronous spawn failure or an early close is never missed.
     const outcomePromise = new Promise((resolve) => {
-      child.once('error', (error) => resolve({ error }))
-      child.once('close', (code, signal) => resolve({ code, signal }))
+      child.once('error', (error) => {
+        codexDone = true
+        resolve({ error })
+      })
+      child.once('close', (code, signal) => {
+        codexDone = true
+        resolve({ code, signal })
+      })
       // Past the limit the tree is ended before the exit line, so the line is true when it is read.
       timer = seams.setTimer(async () => {
         timedOut = true
@@ -180,8 +189,17 @@ export async function runCandidateReview(
         )
     }
   } catch (error) {
-    // The runner itself failed (branch reset, spawn): record it, still clean up.
-    await writeExit(`error ${errorMessage(error)}`)
+    // The runner itself failed (branch reset, spawn, state-file write): record it, still clean up.
+    // Codex runs detached; once started and still alive, its tree is ended first so no review outlives the worktree it reads.
+    let treeEndFailure = ''
+    if (child !== undefined && !codexDone && !timedOut && !ended) {
+      try {
+        await seams.endTree(child)
+      } catch (endError) {
+        treeEndFailure = ` (ending codex's process tree failed: ${errorMessage(endError)})`
+      }
+    }
+    await writeExit(`error ${errorMessage(error)}${treeEndFailure}`)
   } finally {
     if (timer !== undefined) seams.clearTimer(timer)
     release()
