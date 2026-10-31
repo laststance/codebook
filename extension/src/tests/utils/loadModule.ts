@@ -69,10 +69,15 @@ export async function loadModule<Module>(
           context,
           { filename: file },
         ) as (...values: unknown[]) => void
+        const siblingRequire = createRequire(file)
+        // The sibling resolves the stubbed dependencies first, as the module that requires it does.
         evaluate(
           sibling,
           sibling.exports,
-          createRequire(file),
+          (request: string) =>
+            Object.hasOwn(dependencies, request)
+              ? dependencies[request]
+              : siblingRequire(request),
           dirname(file),
           file,
         )

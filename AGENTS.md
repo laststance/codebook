@@ -227,7 +227,7 @@ Standing rules, stated as rules (no decision log); delivery chain and ship limit
 
 Node as `.node-version` pins it (mirrored in `extension/.node-version`, since a version manager's shim reads the nearest package's `engines` there), pnpm as the extension's `packageManager` pins it, and Bun as `.bun-version` pins it (`pnpm install` does not provide it; install that version, e.g. `curl -fsSL https://bun.com/install | bash -s "bun-v$(cat .bun-version)"`, or the commit hook and the format check fail); put that Node's own `bin` first in `PATH`; run from the repo root.
 
-Delivery commands (each prints usage, exit codes 0/1/2/3/4/64 and `E_…` codes with `--help`; a refusal's first line is its code, its last line `Fix:`):
+Delivery commands (each prints usage, exit codes 0/1/2/3/4/64 (`post-trial-evidence.mjs` also 10/11/12 for `gstack-post` results) and `E_…` codes with `--help`; a refusal's first line is its code, its last line `Fix:`):
 
 | Command | When |
 | --- | --- |
