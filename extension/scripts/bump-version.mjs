@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Writes the five places that hold the release version in one run, and checks that they agree (Cycle 0068, Implementation 1).
 import { randomBytes } from 'node:crypto'
-import { chmod, readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { chmod, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
@@ -164,11 +164,17 @@ function formatLocalDate(date) {
  */
 export async function writeFileAtomically(absolutePath, content) {
   const temporaryPath = `${absolutePath}.${process.pid}-${randomBytes(4).toString('hex')}.tmp`
-  const { mode } = await stat(absolutePath)
-  await writeFile(temporaryPath, content, 'utf8')
-  // Keep the original permission bits (the temporary file gets the default ones).
-  await chmod(temporaryPath, mode)
-  await rename(temporaryPath, absolutePath)
+  try {
+    const { mode } = await stat(absolutePath)
+    await writeFile(temporaryPath, content, 'utf8')
+    // Keep the original permission bits (the temporary file gets the default ones).
+    await chmod(temporaryPath, mode)
+    await rename(temporaryPath, absolutePath)
+  } catch (error) {
+    // A failed write or rename (e.g. EBUSY on Windows) must not leave this call's temporary file: a rerun uses another name and would never remove it, and the untracked file blocks the clean-checkout gate.
+    await rm(temporaryPath, { force: true }).catch(() => {})
+    throw error
+  }
 }
 
 /**

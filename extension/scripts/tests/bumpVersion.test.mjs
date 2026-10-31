@@ -589,3 +589,31 @@ test('the atomic writer leaves the new content and no temporary file', async () 
     await rm(root, { recursive: true, force: true })
   }
 })
+
+// protects=a failed rename leaves no temporary file beside the target, before or after a successful rerun; fails_when=a .tmp file stays behind after the failure; no_claim=a real Windows EBUSY (a directory at the target makes the rename fail)
+test('a failed atomic rename removes its temporary file and a rerun leaves none', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'bump-version-atomic-fail-'))
+  try {
+    // Arrange
+    const path = join(root, 'VERSION')
+    await mkdir(path)
+
+    // Act
+    const failure = await writeFileAtomically(path, '0.2.69.0\n').then(
+      () => null,
+      (error) => error,
+    )
+    const afterFailure = await readdir(root)
+    await rm(path, { recursive: true })
+    await writeFile(path, '0.2.68.0\n')
+    await writeFileAtomically(path, '0.2.69.0\n')
+
+    // Assert
+    assert.notEqual(failure, null)
+    assert.deepEqual(afterFailure, ['VERSION'])
+    assert.equal(await readFile(path, 'utf8'), '0.2.69.0\n')
+    assert.deepEqual(await readdir(root), ['VERSION'])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
