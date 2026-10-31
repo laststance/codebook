@@ -107,6 +107,8 @@ function answers(overrides = {}) {
     'git fetch origin main': ok(),
     'git rev-parse main': ok(`${MAIN_SHA}\n`),
     'git rev-parse origin/main': ok(`${MAIN_SHA}\n`),
+    // The merging checkout sits at the PR head, as after the exact-HEAD gate.
+    'git rev-parse HEAD': ok(`${HEAD}\n`),
     ...overrides,
   }
 }
@@ -546,6 +548,23 @@ test('refuses with E_CHECKS_MISSING naming the workflow file that has no run, an
   assert.deepEqual(mergeCalls(calls), [])
 })
 
+// protects=CI is judged only from a checkout at the PR head, whose workflow files decide the expected set; fails_when=a checkout on another commit (main, an older head) still merges, or the merge call happens; no_claim=real git output (a fake runner answers rev-parse)
+test('refuses with E_CHECKOUT_HEAD when this checkout is not at the PR head, and makes no merge call', async () => {
+  // Arrange
+  const responses = { 'git rev-parse HEAD': ok(`${MAIN_SHA}\n`) }
+
+  // Act
+  const { exit, err, calls } = await runCommand({ responses })
+
+  // Assert
+  assert.equal(exit, 1)
+  assert.deepEqual(err, [
+    `E_CHECKOUT_HEAD: this checkout is at ${MAIN_SHA}, the PR head is ${HEAD}`,
+    'Fix: check out the PR head in this checkout, run pnpm --dir extension gate there, then rerun this command',
+  ])
+  assert.deepEqual(mergeCalls(calls), [])
+})
+
 // protects=an expected workflow whose whole run was skipped does not count as having run; fails_when=a run with conclusion skipped satisfies the expected set and the merge proceeds; no_claim=GitHub's own reasons for skipping a run (the run object stands in)
 test('refuses with E_CHECKS_MISSING when an expected workflow only has a run skipped as a whole, and makes no merge call', async () => {
   // Arrange
@@ -739,7 +758,7 @@ test('reads the CI and merges the head seen first even when a later PR view repo
   assert.ok(!calls.some((call) => call.includes(OTHER_HEAD)))
 })
 
-// protects=--dry-run changes nothing; fails_when=a merge, fetch or pull is called; no_claim=nothing
+// protects=--dry-run changes nothing; fails_when=a merge, fetch, pull or any git call other than the read-only HEAD check is made; no_claim=nothing
 test('a dry run prints what it would merge and calls no merge, fetch or pull', async () => {
   // Arrange
   const argv = [PR, '--dry-run']
@@ -750,7 +769,10 @@ test('a dry run prints what it would merge and calls no merge, fetch or pull', a
   // Assert
   assert.equal(exit, 0)
   assert.equal(out.at(-1), `would merge 173 at ${HEAD}`)
-  assert.ok(calls.every((call) => !/^(gh pr merge|git )/.test(call)))
+  assert.deepEqual(
+    calls.filter((call) => /^(gh pr merge|git )/.test(call)),
+    ['git rev-parse HEAD'],
+  )
 })
 
 // protects=a dry run still refuses what a real run refuses; fails_when=dry run exits 0 with failing checks; no_claim=nothing
@@ -985,6 +1007,7 @@ test('--help prints usage, the example, exit codes and error codes', async () =>
     'E_CHECKS_NONE',
     'E_CHECKS_MISSING',
     'E_WORKFLOWS_UNREADABLE',
+    'E_CHECKOUT_HEAD',
     'E_MERGE_FAILED',
     'E_MERGE_UNKNOWN',
     'E_MERGED_OTHER_HEAD',

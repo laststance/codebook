@@ -54,6 +54,7 @@ export const HELP_TEXT = `Usage: node extension/scripts/merge-pr.mjs <pr> [--dry
 
 Merges pull request <pr> with "gh pr merge <pr> --squash --match-head-commit <head>" only when
   - the PR is open, not a draft, and targets main;
+  - this checkout is at the PR head (its workflow files and gate summary are read here);
   - artifacts/gate/<first 8 of head>/summary.txt (this checkout) holds "Checkout: clean",
     "GATE: pass on <head>" and one "<name> exit=0" line per gate check;
   - every workflow run, check run and commit status of that head passed (a check named CodeRabbit is listed, never gating);
@@ -80,7 +81,7 @@ Exit codes:
 
 Error codes:
   E_USAGE E_GH E_PR_STATE E_GATE_MISSING E_GATE_SUMMARY_OLD E_GATE_NOT_PASSED
-  E_CHECKS_PENDING E_CHECKS_FAILED E_CHECKS_NONE E_CHECKS_MISSING E_WORKFLOWS_UNREADABLE
+  E_CHECKOUT_HEAD E_CHECKS_PENDING E_CHECKS_FAILED E_CHECKS_NONE E_CHECKS_MISSING E_WORKFLOWS_UNREADABLE
   E_MERGE_FAILED E_MERGE_UNKNOWN E_MERGED_OTHER_HEAD E_LOCAL_MAIN E_INTERNAL`
 
 /**
@@ -705,6 +706,33 @@ export async function syncLocalMain(run, environment) {
 }
 
 /**
+ * Refuses unless this checkout sits at the PR head, before CI is judged against its workflow files.
+ *
+ * Why: the expected workflow set and the gate summary are read from this checkout (D18); on another branch a workflow the PR adds would never be required.
+ * Called by {@link runMergePr} for an open PR, before {@link checkChecks}.
+ *
+ * @param {CommandRunner} run - The command runner.
+ * @param {string} head - The PR head read in step 1.
+ * @param {NodeJS.ProcessEnv} environment - Its values are redacted from the relayed error line.
+ * @throws {CommandRefusal} `E_CHECKOUT_HEAD` when HEAD cannot be read or names another commit.
+ * @example await checkCheckoutHead(run, '9f2c…', process.env) // resolves when `git rev-parse HEAD` prints the same sha
+ */
+export async function checkCheckoutHead(run, head, environment) {
+  const result = await run('git', ['rev-parse', 'HEAD'])
+  const checkoutHead = result.status === 0 ? result.stdout.trim() : ''
+  if (checkoutHead !== head)
+    throw new CommandRefusal(
+      'E_CHECKOUT_HEAD',
+      checkoutHead === ''
+        ? `cannot read this checkout's HEAD: ${firstStderrLine(result.stderr, environment)}`
+        : `this checkout is at ${checkoutHead}, the PR head is ${head}`,
+      {
+        fix: 'check out the PR head in this checkout, run pnpm --dir extension gate there, then rerun this command',
+      },
+    )
+}
+
+/**
  * Merges one PR end to end: the seven steps of Implementation 3.
  *
  * Why: this is the whole command, separated from argument parsing so tests drive it with an injected runner and summary reader.
@@ -737,6 +765,8 @@ export async function runMergePr({ pr, dryRun }, dependencies) {
     // A rerun after exit 3 or 4: the merge is done, resume at the local sync.
     print(`already merged at ${mergeCommit ?? 'an unknown commit'}`)
   } else {
+    progress.enter('check the checkout head')
+    await checkCheckoutHead(run, prState.head, environment)
     progress.enter('check CI')
     print(
       await checkChecks(run, prState.head, pr, environment, print, {
