@@ -7,14 +7,18 @@ import { redactedPairsOf } from './redactedPairsOf'
 const CREDENTIAL_HEADER =
   /\b((?:set-cookie|cookie|proxy-authorization|authorization)["']?[ \t]*[:=][ \t]*)[^\r\n]*/gi
 
-/** The query of a logged URL: in a word with a `/` before its first `?` (a path such as `/reset?…` or an absolute URL), the text after that `?` up to a blank, a fragment, or a quote, backtick or angle bracket that log or JSON syntax puts around a URL (a server logs those percent-encoded inside a query). Only a word's start begins a match, so a long word is scanned once; `user?.name` (no `/`) is no URL. */
-const URL_QUERY = /(?<!\S)([^\s?#/]*\/[^\s?#]*\?)([^\s#"'`<>]*)/g
+/**
+ * The query of a logged URL: in a word with a `/` before its first `?` (a path such as `/reset?…` or an absolute URL), the text after that `?` up to a blank or a fragment.
+ * A quote or backtick followed by a blank, the end, or a closing bracket or punctuation closes the text around the URL (`"…/reset?x"`, `{"url":"/a?x"}`) and ends the query; any other one is part of a value (`?token="SECRET"`, `?code=a"b`). Only a word's start begins a match and each character is read with one character of look-ahead, so a long word is scanned once; `user?.name` (no `/`) is no URL.
+ */
+const URL_QUERY =
+  /(?<!\S)([^\s?#/]*\/[^\s?#]*\?)((?:[^\s#"'`]|["'`](?![\s)\]},;:.]|$))*)/g
 
 /** Closing brackets and punctuation a log puts right after a URL (`(see /a?x)`, `/a?x,`): kept out of the query's last part, so a padded token before them is still read as bare. */
 const URL_TRAILING_CLOSERS = ')]},;.'
 
-/** A query parameter's value anywhere else: after `?` or `&`, up to the next separator, blank or fragment. */
-const QUERY_VALUE = /([?&][^\s=&#?]+=)[^\s&#]*/g
+/** A query parameter's value anywhere else: after `?` or `&`, up to the next separator, blank or fragment, or a quote that closes the text around it, read as in {@link URL_QUERY}, so a quoted secret value keeps its closing quote. */
+const QUERY_VALUE = /([?&][^\s=&#?]+=)(?:[^\s&#"'`]|["'`](?![\s)\]},;:.]|$))*/g
 
 /** A whole run of name characters (`A-Z`, `a-z`, `0-9`, `_`, `.`, `-`) followed by `=`: it starts only where no name character comes before it, so a long dotted run without `=` is scanned once, not once per word in it. */
 const NAME_RUN_BEFORE_EQUALS = /(?<![\w.-])([\w.-]+)=/g
