@@ -168,6 +168,36 @@ test('a test history’s events/<sequence> resource for a sequence the history d
   }
 })
 
+// protects=a test history's events/<sequence> names an entry only by its canonical sequence, so events/002 never answers as events/2 and a digit run beyond 2^53 never rounds onto another sequence; fails_when=a zero-padded or unsafe-integer sequence is answered with an entry; no_claim=the server history's own routes
+test('a test history refuses a zero-padded or beyond-2^53 events sequence as an unknown resource', async () => {
+  // Arrange
+  const { harness, studyId } = await serviceWithLargeStopHistory()
+  try {
+    // Act
+    const answers = []
+    for (const sequence of ['002', '00', '9007199254740993']) {
+      answers.push(
+        await readResource(
+          harness.service,
+          `codebook://node-history/${studyId}/events/${sequence}`,
+        ).then(
+          () => 'answered',
+          (error: unknown) =>
+            error instanceof StudyError
+              ? { code: error.code, message: error.message }
+              : String(error),
+        ),
+      )
+    }
+
+    // Assert
+    const refused = { code: 'NOT_FOUND', message: 'Unknown resource.' }
+    assert.deepEqual(answers, [refused, refused, refused])
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a save that cites the lean list's sequences, as an agent does after reading it; fails_when=the save refuses the stop, output or result sequence the lean list shows; why_new=the lean list is what the agent now reads before saving (Cycle 0067 F4); seam=a real store over a temporary folder; no_claim=the save's other refusals (lifecycle tests)
 test('a save citing the sequences of the lean events list is accepted', async () => {
   // Arrange

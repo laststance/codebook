@@ -187,9 +187,17 @@ export async function readResource(
     )
     if (testEvents)
       return readTestEventsPage(baseUri, history.entries, testEvents[1])
-    const testDetail = /^events\/(\d+)(\/pages\/[a-f0-9]{64}\/\d+)?$/.exec(
-      nodeHistoryMatch[2] ?? '',
+    // Only the canonical sequence (no leading zero) names an entry, so `events/007` cannot alias `events/7`; any other events route answers as an unknown resource.
+    const testDetail =
+      /^events\/(0|[1-9]\d*)(\/pages\/[a-f0-9]{64}\/\d+)?$/.exec(
+        nodeHistoryMatch[2] ?? '',
+      )
+    // A digit run beyond 2^53 loses precision as a Number, so it is refused too.
+    if (
+      (!testDetail || !Number.isSafeInteger(Number(testDetail[1]))) &&
+      nodeHistoryMatch[2]?.startsWith('events/')
     )
+      throw new StudyError('NOT_FOUND', 'Unknown resource.')
     if (testDetail)
       return readTestEntryDetail(
         baseUri,
