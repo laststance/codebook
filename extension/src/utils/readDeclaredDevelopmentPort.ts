@@ -53,7 +53,7 @@ type DevelopmentCommand = {
 /**
  * Reads one project file whole; `undefined` when it is absent or unreadable.
  *
- * Called by {@link readDeclaredDevelopmentPort} and {@link readNextDevPreparation} for `package.json`. The path is `stat`ed first (a `stat` does not block on a FIFO, an `open` does and cannot be cancelled), so a path that is not a regular file or is larger than {@link DEVELOPMENT_PORT_SOURCE_LIMIT_BYTES} is refused instead of read or cut (F556).
+ * Called by {@link readDeclaredDevelopmentPort}, {@link readNextDevPreparation} and {@link devScriptRequestsWebpack} for `package.json`, and by {@link readPreScriptRules} for each `.npmrc`. The path is `stat`ed first (a `stat` does not block on a FIFO, an `open` does and cannot be cancelled), so a path that is not a regular file or is larger than {@link DEVELOPMENT_PORT_SOURCE_LIMIT_BYTES} is refused instead of read or cut (F556).
  *
  * @returns The text, `undefined` for an absent or unreadable file, or the reason the file is refused.
  *
@@ -100,7 +100,7 @@ async function exists(path: string): Promise<boolean> {
 /**
  * The folders a project-level marker is searched in: the opened folder and the folders above it up to the Git root (the first folder that holds `.git`, a folder or a file), at most {@link DEVELOPMENT_BUN_LOCKFILE_SEARCH_MAX_FOLDERS} folders counted from the opened one; without a Git root in that range only the opened folder (F514).
  *
- * Called by {@link readDeclaredDevelopmentPort} and {@link readNextDevPreparation} once per read, for {@link isBunProject} and {@link isYarnBerryProject}.
+ * Called by {@link readDeclaredDevelopmentPort} and {@link readNextDevPreparation} once per read, for {@link isBunProject} and {@link isYarnBerryProject}; {@link readNextDevPreparation} also passes the folders to {@link readPreScriptRules}, which reads their lockfiles and `.npmrc` files.
  *
  * @param root - The opened folder; resolved to an absolute path, so a relative root climbs the real folders above it.
  * @returns The folders to search, the opened one first; one folder when no Git root is in range.
