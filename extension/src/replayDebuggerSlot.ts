@@ -104,6 +104,9 @@ export class ReplayDebuggerSlot {
   /**
    * Waits until no replaced historical debugger is still being disposed, before a caller creates the next one.
    *
+   * A retirement queued while the caller waits (a close, a keep-open failure, another request's replacement) is waited for
+   * too: the wait re-reads the slot after each settled retirement and ends only when none is pending.
+   *
    * The editor accepts one descriptor factory per debug type, so a caller waits here, checks that it is still current,
    * and only then creates the owner synchronously through {@link ReplayDebuggerSlot.ensure}.
    *
@@ -117,9 +120,13 @@ export class ReplayDebuggerSlot {
    * ```
    */
   async retired(signal?: AbortSignal): Promise<void> {
-    const retirement = this.retirement
-    if (!retirement) return
-    await (signal ? untilAborted(retirement, signal) : retirement)
+    // A later retirement replaces this.retirement while we wait, so re-read it until none is pending.
+    for (
+      let retirement = this.retirement;
+      retirement;
+      retirement = this.retirement
+    )
+      await (signal ? untilAborted(retirement, signal) : retirement)
   }
 
   /**
@@ -151,9 +158,9 @@ export class ReplayDebuggerSlot {
     isSuperseded: () => boolean,
     present: (debuggerView: ReplayDebugger) => Promise<Result>,
   ): Promise<Result | undefined> {
-    const debuggerView = this.ensure()
     try {
-      return await present(debuggerView)
+      // Inside the try so a superseded request whose ensure() refuses ends quietly too.
+      return await present(this.ensure())
     } catch (error) {
       // A newer learner selection supersedes this moment's native presentation; only the current request reports failures.
       if (isSuperseded()) return undefined

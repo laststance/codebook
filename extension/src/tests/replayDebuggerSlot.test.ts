@@ -265,6 +265,93 @@ test('an aborted retired() waiter leaves at once while the disposal keeps runnin
   assert.equal(slot.retiring, false)
 })
 
+// protects=a waiter in retired() also waits for a retirement queued behind the one it saw, so ensure() then creates the owner instead of throwing (D29); fails_when=retired() returns when only the first disposal settled while a second still runs; no_claim=the editor's real session stop (fake owners stand in for ReplayDebugger)
+test('retired() keeps waiting for a retirement queued while the caller waits', async () => {
+  // Arrange
+  const log: string[] = []
+  const first = fakeDebugger('first', log, { holdDisposal: true })
+  const second = fakeDebugger('second', log, { holdDisposal: true })
+  const next = fakeDebugger('next', log)
+  const { slot, created } = slotOver([first, next])
+  const firstRetirement = slot.retire(slot.ensure())
+  let didWake = false
+  const waiter = slot.retired().then(() => {
+    didWake = true
+  })
+  const secondRetirement = slot.retire(second.view)
+
+  // Act
+  first.releaseDisposal()
+  await flushMicrotasks()
+  const didWakeAfterFirst = didWake
+  second.releaseDisposal()
+  await waiter
+  const ensured = slot.ensure()
+  await Promise.all([firstRetirement, secondRetirement])
+
+  // Assert
+  assert.equal(didWakeAfterFirst, false)
+  assert.equal(ensured, next.view)
+  assert.equal(created.length, 2)
+  assert.deepEqual(log, [
+    'first:dispose-start',
+    'first:dispose-end',
+    'second:dispose-start',
+    'second:dispose-end',
+  ])
+})
+
+// protects=an aborted signal still ends the wait at once while a second retirement is queued; fails_when=the loop keeps an aborted waiter waiting for the later retirement; no_claim=the signal's reason text
+test('an aborted retired() waiter leaves at once although a second retirement is queued', async () => {
+  // Arrange
+  const log: string[] = []
+  const first = fakeDebugger('first', log, { holdDisposal: true })
+  const second = fakeDebugger('second', log, { holdDisposal: true })
+  const { slot } = slotOver([first])
+  const firstRetirement = slot.retire(slot.ensure())
+  const secondRetirement = slot.retire(second.view)
+  const controller = new AbortController()
+  const waiter = slot
+    .retired(controller.signal)
+    .catch((error: unknown) => error)
+
+  // Act
+  const reason = new Error('The request was cancelled.')
+  controller.abort(reason)
+  const waiterResult = await waiter
+  const stillRetiring = slot.retiring
+  first.releaseDisposal()
+  second.releaseDisposal()
+  await Promise.all([firstRetirement, secondRetirement])
+
+  // Assert
+  assert.equal(waiterResult, reason)
+  assert.equal(stillRetiring, true)
+  assert.equal(slot.retiring, false)
+})
+
+// protects=a superseded request whose ensure() refuses during a retirement ends quietly while the current request rethrows the refusal; fails_when=presentFor throws for a superseded request or swallows the refusal for the current one; no_claim=the message wording beyond its subject
+test('presentFor returns undefined for a superseded request refused during a retirement and rethrows for the current one', async () => {
+  // Arrange
+  const log: string[] = []
+  const retiring = fakeDebugger('retiring', log, { holdDisposal: true })
+  const { slot } = slotOver([retiring])
+  const retirement = slot.retire(slot.ensure())
+  const present = async (): Promise<string> => 'presented'
+
+  // Act
+  const superseded = await slot.presentFor(() => true, present)
+  const current = await slot
+    .presentFor(() => false, present)
+    .catch((error: unknown) => error)
+  retiring.releaseDisposal()
+  await retirement
+
+  // Assert
+  assert.equal(superseded, undefined)
+  assert.match(String(current), /still being disposed/)
+})
+
 // protects=a failed disposal is told once and never thrown, and a later clean disposal withdraws it; fails_when=the failure is reported twice, thrown to the caller, or never cleared; no_claim=how the reader words the failure row
 test('a disposal failure is reported once and a later clean disposal clears it', async () => {
   // Arrange
