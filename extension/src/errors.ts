@@ -176,6 +176,13 @@ export const ERROR_RECOVERY = {
 } as const
 export type ErrorCode = keyof typeof ERROR_RECOVERY
 
+/**
+ * The recovery of a node-test run that Vitest itself ended before its first stop (its listing of the cited file failed or timed out, or the test exited before its declared stop), in place of the general `RUNTIME_FAILED` recovery, which is worded for a browser click.
+ * Set as the {@link StudyError.recoveryOverride} by {@link OwnedNodeTestRun.prepare}; the `RUNTIME_FAILED` code stays so clients and `codebook://help/errors` read as before.
+ */
+export const NODE_TEST_VITEST_FAILED_RECOVERY =
+  "Vitest itself ended the run before the test's first stop; nothing ran past that point and nothing was saved. Read the cause for Vitest's own error (after launch it is also in the Codebook test output) and fix what it names in the test's Vitest root, for example install the missing dependency, correct the config, or make testTitles name the cited test exactly. Then start a new run deliberately with a new key; never retry automatically."
+
 /** Carries recoverable domain failures from {@link StudyService} to the MCP boundary. @example throw new StudyError('BUSY', 'Run is preparing') */
 export class StudyError extends Error {
   constructor(

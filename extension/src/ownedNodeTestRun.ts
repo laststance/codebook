@@ -15,6 +15,7 @@ import {
   NODE_TEST_EXIT_GRACE_MS,
   NODE_TEST_LISTING_PHASE_TIMEOUT_MS,
 } from './constants'
+import { NODE_TEST_VITEST_FAILED_RECOVERY, StudyError } from './errors'
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
 import { NodeTestOutputTerminal } from './nodeTestOutputTerminal'
 import {
@@ -42,6 +43,7 @@ import {
   listVitestTestFiles,
   type RetryVitestListingRelease,
 } from './utils/listVitestTestFiles'
+import { nodeTestVitestFailure } from './utils/nodeTestVitestFailure'
 import type { NodeTestExecutionPlan } from './utils/planNodeTestExecution'
 import { prepareNodeTestLaunch } from './utils/prepareNodeTestLaunch'
 import type { PreparedNodeTestLaunch } from './utils/prepareNodeTestLaunch'
@@ -203,7 +205,7 @@ export class OwnedNodeTestRun {
           ? await this.explainEarlyExit(error, 1)
           : error
       await this.release()
-      throw failure
+      throw nodeTestVitestFailure(failure)
     })
     return this.preparation
   }
@@ -962,15 +964,22 @@ export class OwnedNodeTestRun {
     if (this.bound && this.active.has(this.bound.session.id)) return error
     const exit = await this.owned.waitForExit(NODE_TEST_EXIT_GRACE_MS)
     if (!exit) return error
-    return new Error(
+    const message =
       `Owned Node test exited with ${exit.signal ? `signal ${exit.signal}` : `code ${exit.exitCode}`} before declared stop ${stopNumber}. ` +
-        // The first stop has no previous stop, so its reach depends only on the test running its line.
-        (stopNumber === 1
-          ? 'The first declared stop is reached only when the test runs its line'
-          : 'A declared stop is reached only when the test runs its line after the previous stop') +
-        '; its output is in the Codebook test output. If Vitest skipped the cited test, check that testTitles names it exactly; see codebook://help/node-test.',
-      { cause: error },
-    )
+      // The first stop has no previous stop, so its reach depends only on the test running its line.
+      (stopNumber === 1
+        ? 'The first declared stop is reached only when the test runs its line'
+        : 'A declared stop is reached only when the test runs its line after the previous stop') +
+      '; its output is in the Codebook test output. If Vitest skipped the cited test, check that testTitles names it exactly; see codebook://help/node-test.'
+    // Before the first stop nothing was recorded, so the run ends with a test-run recovery; a later stop keeps the general one.
+    return stopNumber === 1
+      ? new StudyError(
+          'RUNTIME_FAILED',
+          message,
+          message,
+          NODE_TEST_VITEST_FAILED_RECOVERY,
+        )
+      : new Error(message, { cause: error })
   }
 
   private owner(session: vscode.DebugSession): boolean {
