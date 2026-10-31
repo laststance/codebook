@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import { chromeExtensionConfigSchema } from './chromeExtensionConfigSchemas'
+import { chromeExtensionSaveHelp } from './chromeExtensionSaveHelp'
 import {
   ACTIVE_TIMEOUT_MS,
   CHROME_EXTENSION_MIN_VERSION,
@@ -589,6 +590,7 @@ export function chromeExtensionHelp() {
       'One run is active at a time; a run that completed or failed is released at once.',
       'A chrome-extension run records a durable history: stop the run with codebook_stop, read chromeExtension.historyUri, then save its explanation with codebook_explain_node_history; codebook_explain redirects there.',
     ],
+    save: chromeExtensionSaveHelp(),
     disclosures: {
       testProfile:
         "The run's browser profile is a fresh one with seeded test data; the learner's own Chrome data (bookmarks, cookies, passwords, extensions) is never used.",
@@ -603,7 +605,7 @@ export function chromeExtensionHelp() {
         "The test browser's debugging port is random and bound to 127.0.0.1; web pages cannot reach it, but any local process of the same user can reach it while the run lives, the same trust boundary as the profile folder.",
       chromeExecutable: `Chrome 149 or later is needed. Set the VS Code setting codebook.chromeExecutable to Google Chrome or to Chrome for Testing ${CHROME_EXTENSION_MIN_VERSION} or later when the default Chrome is older or missing (CHROME_VERSION_UNSUPPORTED, CHROME_COMMAND_UNAVAILABLE).`,
       liveOnly:
-        'The Application view shows the live extension surface; it is the only record of the run besides the run resource and its journal.',
+        'The Application view shows the live extension surface while the run goes on; the run is also recorded in a durable history that can be saved as an Extension replay (section save).',
     },
     failureExamples: FAILURE_EXAMPLES,
     workedExample: {
