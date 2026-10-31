@@ -281,7 +281,7 @@ export class ReplayDebugger {
     )
   }
 
-  /** Reports whether playback may still present history; false after the learner stops the owned session or a startup or presentation bound expired, so the next explicit replay open, or an explicit selection or Inspect of a test replay's stop, replaces this owner ({@link StudyWorkspace}'s `replaceUnavailableReplayDebugger`); a seek or Play never does. @example if (!debuggerView.available) await debuggerView.dispose() */
+  /** Reports whether playback may still present history; false after the learner stops the owned session or a startup or presentation bound expired, so the next explicit replay open, or an explicit selection or Inspect of a test replay's stop, replaces this owner ({@link ReplayDebuggerSlot.replaceUnavailable}); a seek or Play never does. @example if (!debuggerView.available) await debuggerView.dispose() */
   get available(): boolean {
     return !this.closed && !this.detached
   }
