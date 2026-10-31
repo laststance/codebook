@@ -8,7 +8,9 @@ import {
   REPOSITORY_JAVASCRIPT_LIMIT_BYTES,
 } from '../constants'
 
+import { findNextPagesSource } from './findNextPagesSource'
 import { findNextRouteFolder } from './findNextRouteFolder'
+import { hasNextAppPageSource } from './hasNextAppPageSource'
 import { nextManifestError, parseNextManifest } from './parseNextManifest'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
 import { resolveNextClientManifest } from './resolveNextClientManifest'
@@ -115,7 +117,10 @@ export async function readNextRouteManifests(
       request.signal,
     )
     if (isSettledRound(round, routers) || now() >= deadline)
-      return classifyRound(round, request.entryPath)
+      return classifyRound(
+        round,
+        await contestedWinnerOf(round, request.entryPath, request.workspace),
+      )
     await sleep(
       Math.min(NEXT_MANIFEST_POLL_INTERVAL_MS, Math.max(0, deadline - now())),
       request.signal,
@@ -307,28 +312,59 @@ function isSettledRound(
 }
 
 /**
- * Turns the last round of the poll into the answer, judging a conflict once, here; called by {@link readNextRouteManifests}.
- * When both routers match, the more specific route serves the entry path, as Next decides ({@link compareNextRouterMatches}); only an equally specific pair is a conflict.
+ * Decides which router serves an entry path both route manifests match, for {@link classifyRound}: the more specific route as Next decides ({@link compareNextRouterMatches}), but only while its source still exists, so a stale listing left in `.next/dev` stays a conflict whose refusal names it as stale. Called by {@link readNextRouteManifests}.
  * @param round - The last round.
  * @param entryPath - The configured entry path.
+ * @param workspace - The opened workspace, where the winning source is looked up.
+ * @returns
+ * - `undefined` when at most one router matches
+ * - `'app'` or `'pages'` for the more specific route whose source exists
+ * - `'equal'` for an equally specific pair, or a more specific route whose source is gone
+ * @example
+ * await contestedWinnerOf(round, '/about', '/repo') // => 'app' for app/about/page.tsx beside pages/[...slug].tsx
+ */
+async function contestedWinnerOf(
+  round: ManifestRound,
+  entryPath: string,
+  workspace: string,
+): Promise<'app' | 'pages' | 'equal' | undefined> {
+  const { appRoute, pagesRoute } = round
+  if (!appRoute || pagesRoute.kind !== 'matched') return undefined
+  const winner = compareNextRouterMatches(
+    appRoute.key,
+    pagesRoute.route,
+    entryPath,
+  )
+  if (winner === 'app')
+    return (await hasNextAppPageSource(workspace, appRoute.key))
+      ? 'app'
+      : 'equal'
+  if (winner === 'pages')
+    return (await findNextPagesSource(workspace, pagesRoute.compiledPath))
+      .kind === 'missing'
+      ? 'equal'
+      : 'pages'
+  return winner
+}
+
+/**
+ * Turns the last round of the poll into the answer, judging a conflict once, here; called by {@link readNextRouteManifests}.
+ * When both routers match, the route {@link contestedWinnerOf} names serves the entry path; an equally specific pair, or a winner whose source is gone, is a conflict.
+ * @param round - The last round.
+ * @param winner - What {@link contestedWinnerOf} decided for a path both routers match.
  * @returns The settings and what the manifests say about the entry path.
  * @throws The first manifest failure the round still has.
  * @example
- * classifyRound(round, '/') // => { settings: {}, kind: 'conflict', appKey: '/page', pagesRoute: '/', pagesCompiledPath: 'pages/index.js' } when both list `/`
+ * classifyRound(round, 'equal') // => { settings: {}, kind: 'conflict', appKey: '/page', pagesRoute: '/', pagesCompiledPath: 'pages/index.js' } when both list `/`
  */
 function classifyRound(
   round: ManifestRound,
-  entryPath: string,
+  winner: 'app' | 'pages' | 'equal' | undefined,
 ): NextRouteManifests {
   for (const read of [round.settings, round.app, round.pages])
     if (read.state === 'failed') throw read.error
   const settings = round.settings.state === 'read' ? round.settings.value : {}
   const { appRoute, pagesRoute } = round
-  // Both routers match: the more specific route serves the path; an equally specific pair is the conflict Next refuses.
-  const winner =
-    appRoute && pagesRoute.kind === 'matched'
-      ? compareNextRouterMatches(appRoute.key, pagesRoute.route, entryPath)
-      : undefined
   if (appRoute && pagesRoute.kind === 'matched' && winner === 'equal')
     return {
       settings,

@@ -69,7 +69,7 @@ export function resolveNextPagesRoute(
 }
 
 /**
- * Splits an entry path into the decoded path segments a route is matched against; called by {@link resolveNextPagesRoute}.
+ * Splits an entry path into the decoded path segments a route is matched against; called by {@link resolveNextPagesRoute} and {@link compareNextRouterMatches}.
  * @param entryPath - The configured entry path.
  * @returns The segments without query, fragment, empty segments or trailing slash; `/` has none.
  * @example
@@ -120,7 +120,7 @@ function segmentPrecedenceOf(segment: string): SegmentPrecedence {
 }
 
 /**
- * Matches one manifest key against the requested segments and reads the precedence of each of its segments; called by {@link resolveNextPagesRoute}.
+ * Matches one manifest key against the requested segments and reads the precedence of each of its segments; called by {@link resolveNextPagesRoute} and {@link compareNextRouterMatches}.
  * A catch-all must be the last segment and takes one or more requested segments; an optional catch-all takes zero or more, so it also matches its parent path.
  * @param route - A manifest key, e.g. `/docs/[...slug]`.
  * @param requested - The decoded requested segments.
@@ -216,7 +216,7 @@ export function compareNextRouterMatches(
 }
 
 /**
- * Orders two matching routes by their segments' precedence, deciding at the first position where they differ; called by {@link resolveNextPagesRoute}.
+ * Orders two matching routes by their segments' precedence, deciding at the first position where they differ; called by {@link resolveNextPagesRoute} and {@link compareNextRouterMatches}.
  * A route that has run out of segments ranks as an optional catch-all there: two matching routes can differ in length only by a trailing `[[...x]]`, a pair Next refuses as equally specific.
  * @param left - Precedence of the first route's segments.
  * @param right - Precedence of the second route's segments.
