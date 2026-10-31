@@ -41,7 +41,7 @@ export type NextServerOnlyRequest = {
  * - `server-only` with `document` for `<folder>/_document.<ext>`, `api-route` for `<folder>/api.<ext>` or a file under `<folder>/api/`
  * - `server-only` with `server-compile` when the `(pages-dir-node)` module of the page's server compile maps the line and the sealed browser module's complete map does not
  * - `unknown` otherwise, also when the server compile is absent, does not carry the module, or carries another original
- * @throws When the server compile cannot be read for another reason than its absence, or the run's discovery budget is spent.
+ * @throws When the run is aborted or its discovery budget is spent; a server compile that is unreadable, replaced during the read or ambiguous establishes nothing (`unknown`).
  * @example
  * await readNextServerOnlyReason({ workspace, path: 'src/pages/index.tsx', line: 17, folder: 'src/pages', compiledPath: 'pages/index.js', clientBundle, cache })
  * // => { kind: 'server-only', reason: 'server-compile' } for a getStaticProps body line
@@ -60,13 +60,14 @@ export async function readNextServerOnlyReason(
     request.workspace,
     request.signal,
     async (step) => {
-      const chunk = await readNextChunkModules(
-        step,
-        request.cache,
-        `server/${request.compiledPath}`,
-      )
-      if (!chunk) return false
       try {
+        // The read is inside the catch: `next dev` may rewrite or remove the server compile while it is read, which establishes nothing.
+        const chunk = await readNextChunkModules(
+          step,
+          request.cache,
+          `server/${request.compiledPath}`,
+        )
+        if (!chunk) return false
         const serverBundle = selectEvaluatedModule(
           chunk.moduleTexts,
           {
@@ -82,10 +83,14 @@ export async function readNextServerOnlyReason(
           serverBundle &&
           lineMappingOf(serverBundle, request.line) === 'mapped',
         )
-      } catch {
-        // A server module that is ambiguous, stale or names another original establishes nothing; only the run's own limits end the run.
+      } catch (error) {
+        // A server module that is ambiguous, stale, unreadable or names another original establishes nothing; only the run's own limits end the run.
         request.signal?.throwIfAborted()
-        if (performance.now() >= step.deadline)
+        if (
+          performance.now() >= step.deadline ||
+          (error instanceof Error &&
+            error.message === 'Build discovery resource limit exceeded')
+        )
           throw new Error('Build discovery resource limit exceeded')
         return false
       }

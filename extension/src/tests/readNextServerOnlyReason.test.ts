@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, realpath, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -203,4 +203,48 @@ test('a server compile built from an older version of the source establishes not
   })
   // Assert
   assert.deepEqual(reason, { kind: 'unknown' })
+})
+
+test('a server compile that cannot be read establishes nothing instead of failing the run', async (context) => {
+  // Arrange
+  const { build, clientBundle } = await sealedPageWithServerCompile(
+    context,
+    undefined,
+  )
+  // A directory where the server compile should be makes its read fail, as a file replaced by `next dev` mid-read would.
+  await mkdir(join(build.workspace, '.next/dev/server/pages/index.js'), {
+    recursive: true,
+  })
+  // Act
+  const reason = await readNextServerOnlyReason({
+    workspace: build.workspace,
+    path: 'src/pages/index.tsx',
+    line: 5,
+    folder: 'src/pages',
+    compiledPath: 'pages/index.js',
+    clientBundle,
+    cache: createNextPagesDiscoveryCache(),
+  })
+  // Assert
+  assert.deepEqual(reason, { kind: 'unknown' })
+})
+
+test('an aborted run still rejects while the server compile is read', async (context) => {
+  // Arrange
+  const { build, clientBundle } = await sealedPageWithServerCompile(context, 5)
+  const controller = new AbortController()
+  controller.abort()
+  // Act
+  const outcome = readNextServerOnlyReason({
+    workspace: build.workspace,
+    path: 'src/pages/index.tsx',
+    line: 5,
+    folder: 'src/pages',
+    compiledPath: 'pages/index.js',
+    clientBundle,
+    signal: controller.signal,
+    cache: createNextPagesDiscoveryCache(),
+  })
+  // Assert
+  await assert.rejects(outcome, { name: 'AbortError' })
 })
