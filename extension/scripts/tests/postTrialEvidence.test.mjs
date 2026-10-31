@@ -209,6 +209,112 @@ test('lists every private token of a line and allows a public directory by itsel
   ])
 })
 
+// protects=a private home path chained after a public path in one token is refused; fails_when=the scan judges only the first candidate of a token (PATH-style lists, comma lists, semicolon lists); no_claim=none beyond protects
+test('refuses a private path that follows a public path in the same token', () => {
+  // Arrange
+  const text = [
+    'PATH=/Users/lume/a:/Users/ryotamurakami/secret',
+    '/Users/lume/a,/home/murakami/b',
+    '/Users/lume/a;/Users/bob/b',
+  ].join('\n')
+
+  // Act
+  const refused = findPrivatePaths(text)
+
+  // Assert
+  assert.deepEqual(refused, [
+    { line: 1, token: '/Users/ryotamurakami/secret' },
+    { line: 2, token: '/home/murakami/b' },
+    { line: 3, token: '/Users/bob/b' },
+  ])
+})
+
+// protects=JSON-escaped Windows and WSL home paths are refused; fails_when=only a single backslash separator is recognized; no_claim=none beyond protects
+test('refuses JSON-escaped Windows and WSL home paths', () => {
+  // Arrange
+  const text = [
+    'C:\\\\Users\\\\bob\\\\x',
+    '\\\\\\\\wsl$\\\\Ubuntu\\\\home\\\\bob',
+    '{"p":"C:\\\\Users\\\\bob"}',
+    '\\\\wsl.localhost\\Ubuntu\\home\\bob',
+  ].join('\n')
+
+  // Act
+  const refused = findPrivatePaths(text)
+
+  // Assert
+  assert.deepEqual(refused, [
+    { line: 1, token: 'C:\\\\Users\\\\bob\\\\x' },
+    { line: 2, token: '\\\\\\\\wsl$\\\\Ubuntu\\\\home\\\\bob' },
+    { line: 3, token: 'C:\\\\Users\\\\bob' },
+    { line: 4, token: '\\\\wsl.localhost\\Ubuntu\\home\\bob' },
+  ])
+})
+
+// protects=a dot, dash or underscore before a home path no longer hides it, while URL and relative-folder forms stay allowed; fails_when=`Wrote.../Users/bob/x` passes or `https://example.com/home/a` is refused; no_claim=none beyond protects
+test('refuses a home path after a dot, dash or underscore but keeps URL forms allowed', () => {
+  // Arrange
+  const text = [
+    'Wrote.../Users/bob/x',
+    'see:../home/x',
+    'foo_/Users/x',
+    'bar-/home/y',
+    'https://example.com/home/a',
+    'artifacts/Users/a',
+    '/Users/lume/qa/c68/x',
+    '/Users/ryotamurakami/repository/nextjs-dashboard/app/lib/actions.ts',
+    'artifacts/c68-n68/manifest.sha256',
+  ].join('\n')
+
+  // Act
+  const refused = findPrivatePaths(text)
+
+  // Assert
+  assert.deepEqual(refused, [
+    { line: 1, token: '/Users/bob/x' },
+    { line: 2, token: '/home/x' },
+    { line: 3, token: '/Users/x' },
+    { line: 4, token: '/home/y' },
+  ])
+})
+
+// protects=the scan stays linear on hostile input; fails_when=rescanning a long public token is quadratic or backtracks; no_claim=wall-clock bound is generous, not a benchmark
+test('scans a long chain of public paths in linear time', () => {
+  // Arrange
+  const text = '/Users/lume/a:'.repeat(20000)
+
+  // Act
+  const started = Date.now()
+  const refused = findPrivatePaths(text)
+  const elapsedMilliseconds = Date.now() - started
+
+  // Assert
+  assert.deepEqual(refused, [])
+  assert.ok(elapsedMilliseconds < 2000, `took ${elapsedMilliseconds} ms`)
+})
+
+// protects=the command refuses a chained private path before any network call; fails_when=E_PRIVATE_PATH is skipped for a token that starts public; no_claim=gstack-post is never reached, nothing fake stands in
+test('refuses a run log with a chained private path and lists its line number', async () => {
+  await withRepository(async (root) => {
+    // Arrange
+    const logPath = join(root, 'chain.md')
+    await writeFile(
+      logPath,
+      'ok\nPATH=/Users/lume/a:/Users/ryotamurakami/secret\n',
+    )
+
+    // Act
+    const result = await run(root, [logPath])
+
+    // Assert
+    assert.equal(result.exitCode, 1)
+    assert.ok(
+      result.errors.includes('line 2: /Users/ryotamurakami/secret'),
+      result.errors.join('\n'),
+    )
+  })
+})
+
 // protects=a lone CR line end counts as a line break like an editor, and a bare home marker is refused; fails_when=a log with CR line ends reports line 1 for every hit or `~/` alone passes; no_claim=none beyond protects
 test('counts lone CR line ends and refuses a bare ~/', () => {
   // Arrange

@@ -123,10 +123,13 @@ Error codes:
  * Group order matters only for readability; the alternatives do not overlap at one start.
  */
 const CANDIDATE_START =
-  /file:\/\/|\/Users\/|\/home\/|\/mnt\/[a-z]\/Users\/|[a-z]:[\\/]Users[\\/]|\\\\wsl\$\\|\\\\wsl\.localhost\\|~\/|\$\{HOME\}|\$HOME|%USERPROFILE%/iy
+  /file:\/\/|\/Users\/|\/home\/|\/mnt\/[a-z]\/Users\/|[a-z]:[\\/]+Users[\\/]+|[\\/]{2,}wsl\$[\\/]+|[\\/]{2,}wsl\.localhost[\\/]+|~\/|\$\{HOME\}|\$HOME|%USERPROFILE%/iy
 
-/** A character before a start that makes it part of a longer word or URL path (`https://example.com/home/a`, `artifacts/Users/a`), so it is no candidate; anything else fails closed. */
-const WORD_OR_PATH_CHARACTER = /[A-Za-z0-9/.\-_]/
+/** A character before a start that makes it part of a longer word or URL path (`https://example.com/home/a`, `artifacts/Users/a`), so it is no candidate; anything else (`.`, `-`, `_`, `:`, `,`, `=`, …) fails closed. */
+const WORD_OR_PATH_CHARACTER = /[A-Za-z0-9/]/
+
+/** Separators that can chain several paths inside one token (`PATH=a:b`, `a,b`, `a;b`, `a|b`). */
+const LIST_SEPARATOR = /[:,;|=]/
 
 /** The characters that end a candidate token. */
 const CANDIDATE_END = /[\s`"'()[\]<>]/
@@ -165,7 +168,7 @@ function isPrivateToken(prefix, token) {
   const lowerPrefix = prefix.toLowerCase()
   const alwaysRefused =
     lowerPrefix === 'file://' ||
-    lowerPrefix.startsWith('\\\\wsl') ||
+    /^[\\/]+wsl/.test(lowerPrefix) ||
     lowerPrefix === '~/' ||
     lowerPrefix.startsWith('$') ||
     lowerPrefix.startsWith('%')
@@ -193,7 +196,7 @@ function splitLines(text) {
  *
  * Why: the Issue is world-readable, so a run log must not name the owner's home directories, QA profiles or other projects (D4).
  * Called by {@link postTrialEvidence} on the run log (and the manifest text), before any network call.
- * The rule works on the text as written: a candidate starts at a home form (case-insensitive) unless a letter, digit, `/`, `.`, `-` or `_` precedes it, and ends at whitespace, a backtick, a quote, a parenthesis, a bracket, an angle bracket or the line end.
+ * The rule works on the text as written: a candidate starts at a home form (case-insensitive) unless a letter, digit or `/` precedes it, and ends at whitespace, a backtick, a quote, a parenthesis, a bracket, an angle bracket or the line end.
  *
  * @param {string} text - Decoded text.
  * @returns {{ line: number, token: string }[]} One entry per refused token, in order; `line` starts at 1. The line itself is never returned.
@@ -204,6 +207,9 @@ export function findPrivatePaths(text) {
   const refused = []
   splitLines(text).forEach((line, lineIndex) => {
     let position = 0
+    // The end of the token being scanned, cached so rescanning inside a public token stays linear.
+    let tokenEnd = -1
+    let tokenStart = -1
     while (position < line.length) {
       // A word or path character before the start makes it part of something longer.
       const hasLongerWordBefore =
@@ -214,14 +220,32 @@ export function findPrivatePaths(text) {
         position += 1
         continue
       }
-      let end = position + match[0].length
-      while (end < line.length && !CANDIDATE_END.test(line[end])) end += 1
-      const token = line.slice(position, end)
+      // Reuse the cached end while inside the same token; otherwise scan to the next terminator.
+      if (tokenEnd < position + match[0].length) {
+        tokenStart = position
+        tokenEnd = position + match[0].length
+        while (tokenEnd < line.length && !CANDIDATE_END.test(line[tokenEnd]))
+          tokenEnd += 1
+      }
+      // A candidate inside an earlier public token is judged up to the next list separator, so each character is judged once.
+      let candidateEnd = tokenEnd
+      if (position > tokenStart) {
+        candidateEnd = position + match[0].length
+        while (
+          candidateEnd < tokenEnd &&
+          !LIST_SEPARATOR.test(line[candidateEnd])
+        )
+          candidateEnd += 1
+      }
+      const token = line.slice(position, candidateEnd)
       if (isPrivateToken(match[0], token)) {
         refused.push({ line: lineIndex + 1, token })
+        // Continue after a refused token so a path inside it is not matched twice.
+        position = candidateEnd
+      } else {
+        // A public path may be followed by a private one in the same token (`a:/Users/bob`): rescan its interior.
+        position += match[0].length
       }
-      // Continue after the token so a path inside it is not matched twice.
-      position = end
     }
   })
   return refused
