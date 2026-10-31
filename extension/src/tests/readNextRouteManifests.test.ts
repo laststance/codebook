@@ -8,10 +8,13 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
+import type * as ReadNextRouteManifestsModule from '../utils/readNextRouteManifests'
 import { readNextRouteManifests } from '../utils/readNextRouteManifests'
+
+import { loadModule } from './utils/loadModule'
 
 const ROUTES = '.next/dev/routes-manifest.json'
 const APP = '.next/dev/server/app-paths-manifest.json'
@@ -54,6 +57,38 @@ function scriptedManifests(
 }
 
 const ROUTES_TEXT = '{"version":3,"basePath":"","redirects":[],"rewrites":{}}'
+
+/**
+ * Loads the compiled manifest reader with the router contest's source lookups replaced by recorders that find every source, so a test sees whether the contest looked a source up.
+ * @returns The loaded reader and the manifest key or compiled path of each lookup it made.
+ * @example const { read, lookups } = await readerWithRecordedLookups()
+ */
+async function readerWithRecordedLookups() {
+  const lookups: string[] = []
+  const loaded = await loadModule<typeof ReadNextRouteManifestsModule>(
+    resolve(__dirname, '../utils/readNextRouteManifests.js'),
+    {
+      './hasNextAppPageSource': {
+        hasNextAppPageSource: async (_workspace: string, appKey: string) => {
+          lookups.push(appKey)
+          return true
+        },
+      },
+      './findNextPagesSource': {
+        findNextPagesSource: async (
+          _workspace: string,
+          compiledPath: string,
+        ) => {
+          lookups.push(compiledPath)
+          return { kind: 'found', path: 'pages/about.tsx', folder: 'pages' }
+        },
+      },
+    },
+    // The real Error, so the loaded reader keeps a thrown manifest error as it is.
+    { Error },
+  )
+  return { read: loaded.readNextRouteManifests, lookups }
+}
 
 test('a Pages-only project without an App paths manifest resolves its entry path as a Pages route at once', async (context) => {
   // Arrange
@@ -464,6 +499,65 @@ test('an unparsable routes manifest never quotes its redirect sources in the fai
       message:
         'Next route manifest .next/dev/routes-manifest.json could not be read: it is not valid JSON',
     },
+  )
+})
+
+// Value: protects=a manifest read that still fails when the poll ends is thrown before the router contest looks up any source file; fails_when=the contest's file lookups run first (and can fail or wait first) although the read failure decides the answer; why_new=Cycle 0066 task 22 (native adversarial review, Cycle 0065 fix-check 1); seam=loadModule replaces the two source lookups with recorders; no_claim=the lookups' own behavior (findNextPagesSource tests)
+test('a failed manifest read ends the poll with its error before the router contest looks up a source', async (context) => {
+  // Arrange
+  const workspace = await workspaceWithFolders(context, ['app', 'pages'])
+  const { read, lookups } = await readerWithRecordedLookups()
+  const fake = scriptedManifests([
+    {
+      [ROUTES]: '{"basePath":',
+      [APP]: '{"/about/page":"app/about/page.js"}',
+      [PAGES]: '{"/[...slug]":"pages/[...slug].js"}',
+    },
+  ])
+  // Act
+  const failure = await read({ workspace, entryPath: '/about', ...fake }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.ok(failure instanceof Error, String(failure))
+  assert.equal(
+    failure.message,
+    'Next route manifest .next/dev/routes-manifest.json could not be read: it is not valid JSON',
+  )
+  assert.deepEqual(lookups, [])
+})
+
+// Value: protects=a run cancelled while the last round is read ends at the router contest's source lookup with its abort reason; fails_when=the contest looks its sources up without the run's signal and answers as if the run went on; why_new=Cycle 0066 task 22 (the contest ran without the abort signal); seam=the scripted reader aborts during the last read; no_claim=cancelling a real dev server
+test('a run cancelled during the last manifest round ends at the router contest with its abort reason', async (context) => {
+  // Arrange
+  const workspace = await workspaceWithFolders(context, ['app/about', 'pages'])
+  await writeFile(join(workspace, 'app/about/page.tsx'), 'export default 1\n')
+  await writeFile(join(workspace, 'pages/[...slug].tsx'), 'export default 1\n')
+  const controller = new AbortController()
+  const fake = scriptedManifests([
+    {
+      [ROUTES]: ROUTES_TEXT,
+      [APP]: '{"/about/page":"app/about/page.js"}',
+      [PAGES]: '{"/[...slug]":"pages/[...slug].js"}',
+    },
+  ])
+  const readText = async (path: string): Promise<string | undefined> => {
+    // The Pages manifest is the round's last read: the run is cancelled while it is read.
+    if (path === PAGES) controller.abort(new Error('Run cancelled'))
+    return fake.readText(path)
+  }
+  // Act / Assert
+  await assert.rejects(
+    readNextRouteManifests({
+      workspace,
+      entryPath: '/about',
+      signal: controller.signal,
+      now: fake.now,
+      sleep: fake.sleep,
+      readText,
+    }),
+    { message: 'Run cancelled' },
   )
 })
 

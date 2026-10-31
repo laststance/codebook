@@ -119,11 +119,18 @@ export async function readNextRouteManifests(
       request.entryPath,
       request.signal,
     )
-    if (isSettledRound(round, routers) || now() >= deadline)
+    if (isSettledRound(round, routers) || now() >= deadline) {
+      throwFailedRead(round)
       return classifyRound(
         round,
-        await contestedWinnerOf(round, request.entryPath, request.workspace),
+        await contestedWinnerOf(
+          round,
+          request.entryPath,
+          request.workspace,
+          request.signal,
+        ),
       )
+    }
     await sleep(
       Math.min(NEXT_MANIFEST_POLL_INTERVAL_MS, Math.max(0, deadline - now())),
       request.signal,
@@ -300,10 +307,23 @@ function isSettledRound(
 }
 
 /**
- * Decides which router serves an entry path both route manifests match, for {@link classifyRound}: the more specific route as Next decides ({@link compareNextRouterMatches}), but only while its source still exists, so a stale listing left in `.next/dev` stays a conflict whose refusal names it as stale. Called by {@link readNextRouteManifests}.
+ * Throws the first manifest failure the last round of the poll still has, so a failed read ends the poll before the router contest looks up any source file; called by {@link readNextRouteManifests} before {@link contestedWinnerOf}.
+ * @param round - The last round.
+ * @throws The first failed read's error ({@link nextManifestError}), in the order routes, App, Pages.
+ * @example
+ * throwFailedRead(round) // throws 'Next route manifest .next/dev/routes-manifest.json could not be read: it is not valid JSON' when that read failed
+ */
+function throwFailedRead(round: ManifestRound): void {
+  for (const read of [round.settings, round.app, round.pages])
+    if (read.state === 'failed') throw read.error
+}
+
+/**
+ * Decides which router serves an entry path both route manifests match, for {@link classifyRound}: the more specific route as Next decides ({@link compareNextRouterMatches}), but only while its source still exists, so a stale listing left in `.next/dev` stays a conflict whose refusal names it as stale. Called by {@link readNextRouteManifests} once {@link throwFailedRead} found every read whole.
  * @param round - The last round.
  * @param entryPath - The configured entry path.
  * @param workspace - The opened workspace, where the winning source is looked up.
+ * @param signal - Ends the source lookups with the abort reason when the run is cancelled.
  * @returns
  * - `undefined` when at most one router matches
  * - `'app'` or `'pages'` for the more specific route whose source exists
@@ -315,6 +335,7 @@ async function contestedWinnerOf(
   round: ManifestRound,
   entryPath: string,
   workspace: string,
+  signal?: AbortSignal,
 ): Promise<'app' | 'pages' | 'equal' | undefined> {
   const { appRoute, pagesRoute } = round
   if (!appRoute || pagesRoute.kind !== 'matched') return undefined
@@ -324,24 +345,24 @@ async function contestedWinnerOf(
     entryPath,
   )
   if (winner === 'app')
-    return (await hasNextAppPageSource(workspace, appRoute.key))
+    return (await hasNextAppPageSource(workspace, appRoute.key, signal))
       ? 'app'
       : 'equal'
   if (winner === 'pages')
-    return (await findNextPagesSource(workspace, pagesRoute.compiledPath))
-      .kind === 'missing'
+    return (
+      await findNextPagesSource(workspace, pagesRoute.compiledPath, signal)
+    ).kind === 'missing'
       ? 'equal'
       : 'pages'
   return winner
 }
 
 /**
- * Turns the last round of the poll into the answer, judging a conflict once, here; called by {@link readNextRouteManifests}.
+ * Turns the last round of the poll, every read of it whole ({@link throwFailedRead}), into the answer, judging a conflict once, here; called by {@link readNextRouteManifests}.
  * When both routers match, the route {@link contestedWinnerOf} names serves the entry path; an equally specific pair, or a winner whose source is gone, is a conflict.
  * @param round - The last round.
  * @param winner - What {@link contestedWinnerOf} decided for a path both routers match.
  * @returns The settings and what the manifests say about the entry path.
- * @throws The first manifest failure the round still has.
  * @example
  * classifyRound(round, 'equal') // => { settings: {}, kind: 'conflict', appKey: '/page', pagesRoute: '/', pagesCompiledPath: 'pages/index.js' } when both list `/`
  */
@@ -349,8 +370,6 @@ function classifyRound(
   round: ManifestRound,
   winner: 'app' | 'pages' | 'equal' | undefined,
 ): NextRouteManifests {
-  for (const read of [round.settings, round.app, round.pages])
-    if (read.state === 'failed') throw read.error
   const settings = round.settings.state === 'read' ? round.settings.value : {}
   const { appRoute, pagesRoute } = round
   if (appRoute && pagesRoute.kind === 'matched' && winner === 'equal')

@@ -23,13 +23,14 @@ export type NextPagesSourceLookup =
 
 /**
  * Finds the source file of a compiled Pages page the way Next does (`findPageFile`): in the root `pages/` folder when it exists, else in `src/pages/`, trying `.tsx`, `.ts`, `.jsx`, `.js` and, for each, the page file before its folder's `index` file.
- * Called by the Pages run after {@link resolveNextPagesRoute} matched the entry path, to name the page's source, or the candidates tried when none exists. Only `lstat` is asked; a link, or a file under a linked folder, is never followed and never found.
+ * Called by the Pages run after {@link resolveNextPagesRoute} matched the entry path, to name the page's source, or the candidates tried when none exists, and by the router contest of {@link readNextRouteManifests} for a more specific Pages route. Only `lstat` is asked; a link, or a file under a linked folder, is never followed and never found.
  * @param workspace - The opened workspace (the Next project root).
  * @param compiledPath - The Pages manifest value of the route, e.g. `pages/posts/[id].js`.
+ * @param signal - Ends the lookup with the abort reason when the run is cancelled.
  * @returns
  * - `found` with the first existing regular file and its folder
  * - `missing` with the folder and every candidate tried
- * @throws When the compiled path is not a contained `pages/….js` path, so no candidate could leave the workspace.
+ * @throws When the compiled path is not a contained `pages/….js` path, so no candidate could leave the workspace; the abort reason when `signal` aborts before a candidate is looked up.
  * @example
  * await findNextPagesSource('/repo', 'pages/posts.js')
  * // => { kind: 'found', path: 'src/pages/posts/index.tsx', folder: 'src/pages' } in a project whose page is src/pages/posts/index.tsx
@@ -37,12 +38,14 @@ export type NextPagesSourceLookup =
 export async function findNextPagesSource(
   workspace: string,
   compiledPath: string,
+  signal?: AbortSignal,
 ): Promise<NextPagesSourceLookup> {
   const pagePath = pagePathOfCompiled(compiledPath)
   // Next's rule: the root folder wins; without it Next reads src/pages, so that is where a missing page is looked for.
   const folder = (await findNextRouteFolder(workspace, 'pages')) ?? 'src/pages'
   const tried: string[] = []
   for (const candidate of pageSourceCandidates(folder, pagePath)) {
+    signal?.throwIfAborted()
     tried.push(candidate)
     if (await isUnlinkedRegularFile(workspace, candidate))
       return { kind: 'found', path: candidate, folder }

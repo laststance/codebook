@@ -149,6 +149,20 @@ for (const compiledPath of [
     })
   })
 
+// Value: protects=a cancelled run ends the Pages source lookup with its abort reason instead of finishing it; fails_when=the signal is ignored and the lookup answers found; why_new=Cycle 0066 task 22 (the router contest's lookups ran without the abort signal); seam=an already aborted signal; no_claim=cancel timing between two candidates
+test('a cancelled run ends the Pages source lookup with its abort reason', async (context) => {
+  // Arrange
+  const workspace = await temporaryWorkspace(context)
+  await writeStandIn(workspace, 'pages/index.tsx')
+  const controller = new AbortController()
+  controller.abort(new Error('Run cancelled'))
+  // Act / Assert
+  await assert.rejects(
+    findNextPagesSource(workspace, 'pages/index.js', controller.signal),
+    { message: 'Run cancelled' },
+  )
+})
+
 test('a page source that is a link out of the workspace is not followed and not found', async (context) => {
   // Arrange
   const workspace = await temporaryWorkspace(context)
