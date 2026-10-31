@@ -6,14 +6,19 @@ import type {
 } from './chromeExtensionHistorySchemas'
 import type { ChromeExtensionHistoryWriter } from './chromeExtensionHistoryWriter'
 import type {
-  HistoryMaterialBase,
-  HistorySummaryBase,
-} from './historyStorageDescriptor'
+  ChromeExtensionLearningMaterial,
+  ChromeExtensionLearningMaterialContent,
+} from './chromeExtensionLearningSchemas'
+import type { HistorySummaryBase } from './historyStorageDescriptor'
+import type {
+  ExtensionLearningCoverage,
+  ExtensionLearningPart,
+} from './utils/evaluateExtensionLearning'
 import type { ExtensionJournalProgress } from './utils/extensionHistoryJournalRules'
 
 /**
  * One chrome-extension history as the library and the history resources read it: the question, the extension, the surface, how far the run got and what the capture misses. A history whose journal does not verify reads `unavailable` with its header's identity and the reason.
- * The learning fields (`learningCoverage`, `learningMissing`, the title and the material revision) belong to the save path and join this type with it.
+ * `learningCoverage`, `learningMissing`, the title and the material revision are the saved learning material's verdicts (`none` before the chat saved any).
  */
 export type ExtensionHistorySummary = HistorySummaryBase & {
   profile: 'chrome-extension'
@@ -34,6 +39,12 @@ export type ExtensionHistorySummary = HistorySummaryBase & {
   captureComplete: boolean
   /** The reasons the capture misses a part, as the seal keeps them (judged from the journal for an unsealed history). */
   captureMissing: ExtensionHistorySealReason[]
+  /** The saved learning title, absent before the chat saved its explanation. */
+  title?: string
+  learningCoverage: ExtensionLearningCoverage
+  /** Every citation the material still owes, in journal order. */
+  learningMissing: ExtensionLearningPart[]
+  materialRevision: number
 }
 
 /** The types the chrome-extension profile fixes, for {@link NodeHistoryStore}. */
@@ -43,8 +54,7 @@ export type ExtensionHistoryTypes = {
   Seal: ExtensionHistorySeal
   Progress: ExtensionJournalProgress
   Summary: ExtensionHistorySummary
-  /** Learning material is saved by the save path; until it lands the profile offers only the base shape. */
-  Material: HistoryMaterialBase
-  MaterialContent: HistoryMaterialBase['content']
+  Material: ChromeExtensionLearningMaterial
+  MaterialContent: ChromeExtensionLearningMaterialContent
   Writer: ChromeExtensionHistoryWriter
 }

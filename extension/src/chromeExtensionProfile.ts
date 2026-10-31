@@ -58,7 +58,7 @@ export function describeChromeExtensionProfile(prerequisites: {
     recording: {
       available: false,
       reason:
-        'A chrome-extension run is live only: it is not saved or replayed in this version, and has no application video.',
+        'A chrome-extension run has no application video; its pauses, values and frames are recorded in a history that codebook_explain_node_history saves after codebook_stop.',
     },
   }
 }

@@ -1,3 +1,4 @@
+import type { ChromeExtensionLearningMaterial } from '../chromeExtensionLearningSchemas'
 import type { NodeServerLearningMaterial } from '../nodeServerLearningSchemas'
 import type {
   NodeTestHistoryIndex,
@@ -14,7 +15,9 @@ export type NodeLearningStepPosition = {
 
 /** The learning material of either history profile: the same question, title, summary, participants and steps, citing the entries of its own journal. */
 export type NodeLearningMaterialOfHistory =
-  NodeTestLearningMaterial | NodeServerLearningMaterial
+  | NodeTestLearningMaterial
+  | NodeServerLearningMaterial
+  | ChromeExtensionLearningMaterial
 
 /** A replay's learning material as the Study pane's summary renderer takes it, the browser summary's shape, with each referenced step's event. */
 export type NodeLearningSummaryProjection = {

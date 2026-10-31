@@ -14,18 +14,26 @@ import {
   type ExtensionHistoryClock,
 } from './chromeExtensionHistoryWriter'
 import {
+  chromeExtensionLearningMaterialContentSchema,
+  chromeExtensionLearningMaterialSchema,
+} from './chromeExtensionLearningSchemas'
+import {
   CHROME_EXTENSION_HISTORY_DIRECTORY,
   CHROME_EXTENSION_HISTORY_FORMAT_VERSION,
   CHROME_EXTENSION_PROFILE,
   EXTENSION_HISTORY_JOURNAL_LIMIT_BYTES,
   EXTENSION_HISTORY_REASON_CODES as CODES,
   EXTENSION_HISTORY_SEAL_LIMIT_BYTES,
+  NODE_TEST_LEARNING_MATERIAL_VERSION,
 } from './constants'
 import type { HistoryStorageDescriptor } from './historyStorageDescriptor'
+import { assertNodeLearningCitations } from './utils/assertNodeLearningCitations'
 import { evaluateExtensionHistoryCapture } from './utils/evaluateExtensionHistoryCapture'
+import { evaluateExtensionLearning } from './utils/evaluateExtensionLearning'
 import {
   acceptExtensionHistoryEntry,
   newExtensionJournalProgress,
+  type ExtensionJournalProgress,
 } from './utils/extensionHistoryJournalRules'
 import type { CitableEvent } from './utils/recordingJournalScan'
 
@@ -38,21 +46,40 @@ const RECORDING_PENDING_CODES: readonly string[] = [
 ]
 
 /**
- * Reduces an entry to what a learning step may cite for now: a capture (by its source hash) and the result; the save path widens this with the stop's context.
+ * Reduces an entry to what a learning step may cite: a capture (by its source hash and the context, target URL and worker generation of its pause), a pause, and the result.
  * @param entry - A journal entry.
+ * @param progress - What the journal established through this entry; its pause supplies the capture's context.
  * @returns The citable form, or `undefined` for an entry no step may cite.
- * @example citableExtensionEvent(resultEntry) // => { type: 'result' }
+ * @example citableExtensionEvent(resultEntry, progress) // => { type: 'result' }
  */
 function citableExtensionEvent(
   entry: ExtensionHistoryEntry,
+  progress: ExtensionJournalProgress,
 ): CitableEvent | undefined {
-  if (entry.type === 'capture')
+  if (entry.type === 'pause-open')
+    return {
+      type: 'pause',
+      context: entry.context,
+      targetUrl: entry.targetUrl,
+      workerGeneration: entry.workerGeneration,
+      stopIndex: entry.stopIndex,
+    }
+  if (entry.type === 'capture') {
+    const pause = progress.pauses.get(entry.pauseId)
     return {
       type: 'stop',
       sourceHash: entry.sourceHash,
       path: entry.path,
       line: entry.line,
+      ...(pause
+        ? {
+            context: pause.context,
+            targetUrl: pause.targetUrl,
+            workerGeneration: pause.workerGeneration,
+          }
+        : {}),
     }
+  }
   return entry.type === 'result' ? { type: 'result' } : undefined
 }
 
@@ -81,6 +108,9 @@ function emptyExtensionSummary(
     capturedStopCount: 0,
     captureComplete: false,
     captureMissing: [],
+    learningCoverage: 'none',
+    learningMissing: [],
+    materialRevision: 0,
   }
 }
 
@@ -104,12 +134,21 @@ export function createExtensionStorageDescriptor(options?: {
       noSeal: 'Chrome extension history has no verified final seal.',
       subject: 'Chrome extension history',
     },
-    // The save path replaces this codec; until then no material exists to parse and none is offered.
     learningMaterial: {
-      parseMaterial: refuseMaterial,
-      parseContent: refuseMaterial,
-      buildMaterial: refuseMaterial,
-      assertCitations: refuseMaterial,
+      parseMaterial: (value) =>
+        chromeExtensionLearningMaterialSchema.parse(value),
+      parseContent: (value) =>
+        chromeExtensionLearningMaterialContentSchema.parse(value),
+      buildMaterial: (input) =>
+        chromeExtensionLearningMaterialSchema.parse({
+          version: NODE_TEST_LEARNING_MATERIAL_VERSION,
+          ...input,
+        }),
+      assertCitations: (content, citable, lead): void =>
+        assertNodeLearningCitations(content, citable, {
+          lead,
+          withNearest: true,
+        }),
     },
     stampHeader: (input) => ({
       ...input,
@@ -147,7 +186,7 @@ export function createExtensionStorageDescriptor(options?: {
         )
     },
     emptySummary: emptyExtensionSummary,
-    summarize: ({ history }) => {
+    summarize: ({ history, materialContent, materialRevision }) => {
       const { header, entries, seal } = history
       const opened = entries.filter((entry) => entry.type === 'pause-open')
       const result = entries.find((entry) => entry.type === 'result')
@@ -162,6 +201,15 @@ export function createExtensionStorageDescriptor(options?: {
             history.status !== 'recording' ||
             !RECORDING_PENDING_CODES.includes(reason.code),
         )
+      const cited = new Set(
+        (materialContent?.steps ?? []).flatMap((step) =>
+          step.reference ? [step.reference.sequence] : [],
+        ),
+      )
+      const learning = evaluateExtensionLearning(
+        entries,
+        materialContent ? cited : undefined,
+      )
       return {
         summary: {
           ...emptyExtensionSummary(header),
@@ -176,17 +224,14 @@ export function createExtensionStorageDescriptor(options?: {
           ...(result ? { resultOutcome: result.outcome } : {}),
           captureComplete: reasons.length === 0,
           captureMissing: reasons,
+          learningCoverage: learning.coverage,
+          learningMissing: learning.missing,
+          ...(materialContent ? { title: materialContent.title } : {}),
+          materialRevision: materialRevision ?? 0,
         },
       }
     },
   }
-}
-
-/** Refuses a learning material of a chrome-extension history until the save path exists. @throws Always. */
-function refuseMaterial(): never {
-  throw new Error(
-    'Learning material for a Chrome extension history is saved by the save path.',
-  )
 }
 
 /** The chrome-extension profile's descriptor with the real run clock; the repository's store uses it. */

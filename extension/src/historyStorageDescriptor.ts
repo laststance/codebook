@@ -113,7 +113,11 @@ export type HistoryScanRules<Types extends HistoryTypes> = {
     entry: Types['Entry'],
     header: Types['Header'],
   ): void
-  citableOf(entry: Types['Entry']): CitableEvent | undefined
+  /** `progress` is what the entries up to and including this one established, for a profile whose citable event needs an earlier entry (an extension capture takes its context from its pause). */
+  citableOf(
+    entry: Types['Entry'],
+    progress: Types['Progress'],
+  ): CitableEvent | undefined
   /** Whether a scan keeps the whole entry (a recording keeps only what a summary counts). */
   keeps(entry: Types['Entry']): boolean
 }

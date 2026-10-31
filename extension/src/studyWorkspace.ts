@@ -6,6 +6,7 @@ import * as vscode from 'vscode'
 import { z } from 'zod'
 
 import type { RecordedStudyGroups } from './applicationGroupMarkerSchemas'
+import { ChromeExtensionLearningSave } from './chromeExtensionLearningSave'
 import { ChromeExtensionViewportView } from './chromeExtensionViewport'
 import {
   AGENT_SELECTION_APPLICATION_KEYBOARD_MESSAGES,
@@ -36,7 +37,6 @@ import {
   MAIN_THREAD_WEBVIEW_PREFIX,
   MAX_DEFERRED_OPEN_REPLIES,
   MAX_SOURCE_DOCUMENTS,
-  CHROME_EXTENSION_SAVE_REFUSAL,
   CHROME_EXTENSION_PROFILE,
   NODE_SERVER_PROFILE,
   NODE_TEST_PROFILE,
@@ -852,6 +852,14 @@ export class StudyWorkspace {
         (history) => history.studyId === studyId,
       )?.materialRevision,
   })
+
+  /** Saves a chrome-extension run's learning replay from the status item; this workspace only wires the item and its command to it. */
+  private readonly chromeExtensionLearningSave =
+    new ChromeExtensionLearningSave({
+      service: () => this.service,
+      store: () => this.nodeHistoryRepository?.extensionHistories,
+      ...this.saveHostEditorParts(),
+    })
 
   private library?: LearningLibrary
   private recordings?: RecordingStore
@@ -11927,7 +11935,9 @@ export class StudyWorkspace {
         ? this.nodeServerLearningSave
         : record?.profile === NODE_TEST_PROFILE
           ? this.nodeLearningSave
-          : undefined
+          : record?.profile === CHROME_EXTENSION_PROFILE
+            ? this.chromeExtensionLearningSave
+            : undefined
     if (!service || !record || !owner) return undefined
     if (
       expectedStudyId !== undefined &&
@@ -11943,9 +11953,6 @@ export class StudyWorkspace {
   async saveLearningReplay(expectedStudyId?: string): Promise<void> {
     const service = this.service,
       record = this.currentRecord()
-    // An extension run stores nothing: the command refuses before any study, recording or checkpoint is touched (SR13, DR9).
-    if (hasChromeExtensionProfile(record))
-      throw new Error(CHROME_EXTENSION_SAVE_REFUSAL)
     // A server or test run's Save belongs to its own class, with the same delayed-click guard as a browser save.
     const nodeSave = this.nodeRunSave(service, record, expectedStudyId)
     if (nodeSave) return nodeSave
@@ -12036,7 +12043,26 @@ export class StudyWorkspace {
   }
 
   /**
-   * Draws the status item of a run whose profile owns its Save (server, test) or has none (extension); called by {@link publishLearningSave} before the browser run's own item.
+   * Gives the status item of a chrome-extension run: its phase text from the run's view beside its learning replay state.
+   * @param record - The current chrome-extension run.
+   * @returns The item, or `undefined` while the run is not yet created.
+   * @example const item = this.extensionSaveItem(record)
+   */
+  private extensionSaveItem(record: StudyRecord) {
+    const extension = record.chromeExtension
+    if (!extension?.run) return undefined
+    return this.chromeExtensionLearningSave.item(
+      record,
+      describeChromeExtensionViewStatus(
+        extension.run.view(),
+        extension.prepared?.configuration.clicks.map((click) => click.title) ??
+          [],
+      ).statusItem,
+    )
+  }
+
+  /**
+   * Draws the status item of a run whose profile owns its Save (server, test, extension); called by {@link publishLearningSave} before the browser run's own item.
    * @param record - The current run, if any.
    * @param studyId - The run's study id, when a service is attached.
    * @returns `true` when the item was drawn or hidden for this run's profile; `false` for a browser run, which the caller draws.
@@ -12046,30 +12072,15 @@ export class StudyWorkspace {
     record: ReturnType<StudyWorkspace['currentRecord']>,
     studyId: string | undefined,
   ): boolean {
-    // An extension run shows its phase text (C4) and never offers Save (DR9).
-    if (hasChromeExtensionProfile(record)) {
-      const extension = record?.chromeExtension
-      if (!extension?.run || !studyId) this.hideLearningSaveItem()
-      else
-        this.showLearningSaveItem(
-          describeChromeExtensionViewStatus(
-            extension.run.view(),
-            extension.prepared?.configuration.clicks.map(
-              (click) => click.title,
-            ) ?? [],
-          ).statusItem,
-          CHROME_EXTENSION_SAVE_REFUSAL,
-          undefined,
-          studyId,
-        )
-      return true
-    }
     // A server run's item shows what NodeServerLearningSave says of it, a test run's what NodeLearningSave says.
     let view
     if (record?.profile === NODE_SERVER_PROFILE && studyId)
       view = this.nodeServerLearningSave.item(record)
     else if (record?.profile === NODE_TEST_PROFILE)
       view = this.nodeLearningSave.item(record)
+    // An extension run's item shows its phase text (C4) beside what ChromeExtensionLearningSave says of its learning replay.
+    else if (record && hasChromeExtensionProfile(record))
+      view = this.extensionSaveItem(record)
     else return false
     if (!view || !studyId) this.hideLearningSaveItem()
     else

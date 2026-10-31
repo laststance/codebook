@@ -5,7 +5,6 @@ import {
   ACTIVE_TIMEOUT_MS,
   CHROME_EXTENSION_MIN_VERSION,
   CHROME_EXTENSION_PROFILE,
-  CHROME_EXTENSION_SAVE_REFUSAL,
   EXTENSION_ACKNOWLEDGED_API_PERMISSIONS,
   EXTENSION_BUNDLED_LINE_LIMIT_CHARS,
   EXTENSION_CLICK_ACTION,
@@ -588,7 +587,7 @@ export function chromeExtensionHelp() {
       `An observed read is at most ${EXTENSION_OBSERVE_READ_LIMIT_BYTES} bytes; a larger value reads unavailable.`,
       `At most ${EXTENSION_OUTPUT_EVENT_LIMIT} console lines are journaled per run.`,
       'One run is active at a time; a run that completed or failed is released at once.',
-      `A chrome-extension run is live only: it is not saved, has no replay, and codebook_explain and codebook_explain_node_history refuse it with the sentence "${CHROME_EXTENSION_SAVE_REFUSAL}"`,
+      'A chrome-extension run records a durable history: stop the run with codebook_stop, read chromeExtension.historyUri, then save its explanation with codebook_explain_node_history; codebook_explain redirects there.',
     ],
     disclosures: {
       testProfile:

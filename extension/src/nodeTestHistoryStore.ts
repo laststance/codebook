@@ -1272,11 +1272,15 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
    * @example store.citableEventsOf(history).get(2) // => { type: 'stop', sourceHash: '…', path: 'src/scheduler.ts', line: 3 }
    */
   citableEventsOf(
-    history: Pick<HistoryIndexOf<Types>, 'entries'>,
+    history: Pick<HistoryIndexOf<Types>, 'header' | 'entries'>,
   ): Map<number, CitableEvent> {
     const events = new Map<number, CitableEvent>()
+    const rules = this.descriptor.scanRules
+    // The journal's rules run again over the verified entries so a citable event can read what an earlier entry established.
+    const progress = rules.start()
     for (const entry of history.entries) {
-      const citable = this.descriptor.scanRules.citableOf(entry)
+      rules.accept(progress, entry, history.header)
+      const citable = rules.citableOf(entry, progress)
       if (citable) events.set(entry.sequence, citable)
     }
     return events

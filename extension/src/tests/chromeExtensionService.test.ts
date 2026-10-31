@@ -406,14 +406,12 @@ test('a failed extension run keeps its own recovery in the run error, not the se
   )
 })
 
-// protects=SR13 and SR37: codebook_explain and codebook_explain_node_history answer the extension refusal sentence for an extension run and change no stored study; fails_when=either tool saves, answers another sentence or throws a different code; no_claim=the other profiles' saves
-test('codebook_explain and codebook_explain_node_history refuse an extension run with the same sentence and keep the store unchanged', async (context) => {
+// protects=AC3: codebook_explain redirects an extension run to its durable history and codebook_explain_node_history refuses a run that recorded no history with the cause, both without changing the run; fails_when=either tool saves, answers the old refusal sentence or throws another code; no_claim=a run that recorded a history (the save tests)
+test('codebook_explain redirects an extension run to its history and a run without a history cannot be saved', async (context) => {
   // Arrange
   const harness = await createHarness()
   context.after(() => harness.close())
   const { record } = await startFakeChromeExtensionRun(harness)
-  const sentence =
-    'Saving an extension run is not available in this version; the live explanation stays in the chat.'
   // Act, Assert
   await assert.rejects(
     async () =>
@@ -429,7 +427,8 @@ test('codebook_explain and codebook_explain_node_history refuse an extension run
     (error) =>
       error instanceof StudyError &&
       error.code === 'EVIDENCE_UNAVAILABLE' &&
-      error.message === sentence,
+      error.message.includes('chromeExtension.historyUri') &&
+      error.message.includes('codebook_explain_node_history'),
   )
   await assert.rejects(
     async () =>
@@ -447,7 +446,8 @@ test('codebook_explain and codebook_explain_node_history refuse an extension run
     (error) =>
       error instanceof StudyError &&
       error.code === 'EVIDENCE_UNAVAILABLE' &&
-      error.message === sentence,
+      error.message ===
+        'This extension run recorded no history, so there is nothing to save.',
   )
   assert.equal(record.explanations.size, 0)
   assert.equal(record.explanationKeys.size, 0)

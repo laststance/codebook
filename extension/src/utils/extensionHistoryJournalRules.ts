@@ -6,6 +6,10 @@ import type {
 /** One pause as the rules track it: its declared stop, whether it is still open, and whether it has its capture and its pin. */
 export type ExtensionJournalPause = {
   stopIndex: number
+  /** The context, target URL and worker generation the pause opened with: what a capture's citation must match. */
+  context: string
+  targetUrl: string
+  workerGeneration: number
   isOpen: boolean
   isCaptured: boolean
   isPinned: boolean
@@ -102,6 +106,9 @@ function applyEntryRule(
         throw new Error('Chrome extension history opens an undeclared stop.')
       progress.pauses.set(entry.pauseId, {
         stopIndex: entry.stopIndex,
+        context: entry.context,
+        targetUrl: entry.targetUrl,
+        workerGeneration: entry.workerGeneration,
         isOpen: true,
         isCaptured: false,
         isPinned: false,

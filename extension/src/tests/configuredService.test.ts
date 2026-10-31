@@ -4601,7 +4601,7 @@ test('Node test learning material whose observed step has no reference is refuse
   assert.equal(refused.isError, true)
   assert.equal(
     toolText(refused),
-    'MCP error -32602: Input validation error: Invalid arguments for tool codebook_explain_node_history: content.steps[0] (read) is observed and has no reference. Give it the reference of an entry of this history ({type, sequence}, with sourceHash for a stop and channel for an output): node-test cites stops, outputs and the result, node-server the request, stops, outputs, the response or the request failure; or label it unknown. at content.steps[0].reference',
+    'MCP error -32602: Input validation error: Invalid arguments for tool codebook_explain_node_history: content.steps[0] (read) is observed and has no reference. Give it the reference of an entry of this history ({type, sequence}, with sourceHash for a stop and channel for an output): node-test cites stops, outputs and the result, node-server the request, stops, outputs, the response or the request failure, chrome-extension captured stops (with context), pauses and the result; or label it unknown. at content.steps[0].reference',
   )
 })
 
@@ -4642,7 +4642,7 @@ test('the input schemas of codebook_explain and codebook_explain_node_history sa
   )
   assert.equal(
     referenceDescription('codebook_explain_node_history', 'content'),
-    'Required for an observed or source-derived step: an entry of this history by its sequence number. node-test: a stop (with its sourceHash), an output (with its channel) or the result. node-server: the request, a stop (with its sourceHash), an output (with its channel), the response or the request failure. Omit it only for an unknown step.',
+    'Required for an observed or source-derived step: an entry of this history by its sequence number. node-test: a stop (with its sourceHash), an output (with its channel) or the result. node-server: the request, a stop (with its sourceHash), an output (with its channel), the response or the request failure. chrome-extension: a captured stop (with its sourceHash and its context, page or service-worker), a pause (with its context) or the result. Omit it only for an unknown step.',
   )
 })
 

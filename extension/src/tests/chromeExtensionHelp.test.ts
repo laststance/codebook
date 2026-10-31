@@ -7,7 +7,6 @@ import {
   CHROME_EXTENSION_HELP_EVENTS,
   chromeExtensionHelp,
 } from '../chromeExtensionHelp'
-import { CHROME_EXTENSION_SAVE_REFUSAL } from '../constants'
 import { ERROR_RECOVERY, StudyError } from '../errors'
 import { readResource } from '../resources'
 import { CHROME_EXTENSION_EVENT_TYPES } from '../utils/chromeExtensionEventDetail'
@@ -287,14 +286,12 @@ test('codebook://help/chrome-extension reads as the help JSON', async (context) 
   assert.equal(help.quickStart.callOrder.length, 8)
 })
 
-// protects=B1: the help's limits line quotes the save refusal from its constant; fails_when=the help retypes a sentence that drifts from the answer the tools give; no_claim=the rest of the limits
-test('the help limits quote the save refusal sentence exactly', () => {
+// protects=B1: the help's limits line names the save route and no longer says an extension run is live only; fails_when=the help keeps the refusal sentence or drops codebook_explain_node_history; no_claim=the rest of the limits
+test('the help limits name the save route through codebook_explain_node_history', () => {
   // Arrange, Act
   const help = JSON.stringify(chromeExtensionHelp())
   // Assert
-  assert.equal(help.includes(CHROME_EXTENSION_SAVE_REFUSAL), true)
-  assert.equal(
-    CHROME_EXTENSION_SAVE_REFUSAL,
-    'Saving an extension run is not available in this version; the live explanation stays in the chat.',
-  )
+  assert.equal(help.includes('codebook_explain_node_history'), true)
+  assert.equal(help.includes('Saving an extension run is not available'), false)
+  assert.equal(help.includes('is live only'), false)
 })

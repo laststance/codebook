@@ -411,6 +411,7 @@ export async function readResource(
   if (!suffix) {
     // A server run's verdicts are read from the stored history now, not only as they were at the seal and at this window's saves.
     await service.refreshNodeServerVerdicts(record)
+    await service.refreshExtensionVerdicts(record)
     return json(service.state(record))
   }
   // Everything below a run reads its raw evidence, which went to the Trash with a removed study.

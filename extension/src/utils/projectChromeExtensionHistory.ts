@@ -1,4 +1,5 @@
 import type { ChromeExtensionHistoryRecorder } from '../chromeExtensionHistoryRecorder'
+import type { ExtensionHistorySummary } from '../chromeExtensionHistoryTypes'
 
 /** What {@link projectChromeExtensionHistory} reads of an extension run's history. */
 export type ChromeExtensionHistoryProjectionInput = {
@@ -24,6 +25,11 @@ export type ChromeExtensionHistoryProjection = {
   historyIssue?: ChromeExtensionHistoryIssue
   /** The stable codes of the parts the sealed capture misses, in the seal's order; empty for a complete capture. */
   captureMissing?: string[]
+  /** How much of the sealed history the saved learning material explains; `none` until the chat saved some. */
+  learningCoverage?: ExtensionHistorySummary['learningCoverage']
+  /** Every citation the material still owes (a captured stop by its capture's sequence, or the result). */
+  learningMissing?: ExtensionHistorySummary['learningMissing']
+  materialRevision?: number
 }
 
 /**
@@ -82,7 +88,12 @@ export function projectChromeExtensionHistory(
     historyUri: input.historyUri,
     ...(historyIssue ? { historyIssue } : {}),
     ...(summary
-      ? { captureMissing: summary.captureMissing.map((reason) => reason.code) }
+      ? {
+          captureMissing: summary.captureMissing.map((reason) => reason.code),
+          learningCoverage: summary.learningCoverage,
+          learningMissing: summary.learningMissing,
+          materialRevision: summary.materialRevision,
+        }
       : {}),
   }
 }

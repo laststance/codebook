@@ -5,7 +5,7 @@ import { StudyError } from '../errors'
 import type { NodeHistoryStore } from '../nodeTestHistoryStore'
 import type { ResourceContent } from '../resources'
 
-import { describeHistoryHeadline } from './describeHistoryHeadline'
+import { readHistoryResourceTail } from './readHistoryResourceTail'
 import { readJsonPage } from './readJsonPage'
 import { withKnownNodeHistory } from './withKnownNodeHistory'
 
@@ -87,20 +87,21 @@ export async function readExtensionHistoryResource(
       Number(route[1]),
       route[2]?.slice(1),
     )
-  const summary = await withKnownNodeHistory(store, studyId, () =>
-    store.summarize(studyId),
-  )
-  return readJsonPage(
-    baseUri,
-    {
+  return readHistoryResourceTail({
+    store,
+    studyId,
+    history,
+    suffix,
+    verdicts: (summary) => ({
       profile: CHROME_EXTENSION_PROFILE,
-      ...describeHistoryHeadline(history),
       captureComplete: summary?.captureComplete ?? false,
       captureMissing: (summary?.captureMissing ?? []).map(
         (reason) => reason.code,
       ),
-      eventsUri: `${baseUri}/events`,
-    },
-    suffix,
-  )
+      learningCoverage: summary?.learningCoverage ?? 'none',
+      learningMissing: summary?.learningMissing ?? [],
+      materialRevision: summary?.materialRevision ?? 0,
+      learningMaterialUri: `${baseUri}/learning-material`,
+    }),
+  })
 }
