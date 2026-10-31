@@ -2,7 +2,9 @@ import type { DebugProtocol } from '@vscode/debugprotocol'
 import type * as vscode from 'vscode'
 
 import {
+  DEBUGGER_PROXY_TARGET_MAX_DEPTH,
   DEBUGGER_PROXY_TARGET_NAME,
+  NODE_TEST_FACT_PATH_LIMIT_CHARS,
   NODE_TEST_FACT_TYPE_LIMIT_CHARS,
   NODE_TEST_MODULE_BINDING_NAME,
   REPOSITORY_LITERAL_LIMIT_CHARS,
@@ -25,13 +27,13 @@ export type NodeTestFact = {
 
 /**
  * Reads only the declared debugger paths of a Node test stop through native DAP scopes, never evaluating an expression or retaining other local values; called by {@link OwnedNodeTestRun} at an owned source stop.
- * A path's root is the scope variable of that name, or, when none has it, a name the stopped source imports, read as the export it stands for in its own declaration's module binding ({@link sourceImportBindings}, {@link importedName}): Vitest binds each imported module whole ({@link NODE_TEST_MODULE_BINDING_NAME}), a mocked one as a Proxy whose exports sit under {@link DEBUGGER_PROXY_TARGET_NAME}, an unmocked one as a namespace of getters that the debugger shows lazily. A step through a Proxy (a library's tracked result, an Immer draft) is read under its {@link DEBUGGER_PROXY_TARGET_NAME} ({@link childOrProxyTarget}). A lazy value on the path (a getter, such as a Vitest spy's `mock`) is expanded once, which runs that getter in the test process as the Variables view does when the learner expands it (Cycle 0052 task 5).
+ * A path's root is the scope variable of that name, or, when none has it, a name the stopped source imports, read as the export it stands for in its own declaration's module binding ({@link sourceImportBindings}, {@link importedName}): Vitest binds each imported module whole ({@link NODE_TEST_MODULE_BINDING_NAME}), a mocked one as a Proxy whose exports sit under {@link DEBUGGER_PROXY_TARGET_NAME}, an unmocked one as a namespace of getters that the debugger shows lazily. A step after the root that the variable does not hold itself but a Proxy's {@link DEBUGGER_PROXY_TARGET_NAME} holds (up to {@link DEBUGGER_PROXY_TARGET_MAX_DEPTH} levels) is recorded under the path that names every hop (`state.[[Target]].status` for the declared `state.status`), never as the declared path: the Proxy's get trap may answer another value than its target holds, and Codebook never runs it ({@link readDeclaredPath}). A required inspection read this way is still named in `unavailable`, an optional one adds nothing there. A lazy value on the path (a getter, such as a Vitest spy's `mock`) is expanded once, which runs that getter in the test process as the Variables view does when the learner expands it (Cycle 0052 task 5).
  * @param debugSession - Verified native debug session.
  * @param scopes - Scopes of its checked source frame.
  * @param inspections - Validated requested facts.
  * @param sourceImports - The stopped source's import declarations and imported names ({@link sourceImportBindings}).
  * @param signal - Run cancellation.
- * @returns The facts read; the variables they came from; and, as `<mode>:<path>`, each required fact the debugger could not read (absent, ambiguous between two imported modules, empty or longer than {@link REPOSITORY_LITERAL_LIMIT_CHARS}), which the caller reports while the stop stays accepted. An unreadable optional fact is left out, as before.
+ * @returns The facts read (a hop fact carries the path naming its {@link DEBUGGER_PROXY_TARGET_NAME} hops); the variables they came from; and, as `<mode>:<path>`, each required fact the debugger could not read as declared (absent, only readable through a Proxy target, ambiguous between two imported modules, empty or longer than {@link REPOSITORY_LITERAL_LIMIT_CHARS}), which the caller reports while the stop stays accepted. An unreadable optional fact is left out, as before.
  * @example
  * await inspectNodeTestVariables(debugSession, scopes, [{ path: 'revalidatePath.mock.calls.length', mode: 'value', required: true }], sourceImportBindings("import { revalidatePath } from 'next/cache'"), signal)
  * // => { facts: [{ path: 'revalidatePath.mock.calls.length', mode: 'value', display: '1', type: 'number' }], variables: [...], unavailable: [] }
@@ -62,7 +64,7 @@ export async function inspectNodeTestVariables(
     unavailable: string[] = []
   for (const inspection of inspections) {
     signal.throwIfAborted()
-    const variable = await readDeclaredPath(
+    const declared = await readDeclaredPath(
       read,
       lexicalScopes,
       sourceImports,
@@ -71,23 +73,38 @@ export async function inspectNodeTestVariables(
       failedPass.abort()
       throw error
     })
+    const variable = declared?.variable
+    // A value only a Proxy's target holds is a fact of the path naming its hops, never of the declared path.
+    const recordedPath = declared?.recordedPath ?? inspection.path
+    const isReadThroughTarget = recordedPath !== inspection.path
     // Redaction contract: a value under a secret-named step, or one shaped like a credential, reads [masked]; a type name is never a value.
     const rawDisplay =
       inspection.mode === 'type' ? variable?.type : variable?.value
     const display =
       rawDisplay === undefined
         ? undefined
-        : redactInspectedValue(inspection, rawDisplay)
+        : redactInspectedValue(
+            { mode: inspection.mode, path: recordedPath },
+            rawDisplay,
+          )
+    // A required fact is reported by name, also when only its hop fact could be read; the stop keeps the facts that could be read (Cycle 0052 task 5).
+    if (
+      inspection.required &&
+      (isReadThroughTarget ||
+        !variable ||
+        !display ||
+        display.length > REPOSITORY_LITERAL_LIMIT_CHARS ||
+        recordedPath.length > NODE_TEST_FACT_PATH_LIMIT_CHARS)
+    )
+      unavailable.push(`${inspection.mode}:${inspection.path}`)
     if (
       !variable ||
       !display ||
-      display.length > REPOSITORY_LITERAL_LIMIT_CHARS
-    ) {
-      // A required fact is reported by name; the stop keeps the facts that could be read (Cycle 0052 task 5).
-      if (inspection.required)
-        unavailable.push(`${inspection.mode}:${inspection.path}`)
+      display.length > REPOSITORY_LITERAL_LIMIT_CHARS ||
+      // A path longer than a saved fact keeps would make the stop invalid.
+      recordedPath.length > NODE_TEST_FACT_PATH_LIMIT_CHARS
+    )
       continue
-    }
     // An oversized debugger type name is supplementary; omit it instead of making the saved stop invalid.
     const type =
       variable.type !== undefined &&
@@ -95,7 +112,7 @@ export async function inspectNodeTestVariables(
         ? variable.type
         : undefined
     facts.push({
-      path: inspection.path,
+      path: recordedPath,
       mode: inspection.mode,
       display,
       ...(type !== undefined && { type }),
@@ -107,7 +124,7 @@ export async function inspectNodeTestVariables(
       value:
         inspection.mode === 'type'
           ? redactInspectedValue(
-              { mode: 'value', path: inspection.path },
+              { mode: 'value', path: recordedPath },
               variable.value,
             )
           : display,
@@ -183,34 +200,44 @@ class DebuggerRefusedVariables extends Error {
 /** What a stop's scopes hold under a path's root: its variable, `undefined` when its lazy value could not be read; the root then still shadows any import of that name. */
 type ScopeRoot = { variable: DebugProtocol.Variable | undefined }
 
+/** What {@link readDeclaredPath} found: the variable, and the path it is recorded under, which names each {@link DEBUGGER_PROXY_TARGET_NAME} hop a step needed. */
+type DeclaredPathRead = {
+  variable: DebugProtocol.Variable
+  recordedPath: string
+}
+
 /**
  * Walks one declared path, `root.segment.segment`, to its variable; called by {@link inspectNodeTestVariables}.
+ * A step after the root that the variable does not hold but a Proxy's {@link DEBUGGER_PROXY_TARGET_NAME} does is read there, up to {@link DEBUGGER_PROXY_TARGET_MAX_DEPTH} levels, and the recorded path names every hop: the Proxy's get trap may answer another value than its target holds and Codebook never runs it, so the target's value is not the declared path's. A root read from a module binding keeps the declared path (Vitest's own binding Proxy, {@link moduleExport}).
  * @param read - The pass's variable reader.
  * @param scopes - The stop's lexical scopes.
  * @param sourceImports - The stopped source's import declarations and imported names.
  * @param path - The declared path.
- * @returns The variable at the end of the path, or `undefined` when a step is missing.
- * @example await readDeclaredPath(read, scopes, sourceImportBindings("import { revalidatePath } from 'next/cache'"), 'revalidatePath.mock.calls.length') // => { name: 'length', value: '1', ... }
+ * @returns The {@link DeclaredPathRead}; `undefined` when a step is missing.
+ * @example await readDeclaredPath(read, scopes, sourceImportBindings("import { revalidatePath } from 'next/cache'"), 'revalidatePath.mock.calls.length') // => { variable: { name: 'length', value: '1', ... }, recordedPath: 'revalidatePath.mock.calls.length' }
+ * @example await readDeclaredPath(read, scopes, sourceImportBindings(''), 'state.status') // state is a Proxy => { variable: { name: 'status', ... }, recordedPath: 'state.[[Target]].status' }
  */
 async function readDeclaredPath(
   read: DebuggerVariableReader,
   scopes: DebugProtocol.Scope[],
   sourceImports: SourceImports,
   path: string,
-): Promise<DebugProtocol.Variable | undefined> {
+): Promise<DeclaredPathRead | undefined> {
   const [root = '', ...segments] = path.split('.')
   const local = await scopeVariable(read, scopes, root)
   let variable = local
     ? local.variable
     : await importedName(read, scopes, sourceImports, root)
-  for (const segment of segments)
-    variable =
-      variable &&
-      (await settledLazy(
-        read,
-        await childOrProxyTarget(read, variable, segment),
-      ))
-  return variable
+  let recordedPath = root
+  for (const segment of segments) {
+    if (!variable) return undefined
+    const step = await childOrProxyTarget(read, variable, segment)
+    if (!step) return undefined
+    const hopSteps = `.${DEBUGGER_PROXY_TARGET_NAME}`.repeat(step.hops)
+    recordedPath += `${hopSteps}.${segment}`
+    variable = await settledLazy(read, step.variable)
+  }
+  return variable && { variable, recordedPath }
 }
 
 /**
@@ -304,29 +331,31 @@ async function moduleBindingsInScope(
 }
 
 /**
- * Reads one named child of a variable: a direct child, or, when the variable is a Proxy (its children include {@link DEBUGGER_PROXY_TARGET_NAME}), the child of that name under its target, which is how the Variables view shows a mocked module, a library's tracked result or an Immer draft; called by {@link readDeclaredPath} for each path segment and by {@link moduleExport}. Reading the target only expands a variable the debugger already lists; no expression is evaluated.
+ * Reads one named child of a variable: a direct child, or, when the variable is a Proxy (its children include {@link DEBUGGER_PROXY_TARGET_NAME}), the child of that name under its target, or under the target's own target, up to {@link DEBUGGER_PROXY_TARGET_MAX_DEPTH} levels; called by {@link readDeclaredPath} for each path step after the root. Only expands variables the debugger already lists; no expression, no get trap is run.
  * @param read - The pass's variable reader.
  * @param parent - The variable whose child is wanted.
  * @param name - The child's name.
- * @returns The child's variable, or `undefined` when neither the variable nor its Proxy target has it.
- * @example await childOrProxyTarget(read, { name: 'state', value: 'Proxy(Object)', variablesReference: 4 }, 'status') // => { name: 'status', value: "'error'", ... }
+ * @returns The child and how many target levels it sits below `parent` (0 for a direct child), or `undefined` when neither the variable nor its targets within the depth limit have it.
+ * @example await childOrProxyTarget(read, { name: 'state', value: 'Proxy(Object)', variablesReference: 4 }, 'status') // => { variable: { name: 'status', value: "'idle'", ... }, hops: 1 }
  */
 async function childOrProxyTarget(
   read: DebuggerVariableReader,
   parent: DebugProtocol.Variable,
   name: string,
-): Promise<DebugProtocol.Variable | undefined> {
-  const children = await read(parent.variablesReference)
-  const direct = children.find((child) => child.name === name)
-  if (direct) return direct
-  const target = children.find(
-    (child) => child.name === DEBUGGER_PROXY_TARGET_NAME,
-  )
-  return target
-    ? (await read(target.variablesReference)).find(
-        (child) => child.name === name,
-      )
-    : undefined
+): Promise<{ variable: DebugProtocol.Variable; hops: number } | undefined> {
+  let children = await read(parent.variablesReference)
+  for (let hops = 0; hops <= DEBUGGER_PROXY_TARGET_MAX_DEPTH; hops++) {
+    const found = children.find((child) => child.name === name)
+    if (found) return { variable: found, hops }
+    // One more target level only while the depth limit allows it.
+    const target =
+      hops < DEBUGGER_PROXY_TARGET_MAX_DEPTH
+        ? children.find((child) => child.name === DEBUGGER_PROXY_TARGET_NAME)
+        : undefined
+    if (!target) return undefined
+    children = await read(target.variablesReference)
+  }
+  return undefined
 }
 
 /**
@@ -342,7 +371,17 @@ async function moduleExport(
   binding: DebugProtocol.Variable,
   name: string,
 ): Promise<DebugProtocol.Variable | undefined> {
-  return childOrProxyTarget(read, binding, name)
+  const children = await read(binding.variablesReference)
+  const direct = children.find((child) => child.name === name)
+  if (direct) return direct
+  const target = children.find(
+    (child) => child.name === DEBUGGER_PROXY_TARGET_NAME,
+  )
+  return target
+    ? (await read(target.variablesReference)).find(
+        (child) => child.name === name,
+      )
+    : undefined
 }
 
 /**

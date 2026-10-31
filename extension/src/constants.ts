@@ -1465,12 +1465,16 @@ export const TEST_OUTPUT_END_TOLERANCE_PX = 2
 export const TEST_OUTPUT_STATE_REPORT_INTERVAL_MS = 500
 /** Longest debugger type name a saved Node fact keeps; the type is supplementary, so a longer one is omitted rather than failing the run. */
 export const NODE_TEST_FACT_TYPE_LIMIT_CHARS = 256
+/** Longest path a saved Node fact keeps (the history schema's limit); a hop path ({@link DEBUGGER_PROXY_TARGET_NAME} named in it) longer than this is left unread. */
+export const NODE_TEST_FACT_PATH_LIMIT_CHARS = 256
 /**
  * Names of the variables in which Vitest's module runner holds a whole imported module: a test file that calls `vi.mock` binds `__vi_import_<n>__`, any other module `__vite_ssr_import_<n>__` (Vite 8, Vitest 5). An imported name such as `revalidatePath` has no variable of its own; its value is an export of one of these (Cycle 0052 task 5).
  */
 export const NODE_TEST_MODULE_BINDING_NAME = /^__vi(?:te_ssr)?_import_\d+__$/
 /** The debugger's name for the object a JavaScript Proxy wraps; a module that `vi.mock` replaces is a Proxy whose exports sit under it. */
 export const DEBUGGER_PROXY_TARGET_NAME = '[[Target]]'
+/** Most nested {@link DEBUGGER_PROXY_TARGET_NAME} levels one path step may be read through when a Proxy variable does not hold the step's name itself; a Proxy wrapped deeper leaves the step unread, so no chain is followed without bound. */
+export const DEBUGGER_PROXY_TARGET_MAX_DEPTH = 3
 /** Oldest Vitest major whose file listing, exclusion, name matching and JSON report were verified for exact node-test selection (4.1.11 and 5.0.2). */
 export const NODE_TEST_MINIMUM_VITEST_MAJOR = 4
 /** Deepest cited title path: enclosing `describe` titles plus the test title. */
