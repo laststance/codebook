@@ -28,6 +28,33 @@ const KEY_MERGE = `gh pr merge 173 --squash --match-head-commit ${HEAD}`
 const KEY_REREAD = 'gh pr view 173 --json state,headRefOid'
 const KEY_MERGE_COMMIT = 'gh pr view 173 --json mergeCommit -q .mergeCommit.oid'
 
+/** A workflow every pull request starts (a `branches` list is no filter). */
+const UNFILTERED_WORKFLOW = `name: Test
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs: {}
+`
+
+/** A workflow that starts only for some changed paths. */
+const PATH_FILTERED_WORKFLOW = `name: Windows
+on:
+  pull_request:
+    paths:
+      - extension/src/a.ts
+jobs: {}
+`
+
+/** A passed run of the workflow file `file`, as the Actions API lists it. */
+const workflowRun = (name, file) => ({
+  name,
+  path: `.github/workflows/${file}`,
+  status: 'completed',
+  conclusion: 'success',
+})
+
 const ok = (stdout = '') => ({ status: 0, stdout, stderr: '' })
 const failed = (stderr, status = 1) => ({ status, stdout: '', stderr })
 const json = (value) => ok(JSON.stringify(value))
@@ -54,6 +81,7 @@ function answers(overrides = {}) {
         workflow_runs: [
           {
             name: 'Test',
+            path: '.github/workflows/test.yml',
             status: 'completed',
             conclusion: 'success',
             head_sha: HEAD,
@@ -118,9 +146,14 @@ async function runCommand({
   responses = {},
   summary,
   environment = {},
+  workflows = { 'test.yml': UNFILTERED_WORKFLOW },
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'merge-pr-test-'))
   try {
+    // The checkout's own workflow files decide which workflow runs the head must have.
+    await mkdir(join(root, '.github', 'workflows'), { recursive: true })
+    for (const [name, text] of Object.entries(workflows))
+      await writeFile(join(root, '.github', 'workflows', name), text)
     const text = summary === undefined ? await buildSummary() : summary
     if (text !== null) {
       await mkdir(join(root, 'artifacts', 'gate', SHORT_HEAD), {
@@ -487,6 +520,93 @@ test('refuses with E_CHECKS_NONE when the head has no workflow run and no check 
   assert.equal(err[0], `E_CHECKS_NONE: no workflow run exists for ${HEAD}`)
 })
 
+// protects=an unfiltered pull_request workflow that never ran for the head blocks the merge; fails_when=a head whose only run is Format passes while build.yml has no run; no_claim=GitHub's real run listing; the fake lists only the runs given
+test('refuses with E_CHECKS_MISSING naming the workflow file that has no run, and makes no merge call', async () => {
+  // Arrange
+  const responses = {
+    [KEY_RUNS(HEAD)]: json([
+      { workflow_runs: [workflowRun('Format', 'format.yml')] },
+    ]),
+  }
+  const workflows = {
+    'build.yml': UNFILTERED_WORKFLOW,
+    'format.yml': UNFILTERED_WORKFLOW,
+  }
+
+  // Act
+  const { exit, err, calls } = await runCommand({ responses, workflows })
+
+  // Assert
+  assert.equal(exit, 1)
+  assert.deepEqual(err, [
+    `E_CHECKS_MISSING: 1 expected workflow(s) have no run on ${HEAD}`,
+    'missing: .github/workflows/build.yml',
+    'Fix: check that each workflow is enabled and triggered (gh workflow list, gh pr checks 173), or rerun it, then rerun this command',
+  ])
+  assert.deepEqual(mergeCalls(calls), [])
+})
+
+// protects=a path-filtered workflow without a run does not block, and a filtered one that ran still gates; fails_when=a filtered workflow is demanded, or its failure is ignored; no_claim=nothing
+test('does not require a run of a path-filtered workflow but still fails on its failed run', async () => {
+  // Arrange
+  const workflows = {
+    'test.yml': UNFILTERED_WORKFLOW,
+    'windows.yml': PATH_FILTERED_WORKFLOW,
+  }
+  const failedWindows = {
+    [KEY_RUNS(HEAD)]: json([
+      {
+        workflow_runs: [
+          workflowRun('Test', 'test.yml'),
+          { ...workflowRun('Windows', 'windows.yml'), conclusion: 'failure' },
+        ],
+      },
+    ]),
+  }
+
+  // Act
+  const passed = await runCommand({ workflows })
+  const refused = await runCommand({ workflows, responses: failedWindows })
+
+  // Assert
+  assert.equal(passed.exit, 0)
+  assert.equal(refused.exit, 1)
+  assert.equal(refused.err[1], 'workflow Windows: completed/failure')
+})
+
+// protects=a workflow file the reader cannot classify refuses instead of being skipped; fails_when=an unreadable on-block is treated as not expected; no_claim=nothing
+test('refuses with E_WORKFLOWS_UNREADABLE when a workflow file cannot be classified', async () => {
+  // Arrange
+  const workflows = {
+    'test.yml': UNFILTERED_WORKFLOW,
+    'odd.yml': 'name: Odd\njobs: {}\n',
+  }
+
+  // Act
+  const { exit, err, calls } = await runCommand({ workflows })
+
+  // Assert
+  assert.equal(exit, 1)
+  assert.equal(
+    err[0],
+    'E_WORKFLOWS_UNREADABLE: cannot classify .github/workflows/odd.yml: no top-level "on:"',
+  )
+  assert.deepEqual(mergeCalls(calls), [])
+})
+
+// protects=a checkout without any workflow file refuses; fails_when=an empty expected set lets the head pass; no_claim=nothing
+test('refuses with E_WORKFLOWS_UNREADABLE when the checkout has no workflow file', async () => {
+  // Arrange
+  const workflows = {}
+
+  // Act
+  const { exit, err } = await runCommand({ workflows })
+
+  // Assert
+  assert.equal(exit, 1)
+  assert.match(err[0], /^E_WORKFLOWS_UNREADABLE: .* holds no workflow file$/)
+})
+
 // protects=a CodeRabbit check is listed but never gates, and alone it is no CI; fails_when=a pending CodeRabbit blocks, or only-CodeRabbit heads pass; no_claim=nothing
 test('lists a pending CodeRabbit check without letting it gate, and refuses a head with only CodeRabbit checks', async () => {
   // Arrange
@@ -832,6 +952,8 @@ test('--help prints usage, the example, exit codes and error codes', async () =>
     'E_CHECKS_PENDING',
     'E_CHECKS_FAILED',
     'E_CHECKS_NONE',
+    'E_CHECKS_MISSING',
+    'E_WORKFLOWS_UNREADABLE',
     'E_MERGE_FAILED',
     'E_MERGE_UNKNOWN',
     'E_MERGED_OTHER_HEAD',

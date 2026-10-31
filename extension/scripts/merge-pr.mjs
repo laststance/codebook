@@ -4,7 +4,7 @@
 // fast-forwarded to `origin/main`. Every `gh` and `git` call goes through one injected command runner.
 
 import { execFile } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { readdir, readFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
@@ -36,6 +36,9 @@ const PASSING_CONCLUSIONS = ['success', 'neutral', 'skipped']
 /** The one check name that never gates a merge (AGENTS.md: hosted CodeRabbit is off, D16). */
 const NON_GATING_CHECK_NAME = 'CodeRabbit'
 
+/** Folder of the workflow files, relative to the repository root; a run's `path` names a file in it. */
+const WORKFLOW_DIRECTORY = '.github/workflows'
+
 /** The command that makes the gate summary this command reads. */
 const GATE_COMMAND = 'pnpm --dir extension gate'
 
@@ -53,7 +56,8 @@ Merges pull request <pr> with "gh pr merge <pr> --squash --match-head-commit <he
   - the PR is open, not a draft, and targets main;
   - artifacts/gate/<first 8 of head>/summary.txt (this checkout) holds "Checkout: clean",
     "GATE: pass on <head>" and one "<name> exit=0" line per gate check;
-  - every workflow run, check run and commit status of that head passed (a check named CodeRabbit is listed, never gating).
+  - every workflow run, check run and commit status of that head passed (a check named CodeRabbit is listed, never gating);
+  - every workflow of this checkout's .github/workflows that triggers on pull_request without a paths or paths-ignore filter has a run on that head.
 Then it fast-forwards the local main to origin/main.
 A PR that is already merged resumes at the local main step, so rerunning after exit 3 or 4 is safe.
 
@@ -76,7 +80,7 @@ Exit codes:
 
 Error codes:
   E_USAGE E_GH E_PR_STATE E_GATE_MISSING E_GATE_SUMMARY_OLD E_GATE_NOT_PASSED
-  E_CHECKS_PENDING E_CHECKS_FAILED E_CHECKS_NONE
+  E_CHECKS_PENDING E_CHECKS_FAILED E_CHECKS_NONE E_CHECKS_MISSING E_WORKFLOWS_UNREADABLE
   E_MERGE_FAILED E_MERGE_UNKNOWN E_MERGED_OTHER_HEAD E_LOCAL_MAIN E_INTERNAL`
 
 /**
@@ -328,6 +332,115 @@ function classifyRun(status, conclusion) {
 }
 
 /**
+ * @typedef {{
+ *   repositoryRoot: string,
+ *   listDirectory: (path: string) => Promise<string[]>,
+ *   readText: (path: string) => Promise<string>,
+ * }} WorkflowSource
+ */
+
+/**
+ * Tells whether one workflow file runs on every pull request, from the subset of YAML the repository's workflows use.
+ *
+ * Why: a required workflow that never started for the head must block the merge; only a workflow with a `pull_request` trigger and no `paths` or `paths-ignore` filter is guaranteed to start.
+ * Called by {@link readExpectedWorkflows} for each workflow file.
+ *
+ * @param {string} text - The workflow file.
+ * @returns {boolean} `true` when `on:` has an unfiltered `pull_request` trigger; `false` when it has none or a filtered one.
+ * @throws {Error} When the `on:` block cannot be classified (no `on:`, an inline mapping, a tab indent).
+ * @example runsOnEveryPullRequest('on:\n  pull_request:\n    branches: [main]\n') // => true
+ */
+export function runsOnEveryPullRequest(text) {
+  const lines = text
+    .split(/\r?\n/)
+    .filter((line) => line.trim() !== '' && !line.trim().startsWith('#'))
+  if (lines.some((line) => /^ *\t/.test(line))) throw new Error('a tab indent')
+  const indentOf = (line) => line.length - line.trimStart().length
+  const stripComment = (value) => value.replace(/\s+#.*$/, '').trim()
+  const onPattern = /^["']?on["']?:/
+  const onIndex = lines.findIndex((line) => onPattern.test(line))
+  if (onIndex === -1) throw new Error('no top-level "on:"')
+  const inline = stripComment(lines[onIndex].replace(onPattern, ''))
+  if (inline !== '') {
+    if (inline.startsWith('{')) throw new Error('an inline "on:" mapping')
+    // `on: pull_request` or `on: [push, pull_request]` name events only, so no filter can exist.
+    return inline.split(/[\s,[\]]+/).includes('pull_request')
+  }
+  const block = []
+  for (const line of lines.slice(onIndex + 1)) {
+    if (indentOf(line) === 0) break
+    block.push(line)
+  }
+  if (block.length === 0) throw new Error('an empty "on:" block')
+  // `on:` as a list of event names.
+  if (block[0].trim().startsWith('- '))
+    return block.some(
+      (line) => stripComment(line.trim().slice(2)) === 'pull_request',
+    )
+  const eventIndent = indentOf(block[0])
+  const triggerIndex = block.findIndex(
+    (line) =>
+      indentOf(line) === eventIndent && line.trim().startsWith('pull_request:'),
+  )
+  if (triggerIndex === -1) return false
+  const trigger = block[triggerIndex].trim().slice('pull_request:'.length)
+  if (stripComment(trigger) !== '')
+    throw new Error('an inline "pull_request:" value')
+  const children = []
+  for (const line of block.slice(triggerIndex + 1)) {
+    if (indentOf(line) <= eventIndent) break
+    children.push(line)
+  }
+  // A filter is a direct child key of the trigger (the first child fixes the child indent).
+  const childIndent = children.length > 0 ? indentOf(children[0]) : 0
+  return !children.some(
+    (line) =>
+      indentOf(line) === childIndent &&
+      /^(paths|paths-ignore):/.test(line.trim()),
+  )
+}
+
+/**
+ * Lists the workflow files of this checkout that must have a run on every PR head.
+ *
+ * Why: the repository has no branch protection, so the merge command derives the required workflow set from the checkout the gate ran in (D18) and fails closed when it cannot.
+ * Called by {@link checkChecks}.
+ *
+ * @param {WorkflowSource} source - Repository root plus the injected directory lister and file reader.
+ * @returns {Promise<string[]>} Expected run paths such as `.github/workflows/build.yml`, sorted by file name.
+ * @throws {CommandRefusal} `E_WORKFLOWS_UNREADABLE` when the folder cannot be read, holds no workflow or a file cannot be classified.
+ * @example await readExpectedWorkflows(source) // => ['.github/workflows/build.yml']
+ */
+export async function readExpectedWorkflows(source) {
+  const refuse = (reason) =>
+    new CommandRefusal('E_WORKFLOWS_UNREADABLE', reason, {
+      fix: `check ${WORKFLOW_DIRECTORY} in this checkout, then rerun this command`,
+    })
+  const directory = join(source.repositoryRoot, WORKFLOW_DIRECTORY)
+  let names
+  try {
+    names = (await source.listDirectory(directory)).filter((name) =>
+      /\.ya?ml$/.test(name),
+    )
+  } catch {
+    throw refuse(`cannot read ${directory}`)
+  }
+  if (names.length === 0) throw refuse(`${directory} holds no workflow file`)
+  const expected = []
+  for (const name of [...names].sort()) {
+    try {
+      if (runsOnEveryPullRequest(await source.readText(join(directory, name))))
+        expected.push(`${WORKFLOW_DIRECTORY}/${name}`)
+    } catch (error) {
+      throw refuse(
+        `cannot classify ${WORKFLOW_DIRECTORY}/${name}: ${error.message}`,
+      )
+    }
+  }
+  return expected
+}
+
+/**
  * Requires the CI of the step-1 head to have passed (step 3), read from its workflow runs, check runs and commit statuses.
  *
  * Why: the repository has no branch protection, so "required CI" means every check the head triggered; a workflow that is still starting has a run before it has check runs, so all three sources are read, for the head of step 1 and not whatever the PR points at later.
@@ -338,11 +451,19 @@ function classifyRun(status, conclusion) {
  * @param {string} pr - PR number, named in the fix lines.
  * @param {NodeJS.ProcessEnv} environment - Secret values to hide.
  * @param {(line: string) => void} print - Where the non-gating CodeRabbit lines go.
+ * @param {WorkflowSource} workflowSource - Where this checkout's workflow files are read (the expected set).
  * @returns {Promise<string>} A one-line summary of what passed.
- * @throws {CommandRefusal} `E_CHECKS_FAILED`, `E_CHECKS_PENDING` or `E_CHECKS_NONE` (no workflow run, no check run, or only `CodeRabbit`); `E_GH` when `gh` fails.
- * @example await checkChecks(run, '9f2c…', '173', {}, console.log)
+ * @throws {CommandRefusal} `E_CHECKS_FAILED`, `E_CHECKS_PENDING` or `E_CHECKS_NONE` (no workflow run, no check run, or only `CodeRabbit`); `E_CHECKS_MISSING` when an expected workflow has no run on the head; `E_WORKFLOWS_UNREADABLE`; `E_GH` when `gh` fails.
+ * @example await checkChecks(run, '9f2c…', '173', {}, console.log, workflowSource)
  */
-export async function checkChecks(run, head, pr, environment, print) {
+export async function checkChecks(
+  run,
+  head,
+  pr,
+  environment,
+  print,
+  workflowSource,
+) {
   const base = `repos/${REPOSITORY_SLUG}`
   const workflowPages = await readPages(
     run,
@@ -428,6 +549,20 @@ export async function checkChecks(run, head, pr, environment, print) {
         ? `no workflow run exists for ${head}`
         : `no check run other than ${NON_GATING_CHECK_NAME} exists for ${head}`,
       { fix: `gh pr checks ${pr} --watch, then rerun this command` },
+    )
+  // Last: a workflow that never started leaves nothing failed or pending, so the expected set is compared with the runs.
+  const expectedPaths = await readExpectedWorkflows(workflowSource)
+  const missingPaths = expectedPaths.filter(
+    (path) => !workflowRuns.some((workflowRun) => workflowRun.path === path),
+  )
+  if (missingPaths.length > 0)
+    throw new CommandRefusal(
+      'E_CHECKS_MISSING',
+      `${missingPaths.length} expected workflow(s) have no run on ${head}`,
+      {
+        fix: `check that each workflow is enabled and triggered (gh workflow list, gh pr checks ${pr}), or rerun it, then rerun this command`,
+        details: missingPaths.map((path) => `missing: ${path}`),
+      },
     )
   return `checks pass at ${head} (${workflowRuns.length} workflow runs, ${gatingCheckRuns.length} check runs, ${statuses.length} statuses)`
 }
@@ -571,6 +706,7 @@ export async function syncLocalMain(run, environment) {
  * @param {{
  *   run: CommandRunner,
  *   readText: (path: string) => Promise<string>,
+ *   listDirectory?: (path: string) => Promise<string[]>,
  *   repositoryRoot: string,
  *   print: (line: string) => void,
  *   environment: NodeJS.ProcessEnv,
@@ -583,6 +719,7 @@ export async function syncLocalMain(run, environment) {
 export async function runMergePr({ pr, dryRun }, dependencies) {
   const { run, readText, repositoryRoot, print, environment, progress } =
     dependencies
+  const listDirectory = dependencies.listDirectory ?? ((path) => readdir(path))
   progress.enter('read the PR')
   const prState = await readPr(run, pr, environment)
   progress.enter('check the gate summary')
@@ -593,7 +730,13 @@ export async function runMergePr({ pr, dryRun }, dependencies) {
     print(`already merged at ${mergeCommit ?? 'an unknown commit'}`)
   } else {
     progress.enter('check CI')
-    print(await checkChecks(run, prState.head, pr, environment, print))
+    print(
+      await checkChecks(run, prState.head, pr, environment, print, {
+        repositoryRoot,
+        listDirectory,
+        readText,
+      }),
+    )
   }
   if (dryRun) {
     if (!prState.merged) print(`would merge ${pr} at ${prState.head}`)
@@ -633,7 +776,7 @@ export async function runMergePr({ pr, dryRun }, dependencies) {
  *
  * @param {import('./utils/commandContract.mjs').CommandProgress} progress - Stage tracker from {@link runCommandLine}.
  * @param {string[]} [argv] - Arguments after the script name.
- * @param {Partial<{ run: CommandRunner, readText: (path: string) => Promise<string>, repositoryRoot: string, print: (line: string) => void, environment: NodeJS.ProcessEnv }>} [overrides] - Seams for tests.
+ * @param {Partial<{ run: CommandRunner, readText: (path: string) => Promise<string>, listDirectory: (path: string) => Promise<string[]>, repositoryRoot: string, print: (line: string) => void, environment: NodeJS.ProcessEnv }>} [overrides] - Seams for tests.
  * @returns {Promise<number>} The exit code.
  * @throws {CommandRefusal} `E_USAGE` (exit 64) for a missing or non-digit PR number or an unknown option.
  * @example await main(new CommandProgress(), ['173', '--dry-run'], { run, readText })
@@ -680,6 +823,7 @@ export async function main(
     {
       run: overrides.run ?? createCommandRunner(repositoryRoot, environment),
       readText: overrides.readText ?? ((path) => readFile(path, 'utf8')),
+      listDirectory: overrides.listDirectory ?? ((path) => readdir(path)),
       repositoryRoot,
       print,
       environment,
