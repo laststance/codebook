@@ -4918,11 +4918,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       await this.registeredStop(stop)
       this.alive()
     }
+    // A Pages page that already left its entry path on the client is refused first: the other page rarely holds the click target, whose read would end the run uncoded.
+    if (this.pagesRun && (await this.pagesPathLeftBeforeClick())) return
     let point = await this.clickPointBeforeInput()
     // The DOM reads yielded to the adapter's news: a place the source map alone refused is judged by the break locations first, and the page, which went on meanwhile, is read again.
     if (await this.judgeNewsRefusedBeforeInput())
       point = await this.clickPointBeforeInput()
-    // A Pages page that left its entry path on the client receives no click.
+    // A Pages page that left its entry path while the click target was read receives no click either.
     if (this.pagesRun && (await this.pagesPathLeftBeforeClick())) return
     // DOM checks yield to native events; recheck pending authority synchronously before dispatching the first input.
     this.assertServerRegistrationsHeld()

@@ -270,6 +270,36 @@ test('a Pages page that redirects on the client after its router was ready recei
   assert.equal(harness.run.view().operation?.inputDispatched, false)
 })
 
+// Value: protects=a client redirect to a page without the click target still ends with NEXT_ENTRY_REDIRECTED and its recovery; fails_when=the click target is read before the pathname, so the missing target ends the run with the uncoded "Click target or before conditions changed before input"; why_new=CodeRabbit CLI round 3 (Cycle 0065); seam=setPagesState stands in for router.push, failBeforeWith for the other page's DOM; no_claim=the timing of a real router.push
+test('a Pages page that redirects on the client to a page without the click target ends as redirected, not as a changed click target', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    nextPages: {},
+  })
+  await harness.run.prepare()
+  harness.setPagesState({
+    pathname: '/login',
+    routerSeen: true,
+    isReady: true,
+    route: '/login',
+  })
+  harness.failBeforeWith({ reason: 'click-target-missing' })
+  // Act
+  harness.run.action('click', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().failures.length > 0,
+    'the redirect refusal',
+  )
+  // Assert
+  const refusal = refusalFailureOf(harness.run.view().failures[0] ?? '')
+  assert.equal(refusal?.code, 'NEXT_ENTRY_REDIRECTED')
+  assert.equal(
+    refusal?.message,
+    'The page left the entry path / for /login before the click was sent (a client redirect), so Codebook sent no click; the browser Codebook opened is closed with the run.',
+  )
+  assert.equal(harness.mouse.length, 0)
+})
+
 // Value: protects=a Pages page whose router never appears ends at the setup budget with NEXT_SETUP_DEADLINE, the router step and the router-absent recovery (fix entryPath, never retry unchanged); fails_when=the deadline reads as the plain App text or with another variant; why_new=Cycle 0065 sequence table (router absent at the deadline); seam=the manual clock fires the setup deadline; no_claim=a real page's router
 test('a Pages page with no Next router ends at the setup deadline with the router-absent recovery', async (context) => {
   // Arrange
