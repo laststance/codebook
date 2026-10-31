@@ -15,6 +15,7 @@ import {
   type ReplayDebugSnapshot,
 } from './replayDebugSchemas'
 import { sha256 } from './runtimeSupport/utils/sha256'
+import { stripTerminalControls } from './utils/stripTerminalControls'
 
 const requestSchema = z.object({
   seq: z.number().int().nonnegative(),
@@ -654,15 +655,19 @@ export class ReplayDebugAdapter {
         // A type-only inspection holds its type in `display`; the value is never invented.
         inspection.mode === 'type'
           ? {
-              name: inspection.path,
+              name: stripTerminalControls(inspection.path),
               value: REPLAY_RECORDED_INSPECTION_TYPE_ONLY_VALUE,
-              type: inspection.display,
+              type: stripTerminalControls(inspection.display),
               variablesReference: 0,
             }
           : {
-              name: inspection.path,
-              value: inspection.display,
-              type: inspection.type,
+              // Rows are stripped as the Study's display copy is (sanitizeNodeTestHistory); the stored history stays as recorded.
+              name: stripTerminalControls(inspection.path),
+              value: stripTerminalControls(inspection.display),
+              type:
+                inspection.type === undefined
+                  ? undefined
+                  : stripTerminalControls(inspection.type),
               variablesReference: 0,
             },
       ),

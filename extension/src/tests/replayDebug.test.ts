@@ -1938,6 +1938,45 @@ test('a recorded inspection that lives in a closure is listed in the Recorded in
   ])
 })
 
+// protects=the Recorded inspections rows in native Variables carry no bidirectional or terminal control, as the Study's display copy does; fails_when=a recorded path, display or type holding U+202E/U+202C reaches the Variables response and reorders the row; no_claim=the stored history (kept as recorded) and real editor rendering
+test('recorded inspections hide bidirectional controls from native Variables, as the Study does', () => {
+  // Arrange
+  const { adapter, request } = harness()
+  adapter.select(recorded(), 'Recorded', undefined, [
+    {
+      path: 'abc‮txt‬',
+      mode: 'value',
+      display: "'abc‮txt‬'",
+      type: 'str‮ing‬',
+    },
+    {
+      path: 'kind‮',
+      mode: 'type',
+      display: 'num‬ber',
+    },
+  ])
+  request('configurationDone')
+
+  // Act
+  const variables = readScope(request, 'Recorded inspections')
+
+  // Assert
+  assert.deepEqual(variables, [
+    {
+      name: 'abctxt',
+      value: "'abctxt'",
+      type: 'string',
+      variablesReference: 0,
+    },
+    {
+      name: 'kind',
+      value: 'Value not recorded (only its type was recorded)',
+      type: 'number',
+      variablesReference: 0,
+    },
+  ])
+})
+
 // Value: protects=a nested path deeper than the captured tree stays readable at the stop; fails_when=a recorded action.payload is missing from Variables; why_new=capture depth 2 drops nested paths, which only the recorded inspection holds; seam=none; no_claim=the capture limits themselves
 test('a recorded nested inspection deeper than the captured tree is listed with its full path', () => {
   // Arrange
