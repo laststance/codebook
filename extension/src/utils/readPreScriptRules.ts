@@ -64,7 +64,7 @@ export async function readPreScriptRules(
   const lockfiles = await nearestLockfiles(folders)
   const byManager = new Map<ScriptManager, PreScriptRun>([
     ['npm', 'runs'],
-    ['pnpm', pnpmRule(declared, await pnpmPreScriptsEnabled(folders))],
+    ['pnpm', pnpmRule(declared, await pnpmPreScriptsSetting(folders))],
     ['yarn', await yarnRule(declared, lockfiles)],
     ['bun', 'runs'],
   ])
@@ -124,15 +124,17 @@ async function nearestLockfiles(
 }
 
 /**
- * Tells whether an `.npmrc` turns pnpm's pre scripts on; called by {@link readPreScriptRules}.
+ * Reads what an `.npmrc` says about pnpm's pre scripts, so an explicit setting can override pnpm's default for its version; called by {@link readPreScriptRules}.
  * @param folders - The folders from {@link projectMarkerFolders}, the opened one first.
- * @returns `true` when the first `.npmrc` that sets `enable-pre-post-scripts` sets it to `true`.
+ * @returns
+ * - `true` or `false` as the first `.npmrc` that sets `enable-pre-post-scripts` sets it (any value other than `true` reads as `false`)
+ * - `undefined` when no `.npmrc` sets it
  * @example
- * await pnpmPreScriptsEnabled(['/repo']) // => true for an .npmrc line "enable-pre-post-scripts=true"
+ * await pnpmPreScriptsSetting(['/repo']) // => false for an .npmrc line "enable-pre-post-scripts=false"
  */
-async function pnpmPreScriptsEnabled(
+async function pnpmPreScriptsSetting(
   folders: readonly string[],
-): Promise<boolean> {
+): Promise<boolean | undefined> {
   for (const folder of folders) {
     const text = await readProjectFile(join(folder, '.npmrc'))
     const value =
@@ -142,23 +144,25 @@ async function pnpmPreScriptsEnabled(
     // A nearer `.npmrc` that sets the key wins over one further up.
     if (value !== undefined) return value === 'true'
   }
-  return false
+  return undefined
 }
 
 /**
- * Gives pnpm's pre-script rule: on by default since pnpm 9, off in pnpm 7 and 8 unless an `.npmrc` turns it on; called by {@link readPreScriptRules}.
+ * Gives pnpm's pre-script rule: an explicit `.npmrc` setting decides; without one, on by default since pnpm 9 and off in pnpm 7 and 8; called by {@link readPreScriptRules}.
  * @param declared - The declared manager ({@link declaredManagerOf}).
- * @param settingOn - Whether an `.npmrc` sets `enable-pre-post-scripts=true` ({@link pnpmPreScriptsEnabled}).
- * @returns `runs` for a declared pnpm 9 or later or with the setting, `skips` for a declared older pnpm without it, `unknown` when no pnpm version is declared and the setting is not on.
+ * @param setting - What an `.npmrc` sets for `enable-pre-post-scripts` ({@link pnpmPreScriptsSetting}), `undefined` when none does.
+ * @returns `runs` with the setting on, `skips` with it off; otherwise `runs` for a declared pnpm 9 or later, `skips` for a declared older pnpm, `unknown` when no pnpm version is declared.
  * @example
- * pnpmRule({ name: 'pnpm', major: 8 }, false) // => 'skips'
- * pnpmRule(undefined, false)                 // => 'unknown' (a pnpm-lock.yaml alone does not tell pnpm 8 from pnpm 9)
+ * pnpmRule({ name: 'pnpm', major: 9 }, false)     // => 'skips' (an explicit setting wins over the version default)
+ * pnpmRule({ name: 'pnpm', major: 8 }, undefined) // => 'skips'
+ * pnpmRule(undefined, undefined)                  // => 'unknown' (a pnpm-lock.yaml alone does not tell pnpm 8 from pnpm 9)
  */
 function pnpmRule(
   declared: ReturnType<typeof declaredManagerOf>,
-  settingOn: boolean,
+  setting: boolean | undefined,
 ): PreScriptRun {
-  if (settingOn) return 'runs'
+  // An explicit `.npmrc` setting decides whatever pnpm's default for its version is.
+  if (setting !== undefined) return setting ? 'runs' : 'skips'
   if (typeof declared !== 'object' || declared.name !== 'pnpm') return 'unknown'
   return declared.major >= DEVELOPMENT_PNPM_PRE_SCRIPTS_DEFAULT_MAJOR
     ? 'runs'

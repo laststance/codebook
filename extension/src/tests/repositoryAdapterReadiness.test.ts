@@ -728,6 +728,30 @@ test('a predev script in a pnpm 9 project is reported as one skipped statement',
   })
 })
 
+// Value: protects=a pnpm 9 project whose .npmrc turns pre scripts off does not report predev as preparation Codebook skips, the explicit setting winning over pnpm 9's default; fails_when=enable-pre-post-scripts=false is read like an absent setting and the version default counts predev; why_new=Cycle 0066 CodeRabbit CLI round 1 (readPreScriptRules collapsed false and unset); seam=none; no_claim=pnpm's own run
+test('a predev script in a pnpm 9 project whose .npmrc turns pre scripts off is not reported as skipped preparation', async (context) => {
+  // Arrange
+  const root = await createNextRepository(context)
+  await mkdir(join(root, 'src/pages'), { recursive: true })
+  await writeFile(
+    join(root, 'package.json'),
+    JSON.stringify({
+      packageManager: 'pnpm@9.15.0',
+      scripts: { predev: 'prisma generate', dev: 'next dev' },
+    }),
+  )
+  await writeFile(join(root, '.npmrc'), 'enable-pre-post-scripts=false\n')
+  // Act
+  const readiness = await readRepositoryAdapterReadiness(
+    root,
+    process.execPath,
+    SIGNAL,
+  )
+  // Assert
+  assert.equal(readiness['next-dev-webpack'].preparation, undefined)
+  assert.equal(readiness['next-dev-webpack'].notes, undefined)
+})
+
 // Value: protects=a predev script that Yarn 2 and later do not run is not reported as preparation Codebook skips, the Yarn version read from yarn.lock's __metadata key; fails_when=a Yarn Berry lockfile counts predev; why_new=Cycle 0066 task 9 (package-manager pre-script rule, Yarn Berry); seam=none; no_claim=Yarn's own run
 test('a predev script in a project whose yarn.lock is written by Yarn 2 or later is not reported as skipped preparation', async (context) => {
   // Arrange
