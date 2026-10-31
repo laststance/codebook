@@ -5,6 +5,7 @@ import { REPOSITORY_RUN_TIMEOUT_MS } from '../constants'
 import { StudyError } from '../errors'
 import { nextSetupDeadlineRecovery } from '../nextRefusals'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { refusalFailureOf } from '../utils/refusalFailureOf'
 
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
 
@@ -55,5 +56,87 @@ test('a Pages router that is seen but never ready ends the router wait itself at
       recoveryOverride: nextSetupDeadlineRecovery('router-late'),
     },
   )
+  assert.equal(harness.mouse.length, 0)
+})
+
+// --- The pathname checks around the click point ---
+
+// Value: protects=a Pages page that leaves its entry path while the click target is read receives no click: the pathname read after the click point ends the run with NEXT_ENTRY_REDIRECTED; fails_when=the path check after the click point is removed and the click is sent on the other page; why_new=Cycle 0066 task 26; seam=scripted router states (the fourth read is the check after the click point); no_claim=the timing of a real router.push
+test('a Pages page that leaves its entry path while the click target is read receives no click and the run ends as redirected', async (context) => {
+  // Arrange
+  const atEntry = { pathname: '/', routerSeen: true, isReady: true, route: '/' }
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    nextPages: {
+      pageStates: [
+        // After the load, then the router wait.
+        atEntry,
+        atEntry,
+        // Right before the click target is read.
+        atEntry,
+        // Right after the click point was read.
+        {
+          pathname: '/login',
+          routerSeen: true,
+          isReady: true,
+          route: '/login',
+        },
+      ],
+    },
+  })
+  await harness.run.prepare()
+  // Act
+  harness.run.action('click', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().failures.length > 0 || harness.mouse.length > 0,
+    'the redirect refusal or the click',
+  )
+  // Assert
+  assert.deepEqual(refusalFailureOf(harness.run.view().failures[0] ?? ''), {
+    code: 'NEXT_ENTRY_REDIRECTED',
+    message:
+      'The page left the entry path / for /login before the click was sent (a client redirect), so Codebook sent no click; the browser Codebook opened is closed with the run.',
+  })
+  assert.equal(harness.pagesStateReads(), 4)
+  assert.equal(harness.mouse.length, 0)
+  assert.equal(harness.run.view().operation?.inputDispatched, false)
+})
+
+// Value: protects=a Pages run with initial inputs whose page leaves its entry path before the click tells the agent that the declared inputs were written and no click was sent; fails_when=the before-click moment ignores the initial inputs and the message says only that no click was sent; why_new=Cycle 0066 task 27 (the before-click-after-inputs moment had no test); seam=scripted router states (the fourth read is the check before the click); no_claim=the timing of a real router.push
+test('a Pages page with initial inputs that leaves its entry path before the click says the inputs were written and no click was sent', async (context) => {
+  // Arrange
+  const atEntry = { pathname: '/', routerSeen: true, isReady: true, route: '/' }
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    initialInputs: [{ selector: '#email', text: 'learner@example.invalid' }],
+    nextPages: {
+      pageStates: [
+        // After the load, then the router wait.
+        atEntry,
+        atEntry,
+        // Right before the first initial input.
+        atEntry,
+        // Right before the click.
+        {
+          pathname: '/login',
+          routerSeen: true,
+          isReady: true,
+          route: '/login',
+        },
+      ],
+    },
+  })
+  await harness.run.prepare()
+  // Act
+  harness.run.action('click', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().failures.length > 0 || harness.mouse.length > 0,
+    'the redirect refusal or the click',
+  )
+  // Assert
+  assert.deepEqual(refusalFailureOf(harness.run.view().failures[0] ?? ''), {
+    code: 'NEXT_ENTRY_REDIRECTED',
+    message:
+      'The page left the entry path / for /login before the click was sent (a client redirect); the declared inputs were written and Codebook sent no click; the browser Codebook opened is closed with the run.',
+  })
+  assert.deepEqual(harness.insertedTexts, ['learner@example.invalid'])
   assert.equal(harness.mouse.length, 0)
 })
