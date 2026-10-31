@@ -13,6 +13,7 @@ import {
 import { readResource } from '../resources'
 
 import { createHarness } from './helpers'
+import { DEV_SCRIPT_WEBPACK_FORMS } from './utils/devScriptWebpackForms'
 
 /** The compatibility-mode sentence of Issue 166, word for word; the help and the README must both carry it. */
 const COMPATIBILITY_SENTENCE =
@@ -541,6 +542,37 @@ test('the bundled skill relays the recovery the run gives for NEXT_SETUP_DEADLIN
   assert.ok(
     section.includes(
       "- **What the bundled skill does (1.0.59).** The chat sends a question about a Pages Router page to `next-dev-webpack` as it does for an App Router page, tells you a refusal's code with the recovery of that code's section in the help (for `NEXT_SETUP_DEADLINE`, the recovery the run itself gives for the step it reached: one retry, a corrected `entryPath`, the input selector, or reading the captured history first),",
+    ),
+  )
+})
+
+// Value: protects=a learner reading when a Pages launch or compile failure adds the webpack-compatibility sentence finds exactly the dev script forms devScriptRequestsWebpack reads, as asking or as not asking for webpack; fails_when=the README's condition lists a form the table-driven devScriptRequestsWebpack test does not prove, misses one, or puts one on the wrong side; why_new=Cycle 0066 task 12 (Cycle 0065 red team: "has no --webpack" covered quoted, ";"-ended and delegated forms the function does not read); seam=README text and the shared form table; no_claim=the function's answers (devScriptRequestsWebpack test)
+test('the README lists exactly the dev script forms a Pages launch failure reads as asking, or not asking, Next for webpack', async () => {
+  // Arrange
+  const section = await readNextReadmeSection()
+  const codeSpansOf = (text: string): string[] =>
+    [...text.matchAll(/`([^`]+)`/g)].map((match) => match[1] ?? '')
+  // Act
+  const condition =
+    section
+      .split('\n')
+      .find((line) =>
+        line.includes("Codebook reads only the `dev` script's own text"),
+      ) ?? ''
+  const listStart = condition.indexOf("the script's end after it: ")
+  const listed = listStart === -1 ? '' : condition.slice(listStart)
+  const [asking = '', notAsking = ''] = listed.split(' ask for webpack; ')
+  // Assert
+  assert.deepEqual(
+    codeSpansOf(asking),
+    DEV_SCRIPT_WEBPACK_FORMS.filter((form) => form.asksForWebpack).map(
+      (form) => form.devScript,
+    ),
+  )
+  assert.deepEqual(
+    codeSpansOf(notAsking.split(' do not.')[0] ?? ''),
+    DEV_SCRIPT_WEBPACK_FORMS.filter((form) => !form.asksForWebpack).map(
+      (form) => form.devScript,
     ),
   )
 })
