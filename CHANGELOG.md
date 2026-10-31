@@ -4,7 +4,7 @@
 
 Cycle 0068 ([Issue #172](https://github.com/laststance/codebook/issues/172)), an owner-directed process cycle: the extension behaves as 0.2.68.0 for learners (no feature, no fix of product behavior). The replay debugger's lifecycle moved out of `studyWorkspace.ts` into its own module with the same behavior, verified by a native replay regression in VS Code and Cursor, and four repository commands now run the delivery steps that were done by hand.
 
-**The replay debugger keeps its behavior after the move.** Reopening a saved test replay, seeking across its recorded stops and a moment with no stop (**Not recorded at this moment**), stopping the replay debug session and inspecting a stop again, and reopening a saved browser replay all work as in 0.2.68.0 (native regression in both editors on macOS).
+**The replay debugger keeps its behavior after the move.** Reopening a saved test replay, seeking across its recorded stops and a moment with no stop (**Not recorded at this moment**), stopping the replay debug session and inspecting a stop again, and reopening a saved browser replay all work as in 0.2.68.0. Native regression evidence: VS Code 1.144.0 and Cursor 3.27.22 on macOS 26.5.2, candidate `89a5a255`, recorded in [Issue #172](https://github.com/laststance/codebook/issues/172).
 
 **Repository commands for contributors** (not part of the VSIX; `--help` lists each command's prerequisites, exit codes and error codes):
 
