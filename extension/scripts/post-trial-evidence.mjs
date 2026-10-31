@@ -787,21 +787,29 @@ function mapPostResult(result, { issue, copyPath, gstackPost, environment }) {
   )
 }
 
+/** Time limit of one `gh` or `gstack-post` call: a stalled network must end as a failed call, not hang the command (as `merge-pr.mjs` bounds its calls). */
+const PROGRAM_TIMEOUT_MS = 120_000
+
 /**
  * Runs a program with an argument array (no shell) and collects its output.
  *
  * Why: the production command runner behind the `runCommand` seam, used for `gh` and `gstack-post`.
- * Called through {@link createDefaultSeams}.
+ * Called through {@link createDefaultSeams}; a call past its limit is ended with SIGTERM and returns `status: null` with that signal, which the callers report as a failed `gh` call or an unknown post outcome (`E_POST_UNKNOWN`, exit 4).
  *
  * @param {string} file - Program to run.
  * @param {string[]} args - Its arguments.
  * @param {string} cwd - Working directory.
+ * @param {number} [timeoutMs] - Time limit; tests pass a short one.
  * @returns {Promise<CommandResult>} Exit status and output; a program that cannot start gives `status: null` and the reason in `stderr`.
  * @example await runProgram('gh', ['--version'], '/repo')
  */
-function runProgram(file, args, cwd) {
+export function runProgram(file, args, cwd, timeoutMs = PROGRAM_TIMEOUT_MS) {
   return new Promise((resolvePromise) => {
-    const child = spawn(file, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(file, args, {
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: timeoutMs,
+    })
     let stdout = ''
     let stderr = ''
     child.stdout.setEncoding('utf8').on('data', (chunk) => (stdout += chunk))

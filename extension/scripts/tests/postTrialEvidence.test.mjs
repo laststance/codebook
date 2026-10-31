@@ -23,6 +23,7 @@ import {
   findPrivatePaths,
   postTrialEvidence,
   relativeInside,
+  runProgram,
 } from '../post-trial-evidence.mjs'
 import { runCommandLine } from '../utils/commandContract.mjs'
 import { openWithoutFollowing } from '../utils/openWithoutFollowing.mjs'
@@ -678,6 +679,23 @@ test('treats an undocumented gstack-post exit as an unknown outcome', async () =
     )
   })
 })
+
+// protects=a gh or gstack-post call that stops answering ends at its limit as a failed call instead of hanging the command; fails_when=the call never returns or returns as an exit 0; no_claim=the production limit's length (a short limit and a sleeping Node child stand in for a stalled network)
+test(
+  'ends a program that outlives its time limit with SIGTERM and no exit status',
+  { timeout: 10_000 },
+  async () => {
+    // Arrange
+    const sleeper = ['-e', 'setInterval(() => {}, 1000)']
+
+    // Act
+    const result = await runProgram(process.execPath, sleeper, tmpdir(), 200)
+
+    // Assert
+    assert.equal(result.status, null)
+    assert.equal(result.signal, 'SIGTERM')
+  },
+)
 
 // protects=a missing gstack-post stops the post without a plain gh fallback; fails_when=gh issue comment is used or a file is written; no_claim=the install hint's accuracy
 test('refuses with E_NO_GSTACK_POST and never falls back to plain gh', async () => {
