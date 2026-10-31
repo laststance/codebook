@@ -1352,9 +1352,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     })
     this.alive()
     if (manifests.kind === 'app') {
+      // The route is known once the manifests resolved it, so it is recorded before the App verdict: a setup deadline during that verdict keeps an App run's uncoded text ({@link setupDeadlineText}).
+      this.nextRoute = { router: 'app', route: manifests.route.key }
       // An App route keeps today's readiness verdict, judged on the answer already read.
       await this.app!.confirmAppEntry(this.abort.signal, entryPath, entry)
-      this.nextRoute = { router: 'app', route: manifests.route.key }
       return origin
     }
     const nextVersion = (await readNextInstallation(workspace)).version

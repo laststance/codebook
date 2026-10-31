@@ -144,6 +144,8 @@ export async function configuredRuntimeHarness(
     launchFailure?: string
     /** Makes the stand-in server's structured entry check (`readyEntry`) never answer until the run is cancelled, as a first compile that is still running does. */
     entryHangs?: boolean
+    /** Makes the stand-in server's App verdict (`confirmAppEntry`) record its answer and then never settle until the run is cancelled, as a redirected root whose second request does not answer. */
+    appEntryConfirmationHangs?: boolean
     /** Makes the stand-in page never answer a screenshot until the run is cancelled, so the run stays at the end of its setup, after the inputs were written. */
     holdScreenshot?: boolean
   } = {},
@@ -883,11 +885,16 @@ export async function configuredRuntimeHarness(
       }
     },
     confirmAppEntry: async (
-      _signal: AbortSignal,
+      signal: AbortSignal,
       _entryPath: string,
       entry: NextEntryResponse,
     ): Promise<void> => {
       appEntryConfirmations.push(entry)
+      // A root request that does not answer settles only when the run is cancelled.
+      if (options.appEntryConfirmationHangs)
+        await new Promise<never>((_resolve, reject) =>
+          signal.addEventListener('abort', () => reject(signal.reason)),
+        )
     },
     outputTail: () => options.nextPages?.outputTail ?? '',
     close: async (): Promise<void> => {

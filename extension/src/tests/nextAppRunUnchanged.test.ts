@@ -72,6 +72,43 @@ test('a both-routers run whose entry resolved as App keeps the uncoded Repositor
   )
 })
 
+// Value: protects=a both-routers run whose entry the manifests resolved as App keeps the uncoded deadline text when the budget expires during the App verdict itself, and its resource names the App route; fails_when=the App resolution is recorded only after confirmAppEntry, so the deadline carries NEXT_SETUP_DEADLINE; why_new=Cycle 0066 task 47 (deadline during confirmAppEntry coded as a Pages-path step); seam=appEntryConfirmationHangs keeps the App verdict open until the run is cancelled; no_claim=a real redirected root
+test('a both-routers run whose budget expires during the App verdict of an entry resolved as App keeps the uncoded Repository setup deadline exceeded', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
+    appEntryConfirmationHangs: true,
+    nextPages: {
+      withAppFolder: true,
+      manifests: {
+        settings: {},
+        kind: 'app',
+        route: {
+          key: '/page',
+          path: '.next/dev/server/app/page_client-reference-manifest.js',
+        },
+      },
+    },
+  })
+  const preparing = harness.run.prepare().catch(() => undefined)
+  await waitUntil(
+    () => harness.appEntryConfirmations.length === 1,
+    'the App verdict',
+  )
+  // Act
+  harness.advance(REPOSITORY_SETUP_TIMEOUT_MS)
+  await preparing
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Repository setup deadline exceeded',
+  )
+  // The run lives in its own module realm, so its object is compared by value.
+  assert.deepEqual(JSON.parse(JSON.stringify(harness.run.view().nextRoute)), {
+    router: 'app',
+    route: '/page',
+  })
+})
+
 // Value: protects=an App-only Next run whose server exits before it listens keeps the launcher's failure text word for word, with no preparation or webpack note; fails_when=the Pages-path launch notes reach a workspace without a Pages folder; why_new=Cycle 0065 (App launch-failure text unchanged without a Pages folder); seam=launchFailure makes the stand-in readiness reject; no_claim=the launcher's own text (configuredApplication tests)
 test('an App-only Next run whose server exits before listening fails with the launcher text alone', async (context) => {
   // Arrange
