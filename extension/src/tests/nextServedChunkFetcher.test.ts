@@ -90,3 +90,39 @@ test('a served Pages chunk past its byte bound is refused', async (context) => {
   assert.ok(failure instanceof Error)
   assert.equal(failure.message, 'Served build text exceeds byte limit')
 })
+
+// Value: protects=a chunk path from the learner's build manifest with `..` segments never makes the fetcher request a page outside /_next/ (an API route such as a sign-out); fails_when=the URL resolves the dot segments and the request reaches /api/signout.js; why_new=Cycle 0066 task 14 (Cycle 0065 smoke QA reached /api/signout.js through the fetcher by a direct call); seam=a loopback server; no_claim=the caller's own .next/dev containment check
+test('a chunk path with ".." segments is refused before any request leaves /_next/', async (context) => {
+  // Arrange
+  const { origin, requested } = await chunkServer(context)
+  // Act
+  const failure = await nextServedChunkFetcher(origin)(
+    'static/chunks/../../../../api/signout.js',
+    { limitBytes: 1_024, signal: AbortSignal.timeout(5_000) },
+  ).catch((error: unknown) => error)
+  // Assert
+  assert.ok(failure instanceof Error)
+  assert.equal(
+    failure.message,
+    'Declared chunk static/chunks/../../../../api/signout.js has a "." or ".." segment and is not fetched',
+  )
+  assert.deepEqual(requested, [])
+})
+
+// Value: protects=a `.` segment is refused like `..`, so no dot segment is ever resolved by the URL; fails_when=`static/./chunks/…` is fetched as the chunk it resolves to; why_new=Cycle 0066 task 14; seam=a loopback server; no_claim=none
+test('a chunk path with a "." segment is refused without a request', async (context) => {
+  // Arrange
+  const { origin, requested } = await chunkServer(context)
+  // Act
+  const failure = await nextServedChunkFetcher(origin)(
+    'static/./chunks/pages/[id].js',
+    { limitBytes: 1_024, signal: AbortSignal.timeout(5_000) },
+  ).catch((error: unknown) => error)
+  // Assert
+  assert.ok(failure instanceof Error)
+  assert.equal(
+    failure.message,
+    'Declared chunk static/./chunks/pages/[id].js has a "." or ".." segment and is not fetched',
+  )
+  assert.deepEqual(requested, [])
+})
