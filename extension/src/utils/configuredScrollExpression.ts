@@ -19,29 +19,36 @@ export function configuredScrollExpression(selector: string): string {
  * scrollClickTargetIntoView('#load-newer') // => { scrolled: true } for a button 1,500 px down a 720 px viewport
  */
 function scrollClickTargetIntoView(selector: string) {
-  let elements: NodeListOf<Element>
-  try {
-    elements = document.querySelectorAll(selector)
-  } catch {
-    return { scrolled: false }
-  }
-  const element = elements[0]
-  // Only a unique target is scrolled; the read of the click point that follows names every other failure.
-  if (elements.length !== 1 || !element) return { scrolled: false }
-  const rect = element.getBoundingClientRect(),
-    centreX = rect.x + rect.width / 2,
-    centreY = rect.y + rect.height / 2
-  if (
-    centreX >= 0 &&
-    centreY >= 0 &&
-    centreX < innerWidth &&
-    centreY < innerHeight
-  )
-    return { scrolled: false }
+  const element = uniqueElementOf(selector)
+  // Only a unique target outside the viewport is scrolled; the read of the click point that follows names every other failure.
+  if (!element || isCentreInViewport(element)) return { scrolled: false }
   element.scrollIntoView({
     block: 'center',
     inline: 'center',
     behavior: 'instant',
   })
   return { scrolled: true }
+
+  /** The one element the selector matches; none for an invalid selector, no match or several matches. */
+  function uniqueElementOf(targetSelector: string): Element | undefined {
+    try {
+      const elements = document.querySelectorAll(targetSelector)
+      return elements.length === 1 ? elements[0] : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  /** Whether the element's centre lies inside the viewport. */
+  function isCentreInViewport(target: Element): boolean {
+    const rect = target.getBoundingClientRect(),
+      centreX = rect.x + rect.width / 2,
+      centreY = rect.y + rect.height / 2
+    return (
+      centreX >= 0 &&
+      centreY >= 0 &&
+      centreX < innerWidth &&
+      centreY < innerHeight
+    )
+  }
 }
