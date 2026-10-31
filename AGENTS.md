@@ -130,7 +130,7 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 
 - `/spec`: plans a feature increment from PRODUCT_GOAL.md + gap audit, or writes a bug-fix Issue from the previous closing comment (one task + acceptance criterion per carried defect, nothing ranked or selected).
 - Plan reviews may change how a carried defect is fixed; never remove, merge away or defer one.
-- `/review`, `/ship` review steps: Critical fixed; Major fixed in a bug-fix cycle, carried from a feature cycle; findings below Major answered Skip in both kinds (no automatic fixes of informational findings).
+- `/review`, `/ship` review steps: Critical fixed; Major fixed in a bug-fix cycle, carried from a feature cycle; findings below Major per the defect rule in both kinds (fixed when cheap and in scope, else answered Skip; no automatic fixes of informational findings).
 - `/ship`: commit the coverage audit's tests; plan completion audit counts an open bug-fix task NOT DONE and stops (no ship anyway, defer or drop); TODOS step writes no TODOS.md; fix documentation-audit blockers before commit.
 - Test gap, deferral, non-blocking doc debt, skill follow-up: later candidates, no carried defects.
 - Closing comment: feature cycle names every carried defect (bug-fix Issue comes before other work); bug-fix cycle states nothing is carried (`/spec` starts a feature cycle); defects recorded by the ship review limit → named, next cycle is bug-fix.
