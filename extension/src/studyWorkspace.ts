@@ -12523,8 +12523,8 @@ export class StudyWorkspace {
       this.nodeExtensionHistoryCatalog.some(
         (history) => history.studyId === studyId,
       ) ||
-      // A node-server run just saved is a server replay before the catalog lists it, never an ordinary recording.
-      [NODE_TEST_PROFILE, NODE_SERVER_PROFILE].some(
+      // A node-server or extension run just saved is a replay before the catalog lists it, never an ordinary recording.
+      [NODE_TEST_PROFILE, NODE_SERVER_PROFILE, CHROME_EXTENSION_PROFILE].some(
         (profile) => this.recordOfStudy(studyId)?.profile === profile,
       )
     )

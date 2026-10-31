@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { before, test } from 'node:test'
 
 import type { ChromeExtensionLearningMaterialContent } from '../chromeExtensionLearningSchemas'
+import { CHROME_EXTENSION_PROFILE } from '../constants'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
@@ -18,11 +19,13 @@ import {
   shownExtensionMoment,
   writeExtensionHistoryFor,
 } from './utils/extensionWorkspaceHarness'
+import { FakeChromeExtensionRuntime } from './utils/fakeChromeExtensionRuntime'
 import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 import { realProcessStart } from './utils/realProcessStart'
 import type { ExtensionScriptStep } from './utils/sealedExtensionHistory'
 import { repositoryOf } from './utils/serverWorkspaceHarness'
 import { shownApplicationView } from './utils/shownTestOutput'
+import { chromeExtensionConfigurationOf } from './utils/startFakeChromeExtensionRun'
 import { lastView } from './utils/twoStopNodeHistory'
 
 before(async () => {
@@ -687,6 +690,46 @@ test('an Extension replay without saved material shows its recording alone', asy
     assert.equal(section?.explanation, undefined)
     assert.equal(section?.status, 'Result changed · capture complete · 2 stops')
   } finally {
+    await harness.close()
+  }
+})
+
+// protects=Open replay of an extension run that was just saved, before Saved studies lists it, opens the Extension replay and never the browser recording path; fails_when=the study is treated as an ordinary recording because only the catalog decides; no_claim=that the replay itself renders (the open entry is replaced)
+test('Open replay of a just-saved extension run opens the Extension replay before the catalog lists it', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const { service } = harness
+    const run = new FakeChromeExtensionRuntime()
+    service.environment.createChromeExtensionRun = async () => run
+    const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: CHROME_EXTENSION_PROFILE,
+      key: 'extension-just-saved',
+      configuration: chromeExtensionConfigurationOf(harness),
+    })
+    const record = service.record(receipt)
+    await record.preparation
+    const studyId = `${service.instanceId}_${record.id}`
+    const openRecording = context.mock.method(
+      harness.reader,
+      'openRecording',
+      async () => undefined,
+    )
+    const openHistory = context.mock.method(
+      harness.reader,
+      'openNodeHistoryFromHost',
+      async () => undefined,
+    )
+
+    // Act
+    await harness.reader.openLearningReplay(studyId)
+
+    // Assert
+    assert.equal(openHistory.mock.callCount(), 1)
+    assert.equal(openRecording.mock.callCount(), 0)
+  } finally {
+    context.mock.restoreAll()
     await harness.close()
   }
 })
