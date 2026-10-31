@@ -23,6 +23,7 @@ import { WaitTimeoutError } from '../../runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
 import { citationContext } from '../../utils/citationContext'
 import { configuredDomExpression } from '../../utils/configuredDomExpression'
+import { configuredScrollExpression } from '../../utils/configuredScrollExpression'
 import { createBundleVerifier } from '../../utils/createBundleVerifier'
 import type { NextPagesDiscoveryCache } from '../../utils/createNextPagesDiscoveryCache'
 import {
@@ -208,6 +209,9 @@ export async function configuredRuntimeHarness(
   })
   const afterExpression = configuredDomExpression(
     definition.configuration.action.after,
+  )
+  const scrollExpression = configuredScrollExpression(
+    definition.configuration.action.selector,
   )
   const sourcePath = join(
       repository.directory,
@@ -517,8 +521,9 @@ export async function configuredRuntimeHarness(
       body: { threadId: 1, reason: 'breakpoint' },
     })
   }
-  // Whether the page answers held conditions without a click point; {@link answerWithoutClickPoint} sets it.
+  // Whether the page answers held conditions without a click point, and whether the click step's scroll answers that it scrolled; {@link answerWithoutClickPoint} sets both.
   let clickTargetWithoutPoint = false
+  let clickTargetScrolled = false
   let screenshot =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII='
   /** Answers what the page evaluates: its location, and the configured DOM conditions, of which the after conditions hold only once the input was sent. */
@@ -526,6 +531,8 @@ export async function configuredRuntimeHarness(
     if (expression === NEXT_PAGES_STATE_EXPRESSION) return nextPagesState()
     if (expression === 'location.href') return 'about:blank'
     if (expression === 'location.origin') return pageOrigin
+    if (expression === scrollExpression)
+      return { scrolled: clickTargetScrolled }
     if (
       expression === afterExpression &&
       !run.view().operation?.inputDispatched
@@ -1396,9 +1403,12 @@ export async function configuredRuntimeHarness(
     setReady(value: boolean): void {
       ready = value
     },
-    /** Makes every later DOM read answer that the conditions hold without a click point, as the owned page does for a click target still outside the viewport after the click step scrolled it. @example harness.answerWithoutClickPoint() */
-    answerWithoutClickPoint(): void {
+    /** Makes every later DOM read answer that the conditions hold without a click point, as the owned page does for a click target outside the viewport, and the click step's scroll answer `{ scrolled }`: by default it scrolled and the target stayed outside; `{ scrolled: false }` stands for a target the scroll found inside the viewport and that left it before the read. @example harness.answerWithoutClickPoint({ scrolled: false }) */
+    answerWithoutClickPoint({
+      scrolled = true,
+    }: { scrolled?: boolean } = {}): void {
       clickTargetWithoutPoint = true
+      clickTargetScrolled = scrolled
     },
     /** Makes every later DOM read answer this failure, as the owned page would for a before condition that never holds. */
     failBeforeWith(failure: BeforeFailure): void {

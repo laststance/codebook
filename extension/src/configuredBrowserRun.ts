@@ -479,6 +479,8 @@ type Continuation = {
   cdp: boolean
   afterStarted: boolean
 }
+// The click step's scroll answers only whether it scrolled; any other answer reads as no scroll.
+const scrollResultSchema = z.object({ scrolled: z.boolean() })
 const domResultSchema = z.object({
   ready: z.boolean(),
   x: z.number().finite().optional(),
@@ -5034,10 +5036,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * ```
    */
   private async clickPointBeforeInput(): Promise<{ x: number; y: number }> {
-    await this.scrollClickTargetIntoView()
+    const scrolled = await this.scrollClickTargetIntoView()
     const target = await this.readDom('before')
     this.alive()
-    const point = this.clickPoint(target)
+    const point = this.clickPoint(target, scrolled)
     // A result predicate already true before the click cannot prove this operation caused the result.
     const priorResult = await this.readDom('after')
     this.alive()
@@ -5072,44 +5074,54 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /**
    * Takes the point of the one mouse sequence from what the page answered for the before conditions, for {@link dispatchInput} right after that read.
    * @param target - The answer of the page for the `before` phase.
+   * @param scrolled - Whether the click step's scroll right before that read scrolled the page ({@link scrollClickTargetIntoView}).
    * @returns The center of the unique enabled click target, in viewport coordinates.
-   * @throws When the before conditions no longer hold or the page named no point.
+   * @throws When the before conditions no longer hold or the page named no point: a target outside the viewport after a real scroll stayed there, and one that left the viewport without a scroll changed before input.
    * @example
    * ```ts
-   * this.clickPoint({ ready: true, x: 120, y: 48 }) // { x: 120, y: 48 }
+   * this.clickPoint({ ready: true, x: 120, y: 48 }, false) // { x: 120, y: 48 }
+   * this.clickPoint({ ready: true }, true)                // throws 'Click target stayed outside the viewport after Codebook scrolled it into view'
    * ```
    */
   private clickPoint(
     target: Awaited<ReturnType<ConfiguredBrowserRun['readDom']>>,
+    scrolled: boolean,
   ): { x: number; y: number } {
     if (!target.ready)
       throw new Error('Click target or before conditions changed before input')
-    // A target that holds without a point is still outside the viewport after its scroll, so no point can be hit-tested.
+    // A target that holds without a point lies outside the viewport, so no point can be hit-tested: after a real scroll it stayed there; without one, it moved out after the scroll found it inside.
     if (target.x === undefined || target.y === undefined)
       throw new Error(
-        'Click target stayed outside the viewport after Codebook scrolled it into view',
+        scrolled
+          ? 'Click target stayed outside the viewport after Codebook scrolled it into view'
+          : 'Click target or before conditions changed before input',
       )
     return { x: target.x, y: target.y }
   }
 
   /**
    * Scrolls the click target to the middle of the viewport when its centre lies outside it ({@link configuredScrollExpression}), after the page's origin is verified.
-   * Called by {@link clickPointBeforeInput} once per read of the click point, right before that read, so the condition reads ({@link readDom}) stay reads. The page's answer is not judged here: the read that follows names a missing, hidden or obscured target.
+   * Called by {@link clickPointBeforeInput} once per read of the click point, right before that read, so the condition reads ({@link readDom}) stay reads. Only whether the page scrolled is read here, so {@link clickPoint} names a target outside the viewport truthfully; the read that follows names a missing, hidden or obscured target.
+   * @returns `true` when the page answered that it scrolled; `false` for a target it left in place, and for any other answer.
    * @throws When the page left its owned application origin, or the run is no longer alive.
    * @example
    * ```ts
-   * await this.scrollClickTargetIntoView() // a "Load Newer" button below a long list now sits in the middle of the viewport
+   * await this.scrollClickTargetIntoView() // => true: a "Load Newer" button below a long list now sits in the middle of the viewport
    * ```
    */
-  private async scrollClickTargetIntoView(): Promise<void> {
+  private async scrollClickTargetIntoView(): Promise<boolean> {
     const cdp = await this.ownedPageCdp()
-    await cdp.request('Runtime.evaluate', {
+    const response = await cdp.request('Runtime.evaluate', {
       expression: configuredScrollExpression(
         this.definition.configuration.action.selector,
       ),
       returnByValue: true,
     })
     this.alive()
+    return (
+      scrollResultSchema.safeParse(response.result.value).data?.scrolled ===
+      true
+    )
   }
 
   /**

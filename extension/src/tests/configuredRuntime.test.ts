@@ -4345,3 +4345,27 @@ test('a click target still outside the viewport after the scroll gets no click a
   assert.equal(mouse.length, 0)
   assert.equal(run.view().operation?.inputDispatched, false)
 })
+
+// Value: protects=a click target that left the viewport although the click step did not scroll gets no click, and the run says the page changed instead of claiming a scroll that never happened; fails_when=the scroll's { scrolled } answer is ignored and the stayed-outside-after-scrolling sentence is used; why_new=Cycle 0066 task 41 (scroll answer ignored); seam=answerWithoutClickPoint({ scrolled: false }) stands in for the page's answers; no_claim=a real page's own scroll handlers
+test('a click target that leaves the viewport without a scroll gets no click and the run says it changed before input', async (context) => {
+  // Arrange
+  const { run, answerWithoutClickPoint, resumeDuringPreparation, mouse } =
+    await configuredRuntimeHarness(context)
+  resumeDuringPreparation()
+  await run.prepare()
+  answerWithoutClickPoint({ scrolled: false })
+  // Act
+  run.action('one', 'repository-click')
+  await waitUntil(
+    () => run.view().failures.length > 0,
+    'the click step failure',
+  )
+  // Assert
+  assert.match(
+    run.view().failures[0] ?? '',
+    /Click target or before conditions changed before input/,
+  )
+  assert.doesNotMatch(run.view().failures[0] ?? '', /scrolled it into view/)
+  assert.equal(mouse.length, 0)
+  assert.equal(run.view().operation?.inputDispatched, false)
+})
