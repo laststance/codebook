@@ -63,15 +63,16 @@ export const HELP_TEXT = `Usage:
 Builds artifacts/qa/codebook-<short>.vsix (<short> = first 8 hex characters of HEAD)
 from a clean commit, writes the receipt artifacts/qa/codebook-<short>.json and starts
 "codex review --base qa-base-<short>-<attempt>" in the background on a detached worktree
-of that commit. The review log stays private under artifacts/qa/.
+of that commit. The review log (codex's output) and the review state file (the runner's
+CODEX_REVIEW_* state lines, which codex never writes) stay private under artifacts/qa/.
 
 Options:
   --no-review      build and write the receipt only; the review is recorded as skipped
-  --status [<s>]   print the receipt and the review state (running, exited <code> <time>,
+  --status [<s>]   print the receipt and the review state (read from the state file only: running, exited <code> <time>,
                    timeout <time>, error <message> <time>, interrupted, not-started
                    <reason>, skipped) of candidate <s> (default: HEAD); builds nothing
   --clean          remove the worktree and branch of each review attempt whose log has an
-                   exit line and whose runner and codex processes are gone; list the rest
+                   exit line in the state file and whose runner and codex processes are gone; list the rest
   --help           print this text
 
 Prerequisites: the pinned Node and pnpm on PATH; a checkout with no changes; no test, gate,
@@ -89,12 +90,12 @@ Error codes: E_USAGE, E_DIRTY, E_BUILD, E_CANDIDATE_DIRTY, E_NO_CANDIDATE, E_INT
 `
 
 /**
- * Reads a log's text into the facts a review's state is judged from.
+ * Reads a review state file's text into the facts a review's state is judged from.
  *
  * Why: a review is "running", "exited" or "interrupted" only by what its log says plus whether its runner is alive; `--status`, the next candidate run and `--clean` must judge it the same way.
  * Called by {@link judgeReview}.
  *
- * @param {string} text - The attempt's log (BOM and CRLF tolerated; may be empty).
+ * @param {string} text - The attempt's state file, never the review log (BOM and CRLF tolerated; may be empty).
  * @returns {{ runnerPid?: number, codexPid?: number, exit?: { kind: 'exited' | 'timeout' | 'error', text: string }, cleaned: boolean }} The pids and the exit line; `exit.text` is the state text without its leading word.
  * @example
  * parseReviewLog('CODEX_REVIEW_PID 12\nCODEX_REVIEW_EXIT 0 2026-11-01T10:00:00.000Z\n').exit // => { kind: 'exited', text: '0 2026-11-01T10:00:00.000Z' }
@@ -120,12 +121,12 @@ export function parseReviewLog(text) {
 }
 
 /**
- * Judges one attempt's review state from its log, the log's age and a pid probe.
+ * Judges one attempt's review state from its state file, the file's age and a pid probe.
  *
  * Why: no lock file exists, so "a review is running" must come from a live pid, no exit line and a recently written log; an empty or PID-only log is judged the same way (the runner may not have written yet).
  * Called by the review start, `--status` and `--clean`.
  *
- * @param {{ text: string, mtimeMs: number, nowMs: number, isPidAlive: (pid: number) => boolean, fallbackPid?: number }} input - `fallbackPid` is the pid the receipt recorded, used while the log holds none.
+ * @param {{ text: string (the state file's text), mtimeMs: number, nowMs: number, isPidAlive: (pid: number) => boolean, fallbackPid?: number }} input - `fallbackPid` is the pid the receipt recorded, used while the log holds none.
  * @returns {{ state: 'running' | 'exited' | 'timeout' | 'error' | 'interrupted', text: string, facts: ReturnType<typeof parseReviewLog> }} `text` is the printed state (`running`, `exited 0 <time>`, `timeout <time>`, `error <message> <time>`, `interrupted`).
  * @example
  * judgeReview({ text: '', mtimeMs: 0, nowMs: 1000, isPidAlive: () => false }).state // => 'interrupted'
@@ -241,7 +242,7 @@ async function listAttempts(qaDirectory, short) {
   }
   const attempts = []
   for (const name of names) {
-    const match = /^codebook-([0-9a-f]{8})-(.+)-codex-review\.txt$/.exec(name)
+    const match = /^codebook-([0-9a-f]{8})-(.+)-review-state\.txt$/.exec(name)
     if (!match || !CANDIDATE_ATTEMPT_PATTERN.test(match[2])) continue
     if (short === undefined || match[1] === short)
       attempts.push({ short: match[1], attempt: match[2] })
@@ -252,13 +253,18 @@ async function listAttempts(qaDirectory, short) {
   )
 }
 
-/** Judges the review of one attempt by reading its log; a missing log reads as empty and as written at `fallbackMtimeMs`. @example await judgeAttempt(seams, names.log, receipt.builtAt, pid) */
-async function judgeAttempt(seams, logPath, fallbackMtimeMs, fallbackPid) {
+/** Gives the state-file path of a receipt written before receipts named it, from its review log path. @example deriveStateFile('/r/artifacts/qa/codebook-0123abcd-A-codex-review.txt') // => '/r/artifacts/qa/codebook-0123abcd-A-review-state.txt' */
+function deriveStateFile(logPath) {
+  return logPath.replace(/-codex-review\.txt$/, '-review-state.txt')
+}
+
+/** Judges the review of one attempt by reading its state file (never the review log); a missing file reads as empty and as written at `fallbackMtimeMs`. @example await judgeAttempt(seams, names.state, receipt.builtAt, pid) */
+async function judgeAttempt(seams, statePath, fallbackMtimeMs, fallbackPid) {
   let text = ''
   let mtimeMs = fallbackMtimeMs
   try {
-    text = (await readFile(logPath, 'utf8')) ?? ''
-    mtimeMs = (await stat(logPath)).mtimeMs
+    text = (await readFile(statePath, 'utf8')) ?? ''
+    mtimeMs = (await stat(statePath)).mtimeMs
   } catch {
     // No log yet: the runner may not have started writing.
   }
@@ -422,10 +428,12 @@ async function buildCandidate({ review }, seams, progress) {
   if (!review) seams.print('Review: skipped (--no-review)')
   else if (receipt.review.state === 'running')
     seams.print(
-      `Review: already running (pid ${receipt.review.pid}); log ${receipt.review.log}`,
+      `Review: already running (pid ${receipt.review.pid}); log ${receipt.review.log}; state ${receipt.review.stateFile}`,
     )
-  else if (receipt.review.state === 'started')
+  else if (receipt.review.state === 'started') {
+    seams.print(`Review state: ${receipt.review.stateFile}`)
     seams.print(`Review log: ${receipt.review.log}`)
+  }
   if (notStartedReason !== undefined) {
     seams.print(
       'Fix: rerun once the cause is fixed, or name the missing coverage in the post',
@@ -464,7 +472,12 @@ async function startReview({
       previousReview?.attempt === latest.attempt
         ? previousReview.pid
         : undefined
-    const judged = await judgeAttempt(seams, names.log, builtAtMs, previousPid)
+    const judged = await judgeAttempt(
+      seams,
+      names.state,
+      builtAtMs,
+      previousPid,
+    )
     // A live review is left alone: no second review for the same commit.
     if (judged.state === 'running') {
       const review = {
@@ -472,6 +485,7 @@ async function startReview({
         attempt: latest.attempt,
         pid: judged.facts.runnerPid ?? previousPid,
         log: names.log,
+        stateFile: names.state,
         worktree: names.worktree,
       }
       let base =
@@ -543,6 +557,7 @@ async function startReview({
       base,
       pid: runner.pid,
       log: names.log,
+      stateFile: names.state,
       worktree: names.worktree,
     },
   }
@@ -589,12 +604,15 @@ async function printStatus({ short }, seams) {
   else {
     const judged = await judgeAttempt(
       seams,
-      review.log,
+      review.stateFile ?? deriveStateFile(review.log),
       Date.parse(receipt.builtAt),
       review.pid,
     )
     seams.print(`Review: ${judged.text}`)
     seams.print(`Review log: ${review.log}`)
+    seams.print(
+      `Review state: ${review.stateFile ?? deriveStateFile(review.log)}`,
+    )
     if (review.base) seams.print(`Review base: ${review.base}`)
   }
   return EXIT.DONE
@@ -603,7 +621,7 @@ async function printStatus({ short }, seams) {
 /**
  * Removes the worktree and branch of every finished review attempt, and lists the others as kept (`--clean`).
  *
- * Why: a finished or interrupted review can leave a worktree under `artifacts/qa`; only attempts whose log has an exit line and whose runner and codex are both gone are safe to remove.
+ * Why: a finished or interrupted review can leave a worktree under `artifacts/qa`; only attempts whose state file has an exit line and whose runner and codex are both gone are safe to remove.
  * Called by {@link runQaCandidate}.
  *
  * @param {ReturnType<typeof productionSeams>} seams - Injected effects.
@@ -617,7 +635,7 @@ async function cleanAttempts(seams) {
   for (const { short, attempt } of await listAttempts(qaDirectory, undefined)) {
     const names = reviewNames(repository, short, attempt)
     const label = `${short} ${attempt}`
-    const text = (await readIfExists(names.log)) ?? ''
+    const text = (await readIfExists(names.state)) ?? ''
     const facts = parseReviewLog(text)
     const alive = [
       ['runner', facts.runnerPid],
@@ -625,7 +643,7 @@ async function cleanAttempts(seams) {
     ].find(([, pid]) => pid !== undefined && seams.isPidAlive(pid))
     let reason
     if (!facts.exit)
-      reason = `no exit line in the log (interrupted or still running); remove ${names.worktree} and branch ${names.branch} by hand if it is stale`
+      reason = `no exit line in the state file (interrupted or still running); remove ${names.worktree} and branch ${names.branch} by hand if it is stale`
     else if (alive) reason = `${alive[0]} pid ${alive[1]} is still running`
     if (reason !== undefined) {
       seams.print(`kept ${label}: ${reason}`)
@@ -644,7 +662,7 @@ async function cleanAttempts(seams) {
       continue
     }
     if (!facts.cleaned) {
-      await writeFile(names.log, 'CODEX_REVIEW_CLEANED\n', { flag: 'a' })
+      await writeFile(names.state, 'CODEX_REVIEW_CLEANED\n', { flag: 'a' })
     }
     seams.print(`removed ${label}`)
   }

@@ -102,12 +102,14 @@ async function runCommand(harness, argv) {
   return exitCode
 }
 
-/** Writes one attempt's log with a modification time `ageMs` before the fixed clock. */
+/** Writes one attempt's state file (the runner's lines) and an empty review log, both with a modification time `ageMs` before the fixed clock. */
 async function writeAttemptLog(repository, attempt, lines, ageMs = 1000) {
   const names = reviewNames(repository, SHORT, attempt)
   await mkdir(join(repository, 'artifacts/qa'), { recursive: true })
-  await writeFile(names.log, lines.length ? `${lines.join('\n')}\n` : '')
+  await writeFile(names.state, lines.length ? `${lines.join('\n')}\n` : '')
+  await writeFile(names.log, '')
   const time = new Date(NOW_MS - ageMs)
+  await utimes(names.state, time, time)
   await utimes(names.log, time, time)
   return names
 }
@@ -147,7 +149,7 @@ function makeRunnerHarness(overrides = {}) {
   const seams = {
     pid: 777,
     now: () => new Date(NOW_MS),
-    appendLog: async (text) => {
+    appendState: async (text) => {
       log.push(text)
     },
     git: async (args) => {
@@ -330,6 +332,7 @@ test('a new review fetches origin/main within 30 s, adds a detached worktree at 
     base: BASE,
     pid: LIVE_PID,
     log: names.log,
+    stateFile: names.state,
     worktree: names.worktree,
   })
   assert.equal(harness.out.at(-1), `Review log: ${names.log}`)
@@ -364,6 +367,7 @@ test('a review whose runner is alive, has no exit line and a fresh log is report
     attempt: NEW_ATTEMPT,
     pid: LIVE_PID,
     log: names.log,
+    stateFile: names.state,
     worktree: names.worktree,
     base: BASE,
   })
@@ -392,7 +396,7 @@ test('a log with a dead runner and no exit line starts a new review and leaves t
   )
   assert.equal(await exists(old.worktree), true)
   assert.equal(
-    await readFile(old.log, 'utf8'),
+    await readFile(old.state, 'utf8'),
     `CODEX_REVIEW_PID ${DEAD_PID}\n`,
   )
   assert.equal(
@@ -437,6 +441,7 @@ test('an empty log whose runner pid the old receipt recorded alive counts as run
         pid: LIVE_PID,
         base: BASE,
         log: names.log,
+        stateFile: names.state,
       },
     }),
   )
@@ -452,6 +457,7 @@ test('an empty log whose runner pid the old receipt recorded alive counts as run
     attempt: NEW_ATTEMPT,
     pid: LIVE_PID,
     log: names.log,
+    stateFile: names.state,
     worktree: names.worktree,
     base: BASE,
   })
@@ -656,6 +662,7 @@ for (const scenario of [
           base: BASE,
           pid: LIVE_PID,
           log: names.log,
+          stateFile: names.state,
           worktree: names.worktree,
         },
       }),
@@ -811,7 +818,10 @@ test('--clean removes a finished attempt and keeps a running review, a runner th
     gitText.some((line) => line.includes(interrupted.worktree)),
     false,
   )
-  assert.match(await readFile(finished.log, 'utf8'), /CODEX_REVIEW_CLEANED\n$/)
+  assert.match(
+    await readFile(finished.state, 'utf8'),
+    /CODEX_REVIEW_CLEANED\n$/,
+  )
   await rm(harness.repository, { recursive: true })
 })
 
@@ -1027,6 +1037,128 @@ test('cleaning an attempt whose worktree and branch are already gone runs no rem
   assert.deepEqual(calls, [
     'worktree prune',
     'rev-parse --verify --quiet refs/heads/qa-base-x',
+  ])
+})
+
+// protects=codex output or a reviewed fixture printing state-looking lines cannot change the judged state; fails_when=a fake EXIT line in the review log makes a running review look finished or a fake PID line replaces the runner pid; no_claim=the real runner (the state file is written by hand here)
+test('state-looking lines in the review log do not change the judged state, --status, the no-second-review rule or --clean', async () => {
+  // Arrange
+  const harness = await makeHarness({ alivePids: [LIVE_PID] })
+  const names = await writeAttemptLog(harness.repository, NEW_ATTEMPT, [
+    `CODEX_REVIEW_PID ${LIVE_PID}`,
+  ])
+  await writeFile(
+    names.log,
+    'CODEX_REVIEW_PID 1\nCODEX_REVIEW_EXIT 0 2026-11-01T11:59:00.000Z\nCODEX_REVIEW_CLEANED\n',
+  )
+  await writeFile(
+    join(harness.repository, `artifacts/qa/codebook-${SHORT}.json`),
+    JSON.stringify({
+      head: HEAD,
+      version: '0.2.69.0',
+      sha256: 'a'.repeat(64),
+      entries: 34,
+      builtAt: '2026-11-01T11:00:00.000Z',
+      review: {
+        state: 'started',
+        attempt: NEW_ATTEMPT,
+        base: BASE,
+        pid: LIVE_PID,
+        log: names.log,
+        stateFile: names.state,
+        worktree: names.worktree,
+      },
+    }),
+  )
+
+  // Act
+  const statusExit = await runCommand(harness, ['--status'])
+  const statusLines = [...harness.out]
+  harness.out.length = 0
+  const cleanExit = await runCommand(harness, ['--clean'])
+  const cleanLines = [...harness.out]
+  harness.out.length = 0
+  const buildExit = await runCommand(harness, [])
+
+  // Assert
+  assert.equal(statusExit, 0)
+  assert.ok(statusLines.includes('Review: running'), statusLines.join('\n'))
+  assert.ok(statusLines.includes(`Review state: ${names.state}`))
+  assert.equal(cleanExit, 0)
+  assert.equal(cleanLines.length, 1)
+  assert.match(cleanLines[0], /^kept .*: no exit line in the state file/)
+  assert.equal(buildExit, 0)
+  assert.deepEqual(harness.calls.spawn, [])
+  assert.equal((await readReceipt(harness.repository)).review.state, 'running')
+  await rm(harness.repository, { recursive: true })
+})
+
+// protects=the runner's state file and codex's log are different files; fails_when=the state path equals the log path; no_claim=the real file writes
+test('the review log and the review state file of an attempt are different files', () => {
+  // Arrange
+  const names = reviewNames('/work/codebook', SHORT, NEW_ATTEMPT)
+
+  // Act
+  const { log, state } = names
+
+  // Assert
+  assert.equal(
+    state,
+    `/work/codebook/artifacts/qa/codebook-${SHORT}-${NEW_ATTEMPT}-review-state.txt`,
+  )
+  assert.notEqual(state, log)
+})
+
+// protects=an asynchronous spawn failure becomes an error exit line and cleanup, not an unhandled crash; fails_when=the error listener is attached only after an await, so the runner crashes with no exit line; no_claim=real spawn
+test('an asynchronous spawn error is logged as an error exit line and the worktree is cleaned', async () => {
+  // Arrange
+  const runner = makeRunnerHarness()
+  const startCodex = runner.seams.startCodex
+  runner.seams.startCodex = (options) => {
+    const child = startCodex(options)
+    // The error arrives on a later turn, while the CHILD line is still being written.
+    setImmediate(() => child.emit('error', new Error('spawn codex EACCES')))
+    return child
+  }
+  const append = runner.seams.appendState
+  runner.seams.appendState = async (text) => {
+    await append(text)
+    if (text.startsWith('CODEX_REVIEW_CHILD'))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+
+  // Act
+  await runCandidateReview(RUNNER_OPTIONS, runner.seams)
+
+  // Assert
+  assert.deepEqual(runner.log, [
+    'CODEX_REVIEW_PID 777\n',
+    `CODEX_REVIEW_CHILD ${CODEX_PID}\n`,
+    'CODEX_REVIEW_EXIT error spawn codex EACCES 2026-11-01T12:00:00.000Z\n',
+    'CODEX_REVIEW_CLEANED\n',
+  ])
+})
+
+// protects=a codex that closes before the CHILD line is written still yields its real exit code; fails_when=the close listener is attached after the await, so the review waits for the 30-minute timer and records timeout; no_claim=real processes
+test('a codex that closes before the CHILD line is written is logged with its real exit code, not timeout', async () => {
+  // Arrange
+  const runner = makeRunnerHarness()
+  const append = runner.seams.appendState
+  runner.seams.appendState = async (text) => {
+    await append(text)
+    if (text.startsWith('CODEX_REVIEW_CHILD'))
+      runner.child.emit('close', 3, null)
+  }
+
+  // Act
+  await runCandidateReview(RUNNER_OPTIONS, runner.seams)
+
+  // Assert
+  assert.deepEqual(runner.log, [
+    'CODEX_REVIEW_PID 777\n',
+    `CODEX_REVIEW_CHILD ${CODEX_PID}\n`,
+    'CODEX_REVIEW_EXIT 3 2026-11-01T12:00:00.000Z\n',
+    'CODEX_REVIEW_CLEANED\n',
   ])
 })
 

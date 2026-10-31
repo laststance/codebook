@@ -21,15 +21,15 @@ const RUNNER_GIT_TIMEOUT_MS = 60 * 1000
 export const CANDIDATE_ATTEMPT_PATTERN = /^\d{8}T\d{6}Z-[0-9a-f]{6}$/
 
 /**
- * Gives the worktree, branch and log names of one review attempt, so the parent command, the detached runner and `--clean` agree on them.
+ * Gives the worktree, branch, log and state-file names of one review attempt, so the parent command, the detached runner and `--clean` agree on them.
  *
- * Why: every attempt has its own names (an older attempt's cleanup must never touch a newer attempt's worktree, branch or log).
+ * Why: every attempt has its own names (an older attempt's cleanup must never touch a newer attempt's worktree, branch or log). The state file holds only the runner's own state lines; codex and the reviewed code write the log, so a line they print can never pass for state.
  * Called by `qa-candidate.mjs` (to create the worktree and read the log), by {@link runCandidateReview} and by {@link cleanReviewAttempt}.
  *
  * @param {string} repository - The repository's root.
  * @param {string} short - The first 8 hex characters of the candidate's HEAD.
  * @param {string} attempt - The attempt id (matches {@link CANDIDATE_ATTEMPT_PATTERN}).
- * @returns {{ log: string, worktree: string, branch: string }} Absolute log and worktree paths, and the branch name `qa-base-<short>-<attempt>`.
+ * @returns {{ log: string, state: string, worktree: string, branch: string }} Absolute log, state-file and worktree paths, and the branch name `qa-base-<short>-<attempt>`.
  * @example
  * reviewNames('/work/codebook', '0123abcd', '20261101T120000Z-a1b2c3').branch // => 'qa-base-0123abcd-20261101T120000Z-a1b2c3'
  */
@@ -39,6 +39,11 @@ export function reviewNames(repository, short, attempt) {
       repository,
       'artifacts/qa',
       `codebook-${short}-${attempt}-codex-review.txt`,
+    ),
+    state: join(
+      repository,
+      'artifacts/qa',
+      `codebook-${short}-${attempt}-review-state.txt`,
     ),
     worktree: join(repository, 'artifacts/qa', `review-${short}-${attempt}`),
     branch: `qa-base-${short}-${attempt}`,
@@ -99,16 +104,16 @@ function errorMessage(error) {
 }
 
 /**
- * Runs `codex review` for one candidate attempt, bounded in time, and records its life in the attempt's log.
+ * Runs `codex review` for one candidate attempt, bounded in time, and records its life in the attempt's state file (codex's own output goes to the separate review log).
  *
  * Why: a review must read the candidate's exact commit (the detached worktree the parent made), against a pinned base branch, never hang a post (30-minute limit, whole tree ended) and always leave a trace a later run can judge (pid line, exit line with its time, cleanup line).
  * Runs inside the detached runner process that `qa-candidate.mjs` spawns; tests call it with fakes.
  *
- * Log lines, in order: `CODEX_REVIEW_PID <runner pid>`, `CODEX_REVIEW_CHILD <codex pid>`, codex's own output, `CODEX_REVIEW_EXIT <code|timeout|error <message>> <ISO time>`, `CODEX_REVIEW_CLEANED` (or `CODEX_REVIEW_CLEANUP_FAILED <message>` so `--clean` retries).
+ * State-file lines, in order: `CODEX_REVIEW_PID <runner pid>`, `CODEX_REVIEW_CHILD <codex pid>`, `CODEX_REVIEW_EXIT <code|timeout|error <message>> <ISO time>`, `CODEX_REVIEW_CLEANED` (or `CODEX_REVIEW_CLEANUP_FAILED <message>` so `--clean` retries).
  * On SIGTERM, SIGINT or SIGHUP codex's tree is ended first ({@link endChildrenOnSignal}) and an `error` exit line is written; the worktree and branch stay for `--clean`.
  *
  * @param {{ repository: string, short: string, attempt: string, base: string }} options - `base` is the full sha the base branch is reset to.
- * @param {object} seams - `pid`; `now()` returns a Date; `appendLog(text)`; `git(args)` runs in the repository and rejects on failure; `pathExists(path)`; `startCodex({ cwd, args })` returns a child with `pid` that emits `close` (and `error`); `endTree(child)`; `registerSignalEnd(end)` returns a release function; `setTimer(fn, ms)` and `clearTimer(handle)`.
+ * @param {object} seams - `pid`; `now()` returns a Date; `appendState(text)`; `git(args)` runs in the repository and rejects on failure; `pathExists(path)`; `startCodex({ cwd, args })` returns a child with `pid` that emits `close` (and `error`); `endTree(child)`; `registerSignalEnd(end)` returns a release function; `setTimer(fn, ms)` and `clearTimer(handle)`.
  * @returns {Promise<void>} Resolves after the last log line.
  * @example
  * await runCandidateReview({ repository, short, attempt, base }, productionRunnerSeams(repository, short, attempt))
@@ -124,9 +129,9 @@ export async function runCandidateReview(
   const writeExit = async (body) => {
     if (exitWritten) return
     exitWritten = true
-    await seams.appendLog(`CODEX_REVIEW_EXIT ${body} ${stamp()}\n`)
+    await seams.appendState(`CODEX_REVIEW_EXIT ${body} ${stamp()}\n`)
   }
-  await seams.appendLog(`CODEX_REVIEW_PID ${seams.pid}\n`)
+  await seams.appendState(`CODEX_REVIEW_PID ${seams.pid}\n`)
   let child
   let release = () => {}
   let timer
@@ -138,14 +143,8 @@ export async function runCandidateReview(
       cwd: names.worktree,
       args: ['review', '--base', names.branch],
     })
-    await seams.appendLog(`CODEX_REVIEW_CHILD ${child.pid}\n`)
-    // A signal to the runner ends codex's whole tree, then records why the review stopped.
-    release = seams.registerSignalEnd(async () => {
-      ended = true
-      await seams.endTree(child)
-      await writeExit('error terminated by a signal')
-    })
-    const outcome = await new Promise((resolve) => {
+    // Listeners and the exit promise exist before any await, so an asynchronous spawn failure or an early close is never missed.
+    const outcomePromise = new Promise((resolve) => {
       child.once('error', (error) => resolve({ error }))
       child.once('close', (code, signal) => resolve({ code, signal }))
       // Past the limit the tree is ended before the exit line, so the line is true when it is read.
@@ -158,6 +157,14 @@ export async function runCandidateReview(
         resolve({ timeout: true })
       }, CANDIDATE_REVIEW_LIMIT_MS)
     })
+    // A signal to the runner ends codex's whole tree, then records why the review stopped.
+    release = seams.registerSignalEnd(async () => {
+      ended = true
+      await seams.endTree(child)
+      await writeExit('error terminated by a signal')
+    })
+    await seams.appendState(`CODEX_REVIEW_CHILD ${child.pid}\n`)
+    const outcome = await outcomePromise
     if (!ended) {
       if (outcome.timeout) await writeExit('timeout')
       else if (outcome.error)
@@ -179,7 +186,7 @@ export async function runCandidateReview(
   // After a signal the process exits at once; the worktree and branch stay for --clean.
   if (ended) return
   const failures = await cleanReviewAttempt(names, seams)
-  await seams.appendLog(
+  await seams.appendState(
     failures.length === 0
       ? 'CODEX_REVIEW_CLEANED\n'
       : `CODEX_REVIEW_CLEANUP_FAILED ${failures.join('; ')}\n`,
@@ -200,11 +207,11 @@ export async function runCandidateReview(
  * await runCandidateReview(options, productionRunnerSeams(repository, short, attempt))
  */
 export function productionRunnerSeams(repository, short, attempt) {
-  const { log } = reviewNames(repository, short, attempt)
+  const { state } = reviewNames(repository, short, attempt)
   return {
     pid: process.pid,
     now: () => new Date(),
-    appendLog: (text) => appendFile(log, text),
+    appendState: (text) => appendFile(state, text),
     git: async (args) => {
       const { stdout } = await execFileAsync('git', args, {
         ...packageGitOptions(repository),
