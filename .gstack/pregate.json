@@ -237,6 +237,31 @@
       ],
       "pattern": "https[:]//u(?:ser)?:(?:plainsecretpw|pw|\\[masked\\])@[a-z.]+",
       "reason": "dummy basic-auth URLs the Vite settings and masking tests feed in or expect masked, and the pre-push guard's allowlist that names them; never a credential"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "extension/src/tests/nextPagesRun.test.ts",
+        "extension/src/tests/nextRefusalRunResource.test.ts"
+      ],
+      "pattern": "(?:pages-run|next-runtime-failure|next-preparation-failure)",
+      "reason": "codebook_start idempotency keys named key in the Next Pages run tests; no secret value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "extension/src/tests/readNextRouteManifests.test.ts"
+      ],
+      "pattern": "/login/page",
+      "reason": "an App route manifest key named key in a route-manifest test; no secret value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "extension/src/tests/nextPagesMessageParts.test.ts"
+      ],
+      "pattern": "sid=SECRET",
+      "reason": "the dummy cookie value a Next output-masking test seeds to prove it never reaches a message; never a credential"
     }
   ]
 }
