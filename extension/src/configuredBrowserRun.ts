@@ -12,9 +12,15 @@ import {
   configuredDefinitionSchema,
   type ConfiguredDefinition,
 } from './configuredStudySchemas'
-import type { CONFIGURED_CAPTURE_PHASES, ViteSetupStep } from './constants'
+import type {
+  CONFIGURED_CAPTURE_PHASES,
+  NextSetupStep,
+  ViteSetupStep,
+} from './constants'
 import {
   ACTIVE_TIMEOUT_MS,
+  NEXT_ROUTER_POLL_INTERVAL_MS,
+  NEXT_SETUP_STEPS,
   ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION,
   MAX_EVENTS,
   MAX_QUEUED_EVIDENCE_BYTES,
@@ -44,10 +50,19 @@ import {
   SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION,
 } from './constants'
 import type {
+  DevelopmentBundle,
+  DevelopmentBundleRequest,
   DevelopmentServerAdapter,
   DevelopmentServerAdapterName,
 } from './developmentServerAdapter'
 import { StudyError } from './errors'
+import {
+  nextRefusal,
+  nextSetupDeadlineRecovery,
+  nextSetupDeadlineSentence,
+  nextSetupDeadlineVariantOf,
+  type NextRouterState,
+} from './nextRefusals'
 import {
   OwnedBreakpointMovedError,
   OwnedBreakpointRemovedError,
@@ -116,19 +131,26 @@ import { configuredStops } from './utils/configuredStops'
 import { continuationReceipts } from './utils/continuationReceipts'
 import { createBindingLineRule } from './utils/createBindingLineRule'
 import { createBundleVerifier } from './utils/createBundleVerifier'
+import {
+  createNextPagesDiscoveryCache,
+  type NextPagesDiscoveryCache,
+} from './utils/createNextPagesDiscoveryCache'
 import { cutCauseForDisplay } from './utils/cutCauseForDisplay'
 import { deadlineText } from './utils/deadlineText'
 import { declarationStatementEndLine } from './utils/declarationStatementEndLine'
 import { declaredAndArmedPlace } from './utils/declaredAndArmedPlace'
 import { declaredInspectionBindings } from './utils/declaredInspectionBindings'
 import { describeCdpPause } from './utils/describeCdpPause'
+import { describeNextLaunchFailure } from './utils/describeNextLaunchFailure'
 import { elapsedMsSince } from './utils/elapsedMsSince'
 import { bundleOfEvaluatedModule } from './utils/extractDevelopmentModule'
 import { findUnmappedDeclaredStop } from './utils/findUnmappedDeclaredStop'
+import { formatRefusalFailure } from './utils/formatRefusalFailure'
 import { inspectConfiguredValues } from './utils/inspectConfiguredValues'
 import { isBlankOrCommentLine } from './utils/isBlankOrCommentLine'
 import { isFrameAtPosition } from './utils/isFrameAtPosition'
 import type { GeneratedPosition } from './utils/isGeneratedPositionBefore'
+import { isHotUpdateScriptUrl } from './utils/isHotUpdateScriptUrl'
 import { isModuleEntryPause } from './utils/isModuleEntryPause'
 import { isModuleInAnotherLayer } from './utils/isModuleInAnotherLayer'
 import { isPageStubOfSource } from './utils/isPageStubOfSource'
@@ -138,7 +160,16 @@ import { isPauseInScript } from './utils/isPauseInScript'
 import { isRefreshedFrameAtStop } from './utils/isRefreshedFrameAtStop'
 import { isSameGeneratedPosition } from './utils/isSameGeneratedPosition'
 import { launchDevelopmentServer } from './utils/launchDevelopmentServer'
+import { maskNextServerOutput } from './utils/maskNextServerOutput'
 import { maskSourceMapText } from './utils/maskSourceMapText'
+import {
+  nextEntryLeftMessage,
+  type NextEntryLeftMoment,
+} from './utils/nextEntryLeftMessage'
+import { nextPathnameOf } from './utils/nextPathnameOf'
+import { nextServedChunkFetcher } from './utils/nextServedChunkFetcher'
+import { nextServerOnlyFileReason } from './utils/nextServerOnlyFileReason'
+import { nextServerOnlyStopMessage } from './utils/nextServerOnlyStopMessage'
 import {
   browserOriginOf,
   isOwnedApplicationOrigin,
@@ -153,7 +184,21 @@ import { placeAfterDeclaringLine } from './utils/placeAfterDeclaringLine'
 import { prepareRepositoryInputs } from './utils/prepareRepositoryInputs'
 import { readDeclaredDevelopmentPort } from './utils/readDeclaredDevelopmentPort'
 import { readDevelopmentBundle } from './utils/readDevelopmentBundle'
+import {
+  readNextPagesState,
+  type NextPagesState,
+} from './utils/readNextPagesState'
+import { readNextRouteManifests } from './utils/readNextRouteManifests'
+import { readNextRouterKind } from './utils/readNextRouterKind'
+import { readNextServerOnlyReason } from './utils/readNextServerOnlyReason'
+import { readPagesDevelopmentBundle } from './utils/readPagesDevelopmentBundle'
+import { readNextInstallation } from './utils/readRepositoryAdapterReadiness'
+import { redactNextEntryPath } from './utils/redactNextEntryPath'
 import { resolveArmedPlace } from './utils/resolveArmedPlace'
+import {
+  resolveNextPagesEntry,
+  type NextPagesEntry,
+} from './utils/resolveNextPagesEntry'
 import { sameScriptUrl } from './utils/sameScriptUrl'
 import { sanitizeCause } from './utils/sanitizeCause'
 import { selfDeclaredInspectionHint } from './utils/selfDeclaredInspectionHint'
@@ -179,7 +224,38 @@ import {
 } from './viteRefusals'
 
 /**
- * The Next webpack development server behind {@link DevelopmentServerAdapter}: today's workspace check, port reading, launch, `.next/dev` bundle sealing and webpack source-map paths, unchanged.
+ * Seals one browser stop of a Next Pages run from the chunks the page loads at start, before the browser opens, so the debugger binds it when the page's scripts are parsed.
+ *
+ * Why it exists: a Pages page has no App client-reference manifest, so the App seal ({@link readDevelopmentBundle}) cannot find its modules; the page's and `_app`'s entry chunks hold them. Called by the Next adapter's `readBundle` when the request carries the Pages route; the run's one discovery cache is shared by its stops, and a listed chunk with no file is read from the owned server ({@link nextServedChunkFetcher}).
+ * @param request - The stop's seal request.
+ * @param nextRoute - The resolved Pages route and the run's discovery cache.
+ * @returns The sealed module and what its discovery measured.
+ * @throws `NEXT_STOP_NOT_SEALED` when no entry chunk holds the module (a module loaded later, for example through `next/dynamic`); the seal's own failures unchanged.
+ * @example
+ * await readNextPagesStopBundle(request, { route: '/', cache }) // => { bundle: { scriptUrl: 'webpack-internal:///(pages-dir-browser)/./src/pages/index.tsx', … }, discovery: { … } }
+ */
+async function readNextPagesStopBundle(
+  request: DevelopmentBundleRequest,
+  nextRoute: NonNullable<DevelopmentBundleRequest['nextRoute']>,
+): Promise<DevelopmentBundle> {
+  const sealed = await readPagesDevelopmentBundle({
+    workspace: request.workspace,
+    selected: request.source,
+    route: nextRoute.route,
+    signal: request.signal,
+    cache: nextRoute.cache,
+    fetchChunk: nextServedChunkFetcher(request.ownedOrigin),
+  })
+  if (sealed.kind === 'sealed')
+    return { bundle: sealed.bundle, discovery: sealed.discovery }
+  throw nextRefusal(
+    'NEXT_STOP_NOT_SEALED',
+    `${request.source.path} is not in the code the page ${redactNextEntryPath(sealed.route)} loads at start; a module loaded later (for example through next/dynamic) cannot be sealed before input.`,
+  )
+}
+
+/**
+ * The Next webpack development server behind {@link DevelopmentServerAdapter}: today's workspace check, port reading, launch, `.next/dev` bundle sealing and webpack source-map paths; a browser stop of a Pages run is sealed from the page's entry chunks ({@link readNextPagesStopBundle}).
  * Selected by {@link developmentServerAdapterOf} for `adapter: "next-dev-webpack"`.
  */
 const NEXT_DEV_WEBPACK_ADAPTER: DevelopmentServerAdapter = {
@@ -204,6 +280,8 @@ const NEXT_DEV_WEBPACK_ADAPTER: DevelopmentServerAdapter = {
       request.record,
       request.inspectServer,
       declaredPort.port,
+      undefined,
+      request.outputMask,
     )
     request.onApp(app)
     return { app, port: declaredPort.port }
@@ -223,13 +301,16 @@ const NEXT_DEV_WEBPACK_ADAPTER: DevelopmentServerAdapter = {
     return undefined
   },
   readBundle: (request) =>
-    readDevelopmentBundle(
-      request.workspace,
-      request.source,
-      request.signal,
-      request.entryPath,
-      request.execution,
-    ),
+    // A browser stop of a Pages run is sealed from the page's entry chunks; every other stop as before.
+    request.nextRoute && request.execution === 'browser'
+      ? readNextPagesStopBundle(request, request.nextRoute)
+      : readDevelopmentBundle(
+          request.workspace,
+          request.source,
+          request.signal,
+          request.entryPath,
+          request.execution,
+        ),
   browserDebugFields: (workspace) => ({
     webRoot: workspace,
     sourceMaps: true,
@@ -537,6 +618,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private portSource?: string
   /** The Vite version the launcher reported, for a `vite-dev` run. */
   private viteVersion?: string
+  /** The Next setup step reached; a Pages run's setup deadline names it ({@link setupDeadlineText}). The Vite step stays in {@link setupStep}. */
+  private nextSetupStep: NextSetupStep = NEXT_SETUP_STEPS.validatingProject
+  /** The Pages route of a Next run on the Pages path, with the run's one discovery cache; set once the entry path resolved as a Pages route. The setup-deadline text, the seal and the Pages-only checks read it; every other run leaves it unset. */
+  private pagesRun?: NextPagesEntry & { cache: NextPagesDiscoveryCache }
+  /** The route a Next run in a workspace with a Pages folder resolved its entry path to, for the run resource. */
+  private nextRoute?: ConfiguredRuntimeView['nextRoute']
+  /** What the router wait of a Pages run saw: `absent` until `window.next.router` exists, `late` once it was seen; the setup-deadline text reads it. */
+  private nextRouterState?: NextRouterState
+  /** The selector of the initial input being written, which a setup deadline at the input step names. */
+  private pendingInputSelector?: string
+  /** Whether an initial input's text was sent and the page's answer has not come back, so a deadline then cannot tell whether it was written. */
+  private inputInFlight = false
   /** Masks env-file and script values, and secret shapes, in captured values ({@link inspectConfiguredValues}); absent for a Next run. */
   private maskText?: (text: string) => string
   /** Masks only env-file and script values in the module text a Vite run keeps ({@link archivedModuleText}); absent for a Next run. */
@@ -646,12 +739,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       throw new Error('Repository preparation deadline already expired')
     this.preparationDeadlineAt = preparationDeadlineAt
     this.preparationBudgetMs = preparationDeadlineAt - now
-    this.progressDeadline(
-      preparationDeadlineAt - now,
-      this.definition.configuration.adapter === 'vite-dev'
-        ? () =>
-            viteSetupDeadlineText(this.setupStep, preparationDeadlineAt - now)
-        : 'Repository setup deadline exceeded',
+    // The text is read at expiry: a Next run learns only after its route manifests whether it is a Pages run.
+    this.progressDeadline(preparationDeadlineAt - now, () =>
+      this.setupDeadlineText(preparationDeadlineAt - now),
     )
     this.runTimer = setTimeout(
       () =>
@@ -684,8 +774,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const needsServer = configuredStops(this.definition.configuration).some(
       (stop) => stop.participant === 'server',
     )
+    // Only a Next workspace with a Pages folder takes the structured entry check and the route manifests; every other run keeps today's readiness.
+    const hasPagesFolder = await this.hasNextPagesFolder(adapter)
+    this.alive()
+    this.nextSetupStep = NEXT_SETUP_STEPS.startingNext
     // The app runs on the port the project declares (its auth origin points there); a busy port refuses the start instead of moving the app.
     const started = await adapter.start({
+      ...(hasPagesFolder ? { outputMask: maskNextServerOutput } : {}),
       workspace: this.options.workspace,
       node: this.options.node,
       record: (type, detail) => this.evidence.record(type, detail),
@@ -713,10 +808,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const declaredPort = { port: started.port }
     // The server binds 127.0.0.1; the browser opens `localhost` at its port, the name the project's own origin settings use (D65).
     this.setupStep = VITE_SETUP_STEPS.waitingForServer
-    const ownedOrigin = await this.app!.ready(
-      this.abort.signal,
-      this.definition.configuration.entryPath,
-    )
+    this.nextSetupStep = NEXT_SETUP_STEPS.waitingForServer
+    const ownedOrigin = hasPagesFolder
+      ? await this.readyPagesCapableEntry(started.port)
+      : await this.app!.ready(
+          this.abort.signal,
+          this.definition.configuration.entryPath,
+        )
     this.origin = browserOriginOf(ownedOrigin)
     // `localhost` may resolve to ::1: Codebook owns that endpoint for the whole run, or the host has none (D66).
     this.ipv6Forwarder = await startIpv6LoopbackForwarder(declaredPort.port)
@@ -726,16 +824,20 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.options.workspace,
     )
     this.setupStep = VITE_SETUP_STEPS.sealingStops
+    this.nextSetupStep = NEXT_SETUP_STEPS.sealingStops
     for (const [index, stop] of configuredStops(
       this.definition.configuration,
     ).entries())
       this.stops.push(
         await this.sealDeclaredStop(stop, index, adapter, ownedOrigin),
       )
+    // A Pages stop whose line its browser module does not map is refused with what is established about that line, before the general check.
+    if (this.pagesRun) await this.refuseUnmappedPagesStop(this.pagesRun)
     this.freezeSealedStops()
     if (needsServer) await this.selectServer()
     this.alive()
     this.setupStep = VITE_SETUP_STEPS.openingBrowser
+    this.nextSetupStep = NEXT_SETUP_STEPS.openingBrowser
     await this.browser.launch(
       {
         name: `codebook repository ${this.id}`,
@@ -764,6 +866,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.alive()
     }
     this.setupStep = VITE_SETUP_STEPS.loadingEntryPage
+    this.nextSetupStep = NEXT_SETUP_STEPS.loadingEntryPage
     this.navigationRequested = true
     await cdp.request('Page.navigate', {
       url: `${this.origin}${this.definition.configuration.entryPath ?? '/'}`,
@@ -771,13 +874,19 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.alive()
     await this.waitForDom('before')
     this.alive()
+    // A Pages page must still be at its entry path, with its router ready on the resolved route.
+    if (this.pagesRun) await this.confirmPagesEntryAfterLoad(this.pagesRun)
     // Vite's dependency optimizer may reload the page once after the first load; each reload before the inputs starts a new page generation.
     if (adapter.name === 'vite-dev') {
       this.setupStep = VITE_SETUP_STEPS.settlingPage
       await this.waitForStablePage(adapter, ownedOrigin)
     }
     this.setupStep = VITE_SETUP_STEPS.writingInputs
+    this.nextSetupStep = NEXT_SETUP_STEPS.writingInputs
     const inputs = this.definition.configuration.initialInputs ?? []
+    // A Pages page can still leave its entry path on the client after its router was ready; nothing is written then.
+    if (this.pagesRun && inputs.length)
+      await this.refusePagesPathLeft('before-input')
     // A page load after this point is a reload the run did not make: the inputs may already be in the page.
     this.inputsPrepared = true
     await prepareRepositoryInputs(
@@ -785,7 +894,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       inputs,
       loopbackOriginsOf(this.origin, this.ownsIpv6Loopback),
       () => this.alive(),
+      {
+        started: (selector) => {
+          this.pendingInputSelector = selector
+        },
+        inserting: (inFlight) => {
+          this.inputInFlight = inFlight
+        },
+      },
     )
+    this.pendingInputSelector = undefined
     this.alive()
     if (inputs.length)
       this.evidence.record('inputs.prepared', { count: inputs.length })
@@ -827,6 +945,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     ownedOrigin: string,
     generation?: number,
   ): Promise<PreparedStop> {
+    // A Pages `_document` or API route never runs in the browser, so it is refused before any chunk is read.
+    if (this.pagesRun) this.refuseServerOnlyPagesFile(stop, this.pagesRun)
     const acquired = await adapter.readBundle({
       workspace: this.options.workspace,
       source: stop.source,
@@ -835,6 +955,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       execution: stop.participant === 'server' ? 'server-action' : 'browser',
       ownedOrigin,
       record: (type, detail) => this.evidence.record(type, detail),
+      ...(this.pagesRun
+        ? {
+            nextRoute: {
+              route: this.pagesRun.route,
+              cache: this.pagesRun.cache,
+            },
+          }
+        : {}),
     })
     this.alive()
     const verifier = createBundleVerifier(acquired.bundle),
@@ -930,7 +1058,23 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     this.manifest = { ...bound, hash: sha256(JSON.stringify(bound)) }
     // Later stops are armed only in their turn, so a line that can never bind is refused here, before any application effect.
-    const unmappedStop = findUnmappedDeclaredStop(
+    const unmappedStop = this.unbindableStop()
+    if (unmappedStop)
+      throw this.bindingFailure(
+        unmappedStop,
+        `Declared stop ${this.declaredAt(unmappedStop)} has no mapped position on that line in the sealed module`,
+      )
+  }
+
+  /**
+   * Finds the first sealed stop whose declared line can never bind: its sealed map has no position on the line and no later place within its citation ({@link findUnmappedDeclaredStop}).
+   * Called by {@link freezeSealedStops}, which refuses it, and before that by {@link refuseUnmappedPagesStop} for a Pages run, which names what is established about the line first.
+   * @returns The stop, or `undefined` when every stop can bind.
+   * @example
+   * this.unbindableStop() // => the stop declared on a getStaticProps line its browser module does not map
+   */
+  private unbindableStop(): PreparedStop | undefined {
+    return findUnmappedDeclaredStop(
       this.stops,
       (stop, scanComplete) =>
         // When the scan stopped at its size limit, the sealed source says whether the line holds code.
@@ -942,11 +1086,6 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           this.definition.descriptor.anchors[stop.anchorIndex]!.endLine,
         ),
     )
-    if (unmappedStop)
-      throw this.bindingFailure(
-        unmappedStop,
-        `Declared stop ${this.declaredAt(unmappedStop)} has no mapped position on that line in the sealed module`,
-      )
   }
 
   /**
@@ -1097,6 +1236,352 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       if (error instanceof WaitTimeoutError) throw deadlineRefusal()
       throw error
     }
+  }
+
+  /**
+   * Words the failure of an expired setup budget, read when the progress deadline of {@link prepareOwned} expires.
+   * A Vite run names its step with `VITE_SETUP_DEADLINE`; a Next run on the Pages path names its step with `NEXT_SETUP_DEADLINE` and the variant whose static recovery fits what had already run; every other Next run keeps the plain text.
+   * @param budgetMs - The setup budget that expired.
+   * @returns The failure text.
+   * @example
+   * this.setupDeadlineText(90_000) // => 'NEXT_SETUP_DEADLINE(router-absent): Repository setup deadline (90 s) exceeded while waiting for the page router …' for a Pages run at the router step
+   */
+  private setupDeadlineText(budgetMs: number): string {
+    if (this.definition.configuration.adapter === 'vite-dev')
+      return viteSetupDeadlineText(this.setupStep, budgetMs)
+    // Only a run on the Pages path names a code; an App run's text stays as it was.
+    if (!this.pagesRun) return 'Repository setup deadline exceeded'
+    return formatRefusalFailure(
+      'NEXT_SETUP_DEADLINE',
+      nextSetupDeadlineSentence(
+        this.nextSetupStep,
+        budgetMs,
+        this.nextRouterState,
+        this.pendingInputSelector,
+      ),
+      nextSetupDeadlineVariantOf(
+        this.nextSetupStep,
+        this.nextRouterState,
+        this.inputInFlight,
+      ),
+    )
+  }
+
+  /**
+   * Builds the `NEXT_SETUP_DEADLINE` refusal a Pages run throws itself when a wait of its own reaches the end of the setup budget, with the static recovery of its variant.
+   * Called by {@link waitForPagesRouter}; the progress deadline's text ({@link setupDeadlineText}) says the same when its timer comes first.
+   * @returns The error to throw.
+   * @example
+   * throw this.pagesSetupDeadlineError() // NEXT_SETUP_DEADLINE with the router-late recovery once a router was seen
+   */
+  private pagesSetupDeadlineError(): StudyError {
+    const message = nextSetupDeadlineSentence(
+      this.nextSetupStep,
+      this.preparationBudgetMs,
+      this.nextRouterState,
+      this.pendingInputSelector,
+    )
+    return new StudyError(
+      'NEXT_SETUP_DEADLINE',
+      message,
+      message,
+      nextSetupDeadlineRecovery(
+        nextSetupDeadlineVariantOf(
+          this.nextSetupStep,
+          this.nextRouterState,
+          this.inputInFlight,
+        ),
+      ),
+    )
+  }
+
+  /**
+   * Tells whether the run is a Next run in a workspace with a Pages folder (`pages/` or `src/pages/`, with or without an App folder), read from the filesystem before the server starts.
+   * Called by {@link prepareOwned}: only such a run takes the structured entry check and reads the route manifests ({@link readyPagesCapableEntry}); a workspace without a Pages folder keeps today's readiness exactly.
+   * @param adapter - The run's development-server adapter.
+   * @returns `true` for the Next adapter in a workspace whose router kind is `pages` or `both` ({@link readNextRouterKind}).
+   * @example
+   * await this.hasNextPagesFolder(adapter) // => true for a workspace with src/pages/index.tsx
+   */
+  private async hasNextPagesFolder(
+    adapter: DevelopmentServerAdapter,
+  ): Promise<boolean> {
+    if (adapter.name !== 'next-dev-webpack') return false
+    const routerKind = await readNextRouterKind(this.options.workspace)
+    return routerKind === 'pages' || routerKind === 'both'
+  }
+
+  /**
+   * Proves a Pages-capable Next server ready and decides which router serves the entry path: the structured entry check, the route manifests, then the App path unchanged or the Pages path with its refusals.
+   *
+   * Why it exists: in a workspace with a Pages folder a 3xx or 404 of the entry path is data for the decision, not a failure (Issue 166, run sequence steps 3–6). An App route replays today's readiness verdict on the answer already read; a Pages route is checked in the frozen refusal precedence ({@link resolveNextPagesEntry}) before the browser opens, so the run's cleanup stops only the owned server. Called by {@link prepareOwned} instead of `ready`.
+   * @param port - The port the server was started on, named by a launch-failure note.
+   * @returns The origin the owned server listens on.
+   * @throws The launch failure with the preparation and webpack notes; `RUNTIME_FAILED` for a manifest that cannot be read; today's App readiness failures; the Pages refusals.
+   * @example
+   * const ownedOrigin = await this.readyPagesCapableEntry(3000) // 'http://127.0.0.1:3000', with this.pagesRun set for a Pages route
+   */
+  private async readyPagesCapableEntry(port: number): Promise<string> {
+    const workspace = this.options.workspace,
+      entryPath = this.definition.configuration.entryPath ?? '/'
+    const { origin, entry } = await this.app!.readyEntry(
+      this.abort.signal,
+      entryPath,
+    ).catch(async (error: unknown) => {
+      throw await this.withLaunchFailureNotes(error, port)
+    })
+    this.alive()
+    this.nextSetupStep = NEXT_SETUP_STEPS.readingManifests
+    const manifests = await readNextRouteManifests({
+      workspace,
+      entryPath,
+      signal: this.abort.signal,
+    }).catch((error: unknown) => {
+      throw this.manifestReadFailure(error)
+    })
+    this.alive()
+    if (manifests.kind === 'app') {
+      // An App route keeps today's readiness verdict, judged on the answer already read.
+      await this.app!.confirmAppEntry(this.abort.signal, entryPath, entry)
+      this.nextRoute = { router: 'app', route: manifests.route.key }
+      return origin
+    }
+    const nextVersion = (await readNextInstallation(workspace)).version
+    const resolved = await resolveNextPagesEntry({
+      workspace,
+      entryPath,
+      entry,
+      manifests,
+      nextVersion,
+      outputTail: () => this.app!.outputTail(),
+      compileFailureSentences: () =>
+        describeNextLaunchFailure({ workspace, nextVersion, port }),
+    })
+    this.alive()
+    this.pagesRun = { ...resolved, cache: createNextPagesDiscoveryCache() }
+    this.nextRoute = {
+      router: 'pages',
+      route: resolved.route,
+      source: resolved.source,
+    }
+    this.evidence.record('next.route-resolved', this.nextRoute)
+    return origin
+  }
+
+  /**
+   * Adds the Pages-path notes to an uncoded launch failure (the server exited or never listened): the preparation `scripts.dev` runs that Codebook skipped, and that Codebook ran Next with webpack when the dev script does not ask for it.
+   * Called by {@link readyPagesCapableEntry} only, so a workspace without a Pages folder keeps its launch-failure text unchanged; a cancelled run and a coded failure keep their own words.
+   * @param error - What the entry check rejected with.
+   * @param port - The port the server was started on.
+   * @returns The error to throw: a new error with the notes appended, or `error` itself.
+   * @example
+   * throw await this.withLaunchFailureNotes(new Error('Application exited: 1: …'), 3000) // 'Application exited: 1: …. Codebook runs your Next app with webpack …'
+   */
+  private async withLaunchFailureNotes(
+    error: unknown,
+    port: number,
+  ): Promise<unknown> {
+    if (this.abort.signal.aborted || error instanceof StudyError) return error
+    const workspace = this.options.workspace
+    const notes = await describeNextLaunchFailure({
+      workspace,
+      nextVersion: (await readNextInstallation(workspace)).version,
+      port,
+    })
+    return notes.length
+      ? new Error(`${withFinalPeriod(thrownMessage(error))} ${notes.join(' ')}`)
+      : error
+  }
+
+  /**
+   * Turns a route manifest that could not be read into the `RUNTIME_FAILED` error an agent reads: the manifest, the reason and where the run's journal is; any other failure (a cancelled run) is passed on.
+   * Called by {@link readyPagesCapableEntry} for the rejection of {@link readNextRouteManifests}, whose error already names the file and never quotes its content.
+   * @param error - What the manifest read rejected with.
+   * @returns The error to throw.
+   * @example
+   * throw this.manifestReadFailure(new Error('Next route manifest .next/dev/server/pages-manifest.json could not be read: it is not valid JSON'))
+   */
+  private manifestReadFailure(error: unknown): unknown {
+    if (
+      !(error instanceof Error) ||
+      !error.message.startsWith('Next route manifest ')
+    )
+      return error
+    const message = `${withFinalPeriod(error.message)} Codebook stopped the server it started before opening the browser; the run's journal is at the run resource's eventsUri.`
+    return new StudyError('RUNTIME_FAILED', message, message)
+  }
+
+  /**
+   * Refuses a declared browser stop of a Pages run in a file Next never runs in the browser (`_document`, an API route), before any chunk is read.
+   * Called by {@link sealDeclaredStop} for each stop of a Pages run; a server stop is left to the seal.
+   * @param stop - The declared stop.
+   * @param pagesRun - The resolved Pages route, whose folder the file rule reads.
+   * @throws `NEXT_SERVER_ONLY_STOP` naming the reason.
+   * @example
+   * this.refuseServerOnlyPagesFile(stop, this.pagesRun) // throws for src/pages/api/hello.ts
+   */
+  private refuseServerOnlyPagesFile(
+    stop: ReturnType<typeof configuredStops>[number],
+    pagesRun: NextPagesEntry,
+  ): void {
+    if (stop.participant !== 'browser') return
+    const reason = nextServerOnlyFileReason(stop.source.path, pagesRun.folder)
+    if (reason)
+      throw nextRefusal(
+        'NEXT_SERVER_ONLY_STOP',
+        nextServerOnlyStopMessage(
+          `${stop.source.path}:${stop.source.line}`,
+          reason,
+        ),
+      )
+  }
+
+  /**
+   * Refuses a sealed browser stop of a Pages run whose line can never bind, with what is established about the line: server-only when the page's server compile maps it and the browser module does not, otherwise not sealed, which says it is not thereby server-only.
+   * Called by {@link prepareOwned} after the seal and before {@link freezeSealedStops}, which keeps the general refusal for every other stop.
+   * @param pagesRun - The resolved Pages route and the run's discovery cache.
+   * @throws `NEXT_SERVER_ONLY_STOP` or `NEXT_STOP_NOT_SEALED`.
+   * @example
+   * await this.refuseUnmappedPagesStop(this.pagesRun) // throws NEXT_SERVER_ONLY_STOP for a getStaticProps line
+   */
+  private async refuseUnmappedPagesStop(pagesRun: {
+    folder: NextPagesEntry['folder']
+    compiledPath: string
+    cache: NextPagesDiscoveryCache
+  }): Promise<void> {
+    const unmapped = this.unbindableStop()
+    if (!unmapped || unmapped.participant !== 'browser') return
+    const established = await readNextServerOnlyReason({
+      workspace: this.options.workspace,
+      path: unmapped.source.path,
+      line: unmapped.source.line,
+      folder: pagesRun.folder,
+      compiledPath: pagesRun.compiledPath,
+      clientBundle: unmapped.bundle,
+      signal: this.abort.signal,
+      cache: pagesRun.cache,
+    })
+    this.alive()
+    const place = this.declaredAt(unmapped)
+    throw established.kind === 'server-only'
+      ? nextRefusal(
+          'NEXT_SERVER_ONLY_STOP',
+          nextServerOnlyStopMessage(place, established.reason),
+        )
+      : nextRefusal(
+          'NEXT_STOP_NOT_SEALED',
+          `Codebook could not verify a browser source mapping for ${place}. This does not establish that the code is server-only.`,
+        )
+  }
+
+  /**
+   * Checks a Pages page after it loaded and before any input: it is still at its entry path, its Next router becomes ready within the setup budget, and the router's route is the one the entry path resolved to.
+   * Called by {@link prepareOwned} after the before conditions held. A redirect in the page, a rewrite, middleware or a client redirect ends the run before any input.
+   * @param pagesRun - The resolved Pages route.
+   * @throws `NEXT_ENTRY_REDIRECTED` for another path or route; `NEXT_SETUP_DEADLINE` when the router is not ready within the budget.
+   * @example
+   * await this.confirmPagesEntryAfterLoad(this.pagesRun)
+   */
+  private async confirmPagesEntryAfterLoad(
+    pagesRun: NextPagesEntry,
+  ): Promise<void> {
+    const cdp = this.requireCdp()
+    const loaded = await readNextPagesState(cdp)
+    this.alive()
+    this.refuseLeftEntryPath(loaded, 'after-load')
+    this.nextSetupStep = NEXT_SETUP_STEPS.waitingForRouter
+    const ready = await this.waitForPagesRouter(cdp)
+    this.refuseLeftEntryPath(ready, 'after-load')
+    // A rewrite or middleware can serve another page at the same path; the router names the page it rendered.
+    if (ready.route !== pagesRun.route)
+      throw nextRefusal(
+        'NEXT_ENTRY_REDIRECTED',
+        `The page at the entry path ${redactNextEntryPath(this.definition.configuration.entryPath ?? '/')} reports the Pages route ${ready.route === undefined ? '(none)' : redactNextEntryPath(ready.route)}, not ${redactNextEntryPath(pagesRun.route)}, the route the entry path resolved to: a rewrite, middleware or a client redirect served another page, so Codebook sent no input or click; the browser Codebook opened is closed with the run.`,
+      )
+    this.evidence.record('next.router-ready', { route: pagesRun.route })
+  }
+
+  /**
+   * Waits for the Pages router to become ready (`window.next.router.isReady`), reading the page every {@link NEXT_ROUTER_POLL_INTERVAL_MS} within what is left of the setup budget, and remembers whether a router was ever seen for the deadline's text.
+   * Called by {@link confirmPagesEntryAfterLoad}.
+   * @param cdp - The owned page's channel.
+   * @returns The first state with a ready router.
+   * @throws `NEXT_SETUP_DEADLINE` (router absent or late) when the next read would pass the budget.
+   * @example
+   * const ready = await this.waitForPagesRouter(cdp) // { pathname: '/', routerSeen: true, isReady: true, route: '/' }
+   */
+  private async waitForPagesRouter(cdp: Cdp): Promise<NextPagesState> {
+    this.nextRouterState = 'absent'
+    for (;;) {
+      const state = await readNextPagesState(cdp)
+      this.alive()
+      if (state.routerSeen) this.nextRouterState = 'late'
+      if (state.isReady) return state
+      // The wait shares the setup budget: when the next read would pass it, the coded deadline names the router step.
+      if (
+        Date.now() + NEXT_ROUTER_POLL_INTERVAL_MS >=
+        this.preparationDeadlineAt
+      )
+        throw this.pagesSetupDeadlineError()
+      await sleep(NEXT_ROUTER_POLL_INTERVAL_MS, undefined, {
+        signal: this.abort.signal,
+      })
+      this.alive()
+    }
+  }
+
+  /**
+   * Refuses a Pages page whose pathname, normalized like the entry path ({@link nextPathnameOf}), is no longer the entry path.
+   * Called by {@link confirmPagesEntryAfterLoad} and {@link refusePagesPathLeft}.
+   * @param state - What the page reported.
+   * @param moment - When it was read, for the message.
+   * @throws `NEXT_ENTRY_REDIRECTED` naming both paths, redacted.
+   * @example
+   * this.refuseLeftEntryPath({ pathname: '/login', routerSeen: true, isReady: true, route: '/login' }, 'after-load') // throws
+   */
+  private refuseLeftEntryPath(
+    state: NextPagesState,
+    moment: NextEntryLeftMoment,
+  ): void {
+    const entryPath = this.definition.configuration.entryPath ?? '/'
+    if (nextPathnameOf(state.pathname) !== nextPathnameOf(entryPath))
+      throw nextRefusal(
+        'NEXT_ENTRY_REDIRECTED',
+        nextEntryLeftMessage(entryPath, state.pathname, moment),
+      )
+  }
+
+  /**
+   * Reads a Pages page's pathname once more right before an input and refuses when it left the entry path, so a client redirect that lands after the router was ready receives no input.
+   * Called by {@link prepareOwned} before the first initial input and by {@link dispatchInput} before the click.
+   * @param moment - Which input is next.
+   * @throws `NEXT_ENTRY_REDIRECTED` naming both paths.
+   * @example
+   * await this.refusePagesPathLeft('before-input')
+   */
+  private async refusePagesPathLeft(
+    moment: NextEntryLeftMoment,
+  ): Promise<void> {
+    const state = await readNextPagesState(this.requireCdp())
+    this.alive()
+    this.refuseLeftEntryPath(state, moment)
+  }
+
+  /**
+   * Words the `SOURCE_CHANGED` failure of a Pages run whose sealed module was parsed again under another script id (Fast Refresh or HMR), saying that earlier observations stay readable and, when the click was sent and its result not verified, that it was not verified.
+   * Called by {@link bindParsedScript}; every other run keeps its plain text.
+   * @param stop - The stop whose module changed.
+   * @returns The coded failure text.
+   * @example
+   * this.sourceChangedText(stop) // => 'SOURCE_CHANGED: src/components/PostList.tsx changed during the run, so Codebook stopped it. Earlier captured observations remain readable.'
+   */
+  private sourceChangedText(stop: PreparedStop): string {
+    const clickUnverified =
+      this.operation?.inputDispatched === true && !this.operation.afterVerified
+    return formatRefusalFailure(
+      'SOURCE_CHANGED',
+      `${stop.source.path} changed during the run, so Codebook stopped it. Earlier captured observations remain readable.${clickUnverified ? " The click's result was not verified." : ''}`,
+    )
   }
 
   /**
@@ -3158,13 +3643,20 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     name: Participant,
     event: Protocol.Debugger.ScriptParsedEvent,
   ): void {
+    // A Fast Refresh hot-update chunk is never a module a Pages run sealed.
+    if (this.pagesRun && isHotUpdateScriptUrl(event.url)) return
     for (const stop of this.stops) {
       // The same module parsed for another webpack layer is a further instance of the stop's module, placed by its own map.
       if (this.isModuleInAnotherLayerOfStop(stop, name, event))
         this.track(this.adoptInstance(stop, name, event))
       if (!this.isModuleOfStop(stop, name, event)) continue
       if (this.isSealedAsAnotherScript(stop, event)) {
-        this.fail('Selected module changed after sealing')
+        // A Pages run names the changed file with SOURCE_CHANGED; every other run keeps its text.
+        this.fail(
+          this.pagesRun
+            ? this.sourceChangedText(stop)
+            : 'Selected module changed after sealing',
+        )
         return
       }
       stop.script = event
@@ -4423,6 +4915,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // The DOM reads yielded to the adapter's news: a place the source map alone refused is judged by the break locations first, and the page, which went on meanwhile, is read again.
     if (await this.judgeNewsRefusedBeforeInput())
       point = await this.clickPointBeforeInput()
+    // A Pages page that left its entry path on the client receives no click.
+    if (this.pagesRun && (await this.pagesPathLeftBeforeClick())) return
     // DOM checks yield to native events; recheck pending authority synchronously before dispatching the first input.
     this.assertServerRegistrationsHeld()
     this.operation!.inputDispatched = true
@@ -4458,6 +4952,33 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.alive()
     this.operation!.inputAcknowledged = true
     this.evidence.record('input.acknowledged')
+  }
+
+  /**
+   * Reads a Pages page's pathname right before the click and, when it left the entry path, fails the run with the coded `NEXT_ENTRY_REDIRECTED` text instead of clicking.
+   * Called by {@link dispatchInput}, whose failures reach the run as plain text, so the code is written into the failure here ({@link formatRefusalFailure}).
+   * @returns `true` when the run was failed and no click may be sent; `false` when the page is still at its entry path.
+   * @throws Any other failure of the read.
+   * @example
+   * if (await this.pagesPathLeftBeforeClick()) return
+   */
+  private async pagesPathLeftBeforeClick(): Promise<boolean> {
+    const moment =
+      (this.definition.configuration.initialInputs ?? []).length > 0
+        ? 'before-click-after-inputs'
+        : 'before-click-no-inputs'
+    try {
+      await this.refusePagesPathLeft(moment)
+      return false
+    } catch (error) {
+      if (
+        !(error instanceof StudyError) ||
+        error.code !== 'NEXT_ENTRY_REDIRECTED'
+      )
+        throw error
+      this.fail(formatRefusalFailure('NEXT_ENTRY_REDIRECTED', error.message))
+      return true
+    }
   }
 
   /** Lists the server stops whose owned breakpoint exists, for the receipt reads of {@link dispatchInput}, {@link judgeNewsRefusedBeforeInput} and {@link assertServerRegistrationsHeld}. @example this.armedServerStops() // [stops[0]] before the first input of a run whose first stop is a server stop */
@@ -6669,6 +7190,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       applicationOrigin: this.origin,
       applicationPortSource: this.portSource,
       viteVersion: this.viteVersion,
+      nextRoute: this.nextRoute,
       status: this.status,
       cleaned: this.cleaned,
       resourcesReleased: this.resourcesReleased,

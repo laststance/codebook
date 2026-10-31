@@ -3391,6 +3391,7 @@ export class StudyService {
       applicationOrigin: runtime?.applicationOrigin,
       applicationPortSource: runtime?.applicationPortSource,
       viteVersion: runtime?.viteVersion,
+      nextRoute: runtime?.nextRoute,
       manifestUri:
         runtime?.manifest || record.nodePrepared
           ? this.uri(record.id, 'manifest')

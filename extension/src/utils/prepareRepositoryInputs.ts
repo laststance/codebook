@@ -8,15 +8,25 @@ const resultSchema = z.object({
   reason: z.string().optional(),
 })
 
-/** Prepares declared text controls on the owned page before its learning breakpoint is armed; uncertain inserts are never retried. @example await prepareRepositoryInputs(cdp, inputs, origins, assertCurrent) */
+/** What {@link prepareRepositoryInputs} reports while it writes, so a setup deadline can name the input and say whether its text may already be in the page. */
+export type RepositoryInputProgress = {
+  /** The input whose turn it is, before anything of it is sent. */
+  started(selector: string): void
+  /** `true` once its text was sent to the page, `false` once the page answered; a deadline between the two cannot tell whether it was written. */
+  inserting(inFlight: boolean): void
+}
+
+/** Prepares declared text controls on the owned page before its learning breakpoint is armed; uncertain inserts are never retried. @param progress - Told which input is being written and whether its text is in flight, for the setup-deadline text of a Next Pages run; optional. @example await prepareRepositoryInputs(cdp, inputs, origins, assertCurrent) */
 export async function prepareRepositoryInputs(
   cdp: Pick<Cdp, 'request'>,
   inputs: NonNullable<RepositoryConfiguration['initialInputs']>,
   origins: readonly string[],
   assertCurrent: () => void,
+  progress?: RepositoryInputProgress,
 ): Promise<void> {
   for (const [index, input] of inputs.entries()) {
     assertCurrent()
+    progress?.started(input.selector)
     const selected = await cdp.request('Runtime.evaluate', {
       expression: `(${selectInput.toString()})(${JSON.stringify(input.selector)},${JSON.stringify(origins)})`,
       returnByValue: false,
@@ -47,7 +57,9 @@ export async function prepareRepositoryInputs(
       }
       await inspect('focus')
       assertCurrent()
+      progress?.inserting(true)
       await cdp.request('Input.insertText', { text: input.text })
+      progress?.inserting(false)
       assertCurrent()
       await inspect('verify')
     } finally {

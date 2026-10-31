@@ -67,7 +67,7 @@ const nextPackageSchema = z.object({ version: z.string() })
 /**
  * Reads the `next` installation: its executable present, its version when readable.
  *
- * Called by {@link readNextReadiness}, which adds the router kind and preparation labels of an installed Next.
+ * Called by {@link readNextReadiness}, which adds the router kind and preparation labels of an installed Next, and by the configured browser run, which names the Next version in a Pages refusal or launch failure.
  *
  * @param workspace - The package root.
  * @returns
@@ -77,7 +77,7 @@ const nextPackageSchema = z.object({ version: z.string() })
  * @example
  * await readNextInstallation('/repo') // => { installed: true, ready: true, missing: [], version: '16.4.3' }
  */
-async function readNextInstallation(workspace: string): Promise<
+export async function readNextInstallation(workspace: string): Promise<
   Pick<NextAdapterReadiness, 'ready' | 'version' | 'missing'> & {
     installed: boolean
   }
