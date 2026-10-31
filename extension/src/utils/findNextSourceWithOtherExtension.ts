@@ -41,24 +41,25 @@ export async function findNextSourceWithOtherExtension(
 }
 
 /**
- * Says whether every component of a workspace-relative path is a real folder, none of them a link, asking only `lstat`; called by {@link findNextSourceWithOtherExtension} before it lists the folder, so no listing ever passes a link.
+ * Says whether every component of a workspace-relative path is a real folder, none of them a link, asking only `lstat` one component at a time, as {@link isUnlinkedRegularFile} does; called by {@link findNextSourceWithOtherExtension} before it lists the folder, so no listing ever passes a link.
+ * The walk stops at the first component that is missing, no folder or a link, so a deep stem from untrusted manifest data costs one `lstat` per component up to there, never one per prefix of the whole path at once.
  * @param workspace - The opened workspace.
  * @param relativePath - A workspace-relative folder with `/` separators.
  * @returns `true` when each component is a folder that is no link; `false` otherwise, also when a component cannot be read.
  * @example
- * await isUnlinkedFolder('/repo', 'src/pages') // => true for a real src/pages folder
+ * await isUnlinkedFolder('/repo', 'src/pages')     // => true for a real src/pages folder
+ * await isUnlinkedFolder('/repo', 'pages/a/b/c/d') // => false after two lstat calls when pages/a is missing
  */
 async function isUnlinkedFolder(
   workspace: string,
   relativePath: string,
 ): Promise<boolean> {
-  const components = relativePath.split('/')
-  const statuses = await Promise.all(
-    components.map((_, index) =>
-      lstat(join(workspace, ...components.slice(0, index + 1))).catch(
-        () => undefined,
-      ),
-    ),
-  )
-  return statuses.every((status) => status?.isDirectory() === true)
+  let current = workspace
+  for (const component of relativePath.split('/')) {
+    current = join(current, component)
+    const status = await lstat(current).catch(() => undefined)
+    // `lstat` never follows a link, so a linked component reads as no folder and ends the walk with a missing or file one.
+    if (!status?.isDirectory()) return false
+  }
+  return true
 }

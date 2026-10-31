@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import * as fileSystem from 'node:fs/promises'
 import {
   mkdir,
   mkdtemp,
@@ -8,10 +9,13 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
+import type * as FindNextSourceWithOtherExtensionModule from '../utils/findNextSourceWithOtherExtension'
 import { findNextSourceWithOtherExtension } from '../utils/findNextSourceWithOtherExtension'
+
+import { loadModule } from './utils/loadModule'
 
 /** Creates an empty temporary workspace that the test removes afterwards. @example const workspace = await temporaryWorkspace(context) */
 async function temporaryWorkspace(context: TestContext): Promise<string> {
@@ -82,4 +86,47 @@ test('a source folder that is a link out of the workspace is not listed', async 
   )
   // Assert
   assert.equal(found, undefined)
+})
+
+// Value: protects=a deep stem from untrusted manifest data (16,000 folder segments under an empty pages folder) is looked up in linear time, so a hostile .next/dev listing cannot stall the router contest or a Pages refusal for seconds and a gigabyte; fails_when=every prefix folder of the stem is asked at once (about 2.5 s and 0.9 GB here); why_new=Cycle 0066 task 36 (OCR medium: isUnlinkedFolder checked every stem folder at once); seam=a real temporary workspace; no_claim=the lookup's cost for a deep folder that does exist
+test('a lookup of a 16,000-segment stem under an empty pages folder ends within one second', async (context) => {
+  // Arrange
+  const workspace = await temporaryWorkspace(context)
+  await mkdir(join(workspace, 'pages'))
+  const stem = `pages/${'a/'.repeat(16_000)}page`
+  // Act
+  const startedAt = performance.now()
+  const found = await findNextSourceWithOtherExtension(workspace, stem)
+  const elapsedMs = performance.now() - startedAt
+  // Assert
+  assert.equal(found, undefined)
+  // gstack-timing-ok: an explicit bound on hostile input; the walk that stops at the missing pages/a takes a few milliseconds, asking every prefix at once took about 2.5 s on the Mac, so the bound leaves a wide margin under load
+  assert.ok(elapsedMs < 1_000, `the lookup took ${elapsedMs.toFixed(0)} ms`)
+})
+
+// Value: protects=the folder walk stops at the first missing component, asking nothing below it; fails_when=the folders below a missing one are asked too, so a stem's depth sets the cost; why_new=Cycle 0066 task 36 (an incremental per-component check, as isUnlinkedRegularFile does); seam=lstat recorded through the loaded module; no_claim=a component that is a file or a link (the same early return)
+test('a lookup asks the status of each stem folder only up to the first missing one', async (context) => {
+  // Arrange
+  const workspace = await temporaryWorkspace(context)
+  await mkdir(join(workspace, 'pages'))
+  const asked: string[] = []
+  const loaded = await loadModule<
+    typeof FindNextSourceWithOtherExtensionModule
+  >(resolve(__dirname, '../utils/findNextSourceWithOtherExtension.js'), {
+    'node:fs/promises': {
+      ...fileSystem,
+      lstat: async (path: string) => {
+        asked.push(relative(workspace, path))
+        return fileSystem.lstat(path)
+      },
+    },
+  })
+  // Act
+  const found = await loaded.findNextSourceWithOtherExtension(
+    workspace,
+    'pages/a/b/c/page',
+  )
+  // Assert
+  assert.equal(found, undefined)
+  assert.deepEqual(asked, ['pages', 'pages/a'])
 })
