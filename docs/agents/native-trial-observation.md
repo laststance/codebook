@@ -24,6 +24,6 @@ sips -s format jpeg -s formatOptions 70 -Z 1000 /tmp/shot.png --out /tmp/shot.jp
 
 Then `download` `/tmp/shot.jpg` and Read it.
 
-- **Evidence stills**: keep the full-size PNG as the evidence file (downloaded, SHA-256 on both sides, as AGENTS.md _Native QA_ says) and Read only the reduced copy.
+- **Evidence stills**: keep the full-size PNG as the evidence file (downloaded, SHA-256 on both sides, as [native-qa.md](native-qa.md) says) and Read only the reduced copy.
 - **Coordinates**: use `computer_screenshot` when a click needs coordinates the accessibility tree cannot give (a canvas, a webview without accessible names); its pixel space is the one clicks use.
-- **Motion**: recordings and their frames follow AGENTS.md _Native QA_; Read reduced frames (`ffmpeg … -vf scale=1000:-1`).
+- **Motion**: recordings and their frames follow [native-qa.md](native-qa.md); Read reduced frames (`ffmpeg … -vf scale=1000:-1`).

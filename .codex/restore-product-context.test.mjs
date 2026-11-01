@@ -53,7 +53,7 @@ function runHookBeside(agentsText) {
 }
 
 // Value: protects=the owner's 2026-10-21 rule reaching the agent whole after every compaction (PRODUCT_GOAL.md in full and the PNG, then the Issue; AGENTS.md from disk only when it is not in context or changed, owner 2026-10-26); fails_when=the hook prints all of AGENTS.md (Claude Code then injects only a 2,000-character preview), the rule leaves the first 2,000 characters, or a restored section differs from AGENTS.md; no_claim=that the agent actually performs the reads
-test('compaction restores the re-entry rule and the Mandatory entry and Owner directions sections within the inline limit', () => {
+test('compaction restores the re-entry rule and the Mandatory entry and Standing directions sections within the inline limit', () => {
   // Arrange
   const config = JSON.parse(
     readFileSync(new URL('./hooks.json', import.meta.url), 'utf8'),
@@ -88,9 +88,7 @@ test('compaction restores the re-entry rule and the Mandatory entry and Owner di
   assert.ok(rulePosition >= 0, 'the re-entry rule is missing')
   assert.ok(rulePosition < 2_000, `the rule starts at ${rulePosition}`)
   assert.ok(context.includes(agentsSection(agents, '## Mandatory entry')))
-  assert.ok(
-    context.includes(agentsSection(agents, '## Owner directions in force')),
-  )
+  assert.ok(context.includes(agentsSection(agents, '## Standing directions')))
   assert.match(
     context,
     /Preserve pending owner instructions and any explicit pause/,
@@ -108,7 +106,7 @@ test('an AGENTS.md whose restored sections outgrow the limit still restores the 
     '## Mandatory entry',
     '',
     'Read the goal.\n'.repeat(400),
-    '## Owner directions in force',
+    '## Standing directions',
     '',
     'Keep the owner scope.\n'.repeat(400),
     '## Native QA',
@@ -131,13 +129,13 @@ test('an AGENTS.md whose restored sections outgrow the limit still restores the 
   )
   assert.match(
     context,
-    /Mandatory entry and Owner directions in force sections exceed this reminder's 10000-character limit; read them in AGENTS\.md on disk now\./,
+    /Mandatory entry and Standing directions sections exceed this reminder's 10000-character limit; read them in AGENTS\.md on disk now\./,
   )
   assert.ok(!context.includes('Read the goal.\nRead the goal.'))
 })
 
 // Value: protects=the owner's re-entry rule reaching the agent when a restored section is renamed or removed (F74); fails_when=the hook fails or prints nothing instead of printing the rule and naming the missing section; no_claim=which sections AGENTS.md should have
-test('an AGENTS.md without the Owner directions section still restores the rule, the section it has, and names the missing one', () => {
+test('an AGENTS.md without the Standing directions section still restores the rule, the section it has, and names the missing one', () => {
   // Arrange
   const withoutDirections =
     '# codebook agent instructions\n\n## Mandatory entry\n\nRead the goal.\n'
@@ -153,11 +151,11 @@ test('an AGENTS.md without the Owner directions section still restores the rule,
   assert.ok(context.includes('## Mandatory entry\n\nRead the goal.'))
   assert.match(
     context,
-    /AGENTS\.md has no Owner directions in force section under that exact heading; read AGENTS\.md in full on disk now\./,
+    /AGENTS\.md has no Standing directions section under that exact heading; read AGENTS\.md in full on disk now\./,
   )
   assert.match(
     result.stderr,
-    /AGENTS\.md is missing its Owner directions in force section\./,
+    /AGENTS\.md is missing its Standing directions section\./,
   )
 })
 
@@ -171,7 +169,7 @@ test('an AGENTS.md with CRLF line ends and padded headings restores both section
     '',
     'Read the goal.',
     '',
-    '## Owner directions in force\t',
+    '## Standing directions\t',
     '',
     'Keep the owner scope.',
     '',
@@ -187,9 +185,7 @@ test('an AGENTS.md with CRLF line ends and padded headings restores both section
   assert.equal(result.status, 0)
   assert.equal(result.stderr, '')
   assert.ok(context.includes('## Mandatory entry\n\nRead the goal.'))
-  assert.ok(
-    context.includes('## Owner directions in force\n\nKeep the owner scope.'),
-  )
+  assert.ok(context.includes('## Standing directions\n\nKeep the owner scope.'))
   assert.ok(!context.includes('Record windows.'))
   assert.ok(!context.includes('\r'))
 })
@@ -209,7 +205,7 @@ test('an AGENTS.md whose restored headings were all renamed still restores the r
   )
   assert.match(
     context,
-    /AGENTS\.md has no Mandatory entry or Owner directions in force section under that exact heading/,
+    /AGENTS\.md has no Mandatory entry or Standing directions section under that exact heading/,
   )
 })
 
@@ -271,7 +267,7 @@ test('a restored section keeps the trailing spaces of its lines', () => {
     'Read the goal,  ',
     'then the image.',
     '',
-    '## Owner directions in force',
+    '## Standing directions',
     '',
     'Keep the owner scope.',
     '',
