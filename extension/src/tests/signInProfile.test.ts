@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
 import {
+  chmod,
   lstat,
   mkdir,
   mkdtemp,
@@ -30,6 +31,7 @@ import type { ProcessStopper } from '../runtimeSupport/utils/stopListedProcesses
 import { currentStorageOwner } from '../utils/currentStorageOwner'
 import { readProcessStart } from '../utils/readProcessStart'
 import { removeWithoutFollowing } from '../utils/removeWithoutFollowing'
+import { systemErrorCode } from '../utils/systemErrorCode'
 
 import { endProcessesAfter } from './utils/endProcessesAfter'
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
@@ -172,6 +174,35 @@ function silentStopper(): { stopper: ProcessStopper; sent: number[] } {
       sleep: async () => undefined,
     },
   }
+}
+
+/** chmod denies nothing to root or on Windows, so a folder made read-only fails no removal there. */
+const PERMISSIONS_DENY_NOTHING =
+  process.platform === 'win32' || process.getuid?.() === 0
+
+/** Runs `step` while `folder` has `mode`, and gives the folder 0700 back whatever happens, so the test's cleanup can delete it. */
+async function withFolderMode<Value>(
+  folder: string,
+  mode: number,
+  step: () => Promise<Value>,
+): Promise<Value> {
+  await chmod(folder, mode)
+  try {
+    return await step()
+  } finally {
+    await chmod(folder, 0o700)
+  }
+}
+
+/** Says whether this window still holds the session: `released` once {@link SavedSessionStore.whenReleased} resolved, `held` while it is still pending after every queued callback ran. */
+function holdState(
+  store: SavedSessionStore,
+  hash: string,
+): Promise<'released' | 'held'> {
+  return Promise.race([
+    store.whenReleased(hash).then(() => 'released' as const),
+    new Promise<'held'>((resolve) => setImmediate(() => resolve('held'))),
+  ])
 }
 
 // Value: protects=E7 identity, CEO-R8 and CEO-V3 modes; fails_when=the folder is not named by the hash of the real path under sign-in-profiles, has a mode wider than 0700 (folder or parent), the lock lies inside the folder, or a symlinked workspace path yields a second folder; no_claim=Windows ACLs; the editor's real globalStorage
@@ -334,6 +365,30 @@ test('the saved session reads none, setup-open, saved, unconfirmed or unusable, 
   assert.equal(everything.includes(hash), false)
 })
 
+// Value: protects=CEO-V5 status and the path proof (OCR 4); fails_when=a saved session whose folder cannot be looked at reads none, or a run on it is told no-saved-session and sent to set one up again; no_claim=ELOOP or EIO
+test(
+  'a saved session whose folder cannot be looked at reads unusable and refuses the run, never none',
+  { skip: PERMISSIONS_DENY_NOTHING },
+  async (context) => {
+    // Arrange
+    const { storage, repository } = await workspace(context)
+    const store = storeOf(storage, 'window-a')
+    await finishSetup(store, repository)
+    const root = join(storage, 'sign-in-profiles')
+
+    // Act
+    const { status, refusal } = await withFolderMode(root, 0o000, async () => ({
+      status: await store.describe(repository),
+      refusal: await rejection(store.acquireForRun(runRequest(repository))),
+    }))
+
+    // Assert
+    assert.deepEqual(status, { available: false, state: 'unusable' })
+    assert.equal(refusal.code, 'SIGN_IN_PROFILE_UNUSABLE')
+    assert.equal(refusal.details?.reason, 'not-a-session-folder')
+  },
+)
+
 // Value: protects=CEO-V5; fails_when=a corrupt or newer-version record is used by a run, reads as saved, or is deleted or rewritten; no_claim=a record written by a real future build
 test('a corrupt or newer-version signin.json refuses the run as unusable and is never changed', async (context) => {
   // Arrange
@@ -417,6 +472,30 @@ test('a setup closed without Done makes a run answer setup-not-finished and keep
   )
 })
 
+// Value: protects=DES-3 and the help's no-saved-session for a declared fresh profile (OCR 3); fails_when=a run that declared session: "fresh" is answered setup-not-finished because the last setup was closed without Done, so its SIGN_IN_REQUIRED names a recovery that cannot help it, or the run takes the lock; no_claim=lane B's refusal text
+test('a run that declares a fresh profile answers no-saved-session even after a setup was closed without Done', async (context) => {
+  // Arrange
+  const { storage, repository, hash } = await workspace(context)
+  const store = storeOf(storage, 'window-a')
+  await finishSetup(store, repository, { confirmed: false })
+
+  // Act
+  const admission = await store.acquireForRun({
+    ...runRequest(repository),
+    session: 'fresh',
+  })
+
+  // Assert
+  assert.deepEqual(admission, {
+    session: 'fresh',
+    signInRequiredReason: 'no-saved-session',
+  })
+  assert.equal(
+    await exists(join(storage, 'sign-in-profiles', `${hash}.signin.lock`)),
+    false,
+  )
+})
+
 // Value: protects=CEO-S16 and ENG-16; fails_when=a second admission is granted, or the second run's refusal touches the first run's Singleton files; no_claim=a real second Chrome
 test('a second run on the saved session gets BUSY profile-in-use and never reaches a launch', async (context) => {
   // Arrange
@@ -443,6 +522,37 @@ test('a second run on the saved session gets BUSY profile-in-use and never reach
     sideEffects: 'none',
   })
   assert.equal(await exists(singleton), true)
+})
+
+// Value: protects=the BUSY wording by holder (OCR 50); fails_when=a run refused because the saved session is being removed is told that another run uses it, while details.heldBy says removal; no_claim=the chat's relay of the message
+test('a run that starts while the saved session is being removed is told it is being removed, not that another run uses it', async (context) => {
+  // Arrange
+  const { storage, repository, hash } = await workspace(context)
+  const runner = storeOf(storage, 'window-b')
+  let refusal: StudyError | undefined
+  const remover = storeOf(storage, 'window-a', {
+    removeFolder: async (folder) => {
+      refusal = await rejection(runner.acquireForRun(runRequest(repository)))
+      await removeWithoutFollowing(folder)
+    },
+  })
+  await finishSetup(remover, repository)
+
+  // Act
+  await remover.remove({ hash, repositoryName: 'repo-app' })
+
+  // Assert
+  assert.equal(refusal?.code, 'BUSY')
+  assert.equal(
+    refusal?.message,
+    'The saved session of repo-app is being removed, so this run did not start and no browser opened.',
+  )
+  assert.deepEqual(refusal?.details, {
+    reason: 'profile-in-use',
+    heldBy: 'removal',
+    sent: 'not-sent',
+    sideEffects: 'none',
+  })
 })
 
 // Value: protects=ENG-12 exclusive create; fails_when=both racing admissions resolve; no_claim=network file systems
@@ -531,6 +641,71 @@ test('releasing a lease leaves a lock that carries another hold token', async (c
   // Assert
   assert.equal(await exists(lockPath), true)
 })
+
+// Value: protects=Codex correction 1 release and OCR 2 (a); fails_when=a lock written while this editor's own start could not be read stays after the release because the start became readable, so every later run gets BUSY until the editor restarts; no_claim=a real start read that fails
+test("a run lease taken while the editor's own start was unreadable still frees the saved session on release", async (context) => {
+  // Arrange
+  const { storage, repository } = await workspace(context)
+  await finishSetup(storeOf(storage, 'window-a'), repository)
+  let isStartReadable = false
+  const store = storeOf(storage, 'window-a', {
+    identity: async () => ({
+      ...(await currentStorageOwner()),
+      processStart: isStartReadable ? 'ps:read-after-the-take' : undefined,
+    }),
+  })
+  const admission = await store.acquireForRun(runRequest(repository))
+  assert.ok(admission.session === 'saved')
+  isStartReadable = true
+
+  // Act
+  await admission.lease.release()
+  const next = await storeOf(storage, 'window-b')
+    .acquireForRun(runRequest(repository, 'run-2'))
+    .then(
+      ({ session }) => session,
+      (error: unknown) => (error instanceof StudyError ? error.code : error),
+    )
+
+  // Assert
+  assert.equal(next, 'saved')
+})
+
+// Value: protects=OCR 2 (b) and the Codex candidate review (a failed lock removal is no release), and the run's retried Stop; fails_when=a release whose lock removal fails resolves, drops this window's hold while the lock stays, or answers the same failure on every later release so Stop can never free the session; no_claim=EBUSY from a Windows scanner
+test(
+  'a run release whose lock cannot be removed keeps the hold, and the next release frees the saved session',
+  { skip: PERMISSIONS_DENY_NOTHING },
+  async (context) => {
+    // Arrange
+    const { storage, repository, hash } = await workspace(context)
+    const store = storeOf(storage, 'window-a')
+    await finishSetup(store, repository)
+    const admission = await store.acquireForRun(runRequest(repository))
+    assert.ok(admission.session === 'saved')
+    const root = join(storage, 'sign-in-profiles')
+    const lockPath = join(root, `${hash}.signin.lock`)
+
+    // Act
+    const whileLocked = await withFolderMode(root, 0o500, async () => ({
+      release: await admission.lease.release().then(
+        () => 'released',
+        (error: unknown) => systemErrorCode(error),
+      ),
+      isLockKept: await exists(lockPath),
+      hold: await holdState(store, hash),
+    }))
+    await admission.lease.release()
+
+    // Assert
+    assert.deepEqual(whileLocked, {
+      release: 'EACCES',
+      isLockKept: true,
+      hold: 'held',
+    })
+    assert.equal(await exists(lockPath), false)
+    assert.equal(await holdState(store, hash), 'released')
+  },
+)
 
 // Value: protects=probe consequence and ENG-12 (js-debug's "browser is already running" modal); fails_when=SingletonLock, SingletonCookie or SingletonSocket stay after a launch is prepared, or a link target is followed; no_claim=js-debug's own check
 test('stale Chrome lock entries are removed before a launch when no process uses the folder, and link targets stay', async (context) => {
@@ -793,6 +968,46 @@ test('a run on an older Chrome than the setup is refused with chrome-version, a 
   assert.equal(read.kind === 'record' ? read.record.chromeMajor : 0, 155)
 })
 
+// Value: protects=signin.json forward compatibility (OCR 42); fails_when=an accepted newer Chrome rewrites signin.json without the keys a later Codebook added under version 1; no_claim=a real later build
+test('a newer Chrome recorded in signin.json keeps the keys a later Codebook added to it', async (context) => {
+  // Arrange
+  const { storage, repository, hash } = await workspace(context)
+  const store = storeOf(storage, 'window-a')
+  await finishSetup(store, repository, { chromeMajor: 154 })
+  const recordPath = join(storage, 'sign-in-profiles', hash, 'signin.json')
+  await writeFile(
+    recordPath,
+    JSON.stringify({
+      version: 1,
+      confirmed: true,
+      setupAt: '2026-11-02T12:10:00.000Z',
+      signInPaths: ['/login'],
+      chromeMajor: 154,
+      repositoryRoot: repository,
+      appCookies: 'persistent',
+      addedByLaterBuild: 'kept-by-the-rewrite',
+    }),
+  )
+
+  // Act
+  const admission = await store.acquireForRun(
+    runRequest(repository, 'run-1', 'Google Chrome 155.0.1.2'),
+  )
+
+  // Assert
+  assert.equal(admission.session, 'saved')
+  assert.deepEqual(JSON.parse(await readFile(recordPath, 'utf8')), {
+    version: 1,
+    confirmed: true,
+    setupAt: '2026-11-02T12:10:00.000Z',
+    signInPaths: ['/login'],
+    chromeMajor: 155,
+    repositoryRoot: repository,
+    appCookies: 'persistent',
+    addedByLaterBuild: 'kept-by-the-rewrite',
+  })
+})
+
 // Value: protects=CEO-S27 and CEO-S15; fails_when=remembering a run's sign-in paths creates the folder or a record, or the paths are lost; no_claim=VS Code's real globalState
 test('a fresh run remembers its sign-in paths for the next setup without creating a saved session', async (context) => {
   // Arrange
@@ -817,6 +1032,94 @@ test('a fresh run remembers its sign-in paths for the next setup without creatin
   ])
   assert.equal(await exists(join(storage, 'sign-in-profiles')), false)
 })
+
+// Value: protects=the removal quick pick's entries (OCR 7, one read per entry); fails_when=a session whose setup is open in another window is listed as an unknown repository, the workspace's session is not first, or a session is missing; no_claim=the quick pick itself
+test("the session list names each repository, also one whose setup is open, with the workspace's first", async (context) => {
+  // Arrange
+  const { storage, repository } = await workspace(context)
+  const other = join(storage, 'second-repo')
+  await mkdir(other)
+  const store = storeOf(storage, 'window-a')
+  await finishSetup(store, other)
+  await finishSetup(store, repository)
+  const setup = await storeOf(storage, 'window-b').acquireForSetup(other)
+
+  // Act
+  const entries = await store.list(repository)
+  await setup.release()
+
+  // Assert
+  assert.deepEqual(
+    entries.map(({ repositoryName, state, isCurrent }) => ({
+      repositoryName,
+      state,
+      isCurrent,
+    })),
+    [
+      { repositoryName: 'repo-app', state: 'saved', isCurrent: true },
+      { repositoryName: 'second-repo', state: 'setup-open', isCurrent: false },
+    ],
+  )
+})
+
+// Value: protects=ENG-15 path proof for a setup (OCR 5, Codex candidate review); fails_when=a setup follows a link in sign-in-profiles (changing its target's mode or writing Chrome files into it), answers a raw error for a file there, or keeps its lock after the refusal; no_claim=Windows junctions
+test('a setup refuses a session entry that is a link or a file, changes nothing behind the link and frees its lock', async (context) => {
+  // Arrange
+  const { storage, repository, hash } = await workspace(context)
+  const store = storeOf(storage, 'window-a')
+  const root = join(storage, 'sign-in-profiles')
+  const entry = join(root, hash)
+  const decoy = join(storage, 'decoy-folder')
+  await mkdir(root, { recursive: true })
+  await mkdir(decoy)
+  await chmod(decoy, 0o755)
+  await writeFile(join(decoy, 'keep.txt'), 'keep')
+  await symlink(decoy, entry)
+
+  // Act
+  const throughLink = await rejection(store.acquireForSetup(repository))
+  await rm(entry)
+  await writeFile(entry, 'not a folder')
+  const overFile = await rejection(store.acquireForSetup(repository))
+
+  // Assert
+  for (const refusal of [throughLink, overFile]) {
+    assert.equal(refusal.code, 'SIGN_IN_PROFILE_UNUSABLE')
+    assert.equal(refusal.details?.reason, 'not-a-session-folder')
+  }
+  assert.deepEqual(await readdir(decoy), ['keep.txt'])
+  if (process.platform !== 'win32')
+    assert.equal((await stat(decoy)).mode & 0o777, 0o755)
+  assert.deepEqual(await readdir(root), [hash])
+})
+
+// Value: protects=OCR 2 for a removal; fails_when=a removal whose lock cannot be removed after the deletion reads removed (a later setup is then refused with no cause given), or rejects with a raw error that names the lock's path; no_claim=the notice text
+test(
+  'a removal whose lock cannot be removed after the deletion reads partly-removed with the cause',
+  { skip: PERMISSIONS_DENY_NOTHING },
+  async (context) => {
+    // Arrange
+    const { storage, repository, hash } = await workspace(context)
+    const root = join(storage, 'sign-in-profiles')
+    const remover = storeOf(storage, 'window-a', {
+      removeFolder: async (folder) => {
+        await removeWithoutFollowing(folder)
+        // The folder is gone; from here on its lock can no longer be removed.
+        await chmod(root, 0o500)
+      },
+    })
+    await finishSetup(remover, repository)
+
+    // Act
+    const outcome = await remover
+      .remove({ hash, repositoryName: 'repo-app' })
+      .finally(() => chmod(root, 0o700))
+
+    // Assert
+    assert.deepEqual(outcome, { outcome: 'partly-removed', cause: 'EACCES' })
+    assert.equal(await exists(join(root, `${hash}.signin.lock`)), true)
+  },
+)
 
 // Value: protects=AC2, CEO-V3 and CEO-V10; fails_when=the folder, the record or the lock survives a removal, or the Trash is used; no_claim=the macOS Trash API (the store has no Trash dependency)
 test('removal deletes the saved session directly and leaves no folder and no lock', async (context) => {

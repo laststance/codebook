@@ -1562,7 +1562,7 @@ export type SignInRequiredReason = (typeof SIGN_IN_REQUIRED_REASONS)[number]
 export const SIGN_IN_PROFILES_DIRECTORY = 'sign-in-profiles'
 /** The file of a saved-session folder that records its setup (`confirmed`, `setupAt`, `signInPaths`, `chromeMajor`, `repositoryRoot`, `appCookies`); it sits at Chrome's user-data-dir top level. */
 export const SIGN_IN_RECORD_FILE = 'signin.json'
-/** The file of a saved-session folder that names its one holder (a setup, a run or a removal). */
+/** The name suffix of a saved session's lock, which names its one holder (a setup, a run or a removal): a sibling file `<hash>.signin.lock` beside the `<hash>` folder in `sign-in-profiles`, never inside it, so a deletion of the folder cannot race a new owner's lock (Codex correction 1). */
 export const SIGN_IN_LOCK_FILE = 'signin.lock'
 /** The version of {@link SIGN_IN_RECORD_FILE}; a record with a higher number is `newer-record`. */
 export const SIGN_IN_RECORD_VERSION = 1

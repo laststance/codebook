@@ -13,8 +13,8 @@ import { atomicPrivateWrite } from '../../utils/atomicPrivateWrite'
 import { readWikiRegularFile } from '../../utils/readWikiRegularFile'
 import type { SavedSessionUnusableReason } from '../savedSessionTypes'
 
-/** The shape of `signin.json` (version 1): what the last setup of a saved session recorded. Unknown keys are ignored so that a later build may add some. */
-const signInRecordSchema = z.object({
+/** The shape of `signin.json` (version 1): what the last setup of a saved session recorded. Unknown keys are kept through a read and a rewrite, so that a later build may add some under this version and an older build's accepted Chrome upgrade does not drop them. */
+const signInRecordSchema = z.looseObject({
   version: z.literal(SIGN_IN_RECORD_VERSION),
   /** `true` only after Done; Close setup, a timeout and a forced close write `false`. */
   confirmed: z.boolean(),
@@ -92,7 +92,7 @@ async function entryExists(path: string): Promise<boolean> {
 }
 
 /**
- * Writes `signin.json` atomically (temporary file, fsync, rename), so a failure before the rename leaves the earlier record intact; called by the store's setup lease and by an accepted Chrome upgrade.
+ * Writes `signin.json` atomically (temporary file, fsync, rename), so a failure before the rename leaves the earlier record intact; called by the store's setup lease and by an accepted Chrome upgrade, which rewrites the record it read with its unknown keys.
  * @param folder - The saved-session folder.
  * @param record - The record to publish.
  * @param beforePublish - Runs before the rename; a test makes it throw to prove atomicity.

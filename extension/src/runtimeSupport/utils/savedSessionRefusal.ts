@@ -5,7 +5,7 @@ import type { SignInLockConflict } from './signInLock'
 
 /**
  * Words the refusal a held saved-session lock gives, as the coded error the service sends to the chat; called by the store when a run, a setup or a removal meets a lock it cannot take.
- * No message or detail names a path, a hash or a cookie. `BUSY` carries `reason: 'profile-in-use'`, `heldBy` and `sent: 'not-sent'` with its own recovery.
+ * No message or detail names a path, a hash or a cookie. `BUSY` carries `reason: 'profile-in-use'`, `heldBy` and `sent: 'not-sent'` with its own recovery; its message names what holds the session, another run or its removal.
  * @param conflict - What the lock mapping decided ({@link lockConflictOf}).
  * @param repositoryName - The repository's folder name, shown to the learner.
  * @returns The error to throw.
@@ -28,7 +28,10 @@ export function savedSessionRefusal(
   if (conflict.code === 'BUSY')
     return new StudyError(
       'BUSY',
-      `Another run of ${repositoryName} uses the saved session, so this run did not start and no second browser opened.`,
+      // A removal is no run: the learner is told what holds the session.
+      conflict.heldBy === 'removal'
+        ? `The saved session of ${repositoryName} is being removed, so this run did not start and no browser opened.`
+        : `Another run of ${repositoryName} uses the saved session, so this run did not start and no second browser opened.`,
       undefined,
       BUSY_PROFILE_IN_USE_RECOVERY,
       undefined,

@@ -8,12 +8,15 @@ import {
   SIGN_IN_LOCK_FILE,
   SIGN_IN_PATH_LIMIT,
   SIGN_IN_PROFILES_DIRECTORY,
+  SIGN_IN_RECORD_FILE,
+  SIGN_IN_RECORD_VERSION,
   SIGN_IN_REMOVE_RETRIES,
   SIGN_IN_REMOVE_RETRY_DELAY_MS,
   OWNED_BROWSER_MARKER_FILE,
 } from '../constants'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
 import { isStaleStorageLock } from '../utils/isStaleStorageLock'
+import { passIfMissing } from '../utils/passIfMissing'
 import { placeStorageLock } from '../utils/placeStorageLock'
 import {
   readProcessStart,
@@ -23,6 +26,7 @@ import type { StorageOwnerIdentity } from '../utils/readRecordedOwner'
 import { removeStaleStorageLock } from '../utils/removeStaleStorageLock'
 import { removeWithoutFollowing } from '../utils/removeWithoutFollowing'
 import { retryWhileBusy } from '../utils/retryWhileBusy'
+import { SharedAttempt } from '../utils/sharedAttempt'
 import { systemErrorCode } from '../utils/systemErrorCode'
 
 import type {
@@ -117,6 +121,8 @@ type SessionTarget = {
 /** A lock this store holds. */
 type HeldLock = {
   token: string
+  /** The process start this hold wrote into the lock (absent while it could not be read); the release compares the lock with it, never with a later read. */
+  processStart?: string
   /** `true` when the lock was taken over from a holder that no longer exists. */
   wasStale: boolean
 }
@@ -194,6 +200,8 @@ export class SavedSessionStore implements SavedSessionManagerPort {
   private async statusOf(target: SessionTarget): Promise<{
     status: SavedSessionStatus
     record?: SignInRecord
+    /** The repository a readable record names, in every state, a setup that is open included; the session list reads it. */
+    repositoryRoot?: string
     unusableReason?: SavedSessionView['unusableReason']
   }> {
     const proof = await proveSessionFolder(this.root, target.hash)
@@ -213,6 +221,9 @@ export class SavedSessionStore implements SavedSessionManagerPort {
           state: 'setup-open',
           ...(read.kind === 'record' && { setupAt: read.record.setupAt }),
         },
+        ...(read.kind === 'record' && {
+          repositoryRoot: read.record.repositoryRoot,
+        }),
       }
     if (read.kind === 'unusable')
       return {
@@ -224,6 +235,7 @@ export class SavedSessionStore implements SavedSessionManagerPort {
     const { record } = read
     return {
       record,
+      repositoryRoot: record.repositoryRoot,
       status: {
         available: record.confirmed,
         state: record.confirmed ? 'saved' : 'unconfirmed',
@@ -278,22 +290,24 @@ export class SavedSessionStore implements SavedSessionManagerPort {
       if (systemErrorCode(error) === 'ENOENT') return []
       throw error
     })
-    const entries: SavedSessionEntry[] = []
-    for (const hash of names.filter((name) => SESSION_FOLDER_NAME.test(name)))
-      entries.push(await this.entryOf(hash, hash === current.hash))
+    const hashes = names.filter((name) => SESSION_FOLDER_NAME.test(name))
+    // The folders are independent of each other, so they are read at once.
+    const entries = await Promise.all(
+      hashes.map((hash) => this.entryOf(hash, hash === current.hash)),
+    )
     return entries.sort(
       (left, right) => Number(right.isCurrent) - Number(left.isCurrent),
     )
   }
 
+  /** One entry of {@link SavedSessionStore.list}: its repository and state come from the same read of `signin.json`. */
   private async entryOf(
     hash: string,
     isCurrent: boolean,
   ): Promise<SavedSessionEntry> {
-    const read = await readSignInRecord(join(this.root, hash))
-    const repositoryRoot =
-      read.kind === 'record' ? read.record.repositoryRoot : undefined
-    const { status } = await this.statusOf(this.targetOf(hash, ''))
+    const { status, repositoryRoot } = await this.statusOf(
+      this.targetOf(hash, ''),
+    )
     return {
       hash,
       ...(repositoryRoot !== undefined && { repositoryRoot }),
@@ -339,7 +353,13 @@ export class SavedSessionStore implements SavedSessionManagerPort {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         await placeStorageLock(target.lockPath, record)
-        return { held: { token: record.token, wasStale } }
+        return {
+          held: {
+            token: record.token,
+            processStart: record.processStart,
+            wasStale,
+          },
+        }
       } catch (error) {
         if (systemErrorCode(error) !== 'EEXIST') throw error
         // A lock of a gone holder is removed under a claim, then the create is tried once more.
@@ -395,19 +415,22 @@ export class SavedSessionStore implements SavedSessionManagerPort {
     this.emit(hash)
   }
 
-  /** Removes the lock only while it still names this process, its start and this hold's token. */
+  /**
+   * Removes the lock only while it still names this process, the start this hold wrote and this hold's token, then ends the hold; a lock that is gone already counts as removed.
+   * @throws What removing this hold's lock threw for another reason than its absence (`EACCES`, `EPERM`, `EBUSY`); the hold is then kept, so {@link SavedSessionStore.whenReleased} stays pending and a later release tries again.
+   */
   private async releaseLock(
     target: SessionTarget,
     held: HeldLock,
   ): Promise<void> {
     const record = await readSignInLock(target.lockPath)
-    const identity = await this.identity()
+    // The start is compared with the one this hold wrote: a start unreadable at the take and readable now must not disown the lock.
     const isOurs =
       record !== undefined &&
       record.pid === process.pid &&
       record.token === held.token &&
-      record.processStart === identity.processStart
-    if (isOurs) await unlink(target.lockPath).catch(() => undefined)
+      record.processStart === held.processStart
+    if (isOurs) await unlink(target.lockPath).catch(passIfMissing)
     this.holds.get(target.hash)?.markReleased()
     this.holds.delete(target.hash)
     this.emit(target.hash)
@@ -510,7 +533,7 @@ export class SavedSessionStore implements SavedSessionManagerPort {
 
   /**
    * Admits a version 3 run to the saved session, atomically under the folder's lock, or tells it to run with a fresh profile.
-   * A repository that never had a setup is answered `no-saved-session` without creating a folder, a lock or a record. The Chrome rule (D12): a run Chrome whose major is lower than the recorded one, or unreadable, is refused `chrome-version`; a higher one is accepted and recorded.
+   * A repository that never had a setup, and a run that declared `session: 'fresh'` whatever the saved session's state, are answered `no-saved-session` without creating a folder, a lock or a record. The Chrome rule (D12): a run Chrome whose major is lower than the recorded one, or unreadable, is refused `chrome-version`; a higher one is accepted and recorded.
    * @param request - See {@link SavedSessionRunRequest}.
    * @returns The saved session with its lease, or the fresh answer.
    * @throws `SIGN_IN_IN_PROGRESS` (a setup is open, also for `session: 'fresh'`), `BUSY` (reason profile-in-use), `SIGN_IN_PROFILE_IN_USE`, `SIGN_IN_PROFILE_UNUSABLE`.
@@ -528,7 +551,9 @@ export class SavedSessionStore implements SavedSessionManagerPort {
         { code: 'SIGN_IN_IN_PROGRESS', heldBy: 'setup' },
         target.repositoryName,
       )
-    if (request.session === 'fresh') return this.freshAdmission(target)
+    // A run that declared a fresh profile never uses the saved session, so an unfinished setup is not its reason either.
+    if (request.session === 'fresh')
+      return { session: 'fresh', signInRequiredReason: 'no-saved-session' }
     const proof = await proveSessionFolder(this.root, target.hash)
     if (!proof.ok)
       throw savedSessionUnusable('not-a-session-folder', target.repositoryName)
@@ -536,43 +561,44 @@ export class SavedSessionStore implements SavedSessionManagerPort {
     if (!proof.exists)
       return { session: 'fresh', signInRequiredReason: 'no-saved-session' }
     const held = await this.lockOrThrow(target, 'run', request.runId)
+    const admission = await this.releasingOnFailure(target, held, () =>
+      this.admitUnderLock(target, held, request),
+    )
+    // A fresh answer holds nothing: the lock goes before the run starts.
+    if (admission.session === 'fresh') await this.releaseLock(target, held)
+    return admission
+  }
+
+  /**
+   * Runs a step under a lock this call just took; a step that fails releases the lock and throws its own error.
+   * A release that fails as well is not what the caller learns: the hold is kept, as the lock still names this window.
+   */
+  private async releasingOnFailure<Value>(
+    target: SessionTarget,
+    held: HeldLock,
+    step: () => Promise<Value>,
+  ): Promise<Value> {
     try {
-      return await this.admitUnderLock(target, held, request)
+      return await step()
     } catch (error) {
-      await this.releaseLock(target, held)
+      await this.releaseLock(target, held).catch(() => undefined)
       throw error
     }
   }
 
-  private async freshAdmission(
-    target: SessionTarget,
-  ): Promise<SavedSessionRunAdmission> {
-    const read = await readSignInRecord(target.folder)
-    const unconfirmed = read.kind === 'record' && !read.record.confirmed
-    return {
-      session: 'fresh',
-      signInRequiredReason: unconfirmed
-        ? 'setup-not-finished'
-        : 'no-saved-session',
-    }
-  }
-
+  /** Decides the admission under the run's lock; a fresh answer leaves the release to {@link SavedSessionStore.acquireForRun}. */
   private async admitUnderLock(
     target: SessionTarget,
     held: HeldLock,
     request: SavedSessionRunRequest,
   ): Promise<SavedSessionRunAdmission> {
     const read = await readSignInRecord(target.folder)
-    if (read.kind === 'absent') {
-      await this.releaseLock(target, held)
+    if (read.kind === 'absent')
       return { session: 'fresh', signInRequiredReason: 'no-saved-session' }
-    }
     if (read.kind === 'unusable')
       throw savedSessionUnusable(read.reason, target.repositoryName)
-    if (!read.record.confirmed) {
-      await this.releaseLock(target, held)
+    if (!read.record.confirmed)
       return { session: 'fresh', signInRequiredReason: 'setup-not-finished' }
-    }
     const major = chromeMajorOf(request.chromeVersion)
     // D12: refuse a downgrade or a Chrome whose major cannot be read.
     if (major === undefined || major < read.record.chromeMajor)
@@ -591,7 +617,8 @@ export class SavedSessionStore implements SavedSessionManagerPort {
     held: HeldLock,
     record: SignInRecord,
   ): SavedSessionRunLease {
-    let released: Promise<void> | undefined
+    // A release that failed is tried again by the next call (the run's retried Stop).
+    const releaser = new SharedAttempt(() => this.finishRunLease(target, held))
     return {
       profile: target.folder,
       setupAt: record.setupAt,
@@ -600,8 +627,7 @@ export class SavedSessionStore implements SavedSessionManagerPort {
       recordBrowser: (marker): Promise<void> =>
         this.writeMarker(target, { ...marker, launchKind: 'attached' }),
       prepareForLaunch: (): Promise<void> => this.prepareLaunch(target, false),
-      release: (): Promise<void> =>
-        (released ??= this.finishRunLease(target, held)),
+      release: (): Promise<void> => releaser.run(),
     }
   }
 
@@ -617,10 +643,10 @@ export class SavedSessionStore implements SavedSessionManagerPort {
   }
 
   /**
-   * Takes the folder for a setup: creates it (0700), refuses an unusable record, and runs the launch preparation.
+   * Takes the folder for a setup: proves the entry is a real folder of this user inside `sign-in-profiles` (or absent), creates it (0700), refuses an unusable record, and runs the launch preparation.
    * @param repositoryRoot - The workspace repository root.
    * @returns The setup lease.
-   * @throws `SIGN_IN_IN_PROGRESS` (another setup), `SIGN_IN_PROFILE_IN_USE` (a run, a removal or an unprovable Chrome), `SIGN_IN_PROFILE_UNUSABLE`.
+   * @throws `SIGN_IN_IN_PROGRESS` (another setup), `SIGN_IN_PROFILE_IN_USE` (a run, a removal or an unprovable Chrome), `SIGN_IN_PROFILE_UNUSABLE` (reason `not-a-session-folder` for a link, a file or a folder that cannot be proven).
    * @example
    * const lease = await store.acquireForSetup('/work/app')
    */
@@ -629,21 +655,30 @@ export class SavedSessionStore implements SavedSessionManagerPort {
   ): Promise<SavedSessionSetupLease> {
     const target = await this.folderOf(repositoryRoot)
     const held = await this.lockOrThrow(target, 'setup')
-    try {
-      await this.prepareFolder(target)
-      const read = await readSignInRecord(target.folder)
-      if (read.kind === 'unusable')
-        throw savedSessionUnusable(read.reason, target.repositoryName)
-      await this.prepareLaunch(target, held.wasStale)
-      return this.setupLease(
-        target,
-        held,
-        read.kind === 'record' ? read.record : undefined,
-      )
-    } catch (error) {
-      await this.releaseLock(target, held)
-      throw error
-    }
+    return this.releasingOnFailure(target, held, () =>
+      this.prepareSetup(target, held),
+    )
+  }
+
+  /** The steps of {@link SavedSessionStore.acquireForSetup} under its lock. */
+  private async prepareSetup(
+    target: SessionTarget,
+    held: HeldLock,
+  ): Promise<SavedSessionSetupLease> {
+    // The entry is proven before anything is created or its mode changed: a link is never followed, so Chrome never writes cookies outside the store.
+    const proof = await proveSessionFolder(this.root, target.hash)
+    if (!proof.ok)
+      throw savedSessionUnusable('not-a-session-folder', target.repositoryName)
+    await this.prepareFolder(target)
+    const read = await readSignInRecord(target.folder)
+    if (read.kind === 'unusable')
+      throw savedSessionUnusable(read.reason, target.repositoryName)
+    await this.prepareLaunch(target, held.wasStale)
+    return this.setupLease(
+      target,
+      held,
+      read.kind === 'record' ? read.record : undefined,
+    )
   }
 
   private setupLease(
@@ -651,30 +686,34 @@ export class SavedSessionStore implements SavedSessionManagerPort {
     held: HeldLock,
     previous: SignInRecord | undefined,
   ): SavedSessionSetupLease {
-    let released: Promise<void> | undefined
+    // A release that failed is tried again by the next call.
+    const releaser = new SharedAttempt(() => this.finishRunLease(target, held))
     return {
       profile: target.folder,
       ...(previous !== undefined && { previous }),
       recordBrowser: (marker): Promise<void> =>
         this.writeMarker(target, marker),
+      // A setup's record holds exactly the known fields: nothing else the caller's object carries is written.
       writeRecord: async (fields): Promise<void> => {
         await writeSignInRecord(target.folder, {
-          version: 1,
-          ...fields,
+          version: SIGN_IN_RECORD_VERSION,
+          confirmed: fields.confirmed,
+          setupAt: fields.setupAt,
           signInPaths: [...fields.signInPaths],
+          chromeMajor: fields.chromeMajor,
           repositoryRoot: target.realRoot,
+          appCookies: fields.appCookies,
         })
         this.emit(target.hash)
       },
-      release: (): Promise<void> =>
-        (released ??= this.finishRunLease(target, held)),
+      release: (): Promise<void> => releaser.run(),
     }
   }
 
   /**
    * Deletes a saved session directly (never to the Trash) after the path proof, holding the lock beside the folder from before the first deletion until after the last, so a second window cannot create files in a folder being deleted.
    * @param entry - A session from {@link SavedSessionStore.list}.
-   * @returns What happened; every outcome but `removed` leaves the session as it was or partly deleted.
+   * @returns What happened; every outcome but `removed` leaves the session as it was or partly deleted. A deletion whose lock cannot be removed afterwards is `partly-removed` with the lock's cause, and this window keeps the hold.
    * @example
    * await store.remove(entry) // => { outcome: 'removed' }
    */
@@ -687,16 +726,34 @@ export class SavedSessionStore implements SavedSessionManagerPort {
     const taken = await this.takeLock(target, 'removal')
     if ('conflict' in taken) return this.removalRefusal(taken.conflict)
     this.registerHold(target.hash, 'removal')
+    const removal = await this.releasingOnFailure(target, taken.held, () =>
+      this.removeUnderLock(target, taken.held.wasStale),
+    )
     try {
-      // The proof is made again under the lock: the folder may have changed since the first look.
-      const again = await this.proofOf(target)
-      if (again !== undefined) return again
-      if (!(await this.isUnused(target, taken.held.wasStale)))
-        return { outcome: 'in-use-elsewhere' }
-      return await this.deleteFolder(target)
-    } finally {
       await this.releaseLock(target, taken.held)
+      return removal
+    } catch (error) {
+      // The lock outlived the deletion and still names this window, so the removal is not complete.
+      return removal.outcome === 'removed'
+        ? {
+            outcome: 'partly-removed',
+            cause: systemErrorCode(error) || 'unknown',
+          }
+        : removal
     }
+  }
+
+  /** The steps of {@link SavedSessionStore.remove} under its lock: the path proof again, the fresh process listing, then the deletion. */
+  private async removeUnderLock(
+    target: SessionTarget,
+    wasStale: boolean,
+  ): Promise<SavedSessionRemoval> {
+    // The proof is made again under the lock: the folder may have changed since the first look.
+    const again = await this.proofOf(target)
+    if (again !== undefined) return again
+    if (!(await this.isUnused(target, wasStale)))
+      return { outcome: 'in-use-elsewhere' }
+    return this.deleteFolder(target)
   }
 
   private async proofOf(
@@ -727,7 +784,9 @@ export class SavedSessionStore implements SavedSessionManagerPort {
     const removeFolder = this.options.removeFolder ?? removeSessionFolder
     try {
       // The record goes first so a reader never sees a half-deleted session as saved.
-      await unlink(join(target.folder, 'signin.json')).catch(() => undefined)
+      await unlink(join(target.folder, SIGN_IN_RECORD_FILE)).catch(
+        () => undefined,
+      )
       await removeFolder(target.folder)
       return { outcome: 'removed' }
     } catch (error) {

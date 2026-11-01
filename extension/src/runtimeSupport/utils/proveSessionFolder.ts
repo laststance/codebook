@@ -1,6 +1,8 @@
 import { lstat, realpath } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 
+import { passIfMissing } from '../../utils/passIfMissing'
+
 import { sha256 } from './sha256'
 
 /** The name a saved-session folder has: the sha256 hex of its repository's real path. */
@@ -15,7 +17,7 @@ export type SessionFolderProof =
  * @param root - The `sign-in-profiles` folder.
  * @param hash - The folder name to prove.
  * @param recordedRepositoryRoot - The `repositoryRoot` of a readable `signin.json`; its hash must equal the folder name.
- * @returns `ok` with the folder (and whether it exists; an absent folder has nothing to delete) or the refusal reason, which names no path.
+ * @returns `ok` with the folder (and whether it exists; only an absent entry, `ENOENT`, has nothing to delete) or the refusal reason, which names no path; an entry that cannot be looked at (`EACCES`, `ENOTDIR`, `ELOOP`, `EIO`) is refused, never taken for an absent one.
  * @example
  * await proveSessionFolder('/storage/sign-in-profiles', 'ab12…', '/work/app') // => { ok: true, folder: '/storage/sign-in-profiles/ab12…', exists: true }
  */
@@ -32,7 +34,11 @@ export async function proveSessionFolder(
   )
     return { ok: false, reason: 'The folder is not named by its record.' }
   const folder = join(root, hash)
-  const entry = await lstat(folder).catch(() => undefined)
+  // Only absence answers "no folder" (`undefined`); any other failure to look (`null`) proves nothing.
+  const entry = await lstat(folder)
+    .catch(passIfMissing)
+    .catch(() => null)
+  if (entry === null) return { ok: false, reason: 'The folder cannot be read.' }
   if (entry === undefined) return { ok: true, folder, exists: false }
   // A link or a file is never followed or deleted as a session.
   if (!entry.isDirectory())
