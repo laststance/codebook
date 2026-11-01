@@ -4,6 +4,7 @@ import type * as vscode from 'vscode'
 
 import {
   REMOVE_SAVED_SESSION_COMMAND,
+  REVIEW_SAVED_SESSION_OPERATIONS_COMMAND,
   SAVED_SESSION_ACTIONS_COMMAND,
   SAVED_SESSION_STATUS_PRIORITY,
   SET_UP_SAVED_SESSION_COMMAND,
@@ -57,7 +58,9 @@ export interface SavedSessionEditor {
       ...items: string[]
     ): Thenable<string | undefined>
   }
-  commands: { executeCommand(command: string): Thenable<unknown> }
+  commands: {
+    executeCommand(command: string, ...args: unknown[]): Thenable<unknown>
+  }
   StatusBarAlignment: { Right: number }
 }
 
@@ -88,6 +91,8 @@ export interface SavedSessionCommandOptions {
   stopRun(runId: string): Promise<void>
   /** The workspace repository's root; throws when the window has no usable workspace. */
   workspaceRoot(): string
+  /** The run that waits for the learner to confirm its operations again (DES-4); the status item shows it and offers Review operations again. */
+  awaitingReview?(): { runId: string; repository: string } | undefined
   /** Test seam: how long Stop run and remove waits; the product uses {@link SIGN_IN_STOP_RUN_BOUND_MS}. */
   stopRunBoundMs?: number
 }
@@ -97,6 +102,8 @@ export interface InstalledSavedSessions {
   disposables: vscode.Disposable[]
   /** Shows the one notice (DES-3) of a run that needs a saved session and sets the status item's "needed" state. */
   showSignInRequired(reason: SignInRequiredReason): void
+  /** Redraws the status item; the extension calls it when the operations review state changes. */
+  refresh(): void
   /** Closes an open setup as the window closes and releases what it holds. */
   dispose(): Promise<void>
 }
@@ -114,6 +121,7 @@ const SIGN_IN_REQUIRED_NOTICES: Record<
     `${name} keeps its sign-in only while the browser stays open, so a saved session cannot keep it.`,
 }
 const SET_UP_BUTTON = 'Set Up Saved Session…'
+const REVIEW_AGAIN_LABEL = 'Review operations again'
 const ANOTHER_PATH_LABEL = 'Another path…'
 const ADAPTER_LABELS: Record<DevelopmentServerAdapterName, string> = {
   'next-dev-webpack': 'Next.js (webpack dev server)',
@@ -166,19 +174,26 @@ export function installSavedSessions(
     }
   }
   /** Recomputes the item from the setup of this window, then a run's need, then the stored session. */
+  let latestRefresh = 0
   const refresh = async (): Promise<void> => {
+    // A refresh that started earlier and finishes later must not paint over the newer one.
+    const thisRefresh = ++latestRefresh
     const root = safeRoot()
     let input: SavedSessionStatusInput | undefined
     if (setup.isActive && setup.phase)
       input = { kind: 'setup', phase: setup.phase }
-    else if (needed) input = { kind: 'needed', ...needed }
-    else if (root)
+    else if (options.awaitingReview?.())
       input = {
-        kind: 'view',
-        view:
-          (await store.describeForUi(root).catch(() => undefined)) ??
-          unusableView(root),
+        kind: 'review',
+        repositoryName: options.awaitingReview()!.repository,
       }
+    else if (needed) input = { kind: 'needed', ...needed }
+    else if (root) {
+      // A store that cannot answer (for example a workspace folder that no longer exists) shows no item rather than a guess.
+      const view = await store.describeForUi(root).catch(() => undefined)
+      if (view) input = { kind: 'view', view }
+    }
+    if (thisRefresh !== latestRefresh) return
     const text = input ? savedSessionStatusText(input) : undefined
     paint(text)
   }
@@ -203,12 +218,6 @@ export function installSavedSessions(
     if (!shown) item.show()
     shown = text
   }
-  const unusableView = (root: string) => ({
-    available: false,
-    state: 'unusable' as const,
-    repositoryName: basename(root),
-    setupOpenHere: false,
-  })
   const ui: SavedSessionSetupUi = {
     showStatus: (phase: SetupPhase | undefined) => {
       if (phase) needed = undefined
@@ -326,7 +335,7 @@ export function installSavedSessions(
       new AbortController().signal,
     )
     const candidates = [
-      ...new Set([...store.lastSignInPaths(root), ...discovered]),
+      ...new Set([...(await store.lastSignInPaths(root)), ...discovered]),
     ]
     const signInPath = await pickSignInPath(name, candidates)
     if (!signInPath) return
@@ -418,11 +427,19 @@ export function installSavedSessions(
   const actionsCommand = async (): Promise<void> => {
     const name = basename(safeRoot() ?? '')
     if (setup.isActive) return reofferSetup(name)
+    const awaiting = options.awaitingReview?.()
+    // A run that waits for its operations to be confirmed comes first (DES-4).
     const picked = await editor.window.showQuickPick([
+      ...(awaiting ? [REVIEW_AGAIN_LABEL] : []),
       SET_UP_BUTTON,
       'Remove Saved Session…',
     ])
-    if (picked === SET_UP_BUTTON)
+    if (picked === REVIEW_AGAIN_LABEL && awaiting)
+      await editor.commands.executeCommand(
+        REVIEW_SAVED_SESSION_OPERATIONS_COMMAND,
+        awaiting.runId,
+      )
+    else if (picked === SET_UP_BUTTON)
       await editor.commands.executeCommand(SET_UP_SAVED_SESSION_COMMAND)
     else if (picked)
       await editor.commands.executeCommand(REMOVE_SAVED_SESSION_COMMAND)
@@ -456,6 +473,7 @@ export function installSavedSessions(
           return editor.commands.executeCommand(SET_UP_SAVED_SESSION_COMMAND)
       })
     },
+    refresh: (): void => void refresh(),
     dispose: (): Promise<void> => setup.dispose(),
   }
 }
@@ -487,6 +505,7 @@ export function installSavedSessionCommands(
       options.register(REMOVE_SAVED_SESSION_COMMAND, unavailable),
     ],
     showSignInRequired: () => undefined,
+    refresh: (): void => undefined,
     dispose: async (): Promise<void> => undefined,
   }
 }

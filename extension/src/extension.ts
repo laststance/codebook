@@ -104,6 +104,7 @@ import {
   classifyWikiUpdateEnd,
   type WikiUpdateEndFacts,
 } from './utils/classifyWikiUpdateEnd'
+import { createSavedSessionStore } from './utils/createSavedSessionStore'
 import {
   currentStorageOwner,
   useEditorMachineId,
@@ -225,10 +226,14 @@ export function activate(
   context: Pick<vscode.ExtensionContext, 'extensionPath' | 'subscriptions'> & {
     globalStorageUri: Pick<vscode.Uri, 'fsPath'>
     workspaceState: Pick<vscode.Memento, 'get' | 'update'>
-    /** The saved-session store of this window ({@link SavedSessionManagerPort}); the product binds lane A1's `SavedSessionStore` here, a test passes a fake. Without one the saved-session commands tell the learner that sessions are unavailable. */
+    /** The editor state that keeps the last sign-in paths per repository for the saved-session setup; without it the store forgets them. */
+    globalState?: Pick<vscode.Memento, 'get' | 'update'>
+    /** The saved-session store of this window ({@link SavedSessionManagerPort}); the product leaves it unset and {@link activate} builds the real {@link SavedSessionStore}, a test passes a fake. */
     savedSessionStore?: SavedSessionManagerPort
   },
 ) {
+  // One store per window: the commands, the status item, `codebook_status` and (later) the runs all share it.
+  const savedSessionStore = createSavedSessionStore(context, vscode.env)
   // Before anything takes a storage lock: locks and the connection descriptor name this machine by the editor's id.
   useEditorMachineId(vscode.env?.machineId, vscode.env?.remoteName)
   // The read of this process's start (a spawned query on macOS and Windows) begins now and is kept, so the first storage lock does not wait for it.
@@ -614,7 +619,7 @@ export function activate(
         {
           extensionPath: context.extensionPath,
           workspaceState: context.workspaceState,
-          savedSessions: context.savedSessionStore,
+          savedSessions: savedSessionStore,
           showSignInRequired: (reason) =>
             savedSessionInstall?.showSignInRequired(reason),
         },
@@ -637,6 +642,9 @@ export function activate(
         service = new StudyService(environment, storageRoot)
         service.diagnostics = diagnostics.log
         service.outputLog = diagnostics.line
+        service.savedSessions = savedSessionStore
+        // The status item shows a run that waits for its operations to be confirmed again.
+        service.operationsReviewChanged = () => savedSessionInstall?.refresh()
         // Every storage folder of the extension stays out of the causes the learner and the agent read (EN12).
         service.extraStorageRoots = [context.globalStorageUri.fsPath]
         await workspace().attach(service)
@@ -2875,7 +2883,7 @@ export function activate(
   // Saved sessions (Set Up / Remove, the status item); a window without a store keeps the commands but answers that sessions are unavailable.
   savedSessionInstall = installSavedSessionCommands({
     editor: vscode,
-    store: context.savedSessionStore,
+    store: savedSessionStore,
     register: registerCommand,
     showNotice,
     output,
@@ -2892,6 +2900,7 @@ export function activate(
       })
     },
     workspaceRoot: requireWorkspace,
+    awaitingReview: () => running?.service.awaitingOperationsReview(),
   })
   context.subscriptions.push(...savedSessionInstall.disposables)
   context.subscriptions.push(

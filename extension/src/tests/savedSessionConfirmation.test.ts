@@ -215,6 +215,31 @@ test('after a decline the next operation is refused without a second dialog unti
   assert.equal(runtime.dispatches, 0)
 })
 
+// protects=DES-4 (the status item refreshes when a run starts or stops waiting for Review again); fails_when=the service emits no change on a decline or on Review again's answer; no_claim=the status item itself (the commands test)
+test('the service announces when a run starts and stops waiting for Review again', async (context) => {
+  // Arrange
+  const { service, receipt, environment } = await startRun(context, {
+    session: 'saved',
+  })
+  const hooks = recordHooks(environment)
+  hooks.answers.push(false, true)
+  const waiting: (string | undefined)[] = []
+  service.operationsReviewChanged = (): void => {
+    waiting.push(service.awaitingOperationsReview()?.runId)
+  }
+  // Act
+  await errorOf(() =>
+    service.performAction({
+      ...receipt,
+      key: 'op-1',
+      action: OPERATION_ACTION,
+    }),
+  )
+  await service.reviewSavedSessionOperations(receipt.runId)
+  // Assert
+  assert.deepEqual(waiting, [receipt.runId, undefined])
+})
+
 // protects=CEO-S18/ENG-6: a dialog not answered in time is not confirmed, and its later Run answer is ignored and only offers Review again; fails_when=a late answer approves, sends operation 1, or is dropped without a notice; no_claim=the 300 s value (a constant)
 test('a dialog not answered in time is not confirmed, and its later Run answer is ignored and offers Review again', async (context) => {
   // Arrange

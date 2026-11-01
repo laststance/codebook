@@ -71,7 +71,7 @@ async function load(warningAnswers: string[], pressFirstButton = false) {
       whenReleased: async () => {
         calls.push('whenReleased')
       },
-      lastSignInPaths: () => [],
+      lastSignInPaths: async () => [],
       onDidChange: () => () => undefined,
       describe: async () => ({ available: true, state: 'saved' }),
       acquireForRun: async () => {

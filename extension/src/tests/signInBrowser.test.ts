@@ -62,7 +62,12 @@ test('Done closes the setup browser with Browser.close and waits until it exited
   ])
   assert.equal(browser.chromeVersion, 'Chrome/154.0.1.2')
   assert.deepEqual(markers, [
-    { executable: process.execPath, pid: fake.child().pid },
+    {
+      executable: process.execPath,
+      pid: fake.child().pid,
+      // The setup browser leads its own process group off Windows, so a later window may signal the group.
+      launchKind: process.platform === 'win32' ? 'attached' : 'detached',
+    },
   ])
 })
 

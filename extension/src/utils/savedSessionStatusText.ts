@@ -8,6 +8,7 @@ import { formatSetupTime, type SetupTimeFormat } from './formatSetupTime'
 export type SavedSessionStatusInput =
   | { kind: 'view'; view: SavedSessionView }
   | { kind: 'setup'; phase: SetupPhase }
+  | { kind: 'review'; repositoryName: string }
   | { kind: 'needed'; reason: SignInRequiredReason; repositoryName: string }
 
 /** The text and tooltip of the status item. */
@@ -90,6 +91,11 @@ export function savedSessionStatusText(
     return input.phase.phase === 'ended'
       ? undefined
       : SETUP_TEXTS[input.phase.phase](input.phase.repositoryName)
+  if (input.kind === 'review')
+    return {
+      text: '$(key) Saved session · operations not confirmed',
+      tooltip: `A run with the saved session for ${input.repositoryName} waits for you to confirm its operations. Choose Review operations again.`,
+    }
   return {
     text: '$(key) Saved session needed',
     tooltip: NEEDED_TOOLTIPS[input.reason](input.repositoryName),

@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { test } from 'node:test'
 
-import { OPERATIONS_ERROR_CODES } from '../operationsHelp'
+import { OPERATIONS_ERROR_CODES, operationsHelp } from '../operationsHelp'
 import { savedSessionHelp } from '../savedSessionHelp'
 
 const readPackaged = (...parts: string[]): Promise<string> =>
@@ -54,4 +54,31 @@ test('the README and the bundled skill name both commands, forbid typing a passw
   )
   for (const packaged of [readme, skill, manifest])
     assert.equal(/signed in for runs/i.test(packaged), false)
+})
+
+// protects=AC7, DX-11, G3 (the packaged help and the bundled skill give a chat everything it needs about a saved session); fails_when=either text loses the vocabulary, the waiting bound or the password rule; no_claim=how well a chat follows it
+test('the packaged help and the bundled skill name the saved session, its command, its codes, Review again, the waiting bound and the password rule', async () => {
+  // Arrange
+  const help = JSON.stringify({ ...operationsHelp(), ...savedSessionHelp() })
+  const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
+  // Act / Assert
+  for (const [name, text] of [
+    ['help', help],
+    ['skill', skill],
+  ] as const) {
+    for (const phrase of [
+      'saved session',
+      'Set Up Saved Session',
+      'SIGN_IN_REQUIRED',
+      'OPERATIONS_NOT_CONFIRMED',
+      'Review again',
+      'at most every 10 s for at most 5 minutes',
+    ])
+      assert.ok(text.includes(phrase), `${name} lacks ${phrase}`)
+    assert.match(
+      text,
+      /never type, ask for or accept a password/i,
+      `${name} lacks the password rule`,
+    )
+  }
 })

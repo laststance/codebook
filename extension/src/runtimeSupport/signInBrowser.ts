@@ -74,7 +74,11 @@ export interface SignInBrowserOptions {
   /** Test seam: opens the browser headless so a CI machine without a display can run the real-Chrome case; the product never sets it. */
   headless?: boolean
   /** Records the spawned browser so a later window can stop it if this one dies (the store's lease does the write). */
-  recordBrowser(marker: { executable: string; pid: number }): Promise<void>
+  recordBrowser(marker: {
+    executable: string
+    pid: number
+    launchKind?: 'detached' | 'attached'
+  }): Promise<void>
 }
 
 /**
@@ -218,6 +222,8 @@ export async function launchSignInBrowser(
     await options.recordBrowser({
       executable: options.executable,
       pid: browser.pid,
+      // The setup browser leads its own process group (spawned detached off Windows), so a later window may signal the group.
+      launchKind: process.platform === 'win32' ? 'attached' : 'detached',
     })
     trackPages(cdp, pages, () => {
       if (pages.size > 0) hasHadPage = true

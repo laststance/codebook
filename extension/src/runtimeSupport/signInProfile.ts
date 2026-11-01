@@ -26,12 +26,17 @@ import { retryWhileBusy } from '../utils/retryWhileBusy'
 import { systemErrorCode } from '../utils/systemErrorCode'
 
 import type {
+  SavedSessionEntry,
+  SavedSessionManagerPort,
+  SavedSessionRemoval,
+  SavedSessionSetupLease,
+  SavedSessionView,
+} from './savedSessionSetupTypes'
+import type {
   SavedSessionRunAdmission,
   SavedSessionRunLease,
   SavedSessionRunRequest,
-  SavedSessionState,
   SavedSessionStatus,
-  SavedSessionStorePort,
 } from './savedSessionTypes'
 import { chromeMajorOf } from './utils/chromeMajorOf'
 import { ensureSignInPreferences } from './utils/ensureSignInPreferences'
@@ -76,50 +81,6 @@ import { stopOrphanBrowser } from './utils/stopOrphanBrowser'
 
 /** The Chrome file that exists only while a debugging port is open; a stale one makes the next launch fail. */
 const DEVTOOLS_ACTIVE_PORT_FILE = 'DevToolsActivePort'
-
-/** One saved session on this host, as the removal list shows it. */
-export type SavedSessionEntry = {
-  hash: string
-  /** The repository's real path when `signin.json` names it; never shown to the learner. */
-  repositoryRoot?: string
-  /** The repository's folder name for display. */
-  repositoryName: string
-  state: SavedSessionState
-  setupAt?: string
-  /** `true` for the workspace repository of the window that asked. */
-  isCurrent: boolean
-}
-
-/** The hold a setup takes on a saved-session folder while its browser is open. */
-export type SavedSessionSetupLease = {
-  /** The user-data-dir the setup browser opens; never journaled. */
-  readonly profile: string
-  /** The record of the earlier setup, if any. */
-  readonly previous?: SignInRecord
-  /** Records the setup browser for crash recovery; `launchKind` is `detached` when it leads its own process group. */
-  recordBrowser(marker: {
-    executable: string
-    pid: number
-    launchKind?: 'detached' | 'attached'
-  }): Promise<void>
-  /** Writes `signin.json` atomically; `version` and `repositoryRoot` are added. */
-  writeRecord(
-    fields: Pick<
-      SignInRecord,
-      'confirmed' | 'setupAt' | 'signInPaths' | 'chromeMajor' | 'appCookies'
-    >,
-  ): Promise<void>
-  release(): Promise<void>
-}
-
-/** What a removal did. `partly-removed` keeps whatever the system refused to delete. */
-export type SavedSessionRemoval =
-  | { outcome: 'removed' }
-  | { outcome: 'run-in-this-window'; runId: string }
-  | { outcome: 'in-use-elsewhere' }
-  | { outcome: 'setup-open' }
-  | { outcome: 'refused-path'; reason: string }
-  | { outcome: 'partly-removed'; cause: string }
 
 /** The editor state the store keeps the last sign-in paths in. */
 export type SavedSessionMemento = {
@@ -175,7 +136,7 @@ type WindowHold = {
  * const store = new SavedSessionStore({ globalStorage, windowSession: vscode.env.sessionId })
  * const admission = await store.acquireForRun({ repositoryRoot, runId, session: 'saved-if-available', chromeVersion, signal })
  */
-export class SavedSessionStore implements SavedSessionStorePort {
+export class SavedSessionStore implements SavedSessionManagerPort {
   private readonly root: string
   private readonly holds = new Map<string, WindowHold>()
   private readonly listeners = new Set<(hash: string) => void>()
@@ -230,11 +191,17 @@ export class SavedSessionStore implements SavedSessionStorePort {
     return (await this.statusOf(await this.folderOf(repositoryRoot))).status
   }
 
-  private async statusOf(
-    target: SessionTarget,
-  ): Promise<{ status: SavedSessionStatus; record?: SignInRecord }> {
+  private async statusOf(target: SessionTarget): Promise<{
+    status: SavedSessionStatus
+    record?: SignInRecord
+    unusableReason?: SavedSessionView['unusableReason']
+  }> {
     const proof = await proveSessionFolder(this.root, target.hash)
-    if (!proof.ok) return { status: { available: false, state: 'unusable' } }
+    if (!proof.ok)
+      return {
+        status: { available: false, state: 'unusable' },
+        unusableReason: 'not-a-session-folder',
+      }
     const setupOpen = await this.isSetupOpen(target)
     const read = proof.exists
       ? await readSignInRecord(target.folder)
@@ -248,7 +215,10 @@ export class SavedSessionStore implements SavedSessionStorePort {
         },
       }
     if (read.kind === 'unusable')
-      return { status: { available: false, state: 'unusable' } }
+      return {
+        status: { available: false, state: 'unusable' },
+        unusableReason: read.reason,
+      }
     if (read.kind === 'absent')
       return { status: { available: false, state: 'none' } }
     const { record } = read
@@ -259,6 +229,28 @@ export class SavedSessionStore implements SavedSessionStorePort {
         state: record.confirmed ? 'saved' : 'unconfirmed',
         setupAt: record.setupAt,
       },
+    }
+  }
+
+  /**
+   * Answers what the status item and the setup need beyond {@link SavedSessionStore.describe}: the repository name, whether the last setup was confirmed, the app's cookie kind, why a folder is unusable, and whether a setup of this window holds the folder.
+   * @param repositoryRoot - The workspace repository root.
+   * @returns The view; carries no path, hash or cookie value.
+   * @example
+   * await store.describeForUi('/work/app') // => { available: true, state: 'saved', repositoryName: 'app', confirmed: true, appCookies: 'persistent', setupOpenHere: false }
+   */
+  async describeForUi(repositoryRoot: string): Promise<SavedSessionView> {
+    const target = await this.folderOf(repositoryRoot)
+    const { status, record, unusableReason } = await this.statusOf(target)
+    return {
+      ...status,
+      repositoryName: target.repositoryName,
+      ...(record !== undefined && {
+        confirmed: record.confirmed,
+        appCookies: record.appCookies,
+      }),
+      ...(unusableReason !== undefined && { unusableReason }),
+      setupOpenHere: this.holds.get(target.hash)?.holder === 'setup',
     }
   }
 
@@ -669,6 +661,7 @@ export class SavedSessionStore implements SavedSessionStorePort {
         await writeSignInRecord(target.folder, {
           version: 1,
           ...fields,
+          signInPaths: [...fields.signInPaths],
           repositoryRoot: target.realRoot,
         })
         this.emit(target.hash)

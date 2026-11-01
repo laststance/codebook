@@ -30,7 +30,12 @@ export interface SavedSessionSetupLease {
   readonly profile: string
   /** The record the folder had before this setup, when it had a readable one. */
   readonly previous?: SignInRecordFields
-  recordBrowser(marker: { executable: string; pid: number }): Promise<void>
+  /** `launchKind` is `detached` when the browser leads its own process group, so a later window may signal the group. */
+  recordBrowser(marker: {
+    executable: string
+    pid: number
+    launchKind?: 'detached' | 'attached'
+  }): Promise<void>
   writeRecord(fields: SignInRecordFields): Promise<void>
   release(): Promise<void>
 }
@@ -76,6 +81,6 @@ export interface SavedSessionManagerPort extends SavedSessionStorePort {
   remove(entry: SavedSessionEntry): Promise<SavedSessionRemoval>
   /** Resolves when the lock of the folder is released in this window. */
   whenReleased(hash: string): Promise<void>
-  lastSignInPaths(repositoryRoot: string): readonly string[]
+  lastSignInPaths(repositoryRoot: string): Promise<readonly string[]>
   onDidChange(listener: (hash: string) => void): () => void
 }

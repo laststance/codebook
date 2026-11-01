@@ -685,6 +685,8 @@ export class StudyService {
   repository?: RepositoryBookStore
   /** The saved-session store that answers `savedSession` in {@link StudyService.status}; set by the extension at start. */
   savedSessions?: Pick<SavedSessionStorePort, 'describe'>
+  /** Called after each change of {@link StudyService.awaitingOperationsReview} (a dialog answered, a run stopped); the extension sets it at start so the saved-session status item refreshes (DES-4). */
+  operationsReviewChanged?: () => void
   nodeHistoryStore?: NodeTestHistoryStore
   /** The workspace's history repository, which resolves a study id to the test or server store that holds it; set with {@link nodeHistoryStore}. */
   nodeHistoryRepository?: NodeHistoryRepository
@@ -5196,6 +5198,7 @@ export class StudyService {
       // What the evidence failed with by the end is the run's; a later write's failure is not (row 699).
       record.evidenceFailureAtStop = record.runtime?.evidence.failure
       record.stopped = true
+      this.notifyOperationsReviewChange()
       record.cleanupError = undefined
       record.releaseError = undefined
     })())
@@ -5681,6 +5684,8 @@ export class StudyService {
       )
     } finally {
       confirmation.isAsking = false
+      // Every outcome (confirmed, declined, timed out, stopped, failed) can change who waits for a review.
+      this.notifyOperationsReviewChange()
     }
   }
 
@@ -5857,6 +5862,15 @@ export class StudyService {
         record.operationsConfirmation?.state === 'declined' &&
         this.needsOperationsConfirmation(record),
     )
+  }
+
+  /** Calls {@link StudyService.operationsReviewChanged}; a callback that throws never breaks the run it observes. */
+  private notifyOperationsReviewChange(): void {
+    try {
+      this.operationsReviewChanged?.()
+    } catch {
+      // The status item is advisory; the run goes on.
+    }
   }
 
   /**
