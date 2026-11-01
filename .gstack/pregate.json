@@ -263,6 +263,17 @@
       ],
       "pattern": "theme=dark; sid=SECRET",
       "reason": "the dummy cookie value a Next output-masking test seeds to prove it never reaches a message; never a credential"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "extension/src/tests/chromeExtensionHistoryResource.test.ts",
+        "extension/src/tests/chromeExtensionService.test.ts",
+        "extension/src/tests/studyWorkspaceExtensionReplay.test.ts",
+        "extension/src/tests/utils/startRecordedExtensionRun.ts"
+      ],
+      "pattern": "(?:extension-history|extension-just-saved|extension-save|over-replay|after-return)",
+      "reason": "codebook_start idempotency keys named key in the Extension replay run tests; no secret value"
     }
   ]
 }
