@@ -2,6 +2,8 @@ import {
   PANE_RETURN_PRESS_WINDOW_MS,
   PLAYBACK_PAGE_STEP_MS,
   MILLISECONDS_PER_SECOND,
+  OPERATION_MARK_LABELS_MIN_WIDTH_PX,
+  OPERATION_MARK_STACK_PX,
   REPLAY_COVERED_LABEL,
   REPLAY_DEBUG_SESSION_NAME,
   PRESENTATION_MODE_IDS,
@@ -180,6 +182,22 @@ export const STUDY_UI_OPTIONS = {
   /** The words of both transports' coverage strips. */
   coverage: TIMELINE_COVERAGE_TEXT,
   sequence: STUDY_SEQUENCE_LAYOUT,
+  /** The replay's operation row (Cycle 0070): numbered marks above the playhead, Previous and Next operation, and the caption of a seek to a mark. */
+  operations: {
+    groupName: 'Operations',
+    previous: 'Previous operation',
+    next: 'Next operation',
+    /** Marks closer than this many pixels stack vertically. */
+    stackPx: OPERATION_MARK_STACK_PX,
+    /** The height of one stacked line of marks. */
+    lineHeightPx: OPERATION_MARK_STACK_PX + 4,
+    stateWords: { done: 'done', failed: 'failed', pending: 'not finished' },
+    notSent: 'not sent',
+    /** The announcement of a move; `{n}` is the operation number. */
+    moved: 'Moved to operation {n}',
+    /** The announcement of a mark whose operation was never sent, so there is no moment to move to. */
+    notMoved: 'Operation {n} was not sent, so there is no moment to show',
+  },
   maxStickyFraction: 0.35,
   compactReaderMaxWidthPx: STUDY_COMPACT_READER_MAX_WIDTH_PX,
   secondMs: MILLISECONDS_PER_SECOND,
@@ -313,7 +331,10 @@ body.moments-only #recording-transport{display:flex;flex-wrap:wrap;align-items:c
 /* A test replay's summary leads with its own content (DS-B): the learning title has no section padding of its own, and the article's pane controls follow the summary instead of standing above it. */
 #node-history-learning{padding:0;border:0}body[data-replay-family=test] #node-history{padding-top:0}#node-learning-title{margin-top:0}body[data-replay-family=test] .learning-header{display:flex;flex-wrap:wrap;align-items:start;gap:0 8px}body[data-replay-family=test] #reader-kind{flex-basis:100%}body[data-replay-family=test] .learning-header h1{flex:1}body[data-replay-family=test] .learning-header [data-shortcut-help]{flex:none}body[data-replay-family=test] #study-content{display:flex;flex-direction:column}body[data-replay-family=test] #study-content>div:has(>#content-tabs){order:1}
 /* The shared transport's event group wraps as one: it takes its own line before the slider shrinks below its minimum width (DS-C); the 5A button ends the status row, apart from the move controls. */
-.playback-events{display:inline-flex;gap:6px;flex:none}.playback-status-row #show-learning-summary{flex:none;margin-left:auto;min-height:32px;padding:4px 8px}
+.playback-events{display:inline-flex;gap:6px;flex:none}
+/* The replay's operation row (Cycle 0070): numbered marks directly above the playhead, apart from the history-coverage strip. A done mark is filled, a failed one carries a cross and its word, a pending one is outlined with a question mark: shape and text, never colour alone. Marks closer than ${OPERATION_MARK_STACK_PX} px stack on further lines. */
+.timeline-track .operation-row{position:relative;margin:0 8px 2px}.operation-row .operation-mark{position:absolute;transform:translateX(-50%);min-height:${OPERATION_MARK_STACK_PX}px;min-width:${OPERATION_MARK_STACK_PX}px;padding:0 6px;font-size:12px;line-height:1;white-space:nowrap;border:1px solid var(--vscode-button-background,#0e639c);border-radius:12px;background:transparent;color:var(--vscode-foreground,#ddd)}.operation-row .operation-mark[data-state=done]{background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff)}.operation-row .operation-mark[data-state=pending]{border-style:dashed}.operation-row .operation-mark[aria-current=true]{outline:2px solid var(--vscode-focusBorder,#007fd4);outline-offset:1px}.operation-row .operation-mark:focus-visible{outline:2px solid var(--vscode-focusBorder,#007fd4);outline-offset:2px}#operation-caption{margin:4px 0 0;font-size:12px}#operation-caption[hidden]{display:none}
+@media(max-width:${OPERATION_MARK_LABELS_MIN_WIDTH_PX - 1}px){.operation-row .operation-mark-label{display:none}}.playback-status-row #show-learning-summary{flex:none;margin-left:auto;min-height:32px;padding:4px 8px}
 /* A test replay's Application pane: the header and footer stay pinned and the output region is the only scroller (DS4); a standard-error line starts with a mark in the terminal's red, and the mark, never the color alone, says so. */
 body.test-output{height:100vh;padding:0;overflow:hidden}body.test-output main{display:flex;flex-direction:column;height:100%;min-height:0;padding:12px 16px}#test-output-test,#test-output-request-line{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere}#test-output-test:focus,#test-output-request-line:focus{display:block;overflow:visible}.server-region{flex:none;margin:4px 0;padding:8px 0}#test-output-response-body{max-height:30vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;margin:4px 0;padding:8px;border:1px solid var(--vscode-panel-border,#444)}#test-output-response-body:focus-visible{outline:2px solid var(--vscode-focusBorder,#007fd4)}#test-output-response-state{overflow-wrap:anywhere}#test-output{flex:1;min-height:0;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0;padding:8px;border:1px solid var(--vscode-panel-border,#444)}#test-output:focus-visible{outline:2px solid var(--vscode-focusBorder,#007fd4)}.stderr-mark{color:var(--vscode-terminal-ansiRed,#f14c4c)}#test-output-jump{align-self:flex-start}body.test-output p{margin:4px 0}
 /* A Learning summary in a narrow side bar keeps a long title to two lines and its sequence in view; the full title stays in its tooltip, and a title the clamp cuts is a tab stop that is shown whole while it has the keyboard focus. A wider summary shows the title whole. */

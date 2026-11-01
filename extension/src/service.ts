@@ -153,6 +153,7 @@ import {
 } from './utils/describeNodeServerOutputLine'
 import { describeNodeTestResult } from './utils/describeNodeTestResult'
 import { describeOperationFailureDetails } from './utils/describeOperationFailureDetails'
+import { describeOperationStatus } from './utils/describeOperationStatus'
 import {
   explanationPlace,
   type ExplanationPlace,
@@ -3610,6 +3611,12 @@ export class StudyService {
         : record.cleanupError && !record.stopped
           ? ['stop']
           : availableActions
+    // The words of a version 3 run's progress, for the chat as for the status item (DES-5).
+    const operationStatus = describeOperationStatus(
+      runtime?.operations,
+      record.stopped ? 'stopped' : terminalReason ? 'failed' : runtime?.status,
+      runtime?.operationFailure,
+    )
     const material = {
       instanceId: this.instanceId,
       runId: record.id,
@@ -3642,6 +3649,7 @@ export class StudyService {
       operations:
         runtime?.operations ??
         [...record.actions.values()].map((action) => action.receipt),
+      ...(operationStatus ? { operationStatus } : {}),
       observed: runtime?.observed,
       links: runtime?.links,
       nodeTest:

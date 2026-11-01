@@ -301,6 +301,7 @@ import {
   NODE_SERVER_REPLAY_TEXT,
 } from './utils/describeNodeServerReplay'
 import { describeNodeTestReplay } from './utils/describeNodeTestReplay'
+import { describeOperationStatus } from './utils/describeOperationStatus'
 import { describePaneIdentity } from './utils/describePaneIdentity'
 import { describeStudy } from './utils/describeStudy'
 import {
@@ -12167,7 +12168,7 @@ export class StudyWorkspace {
       this.hideLearningSaveItem()
       return
     }
-    const text =
+    const saveText =
       saved?.status === 'saving'
         ? '$(sync~spin) Saving learning…'
         : saved?.status === 'saved'
@@ -12177,6 +12178,17 @@ export class StudyWorkspace {
             : saved?.status === 'failed'
               ? '$(error) Learning save failed · Retry'
               : `${record.stopped ? '$(save) Recording finished' : '$(record) Recording explanation'} · Save learning replay`
+    // A version 3 run's progress follows the capture and save state, which stay leftmost and always visible (DES-5).
+    const runView = record.runtime?.view()
+    const operationStatus =
+      runView?.profile === REPOSITORY_BROWSER_PROFILE
+        ? describeOperationStatus(
+            runView.operations,
+            record.stopped ? 'stopped' : runView.status,
+            runView.operationFailure,
+          )
+        : undefined
+    const text = operationStatus ? `${saveText} · ${operationStatus}` : saveText
     const tooltip =
       saved?.detail ??
       'Finish this Codebook recording and save learning replay. This stops only its owned runtime; missing history or summary is reported as partial.'

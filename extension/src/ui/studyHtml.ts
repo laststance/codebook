@@ -238,7 +238,7 @@ export function studyHtml(kind: 'context' | 'moments'): string {
 <section id="node-history"><h2 id="node-history-heading">${STUDY_UI_OPTIONS.testReplay.heading}</h2><section id="node-history-learning" hidden><h3 id="node-learning-title"></h3></section><p id="node-history-status" class="status" role="status"></p><div class="clamped-text"><p id="node-history-capture-reason" class="muted clamp"></p><button type="button" class="link show-more" data-show-more="node-history-capture-reason" aria-controls="node-history-capture-reason" aria-expanded="false" hidden>${STUDY_UI_OPTIONS.testReplay.showMore}</button></div><div id="node-history-material" hidden><div class="clamped-text"><p id="node-learning-question" class="muted clamp"></p><button type="button" class="link show-more" data-show-more="node-learning-question" aria-controls="node-learning-question" aria-expanded="false" hidden>${STUDY_UI_OPTIONS.testReplay.showMore}</button></div><div class="clamped-text"><p id="node-learning-summary" class="clamp"></p><button type="button" class="link show-more" data-show-more="node-learning-summary" aria-controls="node-learning-summary" aria-expanded="false" hidden>${STUDY_UI_OPTIONS.testReplay.showMore}</button></div><div id="node-learning-sequence" aria-label="Test replay learning sequence"></div><details id="node-learning-steps-details"><summary id="node-learning-steps-summary">${STUDY_UI_OPTIONS.testReplay.stepDetails}</summary><div id="node-learning-steps"></div></details></div><p id="node-history-no-material" class="muted" hidden>${STUDY_UI_OPTIONS.testReplay.noMaterial}</p><div id="node-history-moment" role="status" aria-live="polite"><h3 id="node-history-step-heading" tabindex="-1" data-focus-fallback hidden></h3><p id="node-history-position" class="status"></p><p id="node-history-explanation"></p></div><p id="node-history-not-recorded" class="muted"></p><p id="node-history-unverified" class="muted"></p><p id="node-history-pointer" class="muted"></p><div id="node-history-closed" class="row" hidden><button type="button" data-action="focus-app">${STUDY_UI_OPTIONS.testReplay.showRecordedOutput}</button></div><p id="node-history-hint" class="muted" role="status" aria-live="polite"></p><button id="node-history-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button><button id="node-history-inspect" type="button" hidden>Inspect in native debugger</button><label><input id="node-history-understood" type="checkbox"><span><span id="node-history-understanding-label">${STUDY_UI_OPTIONS.testReplay.understanding}</span> <span id="node-history-understanding-state" class="muted"></span></span></label><details id="node-history-events-details"><summary id="node-history-events-summary">Events</summary><div class="row"><span id="node-history-page" class="muted"></span><button id="node-history-previous" type="button">Previous page</button><button id="node-history-next" type="button">Next page</button></div><div id="node-history-events"></div></details></section>
 <section id="observed-moments"><h2>Observed moments</h2><p class="muted" id="moments-caption">Select a captured observation or open Recording to follow its time.</p><div id="moments" class="moments"></div></section>
 <section id="saved-studies"><h2>Saved studies</h2><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select><p id="study-unopenable" class="muted" hidden></p><p id="study-newer" class="muted" hidden></p><p id="study-repairable" class="muted" hidden></p><div id="delete-study-row" class="row" hidden><button id="repair-study" class="primary" type="button" data-action="retry" aria-describedby="study-repairable" hidden>Repair saved study</button><button id="delete-study" type="button" aria-describedby="delete-study-reason delete-study-status">Delete saved study…</button></div><p id="delete-study-reason" class="muted" hidden></p><p id="delete-study-status" role="status" aria-live="polite"></p><details id="study-files" hidden><summary>Remove by hand</summary><p id="study-files-note" role="status" aria-live="polite"></p><ul id="study-files-list" class="muted" aria-label="Files of the chosen saved study"></ul><div class="row"><button id="copy-study-files" type="button">Copy paths</button><button type="button" data-action="retry">Retry storage / refresh</button></div><p id="copy-study-files-status" role="status" aria-live="polite"></p></details></section>
-<section id="recording-transport">${markupOnlyIn(kind, 'context', valuesHint)}<div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="${STUDY_UI_OPTIONS.coverage.unknownName}" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span><span id="playback-events" class="playback-events" role="group" aria-label="${STUDY_UI_OPTIONS.testReplay.eventsGroup}" hidden><button id="previous-event" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousEvent}" disabled>${STUDY_UI_OPTIONS.testReplay.previousEvent}</button><button id="next-event" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextEvent}" disabled>${STUDY_UI_OPTIONS.testReplay.nextEvent}</button></span></div><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><span id="application-covered-remedy" class="${markupOnlyIn(kind, 'context', 'visually-hidden')}${markupOnlyIn(kind, 'moments', 'muted')}" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details>${markupOnlyIn(kind, 'moments', learningSummaryButton)}</div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p>${markupOnlyIn(kind, 'moments', valuesHint)}</section>
+<section id="recording-transport">${markupOnlyIn(kind, 'context', valuesHint)}<div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><div id="operation-row" class="operation-row" role="group" aria-label="${STUDY_UI_OPTIONS.operations.groupName}" hidden></div><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="${STUDY_UI_OPTIONS.coverage.unknownName}" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span><span id="playback-events" class="playback-events" role="group" aria-label="${STUDY_UI_OPTIONS.testReplay.eventsGroup}" hidden><button id="previous-event" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousEvent}" disabled>${STUDY_UI_OPTIONS.testReplay.previousEvent}</button><button id="next-event" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextEvent}" disabled>${STUDY_UI_OPTIONS.testReplay.nextEvent}</button><button id="previous-operation" type="button" title="${STUDY_UI_OPTIONS.operations.previous}" hidden disabled>${STUDY_UI_OPTIONS.operations.previous}</button><button id="next-operation" type="button" title="${STUDY_UI_OPTIONS.operations.next}" hidden disabled>${STUDY_UI_OPTIONS.operations.next}</button></span></div><p id="operation-caption" class="muted" hidden></p><span id="operation-status" class="visually-hidden" role="status" aria-live="polite"></span><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><span id="application-covered-remedy" class="${markupOnlyIn(kind, 'context', 'visually-hidden')}${markupOnlyIn(kind, 'moments', 'muted')}" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details>${markupOnlyIn(kind, 'moments', learningSummaryButton)}</div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p>${markupOnlyIn(kind, 'moments', valuesHint)}</section>
 </main>
 <script nonce="${nonce}">(${installShortcutHelp.toString()})(${JSON.stringify(STUDY_SHORTCUTS)}, '#study-content');(${studyClient.toString()})(${JSON.stringify(STUDY_UI_OPTIONS)}, ${kind === 'context' ? installWebviewFocus.toString() : 'undefined'}, ${savedStudyLabel.toString()}, ${savedLaterNote.toString()}, ${installPaneFocusMemory.toString()})</script></body></html>`
 }
@@ -475,10 +475,14 @@ function studyClient(
       coverage.append(mark)
     }
   }
+  // The operation the learner last moved to from the operation row, Previous or Next operation, or a summary step; any other playback control forgets it, so the caption never outlives its moment.
+  let soughtOperation: { index: number; atMs: number } | undefined
   const playback = (
     action: 'play' | 'pause' | 'seek',
     positionMs?: number,
+    operation?: { index: number; atMs: number },
   ): void => {
+    soughtOperation = operation
     if (current?.recording)
       send({
         type: 'playback',
@@ -486,6 +490,180 @@ function studyClient(
         expectedRevision: current.recording.revision,
         ...(positionMs === undefined ? {} : { positionMs }),
       })
+  }
+  /**
+   * Moves the replay to the moment an operation's input was sent: the last frame at or before it and the stop state there; called by an operation mark, Previous and Next operation and a summary step linked to an operation.
+   * An operation that was never sent has no moment, so the move is only announced as not made.
+   * @param index - The operation's 1-based number.
+   * @example seekToOperation(3)
+   */
+  const seekToOperation = (index: number): void => {
+    const recording = current?.recording
+    const mark = recording?.operations.find((value) => value.index === index)
+    if (!recording || !mark || recording.readiness !== 'ready') return
+    if (mark.atMs === undefined) {
+      text(
+        'operation-status',
+        options.operations.notMoved.replace('{n}', String(index)),
+      )
+      return
+    }
+    text(
+      'operation-status',
+      options.operations.moved.replace('{n}', String(index)),
+    )
+    playback('seek', mark.atMs, { index, atMs: mark.atMs })
+  }
+  /**
+   * Finds the sent operation before or after the replay's position, for Previous and Next operation.
+   * @param direction - Which way to step.
+   * @returns The nearest sent operation in that direction, or `undefined`.
+   * @example operationStep('next')?.index
+   */
+  const operationStep = (direction: 'previous' | 'next') => {
+    const recording = current?.recording
+    const position = soughtOperation?.atMs ?? recording?.presentedMs
+    if (!recording || recording.readiness !== 'ready' || position === undefined)
+      return undefined
+    const timed = recording.operations.flatMap((mark) =>
+      mark.atMs === undefined ? [] : [{ index: mark.index, atMs: mark.atMs }],
+    )
+    return direction === 'previous'
+      ? timed
+          .filter((mark) => mark.atMs < position)
+          .sort((left, right) => right.atMs - left.atMs)[0]
+      : timed
+          .filter((mark) => mark.atMs > position)
+          .sort((left, right) => left.atMs - right.atMs)[0]
+  }
+  /**
+   * Shows the shared transport's event buttons (a test replay) or its operation buttons (a browser replay), never both; called by the renderers of both transports.
+   * @param showEvents - Whether the event buttons are the ones shown.
+   * @example showTransportMoves(true)
+   */
+  const showTransportMoves = (showEvents: boolean): void => {
+    for (const id of ['previous-event', 'next-event'])
+      element(id).hidden = !showEvents
+    for (const id of ['previous-operation', 'next-operation'])
+      element(id).hidden = showEvents
+  }
+  /**
+   * Draws the browser replay's operation row above the playhead: one numbered button per operation at its moment (filled when done, with a cross and the word failed when failed, outlined with a question mark otherwise), marks closer than the stack distance on further lines, the caption of the last move, and Previous and Next operation. A replay without operations draws no row.
+   * @param recording - The browser replay's state.
+   * @param isTransportShown - Whether this pane shows the transport.
+   * @param selectedHistoryGap - Whether the shown moment lies in an unrecorded interval, where the transport's own "Not recorded at this moment" text stays and no caption is shown.
+   * @example renderOperationRow(message.recording, true, false)
+   */
+  const renderOperationRow = (
+    recording: NonNullable<StudyViewMessage['recording']>,
+    isTransportShown: boolean,
+    selectedHistoryGap: boolean,
+  ): void => {
+    const marks = recording.operations
+    const range = recording.range
+    const row = element('operation-row')
+    const isShown = isTransportShown && marks.length > 0 && Boolean(range)
+    row.hidden = !isShown
+    element('playback-events').hidden = !isShown
+    showTransportMoves(false)
+    if (!isShown || !range) {
+      text('operation-caption', '')
+      element('operation-caption').hidden = true
+      return
+    }
+    const rowWidth = row.getBoundingClientRect().width
+    const duration = Math.max(1, range.endMs - range.startMs)
+    // Marks are placed by time; an operation never sent has no time and stands at the end. Each mark takes the first line where it is at least the stack distance from the previous mark of that line.
+    const placed = marks
+      .map((mark) => ({
+        mark,
+        x:
+          mark.atMs === undefined
+            ? rowWidth
+            : ((mark.atMs - range.startMs) / duration) * rowWidth,
+      }))
+      .sort(
+        (left, right) => left.x - right.x || left.mark.index - right.mark.index,
+      )
+    const lineEnds: number[] = []
+    const lines = new Map<number, { x: number; line: number }>()
+    for (const { mark, x } of placed) {
+      let line = lineEnds.findIndex(
+        (end) => x - end >= options.operations.stackPx,
+      )
+      if (line < 0) line = lineEnds.length
+      lineEnds[line] = x
+      lines.set(mark.index, { x, line })
+    }
+    row.style.height = `${lineEnds.length * options.operations.lineHeightPx}px`
+    const focusedIndex = document.activeElement?.getAttribute(
+      'data-operation-mark',
+    )
+    replace('operation-row', [marks, [...lines.values()]], () =>
+      marks.map((mark) => {
+        const place = lines.get(mark.index)
+        const control = document.createElement('button')
+        const stateWord = options.operations.stateWords[mark.state]
+        control.type = 'button'
+        control.className = 'operation-mark'
+        control.dataset.operationMark = String(mark.index)
+        control.dataset.state = mark.state
+        control.style.left = `${place?.x ?? 0}px`
+        control.style.top = `${(place?.line ?? 0) * options.operations.lineHeightPx}px`
+        control.title = `${mark.index} · ${mark.kind} · ${mark.title}`
+        control.setAttribute(
+          'aria-label',
+          `Operation ${mark.index} of ${mark.total}, ${mark.kind}, ${mark.title}, at ${mark.atMs === undefined ? options.operations.notSent : seconds(mark.atMs)}, ${stateWord}`,
+        )
+        const number = document.createElement('span')
+        number.textContent = `${mark.index}${mark.state === 'failed' ? ' ✕' : mark.state === 'pending' ? ' ?' : ''}`
+        control.append(number)
+        if (mark.state === 'failed') {
+          const label = document.createElement('span')
+          label.className = 'operation-mark-label'
+          label.textContent = ` ${stateWord}`
+          control.append(label)
+        }
+        return control
+      }),
+    )
+    // A rebuilt row must not drop the learner's keyboard place.
+    if (
+      focusedIndex &&
+      document.activeElement?.getAttribute('data-operation-mark') !==
+        focusedIndex
+    )
+      row
+        .querySelector<HTMLElement>(`[data-operation-mark="${focusedIndex}"]`)
+        ?.focus({ preventScroll: true })
+    const sought = soughtOperation
+    const isCaptionShown =
+      sought !== undefined &&
+      recording.readiness === 'ready' &&
+      recording.mode === 'paused' &&
+      recording.presentedMs !== undefined &&
+      Math.abs(recording.presentedMs - sought.atMs) < 1 &&
+      !selectedHistoryGap
+    const soughtMark = marks.find((mark) => mark.index === sought?.index)
+    element('operation-caption').hidden = !isCaptionShown || !soughtMark
+    text(
+      'operation-caption',
+      isCaptionShown && soughtMark
+        ? `Operation ${soughtMark.index} · ${soughtMark.title} · showing the last frame before it was sent`
+        : '',
+    )
+    for (const control of Array.from(
+      row.querySelectorAll<HTMLButtonElement>('[data-operation-mark]'),
+    ))
+      control.setAttribute(
+        'aria-current',
+        String(
+          isCaptionShown &&
+            control.dataset.operationMark === String(sought?.index),
+        ),
+      )
+    setDisabled('previous-operation', !operationStep('previous'))
+    setDisabled('next-operation', !operationStep('next'))
   }
   const nodeHistoryPlayback = (
     action: 'play' | 'pause' | 'seek',
@@ -647,6 +825,9 @@ function studyClient(
                 : {}),
             },
       )
+    } else if (target.dataset.operationMark) {
+      // An operation mark, or a summary step linked to one, moves the replay to that operation's moment.
+      seekToOperation(Number(target.dataset.operationMark))
     } else if (target.dataset.summaryStep) {
       const positions = current?.recording?.learningSummary?.positions
       const position = positions?.find(
@@ -838,6 +1019,14 @@ function studyClient(
     else if (control === 'play' || control === 'pause')
       nodeHistoryPlayback(control)
   }
+  element('previous-operation').addEventListener('click', () => {
+    const target = operationStep('previous')
+    if (target) seekToOperation(target.index)
+  })
+  element('next-operation').addEventListener('click', () => {
+    const target = operationStep('next')
+    if (target) seekToOperation(target.index)
+  })
   element('previous-event').addEventListener('click', () =>
     stepTestReplay('previous', 'event'),
   )
@@ -2803,6 +2992,9 @@ function studyClient(
       text('recording-status', testReplayTransportStatus(message, playing))
     hideBrowserRecovery()
     element('playback-events').hidden = false
+    showTransportMoves(true)
+    element('operation-row').hidden = true
+    element('operation-caption').hidden = true
     renderTestReplayToggle(message, playing)
     renderTestReplayMoves(message)
     renderTestReplayPlayhead(playbackState, message.nodeHistoryEventCount ?? 0)
@@ -3972,6 +4164,11 @@ function studyClient(
         marks,
         browserCoverageLegend(marks),
       )
+      renderOperationRow(recording, isTransportShown, selectedHistoryGap)
+    } else if (!replayFamily) {
+      // No browser replay is open: the operation row of the last one must not stay.
+      element('operation-row').hidden = true
+      element('operation-caption').hidden = true
     }
     const item = model.progressByItem.find(
       (value) => value.id === model.selection.itemId,
@@ -4227,7 +4424,7 @@ function studyClient(
       element('learning-title').title = learning.content.title
       text('learning-question', `Question: ${learning.content.question}`)
       text('learning-summary', learning.content.summary)
-      replace('learning-sequence', learning, () =>
+      replace('learning-sequence', [learning, recording?.operations], () =>
         sequenceView(
           learning.content,
           `Sequence for ${learning.content.title}. Numbered interactions are described below.`,
@@ -4235,13 +4432,32 @@ function studyClient(
             const position = learning.positions.find(
               (value) => value.stepId === step.id,
             )?.elapsedMs
+            // A step that names an operation of this run links to its mark; an operation number the replay does not have leaves the step unlinked.
+            const operation = learning.operationLinks.find(
+              (value) => value.stepId === step.id,
+            )
+            const operationMark = recording?.operations.find(
+              (value) => value.index === operation?.operationIndex,
+            )
+            const operationLink = operationMark
+              ? document.createElement('button')
+              : undefined
+            if (operationLink && operationMark) {
+              operationLink.className = 'link'
+              operationLink.dataset.operationMark = String(operationMark.index)
+              operationLink.textContent = `Go to operation ${operationMark.index} · ${operationMark.title}`
+            }
             if (position !== undefined) {
               const link = document.createElement('button')
               link.className = 'link'
               link.dataset.summaryStep = step.id
               link.textContent = `${step.reference && 'captureHash' in step.reference ? 'Inspect verified result' : 'Inspect referenced stop'} · ${seconds(position)}`
-              return link
+              if (!operationLink) return link
+              const both = document.createElement('span')
+              both.append(link, ' ', operationLink)
+              return both
             }
+            if (operationLink) return operationLink
             const missing = document.createElement('p')
             missing.className = 'muted'
             missing.textContent = 'No recorded evidence is linked to this step.'
@@ -4251,7 +4467,7 @@ function studyClient(
       )
       for (const control of Array.from(
         element('learning-sequence').querySelectorAll<HTMLButtonElement>(
-          '[data-summary-step]',
+          '[data-summary-step],[data-operation-mark]',
         ),
       )) {
         control.disabled = recording?.readiness !== 'ready'

@@ -8,6 +8,7 @@ import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { leavesStopForNoStop } from './utils/leavesStopForNoStop'
 import { projectHistoricalTimeline } from './utils/projectHistoricalTimeline'
 import { projectRecording } from './utils/projectRecording'
+import { projectReplayOperations } from './utils/projectReplayOperations'
 import { snapSeekToRecordedStop } from './utils/snapSeekToRecordedStop'
 import { untilAborted } from './utils/untilAborted'
 
@@ -238,6 +239,8 @@ export class PlaybackController {
         this.data?.context,
         this.range(),
       ),
+      // The operation row of a version 3 replay: its marks come from the same saved context as the history-coverage strip.
+      operations: projectReplayOperations(this.data?.context, this.range()),
       recordingStatus: this.data?.index.status,
       recordingReason: this.data?.index.reason,
       cleared: this.cleared,
