@@ -744,3 +744,36 @@ test('the Output lines of a run name each operation by its log id and hold no ty
   )
   assert.doesNotMatch(text, /typed-by-learner|declared-text/)
 })
+
+// protects=the run's aggregate operation receipt only moves forward: once operation 1 is acknowledged, starting operation 2 does not take the acknowledgement back, so a checkpoint saved during operation 2's stop passes the library's checkpoint rule; fails_when=accepting a later operation resets inputAcknowledged to false; no_claim=the library save itself (assertStudyCheckpoint compares exactly this field); the page and debugger are the controlled harness
+test('accepting operation 2 keeps the acknowledgement of operation 1 in the aggregate receipt', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [{ line: 1, column: 7, inspections: [...ENABLED_STOP] }],
+    {
+      operations: {
+        operations: [choose, amount],
+        stopOperations: [2, 2],
+        controls: { ...CUSTOMER_CONTROLS, ...NUMBER_CONTROLS },
+      },
+    },
+  )
+  const { run } = harness
+  await run.prepare()
+  run.action('op-1', OPERATION_ACTION)
+  await waitUntil(() => run.view().operations?.[0]?.state === 'done', 'op 1')
+  const afterFirst = plain(run.view().operation)
+  // Act
+  run.action('op-2', OPERATION_ACTION)
+  await waitUntil(
+    () => run.view().participants.browser.snapshot,
+    'the stop of operation 2',
+  )
+  const duringSecond = plain(run.view().operation)
+  // Assert
+  assert.equal(afterFirst?.inputAcknowledged, true)
+  assert.equal(duringSecond?.inputAcknowledged, true)
+  assert.equal(plain(run.view().operations?.[1])?.ack, 'pending')
+})

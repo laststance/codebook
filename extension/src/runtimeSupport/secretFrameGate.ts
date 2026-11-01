@@ -44,12 +44,14 @@ export type SecretFrameGateOptions = {
  * @param selector - The control's selector.
  * @param globalName - The page global the record is kept under.
  * @param copyMinChars - The shortest value checked for a copy into visible text.
+ * @param secretValue - The value the learner will type, when the caller has it: its occurrences in the rendered text are counted now, before the value is sent, so the baseline never depends on whether a page handler registered earlier copies the typed value first. Kept only inside this observer.
  * @returns `{ ok: true }` once watching, or the reason the control is not a password control now.
  */
 function installSecretFrameObserver(
   selector: string,
   globalName: string,
   copyMinChars: number,
+  secretValue?: string,
 ):
   | { ok: true; origin: number }
   | { ok: false; reason: SecretFrameFailureReason } {
@@ -67,6 +69,16 @@ function installSecretFrameObserver(
   // How often the value already appeared in the rendered text when it arrived: page text, not a copy.
   let baselineValue: string | undefined
   let baselineOccurrences = 0
+  // The rendered text counted before anything is typed.
+  if (
+    secretValue !== undefined &&
+    secretValue !== '' &&
+    secretValue.length >= copyMinChars
+  ) {
+    baselineValue = secretValue
+    baselineOccurrences =
+      (document.body?.innerText ?? '').split(secretValue).length - 1
+  }
   const copiedToText = (value: string): boolean => {
     // `innerText` is the rendered text: script, style and hidden elements are left out.
     const occurrences = (document.body?.innerText ?? '').split(value).length - 1
@@ -110,7 +122,7 @@ function installSecretFrameObserver(
       state.open = null
     }
   }
-  // Typed text arrives with an input event, before the page's own handlers can copy it, so the value's baseline is taken then.
+  // Without a value known beforehand, the baseline is taken when the value first arrives with an input event.
   node.addEventListener('input', check)
   // A mutation callback runs before the next paint, so any painted unsafe state is recorded.
   new MutationObserver(check).observe(document, {
@@ -147,7 +159,14 @@ function installSecretFrameObserver(
  * if ((await gate.admitFrame(frame.metadata.timestamp * 1000)) === 'pass') recorder.frame(frame)
  */
 export class SecretFrameGate {
-  private armedSelector?: string
+  /** Every control armed in the current document, each with the page global its observer keeps its record under; all are consulted for each image. */
+  private observers: {
+    selector: string
+    global: string
+    /** Held only here and inside the page observer; never logged, journaled or put in a failure. */
+    secretValue: string | undefined
+  }[] = []
+  private observersInstalled = 0
   private failureReason?: SecretFrameFailureReason
   /** When the first unsafe time began (page clock); every image at or after it is dropped. */
   private firstUnsafeMs?: number
@@ -166,7 +185,7 @@ export class SecretFrameGate {
 
   /** Whether a secret operation was announced, so images are checked. */
   get armed(): boolean {
-    return this.armedSelector !== undefined
+    return this.observers.length > 0
   }
 
   /** Why capture stopped for the rest of the run, once it did. */
@@ -176,19 +195,34 @@ export class SecretFrameGate {
 
   /**
    * Starts watching a password control; from now on every image is checked.
-   * Called right before a secret input is sent. A gate that is already armed on the same selector stays armed.
+   * Called right before a secret input is sent. A control already armed with the same selector and value stays armed; another control is watched as well, so a password and a confirmation field are both consulted for every image.
    * @param selector - The selector of the control that receives the secret.
+   * @param secretValue - The value that will be typed, when known: the observer counts its occurrences in the page's text before it is sent, so a copy made by a page handler that runs before the observer is still a copy. Never logged.
    * @returns Resolves when the observer is installed; if the control is not a password control, or the page cannot answer, the gate fails (the run then fails with `SECRET_BECAME_VISIBLE`) and no image passes.
    * @example
-   * await gate.arm('#password')
+   * await gate.arm('#password', 'correct horse')
    */
-  async arm(selector: string): Promise<void> {
-    if (this.armedSelector === selector) return
-    this.armedSelector = selector
-    this.armedAtMs = Date.now()
+  async arm(selector: string, secretValue?: string): Promise<void> {
+    if (
+      this.observers.some(
+        (observer) =>
+          observer.selector === selector &&
+          observer.secretValue === secretValue,
+      )
+    )
+      return
+    // Each observer keeps its own record: a later arm never overwrites an earlier control's.
+    this.observersInstalled += 1
+    const entry = {
+      selector,
+      global: `${SECRET_FRAME_OBSERVER_GLOBAL}${this.observersInstalled}`,
+      secretValue,
+    }
+    if (this.observers.length === 0) this.armedAtMs = Date.now()
+    this.observers.push(entry)
     try {
       const result = await this.options.evaluate(
-        `(${installSecretFrameObserver.toString()})(${JSON.stringify(selector)},${JSON.stringify(SECRET_FRAME_OBSERVER_GLOBAL)},${SECRET_FRAME_VALUE_COPY_MIN_CHARS})`,
+        `(${installSecretFrameObserver.toString()})(${JSON.stringify(selector)},${JSON.stringify(entry.global)},${SECRET_FRAME_VALUE_COPY_MIN_CHARS},${JSON.stringify(secretValue)})`,
         SECRET_FRAME_OBSERVER_TIMEOUT_MS,
       )
       const parsed = result as {
@@ -198,7 +232,15 @@ export class SecretFrameGate {
       }
       if (parsed?.ok !== true)
         this.fail(parsed?.reason ?? 'observer-unanswered', -Infinity)
-      else this.documentOrigin = parsed.origin
+      else {
+        // Observers of an earlier document are gone with it; what they last vouched for ends there.
+        if (
+          this.documentOrigin !== undefined &&
+          this.documentOrigin !== parsed.origin
+        )
+          this.retireObserversExcept(entry)
+        this.documentOrigin = parsed.origin
+      }
     } catch {
       this.fail('observer-unanswered', -Infinity)
     }
@@ -274,14 +316,21 @@ export class SecretFrameGate {
     return this.intervals.some(([start, end]) => fromMs <= end && toMs >= start)
   }
 
-  /** Asks the observer for its record; an unanswered or lost observer fails the gate. */
+  /** Asks every armed observer for its record; an unanswered or lost observer fails the gate. */
   private async refresh(): Promise<void> {
     try {
-      const report = (await this.options.evaluate(
-        `window[${JSON.stringify(SECRET_FRAME_OBSERVER_GLOBAL)}]?.query() ?? null`,
-        SECRET_FRAME_OBSERVER_TIMEOUT_MS,
-      )) as ObserverReport | null
-      if (report === null || typeof report?.now !== 'number') {
+      const reports = (await Promise.all(
+        this.observers.map((observer) =>
+          this.options.evaluate(
+            `window[${JSON.stringify(observer.global)}]?.query() ?? null`,
+            SECRET_FRAME_OBSERVER_TIMEOUT_MS,
+          ),
+        ),
+      )) as (ObserverReport | null)[]
+      const answered = reports.filter(
+        (report): report is ObserverReport => typeof report?.now === 'number',
+      )
+      if (answered.length < reports.length) {
         // A new document has no observer and no password control; only the same document losing its observer is a failure.
         if (await this.documentWasReplaced()) {
           this.release()
@@ -290,15 +339,24 @@ export class SecretFrameGate {
         this.fail('observer-unanswered', -Infinity)
         return
       }
-      this.lastAnswerMs = report.now
-      this.intervals = report.unsafe
-      this.openSinceMs = report.open
+      // The oldest answer is what every observer vouches for.
+      this.lastAnswerMs = Math.min(...answered.map((report) => report.now))
+      this.intervals = answered.flatMap((report) => report.unsafe)
+      const opens = answered.flatMap((report) =>
+        report.open === null ? [] : [report.open],
+      )
+      this.openSinceMs = opens.length > 0 ? Math.min(...opens) : null
       const earliest = Math.min(
-        report.open ?? Infinity,
-        ...report.unsafe.map(([start]) => start),
+        ...opens,
+        ...this.intervals.map(([start]) => start),
       )
       if (Number.isFinite(earliest))
-        this.fail(report.reason ?? 'control-not-password', earliest)
+        this.fail(
+          answered.find(
+            (report) => report.open !== null || report.unsafe.length > 0,
+          )?.reason ?? 'control-not-password',
+          earliest,
+        )
     } catch {
       this.fail('observer-unanswered', -Infinity)
     }
@@ -324,13 +382,23 @@ export class SecretFrameGate {
    */
   private release(): void {
     if (this.failureReason !== undefined) return
-    // Images captured after the old observer last vouched for the page and before this release (a show-password toggle followed at once by a submit that navigates) were never verified.
+    this.retireObserversExcept(undefined)
+    this.documentOrigin = undefined
+  }
+
+  /**
+   * Forgets the observers of a document that was replaced and records the time they could no longer vouch for.
+   * Images captured after the old observers last vouched for the page and before this point (a show-password toggle followed at once by a submit that navigates) were never verified.
+   * @param keep - The observer just installed in the new document, which stays.
+   */
+  private retireObserversExcept(
+    keep: (typeof this.observers)[number] | undefined,
+  ): void {
     this.unverifiedGaps.push([
       this.lastAnswerMs > 0 ? this.lastAnswerMs : this.armedAtMs,
       Date.now(),
     ])
-    this.armedSelector = undefined
-    this.documentOrigin = undefined
+    this.observers = keep ? [keep] : []
     this.intervals = []
     this.openSinceMs = null
     this.lastAnswerMs = 0

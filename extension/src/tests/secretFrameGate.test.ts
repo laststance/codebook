@@ -310,3 +310,79 @@ test('arming on a text control fails the gate', async (context) => {
   assert.equal(verdict, 'drop')
   assert.deepEqual(failures, ['control-not-password'])
 })
+
+// protects=a copy of the typed value made by a page handler registered before the observer is still a copy; fails_when=the baseline is taken after that handler, so the copy counts as page text and frames pass; no_claim=handlers that transform the value
+test('a value copied by an input handler registered before the observer drops frames and fails the run', async (context) => {
+  // Arrange
+  const page = await launchRealHeadlessPage(context)
+  if (!page) return
+  await page.load(
+    "<form><input id=\"pw\" type=\"password\"></form><p id=\"echo\"></p><script>document.getElementById('pw').addEventListener('input', (event) => { document.getElementById('echo').textContent = 'you typed ' + event.target.value })</script>",
+  )
+  const failures: SecretFrameFailureReason[] = []
+  const gate = new SecretFrameGate({
+    evaluate: (expression) => page.evaluate(expression),
+    onFailure: (reason) => void failures.push(reason),
+  })
+  await gate.arm('#pw', 'hunter2-visible')
+  // Act
+  await typeIntoControl(page, 'hunter2-visible')
+  await settle(page)
+  const verdict = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.deepEqual([verdict, failures], ['drop', ['value-copied-to-text']])
+})
+
+// protects=every armed control keeps its observer: toggling the first of two secret controls to text fails the run; fails_when=the second arm overwrites the first observer and the first control's unsafe state is never read; no_claim=more than two controls
+test('with two armed secret controls, the first turning into a text control drops frames and fails the run', async (context) => {
+  // Arrange
+  const page = await launchRealHeadlessPage(context)
+  if (!page) return
+  await page.load(
+    '<form><input id="pw" type="password"><input id="confirm" type="password"></form>',
+  )
+  const failures: SecretFrameFailureReason[] = []
+  const gate = new SecretFrameGate({
+    evaluate: (expression) => page.evaluate(expression),
+    onFailure: (reason) => void failures.push(reason),
+  })
+  await gate.arm('#pw', 'first-secret')
+  await gate.arm('#confirm', 'second-secret')
+  const beforeToggle = await gate.admitFrame(Date.now() - 20)
+  // Act
+  await page.evaluate("document.getElementById('pw').type = 'text'")
+  await settle(page)
+  const afterToggle = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.deepEqual(
+    [beforeToggle, afterToggle, failures],
+    ['pass', 'drop', ['control-not-password']],
+  )
+})
+
+// protects=a frame captured on the old document after the old observer last vouched for the page is dropped once the new document is noticed, while a frame the old observer verified passes; fails_when=a frame of an unverified gap passes after the release; no_claim=a real navigation (the evaluate function stands in for the page)
+test('a frame captured after the last verification of a replaced document is dropped, an earlier verified frame passes', async () => {
+  // Arrange
+  let replaced = false
+  const gate = new SecretFrameGate({
+    evaluate: async (expression) => {
+      if (expression === 'performance.timeOrigin') return replaced ? 2 : 1
+      if (expression.includes('query()'))
+        return replaced ? null : { now: Date.now(), open: null, unsafe: [] }
+      return { ok: true, origin: 1 }
+    },
+  })
+  await gate.arm('#password', 'typed-secret')
+  const capturedAt = Date.now() - 500
+  const verified = await gate.admitFrame(capturedAt)
+  await delay(20)
+  replaced = true
+  // Act
+  const unverifiedLate = await gate.admitFrame(Date.now())
+  const verifiedAfterRelease = await gate.admitFrame(capturedAt)
+  // Assert
+  assert.deepEqual(
+    [verified, unverifiedLate, verifiedAfterRelease],
+    ['pass', 'drop', 'pass'],
+  )
+})

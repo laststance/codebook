@@ -5148,7 +5148,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.operationKeys.push(key)
     this.operationIndexByKey.set(key, index)
     this.operationsAccepted = index
-    // The aggregate `operation` keeps the first operation's id and key; its dispatch and acknowledgement flags follow the operation in flight.
+    // The aggregate `operation` keeps the first operation's id and key; its dispatch and acknowledgement flags only move forward (a saved checkpoint must never take one back), and each operation's own progress lives in its record.
     this.operation ??= {
       id,
       key,
@@ -5156,7 +5156,6 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       inputAcknowledged: false,
       afterVerified: false,
     }
-    this.operation.inputAcknowledged = false
     this.status = 'acting'
     // The stop this operation's input leads to opens its causal window with the input.
     const stop = this.stops[this.stopIndex]
@@ -5241,7 +5240,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       }
       const hooks = this.operationHooks(index, operation)
       // Every image path is gated from before the secret is typed (ENG-5); a control that is no safe password control gets no input.
-      if (prepared.isSecret) await this.armSecretGate(index, operation.selector)
+      if (prepared.isSecret)
+        await this.armSecretGate(index, operation.selector, learnerSecret)
       await prepared.send({
         ...hooks,
         beforeInput: () => {
@@ -5284,13 +5284,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Called by {@link dispatchOperation} right before the input of an ask-learner operation; the gate stays armed for the rest of the run.
    * @param index - The operation (1-based).
    * @param selector - The selector of the secret control.
+   * @param learnerSecret - The value about to be typed; the observer counts its occurrences in the page text before the input, so the copy baseline never depends on listener order. Never logged.
    * @throws {@link OperationRefusal} `SECRET_BECAME_VISIBLE` when the control is not a password control, or the page could not answer; nothing was sent.
    * @example await this.armSecretGate(2, '#password')
    */
-  private async armSecretGate(index: number, selector: string): Promise<void> {
+  private async armSecretGate(
+    index: number,
+    selector: string,
+    learnerSecret: string | undefined,
+  ): Promise<void> {
     this.armingSecretGate = true
     try {
-      await this.secretFrameGate.arm(selector)
+      await this.secretFrameGate.arm(selector, learnerSecret)
     } finally {
       this.armingSecretGate = false
     }
@@ -7668,7 +7673,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     await this.waitForDom('after')
     current()
     await waitUntil(
-      () => this.operation?.inputAcknowledged,
+      // A version 3 run waits for the acknowledgement of the operation in flight, which its own record keeps.
+      () =>
+        this.operationsConfiguration
+          ? this.operationRecords[this.operationsAccepted - 1]?.ack === 'yes'
+          : this.operation?.inputAcknowledged,
       'single input acknowledgement',
       ACTIVE_TIMEOUT_MS,
       this.abort.signal,
