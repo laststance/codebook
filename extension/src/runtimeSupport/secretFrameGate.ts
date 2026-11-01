@@ -50,7 +50,9 @@ function installSecretFrameObserver(
   selector: string,
   globalName: string,
   copyMinChars: number,
-): { ok: true } | { ok: false; reason: SecretFrameFailureReason } {
+):
+  | { ok: true; origin: number }
+  | { ok: false; reason: SecretFrameFailureReason } {
   const first = document.querySelectorAll(selector)
   const node = first.length === 1 ? first[0] : undefined
   if (!(node instanceof HTMLInputElement) || node.type !== 'password')
@@ -105,7 +107,7 @@ function installSecretFrameObserver(
       },
     },
   })
-  return { ok: true }
+  return { ok: true, origin: performance.timeOrigin }
 }
 
 /**
@@ -127,6 +129,8 @@ export class SecretFrameGate {
   private lastAnswerMs = 0
   private openSinceMs: number | null = null
   private failureReported = false
+  /** The `performance.timeOrigin` of the document the observer was installed in; another value means the page loaded a new document. */
+  private documentOrigin?: number
 
   constructor(private readonly options: SecretFrameGateOptions) {}
 
@@ -158,10 +162,12 @@ export class SecretFrameGate {
       )
       const parsed = result as {
         ok?: boolean
+        origin?: number
         reason?: SecretFrameFailureReason
       }
       if (parsed?.ok !== true)
         this.fail(parsed?.reason ?? 'observer-unanswered', -Infinity)
+      else this.documentOrigin = parsed.origin
     } catch {
       this.fail('observer-unanswered', -Infinity)
     }
@@ -202,6 +208,8 @@ export class SecretFrameGate {
     if (!this.armed) return 'pass'
     // A verification must answer after the capture; one answered earlier is not reused.
     if (this.lastAnswerMs < toMs + SECRET_FRAME_MARGIN_MS) await this.refresh()
+    // The page loaded a new document while the answer was awaited: the secret control is gone and the image shows the new page.
+    if (!this.armed) return 'pass'
     const safe =
       this.lastAnswerMs >= toMs &&
       !this.overlapsUnsafe(
@@ -229,6 +237,11 @@ export class SecretFrameGate {
         SECRET_FRAME_OBSERVER_TIMEOUT_MS,
       )) as ObserverReport | null
       if (report === null || typeof report?.now !== 'number') {
+        // A new document has no observer and no password control; only the same document losing its observer is a failure.
+        if (await this.documentWasReplaced()) {
+          this.release()
+          return
+        }
         this.fail('observer-unanswered', -Infinity)
         return
       }
@@ -244,6 +257,33 @@ export class SecretFrameGate {
     } catch {
       this.fail('observer-unanswered', -Infinity)
     }
+  }
+
+  /** Asks the page for its document's time origin and compares it with the one the observer was installed in; `false` when the page cannot answer. */
+  private async documentWasReplaced(): Promise<boolean> {
+    if (this.documentOrigin === undefined) return false
+    try {
+      const origin = await this.options.evaluate(
+        'performance.timeOrigin',
+        SECRET_FRAME_OBSERVER_TIMEOUT_MS,
+      )
+      return typeof origin === 'number' && origin !== this.documentOrigin
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Stops checking images after the page loaded a new document (a sign-in that redirects): the control that received the secret is gone with the old document, so there is no password to draw.
+   * A gate that already failed stays failed; a later secret operation arms it again.
+   */
+  private release(): void {
+    if (this.failureReason !== undefined) return
+    this.armedSelector = undefined
+    this.documentOrigin = undefined
+    this.intervals = []
+    this.openSinceMs = null
+    this.lastAnswerMs = 0
   }
 
   /** Stops capture for the rest of the run from `fromMs` on and reports the failure once. */

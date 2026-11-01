@@ -33,6 +33,7 @@ export function maskRunSecrets(
  * Why it exists: results, snapshots and saved records are nested objects and arrays; this walks them once. Keys are left alone, except that a key that equals a secret is masked too, because the key is itself a copy of the secret.
  * @param value - A JSON-like value: string, number, boolean, null, array or plain object.
  * @param secrets - The run-scoped secret values; empty strings are ignored.
+ * @param keep - Says for an object (not an array) whether it is returned as it is, unmasked: for a record whose text is bound by a hash (a sealed source), where masking would break the seal.
  * @returns A copy with each string value masked; non-string leaves are returned as they are.
  * @example
  * maskRunSecretsDeep({ items: ['a hunter2 b'] }, new Set(['hunter2'])) // => { items: ['a [masked] b'] }
@@ -40,25 +41,28 @@ export function maskRunSecrets(
 export function maskRunSecretsDeep<T>(
   value: T,
   secrets: ReadonlySet<string>,
+  keep?: (record: object) => boolean,
 ): T {
-  return maskValue(value, secrets, orderedSecrets(secrets)) as T
+  return maskValue(value, secrets, orderedSecrets(secrets), keep) as T
 }
 
 function maskValue(
   value: unknown,
   secrets: ReadonlySet<string>,
   ordered: readonly string[],
+  keep: ((record: object) => boolean) | undefined,
 ): unknown {
   if (typeof value === 'string')
     return ordered.length ? maskRunSecrets(value, secrets) : value
   if (Array.isArray(value))
-    return value.map((entry) => maskValue(entry, secrets, ordered))
+    return value.map((entry) => maskValue(entry, secrets, ordered, keep))
+  if (value !== null && typeof value === 'object' && keep?.(value)) return value
   if (value !== null && typeof value === 'object')
     return Object.fromEntries(
       Object.entries(value).map(([key, entry]) => [
         // A key equal to a secret is a copy of it; any other key stays readable.
         secrets.has(key) && key.length > 0 ? REDACTION_MASK : key,
-        maskValue(entry, secrets, ordered),
+        maskValue(entry, secrets, ordered, keep),
       ]),
     )
   return value

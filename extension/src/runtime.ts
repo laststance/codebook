@@ -501,6 +501,8 @@ export interface StudyRuntime {
     | 'directory'
     | 'elapsedMs'
   >
+  /** The secrets the learner typed for ask-learner operations, in memory only; every sink that stores or serves run data masks them (ENG-4). Runtimes without ask-learner operations omit it. */
+  readonly learnerSecrets?: ReadonlySet<string>
   prepare(): Promise<void>
   view(): RuntimeView
   /**

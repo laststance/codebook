@@ -27,6 +27,7 @@ export type OperationRefusalCode =
   | 'NAVIGATION_NOT_SETTLED'
   | 'OPERATION_AFTER_NOT_MET'
   | 'RUN_FAILED_UNEXPECTEDLY'
+  | 'SECRET_BECAME_VISIBLE'
 
 /** Whether anything of the operation reached the page before the failure, and what a retry may rely on. */
 export type OperationSideEffects = 'none' | 'unknown'

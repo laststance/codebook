@@ -177,6 +177,8 @@ import {
 } from './utils/listMissingNodeExplanations'
 import type { NodeLearningCapturePart } from './utils/listMissingNodeLearning'
 import type { RetryVitestListingRelease } from './utils/listVitestTestFiles'
+import { maskLearnerSecretData } from './utils/maskLearnerSecretData'
+import { maskLearnerSecretText } from './utils/maskLearnerSecretText'
 import { namesLineNumber } from './utils/namesLineNumber'
 import { nextNodeServerState } from './utils/nextNodeServerState'
 import { nodeTestResultKind } from './utils/nodeTestResultKind'
@@ -725,6 +727,40 @@ export class StudyService {
   }
 
   /**
+   * Gives the secrets the learner typed for ask-learner operations in any run of this service.
+   * @returns The union of every run's learner secrets; empty when no run took one.
+   * @example this.learnerSecretsOfRuns().size // => 1 after one password was typed
+   */
+  private learnerSecretsOfRuns(): ReadonlySet<string> {
+    const secrets = new Set<string>()
+    for (const record of this.records.values())
+      for (const secret of record.runtime?.learnerSecrets ?? [])
+        // A runtime without ask-learner operations lists none.
+        if (typeof secret === 'string') secrets.add(secret)
+    return secrets
+  }
+
+  /**
+   * Masks the learner's secrets in a sentence the service words, writes or answers (ENG-4).
+   * @param text - Any text.
+   * @returns The text with every learner secret, raw or JSON-escaped, masked.
+   * @example service.maskLearnerSecretsInText('failed for hunter2') // => 'failed for [masked]'
+   */
+  maskLearnerSecretsInText(text: string): string {
+    return maskLearnerSecretText(text, this.learnerSecretsOfRuns())
+  }
+
+  /**
+   * Masks the learner's secrets in every string of a result before the MCP protocol serializes it (ENG-4).
+   * @param value - A tool answer or a JSON-like result.
+   * @returns A masked copy; the value itself when no run took a secret.
+   * @example service.maskLearnerSecretsInData({ error: 'bad hunter2' }) // => { error: 'bad [masked]' }
+   */
+  maskLearnerSecretsInData<T>(value: T): T {
+    return maskLearnerSecretData(value, this.learnerSecretsOfRuns())
+  }
+
+  /**
    * Words a failure for the places a run keeps it, once, at the moment it is assigned: private roots replaced ({@link sanitizeCause}) and the whole bounded to {@link MAX_UI_TEXT_CHARS}; every surface then shows the same value, cut for display where it is shown ({@link cutCauseForDisplay}).
    * A cause past the bound is cut between characters, never inside a surrogate pair, and says it was cut ({@link cutTextToFit}, F258).
    * @param error - What was thrown, or a cause already in words.
@@ -737,7 +773,7 @@ export class StudyService {
     roots: CauseRoots = this.causeRoots,
   ): string {
     return cutTextToFit(
-      sanitizeCause(error, roots),
+      this.maskLearnerSecretsInText(sanitizeCause(error, roots)),
       (candidate) => candidate.length <= MAX_UI_TEXT_CHARS,
     )
   }
@@ -877,8 +913,8 @@ export class StudyService {
         surface,
         studyId: `${this.instanceId}_${record.id}`,
         profile: record.profile,
-        cause,
-        ...(stack ? { stack } : {}),
+        cause: this.maskLearnerSecretsInText(cause),
+        ...(stack ? { stack: this.maskLearnerSecretsInText(stack) } : {}),
       })
     } catch {
       // The failure is in the run's own answer; the channel has nowhere to write.
@@ -3225,7 +3261,8 @@ export class StudyService {
     try {
       const context = buildRecordingContext(
         archive,
-        record.runtime?.view().events ?? [],
+        // The journal masks at write; this keeps the context free of a secret that a later journal change would let through.
+        this.maskLearnerSecretsInData(record.runtime?.view().events ?? []),
         historyRevision,
       )
       const saved = await this.recordings.saveContext(context)
@@ -4642,7 +4679,7 @@ export class StudyService {
               record.createdAt + REPOSITORY_SETUP_TIMEOUT_MS,
             // A version 3 run names its operations by the service's run id in its log lines and failure fields.
             runId: record.id,
-            outputLog: (line) => this.outputLog?.(line),
+            outputLog: (line) => this.writeOutputLine(line),
           },
         )
         const acquired = record.runtime.view()
@@ -5699,7 +5736,10 @@ export class StudyService {
    */
   private writeOutputLine(line: NodeServerOutputLine): void {
     try {
-      this.outputLog?.(line)
+      this.outputLog?.({
+        ...line,
+        text: this.maskLearnerSecretsInText(line.text),
+      })
     } catch {
       // The line is also in the run's events; the channel has nowhere to write.
     }

@@ -177,6 +177,7 @@ import { isPauseInScript } from './utils/isPauseInScript'
 import { isRefreshedFrameAtStop } from './utils/isRefreshedFrameAtStop'
 import { isSameGeneratedPosition } from './utils/isSameGeneratedPosition'
 import { launchDevelopmentServer } from './utils/launchDevelopmentServer'
+import { maskLearnerSecretText } from './utils/maskLearnerSecretText'
 import { maskNextServerOutput } from './utils/maskNextServerOutput'
 import { maskSourceMapText } from './utils/maskSourceMapText'
 import {
@@ -590,10 +591,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
       return answer.result.value
     },
-    onFailure: (reason) =>
-      this.fail(
-        `SECRET_BECAME_VISIBLE: The control that received a secret stopped being a safe password control (${reason}); Codebook stopped recording and kept no image from that time.`,
-      ),
+    onFailure: (reason) => this.failSecretVisible(reason),
     onDrop: (detail) => this.evidence.record('secret-frame.dropped', detail),
   })
   /** Where each prepared text stands; the real texts never leave {@link definition}'s memory. */
@@ -680,6 +678,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private inputInFlight = false
   /** Masks env-file and script values, and secret shapes, in captured values ({@link inspectConfiguredValues}); absent for a Next run. */
   private maskText?: (text: string) => string
+  /**
+   * Hides what a text may hold of a secret: env-file values and secret shapes first, then every value the learner typed (ENG-4).
+   * Passed as the masking of inspection values and debugger previews, and used for failures and Output lines.
+   * @param text - Any text the run stores or serves.
+   * @returns The masked text.
+   * @example this.maskRunText('Login failed for hunter2') // => 'Login failed for [masked]'
+   */
+  private readonly maskRunText = (text: string): string =>
+    maskLearnerSecretText(
+      this.maskText?.(text) ?? text,
+      this.learnerSecretValues,
+    )
   /** Masks only env-file and script values in the module text a Vite run keeps ({@link archivedModuleText}); absent for a Next run. */
   private maskModuleText?: (text: string) => string
   /** The masked copy of each bundle, kept so a read does not mask the same module again; a re-sealed bundle is a new object, so its entry is never stale. */
@@ -771,6 +781,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       retainedBytes: MAX_RETAINED_EVENT_BYTES,
       queuedBytes: MAX_QUEUED_EVIDENCE_BYTES,
     })
+    // Every journal event and saved JSON file hides the learner's secrets by value (ENG-4).
+    this.evidence.learnerSecrets = () => this.learnerSecretValues
     this.sources = new RepositorySourceService(options.workspace)
     this.browser = new HostBrowser(
       options.host,
@@ -5225,6 +5237,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         prepared = await prepare()
       }
       const hooks = this.operationHooks(index, operation, prepared.isSecret)
+      // Every image path is gated from before the secret is typed (ENG-5); a control that is no safe password control gets no input.
+      if (prepared.isSecret) await this.armSecretGate(index, operation.selector)
       await prepared.send({
         ...hooks,
         beforeInput: () => {
@@ -5240,6 +5254,44 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       throw this.refusalOfOperationFailure(index, error, hookFailure)
     }
     this.settleOperation(index)
+  }
+
+  /**
+   * Fails the run because the secret control stopped being safe to draw; capture stops for the rest of the run and the images stored before stay.
+   * Called by the secret frame gate's failure hook; a version 3 run keeps the operation's failure fields (DX-5).
+   * @param reason - Why the gate failed.
+   * @example this.failSecretVisible('control-not-password')
+   */
+  private failSecretVisible(reason: string): void {
+    const message = `The control that received a secret stopped being a safe password control (${reason}); Codebook stopped recording and kept no image from that time.`
+    if (this.operationsConfiguration && this.operationsDispatched > 0)
+      this.failOperation(
+        new OperationRefusal('SECRET_BECAME_VISIBLE', message, {
+          operationIndex: this.operationsDispatched,
+          sent: 'sent',
+        }),
+      )
+    else this.fail(`SECRET_BECAME_VISIBLE: ${message}`)
+  }
+
+  /**
+   * Arms the secret frame gate on the control that is about to receive the learner's secret, and refuses the input when the gate failed at once.
+   * Called by {@link dispatchOperation} right before the input of an ask-learner operation; the gate stays armed for the rest of the run.
+   * @param index - The operation (1-based).
+   * @param selector - The selector of the secret control.
+   * @throws {@link OperationRefusal} `SECRET_BECAME_VISIBLE` when the control is not a password control, or the page could not answer; nothing was sent.
+   * @example await this.armSecretGate(2, '#password')
+   */
+  private async armSecretGate(index: number, selector: string): Promise<void> {
+    await this.secretFrameGate.arm(selector)
+    this.alive()
+    const reason = this.secretFrameGate.failure
+    if (reason !== undefined)
+      throw new OperationRefusal(
+        'SECRET_BECAME_VISIBLE',
+        `Operation ${index} was not sent: the control for the secret is not a safe password control (${reason}).`,
+        { operationIndex: index, path: `operations[${index - 1}].selector` },
+      )
   }
 
   /**
@@ -5637,7 +5689,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     try {
       this.options.control?.outputLog?.({
         level,
-        text: `Run ${this.options.control.runId ?? this.id}: operation ${index}/${total} ${text} [log ${this.operationLogId(index)}]`,
+        text: this.maskRunText(
+          `Run ${this.options.control.runId ?? this.id}: operation ${index}/${total} ${text} [log ${this.operationLogId(index)}]`,
+        ),
       })
     } catch {
       // The line is also in the run's journal; the channel has nowhere to write.
@@ -7219,7 +7273,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       callFrame.callFrameId,
       stop.inspections,
       current,
-      this.maskText,
+      this.maskRunText,
     )
     current()
     const debuggerSnapshot = await captureReplayDebugSnapshot({
@@ -7235,7 +7289,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       assertCurrent: current,
       signal: this.abort.signal,
       workspaceRoot: this.options.workspace,
-      maskKnownText: this.maskText,
+      maskKnownText: this.maskRunText,
     })
     current()
     let inspectionFailure: Error | undefined
@@ -8226,7 +8280,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       links: [],
       captures: this.captures,
       snapshotCaptures: { ...this.snapshotCaptures },
-      failures: [...this.failures],
+      failures: this.failures.map(this.maskRunText),
       events: this.evidence.events,
       artifactDirectory: this.evidence.directory,
       activeSessionIds: [...this.activeSessions],
@@ -8302,7 +8356,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @param reason - The failure, as the run's failures and its journal name it.
    * @example this.enterFailure('Error: ENOSPC: no space left on device, write')
    */
-  private enterFailure(reason: string): void {
+  private enterFailure(unmaskedReason: string): void {
+    // A failure sentence may quote what the page was given.
+    const reason = this.maskRunText(unmaskedReason)
     this.failures.push(reason)
     this.status = 'failed'
     this.continuation = undefined

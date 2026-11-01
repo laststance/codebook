@@ -9,6 +9,7 @@ import type * as ConfiguredBrowserRunModule from '../../configuredBrowserRun'
 import { configuredDefinitionSchema } from '../../configuredStudySchemas'
 import {
   CROSS_RUNTIME_CONFIG_VERSION,
+  SECRET_FRAME_OBSERVER_GLOBAL,
   REPOSITORY_LITERAL_LIMIT_CHARS,
 } from '../../constants'
 import { StudyError } from '../../errors'
@@ -75,6 +76,8 @@ export interface FakeControl {
   tagName?: 'input' | 'textarea' | 'select'
   /** The `<input type>`; `text` by default. */
   type?: string
+  /** The type the secret frame gate's in-page observer finds on the control, when it differs from `type`. */
+  observedType?: string
   name?: string
   id?: string
   autocomplete?: string
@@ -180,6 +183,10 @@ export async function configuredRuntimeHarness(
       controls?: Record<string, FakeControl>
       /** Selectors whose text the page reads back differently after the insert, as a control that rewrites its value does. */
       failValueCheck?: string[]
+      /** The reason the page gives when a text's value check fails, in place of the default; a page may quote what it holds. */
+      failValueCheckReason?: string
+      /** Makes the page's answer to resolving a control throw an error with this message, as a transport failure that quotes text does. */
+      selectControlFailsWith?: string
     }
   } = {},
 ) {
@@ -420,6 +427,7 @@ export async function configuredRuntimeHarness(
     requiredValueUndefined = false
   let hideViewportAtPause = false,
     viewportReady = true
+  let secretVisibleSince: number | null = null
   let controlledContinuation = false,
     continuationEntered = (): void => {},
     acknowledgeContinuation = (): void => {},
@@ -663,7 +671,11 @@ export async function configuredRuntimeHarness(
       argument.phase === 'verify' &&
       operationsOption?.failValueCheck?.includes(String(argument.selector))
     )
-      return { ready: false, reason: 'input-result-changed' }
+      return {
+        ready: false,
+        reason:
+          operationsOption?.failValueCheckReason ?? 'input-result-changed',
+      }
     // A prepared input's focus phase reports the control its selector resolved to; a selector without a declared control reports none.
     const preparedControl =
       typeof argument.selector === 'string' && argument.phase === 'focus'
@@ -778,6 +790,8 @@ export async function configuredRuntimeHarness(
         method === 'Runtime.evaluate' &&
         parameters?.expression?.startsWith('(function selectControl')
       ) {
+        if (operationsOption?.selectControlFailsWith)
+          throw new Error(operationsOption.selectControlFailsWith)
         const quoted = /\)\(("(?:[^"\\]|\\.)*"),\[/.exec(
           parameters.expression,
         )?.[1]
@@ -819,6 +833,37 @@ export async function configuredRuntimeHarness(
             rejectHeldInsert = reject
           })
         return {}
+      }
+      // The secret frame gate's in-page observer: installed on a password control, it reports the time a script made the control draw its text.
+      if (
+        method === 'Runtime.evaluate' &&
+        parameters?.expression?.includes(SECRET_FRAME_OBSERVER_GLOBAL)
+      ) {
+        const expression = parameters.expression
+        if (expression.startsWith('window['))
+          return {
+            result: {
+              value: {
+                now: Date.now(),
+                open: secretVisibleSince,
+                unsafe: [],
+                ...(secretVisibleSince !== null && {
+                  reason: 'control-not-password',
+                }),
+              },
+            },
+          }
+        const quoted = /\)\(("(?:[^"\\]|\\.)*"),/.exec(expression)?.[1]
+        const control =
+          operationsOption?.controls?.[quoted ? JSON.parse(quoted) : '']
+        return {
+          result: {
+            value:
+              (control?.observedType ?? control?.type) === 'password'
+                ? { ok: true, origin: 1 }
+                : { ok: false, reason: 'control-not-password' },
+          },
+        }
       }
       if (method === 'Runtime.evaluate')
         return { result: { value: pageEvaluation(parameters?.expression) } }
@@ -1406,6 +1451,10 @@ export async function configuredRuntimeHarness(
       listeners.get('Debugger.paused')?.(
         debuggerPausedEvent({ callFrameId: 'adapter-frame', ...place }),
       )
+    },
+    /** Makes the stand-in page draw the secret control's text from now on, as a show-password toggle does; `false` restores the dots. */
+    setSecretVisible(visible: boolean): void {
+      secretVisibleSince = visible ? Date.now() : null
     },
     setScreenshot(base64: string): void {
       screenshot = base64

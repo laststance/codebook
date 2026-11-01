@@ -66,9 +66,10 @@ export async function captureStudy(
       .filter((value) => value.snapshotUri === snapshotUri)
       .map((value) => ({
         id: value.id,
-        text: value.agentInterpretation,
+        // The chat's words and the facts it quoted are masked by the learner's secrets (ENG-4).
+        text: service.maskLearnerSecretsInText(value.agentInterpretation),
         createdAt: value.createdAt,
-        facts: value.capturedFacts,
+        facts: service.maskLearnerSecretsInData(value.capturedFacts),
       }))
     // Versioned validators reject mixed evidence before any history or recording writer can accept it.
     if (snapshot.actionId === REPOSITORY_BROWSER_ACTION) {
@@ -159,11 +160,12 @@ export async function captureStudy(
               : capture.status === 'pending'
                 ? 'pending'
                 : 'absent',
-          reason:
+          reason: service.maskLearnerSecretsInText(
             capture.error ??
-            (capture.status === 'pending'
-              ? 'Capturing this observation…'
-              : 'No confirmed image for this phase.'),
+              (capture.status === 'pending'
+                ? 'Capturing this observation…'
+                : 'No confirmed image for this phase.'),
+          ),
         })
     }
   }
@@ -173,7 +175,9 @@ export async function captureStudy(
     .filter((value) => value.learningSummary)
     .at(-1)
   const learningSummary = summaryExplanation?.learningSummary && {
-    content: summaryExplanation.learningSummary,
+    content: service.maskLearnerSecretsInData(
+      summaryExplanation.learningSummary,
+    ),
     explanationId: summaryExplanation.id,
     createdAt: summaryExplanation.createdAt,
   }
@@ -215,7 +219,10 @@ export async function captureStudy(
       terminal: record.stopped || state.resourcesReleased,
       finalOutcome: state.finalOutcome,
       materialSignature: signature,
-      reason: state.terminalReason ?? state.cleanupError?.message,
+      reason:
+        service.maskLearnerSecretsInText(
+          state.terminalReason ?? state.cleanupError?.message ?? '',
+        ) || undefined,
       learningSummary,
       observations,
       captures,
