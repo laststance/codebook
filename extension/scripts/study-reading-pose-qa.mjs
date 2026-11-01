@@ -729,6 +729,68 @@ async function check(page, options, collected) {
     actual: switchedSeeks.map((message) => message.positionMs),
     passed: switchedSeeks.length === 1 && switchedSeeks[0].positionMs === 3500,
   })
+  // Value: protects=after the learner moved to operation 2 here and another pane (the sidebar's Learning summary) then moved the same replay to 4.00 s, Previous and Next operation and their disabled state count from 4.00 s; fails_when=this page keeps stepping from operation 2's moment, so Next seeks operation 3 (3.50 s), which lies behind the shown moment, and Previous seeks operation 1; why_new=CodeRabbit CLI Cycle 0070 pt1 finding 6; seam=none; no_claim=the host's broadcast of one replay's position to both panes (studyWorkspace tests) (stand-ins: the Study messages the host posts)
+  // Arrange: operation 2 is sought and presented here, then the host presents 4.00 s after a move this page did not send.
+  await render(operationReplay(0))
+  await markOf(2).click()
+  await publish(operationReplay(1, { presentedMs: 1500 }))
+  await waitUntilRendered(revisionAt(1))
+  await publish(operationReplay(2, { presentedMs: 4000 }))
+  await waitUntilRendered(revisionAt(2))
+  const movedElsewhere = await readRow()
+  const sentBeforeMovedElsewhereSteps = (await sentPlayback()).length
+  // Act: press Next operation, then Previous operation, as the page offers them (a disabled button gets no click and sends no seek).
+  await page.evaluate(() => document.getElementById('next-operation').click())
+  await page.evaluate(() =>
+    document.getElementById('previous-operation').click(),
+  )
+  const movedElsewhereSeeks = (await sentPlayback())
+    .slice(sentBeforeMovedElsewhereSteps)
+    .map((message) => message.positionMs)
+  // Assert
+  cases.push({
+    name: 'after another pane moves the replay past operation 3, Next operation is disabled and Previous operation seeks operation 3, not the steps around the operation sought here',
+    actual: { movedElsewhere, movedElsewhereSeeks },
+    passed:
+      movedElsewhere.nextDisabled === true &&
+      movedElsewhere.previousDisabled === false &&
+      movedElsewhere.caption === '' &&
+      movedElsewhereSeeks.length === 1 &&
+      movedElsewhereSeeks[0] === 3500,
+  })
+  // Value: protects=an operation sent at a fractional moment (1.5005 s) and presented at whole milliseconds (1.500 s) counts as the shown position, so the caption stays and Next operation moves on to operation 3; fails_when=the steps count from the presented 1.500 s alone and Next seeks operation 2 again; why_new=CodeRabbit CLI Cycle 0070 pt1 finding 6 keeps this rule while it drops a sought operation the replay no longer shows; seam=none; no_claim=how the host rounds a presented moment (playbackController tests) (stand-ins: the Study messages the host posts)
+  // Arrange: operation 2 sent at 1500.5 ms is sought and the host presents 1500 ms.
+  const fractional = [
+    { ...fourMarks[0] },
+    { ...fourMarks[1], atMs: 1500.5 },
+    { ...fourMarks[2] },
+    { ...fourMarks[3] },
+  ]
+  await render(operationReplay(0, { operations: fractional }))
+  await markOf(2).click()
+  await publish(
+    operationReplay(1, { operations: fractional, presentedMs: 1500 }),
+  )
+  await waitUntilRendered(revisionAt(1))
+  const fractionalShown = await readRow()
+  const sentBeforeFractionalNext = (await sentPlayback()).length
+  // Act: press Next operation.
+  await page.locator('#next-operation').click()
+  const fractionalNext = (await sentPlayback())
+    .slice(sentBeforeFractionalNext)
+    .map((message) => message.positionMs)
+  // Assert
+  cases.push({
+    name: 'Next operation from an operation sent at a fractional moment and presented at the whole millisecond seeks the following operation, not the same one',
+    actual: { fractionalShown, fractionalNext },
+    passed:
+      fractionalShown.caption ===
+        'Operation 2 · Amount · showing the last frame before it was sent' &&
+      fractionalShown.previousDisabled === false &&
+      fractionalShown.nextDisabled === false &&
+      fractionalNext.length === 1 &&
+      fractionalNext[0] === 3500,
+  })
   // Inside an unrecorded interval the transport keeps its own text and the caption is not shown.
   const inGap = [
     { ...fourMarks[0] },

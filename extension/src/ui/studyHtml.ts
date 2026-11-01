@@ -485,6 +485,23 @@ function studyClient(
     soughtOperation?.studyId === current?.recording?.studyId
       ? soughtOperation
       : undefined
+  /**
+   * The sought operation while the replay still presents its moment, read by {@link renderOperationCaption} and {@link operationStep}; a move made elsewhere (another pane's Learning summary) leaves this page's sought operation set but presents another moment, so it no longer counts.
+   * A fractional moment is presented at whole milliseconds, so "still presents" means within 1 ms.
+   * @param recording - The browser replay's state.
+   * @returns The sought operation, or `undefined` when none was sought in this replay or the replay presents another moment.
+   * @example soughtMomentShown(recording)?.atMs // 250.5 while 250 is presented, undefined once 4000 is
+   */
+  const soughtMomentShown = (
+    recording: NonNullable<StudyViewMessage['recording']>,
+  ): { index: number; atMs: number } | undefined => {
+    const sought = soughtInSelectedReplay()
+    return sought &&
+      recording.presentedMs !== undefined &&
+      Math.abs(recording.presentedMs - sought.atMs) < 1
+      ? sought
+      : undefined
+  }
   const playback = (
     action: 'play' | 'pause' | 'seek',
     positionMs?: number,
@@ -533,9 +550,10 @@ function studyClient(
    */
   const operationStep = (direction: 'previous' | 'next') => {
     const recording = current?.recording
-    const position = soughtInSelectedReplay()?.atMs ?? recording?.presentedMs
-    if (!recording || recording.readiness !== 'ready' || position === undefined)
-      return undefined
+    if (!recording || recording.readiness !== 'ready') return undefined
+    // The sought operation's own moment stands for the position only while it is still presented: a fractional moment shown at whole milliseconds must not select the same operation again, and a move made in another pane counts from where it went.
+    const position = soughtMomentShown(recording)?.atMs ?? recording.presentedMs
+    if (position === undefined) return undefined
     const timed = (recording.operations ?? []).flatMap((mark) =>
       mark.atMs === undefined ? [] : [{ index: mark.index, atMs: mark.atMs }],
     )
@@ -657,13 +675,11 @@ function studyClient(
     recording: NonNullable<StudyViewMessage['recording']>,
     selectedHistoryGap: boolean,
   ): void => {
-    const sought = soughtInSelectedReplay()
+    const sought = soughtMomentShown(recording)
     const isCaptionShown =
       sought !== undefined &&
       recording.readiness === 'ready' &&
       recording.mode === 'paused' &&
-      recording.presentedMs !== undefined &&
-      Math.abs(recording.presentedMs - sought.atMs) < 1 &&
       !selectedHistoryGap
     const soughtMark = recording.operations?.find(
       (mark) => mark.index === sought?.index,
