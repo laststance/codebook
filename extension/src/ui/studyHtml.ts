@@ -700,6 +700,9 @@ function studyClient(
     element('playback-events').hidden = !isShown
     showTransportMoves(false)
     if (!isShown || !range) {
+      // A hidden row keeps no input and no marks: a width change of the hidden row must not draw the previous replay's marks again.
+      lastOperationRow = undefined
+      replace('operation-row', 'hidden', () => [])
       text('operation-caption', '')
       element('operation-caption').hidden = true
       return

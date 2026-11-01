@@ -790,6 +790,28 @@ async function check(page, options, collected) {
     actual: without,
     passed: !without.rowVisible && without.marks === 0 && !without.groupVisible,
   })
+  // Switching in one webview from a replay with operations to one without: the row's width changes to zero when it hides, and the resize observer that follows must not draw the previous replay's marks again.
+  await render(operationReplay(0))
+  await publish(operationReplay(1, { operations: [] }))
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  )
+  const withoutAfterResize = await page.evaluate(() => ({
+    rowVisible: document.getElementById('operation-row').checkVisibility(),
+    marks: document.querySelectorAll('[data-operation-mark]').length,
+    groupVisible: document.getElementById('playback-events').checkVisibility(),
+  }))
+  cases.push({
+    name: 'a replay without operations stays without marks after the hidden row is resized',
+    actual: withoutAfterResize,
+    passed:
+      !withoutAfterResize.rowVisible &&
+      withoutAfterResize.marks === 0 &&
+      !withoutAfterResize.groupVisible,
+  })
   // A summary step links to its mark when the host names a valid operation, and stays unlinked otherwise.
   const learning = {
     explanationId: '44444444-4444-4444-8444-444444444444',
