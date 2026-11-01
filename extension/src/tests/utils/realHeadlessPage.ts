@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { TestContext } from 'node:test'
@@ -8,26 +7,14 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 import { connectFlatCdp } from '../../runtimeSupport/flatCdpConnection'
 import { readDevToolsActivePort } from '../../runtimeSupport/utils/readDevToolsActivePort'
+import { resolveChromeExecutable } from '../../utils/resolveChromeExecutable'
 
-/** Where a Chrome that can run a headless page is usually installed; `CODEBOOK_TEST_CHROME` overrides. */
-const CHROME_CANDIDATES = [
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  '/usr/bin/google-chrome',
-  '/usr/bin/google-chrome-stable',
-  '/usr/bin/chromium',
-  '/usr/bin/chromium-browser',
-]
-
-/**
- * Finds a Chrome that can run a headless page for a test.
- * @returns The executable path, or `undefined` when none is installed (a test then states it did not run).
- * @example
- * const chrome = findTestChrome() // => '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
- */
-export function findTestChrome(): string | undefined {
-  const fromEnvironment = process.env.CODEBOOK_TEST_CHROME
-  if (fromEnvironment && existsSync(fromEnvironment)) return fromEnvironment
-  return CHROME_CANDIDATES.find((candidate) => existsSync(candidate))
+/** Says whether a path is an executable file. */
+function isExecutable(path: string): Promise<boolean> {
+  return stat(path).then(
+    (entry) => entry.isFile(),
+    () => false,
+  )
 }
 
 /** A real headless page a test drives over the Chrome DevTools protocol. */
@@ -42,19 +29,35 @@ export type RealHeadlessPage = {
 
 /**
  * Launches the installed Chrome headless on a fresh profile, opens one blank page and removes everything when the test ends.
+ * Finds Chrome with the resolver {@link openRealChromePage} uses (`CODEBOOK_CHROME_EXECUTABLE`, then the platform's usual places); in CI (`CI=true`) a missing Chrome fails the test, locally the test is skipped with the reason.
  * Called by the secret frame gate tests, which need the page's real MutationObserver and clock.
  * @param context - The test context; its `after` hook ends the browser and removes the profile.
- * @param chromeExecutable - The Chrome to run ({@link findTestChrome}).
- * @returns The page driver.
- * @throws When the browser does not publish its debugging endpoint in time.
+ * @returns The page driver, or `undefined` when the test was skipped.
+ * @throws When no Chrome is found in CI, or the browser does not publish its debugging endpoint in time.
  * @example
- * const page = await launchRealHeadlessPage(context, chrome)
+ * const page = await launchRealHeadlessPage(context)
+ * if (!page) return
  * await page.load('<input type=password id=pw>')
  */
 export async function launchRealHeadlessPage(
   context: TestContext,
-  chromeExecutable: string,
-): Promise<RealHeadlessPage> {
+): Promise<RealHeadlessPage | undefined> {
+  const chromeExecutable = await resolveChromeExecutable(
+    process.env.CODEBOOK_CHROME_EXECUTABLE ?? '',
+    process.platform,
+    process.env.PATH,
+    isExecutable,
+  )
+  if (
+    chromeExecutable === undefined ||
+    !(await isExecutable(chromeExecutable))
+  ) {
+    const reason =
+      'no Chrome is installed here; set CODEBOOK_CHROME_EXECUTABLE to run the real-page gate tests'
+    if (process.env.CI === 'true') throw new Error(reason)
+    context.skip(reason)
+    return undefined
+  }
   const profile = await mkdtemp(join(tmpdir(), 'codebook-gate-chrome-'))
   const child = spawn(
     chromeExecutable,

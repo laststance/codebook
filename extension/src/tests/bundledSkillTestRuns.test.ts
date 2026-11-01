@@ -148,7 +148,7 @@ test('the bundled skill sends a learner in a Copilot-harness chat to a Local cha
   )
 })
 
-// Value: protects=a chat summary or table of a test run labelling a value observed only when the run recorded it (a stop's captured facts or the test result), a value derived from test or source code staying source reasoning even inside a table of observed values; fails_when=the Test runs paragraph drops the rule, so a chat tabulates a mock's return value or an assertion's expected value as observed (Cycle 0067 F2, Cursor Agent Grok 4.6 High); why_new=skill 1.0.63 separated observed facts from source reasoning only in general, not for summaries and tables; seam=none; no_claim=model behavior (text pin only)
+// Value: protects=a chat summary or table of a test run labelling a value observed only when the run recorded it (a stop's captured facts or the test result), a value derived from test or source code staying source reasoning even inside a table of observed values; fails_when=the Test runs paragraph drops the rule, so a chat tabulates a mock's return value or an assertion's expected value as observed (Cycle 0067 F2, Cursor Agent Grok 4.6 High); why_new=skill 1.0.62 separated observed facts from source reasoning only in general, not for summaries and tables; seam=none; no_claim=model behavior (text pin only)
 test('the bundled skill labels a value observed in a test summary or table only when the run recorded it and derived values source reasoning', async () => {
   // Arrange / Act
   const skill = await readBundledSkill()

@@ -8,15 +8,10 @@ import {
 } from '../runtimeSupport/secretFrameGate'
 
 import {
-  findTestChrome,
   launchRealHeadlessPage,
   type RealHeadlessPage,
 } from './utils/realHeadlessPage'
 
-const CHROME = findTestChrome()
-const NO_CHROME = CHROME
-  ? false
-  : 'no Chrome is installed here; set CODEBOOK_TEST_CHROME to run the real-page gate tests'
 const PAGE =
   '<form><input id="pw" type="password" name="pw"></form><p id="note">hello</p>'
 /** A pause longer than the margin around an unsafe time, so a frame can fall clearly before or after it. */
@@ -24,7 +19,8 @@ const CLEAR_OF_MARGIN_MS = 150
 
 /** Starts a real page with a password control and a gate armed on it. */
 async function armedGate(context: TestContext) {
-  const page = await launchRealHeadlessPage(context, CHROME!)
+  const page = await launchRealHeadlessPage(context)
+  if (!page) return undefined
   await page.load(PAGE)
   const failures: SecretFrameFailureReason[] = []
   const gate = new SecretFrameGate({
@@ -127,211 +123,190 @@ test('frames between the last verified answer and a document replacement are dro
 })
 
 // protects=a safe password control lets its frames pass; fails_when=a verification of a safe control drops frames; no_claim=pixels, the gate does not read them
-test(
-  'frames of a control that stays a password control pass',
-  { skip: NO_CHROME },
-  async (context) => {
-    // Arrange
-    const { page, gate, failures } = await armedGate(context)
-    await settle(page)
-    // Act
-    const verdict = await gate.admitFrame(Date.now() - 20)
-    // Assert
-    assert.equal(verdict, 'pass')
-    assert.deepEqual(failures, [])
-  },
-)
+test('frames of a control that stays a password control pass', async (context) => {
+  // Arrange
+  const armed = await armedGate(context)
+  if (!armed) return
+  const { page, gate, failures } = armed
+  await settle(page)
+  // Act
+  const verdict = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.equal(verdict, 'pass')
+  assert.deepEqual(failures, [])
+})
 
 // protects=a toggle to text and back drops the frames of the unsafe interval and every frame after it, fails the run, and still passes a frame captured before the toggle; fails_when=a frame from the interval is stored, or the quick return to password lets later frames through; no_claim=the toggle is a script here; Chrome's paint of the dots is not checked
-test(
-  'a quick toggle to text and back drops the unsafe interval and later frames',
-  { skip: NO_CHROME },
-  async (context) => {
-    // Arrange
-    const { page, gate, failures } = await armedGate(context)
-    await settle(page)
-    const beforeToggle = Date.now() - 20
-    await delay(CLEAR_OF_MARGIN_MS)
-    // Act
-    await page.evaluate("document.getElementById('pw').type = 'text'")
-    await delay(CLEAR_OF_MARGIN_MS)
-    const insideInterval = Date.now() - 20
-    await page.evaluate("document.getElementById('pw').type = 'password'")
-    await settle(page)
-    const verdicts = [
-      await gate.admitFrame(beforeToggle),
-      await gate.admitFrame(insideInterval),
-      await gate.admitFrame(Date.now() - 20),
-    ]
-    // Assert
-    assert.deepEqual(verdicts, ['pass', 'drop', 'drop'])
-    assert.deepEqual(failures, ['control-not-password'])
-  },
-)
+test('a quick toggle to text and back drops the unsafe interval and later frames', async (context) => {
+  // Arrange
+  const armed = await armedGate(context)
+  if (!armed) return
+  const { page, gate, failures } = armed
+  await settle(page)
+  const beforeToggle = Date.now() - 20
+  await delay(CLEAR_OF_MARGIN_MS)
+  // Act
+  await page.evaluate("document.getElementById('pw').type = 'text'")
+  await delay(CLEAR_OF_MARGIN_MS)
+  const insideInterval = Date.now() - 20
+  await page.evaluate("document.getElementById('pw').type = 'password'")
+  await settle(page)
+  const verdicts = [
+    await gate.admitFrame(beforeToggle),
+    await gate.admitFrame(insideInterval),
+    await gate.admitFrame(Date.now() - 20),
+  ]
+  // Assert
+  assert.deepEqual(verdicts, ['pass', 'drop', 'drop'])
+  assert.deepEqual(failures, ['control-not-password'])
+})
 
 // protects=a control replaced by a plain control that shows the typed value is unsafe: frames after it are dropped and the run fails; fails_when=a show-password swap to a text input is accepted; no_claim=a framework's own re-render, which the next test covers
-test(
-  'replacing the control with a plain control that shows the value drops later frames and fails the run',
-  { skip: NO_CHROME },
-  async (context) => {
-    // Arrange
-    const { page, gate, failures } = await armedGate(context)
-    await typeIntoControl(page, 'hunter2-shown')
-    await settle(page)
-    // Act
-    await page.evaluate(
-      "(() => { const old = document.getElementById('pw'); const plain = document.createElement('input'); plain.type = 'text'; plain.id = 'pw'; plain.value = old.value; old.replaceWith(plain) })()",
-    )
-    await settle(page)
-    const verdict = await gate.admitFrame(Date.now() - 20)
-    // Assert
-    assert.equal(verdict, 'drop')
-    assert.deepEqual(failures, ['control-replaced'])
-  },
-)
+test('replacing the control with a plain control that shows the value drops later frames and fails the run', async (context) => {
+  // Arrange
+  const armed = await armedGate(context)
+  if (!armed) return
+  const { page, gate, failures } = armed
+  await typeIntoControl(page, 'hunter2-shown')
+  await settle(page)
+  // Act
+  await page.evaluate(
+    "(() => { const old = document.getElementById('pw'); const plain = document.createElement('input'); plain.type = 'text'; plain.id = 'pw'; plain.value = old.value; old.replaceWith(plain) })()",
+  )
+  await settle(page)
+  const verdict = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.equal(verdict, 'drop')
+  assert.deepEqual(failures, ['control-replaced'])
+})
 
 // protects=a sign-in form that unmounts after its submit, and a re-render that puts a new password control in its place, show nothing and fail nothing; fails_when=the normal success path of a sign-in (the form leaves the page) fails the run with SECRET_BECAME_VISIBLE; no_claim=a real framework, the DOM changes are scripted
-test(
-  'removing the control or re-rendering it as another password control keeps frames passing',
-  { skip: NO_CHROME },
-  async (context) => {
-    // Arrange
-    const { page, gate, failures } = await armedGate(context)
-    await typeIntoControl(page, 'hunter2-typed')
-    await settle(page)
-    // Act
-    await page.evaluate(
-      "(() => { const old = document.getElementById('pw'); old.replaceWith(old.cloneNode()) })()",
-    )
-    await settle(page)
-    const afterRerender = await gate.admitFrame(Date.now() - 20)
-    await page.evaluate("document.querySelector('form').remove()")
-    await settle(page)
-    const afterRemoval = await gate.admitFrame(Date.now() - 20)
-    // Assert
-    assert.deepEqual(
-      [afterRerender, afterRemoval, failures],
-      ['pass', 'pass', []],
-    )
-  },
-)
+test('removing the control or re-rendering it as another password control keeps frames passing', async (context) => {
+  // Arrange
+  const armed = await armedGate(context)
+  if (!armed) return
+  const { page, gate, failures } = armed
+  await typeIntoControl(page, 'hunter2-typed')
+  await settle(page)
+  // Act
+  await page.evaluate(
+    "(() => { const old = document.getElementById('pw'); old.replaceWith(old.cloneNode()) })()",
+  )
+  await settle(page)
+  const afterRerender = await gate.admitFrame(Date.now() - 20)
+  await page.evaluate("document.querySelector('form').remove()")
+  await settle(page)
+  const afterRemoval = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.deepEqual(
+    [afterRerender, afterRemoval, failures],
+    ['pass', 'pass', []],
+  )
+})
 
 // protects=a frame delivered late whose capture time falls inside an unsafe interval is dropped although the control is safe again when it arrives; fails_when=the verdict follows the control's state at delivery instead of at capture; no_claim=real screencast delay, the timestamp is chosen by the test
-test(
-  'a delayed frame captured during an unsafe interval is dropped after the control is safe again',
-  { skip: NO_CHROME },
-  async (context) => {
-    // Arrange
-    const { page, gate } = await armedGate(context)
-    await settle(page)
-    await page.evaluate("document.getElementById('pw').type = 'text'")
-    await delay(CLEAR_OF_MARGIN_MS)
-    const capturedDuringToggle = Date.now() - 20
-    await delay(CLEAR_OF_MARGIN_MS)
-    await page.evaluate("document.getElementById('pw').type = 'password'")
-    await settle(page)
-    // Act
-    const verdict = await gate.admitFrame(capturedDuringToggle)
-    // Assert
-    assert.equal(verdict, 'drop')
-  },
-)
+test('a delayed frame captured during an unsafe interval is dropped after the control is safe again', async (context) => {
+  // Arrange
+  const armed = await armedGate(context)
+  if (!armed) return
+  const { page, gate } = armed
+  await settle(page)
+  await page.evaluate("document.getElementById('pw').type = 'text'")
+  await delay(CLEAR_OF_MARGIN_MS)
+  const capturedDuringToggle = Date.now() - 20
+  await delay(CLEAR_OF_MARGIN_MS)
+  await page.evaluate("document.getElementById('pw').type = 'password'")
+  await settle(page)
+  // Act
+  const verdict = await gate.admitFrame(capturedDuringToggle)
+  // Assert
+  assert.equal(verdict, 'drop')
+})
 
 // protects=a stop screenshot taken while the control draws text is withheld, and one taken while it is a password control is kept; fails_when=the screenshot path skips the gate; no_claim=the PNG is real but its pixels are not inspected
-test(
-  'a stop screenshot taken during the unsafe window is withheld',
-  { skip: NO_CHROME },
-  async (context) => {
-    // Arrange
-    const safe = await armedGate(context)
-    await settle(safe.page)
-    const safeStart = Date.now()
-    await safe.page.screenshot()
-    const safeVerdict = await safe.gate.admitCapture(safeStart, Date.now())
-    await safe.page.evaluate("document.getElementById('pw').type = 'text'")
-    await settle(safe.page)
-    // Act
-    const unsafeStart = Date.now()
-    const png = await safe.page.screenshot()
-    const unsafeVerdict = await safe.gate.admitCapture(unsafeStart, Date.now())
-    // Assert
-    assert.ok(png.length > 0)
-    assert.deepEqual([safeVerdict, unsafeVerdict], ['pass', 'drop'])
-  },
-)
+test('a stop screenshot taken during the unsafe window is withheld', async (context) => {
+  // Arrange
+  const safe = await armedGate(context)
+  if (!safe) return
+  await settle(safe.page)
+  const safeStart = Date.now()
+  await safe.page.screenshot()
+  const safeVerdict = await safe.gate.admitCapture(safeStart, Date.now())
+  await safe.page.evaluate("document.getElementById('pw').type = 'text'")
+  await settle(safe.page)
+  // Act
+  const unsafeStart = Date.now()
+  const png = await safe.page.screenshot()
+  const unsafeVerdict = await safe.gate.admitCapture(unsafeStart, Date.now())
+  // Assert
+  assert.ok(png.length > 0)
+  assert.deepEqual([safeVerdict, unsafeVerdict], ['pass', 'drop'])
+})
 
 // protects=a password value copied into visible text fails the gate; fails_when=the observer watches only the type attribute; no_claim=copies split across elements or transformed
-test(
-  'a password value copied into visible page text drops frames and fails the run',
-  { skip: NO_CHROME },
-  async (context) => {
-    // Arrange
-    const { page, gate, failures } = await armedGate(context)
-    await typeIntoControl(page, 'hunter2-visible')
-    await settle(page)
-    // Act
-    await page.evaluate(
-      "document.getElementById('note').textContent = 'you typed hunter2-visible'",
-    )
-    await settle(page)
-    const verdict = await gate.admitFrame(Date.now() - 20)
-    // Assert
-    assert.equal(verdict, 'drop')
-    assert.deepEqual(failures, ['value-copied-to-text'])
-  },
-)
+test('a password value copied into visible page text drops frames and fails the run', async (context) => {
+  // Arrange
+  const armed = await armedGate(context)
+  if (!armed) return
+  const { page, gate, failures } = armed
+  await typeIntoControl(page, 'hunter2-visible')
+  await settle(page)
+  // Act
+  await page.evaluate(
+    "document.getElementById('note').textContent = 'you typed hunter2-visible'",
+  )
+  await settle(page)
+  const verdict = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.equal(verdict, 'drop')
+  assert.deepEqual(failures, ['value-copied-to-text'])
+})
 
 // protects=a secret that the page already shows as text (a "Forgot password?" label for the password "password") lets frames pass, and a real copy still fails; fails_when=any page text containing the value fails a normal run, or the baseline hides a later copy; no_claim=copies split across elements or transformed
-test(
-  'text the page already showed is no copy, and a later copy of the value still fails the run',
-  { skip: NO_CHROME },
-  async (context) => {
-    // Arrange
-    const page = await launchRealHeadlessPage(context, CHROME!)
-    await page.load(
-      '<form><input id="pw" type="password"></form><a>Forgot password?</a><p id="note"></p>',
-    )
-    const failures: SecretFrameFailureReason[] = []
-    const gate = new SecretFrameGate({
-      evaluate: (expression) => page.evaluate(expression),
-      onFailure: (reason) => void failures.push(reason),
-    })
-    await gate.arm('#pw')
-    await typeIntoControl(page, 'password')
-    await settle(page)
-    // Act
-    const beforeCopy = await gate.admitFrame(Date.now() - 20)
-    await page.evaluate(
-      "document.getElementById('note').textContent = 'you typed password'",
-    )
-    await settle(page)
-    const afterCopy = await gate.admitFrame(Date.now() - 20)
-    // Assert
-    assert.deepEqual(
-      [beforeCopy, afterCopy, failures],
-      ['pass', 'drop', ['value-copied-to-text']],
-    )
-  },
-)
+test('text the page already showed is no copy, and a later copy of the value still fails the run', async (context) => {
+  // Arrange
+  const page = await launchRealHeadlessPage(context)
+  if (!page) return
+  await page.load(
+    '<form><input id="pw" type="password"></form><a>Forgot password?</a><p id="note"></p>',
+  )
+  const failures: SecretFrameFailureReason[] = []
+  const gate = new SecretFrameGate({
+    evaluate: (expression) => page.evaluate(expression),
+    onFailure: (reason) => void failures.push(reason),
+  })
+  await gate.arm('#pw')
+  await typeIntoControl(page, 'password')
+  await settle(page)
+  // Act
+  const beforeCopy = await gate.admitFrame(Date.now() - 20)
+  await page.evaluate(
+    "document.getElementById('note').textContent = 'you typed password'",
+  )
+  await settle(page)
+  const afterCopy = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.deepEqual(
+    [beforeCopy, afterCopy, failures],
+    ['pass', 'drop', ['value-copied-to-text']],
+  )
+})
 
 // protects=arming on a control that is not a password control fails at once and no frame passes; fails_when=the gate arms on a text control and trusts it; no_claim=text controls with secret names, which the operation engine refuses before it arms
-test(
-  'arming on a text control fails the gate',
-  { skip: NO_CHROME },
-  async (context) => {
-    // Arrange
-    const page = await launchRealHeadlessPage(context, CHROME!)
-    await page.load('<input id="pw" type="text">')
-    const failures: SecretFrameFailureReason[] = []
-    const gate = new SecretFrameGate({
-      evaluate: (expression) => page.evaluate(expression),
-      onFailure: (reason) => void failures.push(reason),
-    })
-    // Act
-    await gate.arm('#pw')
-    const verdict = await gate.admitFrame(Date.now())
-    // Assert
-    assert.equal(verdict, 'drop')
-    assert.deepEqual(failures, ['control-not-password'])
-  },
-)
+test('arming on a text control fails the gate', async (context) => {
+  // Arrange
+  const page = await launchRealHeadlessPage(context)
+  if (!page) return
+  await page.load('<input id="pw" type="text">')
+  const failures: SecretFrameFailureReason[] = []
+  const gate = new SecretFrameGate({
+    evaluate: (expression) => page.evaluate(expression),
+    onFailure: (reason) => void failures.push(reason),
+  })
+  // Act
+  await gate.arm('#pw')
+  const verdict = await gate.admitFrame(Date.now())
+  // Assert
+  assert.equal(verdict, 'drop')
+  assert.deepEqual(failures, ['control-not-password'])
+})
