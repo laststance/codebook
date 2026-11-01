@@ -1,3 +1,4 @@
+import type { ExtensionPauseCloseReason } from '../chromeExtensionHistorySchemas'
 import type { ExtensionHistorySummary } from '../chromeExtensionHistoryTypes'
 
 import type {
@@ -117,10 +118,32 @@ function capitalize(text: string): string {
 }
 
 /**
+ * Words how a pause ended, so only a real continue reads as continued; called by {@link describeExtensionPosition}.
+ * @param reason - The journal's close reason; absent reads as a continue.
+ * @returns `continued`, `service worker lost`, `surface closed` or `run ended while paused`.
+ * @example describeExtensionCloseReason('worker-lost') // => 'service worker lost'
+ */
+function describeExtensionCloseReason(
+  reason: ExtensionPauseCloseReason | undefined,
+): string {
+  switch (reason) {
+    case 'worker-lost':
+      return 'service worker lost'
+    case 'surface-lost':
+      return 'surface closed'
+    case 'run-ended':
+      return 'run ended while paused'
+    case 'continue':
+    case undefined:
+      return 'continued'
+  }
+}
+
+/**
  * Words an event's locator for the Study section and the event list heading.
  * @param event - The event.
  * @param model - The replay model, for a stop's number and the result.
- * @returns `<Context> stop <n> · <t> s`, `<Context> stop <n> continued · <t> s`, `Frame · <t> s` or `Result · <outcome> · <t> s`.
+ * @returns `<Context> stop <n> · <t> s`, `<Context> stop <n> continued · <t> s` (or `run ended while paused`, `service worker lost`, `surface closed`), `Frame · <t> s` or `Result · <outcome> · <t> s`.
  * @example describeExtensionPosition(event, model) // => 'Page stop 1 · 0.42 s'
  */
 export function describeExtensionPosition(
@@ -136,7 +159,7 @@ export function describeExtensionPosition(
     case 'pause-open':
       return `${capitalize(stop)} · ${time}`
     case 'pause-close':
-      return `${capitalize(stop)} continued · ${time}`
+      return `${capitalize(stop)} ${describeExtensionCloseReason(event.closeReason)} · ${time}`
     case 'frame':
       return `${NODE_EXTENSION_REPLAY_TEXT.eventOutput} · ${time}`
     case 'result':

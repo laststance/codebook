@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import type { ExtensionPauseCloseReason } from '../../chromeExtensionHistorySchemas'
 import type { ExtensionHistoryTypes } from '../../chromeExtensionHistoryTypes'
 import { createExtensionStorageDescriptor } from '../../chromeExtensionStorageDescriptor'
 import { EXTENSION_HISTORY_FRAMES_DIRECTORY } from '../../constants'
@@ -32,7 +33,13 @@ export type ExtensionScriptStep =
       /** Records a source hash the executed text does not have, so the stop's source cannot be proven (a partial stop). */
       staleSource?: boolean
     }
-  | { at: number; type: 'close'; pauseId: string }
+  | {
+      at: number
+      type: 'close'
+      pauseId: string
+      /** Why the pause closed; a continue when omitted. */
+      reason?: ExtensionPauseCloseReason
+    }
   | {
       at: number
       type: 'frame'
@@ -122,7 +129,7 @@ export async function writeExtensionHistory(
     } else if (step.type === 'close')
       await writer.appendPauseClose({
         pauseId: step.pauseId,
-        reason: 'continue',
+        reason: step.reason ?? 'continue',
       })
     else if (step.type === 'frame') {
       const width = step.width ?? 720

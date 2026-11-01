@@ -6,6 +6,10 @@ import {
   openingExtensionEvent,
   restoreExtensionPlayhead,
 } from '../utils/buildExtensionReplayModel'
+import {
+  describeExtensionEventRow,
+  describeExtensionPosition,
+} from '../utils/describeExtensionReplay'
 
 import {
   EXTENSION_WORKSPACE_KEY,
@@ -255,4 +259,44 @@ test('a saved sequence that is no event restores the nearest earlier event and t
   assert.equal(restoredExact?.sequence, close)
   assert.equal(opening?.sequence, open)
   assert.notEqual(opening?.sequence, frame)
+})
+
+// protects=a pause that closed because the run ended, the worker was lost or the surface closed reads as that, and only a real continue reads as continued; fails_when=every pause-close is worded `continued`, so the learner misreads how the stop ended; no_claim=the drawing of the event list
+test('a pause closed by the run ending, a lost worker or a closed surface is not worded as continued', async (context) => {
+  // Arrange
+  const { model, written } = await modelOf(context, [
+    { at: 100, type: 'open', pauseId: 'p1', stopIndex: 1, context: 'page' },
+    { at: 200, type: 'close', pauseId: 'p1', reason: 'continue' },
+    {
+      at: 300,
+      type: 'open',
+      pauseId: 'p2',
+      stopIndex: 2,
+      context: 'service-worker',
+    },
+    { at: 400, type: 'close', pauseId: 'p2', reason: 'worker-lost' },
+    { at: 500, type: 'open', pauseId: 'p3', stopIndex: 1, context: 'page' },
+    { at: 600, type: 'close', pauseId: 'p3', reason: 'surface-lost' },
+    { at: 700, type: 'open', pauseId: 'p4', stopIndex: 1, context: 'page' },
+    { at: 800, type: 'close', pauseId: 'p4', reason: 'run-ended' },
+  ])
+  const closes = [1, 3, 5, 7].map(
+    (index) =>
+      model.events[model.indexBySequence.get(written.sequences[index]!)!]!,
+  )
+
+  // Act
+  const headings = closes.map(
+    (event) => describeExtensionEventRow(event, model).heading,
+  )
+  const position = describeExtensionPosition(closes[1]!, model)
+
+  // Assert
+  assert.deepEqual(headings, [
+    'Page stop 1 continued · 0.20 s',
+    'Service worker stop 2 service worker lost · 0.40 s',
+    'Page stop 1 surface closed · 0.60 s',
+    'Page stop 1 run ended while paused · 0.80 s',
+  ])
+  assert.equal(position, 'Service worker stop 2 service worker lost · 0.40 s')
 })

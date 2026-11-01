@@ -2,6 +2,7 @@ import type {
   ExtensionHistoryEntry,
   ExtensionHistoryEntryOf,
   ExtensionHistoryHeader,
+  ExtensionPauseCloseReason,
 } from '../chromeExtensionHistorySchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
@@ -52,6 +53,8 @@ export type ExtensionReplayEvent = {
   type: 'pause-open' | 'pause-close' | 'frame' | 'result'
   pauseId?: string
   frame?: ExtensionReplayFrame
+  /** Why the pause closed, on a `pause-close` event. */
+  closeReason?: ExtensionPauseCloseReason
 }
 
 /** What the Application pane shows of a moment: the pause's pinned frame, a stream frame (with how far before the stop it was received, at a stop), or nothing recorded. */
@@ -187,6 +190,7 @@ function closeExtensionPause(
     timeMs: entry.elapsedMs,
     type: 'pause-close',
     pauseId: entry.pauseId,
+    closeReason: entry.reason,
   })
 }
 
