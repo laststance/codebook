@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import {
+import fsPromises, {
   appendFile,
   chmod,
   mkdir,
@@ -9,7 +9,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { join } from 'node:path'
-import { before, test } from 'node:test'
+import { before, mock, test } from 'node:test'
 
 import type { ExtensionPauseView } from '../chromeExtensionDebugger'
 import type { ExtensionFrameBudget } from '../chromeExtensionHistoryFrames'
@@ -816,6 +816,33 @@ test('a pause end dated after its journal entry is refused as a damaged history'
 
   // Assert
   await assert.rejects(write, /dates a pause end/)
+})
+
+// protects=E-B: a temporary-blob cleanup whose directory read never settles does not hold Stop or Save past the seal's bound; fails_when=the cleanup runs before the bound starts and the seal never settles; no_claim=whether the history is sealed or abandoned in that case (either is allowed by the seal rules)
+test('a hung temporary-blob cleanup does not hold the seal past its bound', async (context) => {
+  // Arrange
+  const { recorder } = await recorderOver(context)
+  const realReaddir = fsPromises.readdir.bind(fsPromises)
+  mock.method(fsPromises, 'readdir', (path: string, ...rest: unknown[]) =>
+    String(path).endsWith('frames')
+      ? new Promise<never>(() => undefined)
+      : (realReaddir as (...args: unknown[]) => unknown)(path, ...rest),
+  )
+  context.after(() => mock.restoreAll())
+  let guard: ReturnType<typeof setTimeout> | undefined
+
+  // Act
+  const outcome = await Promise.race([
+    recorder.seal({}, 300).then(() => 'settled' as const),
+    new Promise<'hung'>((resolve) => {
+      guard = setTimeout(() => resolve('hung'), 3_000)
+    }),
+  ])
+  clearTimeout(guard)
+
+  // Assert
+  assert.equal(outcome, 'settled')
+  assert.notEqual(recorder.status, 'recording')
 })
 
 // protects=N69: a pause this run asked to continue is journaled continue when it leaves the debugger; fails_when=a continue the chat asked for is journaled as lost or run-ended

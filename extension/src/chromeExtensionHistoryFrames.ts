@@ -1,4 +1,4 @@
-import { mkdir } from 'node:fs/promises'
+import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { ChromeExtensionHistoryWriter } from './chromeExtensionHistoryWriter'
@@ -18,6 +18,9 @@ import { sha256 } from './runtimeSupport/utils/sha256'
 import { atomicPrivateBytes } from './utils/atomicPrivateBytes'
 import { readPngDimensions } from './utils/readPngDimensions'
 import { removeTemporaryFrameBlobs } from './utils/removeTemporaryFrameBlobs'
+
+/** Thrown inside a store that finds the queue abandoned just before it would publish its blob; {@link ExtensionHistoryFrameWriter} treats it as the store's quiet end. */
+const FRAME_QUEUE_ABANDONED = new Error('The frame queue was abandoned.')
 
 /** What {@link ExtensionHistoryFrameWriter.offer} did with a frame: `ignored` is a second pin for one pause. */
 export type ExtensionFrameOffer =
@@ -264,14 +267,7 @@ export class ExtensionHistoryFrameWriter {
   ): Promise<void> {
     // After a failed blob no later frame is stored: one of them could name that blob. A queue abandoned at the drain deadline writes nothing more.
     if (this.failure !== undefined || this.isAbandoned) return
-    if (isNew) {
-      const directory = join(
-        this.writer.historyDirectory,
-        EXTENSION_HISTORY_FRAMES_DIRECTORY,
-      )
-      await mkdir(directory, { recursive: true, mode: PRIVATE_DIRECTORY_MODE })
-      await atomicPrivateBytes(join(directory, `${hash}.png`), bytes)
-    }
+    if (isNew && !(await this.publishBlob(bytes, hash))) return
     await this.writer.appendFrame({
       kind: frame.kind,
       ...(frame.pauseId === undefined ? {} : { pauseId: frame.pauseId }),
@@ -284,4 +280,44 @@ export class ExtensionHistoryFrameWriter {
     if (frame.kind === 'pin' && frame.pauseId !== undefined)
       this.storedPins.add(frame.pauseId)
   }
+
+  /**
+   * Gives a new frame its blob `frames/<hash>.png` (temporary name, flush, rename), unless the queue was abandoned at the drain deadline.
+   * Why: after the deadline the seal removes temporary files and goes on, so a store still running must neither publish a blob no entry names nor report the cleanup's removal as a failure.
+   * Called by {@link ExtensionHistoryFrameWriter.store} for a hash not yet on disk.
+   * @param bytes - The PNG.
+   * @param hash - Its SHA-256, the blob's name.
+   * @returns `true` when the blob is published and its entry may follow; `false` when the queue was abandoned (nothing is left behind).
+   * @throws When the blob cannot be written for a reason other than the abandon.
+   */
+  private async publishBlob(bytes: Buffer, hash: string): Promise<boolean> {
+    const directory = join(
+      this.writer.historyDirectory,
+      EXTENSION_HISTORY_FRAMES_DIRECTORY,
+    )
+    await mkdir(directory, { recursive: true, mode: PRIVATE_DIRECTORY_MODE })
+    const blobPath = join(directory, `${hash}.png`)
+    try {
+      // An abandoned queue publishes nothing: the temporary file is removed and the blob never gets its name.
+      await atomicPrivateBytes(blobPath, bytes, () => {
+        if (this.isAbandoned) throw FRAME_QUEUE_ABANDONED
+      })
+    } catch (error) {
+      // The seal's cleanup may have removed the temporary file under the rename (ENOENT): nothing was published and nothing failed.
+      if (this.isAbandoned && isAbandonedStoreError(error)) return false
+      throw error
+    }
+    // Abandoned while the rename ran: the blob has no entry, so it is removed rather than left as an orphan in a sealed history.
+    if (!this.isAbandoned) return true
+    await rm(blobPath, { force: true }).catch(() => undefined)
+    return false
+  }
+}
+
+/** Whether a failed blob write is the quiet end of an abandoned store: its own abandon, or the temporary file's removal by the seal's cleanup. */
+function isAbandonedStoreError(error: unknown): boolean {
+  return (
+    error === FRAME_QUEUE_ABANDONED ||
+    (error instanceof Error && 'code' in error && error.code === 'ENOENT')
+  )
 }

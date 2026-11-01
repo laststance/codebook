@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { readdir } from 'node:fs/promises'
+import fsPromises, { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { mock, test } from 'node:test'
 
 import { ExtensionHistoryFrameWriter } from '../chromeExtensionHistoryFrames'
 import type { ChromeExtensionHistoryWriter } from '../chromeExtensionHistoryWriter'
@@ -275,4 +275,77 @@ test('a frame that is not a readable PNG is dropped and the next stream frame an
     ['stream', 'pin'],
   )
   assert.equal(frames.isIncomplete, true)
+})
+
+// protects=E-B/E-D: a frame whose store was running at the drain deadline publishes no blob and leaves no temporary file, and no entry names it; fails_when=the late store renames its blob after the queue was abandoned and the sealed history keeps an orphan PNG; no_claim=the seal's own deadline (recorder tests)
+test('a frame being stored when the drain deadline passes leaves no blob and no temporary file', async (context) => {
+  // Arrange
+  const { frames, writer, store, header } = await framesOver(context)
+  context.after(() => mock.restoreAll())
+  const realMkdir = fsPromises.mkdir.bind(fsPromises)
+  let release: () => void = () => undefined
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  let markHeld: () => void = () => undefined
+  const reached = new Promise<void>((resolve) => {
+    markHeld = resolve
+  })
+  mock.method(
+    fsPromises,
+    'mkdir',
+    async (...args: Parameters<typeof realMkdir>) => {
+      markHeld()
+      await held
+      return realMkdir(...args)
+    },
+  )
+  frames.offer({
+    data: pngOf(720, 640, 'in-flight').toString('base64'),
+    kind: 'stream',
+    capturedAtMs: 100,
+  })
+  await reached
+
+  // Act
+  // The store is held at its folder creation when the drain deadline passes; then it goes on.
+  await frames.drain(1)
+  release()
+  await frames['chain']
+  const left = await readdir(join(writer.historyDirectory, 'frames'))
+
+  // Assert
+  assert.deepEqual(left, [])
+  assert.equal(frames.failure, undefined)
+  assert.deepEqual(await frameEntries(store, header.studyId), [])
+})
+
+// protects=E-D: a temporary file the seal's cleanup removed under a running store is no fault; fails_when=the rename's ENOENT is reported as a frame failure and the live run's Output shows a spurious write error; no_claim=the cleanup's own scan
+test('a store whose temporary file the cleanup removed does not report a failure', async (context) => {
+  // Arrange
+  const { frames, writer } = await framesOver(context)
+  context.after(() => mock.restoreAll())
+  const realRename = fsPromises.rename.bind(fsPromises)
+  mock.method(
+    fsPromises,
+    'rename',
+    async (...args: Parameters<typeof realRename>) => {
+      // The deadline passes and the cleanup runs between the blob's flush and its rename.
+      await frames.drain(1)
+      await frames.removeTemporaryBlobs()
+      return realRename(...args)
+    },
+  )
+  frames.offer({
+    data: pngOf(720, 640, 'in-flight').toString('base64'),
+    kind: 'stream',
+    capturedAtMs: 100,
+  })
+
+  // Act
+  await frames['chain']
+
+  // Assert
+  assert.equal(frames.failure, undefined)
+  assert.deepEqual(await readdir(join(writer.historyDirectory, 'frames')), [])
 })

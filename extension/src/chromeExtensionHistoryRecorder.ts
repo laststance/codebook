@@ -292,11 +292,13 @@ export class ChromeExtensionHistoryRecorder implements ChromeExtensionHistorySin
       )
     }
     await this.frames.drain(EXTENSION_HISTORY_DRAIN_TIMEOUT_MS)
-    // A blob that never reached its name has no entry; the folder keeps no temporary file.
-    await this.frames.removeTemporaryBlobs()
-    if (this.frames.failure !== undefined) this.reportFault(this.frames.failure)
+    // The bound starts before the cleanup, so a hung directory read or removal cannot hold Stop, Save or the next run past it.
     const deadline = startSealDeadline(boundMs)
     try {
+      // A blob that never reached its name has no entry; the folder keeps no temporary file. A cleanup that loses the race is left behind.
+      await Promise.race([this.frames.removeTemporaryBlobs(), deadline.passed])
+      if (this.frames.failure !== undefined)
+        this.reportFault(this.frames.failure)
       const raced = await Promise.race([this.sealWithRetry(), deadline.passed])
       // A writer whose seal is already published is never abandoned: the store lists it sealed.
       const hash =
