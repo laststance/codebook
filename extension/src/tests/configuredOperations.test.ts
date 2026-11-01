@@ -714,3 +714,52 @@ test('a text operation requests its insert with the pause-length deadline', asyn
   // Assert
   assert.deepEqual(insertDeadlines, [REPOSITORY_RUN_TIMEOUT_MS])
 })
+
+// protects=a select that an input/change handler replaces is verified on the control the page now shows: a replacement holding another value is refused as INPUT_NOT_ACCEPTED and reported as sent; fails_when=the check reads the detached old node and reports success while the page shows another value; no_claim=a real React app (a handler script stands in for a re-render); real headless Chrome
+test('a select replaced by its change handler with another value is refused as INPUT_NOT_ACCEPTED and reported as sent', async (context) => {
+  // Arrange
+  const page = await openRealChromePage(context, FIXTURE)
+  if (!page) return
+  await read(
+    page,
+    `(() => { const old = document.getElementById('customer'); old.addEventListener('change', () => { const next = document.createElement('select'); next.id = 'customer'; next.innerHTML = '<option value="">Choose</option><option value="c1">Alice</option>'; old.replaceWith(next) }) })()`,
+  )
+  // Act
+  const failure = await refusalOf(page, {
+    kind: 'choose',
+    title: 'Customer',
+    selector: '#customer',
+    value: 'c1',
+  })
+  // Assert
+  assert.equal(failure.code, 'INPUT_NOT_ACCEPTED')
+  assert.equal(failure.sent, 'sent')
+  assert.equal(
+    await read(page, 'document.getElementById("customer").value'),
+    '',
+  )
+})
+
+// protects=a select that its handler replaces by a control holding the chosen value passes; fails_when=a re-render that keeps the value is refused; no_claim=a real React app; real headless Chrome
+test('a select replaced by its change handler with a control holding the chosen value passes', async (context) => {
+  // Arrange
+  const page = await openRealChromePage(context, FIXTURE)
+  if (!page) return
+  await read(
+    page,
+    `(() => { const old = document.getElementById('customer'); old.addEventListener('change', () => { const next = document.createElement('select'); next.id = 'customer'; next.innerHTML = '<option value="">Choose</option><option value="c1" selected>Alice</option>'; old.replaceWith(next) }) })()`,
+  )
+  // Act
+  const moments = await send(page, {
+    kind: 'choose',
+    title: 'Customer',
+    selector: '#customer',
+    value: 'c1',
+  })
+  // Assert
+  assert.deepEqual(moments, [
+    'before-input',
+    'acknowledged',
+    'value-checked:true',
+  ])
+})

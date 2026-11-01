@@ -74,16 +74,33 @@ function installSecretFrameObserver(
   let lastValue = ''
   // How often each value already appeared in the rendered text when it arrived: page text, not a copy.
   const baselines = new Map<string, number>()
-  // Every document the learner could see: the page, the open shadow roots in it and the same-origin frames in it.
+  // Every root the learner could see: the page, the open shadow roots in it and the same-origin frames in it, recursively. A cross-origin frame has no readable document, so its text and controls cannot be checked (a stated limit of this gate).
+  // Realm-independent: a frame's nodes fail the parent realm's `instanceof`, so roots and elements are told apart by `nodeType` and `tagName`.
+  const observedRoots = new WeakSet<object>()
+  const mutationCallback = (): void => check()
   const visibleRoots = (): ParentNode[] => {
     const roots: ParentNode[] = []
     const visit = (root: ParentNode): void => {
       roots.push(root)
+      // Mutations in a shadow root or a frame document are not seen by the observer on the page's document.
+      if (!observedRoots.has(root)) {
+        observedRoots.add(root)
+        new MutationObserver(mutationCallback).observe(root, {
+          attributes: true,
+          childList: true,
+          subtree: true,
+          characterData: true,
+        })
+      }
       for (const element of Array.from(root.querySelectorAll('*'))) {
         if (element.shadowRoot) visit(element.shadowRoot)
-        if (element instanceof HTMLIFrameElement) {
-          // A cross-origin frame has no readable document; its text cannot be checked.
-          const inner = element.contentDocument
+        if (element.tagName === 'IFRAME') {
+          let inner: Document | null = null
+          try {
+            inner = (element as HTMLIFrameElement).contentDocument
+          } catch {
+            // A cross-origin frame refuses access; its text cannot be checked.
+          }
           if (inner) visit(inner)
         }
       }
@@ -91,14 +108,21 @@ function installSecretFrameObserver(
     visit(document)
     return roots
   }
+  const countIn = (text: string, value: string): number =>
+    text.split(value).length - 1
+  // `innerText` is the rendered text (script, style and hidden elements are left out); a shadow root has none of its own, so its children's are read.
+  const occurrencesInRoot = (root: ParentNode, value: string): number => {
+    if ((root as Node).nodeType === 9)
+      return countIn((root as Document).body?.innerText ?? '', value)
+    return Array.from(root.children).reduce(
+      (total, child) =>
+        total + countIn((child as HTMLElement).innerText ?? '', value),
+      0,
+    )
+  }
   const occurrencesOf = (value: string): number =>
-    // `innerText` is the rendered text (script, style and hidden elements are left out) and includes open shadow roots.
     visibleRoots().reduce(
-      (total, root) =>
-        total +
-        (root instanceof Document
-          ? (root.body?.innerText ?? '').split(value).length - 1
-          : 0),
+      (total, root) => total + occurrencesInRoot(root, value),
       0,
     )
   // The value the learner will type is counted before anything is typed.
@@ -127,10 +151,12 @@ function installSecretFrameObserver(
       Array.from(root.querySelectorAll('input, textarea')).some(
         (element) =>
           element !== node &&
-          (element instanceof HTMLTextAreaElement ||
-            (element instanceof HTMLInputElement &&
-              !['password', 'hidden'].includes(element.type))) &&
-          holdsValue(element.value, value),
+          (element.tagName === 'TEXTAREA' ||
+            (element.tagName === 'INPUT' &&
+              !['password', 'hidden'].includes(
+                (element as HTMLInputElement).type,
+              ))) &&
+          holdsValue((element as HTMLInputElement).value, value),
       ),
     )
   // The armed element itself, whatever the selector matches now: the selector only serves to notice a replacement.

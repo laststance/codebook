@@ -429,7 +429,7 @@ test('reopened historical replay clears source and native state at the sealed re
   assert.deepEqual(revisited.observation, during.observation)
 })
 
-// protects=an image the secret gate withheld becomes the recorder's own gap, so the recording is sealed partial and keeps no frame after it; fails_when=a withheld image leaves no trace and the run is sealed complete; no_claim=the viewport that raises the gap (viewport tests) and a real browser
+// protects=an image the secret gate withheld becomes the recorder's own gap, so the recording is sealed partial while frames after the gap are still stored; fails_when=a withheld image leaves no trace and the run is sealed complete, or ends the recording; no_claim=the viewport that raises the gap (viewport tests) and a real browser
 test('a withheld image makes the recording partial with a declared gap', async (context) => {
   // Arrange
   const { store, binding } = await configuredRecordingHarness(context)
@@ -451,6 +451,10 @@ test('a withheld image makes the recording partial with a declared gap', async (
   // Assert
   assert.deepEqual(
     [index.status, index.seal?.status, index.seal?.reason, lateAccepted],
-    ['partial', 'partial', 'An image was withheld.', false],
+    ['partial', 'partial', 'An image was withheld.', true],
+  )
+  assert.deepEqual(
+    index.entries.map((entry) => entry.type),
+    ['frame', 'gap', 'frame', 'end'],
   )
 })

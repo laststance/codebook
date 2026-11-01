@@ -498,10 +498,6 @@ export class RecordingStore {
         )
           throw new Error('Recording order or receipt time changed.')
         if (entry.type === 'frame') {
-          if (hasGap)
-            throw new Error(
-              'Recording frames continue after a declared missing tail.',
-            )
           if (
             entry.phase &&
             !recordingPhases(header.profile, header.version).some(
@@ -1159,6 +1155,8 @@ export class RecordingWriter {
   private finalized = false
   private accepting = true
   private failure?: string
+  /** The first reason a non-terminal gap withheld an interval; seals the recording `partial` without ending frame admission. */
+  private withheld?: string
   private ioFailure?: string
   private sequence = 0
   private frameCount = 0
@@ -1245,36 +1243,67 @@ export class RecordingWriter {
       const bytes = isNew ? Buffer.from(input.bytes) : undefined
       this.pendingBytes += binaryBytes + lineBytes
       this.pendingHighWater = Math.max(this.pendingHighWater, this.pendingBytes)
-      this.pending = this.pending
-        .then(async () => {
-          if (this.ioFailure) return
-          if (bytes) {
-            await this.io.binary(join(this.directory, `${hash}.png`), bytes)
-            this.writtenFrames.set(hash, {
-              byteLength: bytes.byteLength,
-              ...dimensions,
-            })
-          }
-          await this.io.append(
-            join(this.directory, RECORDING_JOURNAL_FILE),
-            line,
-          )
-          this.journal += line
-          this.lastWrittenMs = entry.elapsedMs
-        })
-        .catch((error) => {
-          this.ioFailure = String(error)
-          this.accepting = false
-          this.failure ??= `Recording storage failed: ${String(error)}`
-        })
-        .finally(() => {
-          this.pendingBytes -= binaryBytes + lineBytes
-        })
+      this.queueWrite(async () => {
+        if (bytes) {
+          await this.io.binary(join(this.directory, `${hash}.png`), bytes)
+          this.writtenFrames.set(hash, {
+            byteLength: bytes.byteLength,
+            ...dimensions,
+          })
+        }
+        await this.io.append(join(this.directory, RECORDING_JOURNAL_FILE), line)
+        this.journal += line
+        this.lastWrittenMs = entry.elapsedMs
+      }, binaryBytes + lineBytes)
       return true
     } catch (error) {
       this.stopFrames(input.elapsedMs, String(error))
       return false
     }
+  }
+
+  /**
+   * Declares a withheld interval and keeps admitting frames: a gap entry in sequence through the reserved append path, after which later frames are stored again.
+   * Called by the recording observer when the secret frame gate drops frames that may carry a secret (for example the old document of a sign-in redirect); a terminal loss uses {@link stopFrames}.
+   * The recording seals `partial` with the first such reason, because it has a declared missing interval.
+   * @param elapsedMs - Receipt time of the withheld interval's start; clamped to the last admitted time.
+   * @param reason - Why the interval is missing; shown in the replay for that interval.
+   * @example writer.gap(400, 'A frame that may show a secret value was withheld.')
+   */
+  gap(elapsedMs: number, reason: string): void {
+    if (!this.accepting) return
+    const text = reason.slice(0, RECORDING_REASON_LIMIT_CHARS)
+    const entry: RecordingEntry = {
+      type: 'gap',
+      sequence: this.sequence + 1,
+      elapsedMs: Math.max(
+        Number.isFinite(elapsedMs) ? elapsedMs : this.lastAdmittedMs,
+        this.lastAdmittedMs,
+      ),
+      reason: text,
+    }
+    const line = JSON.stringify(entry) + '\n',
+      lineBytes = Buffer.byteLength(line)
+    // A gap that does not fit the journal or pending budget is a terminal loss, as a rejected frame is.
+    if (
+      this.pendingBytes + lineBytes > this.limits.pendingBytes ||
+      this.journalBytes + lineBytes >
+        this.limits.journalBytes - RECORDING_TERMINAL_RESERVE_BYTES
+    ) {
+      this.stopFrames(elapsedMs, text)
+      return
+    }
+    this.sequence++
+    this.journalBytes += lineBytes
+    this.pendingBytes += lineBytes
+    this.pendingHighWater = Math.max(this.pendingHighWater, this.pendingBytes)
+    this.lastAdmittedMs = entry.elapsedMs
+    this.withheld ??= text
+    this.queueWrite(async () => {
+      await this.io.append(join(this.directory, RECORDING_JOURNAL_FILE), line)
+      this.journal += line
+      this.lastWrittenMs = entry.elapsedMs
+    }, lineBytes)
   }
 
   /** Marks a known loss without blocking runtime teardown; terminal metadata retains its reserved capacity. @example writer.stopFrames(400, 'stream disconnected') */
@@ -1317,8 +1346,8 @@ export class RecordingWriter {
           type: 'end',
           sequence: ++this.sequence,
           elapsedMs: endMs,
-          status: this.failure ? 'partial' : 'complete',
-          reason: this.failure,
+          status: this.failure || this.withheld ? 'partial' : 'complete',
+          reason: this.failure ?? this.withheld,
         }
         await this.appendTerminal(end)
         const seal = retainedRecordingSealSchema.parse({
@@ -1377,12 +1406,12 @@ export class RecordingWriter {
     return {
       status: this.accepting
         ? ('recording' as const)
-        : this.failure
+        : this.failure || this.withheld
           ? ('partial' as const)
           : this.finalized
             ? ('finalized' as const)
             : ('finalizing' as const),
-      reason: this.failure,
+      reason: this.failure ?? this.withheld,
       frameCount: this.frameCount,
       pngBytes: this.pngBytes,
       pendingBytes: this.pendingBytes,
@@ -1395,6 +1424,28 @@ export class RecordingWriter {
   async flush(): Promise<void> {
     await this.pending
     if (this.ioFailure) throw new Error(this.ioFailure)
+  }
+
+  /**
+   * Chains one reserved write behind the accepted ones, and releases its pending-byte reservation when it settles; a storage failure closes frame admission and is kept for {@link finish}.
+   * @param write - The blob/journal writes of one entry; skipped once an earlier write failed.
+   * @param reservedBytes - The pending bytes {@link frame} or {@link gap} reserved for this write.
+   * @example this.queueWrite(async () => { await this.io.append(path, line) }, lineBytes)
+   */
+  private queueWrite(write: () => Promise<void>, reservedBytes: number): void {
+    this.pending = this.pending
+      .then(async () => {
+        if (this.ioFailure) return
+        await write()
+      })
+      .catch((error) => {
+        this.ioFailure = String(error)
+        this.accepting = false
+        this.failure ??= `Recording storage failed: ${String(error)}`
+      })
+      .finally(() => {
+        this.pendingBytes -= reservedBytes
+      })
   }
 
   /** Appends only reserved gap/end records after frame admission closes; it never repairs a torn failed write. @example await this.appendTerminal(end) */

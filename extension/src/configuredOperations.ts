@@ -311,13 +311,26 @@ function applyNativeValue(
     step: entry.getAttribute('step') ?? undefined,
     pattern: entry.getAttribute('pattern') ?? undefined,
   })
-  return {
-    applied: true,
-    valueMatches: control.value === input.value,
-    isValid:
-      control instanceof HTMLInputElement ? control.validity.valid : true,
-    rule: control instanceof HTMLInputElement ? rules(control) : undefined,
+  // The handlers may have re-rendered the control: the value is read from the control the selector resolves to now, which must be one connected select or input.
+  const readBack = () => {
+    const matches = document.querySelectorAll(input.selector)
+    const current =
+      matches.length === 1 && matches[0]?.isConnected ? matches[0] : undefined
+    const resolved =
+      current instanceof HTMLSelectElement ||
+      current instanceof HTMLInputElement
+        ? current
+        : undefined
+    return {
+      valueMatches: resolved !== undefined && resolved.value === input.value,
+      isValid:
+        resolved instanceof HTMLInputElement
+          ? resolved.validity.valid
+          : resolved !== undefined,
+      rule: resolved instanceof HTMLInputElement ? rules(resolved) : undefined,
+    }
   }
+  return { applied: true, ...readBack() }
 }
 
 /**

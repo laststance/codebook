@@ -480,3 +480,69 @@ test('a value set by script into a visible text control and cleared again before
   // Assert
   assert.deepEqual([earlier, during], ['pass', 'drop'])
 })
+
+// protects=a secret copied into the text of a same-origin iframe fails the gate; fails_when=the rendered-text check reads only the top document (an iframe document fails the parent realm's instanceof Document); no_claim=cross-origin iframes (their text cannot be read, a stated limit); real headless Chrome
+test('a secret copied into the text of a same-origin iframe drops frames and fails the run', async (context) => {
+  // Arrange
+  const page = await launchRealHeadlessPage(context)
+  if (!page) return
+  await page.load('<input id="pw" type="password"><div id="host"></div>')
+  const failures: SecretFrameFailureReason[] = []
+  const gate = new SecretFrameGate({
+    evaluate: (expression) => page.evaluate(expression),
+    onFailure: (reason) => void failures.push(reason),
+  })
+  await gate.arm('#pw', 'typed-secret')
+  // Act
+  await page.evaluate(
+    `(() => { const frame = document.createElement('iframe'); document.getElementById('host').append(frame); frame.contentDocument.body.textContent = 'you typed typed-secret' })()`,
+  )
+  await settle(page)
+  const verdict = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.deepEqual([verdict, failures], ['drop', ['value-copied-to-text']])
+})
+
+// protects=a secret copied into the text of an open shadow root fails the gate; fails_when=shadow roots count as zero occurrences; no_claim=closed shadow roots; real headless Chrome
+test('a secret copied into the text of an open shadow root drops frames and fails the run', async (context) => {
+  // Arrange
+  const page = await launchRealHeadlessPage(context)
+  if (!page) return
+  await page.load('<input id="pw" type="password"><div id="host"></div>')
+  const failures: SecretFrameFailureReason[] = []
+  const gate = new SecretFrameGate({
+    evaluate: (expression) => page.evaluate(expression),
+    onFailure: (reason) => void failures.push(reason),
+  })
+  await gate.arm('#pw', 'typed-secret')
+  // Act
+  await page.evaluate(
+    `(() => { const note = document.createElement('p'); note.textContent = 'you typed typed-secret'; document.getElementById('host').attachShadow({ mode: 'open' }).append(note) })()`,
+  )
+  await settle(page)
+  const verdict = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.deepEqual([verdict, failures], ['drop', ['value-copied-to-text']])
+})
+
+// protects=a plain text control inside a same-origin iframe that holds the secret fails the gate; fails_when=the control test uses the parent realm's HTMLInputElement, which an iframe's input is not; no_claim=cross-origin iframes; real headless Chrome
+test('a plain control inside a same-origin iframe holding the secret drops frames and fails the run', async (context) => {
+  // Arrange
+  const page = await launchRealHeadlessPage(context)
+  if (!page) return
+  await page.load('<input id="pw" type="password"><div id="host"></div>')
+  const failures: SecretFrameFailureReason[] = []
+  const gate = new SecretFrameGate({
+    evaluate: (expression) => page.evaluate(expression),
+    onFailure: (reason) => void failures.push(reason),
+  })
+  await gate.arm('#pw', 'typed-secret')
+  // Act
+  await page.evaluate(
+    `(() => { const frame = document.createElement('iframe'); document.getElementById('host').append(frame); const input = frame.contentDocument.createElement('input'); input.type = 'text'; frame.contentDocument.body.append(input); input.value = 'typed-secret' })()`,
+  )
+  await settle(page)
+  const verdict = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.deepEqual([verdict, failures], ['drop', ['control-replaced']])
+})

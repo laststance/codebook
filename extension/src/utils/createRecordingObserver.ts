@@ -35,8 +35,8 @@ export function createRecordingObserver(
       }
     },
     gap(input): void {
-      // A withheld image is a declared missing interval: the recording is partial from here (4A).
-      writer.stopFrames(input.elapsedMs, input.reason)
+      // A withheld image is a declared missing interval, not the end: later frames are stored and the recording seals partial (4A).
+      writer.gap(input.elapsedMs, input.reason)
     },
     closed(input): void {
       record.recordingEndMs = input.elapsedMs
