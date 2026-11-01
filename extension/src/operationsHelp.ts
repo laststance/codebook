@@ -5,6 +5,7 @@ import {
   OPERATION_SETTLE_QUIET_MS,
   REPOSITORY_OPERATION_ACTION,
   REPOSITORY_OPERATION_LIMIT,
+  SECRET_FRAME_VALUE_COPY_MIN_CHARS,
 } from './constants'
 import { ERROR_RECOVERY, type ErrorCode } from './errors'
 
@@ -182,7 +183,7 @@ export function operationsHelp() {
         effect:
           "pending, dispatched or after-verified: after-verified once the operation's own after conditions held. A non-last operation without its own after reads dispatched when done: Codebook sent it and no condition checked its result. For the last operation, the run-level after decides, and observed.afterVerified reads true.",
         failure:
-          'After a refusal or failure the resource adds operationFailure { code, operationIndex, path, sent, sideEffects, logId }: path is the configuration field to fix, sent says whether anything reached the page, sideEffects says whether the app may have changed, and logId matches one line in Output > Codebook.',
+          'After a refusal or failure the resource adds operationFailure { code, operationIndex, path, sent, sideEffects, logId }: path is the configuration field to fix, sent says whether anything reached the page, sideEffects says whether the app may have changed (unknown too when an earlier operation of the run was sent, so a rerun would repeat it), and logId matches one line in Output > Codebook.',
       },
       firstSuccess:
         'The chat knows the first operation took effect only when the run resource shows operations[0].state done with ack yes, valueCheck passed or n/a and, if you claim its result, effect after-verified. A receipt or a ready state is not that evidence. The whole flow succeeded when every operation reads done and observed.afterVerified is true.',
@@ -211,7 +212,7 @@ export function operationsHelp() {
     },
     operationsSecrets: {
       anchor: 'codebook://help/repository-browser#secrets-and-masking',
-      askLearner: `A text operation declared secret: "${ASK_LEARNER_SECRET}" asks the learner. When you send that operation, the editor shows a masked input box titled with the repository and the operation title, and the call waits for the answer; the value goes straight into the page and is never in the chat, the configuration, a receipt or a resource. If the learner dismisses the box, leaves it empty or does not answer in time, the call answers OPERATIONS_NOT_CONFIRMED, nothing is sent and the run stays ready: tell the learner what the question was for and ask whether to try again.`,
+      askLearner: `A text operation declared secret: "${ASK_LEARNER_SECRET}" asks the learner. When you send that operation, the editor shows a masked input box titled with the repository and the operation title, and the call waits for the answer; the value goes straight into the page and is never in the chat, the configuration, a receipt or a resource. The box refuses a secret shorter than ${SECRET_FRAME_VALUE_COPY_MIN_CHARS} characters and stays open, so tell the learner to use a test account password of that length or more. If the learner dismisses the box, leaves it empty or does not answer in time, the call answers OPERATIONS_NOT_CONFIRMED, nothing is sent and the run stays ready: tell the learner what the question was for and ask whether to try again.`,
       neverFromChat:
         'A control that reads as a secret (type password, or a name, id or autocomplete such as current-password, new-password or one-time-code) never receives text from the chat: a text operation with text into it answers SECRET_INPUT_FROM_CHAT and sends nothing. A secret select answers SECRET_INPUT_VISIBLE. Never put a secret in the configuration, the chat or an article.',
       passwordInputOnly:

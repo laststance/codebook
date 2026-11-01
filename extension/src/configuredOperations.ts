@@ -111,6 +111,7 @@ const descriptionSchema = z.object({
   autocomplete: z.string().optional(),
   multiple: z.boolean().optional(),
   isContentEditable: z.boolean().optional(),
+  isFocused: z.boolean().optional(),
 })
 const applySchema = z.object({
   applied: z.boolean(),
@@ -169,6 +170,10 @@ function describeOperationControl(
   const matches = document.querySelectorAll(input.selector)
   if (matches.length !== 1 || matches[0] !== this || !this.isConnected)
     return { ready: false, reason: 'unique-control-required' }
+  // The focused element, through open shadow roots: text typed now goes there.
+  let focused = document.activeElement
+  while (focused?.shadowRoot?.activeElement)
+    focused = focused.shadowRoot.activeElement
   const rect = this.getBoundingClientRect(),
     style = getComputedStyle(this),
     formControl =
@@ -206,6 +211,7 @@ function describeOperationControl(
     autocomplete: this.getAttribute('autocomplete') ?? '',
     multiple: this instanceof HTMLSelectElement && this.multiple,
     isContentEditable: this instanceof HTMLElement && this.isContentEditable,
+    isFocused: focused === this,
   }
 }
 
@@ -800,11 +806,9 @@ function sendNativeValue(
         { operationIndex: index, sent: 'sent' },
       )
     }
+    // An unapplied value reached no control: the operation is refused unsent and nothing is acknowledged.
+    if (!parsed.applied) throw refusalOfUnapplied(parsed.reason, label, context)
     hooks.acknowledged()
-    if (!parsed.applied) {
-      hooks.valueChecked(false)
-      throw refusalOfUnapplied(parsed.reason, label, context)
-    }
     const passed = parsed.valueMatches === true && parsed.isValid === true
     hooks.valueChecked(passed)
     if (!passed)
@@ -911,6 +915,13 @@ async function sendTextLike(
             port,
           )
           port.assertCurrent()
+          // The text goes to whatever holds the focus, so the control must still hold it.
+          if (again.isFocused !== true)
+            throw new OperationRefusal(
+              'INPUT_NOT_ACCEPTED',
+              `${label} was not sent: the control lost the focus after it was resolved, so Codebook sent nothing.`,
+              { operationIndex: index, path: context.configPath('selector') },
+            )
           const nowSecret = classifySecretControl(fingerprintOf(again))
           if (
             nowSecret !== classified ||

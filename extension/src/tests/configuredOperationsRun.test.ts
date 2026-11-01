@@ -3,6 +3,7 @@ import { test } from 'node:test'
 
 import type { RepositoryOperation } from '../repositoryConfigSchemas'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { describeOperationFailureDetails } from '../utils/describeOperationFailureDetails'
 
 import {
   configuredRuntimeHarness,
@@ -319,6 +320,10 @@ test('chat text into a password control fails the run before anything is typed',
   assert.deepEqual(insertedTexts, [])
   assert.equal(view.operationFailure?.sent, 'not-sent')
   assert.equal(view.operationFailure?.sideEffects, 'none')
+  assert.equal(
+    describeOperationFailureDetails(view.operationFailure).retry,
+    'Fix the configuration, then start one new run.',
+  )
   assert.equal(view.operations?.[0]?.state, 'failed')
 })
 
@@ -365,8 +370,8 @@ test('an ask-learner operation types the learner value with the frame gate armed
   assert.doesNotMatch(serialized, /typed-by-learner/)
 })
 
-// protects=ENG-5: when the secret gate cannot arm for operation 2, the run fails as operation 2 (not sent, no side effects) with SECRET_BECAME_VISIBLE and nothing is typed; fails_when=the failure names operation 1 or says sent, or the secret is typed; no_claim=a real page (the harness stands in for the gate's observer, which finds a plain text control)
-test('a secret gate that cannot arm for operation 2 fails the run as operation 2, not sent', async (context) => {
+// protects=ENG-5 and the rerun rule: when the secret gate cannot arm for operation 2 after operation 1 was sent, the run fails as operation 2 (not sent, side effects unknown) with SECRET_BECAME_VISIBLE, nothing is typed and the retry rule is to ask the learner; fails_when=the failure names operation 1 or says sent, reads side effects none (inviting a rerun that repeats operation 1), or the secret is typed; no_claim=a real page (the harness stands in for the gate's observer, which finds a plain text control)
+test('a secret gate that cannot arm for operation 2 fails as operation 2, not sent, with unknown side effects and no rerun advice', async (context) => {
   // Arrange
   const { run, insertedTexts } = await configuredRuntimeHarness(
     context,
@@ -409,9 +414,13 @@ test('a secret gate that cannot arm for operation 2 fails the run as operation 2
     operationIndex: 2,
     path: 'operations[1].selector',
     sent: 'not-sent',
-    sideEffects: 'none',
+    sideEffects: 'unknown',
     logId: `${run.id}#2`,
   })
+  assert.equal(
+    describeOperationFailureDetails(view.operationFailure!).retry,
+    'Never retry automatically; ask the learner.',
+  )
   assert.deepEqual(insertedTexts, [])
 })
 
@@ -816,4 +825,59 @@ test('accepting operation 2 keeps the acknowledgement of operation 1 in the aggr
   assert.equal(afterFirst?.inputAcknowledged, true)
   assert.equal(duringSecond?.inputAcknowledged, true)
   assert.equal(plain(run.view().operations?.[1])?.ack, 'pending')
+})
+
+// protects=a choose whose page call applied nothing is refused unsent and its record is never acknowledged; fails_when=the record reads ack yes while the failure says not-sent; no_claim=a real select (the harness page answers the unapplied value)
+test('a choose the page did not apply leaves the operation unacknowledged and the failure not-sent', async (context) => {
+  // Arrange
+  const { run } = await configuredRuntimeHarness(context, undefined, [], {
+    operations: {
+      operations: [choose],
+      stopOperations: [1],
+      controls: CUSTOMER_CONTROLS,
+      unappliedNativeValue: ['#customer'],
+    },
+  })
+  await run.prepare()
+  // Act
+  run.action('op-1', OPERATION_ACTION)
+  const stop = await waitUntil(
+    () => run.view().participants.browser.snapshot,
+    'the stop inside the handler',
+  )
+  await run.continue('browser', stop.pause)
+  await waitUntil(() => run.view().status === 'failed', 'the refusal')
+  // Assert
+  const view = run.view()
+  assert.equal(view.operationFailure?.sent, 'not-sent')
+  assert.equal(view.operations?.[0]?.ack, 'pending')
+  assert.equal(view.operations?.[0]?.valueCheck, 'pending')
+})
+
+// protects=a stop that began cleanup lets no operation input out, even while the recording drains for its bounded time; fails_when=an operation accepted during the drain types its text after cleanup.started; no_claim=the recording's seal (viewport tests) and a real page: the harness holds the drain and records the inserts
+test('an operation offered while a stop drains the recording sends nothing', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, [], {
+    holdRecordingHistoryEnd: true,
+    operations: {
+      operations: [amount],
+      stopOperations: [1],
+      controls: NUMBER_CONTROLS,
+    },
+  })
+  const { run, insertedTexts } = harness
+  await run.prepare()
+  // Act: the stop begins and waits on the drain, then the agent offers the operation.
+  const stopping = run.stop()
+  try {
+    run.action('op-1', OPERATION_ACTION)
+  } catch {
+    // The run refuses the operation once cleanup began; either way nothing may be typed.
+  }
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  harness.releaseRecordingHistoryEnd()
+  await stopping
+  // Assert
+  assert.deepEqual(insertedTexts, [])
+  assert.equal(run.view().operations?.[0]?.state, 'not-run')
 })

@@ -5,7 +5,7 @@ import type { OperationFailure } from '../runtime'
  * Called by the service when it describes a version 3 run's failure ({@link StudyService.runtimeFailureError}).
  * @param failure - The run's first operation failure.
  * @param runUri - The run's resource address, when the caller has it.
- * @returns The fields; `retry` is "fix the configuration, then one new run" when nothing was sent, and "never retry automatically; ask the learner" once the input was sent.
+ * @returns The fields; `retry` is "fix the configuration, then one new run" when nothing of the run reached the page (not sent and no side effects), and "never retry automatically; ask the learner" once the input of this or an earlier operation was sent.
  * @example
  * describeOperationFailureDetails({ code: 'OPTION_NOT_AVAILABLE', operationIndex: 1, path: 'operations[0].value', sent: 'not-sent', sideEffects: 'none', logId: 'r1#1' }, 'codebook://run/r1')
  * // => { runUri: 'codebook://run/r1', operationIndex: 1, path: 'operations[0].value', sent: 'not-sent', sideEffects: 'none', retry: 'Fix the configuration, then start one new run.', logId: 'r1#1' }
@@ -21,7 +21,7 @@ export function describeOperationFailureDetails(
     sent: failure.sent,
     sideEffects: failure.sideEffects,
     retry:
-      failure.sent === 'not-sent'
+      failure.sent === 'not-sent' && failure.sideEffects === 'none'
         ? 'Fix the configuration, then start one new run.'
         : 'Never retry automatically; ask the learner.',
     logId: failure.logId,

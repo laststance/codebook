@@ -1,9 +1,13 @@
+import { SECRET_FRAME_VALUE_COPY_MIN_CHARS } from '../constants'
+
 /** What the editor's input box needs to ask for a secret: masked, titled, and kept open when the focus moves. */
 export type LearnerSecretBoxOptions = {
   password: true
   title: string
   prompt: string
   ignoreFocusOut: true
+  /** Refuses a value too short for the frame gate to verify, so the box stays open for a valid one. */
+  validateInput: (value: string) => string | undefined
 }
 
 /** The editor's input box (`vscode.window.showInputBox`), with the cancellation token it closes on. */
@@ -50,6 +54,11 @@ export function createLearnerSecretAsker<Token>(
           prompt:
             'Codebook types this into the page for the operation your AI chat sent. The chat never sees it.',
           ignoreFocusOut: true,
+          // A secret shorter than the frame gate can verify would fail every later image of the recording.
+          validateInput: (value) =>
+            value.length < SECRET_FRAME_VALUE_COPY_MIN_CHARS
+              ? `Codebook needs at least ${SECRET_FRAME_VALUE_COPY_MIN_CHARS} characters to keep a typed secret out of the recording. Use a test account password of ${SECRET_FRAME_VALUE_COPY_MIN_CHARS} or more characters.`
+              : undefined,
         },
         cancellation.token,
       )

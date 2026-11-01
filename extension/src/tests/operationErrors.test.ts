@@ -87,6 +87,23 @@ test('the failure fields give the retry rule that matches what was sent', () => 
   assert.equal(sent.sideEffects, 'unknown')
 })
 
+// protects=DX-5: a not-sent failure whose run already sent an earlier operation is never told to be rerun; fails_when=the retry rule keys on sent alone; no_claim=how the run derives sideEffects (run tests)
+test('a not-sent failure with unknown side effects is not told to be rerun', () => {
+  // Arrange
+  const failure = {
+    code: 'INPUT_NOT_ACCEPTED',
+    operationIndex: 2,
+    path: 'operations[1].selector',
+    sent: 'not-sent',
+    sideEffects: 'unknown',
+    logId: 'run-1#2',
+  } as const
+  // Act
+  const details = describeOperationFailureDetails(failure)
+  // Assert
+  assert.equal(details.retry, 'Never retry automatically; ask the learner.')
+})
+
 // protects=the describe() of a StudyError shows its details beside the code and leaves an error without details as before; fails_when=details are dropped or appear on every error; no_claim=none beyond protects
 test('a StudyError shows its details only when it has some', () => {
   // Arrange
@@ -109,7 +126,12 @@ test('a StudyError shows its details only when it has some', () => {
 // protects=DX-3: the learner is asked in a masked input box titled with the repository and the operation, kept open when focus moves, and the box closes when the wait ends; fails_when=the box is not masked, is titled otherwise, stays open after an abort, or is shown for an already aborted wait; no_claim=the editor's real input box (a stand-in is injected)
 test('the secret question is a masked input box titled repository and operation that closes when the wait aborts', async () => {
   // Arrange
-  const shown: { password: true; title: string; ignoreFocusOut: true }[] = []
+  const shown: {
+    password: true
+    title: string
+    ignoreFocusOut: true
+    validateInput: (value: string) => string | undefined
+  }[] = []
   let cancelled = 0
   let disposed = 0
   let answer: (value: string | undefined) => void = () => {}
@@ -162,4 +184,29 @@ test('the secret question is a masked input box titled repository and operation 
   )
   assert.equal(cancelled, 1)
   assert.equal(disposed, 2)
+})
+
+// protects=a secret too short for the frame gate to verify is refused by the box itself, which stays open for a valid one; fails_when=a 3-character answer is accepted or a 4-character one is refused; no_claim=the editor's real input box (a stand-in is injected)
+test('the secret box refuses an answer shorter than 4 characters and accepts 4', async () => {
+  // Arrange
+  const shown: { validateInput: (value: string) => string | undefined }[] = []
+  const ask = createLearnerSecretAsker(
+    (options) => {
+      shown.push(options)
+      return Promise.resolve('abcd')
+    },
+    () => ({ token: 'token', cancel: (): void => {}, dispose: (): void => {} }),
+  )
+  // Act
+  await ask(
+    { runId: 'r1', repository: 'nextjs-dashboard', title: 'Password' },
+    new AbortController().signal,
+  )
+  const validate = shown[0]!.validateInput
+  // Assert
+  assert.equal(
+    validate('abc'),
+    'Codebook needs at least 4 characters to keep a typed secret out of the recording. Use a test account password of 4 or more characters.',
+  )
+  assert.equal(validate('abcd'), undefined)
 })

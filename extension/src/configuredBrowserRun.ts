@@ -5709,18 +5709,22 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (this.operationFailure) return
     const record = this.operationRecords[refusal.operationIndex - 1]
     if (record) this.moveForward(record, { state: 'failed' })
+    // An earlier operation of the run reached the page, so a rerun would repeat it: the side effects are unknown whatever this operation's own fact is.
+    const earlierDispatched =
+      Math.min(this.operationsDispatched, refusal.operationIndex - 1) >= 1
+    const sideEffects = earlierDispatched ? 'unknown' : refusal.sideEffects
     this.operationFailure = {
       code: refusal.code,
       operationIndex: refusal.operationIndex,
       path: refusal.path,
       sent: refusal.sent,
-      sideEffects: refusal.sideEffects,
+      sideEffects,
       logId: this.operationLogId(refusal.operationIndex),
     }
     this.logOperation(
       refusal.operationIndex,
       'error',
-      `refused ${refusal.code} (sent: ${refusal.sent}, side effects: ${refusal.sideEffects})`,
+      `refused ${refusal.code} (sent: ${refusal.sent}, side effects: ${sideEffects})`,
     )
   }
 
@@ -8558,8 +8562,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         journalLimit: REPOSITORY_STOP_MODULE_JOURNAL_LIMIT,
       })
     this.evidence.record('cleanup.started')
-    // Teardown frames are not history: queued images get their verdict while the page still answers, later ones are discarded.
-    await this.browser.endRecordingHistory().catch(() => undefined)
+    // Teardown frames are not history: the history ends at once and queued images get their verdict while the page still answers, later ones are discarded.
+    const historyEnded = this.browser
+      .endRecordingHistory()
+      .catch(() => undefined)
+    // No operation input may start once cleanup began, so the run closes before the bounded drain below (the drain depends on neither the flag nor the signal).
+    this.cleaning = true
+    this.abort.abort()
+    await historyEnded
     this.forgetCausalSessions()
     this.scriptAnnouncements.clear()
     if (this.transientBrowserPause) {
@@ -8568,8 +8578,6 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     // The gate's last counts are journaled once, with the run's other closing facts.
     this.secretFrameGate.flushSummary()
-    this.cleaning = true
-    this.abort.abort()
     this.continuation = undefined
     for (const participant of Object.values(this.participants))
       participant.gate.invalidate()

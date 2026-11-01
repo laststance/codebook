@@ -42,11 +42,14 @@ const FIXTURE = `<!doctype html><html><body>
 <input id="when" type="date">
 <input id="agree" type="checkbox">
 <input id="shifty" type="text" name="shifty">
+<input id="stealer" type="text" name="stealer">
+<input id="landing" type="text" name="landing">
 <button id="go" type="button">Go</button>
 </form>
 <script>
 window.reactChanges = [];
 window.clicks = 0;
+document.getElementById('stealer').addEventListener('focus', () => { document.getElementById('landing').focus(); });
 document.getElementById('go').addEventListener('click', () => { window.clicks++; });
 for (const id of ['amount', 'customer']) {
   const element = document.getElementById(id);
@@ -762,4 +765,23 @@ test('a select replaced by its change handler with a control holding the chosen 
     'acknowledged',
     'value-checked:true',
   ])
+})
+
+// protects=text goes only to the control that holds the focus at the last look: a page that moves the focus on focus gets a refusal and no text lands in either control; fails_when=the text is inserted into the control that took the focus; no_claim=shadow-root focus (the same walk is not exercised here); real headless Chrome
+test('a page that moves the focus away from the control on focus receives no text', async (context) => {
+  // Arrange
+  const page = await openRealChromePage(context, FIXTURE)
+  if (!page) return
+  // Act
+  const refusal = await refusalOf(page, {
+    kind: 'text',
+    title: 'Stealer',
+    selector: '#stealer',
+    text: 'not-from-chat',
+  })
+  // Assert
+  assert.equal(refusal.code, 'INPUT_NOT_ACCEPTED')
+  assert.equal(refusal.sent, 'not-sent')
+  assert.equal(await read(page, 'document.getElementById("stealer").value'), '')
+  assert.equal(await read(page, 'document.getElementById("landing").value'), '')
 })

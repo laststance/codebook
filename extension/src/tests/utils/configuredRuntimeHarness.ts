@@ -165,6 +165,8 @@ export async function configuredRuntimeHarness(
     >
     /** Makes the stand-in page never answer the text insert of an initial input, as a page whose reply is lost. */
     holdInputInsert?: boolean
+    /** Makes the stand-in browser's end of the recording history wait until {@link releaseRecordingHistoryEnd} is called, as a drain of queued image verdicts that takes its whole bound. */
+    holdRecordingHistoryEnd?: boolean
     /** Makes the stand-in server's readiness check (`ready` and `readyEntry`) reject with this message, as a server that exits before it listens does. */
     launchFailure?: string
     /** Makes the stand-in server's structured entry check (`readyEntry`) never answer until the run is cancelled, as a first compile that is still running does. */
@@ -185,13 +187,20 @@ export async function configuredRuntimeHarness(
       failValueCheck?: string[]
       /** The reason the page gives when a text's value check fails, in place of the default; a page may quote what it holds. */
       failValueCheckReason?: string
+      /** Selectors of native-value controls (number, select) whose page call applies nothing, as a select without the declared option does. */
+      unappliedNativeValue?: string[]
       /** Makes the page's answer to resolving a control throw an error with this message, as a transport failure that quotes text does. */
       selectControlFailsWith?: string
     }
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
+  let releaseHistoryEnd: () => void = () => {}
+  const historyEndReleased = new Promise<void>((resolve) => {
+    releaseHistoryEnd = resolve
+  })
   context.after(async () => {
+    releaseHistoryEnd()
     await owned?.stop()
   })
   const repository = await repositoryHarness(context),
@@ -653,6 +662,7 @@ export async function configuredRuntimeHarness(
         autocomplete: control?.autocomplete ?? '',
         multiple: control?.multiple ?? false,
         isContentEditable: false,
+        isFocused: true,
       }
     if (declaration.includes('checkSelectOption')) {
       const option = control?.options?.find(
@@ -662,13 +672,16 @@ export async function configuredRuntimeHarness(
         state: !option ? 'missing' : option.disabled ? 'disabled' : 'available',
       }
     }
-    if (declaration.includes('applyNativeValue'))
+    if (declaration.includes('applyNativeValue')) {
+      if (operationsOption?.unappliedNativeValue?.includes(selector))
+        return { applied: false, reason: 'option-missing' }
       return {
         applied: true,
         valueMatches: true,
         isValid: true,
         rule: { min: '1' },
       }
+    }
     if (
       argument.phase === 'verify' &&
       operationsOption?.failValueCheck?.includes(String(argument.selector))
@@ -1178,7 +1191,9 @@ export async function configuredRuntimeHarness(
             viewportReady = true
           }
           resumeViewport(): void {}
-          async endRecordingHistory(): Promise<void> {}
+          async endRecordingHistory(): Promise<void> {
+            if (options.holdRecordingHistoryEnd) await historyEndReleased
+          }
           recordCapture(data: string, phase: string): void {
             const observer = recordingObserver()
             observer?.frame({
@@ -1478,6 +1493,8 @@ export async function configuredRuntimeHarness(
     setScreenshot(base64: string): void {
       screenshot = base64
     },
+    /** Lets a held end of the recording history finish. @example harness.releaseRecordingHistoryEnd() */
+    releaseRecordingHistoryEnd: (): void => releaseHistoryEnd(),
     /** Makes the page report this `location.origin`, as after a redirect to another loopback name. @example harness.setPageOrigin('http://localhost:4321') */
     setPageOrigin(origin: string): void {
       pageOrigin = origin
