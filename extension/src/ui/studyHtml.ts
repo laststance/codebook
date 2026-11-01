@@ -2519,29 +2519,40 @@ function studyClient(
     else releaseTestReplayPlayhead()
   }
   /**
+   * Names the replay family whose words the page uses: the shown replay's profile, else, with no replay selected, the only family the workspace saved (test replays first, then server replays, then Extension replays), so a workspace holding only Extension replays is not asked to choose a test replay; called by {@link useReplayWords}.
+   * @param message - The current Study message.
+   * @returns `node-server`, `chrome-extension`, or `undefined` for test replay words.
+   * @example replayProfileOf({ nodeExtensionHistoryCatalog: [summary] }) // => 'chrome-extension'
+   */
+  const replayProfileOf = (
+    message: StudyViewMessage,
+  ): StudyViewMessage['nodeReplayProfile'] => {
+    if (message.nodeReplayProfile) return message.nodeReplayProfile
+    if (message.nodeHistoryCatalog?.length) return undefined
+    if (message.nodeServerHistoryCatalog?.length) return 'node-server'
+    return message.nodeExtensionHistoryCatalog?.length
+      ? 'chrome-extension'
+      : undefined
+  }
+  /**
+   * Gives the fixed words of one replay family; called by {@link useReplayWords}.
+   * @param profile - The family, `undefined` for test replays.
+   * @returns The family's words.
+   * @example replayWordsOfProfile('node-server') === options.serverReplay // => true
+   */
+  const replayWordsOfProfile = (
+    profile: StudyViewMessage['nodeReplayProfile'],
+  ): Readonly<Record<keyof typeof options.testReplay, string>> => {
+    if (profile === 'chrome-extension') return options.extensionReplay
+    return profile === 'node-server' ? options.serverReplay : options.testReplay
+  }
+  /**
    * Chooses the replay's fixed words for a Study message and writes the ones the page's markup holds: the section's heading, the sequence's group name, the no-summary line, the step details and Show recorded output labels, and the understanding label; a server replay reads every one in the server catalog and never as a test. Called first for each Study message.
    * @param message - The current Study message; `nodeReplayProfile` names a server replay.
    * @example useReplayWords(message) // heading reads 'Server replay' for a server replay
    */
   const useReplayWords = (message: StudyViewMessage): void => {
-    // With no replay selected, the saved replays decide the words: test replays first, then server replays, then Extension replays, so a workspace holding only Extension replays is not asked to choose a test replay.
-    const noReplaySelected = message.nodeReplayProfile === undefined
-    const hasTestReplays = Boolean(message.nodeHistoryCatalog?.length)
-    const onlyServerReplays =
-      noReplaySelected &&
-      !hasTestReplays &&
-      Boolean(message.nodeServerHistoryCatalog?.length)
-    const onlyExtensionReplays =
-      noReplaySelected &&
-      !hasTestReplays &&
-      !message.nodeServerHistoryCatalog?.length &&
-      Boolean(message.nodeExtensionHistoryCatalog?.length)
-    replayWords =
-      message.nodeReplayProfile === 'chrome-extension' || onlyExtensionReplays
-        ? options.extensionReplay
-        : message.nodeReplayProfile === 'node-server' || onlyServerReplays
-          ? options.serverReplay
-          : options.testReplay
+    replayWords = replayWordsOfProfile(replayProfileOf(message))
     text('node-history-heading', replayWords.heading)
     element('node-learning-sequence').setAttribute(
       'aria-label',
@@ -2640,6 +2651,18 @@ function studyClient(
     suppressed: boolean,
   ): boolean => !suppressed && !message.nodeHistoryPosition?.pending
   /**
+   * Gives the line the section shows with no replay selected: choose one when any test, server or Extension replay is saved, else that none is; called by {@link renderTestReplayMoment}.
+   * @param message - The current Study message.
+   * @returns The family's choose-a-replay or no-replay line.
+   * @example idleReplayLine({ nodeHistoryCatalog: [] }) === replayWords.noReplay // => true
+   */
+  const idleReplayLine = (message: StudyViewMessage): string =>
+    message.nodeHistoryCatalog?.length ||
+    message.nodeServerHistoryCatalog?.length ||
+    message.nodeExtensionHistoryCatalog?.length
+      ? replayWords.chooseReplay
+      : replayWords.noReplay
+  /**
    * Writes the section's status, the selected moment's locator and explanation (one polite live region), the not-recorded lines, where the output is, and the values hint; called by {@link renderTestReplay}.
    * @param message - The current Study message.
    * @param section - The section's worded view, absent while suppressed or without a test replay.
@@ -2652,13 +2675,7 @@ function studyClient(
     suppressed: boolean,
     replaying: boolean,
   ): void => {
-    const idle = suppressed
-      ? ''
-      : message.nodeHistoryCatalog?.length ||
-          message.nodeServerHistoryCatalog?.length ||
-          message.nodeExtensionHistoryCatalog?.length
-        ? replayWords.chooseReplay
-        : replayWords.noReplay
+    const idle = suppressed ? '' : idleReplayLine(message)
     renderTestReplayLines(section, idle)
     // While a selection is pending the earlier stop's fields may still ride on the position: no stop control is offered then (D29, F370).
     const settled = isTestReplayStopSettled(message, suppressed)
@@ -2939,6 +2956,22 @@ function studyClient(
     return playing || playbackState.sequence !== playbackState.lastSequence
   }
   /**
+   * Names the shown replay's profile on the shared slider and gives it that family's tooltip, so the shortcut list and the tooltip say server or Extension replay for those replays; called by {@link renderTestReplayPlayhead}.
+   * @param profile - The shown replay's profile, `undefined` for a test replay.
+   * @example markPlayheadProfile('chrome-extension') // the slider reads the Extension replay timeline title
+   */
+  const markPlayheadProfile = (
+    profile: StudyViewMessage['nodeReplayProfile'],
+  ): void => {
+    if (profile) playheadInput.dataset.replayProfile = profile
+    else delete playheadInput.dataset.replayProfile
+    if (profile === 'node-server')
+      playheadInput.title = options.serverReplayTimelineTitle
+    else if (profile === 'chrome-extension')
+      playheadInput.title = options.extensionReplayTimelineTitle
+    else playheadInput.title = options.testReplayTimelineTitle
+  }
+  /**
    * Places the shared slider at a test replay's selected time, unless the learner drags it, and names its keys for this family (DS-C, D035); called by {@link renderTestReplaySharedTransport}.
    * A history of two or more events keeps the slider enabled for its keys even when every event has one time: the arrows still step by event (DS-C).
    * @param playbackState - The test replay's playback state.
@@ -2951,16 +2984,7 @@ function studyClient(
   ): void => {
     const range = testReplayPlayheadRange(playbackState)
     playheadInput.dataset.replayFamily = 'test'
-    // The page names the slider's profile, so the shortcut list says server or Extension replay for those replays.
-    if (current?.nodeReplayProfile)
-      playheadInput.dataset.replayProfile = current.nodeReplayProfile
-    else delete playheadInput.dataset.replayProfile
-    playheadInput.title =
-      current?.nodeReplayProfile === 'node-server'
-        ? options.serverReplayTimelineTitle
-        : current?.nodeReplayProfile === 'chrome-extension'
-          ? options.extensionReplayTimelineTitle
-          : options.testReplayTimelineTitle
+    markPlayheadProfile(current?.nodeReplayProfile)
     playheadInput.setAttribute(
       'aria-keyshortcuts',
       options.testReplayTimelineKeys,
