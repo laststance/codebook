@@ -536,3 +536,41 @@ test('a key answers its first receipt after the run failed', async (context) => 
   assert.deepEqual(repeated, first)
   assert.equal(runtime.dispatches, 1)
 })
+
+// protects=the run resource carries the status words the chat and the status item share, moving from sending to the next operation and to Done; fails_when=operationStatus is missing from the resource, stays on an old operation, or reads a bare count; no_claim=the status bar item (the workspace shows the same words)
+test('the run resource carries the operation status words for the chat as the run moves', async (context) => {
+  // Arrange
+  const { service, receipt, runtime } = await startOperationsRun(
+    context,
+    'status',
+    [
+      { kind: 'click', title: 'First', selector: '#first' },
+      { kind: 'click', title: 'Last', selector: '#last' },
+    ],
+  )
+  const statusOf = (): unknown =>
+    (service.state(service.record(receipt)) as { operationStatus?: string })
+      .operationStatus
+  // Act
+  const before = statusOf()
+  await service.performAction({
+    ...receipt,
+    key: 'op-1',
+    action: OPERATION_ACTION,
+  })
+  const sendingFirst = statusOf()
+  runtime.finish(1)
+  await service.performAction({
+    ...receipt,
+    key: 'op-2',
+    action: OPERATION_ACTION,
+  })
+  const sendingLast = statusOf()
+  runtime.finish(2)
+  const finished = statusOf()
+  // Assert
+  assert.equal(before, undefined)
+  assert.equal(sendingFirst, 'Operation 1/2 · First · sending')
+  assert.equal(sendingLast, 'Operation 2/2 · Last · sending')
+  assert.equal(finished, 'Done · 2 operations')
+})
