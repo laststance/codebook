@@ -2,14 +2,17 @@ import { execFile } from 'node:child_process'
 import { constants as filesystemConstants } from 'node:fs'
 import { access, readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { promisify } from 'node:util'
 
 import * as vscode from 'vscode'
 import { z } from 'zod'
 
 import type { ChromeExtensionViewportFactory } from './chromeExtensionContracts'
-import { ConfiguredBrowserRun } from './configuredBrowserRun'
+import {
+  ConfiguredBrowserRun,
+  developmentServerAdapterOf,
+} from './configuredBrowserRun'
 import type { ConfiguredDescriptor } from './configuredStudySchemas'
 import {
   CHROME_LINUX_EXECUTABLE_NAMES,
@@ -39,6 +42,7 @@ import type {
 } from './runtimeSupport/savedSessionTypes'
 import { assertSupportedChromeVersion } from './runtimeSupport/utils/assertSupportedChromeVersion'
 import { managedProfileRoot } from './runtimeSupport/utils/managedProfileRoot'
+import { startSavedSessionServer } from './savedSessionServer'
 import { createStateChangingRequestAsker } from './utils/askToSendStateChangingRequest'
 import { assertConfiguredSourceDocuments } from './utils/assertConfiguredSourceDocuments'
 import {
@@ -750,6 +754,43 @@ export async function createEnvironment(
         ...actions,
       )
       return choice === REVIEW_AGAIN_LABEL ? 'review-again' : undefined
+    },
+    async savedSessionSetupInputs() {
+      // A live run of this window holds the development port and may hold the saved session: setup waits for it.
+      for (const run of runs.values())
+        if (run instanceof ConfiguredBrowserRun && !run.view().cleaned)
+          return {
+            ready: false,
+            missing: [
+              `A Codebook run is using ${basename(workspace)}; stop it before setup.`,
+            ],
+          }
+      const prerequisites = await resolvePrerequisites()
+      if (
+        !prerequisites.ready ||
+        !prerequisites.nodeExecutable ||
+        !prerequisites.chrome
+      )
+        return { ready: false, missing: prerequisites.missing }
+      return {
+        ready: true,
+        node: prerequisites.nodeExecutable,
+        chrome: prerequisites.chrome,
+        adapters: await readRepositoryAdapterReadiness(
+          workspace,
+          prerequisites.nodeExecutable,
+          new AbortController().signal,
+        ),
+      }
+    },
+    async startSavedSessionServer(adapter, signInPath, signal) {
+      const node = await requireNodeRunPrerequisites('the saved session setup')
+      return startSavedSessionServer(developmentServerAdapterOf(adapter), {
+        workspace,
+        node,
+        signInPath,
+        signal,
+      })
     },
     dispose(): void {
       tracker.dispose()

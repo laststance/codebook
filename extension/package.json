@@ -210,6 +210,15 @@
         "icon": "$(book)"
       },
       {
+        "command": "codebook.setUpSavedSession",
+        "title": "Codebook: Set Up Saved Session…",
+        "icon": "$(key)"
+      },
+      {
+        "command": "codebook.removeSavedSession",
+        "title": "Codebook: Remove Saved Session…"
+      },
+      {
         "command": "codebook.moveLearningSummary",
         "title": "Codebook: Move Learning Summary…",
         "icon": "$(move)"
@@ -379,6 +388,16 @@
           "group": "navigation"
         },
         {
+          "command": "codebook.setUpSavedSession",
+          "when": "view == codebook.learningOutline",
+          "group": "savedSession@1"
+        },
+        {
+          "command": "codebook.removeSavedSession",
+          "when": "view == codebook.learningOutline",
+          "group": "savedSession@2"
+        },
+        {
           "command": "codebook.moveLearningSummary",
           "when": "view == codebook.learningSummary && codebook.learningSummaryMovable",
           "group": "navigation"
@@ -393,6 +412,14 @@
         {
           "command": "codebook.reviewSavedSessionOperations",
           "when": "false"
+        },
+        {
+          "command": "codebook.setUpSavedSession",
+          "when": "isWorkspaceTrusted && workspaceFolderCount > 0"
+        },
+        {
+          "command": "codebook.removeSavedSession",
+          "when": "isWorkspaceTrusted && workspaceFolderCount > 0"
         },
         {
           "command": "codebook.moveLearningSummary",

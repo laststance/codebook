@@ -363,7 +363,7 @@ const NEXT_DEV_WEBPACK_ADAPTER: DevelopmentServerAdapter = {
  * developmentServerAdapterOf('next-dev-webpack').name // 'next-dev-webpack'
  * ```
  */
-function developmentServerAdapterOf(
+export function developmentServerAdapterOf(
   name: DevelopmentServerAdapterName,
 ): DevelopmentServerAdapter {
   return DEVELOPMENT_SERVER_ADAPTERS[name]

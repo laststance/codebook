@@ -78,6 +78,11 @@ import { learningItemSchema } from './identitySchemas'
 import { repositorySelectionSchema } from './learnerSchemas'
 import { RepositoryReader } from './repositoryReader'
 import { repositoryActionSchema } from './repositoryView'
+import type { SavedSessionManagerPort } from './runtimeSupport/savedSessionSetupTypes'
+import {
+  installSavedSessionCommands,
+  type InstalledSavedSessions,
+} from './savedSessionCommands'
 import { startServer } from './server'
 import { StudyService } from './service'
 import { StudyWorkspace, type UnsavedStudyArchive } from './studyWorkspace'
@@ -220,6 +225,8 @@ export function activate(
   context: Pick<vscode.ExtensionContext, 'extensionPath' | 'subscriptions'> & {
     globalStorageUri: Pick<vscode.Uri, 'fsPath'>
     workspaceState: Pick<vscode.Memento, 'get' | 'update'>
+    /** The saved-session store of this window ({@link SavedSessionManagerPort}); the product binds lane A1's `SavedSessionStore` here, a test passes a fake. Without one the saved-session commands tell the learner that sessions are unavailable. */
+    savedSessionStore?: SavedSessionManagerPort
   },
 ) {
   // Before anything takes a storage lock: locks and the connection descriptor name this machine by the editor's id.
@@ -242,6 +249,7 @@ export function activate(
     cursorRemoval: Promise<void> | undefined,
     cursorRemoving = false
   let notifyMcpDefinitions: () => void = () => {}
+  let savedSessionInstall: InstalledSavedSessions | undefined
   /** Shows every non-modal notification of this window through {@link showPlainNotice}, so no outside text in it becomes a link; `actions` are its buttons and the pressed one is returned. @example void showNotice('error', `Codebook could not open DeepWiki: ${String(error)}`) */
   const showNotice = <Action extends string>(
     severity: NoticeSeverity,
@@ -603,7 +611,13 @@ export function activate(
     }
     const attempt = (starting ??= (async () => {
       const environment = await createEnvironment(
-        context,
+        {
+          extensionPath: context.extensionPath,
+          workspaceState: context.workspaceState,
+          savedSessions: context.savedSessionStore,
+          showSignInRequired: (reason) =>
+            savedSessionInstall?.showSignInRequired(reason),
+        },
         workspace().presentation,
       )
       const directory = join(
@@ -1070,6 +1084,8 @@ export function activate(
     for (const step of [
       // Owned runtimes are released first; an in-flight or failing browser reader close cannot strand them.
       (): Promise<void> => stopOnRequest(),
+      // An open saved-session setup closes without a notice and releases its folder.
+      (): Promise<void> | undefined => savedSessionInstall?.dispose(),
       // Waits for the accepted publications and the learner's writes.
       (): Promise<void> | undefined => repositoryReader?.dispose(),
       // Ends the reader's run and saves the playback position.
@@ -2856,6 +2872,28 @@ export function activate(
       'No LLM Wiki run is going on in this window.',
     )
   }
+  // Saved sessions (Set Up / Remove, the status item); a window without a store keeps the commands but answers that sessions are unavailable.
+  savedSessionInstall = installSavedSessionCommands({
+    editor: vscode,
+    store: context.savedSessionStore,
+    register: registerCommand,
+    showNotice,
+    output,
+    ensureEnvironment: async () => {
+      await start()
+      if (!running) throw new Error('The Codebook server is not running.')
+      return running.environment
+    },
+    stopRun: async (runId) => {
+      if (!running) return
+      await running.service.stop({
+        instanceId: running.service.instanceId,
+        runId,
+      })
+    },
+    workspaceRoot: requireWorkspace,
+  })
+  context.subscriptions.push(...savedSessionInstall.disposables)
   context.subscriptions.push(
     registerCommand('codebook.startAgentServer', start),
     registerCommand('codebook.stopAgentServer', stopOnRequest),

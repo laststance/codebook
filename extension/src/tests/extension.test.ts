@@ -436,6 +436,125 @@ test('Move Learning Summary… is contributed as a title action of the Learning 
   }
 })
 
+// Value: protects=AC-ENTRY, DX-9 (the two saved-session commands are reachable); fails_when=the manifest loses a title, its Learning outline title-menu entry or its Command Palette entry, or activation no longer registers them; no_claim=rendering in Cursor
+test('Set Up Saved Session… and Remove Saved Session… are contributed in the Command Palette and the Learning outline title menu, and registered at activation', async () => {
+  // Arrange
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-saved-session-commands-')),
+  )
+  const registered: string[] = []
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        commands: {
+          registerCommand(name: string) {
+            registered.push(name)
+            return { dispose(): void {} }
+          },
+        },
+        workspace: {
+          getConfiguration: () => ({ get: () => '.codebook/wiki' }),
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+        },
+        env: { openExternal: async () => true },
+        Uri: {
+          parse: (value: string) => ({ value }),
+          file: (fsPath: string) => ({ fsPath }),
+        },
+        window: { showErrorMessage: async () => undefined },
+      },
+      './environment': { requireWorkspace: () => projectRoot },
+      './deepWikiReader': {
+        readDeepWikiManifest: async () => undefined,
+        startDeepWikiReader: async () => ({
+          url: 'http://127.0.0.1:9/reader/index.html',
+          close: async (): Promise<void> => {},
+        }),
+      },
+      './repositoryReader': {
+        RepositoryReader: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+    },
+  )
+  type MenuEntry = { command: string; when?: string; group?: string }
+  const manifest: {
+    contributes: {
+      commands: Array<{ command: string; title: string; icon?: string }>
+      menus: { 'view/title': MenuEntry[]; commandPalette: MenuEntry[] }
+    }
+  } = JSON.parse(
+    await readFile(resolve(__dirname, '../../package.json'), 'utf8'),
+  )
+  const ofSavedSession = (entry: { command: string }): boolean =>
+    entry.command === 'codebook.setUpSavedSession' ||
+    entry.command === 'codebook.removeSavedSession'
+  try {
+    // Act
+    boundary.activate({
+      extensionPath: resolve(__dirname, '../..'),
+      globalStorageUri: { fsPath: projectRoot },
+      subscriptions: [],
+      workspaceState: { get: () => undefined, update: async () => {} },
+    })
+
+    // Assert
+    assert.deepEqual(
+      registered.filter((name) => name.endsWith('SavedSession')),
+      ['codebook.setUpSavedSession', 'codebook.removeSavedSession'],
+    )
+    assert.deepEqual(manifest.contributes.commands.filter(ofSavedSession), [
+      {
+        command: 'codebook.setUpSavedSession',
+        title: 'Codebook: Set Up Saved Session…',
+        icon: '$(key)',
+      },
+      {
+        command: 'codebook.removeSavedSession',
+        title: 'Codebook: Remove Saved Session…',
+      },
+    ])
+    assert.deepEqual(
+      manifest.contributes.menus['view/title'].filter(ofSavedSession),
+      [
+        {
+          command: 'codebook.setUpSavedSession',
+          when: 'view == codebook.learningOutline',
+          group: 'savedSession@1',
+        },
+        {
+          command: 'codebook.removeSavedSession',
+          when: 'view == codebook.learningOutline',
+          group: 'savedSession@2',
+        },
+      ],
+    )
+    assert.deepEqual(
+      manifest.contributes.menus.commandPalette.filter(ofSavedSession),
+      [
+        {
+          command: 'codebook.setUpSavedSession',
+          when: 'isWorkspaceTrusted && workspaceFolderCount > 0',
+        },
+        {
+          command: 'codebook.removeSavedSession',
+          when: 'isWorkspaceTrusted && workspaceFolderCount > 0',
+        },
+      ],
+    )
+  } finally {
+    await boundary.deactivate()
+    await rm(projectRoot, { recursive: true, force: true })
+  }
+})
+
 test('a Wiki question opens a source-cited editor chat draft when VS Code exposes no reader model', async () => {
   // Arrange
   const projectRoot = await realpath(

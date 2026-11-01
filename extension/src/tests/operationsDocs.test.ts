@@ -198,7 +198,7 @@ test('the Error codes table has one anchored row per version 3 code with the aud
   assert.equal(rows.OPTION_NOT_AVAILABLE?.audience, 'chat')
 })
 
-// protects=DX-11: the packaged skill carries each pt1 safety rule; fails_when=a sentence leaves the skill or its version is not 1.0.63; no_claim=how a chat follows the rules
+// protects=DX-11: the packaged skill carries each pt1 safety rule; fails_when=a sentence leaves the skill or its version is not 1.0.64; no_claim=how a chat follows the rules
 test('the bundled skill declares flows as operations, keeps secrets with the learner, claims only shown progress and never repeats unasked', async () => {
   // Arrange
   const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
@@ -210,7 +210,7 @@ test('the bundled skill declares flows as operations, keeps secrets with the lea
         part.startsWith('**Operations (configuration version 3).**'),
       ) ?? ''
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.63"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.64"\n'))
   assert.ok(paragraph.includes('ordered v3 `operations`'))
   assert.ok(paragraph.includes('`afterOperation`'))
   assert.ok(paragraph.includes('always `secret: "ask-learner"`'))
