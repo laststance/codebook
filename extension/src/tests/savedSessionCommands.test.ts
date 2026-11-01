@@ -4,6 +4,7 @@ import { test } from 'node:test'
 
 import type * as SavedSessionCommands from '../savedSessionCommands'
 
+import { defer } from './utils/defer'
 import { loadModule } from './utils/loadModule'
 
 const MODULE = join(__dirname, '..', 'savedSessionCommands.js')
@@ -155,4 +156,368 @@ test('SIGN_IN_REQUIRED shows one notice with the reason text, and its button run
     },
   ])
   assert.deepEqual(calls, ['execute codebook.setUpSavedSession'])
+})
+
+const SAVED_VIEW = {
+  available: true,
+  state: 'saved' as const,
+  setupAt: '2026-11-02T12:10:00.000Z',
+  repositoryName: 'shop',
+  setupOpenHere: false,
+}
+const NEXT_READY = { ready: true, missing: [] }
+const VITE_NOT_INSTALLED = {
+  ready: false,
+  installed: false,
+  supportedMajor: 8,
+  yarnPnp: false,
+  missing: ['Install Vite in the workspace before using vite-dev.'],
+}
+
+/**
+ * Loads the commands with a store, an agent environment and a setup browser the test drives, so a setup runs through the real {@link SavedSessionSetup}.
+ * Every notice lands in `notices` and `answer` picks its button; the status item, the quick picks and the store's effects are recorded.
+ */
+async function loadWithSetup(options: {
+  answer?: (message: string) => string | undefined
+  adapters?: { 'next-dev-webpack': unknown; 'vite-dev': unknown }
+  ensureEnvironment?: () => Promise<never>
+  startServer?: (signal: AbortSignal) => Promise<unknown>
+  closeBrowser?: () => Promise<'graceful'>
+}) {
+  const calls: string[] = []
+  const notices: { severity: string; message: string; actions: string[] }[] = []
+  const picks: string[][] = []
+  const item = {
+    name: '',
+    text: '',
+    tooltip: '',
+    command: undefined as string | undefined,
+    show(): void {},
+    hide(): void {},
+    dispose(): void {},
+  }
+  const handlers = new Map<
+    string,
+    (...commandArguments: unknown[]) => unknown
+  >()
+  const stored = { view: SAVED_VIEW }
+  let storeChanged: (hash: string) => void = () => undefined
+  let windowStateChanged: (state: { focused: boolean }) => void = () =>
+    undefined
+  const module = await loadModule<typeof SavedSessionCommands>(MODULE, {
+    './runtimeSupport/signInBrowser': {
+      launchSignInBrowser: async () => ({
+        chromeVersion: 'Chrome/154.0.1.2',
+        onClosedByLearner: () => () => undefined,
+        readAppCookieKind: async () => 'persistent',
+        close: async () => {
+          calls.push('browserClose')
+          return options.closeBrowser?.() ?? 'graceful'
+        },
+      }),
+    },
+  })
+  const environment = {
+    savedSessionSetupInputs: async () => ({
+      ready: true,
+      node: '/node',
+      chrome: { binary: '/chrome', version: 'Chrome/154.0.1.2' },
+      adapters: options.adapters ?? {
+        'next-dev-webpack': NEXT_READY,
+        'vite-dev': VITE_NOT_INSTALLED,
+      },
+    }),
+    startSavedSessionServer: async (
+      _adapter: string,
+      _signInPath: string,
+      signal: AbortSignal,
+    ) => {
+      calls.push('startServer')
+      if (options.startServer) return options.startServer(signal)
+      return {
+        origin: 'http://localhost:3165',
+        port: 3165,
+        close: async (): Promise<void> => {
+          calls.push('serverClose')
+        },
+      }
+    },
+  }
+  const installed = module.installSavedSessions({
+    editor: {
+      StatusBarAlignment: { Right: 2 },
+      window: {
+        createStatusBarItem: () => item,
+        onDidChangeWindowState: (listener) => {
+          windowStateChanged = listener
+          return { dispose(): void {} }
+        },
+        showQuickPick: async (items: readonly unknown[]) => {
+          picks.push(
+            items.map((entry) =>
+              typeof entry === 'string' ? entry : String(entry),
+            ),
+          )
+          // The sign-in path pick takes the path of the last run.
+          return '/login' as never
+        },
+        showInputBox: async () => undefined,
+        showWarningMessage: async () => undefined,
+      },
+      commands: {
+        // As the editor does, a command runs its registered handler and rejects with its failure.
+        executeCommand: async (command: string) => handlers.get(command)?.(),
+      },
+    },
+    store: {
+      describeForUi: async () => stored.view,
+      list: async () => [],
+      remove: async () => ({ outcome: 'removed' }),
+      whenReleased: async () => undefined,
+      lastSignInPaths: async () => ['/login'],
+      onDidChange: (listener) => {
+        storeChanged = listener
+        return () => undefined
+      },
+      describe: async () => ({ available: true, state: 'saved' }),
+      acquireForRun: async () => {
+        throw new Error('not used')
+      },
+      acquireForSetup: async () => {
+        calls.push('acquire')
+        return {
+          profile: '/store/sign-in-profiles/abc123',
+          recordBrowser: async () => undefined,
+          writeRecord: async (): Promise<void> => {
+            calls.push('writeRecord')
+          },
+          release: async (): Promise<void> => {
+            calls.push('release')
+          },
+        }
+      },
+      rememberSignInPaths: async () => undefined,
+    },
+    register: (command, handler) => {
+      handlers.set(command, handler)
+      return { dispose(): void {} }
+    },
+    showNotice: async (severity, message, ...actions) => {
+      notices.push({ severity, message, actions })
+      return options.answer?.(message) as never
+    },
+    output: undefined,
+    ensureEnvironment:
+      options.ensureEnvironment ?? (async () => environment as never),
+    stopRun: async () => undefined,
+    workspaceRoot: () => '/work/shop',
+  })
+  return {
+    calls,
+    notices,
+    picks,
+    item,
+    handlers,
+    installed,
+    stored,
+    emitStoreChange: (hash: string): void => storeChanged(hash),
+    focusWindow: (): void => windowStateChanged({ focused: true }),
+  }
+}
+
+const settle = (): Promise<void> =>
+  new Promise((resolve) => setImmediate(resolve))
+
+// protects=DES-2 starting state, E11 (closing setup before the browser opened keeps the saved session as it was); fails_when=the status item offers Done or asks to sign in before a browser is open, or Close setup leaves the start running, writes a record or keeps the lock; no_claim=the wording of the stopped start's own notice (savedSessionSetup)
+test('Close setup chosen from the status item while the app is still starting stops the start, offers no Done and keeps the saved session as it was', async () => {
+  // Arrange
+  const started = defer<AbortSignal>()
+  const { calls, notices, handlers } = await loadWithSetup({
+    answer: (message) =>
+      message.startsWith('Codebook is starting') ? 'Close setup' : undefined,
+    startServer: (signal) => {
+      started.resolve(signal)
+      // A cold sign-in page compiles until the start is stopped.
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () =>
+          reject(new Error('the start was stopped')),
+        )
+      })
+    },
+  })
+  const setUp = handlers.get('codebook.setUpSavedSession')!()
+  const signal = await started.promise
+
+  // Act
+  await handlers.get('codebook.savedSession.actions')!()
+  await settle()
+
+  // Assert
+  assert.equal(signal.aborted, true)
+  await setUp
+  assert.deepEqual(notices[0], {
+    severity: 'information',
+    message: 'Codebook is starting shop to open its sign-in page.',
+    actions: ['Close setup'],
+  })
+  assert.equal(
+    notices.some((notice) => notice.actions.includes('Done')),
+    false,
+  )
+  assert.deepEqual(calls, ['acquire', 'startServer', 'release'])
+})
+
+// protects=DES-2 finishing state; fails_when=Set Up during the close re-offers Done and Close setup, whose answers would only wait for the same close; no_claim=the browser's real exit
+test('Set Up while a setup is ending says that Codebook is closing its browser and offers neither Done nor Close setup', async () => {
+  // Arrange
+  const closing = defer<'graceful'>()
+  const closeAsked = defer<void>()
+  const { notices, handlers } = await loadWithSetup({
+    answer: (message) =>
+      message.startsWith('Sign in to') ? 'Done' : undefined,
+    closeBrowser: () => {
+      closeAsked.resolve()
+      return closing.promise
+    },
+  })
+  await handlers.get('codebook.setUpSavedSession')!()
+  await closeAsked.promise
+
+  // Act
+  const again = handlers.get('codebook.setUpSavedSession')!()
+  await settle()
+  const noticesWhileEnding = notices.slice(0, 2)
+  closing.resolve('graceful')
+  await again
+  await settle()
+
+  // Assert
+  assert.deepEqual(noticesWhileEnding, [
+    {
+      severity: 'information',
+      message:
+        'Sign in to shop in the Codebook browser window. This window is not recorded, and Codebook never sees what you type there. When you are signed in, choose Done.',
+      actions: ['Done', 'Close setup'],
+    },
+    {
+      severity: 'information',
+      message: 'Setup for shop is ending: Codebook is closing its browser.',
+      actions: [],
+    },
+  ])
+})
+
+// protects=setup start without a ready development server; fails_when=the learner is asked to pick a server that cannot start, or the folder's lock is taken before the start fails; no_claim=the readiness sentences themselves (readRepositoryAdapterReadiness)
+test('Set Up with no ready development server says what each one misses and takes no lock', async () => {
+  // Arrange
+  const { calls, notices, picks, handlers } = await loadWithSetup({
+    adapters: {
+      'next-dev-webpack': {
+        ready: false,
+        missing: [
+          'Install the selected workspace dependencies, including Next, before using next-dev-webpack.',
+        ],
+      },
+      'vite-dev': VITE_NOT_INSTALLED,
+    },
+  })
+
+  // Act
+  await handlers.get('codebook.setUpSavedSession')!()
+
+  // Assert
+  assert.deepEqual(notices, [
+    {
+      severity: 'error',
+      message:
+        'Saved session setup cannot start: no development server is ready. Install the selected workspace dependencies, including Next, before using next-dev-webpack. Install Vite in the workspace before using vite-dev.',
+      actions: [],
+    },
+  ])
+  assert.deepEqual(picks, [])
+  assert.deepEqual(calls, [])
+})
+
+// protects=DES-3 notice button; fails_when=a setup started from the notice fails silently (an unhandled rejection) instead of telling the learner why; no_claim=the editor's own notification of a failed palette command
+test('a setup started from the sign-in notice that cannot start tells the learner why', async () => {
+  // Arrange
+  const { notices, installed } = await loadWithSetup({
+    answer: (message) =>
+      message.startsWith('This run needs')
+        ? 'Set Up Saved Session…'
+        : undefined,
+    ensureEnvironment: async () => {
+      throw new Error(
+        'Codebook server is stopping; wait for cleanup before starting.',
+      )
+    },
+  })
+
+  // Act
+  installed.showSignInRequired('no-saved-session')
+  await settle()
+
+  // Assert
+  assert.deepEqual(notices, [
+    {
+      severity: 'information',
+      message: 'This run needs a saved session for shop.',
+      actions: ['Set Up Saved Session…'],
+    },
+    {
+      severity: 'error',
+      message: 'Codebook server is stopping; wait for cleanup before starting.',
+      actions: [],
+    },
+  ])
+})
+
+// protects=DES-3 needed state of the status item; fails_when=the item drops the need at the refused run's own release, or keeps "Saved session needed" after a later run took the saved session; no_claim=the store's real hold events (signInProfile tests)
+test('the Saved session needed item lasts through the refused run and gives way to the stored session once a later run takes it', async () => {
+  // Arrange
+  const { item, installed, emitStoreChange } = await loadWithSetup({})
+  await settle()
+
+  // Act
+  installed.showSignInRequired('redirected-to-sign-in')
+  await settle()
+  const afterRefusal = item.text
+  // The refused run's cleanup releases the saved session.
+  emitStoreChange('abc123')
+  await settle()
+  const afterItsRelease = item.text
+  // A later run of this window takes the saved session.
+  emitStoreChange('abc123')
+  await settle()
+
+  // Assert
+  assert.equal(afterRefusal, '$(key) Saved session needed')
+  assert.equal(afterItsRelease, '$(key) Saved session needed')
+  assert.match(item.text, /^\$\(key\) Saved session · set up /)
+})
+
+// protects=DES-3 needed state across windows; fails_when=a setup finished in another window leaves this window's item on "may have expired", or an unchanged session drops the need; no_claim=how the other window wrote its record
+test('the Saved session needed item gives way to the stored session when a setup in another window changed it', async () => {
+  // Arrange
+  const { item, installed, stored, focusWindow } = await loadWithSetup({})
+  await settle()
+  installed.showSignInRequired('redirected-to-sign-in')
+  await settle()
+
+  // Act
+  focusWindow()
+  await settle()
+  const whileUnchanged = item.text
+  stored.view = { ...SAVED_VIEW, setupAt: '2026-11-03T09:00:00.000Z' }
+  focusWindow()
+  await settle()
+
+  // Assert
+  assert.equal(whileUnchanged, '$(key) Saved session needed')
+  assert.match(item.text, /^\$\(key\) Saved session · set up /)
+  assert.equal(
+    item.tooltip,
+    'Saved session for shop. Codebook does not check whether the app still has you signed in.',
+  )
 })

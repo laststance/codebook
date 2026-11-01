@@ -526,12 +526,12 @@ test('Set Up Saved Session… and Remove Saved Session… are contributed in the
       [
         {
           command: 'codebook.setUpSavedSession',
-          when: 'view == codebook.learningOutline',
+          when: 'view == codebook.learningOutline && isWorkspaceTrusted && workspaceFolderCount > 0',
           group: 'savedSession@1',
         },
         {
           command: 'codebook.removeSavedSession',
-          when: 'view == codebook.learningOutline',
+          when: 'view == codebook.learningOutline && isWorkspaceTrusted && workspaceFolderCount > 0',
           group: 'savedSession@2',
         },
       ],

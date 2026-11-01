@@ -80,7 +80,7 @@ import { RepositoryReader } from './repositoryReader'
 import { repositoryActionSchema } from './repositoryView'
 import type { SavedSessionManagerPort } from './runtimeSupport/savedSessionSetupTypes'
 import {
-  installSavedSessionCommands,
+  installSavedSessions,
   type InstalledSavedSessions,
 } from './savedSessionCommands'
 import { startServer } from './server'
@@ -2880,8 +2880,8 @@ export function activate(
       'No LLM Wiki run is going on in this window.',
     )
   }
-  // Saved sessions (Set Up / Remove, the status item); a window without a store keeps the commands but answers that sessions are unavailable.
-  savedSessionInstall = installSavedSessionCommands({
+  // Saved sessions (Set Up / Remove, the status item) on the window's one store, which every window has.
+  savedSessionInstall = installSavedSessions({
     editor: vscode,
     store: savedSessionStore,
     register: registerCommand,

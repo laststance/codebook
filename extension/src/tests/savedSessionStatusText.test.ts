@@ -37,6 +37,41 @@ test('the saved-session item shows its setup date and time, never claims a sign-
   assert.equal(unconfirmed?.text, '$(key) Saved session · setup not finished')
 })
 
+// protects=DES-2 (Done and Close setup exist only in the window that opened the setup); fails_when=a window whose store reads setup-open for another window's setup tells the learner to choose Done here; no_claim=how the store reads another window's lock
+test('a setup open in another editor window says so instead of asking to choose Done in this one', () => {
+  // Arrange / Act
+  const elsewhere = savedSessionStatusText(
+    {
+      kind: 'view',
+      view: { ...VIEW, available: false, state: 'setup-open' },
+    },
+    FORMAT,
+  )
+  const here = savedSessionStatusText(
+    {
+      kind: 'view',
+      view: {
+        ...VIEW,
+        available: false,
+        state: 'setup-open',
+        setupOpenHere: true,
+      },
+    },
+    FORMAT,
+  )
+  // Assert
+  assert.deepEqual(elsewhere, {
+    text: '$(key) Saved session · setup open',
+    tooltip:
+      'A setup for shop is open in another editor window. Choose Done or Close setup there.',
+  })
+  assert.deepEqual(here, {
+    text: '$(key) Saved session · setup open',
+    tooltip:
+      'Sign in to shop in the Codebook browser window, then choose Done.',
+  })
+})
+
 // protects=DES-2 states, DES-3 needed state; fails_when=a setup phase or a refused run has no item text; no_claim=the notice text
 test('the item reads Setup open during a setup and Saved session needed after a refused run', () => {
   // Arrange / Act

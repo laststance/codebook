@@ -8,6 +8,8 @@ import {
   SAVED_SESSION_ACTIONS_COMMAND,
   SAVED_SESSION_STATUS_PRIORITY,
   SET_UP_SAVED_SESSION_COMMAND,
+  SIGN_IN_SETUP_TIMEOUT_MS,
+  SIGN_IN_SETUP_WARNING_MS,
   SIGN_IN_STOP_RUN_BOUND_MS,
   type SignInRequiredReason,
 } from './constants'
@@ -18,6 +20,7 @@ import type {
   SavedSessionEntry,
   SavedSessionManagerPort,
   SavedSessionRemoval,
+  SavedSessionView,
 } from './runtimeSupport/savedSessionSetupTypes'
 import { launchSignInBrowser } from './runtimeSupport/signInBrowser'
 import {
@@ -25,12 +28,15 @@ import {
   type SavedSessionSetupUi,
   type SetupPhase,
 } from './savedSessionSetup'
+import { describeMinutes } from './utils/describeMinutes'
 import { discoverSignInPaths } from './utils/discoverSignInPaths'
 import {
   savedSessionStatusText,
   type SavedSessionStatusInput,
 } from './utils/savedSessionStatusText'
 import type { NoticeSeverity } from './utils/showPlainNotice'
+import { signInRequiredNotice } from './utils/signInRequiredNotice'
+import { thrownMessage } from './utils/thrownMessage'
 
 /** The slice of the editor API the commands use; the real `vscode` satisfies it and a test supplies a small stand-in. */
 export interface SavedSessionEditor {
@@ -100,7 +106,7 @@ export interface SavedSessionCommandOptions {
 /** What {@link installSavedSessions} hands back to the extension. */
 export interface InstalledSavedSessions {
   disposables: vscode.Disposable[]
-  /** Shows the one notice (DES-3) of a run that needs a saved session and sets the status item's "needed" state. */
+  /** Shows the one notice (DES-3) of a run that needs a saved session and sets the status item's "needed" state, which lasts until the saved session changes after that run (a later run takes it, or a setup or removal changes it). */
   showSignInRequired(reason: SignInRequiredReason): void
   /** Redraws the status item; the extension calls it when the operations review state changes. */
   refresh(): void
@@ -108,24 +114,39 @@ export interface InstalledSavedSessions {
   dispose(): Promise<void>
 }
 
-const SIGN_IN_REQUIRED_NOTICES: Record<
-  SignInRequiredReason,
-  (repositoryName: string) => string
-> = {
-  'no-saved-session': (name) => `This run needs a saved session for ${name}.`,
-  'setup-not-finished': (name) =>
-    `The last setup for ${name} was closed without Done, so runs do not use it.`,
-  'redirected-to-sign-in': (name) =>
-    `The saved session for ${name} may have expired. Set it up again.`,
-  'session-cookie-only': (name) =>
-    `${name} keeps its sign-in only while the browser stays open, so a saved session cannot keep it.`,
-}
 const SET_UP_BUTTON = 'Set Up Saved Session…'
-const REVIEW_AGAIN_LABEL = 'Review operations again'
+const CLOSE_SETUP_BUTTON = 'Close setup'
+/** The status item's first menu entry while a run waits for its operations to be confirmed; the notification's button is {@link REVIEW_AGAIN_LABEL}, a different label. */
+const REVIEW_OPERATIONS_AGAIN_LABEL = 'Review operations again'
 const ANOTHER_PATH_LABEL = 'Another path…'
 const ADAPTER_LABELS: Record<DevelopmentServerAdapterName, string> = {
   'next-dev-webpack': 'Next.js (webpack dev server)',
   'vite-dev': 'Vite dev server',
+}
+
+/**
+ * A refused run's need for a saved session, which the status item shows until the saved session changes after that run.
+ * Set by {@link InstalledSavedSessions.showSignInRequired}; read and dropped by the item's refresh and the store's change listener.
+ */
+type NeededMark = {
+  reason: SignInRequiredReason
+  repositoryName: string
+  /** The stored session as the first refresh after the refusal read it; a different one later means a setup or a removal changed it, in this window or another. */
+  storedKey?: string
+  /** Set once the refused run let go of the saved session, so the next store change is a later run, a setup or a removal, not that run's own cleanup. */
+  isRunReleased: boolean
+}
+
+/**
+ * Names the part of a stored session a setup or a removal changes, so the status item can tell that the session changed since a run was refused.
+ * @param view - The store's view of the workspace repository.
+ * @returns The state and setup time as one string.
+ * @example
+ * storedSessionKey({ available: true, state: 'saved', setupAt: '2026-11-02T12:10:00.000Z', repositoryName: 'shop', setupOpenHere: false }) // => 'saved 2026-11-02T12:10:00.000Z'
+ * storedSessionKey({ available: false, state: 'none', repositoryName: 'shop', setupOpenHere: false })                                        // => 'none '
+ */
+function storedSessionKey(view: SavedSessionView): string {
+  return `${view.state} ${view.setupAt ?? ''}`
 }
 
 /** Words a removal that did not delete, for the notice. */
@@ -163,8 +184,7 @@ export function installSavedSessions(
 ): InstalledSavedSessions {
   const { store, showNotice, output, editor } = options
   let item: SavedSessionStatusItem | undefined
-  let needed:
-    { reason: SignInRequiredReason; repositoryName: string } | undefined
+  let needed: NeededMark | undefined
   let shown: { text: string; tooltip: string } | undefined
   const safeRoot = (): string | undefined => {
     try {
@@ -173,29 +193,61 @@ export function installSavedSessions(
       return undefined
     }
   }
-  /** Recomputes the item from the setup of this window, then a run's need, then the stored session. */
+  /** Reads the stored session of the workspace; a store that cannot answer (for example a workspace folder that no longer exists) gives `undefined`, never a guess. */
+  const storedView = async (): Promise<SavedSessionView | undefined> => {
+    const root = safeRoot()
+    return root
+      ? await store.describeForUi(root).catch(() => undefined)
+      : undefined
+  }
+  /** Shows a refused run's need while the stored session is the one that run met; once a setup or removal changed it, the need is dropped and the stored session shows. */
+  const neededOrStored = (
+    view: SavedSessionView | undefined,
+  ): SavedSessionStatusInput | undefined => {
+    const mark = needed
+    if (!mark) return view && { kind: 'view', view }
+    // A store that cannot answer tells nothing about a change; its first answer after the refusal fixes the session the run met.
+    if (view !== undefined) mark.storedKey ??= storedSessionKey(view)
+    if (view === undefined || mark.storedKey === storedSessionKey(view))
+      return {
+        kind: 'needed',
+        reason: mark.reason,
+        repositoryName: mark.repositoryName,
+      }
+    needed = undefined
+    return { kind: 'view', view }
+  }
+  /** What the item shows: the setup of this window, then a run waiting for its operations, then a refused run's need, then the stored session. */
+  const statusInput = async (): Promise<
+    SavedSessionStatusInput | undefined
+  > => {
+    if (setup.isActive && setup.phase)
+      return { kind: 'setup', phase: setup.phase }
+    const awaiting = options.awaitingReview?.()
+    if (awaiting) return { kind: 'review', repositoryName: awaiting.repository }
+    return neededOrStored(await storedView())
+  }
+  /** Recomputes the item from {@link statusInput}. */
   let latestRefresh = 0
   const refresh = async (): Promise<void> => {
     // A refresh that started earlier and finishes later must not paint over the newer one.
     const thisRefresh = ++latestRefresh
-    const root = safeRoot()
-    let input: SavedSessionStatusInput | undefined
-    if (setup.isActive && setup.phase)
-      input = { kind: 'setup', phase: setup.phase }
-    else if (options.awaitingReview?.())
-      input = {
-        kind: 'review',
-        repositoryName: options.awaitingReview()!.repository,
-      }
-    else if (needed) input = { kind: 'needed', ...needed }
-    else if (root) {
-      // A store that cannot answer (for example a workspace folder that no longer exists) shows no item rather than a guess.
-      const view = await store.describeForUi(root).catch(() => undefined)
-      if (view) input = { kind: 'view', view }
-    }
+    const input = await statusInput()
     if (thisRefresh !== latestRefresh) return
-    const text = input ? savedSessionStatusText(input) : undefined
-    paint(text)
+    paint(input ? savedSessionStatusText(input) : undefined)
+  }
+  /**
+   * Drops a refused run's need at the first store change after that run let go of the saved session (a later run taking it, a setup or a removal), then redraws.
+   * The refused run's own release is not such a change: it only marks the run as released.
+   */
+  const onStoreChange = (hash: string): void => {
+    const mark = needed
+    if (mark?.isRunReleased) needed = undefined
+    else if (mark)
+      void store.whenReleased(hash).then(() => {
+        mark.isRunReleased = true
+      })
+    void refresh()
   }
   /** Touches the item only for what changed: each write is a message to the status bar. */
   const paint = (text: { text: string; tooltip: string } | undefined): void => {
@@ -228,12 +280,12 @@ export function installSavedSessions(
         'information',
         `Sign in to ${name} in the Codebook browser window. This window is not recorded, and Codebook never sees what you type there. When you are signed in, choose Done.`,
         'Done',
-        'Close setup',
+        CLOSE_SETUP_BUTTON,
       ),
     warnClosingSoon: () =>
       showNotice(
         'warning',
-        'Setup closes in 2 minutes. Choose Done if you are signed in.',
+        `Setup closes in ${describeMinutes(SIGN_IN_SETUP_TIMEOUT_MS - SIGN_IN_SETUP_WARNING_MS)}. Choose Done if you are signed in.`,
         'Done',
       ),
     notify: (severity, message, ...actions) =>
@@ -263,7 +315,7 @@ export function installSavedSessions(
     },
   })
 
-  /** Picks the adapter to start: the only ready one, else the learner's choice. */
+  /** Picks the adapter to start: the only ready one, else the learner's choice among the ready ones; with none ready, says what each misses before any lock or folder is taken. */
   const pickAdapter = async (
     adapters: Extract<
       Awaited<
@@ -276,9 +328,17 @@ export function installSavedSessions(
       (name): name is DevelopmentServerAdapterName => name in adapters,
     )
     const ready = names.filter((name) => adapters[name].ready)
+    if (ready.length === 0) {
+      const missing = new Set(names.flatMap((name) => adapters[name].missing))
+      void showNotice(
+        'error',
+        `Saved session setup cannot start: no development server is ready. ${[...missing].join(' ')}`,
+      )
+      return undefined
+    }
     if (ready.length === 1) return ready[0]
     const picked = await editor.window.showQuickPick(
-      names.map((name) => ({ label: ADAPTER_LABELS[name], name })),
+      ready.map((name) => ({ label: ADAPTER_LABELS[name], name })),
       { title: 'Which development server starts the app?' },
     )
     return picked?.name
@@ -304,12 +364,31 @@ export function installSavedSessions(
     })
   }
 
-  /** Re-offers Done and Close setup for a setup that is open or stuck. */
+  /** Answers Set Up and the status item while a setup of this window is active: Close setup for a start, a wait notice while it ends, a retry when stuck, else Done and Close setup again. */
   const reofferSetup = async (name: string): Promise<void> => {
-    if (setup.phase?.phase === 'stuck') return setup.closeSetup('closed')
+    const phase = setup.phase?.phase
+    if (phase === 'stuck') return setup.closeSetup('closed')
+    // Ending already: Done or Close setup would only wait for the same close.
+    if (phase === 'finishing') {
+      void showNotice(
+        'information',
+        `Setup for ${name} is ending: Codebook is closing its browser.`,
+      )
+      return
+    }
+    // No browser is open yet, so there is nothing to sign in to and no Done; Close setup stops the start.
+    if (phase === 'starting') {
+      const choice = await showNotice(
+        'information',
+        `Codebook is starting ${name} to open its sign-in page.`,
+        CLOSE_SETUP_BUTTON,
+      )
+      if (choice === CLOSE_SETUP_BUTTON) await setup.closeSetup('closed')
+      return
+    }
     const choice = await ui.offerDoneOrClose(name)
     if (choice === 'Done') await setup.done()
-    else if (choice === 'Close setup') await setup.closeSetup('closed')
+    else if (choice === CLOSE_SETUP_BUTTON) await setup.closeSetup('closed')
   }
 
   const setUpCommand = async (): Promise<void> => {
@@ -430,11 +509,11 @@ export function installSavedSessions(
     const awaiting = options.awaitingReview?.()
     // A run that waits for its operations to be confirmed comes first (DES-4).
     const picked = await editor.window.showQuickPick([
-      ...(awaiting ? [REVIEW_AGAIN_LABEL] : []),
+      ...(awaiting ? [REVIEW_OPERATIONS_AGAIN_LABEL] : []),
       SET_UP_BUTTON,
       'Remove Saved Session…',
     ])
-    if (picked === REVIEW_AGAIN_LABEL && awaiting)
+    if (picked === REVIEW_OPERATIONS_AGAIN_LABEL && awaiting)
       await editor.commands.executeCommand(
         REVIEW_SAVED_SESSION_OPERATIONS_COMMAND,
         awaiting.runId,
@@ -452,7 +531,7 @@ export function installSavedSessions(
     editor.window.onDidChangeWindowState((state) => {
       if (state.focused) void refresh()
     }),
-    { dispose: store.onDidChange(() => void refresh()) },
+    { dispose: store.onDidChange(onStoreChange) },
     { dispose: () => item?.dispose() },
   ]
   void refresh()
@@ -461,51 +540,24 @@ export function installSavedSessions(
     showSignInRequired: (reason): void => {
       const root = safeRoot()
       const name = root ? basename(root) : 'this repository'
-      needed = { reason, repositoryName: name }
+      needed = { reason, repositoryName: name, isRunReleased: false }
       output?.info(`Saved session needed: ${reason}.`)
       void refresh()
       void showNotice(
         'information',
-        SIGN_IN_REQUIRED_NOTICES[reason](name),
+        signInRequiredNotice(reason, name),
         SET_UP_BUTTON,
-      ).then((pressed) => {
-        if (pressed === SET_UP_BUTTON)
-          return editor.commands.executeCommand(SET_UP_SAVED_SESSION_COMMAND)
-      })
+      )
+        .then((pressed) => {
+          if (pressed === SET_UP_BUTTON)
+            return editor.commands.executeCommand(SET_UP_SAVED_SESSION_COMMAND)
+        })
+        // A setup started from this notice has no editor surface that shows its failure, so it is shown here.
+        .then(undefined, (error: unknown) => {
+          void showNotice('error', thrownMessage(error))
+        })
     },
     refresh: (): void => void refresh(),
     dispose: (): Promise<void> => setup.dispose(),
-  }
-}
-
-/**
- * Installs the saved-session commands when the window has a store, and otherwise registers the same two commands so they answer that saved sessions are unavailable instead of "command not found".
- * Called once by {@link activate}; keeps that branch out of the already large activation function.
- * @param options - As {@link installSavedSessions}, with the store optional.
- * @returns The install, whose `showSignInRequired` does nothing and `dispose` resolves at once when there is no store.
- * @example
- * const saved = installSavedSessionCommands({ editor: vscode, store: undefined, register: registerCommand, showNotice, output, ensureEnvironment, stopRun, workspaceRoot })
- */
-export function installSavedSessionCommands(
-  options: Omit<SavedSessionCommandOptions, 'store'> & {
-    store: SavedSessionManagerPort | undefined
-  },
-): InstalledSavedSessions {
-  const { store, ...rest } = options
-  if (store) return installSavedSessions({ ...rest, store })
-  const unavailable = (): void => {
-    void options.showNotice(
-      'warning',
-      'Saved sessions are not available in this build of Codebook.',
-    )
-  }
-  return {
-    disposables: [
-      options.register(SET_UP_SAVED_SESSION_COMMAND, unavailable),
-      options.register(REMOVE_SAVED_SESSION_COMMAND, unavailable),
-    ],
-    showSignInRequired: () => undefined,
-    refresh: (): void => undefined,
-    dispose: async (): Promise<void> => undefined,
   }
 }

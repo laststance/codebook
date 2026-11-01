@@ -12,8 +12,8 @@ import type { StudyService } from '../service'
 import { createHarness } from './helpers'
 import { loadModule } from './utils/loadModule'
 
-// Value: protects=Cycle 0070 pt2 I1 (the real saved-session store reaches the commands and codebook_status); fails_when=activate leaves the commands answering "not available in this build", or the service gets no store so codebook_status omits savedSession; no_claim=real editor, Chrome or runs
-test('activation wires the real saved-session store: the commands do not answer "not available" and codebook_status reports the saved session', async () => {
+// Value: protects=Cycle 0070 pt2 I1 (the real saved-session store reaches the commands and codebook_status); fails_when=activate wires the commands to no store or another store than the service's, so Remove does not ask about the stored session or codebook_status omits savedSession; no_claim=real editor, Chrome or runs
+test('activation wires the real saved-session store: Remove Saved Session asks about the stored session and codebook_status reports it', async () => {
   // Arrange
   const harness = await createHarness()
   const base = await realpath(await mkdtemp(join(tmpdir(), 'codebook-wired-')))

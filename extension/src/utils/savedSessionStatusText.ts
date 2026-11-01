@@ -3,6 +3,7 @@ import type { SavedSessionView } from '../runtimeSupport/savedSessionSetupTypes'
 import type { SetupPhase } from '../savedSessionSetup'
 
 import { formatSetupTime, type SetupTimeFormat } from './formatSetupTime'
+import { signInRequiredNotice } from './signInRequiredNotice'
 
 /** What the saved-session status item can show: a stored session's view, a setup of this window, or a run's need for a saved session. */
 export type SavedSessionStatusInput =
@@ -36,17 +37,6 @@ const SETUP_TEXTS: Record<
   }),
 }
 
-const NEEDED_TOOLTIPS: Record<SignInRequiredReason, (name: string) => string> =
-  {
-    'no-saved-session': (name) => `This run needs a saved session for ${name}.`,
-    'setup-not-finished': (name) =>
-      `The last setup for ${name} was closed without Done, so runs do not use it.`,
-    'redirected-to-sign-in': (name) =>
-      `The saved session for ${name} may have expired. Set it up again.`,
-    'session-cookie-only': (name) =>
-      `${name} keeps its sign-in only while the browser stays open, so a saved session cannot keep it.`,
-  }
-
 /** Words a stored session's state; `undefined` hides the item (nothing to show). */
 function viewText(
   view: SavedSessionView,
@@ -58,11 +48,18 @@ function viewText(
       text: `$(key) Saved session · set up ${formatSetupTime(view.setupAt, format)}`,
       tooltip: `Saved session for ${name}. Codebook does not check whether the app still has you signed in.`,
     }
-  if (view.state === 'setup-open') return SETUP_TEXTS.open(name)
+  // A setup of this window shows through its own phase; a stored setup-open state is almost always another window's, whose Done and Close setup are only there.
+  if (view.state === 'setup-open')
+    return view.setupOpenHere
+      ? SETUP_TEXTS.open(name)
+      : {
+          text: SETUP_TEXTS.open(name).text,
+          tooltip: `A setup for ${name} is open in another editor window. Choose Done or Close setup there.`,
+        }
   if (view.state === 'unconfirmed')
     return {
       text: '$(key) Saved session · setup not finished',
-      tooltip: `The last setup for ${name} was closed without Done, so runs do not use it.`,
+      tooltip: signInRequiredNotice('setup-not-finished', name),
     }
   if (view.state === 'unusable')
     return {
@@ -98,6 +95,6 @@ export function savedSessionStatusText(
     }
   return {
     text: '$(key) Saved session needed',
-    tooltip: NEEDED_TOOLTIPS[input.reason](input.repositoryName),
+    tooltip: signInRequiredNotice(input.reason, input.repositoryName),
   }
 }
