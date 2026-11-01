@@ -4,6 +4,7 @@ import {
   MILLISECONDS_PER_SECOND,
   OPERATION_MARK_LABELS_MIN_WIDTH_PX,
   OPERATION_MARK_STACK_PX,
+  OPERATION_MOMENT_TOLERANCE_MS,
   REPLAY_COVERED_LABEL,
   REPLAY_DEBUG_SESSION_NAME,
   PRESENTATION_MODE_IDS,
@@ -197,6 +198,8 @@ export const STUDY_UI_OPTIONS = {
     symbolWidthPx: 12,
     /** What the word "failed" adds to a failed mark's width while labels show. */
     labelWidthPx: 52,
+    /** The replay still presents a sought operation's moment while its presented position lies less than this many milliseconds from it. */
+    momentToleranceMs: OPERATION_MOMENT_TOLERANCE_MS,
     stateWords: { done: 'done', failed: 'failed', pending: 'not finished' },
     notSent: 'not sent',
     /** The announcement of a move; `{n}` is the operation number. */

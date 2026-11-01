@@ -499,7 +499,7 @@ function studyClient(
   }
   /**
    * The sought operation while the replay still presents its moment, read by {@link renderOperationCaption} and {@link operationStep}; a move made elsewhere (another pane's Learning summary) leaves this page's sought operation set but presents another moment, so it no longer counts.
-   * A fractional moment is presented at whole milliseconds, so "still presents" means within 1 ms.
+   * A fractional moment is presented at whole milliseconds, so "still presents" means less than the operation moment tolerance of {@link STUDY_UI_OPTIONS} (1 ms) away.
    * @param recording - The browser replay's state.
    * @returns The sought operation, or `undefined` when none was sought in this replay or the replay presents another moment.
    * @example soughtMomentShown(recording)?.atMs // 250.5 while 250 is presented, undefined once 4000 is
@@ -510,7 +510,8 @@ function studyClient(
     const sought = soughtInSelectedReplay()
     return sought &&
       recording.presentedMs !== undefined &&
-      Math.abs(recording.presentedMs - sought.atMs) < 1
+      Math.abs(recording.presentedMs - sought.atMs) <
+        options.operations.momentToleranceMs
       ? sought
       : undefined
   }

@@ -1552,6 +1552,8 @@ export const READABLE_STUDY_VERSION = OPERATIONS_STUDY_VERSION
 export const OPERATION_MARK_STACK_PX = 24
 /** Below this webview width in pixels the operation marks show their numbers only. */
 export const OPERATION_MARK_LABELS_MIN_WIDTH_PX = 480
+/** The replay still presents an operation's moment while its presented position lies less than this many milliseconds from it: a fractional moment (250.5 ms) is presented at whole milliseconds (250 ms). */
+export const OPERATION_MOMENT_TOLERANCE_MS = 1
 export const CONFIGURED_STUDY_SUFFIX = '.study.v3.json'
 export const CONFIGURED_STUDY_METADATA_SUFFIX = '.study.meta.v3.json'
 // Highest existing version owns a logical study, including when its bytes are corrupt.
