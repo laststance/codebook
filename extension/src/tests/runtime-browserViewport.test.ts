@@ -2896,8 +2896,8 @@ function gateOverPage(answerDelayMs: number, replaced: { value: boolean }) {
   })
 }
 
-// protects=a late frame of the old document, captured before a released gate noticed the replacement, never reaches the recording and leaves a gap; fails_when=the viewport stops asking the gate once it is unarmed; no_claim=a real navigation (a fake page answers for the gate)
-test('after the gate was released a late frame from the old document is withheld from the recording and declared a gap', async () => {
+// protects=a late frame of the old document, captured before the gate noticed the replacement, never reaches the recording and leaves a gap, and the gate keeps watching the new document (round 6); fails_when=the viewport stops asking the gate after a replacement, or the gate stops watching; no_claim=a real navigation (a fake page answers for the gate and never answers the new document's observers)
+test('after a document replacement a late frame from the old document is withheld from the recording and declared a gap while the gate keeps watching', async () => {
   // Arrange
   const stored: number[] = [],
     gaps: number[] = []
@@ -2913,13 +2913,17 @@ test('after the gate was released a late frame from the old document is withheld
   })
   harness.viewport.setSecretFrameGate(gate)
   replaced.value = true
-  // The release happens while this fresh frame is verified.
+  // The replacement is noticed while this fresh frame is verified.
   await gate.admitFrame(Date.now())
   // Act
   sendFrame((armedAtMs + 1) / 1000)
-  await delay(50)
+  // The verdict waits for the gate's next spaced verification, which this page never answers.
+  await waitUntil(
+    () => gaps.length > 0 || stored.length > 0,
+    'the late frame decided',
+  )
   // Assert
-  assert.deepEqual([stored, gaps, gate.armed], [[], [10], false])
+  assert.deepEqual([stored, gaps, gate.armed], [[], [10], true])
   harness.viewport.close()
 })
 
