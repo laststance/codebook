@@ -132,7 +132,7 @@ export const configuredObservationSchema = z.strictObject({
  * One declared operation of a version 3 run as the saved study keeps it: its progress when the run ended or was last saved, and the recording-clock time its input was sent.
  * Absent `atMs` means the operation was never sent. A saved study of a stopped or failed run keeps the states it had (`done`, `failed`, `not-run`), so it replays as a partial run.
  */
-export const configuredOperationRecordSchema = z.strictObject({
+const configuredOperationRecordSchema = z.strictObject({
   /** 1-based, as in `afterOperation` and every receipt. */
   index: z.number().int().min(1).max(REPOSITORY_OPERATION_LIMIT),
   kind: z.enum(['text', 'choose', 'click']),

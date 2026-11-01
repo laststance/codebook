@@ -27,7 +27,7 @@ export const OPERATIONS_ERROR_CODES = [
 ] as const satisfies readonly ErrorCode[]
 
 /** One code of {@link OPERATIONS_ERROR_CODES}. */
-export type OperationsErrorCode = (typeof OPERATIONS_ERROR_CODES)[number]
+type OperationsErrorCode = (typeof OPERATIONS_ERROR_CODES)[number]
 
 /**
  * A valid version 3 configuration, generic on purpose: every identity and hash is a placeholder the agent replaces with the value the step named in {@link OPERATIONS_QUICK_START_COPY_FROM} returned.

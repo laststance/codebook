@@ -223,7 +223,7 @@ export const recordingContextSchema = z.strictObject({
  * One declared operation of a version 3 run on the recording clock: the moment its input was sent and the final effect the run resource reported (not the dispatch receipt).
  * The replay's operation marks seek to `atMs`; `atMs` is absent for an operation that was never sent. No recording entry type carries it.
  */
-export const recordingOperationSchema = z.strictObject({
+const recordingOperationSchema = z.strictObject({
   index: z.number().int().min(1).max(REPOSITORY_OPERATION_LIMIT),
   kind: z.enum(['text', 'choose', 'click']),
   title: z.string().min(1).max(REFERENCE_LENGTH_LIMIT),
