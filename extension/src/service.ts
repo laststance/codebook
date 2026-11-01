@@ -4082,6 +4082,28 @@ export class StudyService {
       record.nodePhase = 'failed'
   }
 
+  /**
+   * Refuses a run that would start while the open reader shows saved history, before the application, a server, a test process or a history recorder is created; called first by every profile's preparation.
+   * Such a reader displays none of the run's captures, so a browser run would fail at its first one, and a test, server or extension run would draw the replay's frames and values beside the live session. The run has no effect: no study is saved for it and its slot and start key are free.
+   * @param record - The run being prepared; its exclusion is set to `refused-at-admission` when the reader is not following the run.
+   * @throws A `PRESENTATION_UNAVAILABLE` {@link StudyError} worded by {@link readerNotFollowingRunRefusal} when a reader is open and `followingCurrentRun` is false.
+   * @example this.assertReaderFollowsRun(record) // throws while a saved Extension replay is shown
+   */
+  private assertReaderFollowsRun(record: StudyRecord): void {
+    const presentation = this.presentationController?.presentationState()
+    if (
+      presentation?.state === 'open' &&
+      !presentation.reader.followingCurrentRun
+    ) {
+      // The run had no effect: no study is saved for it, as for a run the library refused.
+      record.historyExcluded = 'refused-at-admission'
+      throw new StudyError(
+        'PRESENTATION_UNAVAILABLE',
+        readerNotFollowingRunRefusal(presentation.reader.contentRevision),
+      )
+    }
+  }
+
   /** Acquires the adapter once; cancellation after an await drains rather than abandons it. @example await this.prepare(record) */
   private async prepare(record: StudyRecord): Promise<void> {
     if (record.profile === NODE_SERVER_PROFILE)
@@ -4097,19 +4119,7 @@ export class StudyService {
             'PREREQUISITE_MISSING',
             'Repository source/book storage is unavailable in this editor.',
           )
-        // An open reader that shows saved history displays none of this run's captures, so the run would fail at its first one, after the application was started: it ends here, before any input.
-        const presentation = this.presentationController?.presentationState()
-        if (
-          presentation?.state === 'open' &&
-          !presentation.reader.followingCurrentRun
-        ) {
-          // The run had no effect: no study is saved for it, as for a run the library refused.
-          record.historyExcluded = 'refused-at-admission'
-          throw new StudyError(
-            'PRESENTATION_UNAVAILABLE',
-            readerNotFollowingRunRefusal(presentation.reader.contentRevision),
-          )
-        }
+        this.assertReaderFollowsRun(record)
         // The admission precedes every awaited read, so no reader checkpoint captures a run the library will refuse.
         await this.admitStudy(record)
         if (this.stopping || record.stopping) return
@@ -4127,6 +4137,8 @@ export class StudyService {
         )
         this.environment.assertWorkspace?.()
       } else {
+        // A replay on screen refuses a test run before any test process or history exists.
+        this.assertReaderFollowsRun(record)
         this.environment.assertWorkspace?.()
         if (!this.repository)
           throw new StudyError(
@@ -5599,6 +5611,8 @@ export class StudyService {
   private async startChromeExtensionRun(
     record: ChromeExtensionStudyRecord,
   ): Promise<void> {
+    // A replay on screen refuses the run before any browser launch or history recorder.
+    this.assertReaderFollowsRun(record)
     this.environment.assertWorkspace?.()
     const state = record.chromeExtension
     const configuration = record.configuration
@@ -5748,6 +5762,8 @@ export class StudyService {
   private async startNodeServerRun(
     record: NodeServerStudyRecord,
   ): Promise<void> {
+    // A replay on screen refuses the run before any server start or history recorder.
+    this.assertReaderFollowsRun(record)
     this.environment.assertWorkspace?.()
     if (!this.repository)
       throw new StudyError(

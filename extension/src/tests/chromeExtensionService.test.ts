@@ -3,6 +3,7 @@ import { test } from 'node:test'
 
 import { StudyError } from '../errors'
 import { readResource } from '../resources'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { CHROME_EXTENSION_RECOVERY } from '../utils/chromeExtensionRecovery'
 
 import { createHarness } from './helpers'
@@ -11,6 +12,10 @@ import {
   FAKE_EXTENSION_MANIFEST,
   FakeChromeExtensionRuntime,
 } from './utils/fakeChromeExtensionRuntime'
+import {
+  REPLAY_READER_REFUSAL,
+  readerShowingReplay,
+} from './utils/readerShowingReplay'
 import {
   chromeExtensionConfigurationOf,
   startFakeChromeExtensionRun,
@@ -508,4 +513,28 @@ test('a stop before the last click reads completed with a partial result, no obs
   assert.equal(state.chromeExtension.observed, null)
   assert.equal(state.claimable, false)
   assert.equal(state.error, undefined)
+})
+
+// protects=a chrome-extension start while the open reader shows a saved replay is refused before the browser launches, and the same start is accepted once the reader follows the run again; fails_when=the run starts and its Application tab keeps drawing the replay's frame while Run and Debug shows the replay's values beside the live stop; no_claim=the reader itself (a stub reports it)
+test('a chrome-extension start while the reader shows a saved replay is refused before the browser launches and runs after the return to the current run', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const reader = readerShowingReplay(harness.service)
+  // Act
+  const refused = await startFakeChromeExtensionRun(harness, {
+    key: 'over-replay',
+  })
+  await waitUntil(() => refused.record.stopped, 'the refused run ended')
+  reader.returnToCurrent()
+  const accepted = await startFakeChromeExtensionRun(harness, {
+    key: 'after-return',
+  })
+  // Assert
+  assert.equal(refused.record.error?.code, 'PRESENTATION_UNAVAILABLE')
+  assert.equal(refused.record.error?.message, REPLAY_READER_REFUSAL)
+  assert.equal(refused.record.historyExcluded, 'refused-at-admission')
+  assert.deepEqual(refused.created, [])
+  assert.equal(accepted.record.error, undefined)
+  assert.equal(accepted.record.prepared, true)
 })

@@ -8,6 +8,10 @@ import { readResource } from '../resources'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { createHarness } from './helpers'
+import {
+  REPLAY_READER_REFUSAL,
+  readerShowingReplay,
+} from './utils/readerShowingReplay'
 import { realProcessStart } from './utils/realProcessStart'
 import {
   nodeServerConfigurationOf,
@@ -481,4 +485,27 @@ test('a node-server start uses the narrow start prerequisites hook instead of th
   assert.equal(unready.record.error?.code, 'PREREQUISITE_MISSING')
   assert.equal(unready.record.error?.message, 'node-server needs lsof or ss.')
   assert.equal(unready.created.length, 0)
+})
+
+// protects=a node-server start while the open reader shows a saved replay is refused before any server starts, and the same start is accepted once the reader follows the run again; fails_when=the run starts and its Application tab keeps drawing the replay's frame while Run and Debug shows the replay's values beside the live stop; no_claim=the reader itself (a stub reports it)
+test('a node-server start while the reader shows a saved replay is refused before the server starts and runs after the return to the current run', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const reader = readerShowingReplay(harness.service)
+  // Act
+  const refused = await startFakeNodeServerRun(harness, { key: 'over-replay' })
+  await waitUntil(() => refused.record.stopped, 'the refused run ended')
+  reader.returnToCurrent()
+  const accepted = await startFakeNodeServerRun(harness, {
+    key: 'after-return',
+  })
+  // Assert
+  assert.equal(refused.record.error?.code, 'PRESENTATION_UNAVAILABLE')
+  assert.equal(refused.record.error?.message, REPLAY_READER_REFUSAL)
+  assert.equal(refused.record.historyExcluded, 'refused-at-admission')
+  assert.deepEqual(refused.created, [])
+  assert.deepEqual(refused.run.calls, [])
+  assert.equal(accepted.record.error, undefined)
+  assert.equal(accepted.service.state(accepted.record).state, 'ready')
 })
