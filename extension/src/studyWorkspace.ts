@@ -12874,6 +12874,15 @@ export class StudyWorkspace {
       : { surface: 'open:test-replay', profile: NODE_TEST_PROFILE }
   }
 
+  /** Whether the study is an Extension replay, listed or just saved by this window; worded as one in an open-failure notice. @example this.isExtensionReplay(studyId) // => true */
+  private isExtensionReplay(studyId: string): boolean {
+    return (
+      this.nodeExtensionHistoryCatalog.some(
+        (history) => history.studyId === studyId,
+      ) || this.recordOfStudy(studyId)?.profile === CHROME_EXTENSION_PROFILE
+    )
+  }
+
   /**
    * Tells the learner that a test replay did not open: one Output › Codebook entry, written before this returns, and the load-failure notification, whose Show details button opens the channel; called by {@link openNodeHistoryFromHost} and {@link enterCompositionForEntry}.
    * The notification's answer is never awaited: an error notification stays on screen until the learner answers it, and the entry that raised it holds the next entry's turn, so waiting would leave every later choice with no notice and no Output entry (N55-F4, Cycle 0056 task 17). The answer opens the channel whenever it comes.
@@ -12906,7 +12915,9 @@ export class StudyWorkspace {
       // A server replay that cannot open is worded as one, never as a test replay, also before Saved studies lists it.
       ...(identity.profile === NODE_SERVER_PROFILE
         ? { profile: NODE_SERVER_PROFILE }
-        : {}),
+        : this.isExtensionReplay(studyId)
+          ? { profile: CHROME_EXTENSION_PROFILE }
+          : {}),
       title: summary
         ? [summary.testFile, ...(summary.testTitles ?? [])].join(' › ')
         : serverSummary
