@@ -30,6 +30,7 @@ const FIXTURE = `<!doctype html><html><body>
 <select id="customer"><option value="">Choose</option><option value="c1">Alice</option><option value="c2" disabled>Bob</option></select>
 <input id="amount" type="number" min="1" max="1000" step="1">
 <input id="locked" type="number" readonly>
+<fieldset id="group-fieldset"><input id="fielded" type="number"></fieldset>
 <select id="grouped"><optgroup label="Closed" disabled><option value="g1">Closed one</option></optgroup><optgroup id="open" label="Open"><option value="g2">Open one</option></optgroup></select>
 <input id="email" type="email" name="email">
 <input id="memo" type="text" name="memo">
@@ -612,6 +613,36 @@ test('text into a read-only number input is refused before and after preparation
   assert.ok(beforeSend instanceof OperationRefusal)
   assert.equal(beforeSend.code, 'INPUT_NOT_ACCEPTED')
   assert.equal(await read(page, 'document.getElementById("locked").value'), '')
+})
+
+// protects=a number input inside <fieldset disabled> is refused as INPUT_NOT_ACCEPTED in preparation and right before the send, and keeps its value; fails_when=only the control's own disabled flag decides, so the native setter writes into a control the browser treats as disabled; no_claim=none beyond protects; real headless Chrome
+test('text into a number input inside a disabled fieldset is refused before and after preparation and writes nothing', async (context) => {
+  // Arrange
+  const page = await openRealChromePage(context, FIXTURE)
+  if (!page) return
+  const operation: RepositoryOperation = {
+    kind: 'text',
+    title: 'Fielded',
+    selector: '#fielded',
+    text: '5',
+  }
+  const prepared = await prepareOperation(portOf(page), {
+    index: 1,
+    total: 1,
+    operation,
+  })
+  await read(page, 'document.getElementById("group-fieldset").disabled = true')
+  // Act
+  const atPreparation = await refusalOf(page, operation)
+  const beforeSend = await prepared
+    .send(recordingHooks().hooks)
+    .then(() => undefined)
+    .catch((error: unknown) => error)
+  // Assert
+  assert.equal(atPreparation.code, 'INPUT_NOT_ACCEPTED')
+  assert.ok(beforeSend instanceof OperationRefusal)
+  assert.equal(beforeSend.code, 'INPUT_NOT_ACCEPTED')
+  assert.equal(await read(page, 'document.getElementById("fielded").value'), '')
 })
 
 // protects=an option inside a disabled optgroup is OPTION_NOT_AVAILABLE in preparation and right before the send; fails_when=the option's own disabled flag alone decides, so the choice is applied; no_claim=none beyond protects; real headless Chrome

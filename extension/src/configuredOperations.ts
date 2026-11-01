@@ -187,7 +187,8 @@ function describeOperationControl(
     // The first thing that stops the control from taking a value; a read-only input takes no typed or set value, as the text path's last look refuses it.
     blocker = [
       [isHidden, 'control-not-visible'],
-      [formControl?.disabled === true, 'control-disabled'],
+      // `:disabled` covers a control inside `<fieldset disabled>`, whose own `disabled` stays false.
+      [formControl?.matches(':disabled') === true, 'control-disabled'],
       [
         formControl !== undefined &&
           'readOnly' in formControl &&
@@ -283,7 +284,8 @@ function applyNativeValue(
     [!input.origins.includes(location.origin), 'wrong-origin'],
     [!isUnique(), 'unique-control-required'],
     [!control || !sameKind(control), 'control-changed'],
-    [Boolean(control?.disabled), 'control-disabled'],
+    // The effective disabled state, also of a control inside `<fieldset disabled>`.
+    [Boolean(control?.matches(':disabled')), 'control-disabled'],
     // The same editability check as the text path: a read-only number input receives no value.
     [
       control instanceof HTMLInputElement && control.readOnly,

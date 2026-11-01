@@ -5549,6 +5549,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     if (isLast) {
       this.status = 'resuming'
+      // The operation's own conditions held; from here the run-level conditions are what the progress deadline interrupts.
+      waiting = 'run-after'
       await this.observeAfter(undefined)
       return
     }
@@ -5575,8 +5577,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         waitTimeoutText(ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION),
       )
     else if (waiting === 'after')
-      refusal = this.afterNotMet(index, this.operationAfterTimeoutText())
-    else refusal = this.afterNotMet(index, this.afterDeadlineReason())
+      refusal = this.afterNotMet(
+        index,
+        this.operationAfterTimeoutText(),
+        'operation',
+      )
+    else refusal = this.afterNotMet(index, this.afterDeadlineReason(), 'run')
     this.recordOperationFailure(refusal)
     return formatRefusalFailure(refusal.code, refusal.message)
   }
@@ -5595,14 +5601,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Builds the `OPERATION_AFTER_NOT_MET` refusal of an operation that was sent whose result did not show in time.
    * @param index - The operation (1-based).
    * @param detail - What the page showed or did not show.
-   * @returns The refusal, which names the configuration path of the conditions.
-   * @example this.afterNotMet(4, 'Timed out waiting for configured after conditions')
+   * @param scope - The conditions that failed: the operation's own `after`, or the run-level `after` the last operation takes as its result (also after its own `after` held).
+   * @returns The refusal, which names the configuration path of the conditions that failed.
+   * @example this.afterNotMet(4, 'Timed out waiting for configured after conditions', 'run')
    */
-  private afterNotMet(index: number, detail: string): OperationRefusal {
+  private afterNotMet(
+    index: number,
+    detail: string,
+    scope: 'operation' | 'run',
+  ): OperationRefusal {
     const configuration = this.operationsConfiguration!
     const operation = configuration.operations[index - 1]!
-    const isRunLevel =
-      index === configuration.operations.length && !operation.after
+    const isRunLevel = scope === 'run'
     return new OperationRefusal(
       'OPERATION_AFTER_NOT_MET',
       `Operation ${index} (${operation.title}) was sent, but its result could not be confirmed: ${detail}`,
@@ -5638,7 +5648,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return error
     // Only the wait for the operation's own after conditions means the result did not show; any other timeout is unexpected.
     if (error instanceof OperationAfterTimeoutError)
-      return this.afterNotMet(index, thrownMessage(error))
+      return this.afterNotMet(index, thrownMessage(error), 'operation')
     return this.unexpectedOperationRefusal(index, thrownMessage(error))
   }
 
@@ -7716,6 +7726,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           this.afterNotMet(
             this.operationsConfiguration.operations.length,
             this.changedAfterCaptureReason(afterCapture.failure),
+            'run',
           ),
         )
       else this.fail(this.changedAfterCaptureReason(afterCapture.failure))

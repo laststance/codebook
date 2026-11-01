@@ -3078,6 +3078,10 @@ function studyClient(
     showTransportMoves(true)
     element('operation-row').hidden = true
     element('operation-caption').hidden = true
+    // A replay without an operation row keeps no marks and no cached row for the width observer to draw again over the event buttons.
+    lastOperationRow = undefined
+    replace('operation-row', 'hidden', () => [])
+    text('operation-caption', '')
     renderTestReplayToggle(message, playing)
     renderTestReplayMoves(message)
     renderTestReplayPlayhead(playbackState, message.nodeHistoryEventCount ?? 0)
@@ -4249,9 +4253,11 @@ function studyClient(
       )
       renderOperationRow(recording, isTransportShown, selectedHistoryGap)
     } else if (!replayFamily) {
-      // No browser replay is open: the operation row of the last one must not stay.
+      // No browser replay is open: the operation row of the last one must not stay, nor its cached input.
       element('operation-row').hidden = true
       element('operation-caption').hidden = true
+      lastOperationRow = undefined
+      replace('operation-row', 'hidden', () => [])
     }
     const item = model.progressByItem.find(
       (value) => value.id === model.selection.itemId,

@@ -64,29 +64,30 @@ function installSecretFrameObserver(
     unsafe: [number, number][]
     reason?: SecretFrameFailureReason
   } = { open: null, unsafe: [] }
-  // The control's last value while attached: after the control is gone, no other control or text may show it.
+  // The last non-empty value the control held: a page that clears the control after copying it must not end the checks.
   let lastValue = ''
-  // How often the value already appeared in the rendered text when it arrived: page text, not a copy.
-  let baselineValue: string | undefined
-  let baselineOccurrences = 0
-  // The rendered text counted before anything is typed.
-  if (
+  // How often each value already appeared in the rendered text when it arrived: page text, not a copy.
+  const baselines = new Map<string, number>()
+  const occurrencesOf = (value: string): number =>
+    // `innerText` is the rendered text: script, style and hidden elements are left out.
+    (document.body?.innerText ?? '').split(value).length - 1
+  // The value the learner will type is counted before anything is typed.
+  const typedValue =
     secretValue !== undefined &&
     secretValue !== '' &&
     secretValue.length >= copyMinChars
-  ) {
-    baselineValue = secretValue
-    baselineOccurrences =
-      (document.body?.innerText ?? '').split(secretValue).length - 1
-  }
+      ? secretValue
+      : undefined
+  if (typedValue !== undefined)
+    baselines.set(typedValue, occurrencesOf(typedValue))
   const copiedToText = (value: string): boolean => {
-    // `innerText` is the rendered text: script, style and hidden elements are left out.
-    const occurrences = (document.body?.innerText ?? '').split(value).length - 1
-    if (baselineValue !== value) {
-      baselineValue = value
-      baselineOccurrences = occurrences
+    const occurrences = occurrencesOf(value)
+    const baseline = baselines.get(value)
+    if (baseline === undefined) {
+      baselines.set(value, occurrences)
+      return false
     }
-    return occurrences > baselineOccurrences
+    return occurrences > baseline
   }
   const plainControlHolds = (value: string): boolean =>
     Array.from(document.querySelectorAll('input, textarea')).some(
@@ -104,12 +105,18 @@ function installSecretFrameObserver(
     // While attached, the control itself must stay a password control; its value is remembered for the checks below.
     if (attached) {
       if (node.type !== 'password') return 'control-not-password'
-      lastValue = node.value
+      if (node.value !== '') lastValue = node.value
     }
-    if (lastValue === '') return undefined
-    if (plainControlHolds(lastValue)) return 'control-replaced'
-    if (lastValue.length < copyMinChars) return undefined
-    return copiedToText(lastValue) ? 'value-copied-to-text' : undefined
+    // Both the typed value and the last one the control held are checked for the rest of the run, whatever the control holds now.
+    const watched = [typedValue, lastValue].filter(
+      (value): value is string => value !== undefined && value !== '',
+    )
+    for (const value of watched)
+      if (plainControlHolds(value)) return 'control-replaced'
+    for (const value of watched)
+      if (value.length >= copyMinChars && copiedToText(value))
+        return 'value-copied-to-text'
+    return undefined
   }
   const check = (): void => {
     const reason = unsafeReason()

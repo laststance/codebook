@@ -496,6 +496,46 @@ test('a result that never shows fails the run as OPERATION_AFTER_NOT_MET naming 
   assert.equal(view.operations?.[0]?.state, 'failed')
 })
 
+// protects=a last operation whose own after held and whose run-level after never holds fails naming the run-level after path and its condition, while the operation's record keeps after-verified; fails_when=the run-level timeout is reported at the operation's own after path or with its reason; no_claim=Chrome's rendering of the conditions (harness page)
+test('a last operation whose own after held fails on the run-level after naming that scope', async (context) => {
+  // Arrange
+  const lastWithAfter: RepositoryOperation = {
+    ...submit,
+    after: [{ kind: 'visible', selector: '#own' }],
+  }
+  const { run, advance, failAfterWith, afterReads } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      operations: { operations: [lastWithAfter], stopOperations: [1] },
+    })
+  await run.prepare()
+  run.action('op-1', OPERATION_ACTION)
+  const stop = await waitUntil(
+    () => run.view().participants.browser.snapshot,
+    'the stop',
+  )
+  failAfterWith({ conditionIndex: 0, reason: 'not-visible' })
+  await run.continue('browser', stop.pause)
+  await waitUntil(() => afterReads() > 0, 'the run-level after condition read')
+  // Act
+  advance(20_000)
+  await waitUntil(() => run.view().status === 'failed', 'the failure')
+  // Assert
+  const view = run.view()
+  assert.deepEqual(plain(view.operationFailure), {
+    code: 'OPERATION_AFTER_NOT_MET',
+    operationIndex: 1,
+    path: 'after',
+    sent: 'sent',
+    sideEffects: 'unknown',
+    logId: `${run.id}#1`,
+  })
+  assert.match(view.failures[0] ?? '', /condition 1 .*not-visible/)
+  assert.doesNotMatch(
+    view.failures[0] ?? '',
+    /the operation's after conditions/,
+  )
+})
+
 // protects=an operation's own after conditions that never hold fail the run as OPERATION_AFTER_NOT_MET naming condition 2 and its reason, not the plain deadline text; fails_when=the failure names no condition (the run-level deadline wording) or the operation is reported as not sent; no_claim=Chrome's rendering of the conditions (the harness page answers the read)
 test('an operation whose own after conditions never hold fails naming the failing condition of that operation', async (context) => {
   // Arrange

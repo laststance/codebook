@@ -179,6 +179,7 @@ import {
 import type { NodeLearningCapturePart } from './utils/listMissingNodeLearning'
 import type { RetryVitestListingRelease } from './utils/listVitestTestFiles'
 import { maskLearnerSecretData } from './utils/maskLearnerSecretData'
+import { maskLearnerSecretJsonText } from './utils/maskLearnerSecretJsonText'
 import { maskLearnerSecretText } from './utils/maskLearnerSecretText'
 import { namesLineNumber } from './utils/namesLineNumber'
 import { nextNodeServerState } from './utils/nextNodeServerState'
@@ -752,6 +753,16 @@ export class StudyService {
    */
   maskLearnerSecretsInText(text: string): string {
     return maskLearnerSecretText(text, this.learnerSecretsOfRuns())
+  }
+
+  /**
+   * Masks the learner's secrets in a text that may be serialized JSON, so a JSON answer stays parseable and keeps its identifiers (ENG-4).
+   * @param text - A tool or resource text.
+   * @returns The masked text; a JSON object or array is produced from the masked structure.
+   * @example service.maskLearnerSecretsInJsonText('{"ok":true}') // => '{"ok":true}' even when the learner typed true
+   */
+  maskLearnerSecretsInJsonText(text: string): string {
+    return maskLearnerSecretJsonText(text, this.learnerSecretsOfRuns())
   }
 
   /**

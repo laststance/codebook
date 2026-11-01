@@ -309,13 +309,22 @@ function maskToolResult(
   service: StudyService,
   result: CallToolResult,
 ): CallToolResult {
+  const structured = result.structuredContent as
+    { text?: unknown; numberedText?: unknown } | undefined
   return {
     ...result,
-    content: result.content.map((item) =>
-      item.type === 'text'
-        ? { ...item, text: service.maskLearnerSecretsInText(item.text) }
-        : item,
-    ),
+    content: result.content.map((item) => {
+      if (item.type !== 'text') return item
+      // A resource's own text (a source file) is masked as text; any other text is a serialized answer, masked as data so it still parses.
+      const verbatim =
+        item.text === structured?.text || item.text === structured?.numberedText
+      return {
+        ...item,
+        text: verbatim
+          ? service.maskLearnerSecretsInText(item.text)
+          : service.maskLearnerSecretsInJsonText(item.text),
+      }
+    }),
     ...(result.structuredContent !== undefined && {
       structuredContent: service.maskLearnerSecretsInData(
         result.structuredContent,
@@ -540,7 +549,10 @@ export function createProtocol(service: StudyService): McpServer {
             : {
                 uri: resource.uri,
                 mimeType: resource.mimeType,
-                text: service.maskLearnerSecretsInText(resource.text),
+                text:
+                  resource.mimeType === 'application/json'
+                    ? service.maskLearnerSecretsInJsonText(resource.text)
+                    : service.maskLearnerSecretsInText(resource.text),
               },
         ],
       }

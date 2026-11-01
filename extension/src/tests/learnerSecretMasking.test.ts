@@ -326,6 +326,76 @@ test('an MCP tool answer and a run resource read hold no typed secret even when 
   assert.match(answered, /\[masked\]/)
 })
 
+// protects=ENG-4: a typed secret equal to a JSON token (true) leaves every MCP tool answer parseable with ok: true intact; fails_when=the secret is replaced inside the serialized JSON text, so the answer stops parsing or ok becomes [masked]; no_claim=a real run's failure (the controlled runtime holds the run)
+test('a typed secret equal to a JSON token leaves tool answers parseable with ok true intact', async (context) => {
+  // Arrange
+  const harness = await configuredServiceHarness(
+    context,
+    undefined,
+    (directory, definition) =>
+      new ControlledOperationsRuntime(directory, definition),
+  )
+  const { service, configuration, environment } = harness
+  environment.askLearnerSecret = async () => 'true'
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'mask-json',
+    configuration: {
+      version: 3,
+      adapter: configuration.adapter,
+      book: configuration.book,
+      source: configuration.source,
+      participant: 'browser',
+      afterOperation: 1,
+      before: configuration.action.before,
+      after: configuration.action.after,
+      operations: [...PASSWORD_OPERATIONS],
+      inspections: configuration.inspections,
+    },
+  })
+  const record = service.record(receipt)
+  await record.preparation
+  await service.performAction({
+    ...receipt,
+    key: 'op-1',
+    action: OPERATION_ACTION,
+  })
+  const endpoint = await startServer(service)
+  context.after(() => endpoint.close())
+  const client = new Client({ name: 'masking-json-test', version: '1.0' })
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL(endpoint.descriptor.url), {
+      requestInit: {
+        headers: { Authorization: `Bearer ${endpoint.descriptor.token}` },
+      },
+    }),
+  )
+  context.after(() => client.close())
+  // Act
+  const status = await client.callTool({
+    name: 'codebook_status',
+    arguments: {},
+  })
+  const resource = await client.callTool({
+    name: 'codebook_read_resource',
+    arguments: { uri: service.uri(record.id) },
+  })
+  // Assert
+  const texts = [status, resource].flatMap((result) =>
+    (result.content as { type: string; text?: string }[])
+      .filter((item) => item.type === 'text')
+      .map((item) => item.text ?? ''),
+  )
+  assert.equal(texts.length, 2)
+  assert.deepEqual(
+    JSON.parse(texts[0] ?? ''),
+    (status.structuredContent as { data?: unknown }).data,
+  )
+  assert.equal((status.structuredContent as { ok?: unknown }).ok, true)
+  assert.equal(typeof JSON.parse(texts[1] ?? ''), 'object')
+})
+
 // protects=ENG-5 on a sign-in: after the secret was typed the click that logs in loads a new document, whose images pass because the control with the secret is gone, while an observer that is lost in the same document still fails the run; fails_when=a redirect after login fails the run with SECRET_BECAME_VISIBLE, or a lost observer in the same document passes; no_claim=a real navigation (the evaluate function stands in for the page and its document time origin)
 test('the gate releases after a full navigation and still fails when the same document loses its observer', async () => {
   // Arrange

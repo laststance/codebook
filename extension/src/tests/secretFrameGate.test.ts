@@ -292,6 +292,32 @@ test('text the page already showed is no copy, and a later copy of the value sti
   )
 })
 
+// protects=a copy of the typed value made after the app cleared the password control still fails the run; fails_when=the observer forgets the value once the control is empty, so a submit handler that copies then clears passes frames; no_claim=copies transformed or split across elements
+test('a value copied into text and then cleared from the password control drops frames and fails the run', async (context) => {
+  // Arrange
+  const page = await launchRealHeadlessPage(context)
+  if (!page) return
+  await page.load(
+    '<form><input id="pw" type="password"></form><p id="note"></p>',
+  )
+  const failures: SecretFrameFailureReason[] = []
+  const gate = new SecretFrameGate({
+    evaluate: (expression) => page.evaluate(expression),
+    onFailure: (reason) => void failures.push(reason),
+  })
+  await gate.arm('#pw', 'hunter2-visible')
+  await typeIntoControl(page, 'hunter2-visible')
+  await settle(page)
+  // Act
+  await page.evaluate(
+    "(() => { document.getElementById('note').textContent = 'you typed hunter2-visible'; document.getElementById('pw').value = '' })()",
+  )
+  await settle(page)
+  const verdict = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.deepEqual([verdict, failures], ['drop', ['value-copied-to-text']])
+})
+
 // protects=arming on a control that is not a password control fails at once and no frame passes; fails_when=the gate arms on a text control and trusts it; no_claim=text controls with secret names, which the operation engine refuses before it arms
 test('arming on a text control fails the gate', async (context) => {
   // Arrange

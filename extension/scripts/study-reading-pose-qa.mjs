@@ -812,6 +812,42 @@ async function check(page, options, collected) {
       withoutAfterResize.marks === 0 &&
       !withoutAfterResize.groupVisible,
   })
+  // Switching from a browser replay with operations to a test (or Server or Extension) replay in one webview: the row hides, and the resize observer that follows must neither draw the old marks nor hide Previous and Next event.
+  await page.setViewportSize({ width: 960, height: 640 })
+  await render(operationReplay(0))
+  await publish({
+    ...options.message,
+    revision: revisionAt(1),
+    replayFamily: 'test',
+    recording: undefined,
+  })
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  )
+  const afterTestReplay = await page.evaluate(() => ({
+    rowVisible: document.getElementById('operation-row').checkVisibility(),
+    marks: document.querySelectorAll('[data-operation-mark]').length,
+    previousOperationVisible: document
+      .getElementById('previous-operation')
+      .checkVisibility(),
+    previousEventVisible: document
+      .getElementById('previous-event')
+      .checkVisibility(),
+    nextEventVisible: document.getElementById('next-event').checkVisibility(),
+  }))
+  cases.push({
+    name: 'switching to a test replay leaves no operation marks or buttons and keeps Previous and Next event visible',
+    actual: afterTestReplay,
+    passed:
+      !afterTestReplay.rowVisible &&
+      afterTestReplay.marks === 0 &&
+      !afterTestReplay.previousOperationVisible &&
+      afterTestReplay.previousEventVisible &&
+      afterTestReplay.nextEventVisible,
+  })
   // A summary step links to its mark when the host names a valid operation, and stays unlinked otherwise.
   const learning = {
     explanationId: '44444444-4444-4444-8444-444444444444',
