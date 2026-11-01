@@ -61,6 +61,7 @@ import {
   REPOSITORY_UNOWNED_PAGE_PAUSE_LIMIT_MS,
   SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION,
   SECRET_FRAME_VALUE_COPY_MIN_CHARS,
+  SIGN_IN_REPOSITORY_NAME_FALLBACK,
 } from './constants'
 import type {
   DevelopmentBundle,
@@ -68,7 +69,7 @@ import type {
   DevelopmentServerAdapter,
   DevelopmentServerAdapterName,
 } from './developmentServerAdapter'
-import { StudyError } from './errors'
+import { StudyError, type ErrorCode } from './errors'
 import {
   nextRefusal,
   nextSetupDeadlineRecovery,
@@ -174,6 +175,7 @@ import { declarationStatementEndLine } from './utils/declarationStatementEndLine
 import { declaredAndArmedPlace } from './utils/declaredAndArmedPlace'
 import { declaredInspectionBindings } from './utils/declaredInspectionBindings'
 import { describeCdpPause } from './utils/describeCdpPause'
+import type { NextEntryResponse } from './utils/describeNextEntryResponse'
 import { describeNextLaunchFailure } from './utils/describeNextLaunchFailure'
 import { elapsedMsSince } from './utils/elapsedMsSince'
 import { bundleOfEvaluatedModule } from './utils/extractDevelopmentModule'
@@ -196,7 +198,10 @@ import { launchDevelopmentServer } from './utils/launchDevelopmentServer'
 import { maskLearnerSecretText } from './utils/maskLearnerSecretText'
 import { maskNextServerOutput } from './utils/maskNextServerOutput'
 import { maskSourceMapText } from './utils/maskSourceMapText'
-import { matchSignInPath } from './utils/matchSignInPath'
+import {
+  matchSignInPath,
+  type SignInPageLocation,
+} from './utils/matchSignInPath'
 import {
   nextEntryLeftMessage,
   type NextEntryLeftMoment,
@@ -771,6 +776,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   > = 'no-saved-session'
   /** Whether the readiness check found the entry redirected to a sign-in path, so a saved run loads it once in its browser before sealing ({@link warmEntryBehindSignIn}). */
   private entryBehindSignIn = false
+  /** The entry answer of a workspace with a Pages folder whose entry is behind sign-in: its route manifests are read only after the saved session's browser loaded the entry, which compiles the route ({@link resolvePagesCapableRoute}). */
+  private entryAnswerBehindSignIn?: NextEntryResponse
   /** The declared sign-in path the page reached after the last operation was sent; it fails the run only when the run-level `after` does not hold. */
   private signInLandingAfterLast?: string
   /** Whether the editor was told once that this run needs a saved session. */
@@ -992,6 +999,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
     // An entry behind sign-in compiles only for a request that carries the session: the saved-session browser loads it once, before the seal reads the compiled route.
     await this.warmEntryBehindSignIn(adapter)
+    // A workspace with a Pages folder learns which router serves such an entry only now that it compiled.
+    if (this.entryAnswerBehindSignIn)
+      await this.resolvePagesCapableRoute(
+        this.entryAnswerBehindSignIn,
+        started.port,
+      )
     this.setupStep = VITE_SETUP_STEPS.sealingStops
     this.nextSetupStep = NEXT_SETUP_STEPS.sealingStops
     for (const [index, stop] of configuredStops(
@@ -1119,10 +1132,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
       .catch((error: unknown) => {
         if (error instanceof StudyError)
-          this.logRunStart(
-            'error',
-            `refused ${error.code} before any server started [log ${runId}#start]`,
-          )
+          this.logStartRefusal(error.code, 'before any server started')
         throw error
       })
     if (admission.session === 'saved') {
@@ -1141,7 +1151,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       })
     } else {
       this.session = 'fresh'
-      this.freshSignInReason = admission.signInRequiredReason
+      // A declared fresh profile is no-saved-session whatever the store holds (as the help defines the reason); its sentence names the declaration.
+      this.freshSignInReason =
+        configuration.session === 'fresh'
+          ? 'no-saved-session'
+          : admission.signInRequiredReason
       // A run that declared a fresh profile says nothing about the saved session; one that found none or an unfinished setup says which.
       if (configuration.session !== 'fresh')
         this.savedSessionAtStart = {
@@ -1157,6 +1171,20 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       })
     }
     this.logRunStart('info', `web app session: ${this.session}`)
+  }
+
+  /**
+   * Writes the Output > Codebook line that a coded refusal of the run's start names as its log id (`<runId>#start`), so the id the error carries always finds one line.
+   * Called where a saved-session refusal can end the run before anything was sent: the admission ({@link admitSession}), the origin check ({@link proveServerReady}), the saved folder's last check at the browser launch ({@link launchOwnedBrowser}) and a sign-in page before the first operation ({@link failSignInRequired}).
+   * @param code - The refusal's code.
+   * @param moment - When it ended, such as `before any server started`.
+   * @example this.logStartRefusal('SIGN_IN_IN_PROGRESS', 'before any server started') // Output: 'Run r1: refused SIGN_IN_IN_PROGRESS before any server started [log r1#start]'
+   */
+  private logStartRefusal(code: ErrorCode, moment: string): void {
+    this.logRunStart(
+      'error',
+      `refused ${code} ${moment} [log ${this.options.control?.runId ?? this.id}#start]`,
+    )
   }
 
   /**
@@ -1213,7 +1241,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Proves the owned server ready by the check that fits the run, and refuses to open the saved session on an origin that is not loopback.
-   * Called by {@link prepareOwned}: a Pages-capable workspace takes the structured entry check, a version 3 Next run with `signInPaths` the sign-in aware one, every other run today's readiness.
+   * Called by {@link prepareOwned}: a Pages-capable workspace takes the structured entry check (sign-in aware for a version 3 run with `signInPaths`), a version 3 Next run with `signInPaths` in an App-only workspace the sign-in aware one, every other run today's readiness.
    * @param adapter - The run's development-server adapter.
    * @param hasPagesFolder - Whether the workspace has a Pages folder.
    * @param port - The port the server was started on.
@@ -1239,7 +1267,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         this.definition.configuration.entryPath,
       )
     // The saved session opens only on the loopback origin of the server Codebook started, and nothing is launched before this is judged.
-    if (this.session === 'saved') assertSavedSessionOrigin(ownedOrigin)
+    if (this.session === 'saved')
+      try {
+        assertSavedSessionOrigin(ownedOrigin)
+      } catch (error) {
+        if (error instanceof StudyError)
+          this.logStartRefusal(
+            error.code,
+            'after the development server started, before any browser opened; Codebook stops that server',
+          )
+        throw error
+      }
     return ownedOrigin
   }
 
@@ -1260,16 +1298,28 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
     this.alive()
     if (entry.redirectsToSignIn !== undefined) {
-      if (this.session === 'saved') {
-        this.entryBehindSignIn = true
-        this.evidence.record('application.entry-behind-sign-in')
-        return origin
-      }
-      this.failSignInRequired(this.freshSignInReason, entry.redirectsToSignIn)
-      this.alive()
+      this.holdEntryBehindSignIn(entry.redirectsToSignIn)
+      return origin
     }
     await this.app!.confirmAppEntry(this.abort.signal, entryPath, entry)
     return origin
+  }
+
+  /**
+   * Judges an entry that Codebook's own request, which carries no cookies, found redirected to a declared sign-in path: a run that started fresh is refused with `SIGN_IN_REQUIRED` before the browser opens, a run with the saved session goes on and loads the entry once in its browser before sealing ({@link warmEntryBehindSignIn}).
+   * Called by {@link readyOperationsEntry} (an App-only workspace) and {@link readyPagesCapableEntry} (a workspace with a Pages folder), so both routers' workspaces decide the same way.
+   * @param redirectsToSignIn - The declared sign-in path the entry redirected to.
+   * @throws The failed run's error (via {@link alive}) for a run that started fresh.
+   * @example this.holdEntryBehindSignIn('/login') // a saved run: the entry is warmed before the seal
+   */
+  private holdEntryBehindSignIn(redirectsToSignIn: string): void {
+    // A fresh run has no session that could reach the page: the refusal comes before any browser.
+    if (this.session !== 'saved') {
+      this.failSignInRequired(this.freshSignInReason, redirectsToSignIn)
+      this.alive()
+    }
+    this.entryBehindSignIn = true
+    this.evidence.record('application.entry-behind-sign-in')
   }
 
   /**
@@ -1335,17 +1385,27 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (this.browserLaunched) return
     this.setupStep = VITE_SETUP_STEPS.openingBrowser
     this.nextSetupStep = NEXT_SETUP_STEPS.openingBrowser
-    await this.browser.launch(
-      {
-        name: `codebook repository ${this.id}`,
-        type: 'pwa-chrome',
-        request: 'launch',
-        url: 'about:blank',
-        ...adapter.browserDebugFields(this.options.workspace),
-        timeout: ACTIVE_TIMEOUT_MS,
-      },
-      this.abort.signal,
-    )
+    await this.browser
+      .launch(
+        {
+          name: `codebook repository ${this.id}`,
+          type: 'pwa-chrome',
+          request: 'launch',
+          url: 'about:blank',
+          ...adapter.browserDebugFields(this.options.workspace),
+          timeout: ACTIVE_TIMEOUT_MS,
+        },
+        this.abort.signal,
+      )
+      .catch((error: unknown) => {
+        // The saved folder's last check before Chrome starts can still find it held (SIGN_IN_PROFILE_IN_USE): its refusal names the start's log line too.
+        if (this.sessionLease && error instanceof StudyError)
+          this.logStartRefusal(
+            error.code,
+            'before the browser opened, after the development server started; Codebook stops that server',
+          )
+        throw error
+      })
     this.alive()
     await this.selectPage()
     this.alive()
@@ -1357,20 +1417,41 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Reads the page's pathname and ends the run when it is one of the declared sign-in paths; the backstop of the navigation events at the entry load and before each operation.
+   * Reads the page's origin and pathname in one evaluation and ends the run when the page is on one of the declared sign-in paths of its own origin; the backstop of the navigation events at the entry load and before each operation.
    * @throws The failed run's error (via {@link alive}) after a match; nothing otherwise.
    * @example await this.refuseSignInPageNow()
    */
   private async refuseSignInPageNow(): Promise<void> {
-    const signInPaths = this.operationsConfiguration?.signInPaths
-    if (!signInPaths) return
+    if (!this.operationsConfiguration?.signInPaths) return
     const read = await this.requireCdp().request('Runtime.evaluate', {
-      expression: 'location.pathname',
+      expression: '[location.origin,location.pathname]',
       returnByValue: true,
     })
     this.alive()
-    const matched = matchSignInPath(String(read.result.value), signInPaths)
+    const [origin, pathname] = Array.isArray(read.result.value)
+      ? read.result.value
+      : []
+    const matched = this.signInPathOf({
+      origin: String(origin),
+      pathname: String(pathname),
+    })
     if (matched !== undefined && this.landedOnSignIn(matched)) this.alive()
+  }
+
+  /**
+   * Names the declared sign-in path a page of the run's own origin is on; a page on another origin (an external sign-in page, Chrome's error page) is on none (E4).
+   * Called by {@link refuseSignInPageNow} and {@link onSignInLanding}.
+   * @param page - The navigation's absolute URL, or the page's origin and pathname.
+   * @returns The declared path, or `undefined`.
+   * @example this.signInPathOf('http://localhost:3000/login?callbackUrl=%2F') // => '/login'
+   */
+  private signInPathOf(page: SignInPageLocation): string | undefined {
+    return matchSignInPath(
+      page,
+      this.origin!,
+      this.operationsConfiguration?.signInPaths,
+      this.ownsIpv6Loopback,
+    )
   }
 
   /**
@@ -1427,24 +1508,65 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     landedOn: string,
     operationIndex?: number,
   ): void {
-    const message = signInRequiredMessage(
-      reason,
-      this.options.savedSession?.repositoryName ?? 'this repository',
+    // An operation's page is the operation's refusal, with its own log line; before the first operation the run's start names the line.
+    if (operationIndex !== undefined) {
+      this.failOperation(this.signInRefusal(reason, landedOn, operationIndex))
+      return
+    }
+    const message = this.announceSignInRequired(reason, landedOn)
+    this.fail(formatRefusalFailure('SIGN_IN_REQUIRED', message, reason))
+    this.logStartRefusal(
+      'SIGN_IN_REQUIRED',
+      `(${reason}) before any operation was sent`,
+    )
+  }
+
+  /**
+   * Builds the `SIGN_IN_REQUIRED` refusal of an operation that was sent before the page landed on a sign-in path, and tells the editor once.
+   * Called by {@link failSignInRequired} between operations and by {@link afterNotMet} after the last one (D13), so both refusals carry the same sentence and fields.
+   * @param reason - Why the page asked for sign-in.
+   * @param landedOn - The declared path the page is on.
+   * @param operationIndex - The operation last sent.
+   * @returns The refusal, which names `signInPaths` and says the operation was sent.
+   * @example this.signInRefusal('redirected-to-sign-in', '/login', 2).code // => 'SIGN_IN_REQUIRED'
+   */
+  private signInRefusal(
+    reason: SignInRequiredReason,
+    landedOn: string,
+    operationIndex: number,
+  ): OperationRefusal {
+    return new OperationRefusal(
+      'SIGN_IN_REQUIRED',
+      this.announceSignInRequired(reason, landedOn, operationIndex),
+      { operationIndex, path: 'signInPaths', sent: 'sent', reason },
+    )
+  }
+
+  /**
+   * Words this run's `SIGN_IN_REQUIRED` (its repository, a declared fresh profile) and tells the editor once, so every refusal of the run says the same thing.
+   * Called by {@link failSignInRequired} and {@link signInRefusal}.
+   * @param reason - Why the page asked for sign-in.
+   * @param landedOn - The declared path the page is on.
+   * @param operationIndex - The operation last sent; absent before the first operation.
+   * @returns The sentence the failure carries.
+   * @example this.announceSignInRequired('no-saved-session', '/login') // 'The page landed on /login and shop has no saved session, …'
+   */
+  private announceSignInRequired(
+    reason: SignInRequiredReason,
+    landedOn: string,
+    operationIndex?: number,
+  ): string {
+    const declaredFresh = this.operationsConfiguration?.session === 'fresh'
+    // A run that declared a fresh profile is told to drop the declaration; the editor's setup step would not change its next run.
+    if (!declaredFresh) this.notifySignInRequired(reason)
+    return signInRequiredMessage(reason, {
+      repositoryName:
+        this.options.savedSession?.repositoryName ??
+        SIGN_IN_REPOSITORY_NAME_FALLBACK,
       landedOn,
       operationIndex,
-    )
-    if (operationIndex === undefined)
-      this.fail(formatRefusalFailure('SIGN_IN_REQUIRED', message, reason))
-    else
-      this.failOperation(
-        new OperationRefusal('SIGN_IN_REQUIRED', message, {
-          operationIndex,
-          path: 'signInPaths',
-          sent: 'sent',
-          reason,
-        }),
-      )
-    this.notifySignInRequired(reason)
+      declaredFresh,
+    })
   }
 
   /**
@@ -1459,17 +1581,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Reads a main-frame navigation or a same-document navigation of the page and ends the run when it reaches a declared sign-in path.
+   * Reads a main-frame navigation or a same-document navigation of the page and ends the run when it reaches a declared sign-in path of the run's own origin; a page on another origin is left to the navigation rules.
    * Called first by {@link onPageNavigated} and by the `Page.navigatedWithinDocument` observer of {@link observeParticipant}.
    * @param url - The URL the page navigated to.
    * @returns `true` when the navigation was a sign-in landing, so the caller does no further judgement of it.
    * @example if (this.onSignInLanding(event.frame.url)) return
    */
   private onSignInLanding(url: string): boolean {
-    const matched = matchSignInPath(
-      url,
-      this.operationsConfiguration?.signInPaths,
-    )
+    const matched = this.signInPathOf(url)
     if (matched === undefined) return false
     this.landedOnSignIn(matched)
     return true
@@ -1876,24 +1995,50 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /**
    * Proves a Pages-capable Next server ready and decides which router serves the entry path: the structured entry check, the route manifests, then the App path unchanged or the Pages path with its refusals.
    *
-   * Why it exists: in a workspace with a Pages folder a 3xx or 404 of the entry path is data for the decision, not a failure (Issue 166, run sequence steps 3–6). An App route replays today's readiness verdict on the answer already read; a Pages route is checked in the frozen refusal precedence ({@link resolveNextPagesEntry}) before the browser opens, so the run's cleanup stops only the owned server. Called by {@link prepareOwned} instead of `ready`.
+   * Why it exists: in a workspace with a Pages folder a 3xx or 404 of the entry path is data for the decision, not a failure (Issue 166, run sequence steps 3–6). An App route replays today's readiness verdict on the answer already read; a Pages route is checked in the frozen refusal precedence ({@link resolveNextPagesEntry}) before the browser opens, so the run's cleanup stops only the owned server. A version 3 run whose entry redirects to a declared sign-in path is judged as in an App-only workspace ({@link holdEntryBehindSignIn}): Codebook's request carries no cookies, so the route never compiled, and a saved run reads the manifests only after its browser loaded the entry once. Called by {@link prepareOwned} instead of `ready`.
    * @param port - The port the server was started on, named by a launch-failure note.
    * @returns The origin the owned server listens on.
-   * @throws The launch failure with the preparation and webpack notes; `RUNTIME_FAILED` for a manifest that cannot be read; today's App readiness failures; the Pages refusals.
+   * @throws The launch failure with the preparation and webpack notes; `RUNTIME_FAILED` for a manifest that cannot be read; today's App readiness failures; the Pages refusals; a `SIGN_IN_REQUIRED` failure for a fresh run whose entry redirects to sign-in.
    * @example
    * const ownedOrigin = await this.readyPagesCapableEntry(3000) // 'http://127.0.0.1:3000', with this.pagesRun set for a Pages route
    */
   private async readyPagesCapableEntry(port: number): Promise<string> {
-    const workspace = this.options.workspace,
-      entryPath = this.definition.configuration.entryPath ?? '/'
     const { origin, entry } = await this.app!.readyEntry(
       this.abort.signal,
-      entryPath,
+      this.definition.configuration.entryPath ?? '/',
+      this.operationsConfiguration?.signInPaths,
     ).catch(async (error: unknown) => {
       throw await this.withLaunchFailureNotes(error, port)
     })
     this.alive()
-    this.nextSetupStep = NEXT_SETUP_STEPS.readingManifests
+    // The route behind sign-in compiles only for the saved session's browser: its manifests are read after that load.
+    if (entry.redirectsToSignIn !== undefined) {
+      this.holdEntryBehindSignIn(entry.redirectsToSignIn)
+      this.entryAnswerBehindSignIn = entry
+      return origin
+    }
+    await this.resolvePagesCapableRoute(entry, port)
+    return origin
+  }
+
+  /**
+   * Reads the route manifests of a Pages-capable workspace and continues on the router that serves the entry path: an App route with today's readiness verdict, a Pages route with its refusals.
+   *
+   * Why it exists: the manifests decide the router only once the route compiled, which for an entry behind sign-in is after the saved session's browser loaded it ({@link warmEntryBehindSignIn}); that load already proved the page, so Codebook's own redirected answer is not judged again, and only an App route is supported behind sign-in. Called by {@link readyPagesCapableEntry} right after the entry check, and by {@link prepareOwned} after the warm load for an entry behind sign-in.
+   * @param entry - The answer of the structured entry check.
+   * @param port - The port the server was started on, named by a compile-failure note.
+   * @throws `RUNTIME_FAILED` for a manifest that cannot be read; today's App readiness failures; the Pages refusals; `NEXT_ENTRY_REDIRECTED` for an entry behind sign-in that the manifests do not resolve as an App route.
+   * @example await this.resolvePagesCapableRoute({ status: 200 }, 3000) // this.nextRoute is { router: 'app', route: '/page' }
+   */
+  private async resolvePagesCapableRoute(
+    entry: NextEntryResponse,
+    port: number,
+  ): Promise<void> {
+    const workspace = this.options.workspace,
+      entryPath = this.definition.configuration.entryPath ?? '/'
+    // After the warm load the browser is open: the load's step stays, so a deadline here does not say the browser was never opened.
+    if (!this.browserLaunched)
+      this.nextSetupStep = NEXT_SETUP_STEPS.readingManifests
     const manifests = await readNextRouteManifests({
       workspace,
       entryPath,
@@ -1905,10 +2050,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (manifests.kind === 'app') {
       // The route is known once the manifests resolved it, so it is recorded before the App verdict: a setup deadline during that verdict keeps an App run's uncoded text ({@link setupDeadlineText}).
       this.nextRoute = { router: 'app', route: manifests.route.key }
-      // An App route keeps today's readiness verdict, judged on the answer already read.
-      await this.app!.confirmAppEntry(this.abort.signal, entryPath, entry)
-      return origin
+      // An App route keeps today's readiness verdict, judged on the answer already read; an entry behind sign-in was proven by the saved session's own load instead.
+      if (entry.redirectsToSignIn === undefined)
+        await this.app!.confirmAppEntry(this.abort.signal, entryPath, entry)
+      return
     }
+    // Only an App route is supported behind sign-in; the warm load opened a browser, so the Pages refusal's words do not fit.
+    if (entry.redirectsToSignIn !== undefined)
+      throw nextRefusal(
+        'NEXT_ENTRY_REDIRECTED',
+        `Codebook's own request for the entry path ${redactNextEntryPath(entryPath)}, which carries no saved session, was redirected to the sign-in path ${entry.redirectsToSignIn}, and the route manifests do not resolve the entry path as an App Router page; a Pages Router page behind sign-in is not supported in this version, so the run stopped before it sent anything.`,
+      )
     const nextVersion = (await readNextInstallation(workspace)).version
     const resolved = await resolveNextPagesEntry({
       workspace,
@@ -1928,7 +2080,6 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       source: resolved.source,
     }
     this.evidence.record('next.route-resolved', this.nextRoute)
-    return origin
   }
 
   /**
@@ -6109,20 +6260,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (
       this.signInLandingAfterLast !== undefined &&
       index === configuration.operations.length
-    ) {
-      const reason = this.signInReasonOfLanding()
-      this.notifySignInRequired(reason)
-      return new OperationRefusal(
-        'SIGN_IN_REQUIRED',
-        signInRequiredMessage(
-          reason,
-          this.options.savedSession?.repositoryName ?? 'this repository',
-          this.signInLandingAfterLast,
-          index,
-        ),
-        { operationIndex: index, path: 'signInPaths', sent: 'sent', reason },
+    )
+      return this.signInRefusal(
+        this.signInReasonOfLanding(),
+        this.signInLandingAfterLast,
+        index,
       )
-    }
     return new OperationRefusal(
       'OPERATION_AFTER_NOT_MET',
       `Operation ${index} (${operation.title}) was sent, but its result could not be confirmed: ${detail}`,

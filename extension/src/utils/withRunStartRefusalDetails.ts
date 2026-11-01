@@ -1,6 +1,6 @@
 import { StudyError, type ErrorCode } from '../errors'
 
-/** The retry rule of each refusal that ends a run before it started anything, keyed by code (`BUSY` by its details' reason). */
+/** The retry rule of each saved-session refusal that ends a run before it sent anything to the page, keyed by code (`BUSY` by its details' reason). */
 const RUN_START_RETRY: Partial<
   Record<ErrorCode | 'BUSY:profile-in-use', string>
 > = {
@@ -17,9 +17,9 @@ const RUN_START_RETRY: Partial<
 }
 
 /**
- * Adds the fields an agent decides a retry by (the run, that nothing was started, the retry rule, the Output > Codebook log id) to a saved-session refusal that ended a run before it started a server or a browser.
+ * Adds the fields an agent decides a retry by (the run, that nothing reached the app, the retry rule, the Output > Codebook log id) to a saved-session refusal that ended a run before it sent anything to the page.
  *
- * Why it exists: the store and the origin check throw their coded errors without knowing the run; the service does, so it completes them where it sets the run's error (DX-5, CEO-R7). Called by {@link StudyService.preparationError}.
+ * Why it exists: the store and the origin check throw their coded errors without knowing the run; the service does, so it completes them where it sets the run's error (DX-5, CEO-R7). The refusals come at the admission, before any server (`SIGN_IN_IN_PROGRESS`, `BUSY`, `SIGN_IN_PROFILE_IN_USE`, `SIGN_IN_PROFILE_UNUSABLE`), at the origin check after the development server started (`SIGN_IN_ORIGIN_REFUSED`), or at the saved folder's last check right before Chrome starts (`SIGN_IN_PROFILE_IN_USE`); the run stops a server it started, and at each of the three moments it writes the Output > Codebook line `<runId>#start` that `logId` names. Called by {@link StudyService.preparationError}.
  * @param error - The error the run's preparation rejected with.
  * @param runUri - The run's resource address.
  * @param runId - The service's run id, which names the log line (`<runId>#start`).

@@ -32,6 +32,18 @@ const REDIRECT_TO_LOGIN = {
   status: 307,
   location: '/login?callbackUrl=%2Fdashboard%2Finvoices',
 } as const
+/** A Next project with both an App and a Pages folder (for example `pages/api/auth`), whose route manifests resolve the entry as an App route once it compiled. */
+const BOTH_ROUTERS_APP_ENTRY = {
+  withAppFolder: true,
+  manifests: {
+    settings: {},
+    kind: 'app',
+    route: {
+      key: '/dashboard/invoices/page',
+      path: '.next/dev/server/app/dashboard/invoices/page_client-reference-manifest.js',
+    },
+  },
+} as const
 
 /** Builds the control the service gives a run, with its own run id. @example controlOf(context) */
 function controlOf(
@@ -293,6 +305,215 @@ test('a full load of the sign-in page between operations answers SIGN_IN_REQUIRE
   harness.landOn('/login/', 'document')
   // Assert
   assert.equal(harness.run.view().operationFailure?.code, 'SIGN_IN_REQUIRED')
+})
+
+// Value: protects=E4 (leaving the owned origin, an external OAuth page included, fails the run as today) and the same-origin signInPaths contract (OCR 1, OCR 13): a link to an external sign-in page whose path is /login, between operations, ends the run as a new document and never as SIGN_IN_REQUIRED, and the editor offers no setup; fails_when=https://github.com/login reads as the app's /login; no_claim=a real OAuth provider
+test('a navigation to an external sign-in page between operations ends the run as leaving the page, not as SIGN_IN_REQUIRED', async (context) => {
+  // Arrange
+  const harness = await signInHarness(
+    context,
+    { savedSession: { admission: 'saved' } },
+    [pending, submit, third],
+  )
+  await harness.run.prepare()
+  harness.run.action('op-1', OPERATION_ACTION)
+  await waitUntil(
+    () => harness.run.view().operations?.[0]?.state === 'done',
+    'operation 1',
+  )
+  // Act
+  harness.landOn('https://github.com/login?client_id=Iv1abc', 'document')
+  // Assert
+  assert.equal(
+    harness.run.view().operationFailure?.code,
+    'NAVIGATION_BEFORE_LAST_OPERATION',
+  )
+  assert.deepEqual(plain(harness.signInNotices), [])
+})
+
+// Value: protects=OCR 12 (Codex candidate review P2) fresh side: in a Next project with a Pages folder, an App entry that Codebook's own request finds redirected to the declared sign-in page refuses a fresh run with SIGN_IN_REQUIRED before the browser opens and before any manifest wait; fails_when=the run takes the uncoded App readiness verdict or a NEXT_* refusal, or opens a browser; no_claim=a real proxy redirect
+test('in a Next project with a Pages folder, a fresh run whose entry redirects to the sign-in page is refused before the browser opens', async (context) => {
+  // Arrange
+  const harness = await signInHarness(context, {
+    savedSession: { admission: 'no-saved-session' },
+    entryAnswer: REDIRECT_TO_LOGIN,
+    nextPages: BOTH_ROUTERS_APP_ENTRY,
+  })
+  // Act
+  await assert.rejects(harness.run.prepare())
+  // Assert
+  assert.match(
+    harness.run.view().failures[0]!,
+    /^SIGN_IN_REQUIRED\(no-saved-session\): /,
+  )
+  assert.equal(harness.launchConfigurations.length, 0)
+  assert.deepEqual(harness.appEntryConfirmations, [])
+  assert.deepEqual(plain(harness.signInNotices), ['no-saved-session'])
+})
+
+// Value: protects=OCR 12 (Codex candidate review P2) saved side: in a Next project with a Pages folder, a saved run whose App entry redirects to sign-in loads the entry once with the saved session, reads the route manifests after that load, and reaches ready on the App route without judging Codebook's own redirected answer; fails_when=the run judges the 307 (confirmAppEntry), never warms the entry, or ends with a NEXT_* refusal; no_claim=that Next compiles the route (the native trial verifies)
+test('in a Next project with a Pages folder, a saved run whose App entry redirects to sign-in warms the entry and runs on the App route', async (context) => {
+  // Arrange
+  const harness = await signInHarness(context, {
+    savedSession: { admission: 'saved' },
+    entryAnswer: REDIRECT_TO_LOGIN,
+    nextPages: BOTH_ROUTERS_APP_ENTRY,
+  })
+  // Act
+  await harness.run.prepare()
+  // Assert
+  const view = harness.run.view()
+  assert.equal(view.status, 'ready')
+  assert.deepEqual(harness.navigations, [
+    'http://localhost:4321/dashboard/invoices',
+    'http://localhost:4321/dashboard/invoices',
+  ])
+  assert.deepEqual(harness.appEntryConfirmations, [])
+  assert.deepEqual(plain(view.nextRoute), {
+    router: 'app',
+    route: '/dashboard/invoices/page',
+  })
+})
+
+// Value: protects=the setup deadline's browser fact on the path OCR 12 adds: a saved run in a Next project with a Pages folder whose budget expires while the route manifests are read after the warm load says the browser it opened was closed, never that no browser was opened; fails_when=the deadline sentence says the browser was not opened; no_claim=the deadline's other steps (nextPagesRun tests)
+test('in a Next project with a Pages folder, a setup deadline after the warm load says the browser it opened was closed', async (context) => {
+  // Arrange
+  const harness = await signInHarness(context, {
+    savedSession: { admission: 'saved' },
+    entryAnswer: REDIRECT_TO_LOGIN,
+    nextPages: { ...BOTH_ROUTERS_APP_ENTRY, manifestsHang: true },
+  })
+  const preparing = harness.run.prepare().catch(() => undefined)
+  await waitUntil(() => harness.manifestReads() === 1, 'the manifest read')
+  // Act
+  harness.advance(300_000)
+  await preparing
+  // Assert
+  const failure = harness.run.view().failures[0] ?? ''
+  assert.match(
+    failure,
+    /the browser Codebook opened was closed and no input or click was sent/,
+  )
+  assert.equal(failure.includes('the browser was not opened'), false)
+})
+
+// Value: protects=OCR 12 limit: a saved run whose entry behind sign-in the manifests resolve as a Pages route is refused with NEXT_ENTRY_REDIRECTED naming the unsupported case, after the warm load and before any operation; fails_when=the run reaches ready on a Pages route behind sign-in, or the refusal claims no browser was opened; no_claim=a real Pages project
+test('in a Next project with a Pages folder, a saved run whose entry behind sign-in is a Pages route is refused as not supported', async (context) => {
+  // Arrange
+  const harness = await signInHarness(context, {
+    savedSession: { admission: 'saved' },
+    entryAnswer: REDIRECT_TO_LOGIN,
+    nextPages: {
+      manifests: {
+        settings: {},
+        kind: 'pages',
+        route: '/dashboard/invoices',
+        compiledPath: 'pages/dashboard/invoices.js',
+      },
+    },
+  })
+  // Act
+  const error = await harness.run.prepare().catch((failure: unknown) => failure)
+  // Assert
+  assert.ok(error instanceof StudyError)
+  assert.equal(error.code, 'NEXT_ENTRY_REDIRECTED')
+  assert.equal(
+    error.message,
+    "Codebook's own request for the entry path /dashboard/invoices, which carries no saved session, was redirected to the sign-in path /login, and the route manifests do not resolve the entry path as an App Router page; a Pages Router page behind sign-in is not supported in this version, so the run stopped before it sent anything.",
+  )
+  assert.deepEqual(harness.inputRequests, [])
+})
+
+// Value: protects=OCR 17: a run that declared session fresh and lands on the sign-in page is told to drop the declaration, reads no-saved-session (as the help defines it, also when the store found an unfinished setup), and raises no Set Up notice, so the learner is not sent through a setup the next run would not use; fails_when=the message says the repository has no saved session or names an unfinished setup, or the editor notice is raised; no_claim=the store's own admission (signInProfile tests)
+test('a run that declared session fresh and lands on the sign-in page is told to remove session fresh and raises no setup notice', async (context) => {
+  // Arrange
+  const harness = await signInHarness(context, {
+    savedSession: { admission: 'setup-not-finished' },
+    entryAnswer: REDIRECT_TO_LOGIN,
+    operations: {
+      operations: [pending, submit],
+      stopOperations: [2],
+      session: 'fresh',
+    },
+  })
+  // Act
+  await assert.rejects(harness.run.prepare())
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'SIGN_IN_REQUIRED(no-saved-session): The page landed on /login; the run declared session: "fresh", so it did not use the saved session of shop, and it stopped before it sent anything. For a flow behind sign-in, remove session: "fresh" from the configuration, then start one new run.',
+  )
+  assert.deepEqual(plain(harness.signInNotices), [])
+})
+
+// Value: protects=OCR 39 (DX-5 logId): a refusal of the run's start that comes after its admission (the origin check, the saved folder's last check at the launch, a sign-in page before the first operation) writes the Output > Codebook line its logId <runId>#start names; fails_when=no line names the log id, so the chat sends the learner to a line that does not exist; no_claim=the service's details (savedSessionService tests)
+test('a start refused after admission writes the Output line its start log id names', async (context) => {
+  // Arrange
+  const originLines: string[] = []
+  const launchLines: string[] = []
+  const signInLines: string[] = []
+  const origin = await signInHarness(
+    context,
+    {
+      savedSession: { admission: 'saved' },
+      serverOrigin: 'http://192.0.2.10:4321',
+    },
+    [pending, submit],
+    originLines,
+  )
+  const launch = await signInHarness(
+    context,
+    {
+      savedSession: {
+        admission: 'saved',
+        refuseAtLaunch: new StudyError(
+          'SIGN_IN_PROFILE_IN_USE',
+          'A Chrome holds the saved session.',
+        ),
+      },
+    },
+    [pending, submit],
+    launchLines,
+  )
+  const signIn = await signInHarness(
+    context,
+    {
+      savedSession: { admission: 'no-saved-session' },
+      entryAnswer: REDIRECT_TO_LOGIN,
+    },
+    [pending, submit],
+    signInLines,
+  )
+  // Act
+  await assert.rejects(origin.run.prepare())
+  await assert.rejects(launch.run.prepare())
+  await assert.rejects(signIn.run.prepare())
+  // Assert
+  const logLine = `[log ${SERVICE_RUN_ID}#start]`
+  assert.ok(
+    originLines.some(
+      (line) =>
+        line.includes('refused SIGN_IN_ORIGIN_REFUSED') &&
+        line.endsWith(logLine),
+    ),
+    originLines.join('\n'),
+  )
+  assert.ok(
+    launchLines.some(
+      (line) =>
+        line.includes('refused SIGN_IN_PROFILE_IN_USE') &&
+        line.endsWith(logLine),
+    ),
+    launchLines.join('\n'),
+  )
+  assert.ok(
+    signInLines.some(
+      (line) =>
+        line.includes('refused SIGN_IN_REQUIRED (no-saved-session)') &&
+        line.endsWith(logLine),
+    ),
+    signInLines.join('\n'),
+  )
 })
 
 // Value: protects=AC4/CEO-S15: a version 2 run in a repository with a saved session starts fresh, never calls the store and never refuses a sign-in page; fails_when=the store is asked, a saved folder is used, or a landing on /login fails the run; no_claim=none beyond protects

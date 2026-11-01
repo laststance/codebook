@@ -187,12 +187,13 @@ export async function configuredRuntimeHarness(
     /** Makes the stand-in server's structured entry check (`readyEntry`) never answer until the run is cancelled, as a first compile that is still running does. */
     entryHangs?: boolean
     /**
-     * Binds a stand-in saved-session store to the run, as `createRuntime` does for a version 3 run: `admission` is what the store answers (the saved session with a lease, or a fresh profile with the reason), `refuse` makes it throw a coded refusal instead, and `appCookies` is the lease's cookie kind.
+     * Binds a stand-in saved-session store to the run, as `createRuntime` does for a version 3 run: `admission` is what the store answers (the saved session with a lease, or a fresh profile with the reason), `refuse` makes it throw a coded refusal instead, `refuseAtLaunch` makes the lease's last check at the launch throw one (a Chrome that took the folder meanwhile), and `appCookies` is the lease's cookie kind.
      * The stand-in browser then takes the lease like the real one (`prepareForLaunch` at launch, `recordBrowser` after it), and the page reports its navigations.
      */
     savedSession?: {
       admission: 'saved' | 'no-saved-session' | 'setup-not-finished'
       refuse?: StudyError
+      refuseAtLaunch?: StudyError
       appCookies?: AppCookieKind
     }
     /** The structured answer of the stand-in server's entry check (`readyEntry`) for a version 3 run: the status and the `Location` it redirects to. */
@@ -404,6 +405,8 @@ export async function configuredRuntimeHarness(
     },
   ]
   let pagesStateReads = 0
+  // How many times the run asked the scripted route-manifest reader.
+  let manifestReads = 0
   /** Answers one read of the Pages router state: the next scripted state, the last one repeating. */
   const nextPagesState = (): NextPagesPageState => {
     const state =
@@ -440,6 +443,8 @@ export async function configuredRuntimeHarness(
     },
     prepareForLaunch: async () => {
       savedSessionCalls.push('prepare')
+      if (options.savedSession?.refuseAtLaunch)
+        throw options.savedSession.refuseAtLaunch
     },
     release: async () => {
       savedSessionCalls.push('release')
@@ -813,6 +818,8 @@ export async function configuredRuntimeHarness(
     if (expression === 'document.readyState') return 'complete'
     if (expression === 'location.href') return 'about:blank'
     if (expression === 'location.pathname') return pagePathname
+    if (expression === '[location.origin,location.pathname]')
+      return [pageOrigin, pagePathname]
     if (expression === 'location.origin') return pageOrigin
     if (expression === scrollExpression)
       return { scrolled: clickTargetScrolled }
@@ -1452,7 +1459,17 @@ export async function configuredRuntimeHarness(
       ...(options.nextPages?.manifests || options.nextPages?.manifestFailure
         ? {
             './utils/readNextRouteManifests': {
-              readNextRouteManifests: async () => {
+              readNextRouteManifests: async (request: {
+                signal?: AbortSignal
+              }) => {
+                manifestReads += 1
+                // A poll still waiting for a cold compile answers only when the run is cancelled.
+                if (options.nextPages?.manifestsHang)
+                  await new Promise<never>((_resolve, reject) =>
+                    request.signal?.addEventListener('abort', () =>
+                      reject(request.signal?.reason),
+                    ),
+                  )
                 const failure = options.nextPages?.manifestFailure
                 if (failure) throw new Error(failure)
                 return options.nextPages?.manifests
@@ -1710,11 +1727,13 @@ export async function configuredRuntimeHarness(
     signInNotices,
     /** The stand-in lease's folder, which no journal record or error may name. */
     savedProfileFolder: savedLease.profile,
-    /** Reports that the page reached this path, as a redirect does: a full document load, or a client-side navigation inside the document. @example harness.landOn('/login', 'document') */
+    /** Reports that the page reached this path of the run's origin, or this absolute URL on its own origin (an external sign-in page, Chrome's error page), as a redirect does: a full document load, or a client-side navigation inside the document. @example harness.landOn('/login', 'document') */
     landOn(path: string, kind: 'document' | 'within-document'): void {
+      const onRunOrigin = path.startsWith('/')
+      const url = onRunOrigin ? `http://localhost:4321${path}` : path
       // The page's pathname has no query; the event's URL keeps it, as a redirect to sign-in carries a callback.
-      pagePathname = path.split('?')[0]!
-      const url = `http://localhost:4321${path}`
+      pagePathname = new URL(url).pathname
+      if (!onRunOrigin) pageOrigin = new URL(url).origin
       if (kind === 'document')
         listeners.get('Page.frameNavigated')?.({ frame: { id: 'main', url } })
       else
@@ -1733,6 +1752,8 @@ export async function configuredRuntimeHarness(
     pagesBuildManifest: pagesBuild?.buildManifest,
     /** How many times the run read the Pages router state. */
     pagesStateReads: (): number => pagesStateReads,
+    /** How many times the run asked the scripted route-manifest reader (`nextPages.manifests`). */
+    manifestReads: (): number => manifestReads,
     /** Makes every later read of the Pages router state answer this state, as a client redirect or a late router does. @example harness.setPagesState({ pathname: '/login', routerSeen: true, isReady: true, route: '/login' }) */
     setPagesState(state: NextPagesPageState): void {
       pagesStates = [state]

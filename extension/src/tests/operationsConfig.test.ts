@@ -352,6 +352,28 @@ test('a version 3 configuration refuses a sign-in path declared twice and names 
   ])
 })
 
+// protects=OCR 24 in the schema: a non-ASCII sign-in path and its percent-encoded spelling are one route, as the page reports it; fails_when=/ログイン and /%E3%83%AD%E3%82%B0%E3%82%A4%E3%83%B3 both pass as distinct sign-in paths, or a raw entry path equal to an encoded sign-in path passes; no_claim=the run's match (signInPathMatching tests)
+test('a version 3 configuration refuses a non-ASCII sign-in path declared again percent-encoded, and an entry path that is one', () => {
+  // Arrange, Act
+  const repeated = issuesOf((configuration) => {
+    configuration.signInPaths = [
+      '/ログイン',
+      '/%E3%83%AD%E3%82%B0%E3%82%A4%E3%83%B3',
+    ]
+  })
+  const entry = issuesOf((configuration) => {
+    configuration.entryPath = '/ログイン'
+    configuration.signInPaths = ['/%E3%83%AD%E3%82%B0%E3%82%A4%E3%83%B3']
+  })
+  // Assert
+  assert.deepEqual(repeated, [
+    'signInPaths.1: Sign-in paths must be distinct; "/%E3%83%AD%E3%82%B0%E3%82%A4%E3%83%B3" is declared twice.',
+  ])
+  assert.deepEqual(entry, [
+    'signInPaths.0: The entry path is a sign-in path: the run would always answer SIGN_IN_REQUIRED. Leave signInPaths out to explain the sign-in page itself.',
+  ])
+})
+
 // protects=the entry page cannot be a sign-in path, or every run would answer SIGN_IN_REQUIRED on its first load; fails_when=an entryPath equal to a sign-in path (with a query or trailing slash) is accepted; no_claim=none beyond protects
 test('a version 3 configuration refuses an entry path that is a listed sign-in path', () => {
   // Arrange, Act

@@ -12,12 +12,14 @@ export type SignInRunFacts = {
 /**
  * Builds the `details` of a `SIGN_IN_REQUIRED` error: the reason, which profile the run used, the saved-session state at its start, the setup command, and the DX-5 fields that decide a retry.
  *
- * Called by {@link StudyService} for a refusal at preparation and for one after an operation; the learner-facing command name is the same one the editor's notice offers. Holds no path, cookie or token.
+ * Called by {@link StudyService} for a refusal at preparation and for one after an operation; the learner-facing command name is the same one the editor's notice offers. Holds no path, cookie or token. The retry rule follows the refusal: a run that declared `session: "fresh"` (it reads `session: 'fresh'` without `savedSession`, which every other version 3 run reads at admission) drops the declaration instead of a setup, and `session-cookie-only` sets up again only with the app's own keep-me-signed-in choice.
  * @param input - `reason` and `session` as the run recorded them; `savedSession` as read at admission (absent when the run declared a fresh profile); `sent` and `logId` as the failure recorded them; `runUri` when the caller has it.
  * @returns The details object.
  * @example
- * describeSignInRequiredDetails({ reason: 'no-saved-session', session: 'fresh', sent: 'not-sent', logId: 'r1#start' })
- * // => { reason: 'no-saved-session', session: 'fresh', command: 'codebook.setUpSavedSession', sent: 'not-sent', sideEffects: 'none', retry: 'Ask the learner to set up the saved session, then start one new run.', logId: 'r1#start' }
+ * describeSignInRequiredDetails({ reason: 'no-saved-session', session: 'fresh', savedSession: { available: false, state: 'none' }, sent: 'not-sent', logId: 'r1#start' })
+ * // => { reason: 'no-saved-session', session: 'fresh', savedSession: { state: 'none' }, command: 'codebook.setUpSavedSession', sent: 'not-sent', sideEffects: 'none', retry: 'Ask the learner to set up the saved session, then start one new run.', logId: 'r1#start' }
+ * describeSignInRequiredDetails({ reason: 'no-saved-session', session: 'fresh', sent: 'not-sent', logId: 'r1#start' }).retry
+ * // => 'Remove session: "fresh" from the configuration, then start one new run.'
  */
 export function describeSignInRequiredDetails(input: {
   reason: SignInRequiredReason
@@ -53,8 +55,30 @@ export function describeSignInRequiredDetails(input: {
     sideEffects,
     retry:
       sideEffects === 'none'
-        ? 'Ask the learner to set up the saved session, then start one new run.'
+        ? setUpRetryOf(input)
         : 'Never retry automatically; ask the learner.',
     logId: input.logId,
   }
+}
+
+/**
+ * Words the retry of a `SIGN_IN_REQUIRED` that reached nothing in the app, by what can change the next run's page.
+ * @param input - The refusal's reason and the profile the run used.
+ * @returns
+ * - a run that declared `session: "fresh"`: drop the declaration
+ * - `session-cookie-only`: a new setup only with the app's keep-me-signed-in choice
+ * - otherwise: the learner sets up the saved session
+ * @example setUpRetryOf({ reason: 'redirected-to-sign-in', session: 'saved' }) // => 'Ask the learner to set up the saved session, then start one new run.'
+ */
+function setUpRetryOf(input: {
+  reason: SignInRequiredReason
+  session?: 'saved' | 'fresh'
+  savedSession?: SavedSessionStatus
+}): string {
+  // A fresh run without the status read at admission declared its fresh profile: a setup would not change its next run.
+  if (input.session === 'fresh' && input.savedSession === undefined)
+    return 'Remove session: "fresh" from the configuration, then start one new run.'
+  if (input.reason === 'session-cookie-only')
+    return "Ask the learner to set up the saved session again only when the app's sign-in page offers to keep them signed in (such as Remember me), choosing it; otherwise start no new run."
+  return 'Ask the learner to set up the saved session, then start one new run.'
 }

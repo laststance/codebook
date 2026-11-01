@@ -23,9 +23,9 @@ export type NextEntryResponse = {
 }
 
 /**
- * Describes the answer of the owned Next server to the entry path, for the Pages run's refusals, without keeping any raw `Location`.
+ * Describes the answer of the owned Next server to the entry path, for the Pages run's refusals and the sign-in aware readiness of a version 3 run, without keeping any raw `Location`.
  *
- * Why it exists: a redirect of the entry page is refused (`NEXT_ENTRY_REDIRECTED`) with both paths named, but a `Location` may carry a token in its query or point at another site; so only a redacted same-origin path, or the fact of another origin, is kept. Called by the launcher's structured entry check ({@link launchDevelopmentServer}) after its `redirect: 'manual'` GET; nothing here fetches.
+ * Why it exists: a redirect of the entry page is refused (`NEXT_ENTRY_REDIRECTED`) with both paths named, or, when it points at a declared sign-in path, decides whether a version 3 run is refused with `SIGN_IN_REQUIRED` or warms its entry with the saved session; but a `Location` may carry a token in its query or point at another site, so only a redacted same-origin path, the declared sign-in path, or the fact of another origin is kept. Called by the launcher's structured entry check ({@link launchDevelopmentServer}) after its `redirect: 'manual'` GET; nothing here fetches.
  * @param status - The HTTP status of the entry page.
  * @param location - The response's `Location` header, or `null`.
  * @param requestUrl - The absolute URL that was asked for (`<owned origin><entryPath>`), which a relative `Location` resolves against.
@@ -67,7 +67,7 @@ export function describeNextEntryResponse(
   // The raw path and query are compared here and dropped; only the verdict leaves.
   const loops =
     target.pathname === requested.pathname && target.search === requested.search
-  const signIn = matchSignInPath(target.pathname, signInPaths)
+  const signIn = matchSignInPath(target, ownedOrigin, signInPaths)
   const described: NextEntryResponse = {
     status,
     location: { sameOrigin: true, path },

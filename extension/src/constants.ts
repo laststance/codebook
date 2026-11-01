@@ -1546,6 +1546,8 @@ export const CROSS_RUNTIME_CONFIG_VERSION = 2
 export const OPERATIONS_CONFIG_VERSION = 3
 /** The most `signInPaths` a version 3 configuration declares: the app's own sign-in routes, compared with `location.pathname`. */
 export const SIGN_IN_PATH_LIMIT = 4
+/** The name a `SIGN_IN_REQUIRED` sentence gives the repository when the run has no saved-session store to name its folder. */
+export const SIGN_IN_REPOSITORY_NAME_FALLBACK = 'this repository'
 /**
  * Why a saved-session run answers `SIGN_IN_REQUIRED`, in the order the help lists them.
  * `no-saved-session`: none is set up, or the run declared `session: "fresh"`; `setup-not-finished`: the last setup was closed without Done; `redirected-to-sign-in`: the run used the saved session and the app still asked for sign-in; `session-cookie-only`: the app keeps its sign-in only while the browser stays open, so a saved session cannot keep it.
