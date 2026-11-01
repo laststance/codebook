@@ -298,8 +298,9 @@ test('a prepared secret text into a plain secret-named control is sent and maske
 // protects=a prepared password too short to tell from page text is refused before it is typed, so no copy of it can reach the recorded frames; fails_when=the short value is typed (armed by control only) or the run does not fail with SECRET_INPUT_VISIBLE or the value shows in the run view; no_claim=a real page: the harness stands in for the insertion and the gate's observer
 test('a three-character prepared password is refused before it is typed', async (context) => {
   // Arrange
+  // 'q!z' holds characters no run ID or hash can contain, so finding it in the view means the value leaked
   const { run, insertedTexts } = await preparedControlRun(context, {
-    text: 'abc',
+    text: 'q!z',
     type: 'password',
     name: 'password',
   })
@@ -314,7 +315,7 @@ test('a three-character prepared password is refused before it is typed', async 
     refusal ?? '',
     /SECRET_INPUT_VISIBLE: The prepared text for #field was not sent: a secret shorter than 4 characters cannot be told from page text/,
   )
-  assert.equal(JSON.stringify(run.view()).includes('abc'), false)
+  assert.equal(JSON.stringify(run.view()).includes('q!z'), false)
 })
 
 // protects=a four-character prepared password is typed and watched by value, the shortest length the gate can tell from page text; fails_when=the minimum is raised so it is refused, or the value is typed without arming the gate or joining the secret set; no_claim=a real page: the harness stands in for the insertion and the gate's observer
