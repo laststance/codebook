@@ -129,11 +129,14 @@ export async function closeRealChrome(): Promise<void> {
   launched = undefined
   const chrome = await pending?.catch(() => undefined)
   if (!chrome) return
-  const exited = new Promise<void>((resolve) =>
-    chrome.process.once('exit', () => resolve()),
-  )
-  chrome.process.kill('SIGKILL')
-  await exited
+  // A Chrome that already exited emits no further `exit`, so only a running one is awaited.
+  if (chrome.process.exitCode === null && chrome.process.signalCode === null) {
+    const exited = new Promise<void>((resolve) =>
+      chrome.process.once('exit', () => resolve()),
+    )
+    chrome.process.kill('SIGKILL')
+    await exited
+  }
   await rm(chrome.profile, { recursive: true, force: true })
 }
 

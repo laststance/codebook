@@ -41,6 +41,16 @@ async function settle(page: RealHeadlessPage): Promise<void> {
   await delay(CLEAR_OF_MARGIN_MS)
 }
 
+/** Types `value` into the armed control the way typed text arrives: the value, then an input event. */
+async function typeIntoControl(
+  page: RealHeadlessPage,
+  value: string,
+): Promise<void> {
+  await page.evaluate(
+    `(() => { const control = document.getElementById('pw'); control.value = ${JSON.stringify(value)}; control.dispatchEvent(new Event('input', { bubbles: true })) })()`,
+  )
+}
+
 // protects=an unarmed gate passes every frame and every screenshot and never asks the page; fails_when=the gate checks images before a secret operation was sent, dropping frames of ordinary runs; no_claim=arming from the operation engine, which another lane wires
 test('an unarmed gate passes every frame and screenshot without asking the page', async () => {
   // Arrange
@@ -124,23 +134,50 @@ test(
   },
 )
 
-// protects=a replaced control is unsafe: frames after the replacement are dropped and the run fails; fails_when=a new password node with the same selector is accepted as the armed control; no_claim=a framework's own re-render
+// protects=a control replaced by a plain control that shows the typed value is unsafe: frames after it are dropped and the run fails; fails_when=a show-password swap to a text input is accepted; no_claim=a framework's own re-render, which the next test covers
 test(
-  'replacing the control node drops later frames and fails the run',
+  'replacing the control with a plain control that shows the value drops later frames and fails the run',
   { skip: NO_CHROME },
   async (context) => {
     // Arrange
     const { page, gate, failures } = await armedGate(context)
+    await typeIntoControl(page, 'hunter2-shown')
     await settle(page)
     // Act
     await page.evaluate(
-      "(() => { const old = document.getElementById('pw'); const next = old.cloneNode(); old.replaceWith(next) })()",
+      "(() => { const old = document.getElementById('pw'); const plain = document.createElement('input'); plain.type = 'text'; plain.id = 'pw'; plain.value = old.value; old.replaceWith(plain) })()",
     )
     await settle(page)
     const verdict = await gate.admitFrame(Date.now() - 20)
     // Assert
     assert.equal(verdict, 'drop')
     assert.deepEqual(failures, ['control-replaced'])
+  },
+)
+
+// protects=a sign-in form that unmounts after its submit, and a re-render that puts a new password control in its place, show nothing and fail nothing; fails_when=the normal success path of a sign-in (the form leaves the page) fails the run with SECRET_BECAME_VISIBLE; no_claim=a real framework, the DOM changes are scripted
+test(
+  'removing the control or re-rendering it as another password control keeps frames passing',
+  { skip: NO_CHROME },
+  async (context) => {
+    // Arrange
+    const { page, gate, failures } = await armedGate(context)
+    await typeIntoControl(page, 'hunter2-typed')
+    await settle(page)
+    // Act
+    await page.evaluate(
+      "(() => { const old = document.getElementById('pw'); old.replaceWith(old.cloneNode()) })()",
+    )
+    await settle(page)
+    const afterRerender = await gate.admitFrame(Date.now() - 20)
+    await page.evaluate("document.querySelector('form').remove()")
+    await settle(page)
+    const afterRemoval = await gate.admitFrame(Date.now() - 20)
+    // Assert
+    assert.deepEqual(
+      [afterRerender, afterRemoval, failures],
+      ['pass', 'pass', []],
+    )
   },
 )
 
@@ -195,9 +232,7 @@ test(
   async (context) => {
     // Arrange
     const { page, gate, failures } = await armedGate(context)
-    await page.evaluate(
-      "document.getElementById('pw').value = 'hunter2-visible'",
-    )
+    await typeIntoControl(page, 'hunter2-visible')
     await settle(page)
     // Act
     await page.evaluate(
@@ -208,6 +243,39 @@ test(
     // Assert
     assert.equal(verdict, 'drop')
     assert.deepEqual(failures, ['value-copied-to-text'])
+  },
+)
+
+// protects=a secret that the page already shows as text (a "Forgot password?" label for the password "password") lets frames pass, and a real copy still fails; fails_when=any page text containing the value fails a normal run, or the baseline hides a later copy; no_claim=copies split across elements or transformed
+test(
+  'text the page already showed is no copy, and a later copy of the value still fails the run',
+  { skip: NO_CHROME },
+  async (context) => {
+    // Arrange
+    const page = await launchRealHeadlessPage(context, CHROME!)
+    await page.load(
+      '<form><input id="pw" type="password"></form><a>Forgot password?</a><p id="note"></p>',
+    )
+    const failures: SecretFrameFailureReason[] = []
+    const gate = new SecretFrameGate({
+      evaluate: (expression) => page.evaluate(expression),
+      onFailure: (reason) => void failures.push(reason),
+    })
+    await gate.arm('#pw')
+    await typeIntoControl(page, 'password')
+    await settle(page)
+    // Act
+    const beforeCopy = await gate.admitFrame(Date.now() - 20)
+    await page.evaluate(
+      "document.getElementById('note').textContent = 'you typed password'",
+    )
+    await settle(page)
+    const afterCopy = await gate.admitFrame(Date.now() - 20)
+    // Assert
+    assert.deepEqual(
+      [beforeCopy, afterCopy, failures],
+      ['pass', 'drop', ['value-copied-to-text']],
+    )
   },
 )
 

@@ -70,8 +70,12 @@ export async function launchRealHeadlessPage(
     { stdio: 'ignore' },
   )
   context.after(async () => {
-    child.kill('SIGKILL')
-    await new Promise((resolve) => child.once('exit', resolve))
+    // A Chrome that already exited emits no further `exit`, so only a running one is awaited.
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise((resolve) => child.once('exit', resolve))
+      child.kill('SIGKILL')
+      await exited
+    }
     await rm(profile, { recursive: true, force: true })
   })
   let endpoint: ReturnType<typeof readDevToolsActivePort>

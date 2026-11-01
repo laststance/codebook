@@ -40,7 +40,7 @@ export type SecretFrameGateOptions = {
 /**
  * Runs inside the page: watches one password control and keeps a record of the times it was not safe to draw.
  * Injected as source text by {@link SecretFrameGate.arm}; it must stay self-contained.
- * A control is unsafe while its `type` is not `password`, while it is no longer the one element the selector finds, and while its value appears in the page's visible text.
+ * The page is unsafe while the armed control is attached but no longer a `password` control, while any other non-password control holds its last value (a replacement that shows it), and while that value appears in the page's rendered text more often than when the value arrived (text the page already showed, such as a "Forgot password?" label, is no copy). A control removed from the page, as a sign-in form that unmounts after its submit, or replaced by another password control shows nothing and stays safe.
  * @param selector - The control's selector.
  * @param globalName - The page global the record is kept under.
  * @param copyMinChars - The shortest value checked for a copy into visible text.
@@ -62,18 +62,42 @@ function installSecretFrameObserver(
     unsafe: [number, number][]
     reason?: SecretFrameFailureReason
   } = { open: null, unsafe: [] }
+  // The control's last value while attached: after the control is gone, no other control or text may show it.
+  let lastValue = ''
+  // How often the value already appeared in the rendered text when it arrived: page text, not a copy.
+  let baselineValue: string | undefined
+  let baselineOccurrences = 0
+  const copiedToText = (value: string): boolean => {
+    // `innerText` is the rendered text: script, style and hidden elements are left out.
+    const occurrences = (document.body?.innerText ?? '').split(value).length - 1
+    if (baselineValue !== value) {
+      baselineValue = value
+      baselineOccurrences = occurrences
+    }
+    return occurrences > baselineOccurrences
+  }
+  const plainControlHolds = (value: string): boolean =>
+    Array.from(document.querySelectorAll('input, textarea')).some(
+      (element) =>
+        element !== node &&
+        (element instanceof HTMLTextAreaElement ||
+          (element instanceof HTMLInputElement &&
+            !['password', 'hidden'].includes(element.type))) &&
+        element.value === value,
+    )
   const unsafeReason = (): SecretFrameFailureReason | undefined => {
     const matches = document.querySelectorAll(selector)
-    if (!node.isConnected || matches.length !== 1 || matches[0] !== node)
-      return 'control-replaced'
-    if (node.type !== 'password') return 'control-not-password'
-    const value = node.value
-    if (
-      value.length >= copyMinChars &&
-      (document.body?.textContent ?? '').includes(value)
-    )
-      return 'value-copied-to-text'
-    return undefined
+    const attached =
+      node.isConnected && matches.length === 1 && matches[0] === node
+    // While attached, the control itself must stay a password control; its value is remembered for the checks below.
+    if (attached) {
+      if (node.type !== 'password') return 'control-not-password'
+      lastValue = node.value
+    }
+    if (lastValue === '') return undefined
+    if (plainControlHolds(lastValue)) return 'control-replaced'
+    if (lastValue.length < copyMinChars) return undefined
+    return copiedToText(lastValue) ? 'value-copied-to-text' : undefined
   }
   const check = (): void => {
     const reason = unsafeReason()
@@ -86,6 +110,8 @@ function installSecretFrameObserver(
       state.open = null
     }
   }
+  // Typed text arrives with an input event, before the page's own handlers can copy it, so the value's baseline is taken then.
+  node.addEventListener('input', check)
   // A mutation callback runs before the next paint, so any painted unsafe state is recorded.
   new MutationObserver(check).observe(document, {
     attributes: true,
