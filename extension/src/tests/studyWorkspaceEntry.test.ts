@@ -1738,6 +1738,9 @@ test('presentation preserves a replacement Wiki while its prior background sourc
     const rejected = assert.rejects(changing, {
       code: 'PRESENTATION_UNAVAILABLE',
       causeDetail: /Native pane, group or focus changed/,
+      // The chat is told the real controls and that nothing was started, never an invented command (native trial N70a).
+      recoveryOverride:
+        /no run was started.*choose Restore Study arrangement in the Study pane.*run Codebook: Open Study Workspace/,
     })
     await captureStarted
     const commandsBeforeDeparture = [...harness.commands]

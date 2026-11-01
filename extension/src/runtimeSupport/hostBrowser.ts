@@ -20,6 +20,7 @@ import {
   MANAGED_PROFILE_REMOVAL_RETRIES,
   MANAGED_PROFILE_REMOVAL_RETRY_DELAY_MS,
   PROCESS_LISTING_POLL_INTERVAL_MS_ON_WINDOWS,
+  SECRET_FRAME_DRAIN_TIMEOUT_MS,
 } from '../constants'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
 import { currentUserName } from '../utils/currentUserName'
@@ -37,6 +38,7 @@ import {
   type Scenario,
 } from './constants'
 import { CursorCdpBridge } from './cursorCdpBridge'
+import type { SecretFrameGate } from './secretFrameGate'
 import { awaitResponse } from './utils/awaitResponse'
 import { managedProfileRoot } from './utils/managedProfileRoot'
 import { profileProcesses } from './utils/profileProcesses'
@@ -205,6 +207,7 @@ export class HostBrowser {
   private managedProfileRemoved = false
   private leftProfile?: ProfileLeft
   private viewport?: BrowserViewport
+  private secretFrameGate?: SecretFrameGate
   /** The sweep of the profile folders a killed editor left, started by a managed {@link launch} without waiting for it ({@link startAbandonedProfileSweep}) and awaited by {@link close} for at most {@link ABANDONED_PROFILE_SWEEP_CLOSE_WAIT_MS}; it never rejects, and none is started once the browser is closing. */
   private abandonedProfileSweep?: Promise<void>
   /** Set once {@link close} stopped waiting for a sweep that was still running: the run's journal is complete then, and the sweep's later result is not journaled. */
@@ -574,7 +577,19 @@ export class HostBrowser {
       'browser.runtime-version',
       await cdp.request('Browser.getVersion', undefined),
     )
+    if (this.secretFrameGate)
+      this.viewport.setSecretFrameGate(this.secretFrameGate)
     await this.viewport.attach(cdp, signal)
+  }
+
+  /**
+   * Sets the gate the owned viewport's frames pass once a secret was sent; it takes effect when the viewport attaches.
+   * Called by {@link ConfiguredBrowserRun} before it attaches the viewport.
+   * @param gate - The run's {@link SecretFrameGate}.
+   * @example browser.setSecretFrameGate(gate)
+   */
+  setSecretFrameGate(gate: SecretFrameGate): void {
+    this.secretFrameGate = gate
   }
 
   /** Connects immutable captured pixels to an exact renderer acknowledgement in managed mode. @example await browser.presentCapture(png, 'paused-1') */
@@ -585,9 +600,33 @@ export class HostBrowser {
     return this.viewport?.present(data, phase)
   }
 
-  /** Forwards actual phase response pixels to optional recording before reveal/storage can delay them. @example browser.recordCapture(data, 'before') */
-  recordCapture(data: string, phase: string): void {
-    this.viewport?.recordCapture(data, phase)
+  /**
+   * Forwards actual phase response pixels to optional recording before reveal/storage can delay them, through the run's secret frame gate.
+   * @param requestedAtMs - When the screenshot was requested.
+   * @returns `drop` when the gate withheld the image; `pass` otherwise.
+   * @example if ((await browser.recordCapture(data, 'before', startedAt)) === 'drop') throw new Error('withheld')
+   */
+  async recordCapture(
+    data: string,
+    phase: string,
+    requestedAtMs: number,
+  ): Promise<'pass' | 'drop'> {
+    if (this.viewport)
+      return this.viewport.recordCapture(data, phase, requestedAtMs)
+    // Without a viewport there is no recorder; the gate still decides whether the image may be kept.
+    return (
+      (await this.secretFrameGate?.admitCapture(requestedAtMs, Date.now())) ??
+      'pass'
+    )
+  }
+
+  /**
+   * Ends the recording's history while the page is still alive: queued images get their secret check within {@link SECRET_FRAME_DRAIN_TIMEOUT_MS}, later stream frames are discarded.
+   * Called by {@link ConfiguredBrowserRun} at the start of cleanup, before sessions and the viewport close.
+   * @example await browser.endRecordingHistory()
+   */
+  async endRecordingHistory(): Promise<void> {
+    await this.viewport?.endHistory(SECRET_FRAME_DRAIN_TIMEOUT_MS)
   }
 
   /** Retires only viewport pause presentation; debugger control remains in {@link ConfiguredBrowserRun}. @example browser.resumeViewport() */

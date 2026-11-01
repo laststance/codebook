@@ -615,6 +615,7 @@ test('a Pages run scrolls its click target into view once, right before it reads
   const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
     nextPages: {},
   })
+  assert.ok('action' in harness.definition.configuration)
   const { action } = harness.definition.configuration
   const scrollExpression = configuredScrollExpression(action.selector)
   const beforeRead = configuredDomExpression(action.before, action.selector)

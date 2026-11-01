@@ -61,6 +61,7 @@ import {
 } from './utils/describeChromeExtensionStatus'
 import type { ExtensionObservedRawRead } from './utils/maskExtensionObservedRead'
 import type { StorageOwnerIdentity } from './utils/readRecordedOwner'
+import type { PreparedTextState } from './utils/redactPreparedTexts'
 import { redactSecretText } from './utils/redactSecretText'
 import type { RunClock } from './utils/runningTimeLimit'
 import { hidePrivateRoots } from './utils/sanitizeCause'
@@ -164,6 +165,8 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   private readonly timings: ChromeExtensionRunTimings
   private readonly outputs: ChromeExtensionOutputLine[] = []
   private readonly captures: ChromeExtensionView['captures'] = []
+  /** Where each click's prepared input texts stand, by click then input (zero-based). */
+  private readonly inputStates: PreparedTextState[][] = []
   private readonly pinnedGenerations = new Set<number>()
   /** The run's history once it started; `undefined` before, and for a run that goes on unrecorded. */
   private history: ChromeExtensionHistorySink | undefined
@@ -232,6 +235,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       procedure: this.procedureView(),
       ...(this.lastReceipt && { lastClick: this.answerOf(this.lastReceipt) }),
       pauses,
+      inputStates: this.inputStates.map((states) => [...states]),
       captures: [...this.captures],
       stopsDeclared: declaredCount,
       stopsNotReached:
@@ -545,6 +549,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     elapsedMs: () => this.history?.frameObserver.elapsedMs() ?? 0,
     frame: (frame) => this.history?.frameObserver.frame(frame),
     closed: (closing) => this.history?.frameObserver.closed(closing),
+    gap: (gap) => this.history?.frameObserver.gap?.(gap),
   }
 
   /**
@@ -721,6 +726,12 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       assertSourcesUnchanged: () => this.sourceCheck?.(),
       record: this.record,
       roots: this.roots,
+      onInputClassified: (clickIndex, inputIndex, secret) => {
+        // Fixed before the text is sent, so the manifest never holds a secret text.
+        const states = (this.inputStates[clickIndex - 1] ??= [])
+        states[inputIndex - 1] = secret ? 'secret' : 'plain'
+        this.changed()
+      },
       ...(this.timings.settleMs === undefined
         ? {}
         : { settleMs: this.timings.settleMs }),

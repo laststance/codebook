@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 // Claude Code injects hook context of up to 10,000 characters whole; longer text arrives only as a 2,000-character preview.
 const MAX_CONTEXT_CHARS = 10_000
 // The sections every restored context carries verbatim; the rest of AGENTS.md is read from disk.
-const RESTORED_SECTIONS = ['## Mandatory entry', '## Owner directions in force']
+const RESTORED_SECTIONS = ['## Mandatory entry', '## Standing directions']
 
 /**
  * Returns one `## ` section of AGENTS.md, from its heading to the next `## ` heading.

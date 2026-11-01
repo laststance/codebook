@@ -110,6 +110,10 @@ export class ChromeExtensionHistoryRecorder implements ChromeExtensionHistorySin
           capturedAtMs: frame.elapsedMs,
         })
       },
+      // A withheld image leaves a hole in the frames the history keeps.
+      gap: (): void => {
+        this.frames.isIncomplete = true
+      },
       closed: ({ expected }): void => {
         // A pane closed before the run's own cleanup ends the frames early.
         if (!expected) this.frames.isIncomplete = true

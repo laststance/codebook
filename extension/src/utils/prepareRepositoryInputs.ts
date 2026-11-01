@@ -1,12 +1,14 @@
-import { z } from 'zod'
-
 import type { RepositoryConfiguration } from '../repositoryConfigSchemas'
 import type { Cdp } from '../runtimeSupport/cdp'
 
-const resultSchema = z.object({
-  ready: z.boolean(),
-  reason: z.string().optional(),
-})
+import {
+  controlReadinessSchema,
+  isSecretControl,
+  type ControlIdentity,
+} from './isSecretControl'
+
+/** The page's answer, with the resolved control's identity from the focus phase so its text can be classified before it is sent. */
+const resultSchema = controlReadinessSchema
 
 /** What {@link prepareRepositoryInputs} reports while it writes, so a setup deadline can name the input and say whether its text may already be in the page. */
 export type RepositoryInputProgress = {
@@ -14,6 +16,17 @@ export type RepositoryInputProgress = {
   started(selector: string): void
   /** `true` once its text was sent to the page, `false` once the page answered; a deadline between the two cannot tell whether it was written. */
   inserting(inFlight: boolean): void
+  /** The last look at the resolved control, after it took the focus and before any text is sent; throwing here sends nothing. Receives the control's remote object id. */
+  beforeInsert?(objectId: string): Promise<void> | void
+  /** Told, after the control is resolved and before its text is sent, whether the text is secret and whether the page described the control as an input of type password (the browser draws its text as dots); `index` is the input's place in the declaration. Awaited, so a caller can arm a gate (or refuse by throwing) before anything is sent. */
+  classified?(
+    index: number,
+    secret: boolean,
+    selector: string,
+    passwordControl: boolean,
+  ): Promise<void> | void
+  /** How long the page may take to answer the text insertion; a learning stop declared in the control's `input` handler holds the answer until it is continued. Omitted: the channel's default. */
+  insertTimeoutMs?: number
 }
 
 /** Prepares declared text controls on the owned page before its learning breakpoint is armed; uncertain inserts are never retried. @param progress - Told which input is being written and whether its text is in flight, for the setup-deadline text of a Next Pages run; optional. @example await prepareRepositoryInputs(cdp, inputs, origins, assertCurrent) */
@@ -24,49 +37,97 @@ export async function prepareRepositoryInputs(
   assertCurrent: () => void,
   progress?: RepositoryInputProgress,
 ): Promise<void> {
-  for (const [index, input] of inputs.entries()) {
+  for (const [index, input] of inputs.entries())
+    await writeTextInput(
+      cdp,
+      input,
+      origins,
+      assertCurrent,
+      `Input ${index + 1}`,
+      progress,
+      index,
+    )
+}
+
+/**
+ * Writes one text into the unique text control its selector names: focus and select all, CDP `Input.insertText`, then a check that the control reads the text and holds the focus. An uncertain insert is never retried.
+ * Called by {@link prepareRepositoryInputs} for each prepared input and by {@link prepareOperation} for a `text` operation into a text-like control.
+ * @param cdp - The owned page's channel.
+ * @param input - The control's selector and the text to write.
+ * @param origins - The loopback origins the page may be at.
+ * @param assertCurrent - Throws when the run is no longer alive; called between the steps.
+ * @param label - How a failure names the input (`Input 2`, `Operation 3`).
+ * @param progress - Told which input is being written, whether its text is in flight and whether it is secret, and, through `beforeInsert`, offered the last look at the resolved control before any text is sent.
+ * @param index - The input's place in its declaration, passed to `progress.classified`.
+ * @throws When the control is not unique, not editable or obscured, when the text did not land, and what `beforeInsert` throws; the failure names `label` and the step (`focus` or `verify`).
+ * @example await writeTextInput(cdp, { selector: '#email', text: 'a@b.c' }, origins, assertCurrent, 'Input 1')
+ */
+export async function writeTextInput(
+  cdp: Pick<Cdp, 'request'>,
+  input: { selector: string; text: string },
+  origins: readonly string[],
+  assertCurrent: () => void,
+  label: string,
+  progress?: RepositoryInputProgress,
+  index = 0,
+): Promise<void> {
+  assertCurrent()
+  progress?.started(input.selector)
+  const selected = await cdp.request('Runtime.evaluate', {
+    expression: `(${selectInput.toString()})(${JSON.stringify(input.selector)},${JSON.stringify(origins)})`,
+    returnByValue: false,
+  })
+  const objectId = selected.result.objectId
+  try {
     assertCurrent()
-    progress?.started(input.selector)
-    const selected = await cdp.request('Runtime.evaluate', {
-      expression: `(${selectInput.toString()})(${JSON.stringify(input.selector)},${JSON.stringify(origins)})`,
-      returnByValue: false,
-    })
-    const objectId = selected.result.objectId
-    try {
+    if (
+      selected.exceptionDetails ||
+      selected.result.subtype !== 'node' ||
+      !objectId
+    )
+      throw new Error(`${label} has no unique owned target.`)
+    const inspect = async (
+      phase: 'focus' | 'verify',
+    ): Promise<ControlIdentity | undefined> => {
       assertCurrent()
-      if (
-        selected.exceptionDetails ||
-        selected.result.subtype !== 'node' ||
-        !objectId
-      )
-        throw new Error(`Input ${index + 1} has no unique owned target.`)
-      const inspect = async (phase: 'focus' | 'verify'): Promise<void> => {
-        assertCurrent()
-        const result = await cdp.request('Runtime.callFunctionOn', {
-          objectId,
-          functionDeclaration: inspectInput.toString(),
-          arguments: [{ value: { ...input, origins, phase } }],
-          returnByValue: true,
-        })
-        assertCurrent()
-        const parsed = resultSchema.safeParse(result.result.value)
-        if (result.exceptionDetails || !parsed.success || !parsed.data.ready)
-          throw new Error(
-            `Input ${index + 1} ${phase} failed: ${parsed.success ? (parsed.data.reason ?? 'unavailable') : 'invalid response'}`,
-          )
-      }
-      await inspect('focus')
+      const result = await cdp.request('Runtime.callFunctionOn', {
+        objectId,
+        functionDeclaration: inspectInput.toString(),
+        arguments: [{ value: { ...input, origins, phase } }],
+        returnByValue: true,
+      })
       assertCurrent()
-      progress?.inserting(true)
-      await cdp.request('Input.insertText', { text: input.text })
-      progress?.inserting(false)
-      assertCurrent()
-      await inspect('verify')
-    } finally {
-      // Release only the acquired remote reference; a closed target cannot safely retry input.
-      if (objectId)
-        await cdp.request('Runtime.releaseObject', { objectId }).catch(() => {})
+      const parsed = resultSchema.safeParse(result.result.value)
+      if (result.exceptionDetails || !parsed.success || !parsed.data.ready)
+        throw new Error(
+          `${label} ${phase} failed: ${parsed.success ? (parsed.data.reason ?? 'unavailable') : 'invalid response'}`,
+        )
+      return parsed.data.control
     }
+    const control = await inspect('focus')
+    assertCurrent()
+    // A control the page did not describe is treated as secret: the text is masked wherever it is kept.
+    await progress?.classified?.(
+      index,
+      control ? isSecretControl(control) : true,
+      input.selector,
+      control?.type?.toLowerCase() === 'password',
+    )
+    await progress?.beforeInsert?.(objectId)
+    assertCurrent()
+    progress?.inserting(true)
+    await cdp.request(
+      'Input.insertText',
+      { text: input.text },
+      progress?.insertTimeoutMs,
+    )
+    progress?.inserting(false)
+    assertCurrent()
+    await inspect('verify')
+  } finally {
+    // Release only the acquired remote reference; a closed target cannot safely retry input.
+    if (objectId)
+      await cdp.request('Runtime.releaseObject', { objectId }).catch(() => {})
   }
 }
 
@@ -136,5 +197,12 @@ export function inspectInput(
   return {
     ready: document.activeElement === element,
     reason: 'input-focus-changed',
+    control: {
+      // Both control kinds expose these as strings (`textarea` reports its own type).
+      type: element.type,
+      name: element.name,
+      id: element.id,
+      autocomplete: element.autocomplete,
+    },
   }
 }

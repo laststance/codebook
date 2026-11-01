@@ -12,6 +12,8 @@ import {
   CONFIGURED_STUDY_VERSION,
   KEY_LENGTH_LIMIT,
   MAX_EXPLANATIONS,
+  OPERATIONS_STUDY_VERSION,
+  REPOSITORY_OPERATION_LIMIT,
   MAX_UI_TEXT_CHARS,
   REFERENCE_LENGTH_LIMIT,
   REPOSITORY_BROWSER_ACTION,
@@ -126,6 +128,22 @@ export const configuredObservationSchema = z.strictObject({
     )
     .max(MAX_EXPLANATIONS),
 })
+/**
+ * One declared operation of a version 3 run as the saved study keeps it: its progress when the run ended or was last saved, and the recording-clock time its input was sent.
+ * Absent `atMs` means the operation was never sent. A saved study of a stopped or failed run keeps the states it had (`done`, `failed`, `not-run`), so it replays as a partial run.
+ */
+const configuredOperationRecordSchema = z.strictObject({
+  /** 1-based, as in `afterOperation` and every receipt. */
+  index: z.number().int().min(1).max(REPOSITORY_OPERATION_LIMIT),
+  kind: z.enum(['text', 'choose', 'click']),
+  title: shortText,
+  /** Milliseconds on the recording clock at which the operation's input was sent; absent for an operation that was never sent. */
+  atMs: z.number().finite().nonnegative().optional(),
+  state: z.enum(['not-run', 'sending', 'paused', 'done', 'failed']),
+  ack: z.enum(['pending', 'yes']),
+  valueCheck: z.enum(['pending', 'passed', 'failed', 'n/a']),
+  effect: z.enum(['pending', 'dispatched', 'after-verified']),
+})
 const configuredPhaseSchema = z.enum(CROSS_RUNTIME_CAPTURE_PHASES)
 export const configuredImageSchema = z.discriminatedUnion('status', [
   capturedImageSchema.options[0].extend({
@@ -143,6 +161,7 @@ export const configuredStudySchema = z.strictObject({
     z.literal(CROSS_RUNTIME_STUDY_VERSION),
     z.literal(VITE_STUDY_VERSION),
     z.literal(RECORDED_LOCATION_STUDY_VERSION),
+    z.literal(OPERATIONS_STUDY_VERSION),
   ]),
   workspaceKey: repositoryHashSchema,
   id: studyIdSchema,
@@ -175,6 +194,12 @@ export const configuredStudySchema = z.strictObject({
       continuedPause: configuredPauseSchema.optional(),
       afterVerified: z.boolean(),
     })
+    .optional(),
+  // Present on a study saved from a version 3 configuration: every declared operation in order, with the final state of each.
+  operations: z
+    .array(configuredOperationRecordSchema)
+    .min(1)
+    .max(REPOSITORY_OPERATION_LIMIT)
     .optional(),
   learningSummary: savedLearningSummarySchema.optional(),
   observations: z
@@ -215,6 +240,9 @@ export const configuredSelectionSchema = z.strictObject({
 export const configuredDefinitionSchema = configuredStudySchema
   .pick({ configuration: true, configurationHash: true, descriptor: true })
   .extend({ descriptor: configuredDescriptorSchema })
+export type ConfiguredOperationRecord = z.infer<
+  typeof configuredOperationRecordSchema
+>
 export type ConfiguredStudy = z.infer<typeof configuredStudySchema>
 export type ConfiguredObservation = z.infer<typeof configuredObservationSchema>
 export type ConfiguredDescriptor = z.infer<typeof configuredDescriptorSchema>

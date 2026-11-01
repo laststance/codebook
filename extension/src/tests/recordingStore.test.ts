@@ -30,6 +30,7 @@ import {
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { useEditorMachineId } from '../utils/currentStorageOwner'
+import { projectRecording } from '../utils/projectRecording'
 import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
 import { systemTrashName } from '../utils/systemTrashName'
 
@@ -1058,4 +1059,55 @@ test('a link where a folder of the recordings should be is refused by the listin
       },
     },
   )
+})
+
+// protects=a withheld interval (the secret frame gate dropped frames) is a declared gap, not the end: frames after it are stored, the seal reads partial with the withheld reason, and the replay shows the gap's reason in the interval and the later frame after it; fails_when=the gap stops frame admission for good (the result screen after a sign-in redirect is lost), the seal reads complete, or the reader refuses frames after a gap; no_claim=the observer and the gate (secretFrameGate.test.ts), real capture
+test('a non-terminal gap keeps storing later frames, seals partial with the withheld reason and replays the gap then the later frame', async (context) => {
+  // Arrange
+  const { store, binding } = await recordingHarness(context),
+    writer = await store.start(binding, 0)
+  writer.frame({ bytes: png, elapsedMs: 10, kind: 'stream' })
+  // Act
+  writer.gap(100, 'A frame that may show a secret was withheld.')
+  const later = writer.frame({ bytes: png, elapsedMs: 200, kind: 'stream' })
+  const seal = await writer.finish(300),
+    recording = await store.read(binding.studyId)
+  const inGap = projectRecording(recording, undefined, 150),
+    afterGap = projectRecording(recording, undefined, 250)
+  // Assert
+  assert.equal(later, true)
+  assert.equal(seal.status, 'partial')
+  assert.equal(seal.reason, 'A frame that may show a secret was withheld.')
+  assert.equal(seal.frameCount, 2)
+  assert.deepEqual(
+    recording.entries.map((entry) => entry.type),
+    ['frame', 'gap', 'frame', 'end'],
+  )
+  assert.equal(recording.status, 'partial')
+  assert.equal(inGap.frame, undefined)
+  assert.equal(inGap.missing, 'A frame that may show a secret was withheld.')
+  assert.equal(afterGap.frame?.elapsedMs, 200)
+  assert.equal(afterGap.missing, undefined)
+})
+
+// protects=a non-terminal gap is reserved against the journal budget like a frame, so a full journal ends the frames as a terminal loss and still seals; fails_when=a gap written without a reservation overruns the journal limit or leaves no room for the end record; no_claim=real capture
+test('a non-terminal gap that does not fit the journal budget ends frame admission and still seals partial', async (context) => {
+  // Arrange
+  const { binding, store } = await recordingHarness(context, {
+      journalBytes: 16_634,
+    }),
+    writer = await store.start(binding, 0)
+  writer.frame({ bytes: png, elapsedMs: 10, kind: 'stream' })
+  // Act
+  writer.gap(70, 'withheld one')
+  writer.gap(80, 'withheld two')
+  writer.gap(90, 'withheld three')
+  const accepted = writer.frame({ bytes: png, elapsedMs: 200, kind: 'stream' })
+  const seal = await writer.finish(300),
+    recording = await store.read(binding.studyId)
+  // Assert
+  assert.equal(accepted, false)
+  assert.equal(seal.status, 'partial')
+  assert.equal(recording.entries.at(-1)?.type, 'end')
+  assert.ok((recording.seal?.journalBytes ?? Infinity) <= 16_634)
 })

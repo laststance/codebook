@@ -755,6 +755,7 @@ async function check(page, options, collected) {
       })
       await page.screenshot({ path: `${options.output}/history-coverage.png` })
       // Golden DOM (PR-B2, AC14): the browser transport's time slider with its gap and stop marks renders the markup it rendered before its drawing was shared with test replays.
+      // Since Cycle 0070 (DES-6) the track also holds the operation row directly above the playhead, so its marks share the slider's width; this replay has no operations, so the row stays hidden and empty.
       const mappedTransportMarkup = await page.evaluate(
         () =>
           document.querySelector('#recording-transport .timeline-track')
@@ -772,7 +773,7 @@ async function check(page, options, collected) {
           document.querySelector('#recording-transport .timeline-track')
             .outerHTML,
       )
-      // Value: protects=the browser transport's slider keeps the markup it had before its drawing was shared with test replays (AC14): the gap and stop marks, mapped and unknown, in the same elements and attributes; fails_when=the shared drawing changes the browser slider's DOM, so a recording's transport reads or looks different; why_new=PR-B2 shared the coverage drawing and pinned the old markup as a text fixture; seam=none; no_claim=how the slider looks (native pixels)
+      // Value: protects=the browser transport's slider keeps the markup it had before its drawing was shared with test replays (AC14): the gap and stop marks, mapped and unknown, in the same elements and attributes, and a replay without operations draws no operation row (DES-6: the row is in the track, hidden and empty); fails_when=the shared drawing changes the browser slider's DOM, so a recording's transport reads or looks different, or a replay without operations shows an operation row or marks; why_new=PR-B2 shared the coverage drawing and pinned the old markup as a text fixture; Cycle 0070 added the operation row to the track and the fixture with it; seam=none; no_claim=how the slider looks (native pixels), the row of a replay with operations
       // Computed percentages (left and width of the marks) are compared to a tenth of a percent, so a harmless rounding change of the drawing does not break the fixture (F202).
       const tenthsOfPercent = (markup) =>
         markup.replace(
@@ -780,7 +781,7 @@ async function check(page, options, collected) {
           (_, percent) => `${Math.round(Number(percent) * 10) / 10}%`,
         )
       cases.push({
-        name: 'the browser transport’s slider with its gap and stop marks, mapped and unknown, renders the same markup as before its drawing was shared with test replays',
+        name: 'the browser transport’s slider with its gap and stop marks, mapped and unknown, renders the same markup as before its drawing was shared with test replays, with the operation row hidden and empty for a replay without operations',
         actual: `${mappedTransportMarkup}\n---\n${unknownTransportMarkup}`,
         passed:
           tenthsOfPercent(
@@ -12508,7 +12509,7 @@ try {
           'utf8',
         )
       ).trimEnd(),
-      // The browser transport's slider markup before the shared drawing (PR-B2, AC14): a text fixture.
+      // The browser transport's slider markup before the shared drawing (PR-B2, AC14), with the hidden operation row Cycle 0070 put above the playhead (DES-6): a text fixture.
       goldenHistoryTransport: (
         await readFile(
           new URL('./fixtures/history-transport-golden.txt', import.meta.url),

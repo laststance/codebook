@@ -34,6 +34,10 @@ export function createRecordingObserver(
         writer.stopFrames(input.elapsedMs, String(error))
       }
     },
+    gap(input): void {
+      // A withheld image is a declared missing interval, not the end: later frames are stored and the recording seals partial (4A).
+      writer.gap(input.elapsedMs, input.reason)
+    },
     closed(input): void {
       record.recordingEndMs = input.elapsedMs
       if (!input.expected)

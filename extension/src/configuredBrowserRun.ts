@@ -9,6 +9,13 @@ import * as vscode from 'vscode'
 import { z } from 'zod'
 
 import {
+  OperationRefusal,
+  prepareOperation,
+  waitForSettledPage,
+  type OperationPort,
+  type PreparedOperation,
+} from './configuredOperations'
+import {
   configuredDefinitionSchema,
   type ConfiguredDefinition,
 } from './configuredStudySchemas'
@@ -34,6 +41,8 @@ import {
   REPOSITORY_BROWSER_ACTION,
   REDACTED_MODULE_LABEL,
   REPOSITORY_BROWSER_PROFILE,
+  OPERATIONS_CONFIG_VERSION,
+  REPOSITORY_OPERATION_ACTION,
   REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
   REPOSITORY_PATH_LIMIT_CHARS,
   REPOSITORY_STOP_INSTANCE_READ_MS,
@@ -41,6 +50,7 @@ import {
   REPOSITORY_STOP_MODULE_JOURNAL_LIMIT,
   REPOSITORY_RUN_TIMEOUT_MS,
   REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT,
+  SECRET_FRAME_SOURCE_URL,
   REPOSITORY_SETUP_TIMEOUT_MS,
   VITE_PAGE_GENERATION_LIMIT,
   VITE_SETUP_STEPS,
@@ -48,6 +58,7 @@ import {
   REPOSITORY_STACK_FRAME_LIMIT,
   REPOSITORY_UNOWNED_PAGE_PAUSE_LIMIT_MS,
   SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION,
+  SECRET_FRAME_VALUE_COPY_MIN_CHARS,
 } from './constants'
 import type {
   DevelopmentBundle,
@@ -75,11 +86,15 @@ import {
   configuredDomFailureSchema,
   configuredTextReadingsSchema,
   type ConfiguredDomFailure,
+  type OperationsRepositoryConfiguration,
+  type RepositoryCondition,
 } from './repositoryConfigSchemas'
 import { RepositorySourceService } from './repositorySource'
 import type {
   ConfiguredRuntimeSnapshot,
   ConfiguredRuntimeView,
+  OperationFailure,
+  OperationRecord,
   RuntimeAction,
   RuntimeControl,
   RuntimeSource,
@@ -97,6 +112,7 @@ import {
   type HostConfiguration,
 } from './runtimeSupport/hostBrowser'
 import { PauseGate, type PauseIdentity } from './runtimeSupport/pauseGate'
+import { SecretFrameGate } from './runtimeSupport/secretFrameGate'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { isStopCausedByCodebook } from './runtimeSupport/utils/isStopCausedByCodebook'
 import { settleCleanup } from './runtimeSupport/utils/settleCleanup'
@@ -104,6 +120,7 @@ import { sha256 } from './runtimeSupport/utils/sha256'
 import { WaitTimeoutError } from './runtimeSupport/utils/waitTimeoutError'
 import { waitTimeoutText } from './runtimeSupport/utils/waitTimeoutText'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
+import { afterOperationOf } from './utils/afterOperationOf'
 import { assertConfiguredDescriptor } from './utils/assertConfiguredDescriptor'
 import { assertConfiguredSourceDocuments } from './utils/assertConfiguredSourceDocuments'
 import { assertDevelopmentPortFree } from './utils/assertDevelopmentPortFree'
@@ -118,6 +135,7 @@ import {
   type BreakLocationsOnTheWay,
   type MappedBreakLocation,
 } from './utils/breakLocationLinesOnTheWay'
+import { canonicalDefinition } from './utils/canonicalDefinition'
 import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
 import { causeRootsFor } from './utils/causeRootsFor'
 import {
@@ -161,6 +179,7 @@ import { isPauseInScript } from './utils/isPauseInScript'
 import { isRefreshedFrameAtStop } from './utils/isRefreshedFrameAtStop'
 import { isSameGeneratedPosition } from './utils/isSameGeneratedPosition'
 import { launchDevelopmentServer } from './utils/launchDevelopmentServer'
+import { maskLearnerSecretText } from './utils/maskLearnerSecretText'
 import { maskNextServerOutput } from './utils/maskNextServerOutput'
 import { maskSourceMapText } from './utils/maskSourceMapText'
 import {
@@ -171,6 +190,7 @@ import { nextPathnameOf } from './utils/nextPathnameOf'
 import { nextServedChunkFetcher } from './utils/nextServedChunkFetcher'
 import { nextServerOnlyFileReason } from './utils/nextServerOnlyFileReason'
 import { nextServerOnlyStopMessage } from './utils/nextServerOnlyStopMessage'
+import { OperationAfterTimeoutError } from './utils/operationAfterTimeoutError'
 import {
   browserOriginOf,
   isOwnedApplicationOrigin,
@@ -182,6 +202,7 @@ import {
 } from './utils/pagePauseUnderResumeText'
 import { pausePlace } from './utils/pausePlace'
 import { placeAfterDeclaringLine } from './utils/placeAfterDeclaringLine'
+import { preparedInputsOf } from './utils/preparedInputsOf'
 import { prepareRepositoryInputs } from './utils/prepareRepositoryInputs'
 import { readDeclaredDevelopmentPort } from './utils/readDeclaredDevelopmentPort'
 import { readDevelopmentBundle } from './utils/readDevelopmentBundle'
@@ -195,6 +216,8 @@ import { readNextServerOnlyReason } from './utils/readNextServerOnlyReason'
 import { readPagesDevelopmentBundle } from './utils/readPagesDevelopmentBundle'
 import { readNextInstallation } from './utils/readRepositoryAdapterReadiness'
 import { redactNextEntryPath } from './utils/redactNextEntryPath'
+import { redactPreparedConfiguration } from './utils/redactPreparedConfiguration'
+import type { PreparedTextState } from './utils/redactPreparedTexts'
 import { resolveArmedPlace } from './utils/resolveArmedPlace'
 import {
   resolveNextPagesEntry,
@@ -416,6 +439,9 @@ function requiredBindingsDeclaredOn(
   )
 }
 /** What a server stop's registration says when a deadline expires; a refusal keeps the reason the registration read threw, so the deadline text can pass it on, and the place when the adapter moved the breakpoint to a line the stop's rule refuses. */
+/** The wait {@link ConfiguredBrowserRun.completeOperation} is in, which decides how the run's deadline words its failure. */
+type OperationWait = 'pauses' | 'after' | 'run-after'
+
 type RegistrationStatus =
   | { status: 'pending' | 'bound' | 'unknown' }
   | {
@@ -554,7 +580,33 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private sealedGeneration = 0
   private preparation?: Promise<void>
   private cleanupPromise?: Promise<void>
-  private manifest?: ConfiguredRuntimeView['manifest']
+  /** The sealed part of the manifest; the configuration and its hash are added by {@link currentManifest} from the redacted form. */
+  private sealedManifest?: Omit<
+    NonNullable<ConfiguredRuntimeView['manifest']>,
+    'hash' | 'configuration' | 'configurationHash'
+  >
+  /**
+   * Gate every stored image passes once a secret operation was sent (ENG-5). Inert until the operation engine arms it; its failure fails the run with `SECRET_BECAME_VISIBLE`.
+   */
+  readonly secretFrameGate = new SecretFrameGate({
+    evaluate: async (expression, timeoutMs) => {
+      // Quiet, and marked: the gate's many queries are neither journaled one by one nor listed as observed scripts; it journals its own summary.
+      const answer = await this.requireCdp().requestQuietly(
+        'Runtime.evaluate',
+        {
+          expression: `${expression}\n//# sourceURL=${SECRET_FRAME_SOURCE_URL}`,
+          returnByValue: true,
+        },
+        timeoutMs,
+      )
+      return answer.result.value
+    },
+    onFailure: (reason) => this.failSecretVisible(reason),
+    onSummary: (summary) =>
+      this.evidence.record('secret-frame.summary', summary),
+  })
+  /** Where each prepared text stands; the real texts never leave {@link definition}'s memory. */
+  private readonly preparedStates: PreparedTextState[] = []
   private continuation?: Continuation
   private acceptedStop = false
   private stopIndex = 0
@@ -604,6 +656,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private readonly instanceTexts = new Map<string, Promise<string>>()
   /** What the after conditions last answered while they did not hold, so the run's own deadline, which ends the after wait first, can still name the condition and its hint ({@link afterDeadlineReason}). */
   private lastAfterFailure?: ConfiguredDomFailure
+  /** What the current operation's own after conditions last answered while they did not hold, for the same reason as {@link lastAfterFailure} ({@link operationAfterDeadlineText}). */
+  private lastOperationAfterFailure?: ConfiguredDomFailure
   /** The phases whose text conditions were journaled as held on one of several elements; each phase is journaled once ({@link journalTextReadings}). */
   private readonly journaledTextReadingPhases = new Set<'before' | 'after'>()
   private progressTimer?: ReturnType<typeof setTimeout>
@@ -637,6 +691,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private inputInFlight = false
   /** Masks env-file and script values, and secret shapes, in captured values ({@link inspectConfiguredValues}); absent for a Next run. */
   private maskText?: (text: string) => string
+  /**
+   * Hides what a text may hold of a secret: env-file values and secret shapes first, then every value the learner typed (ENG-4).
+   * Passed as the masking of inspection values and debugger previews, and used for failures and Output lines.
+   * @param text - Any text the run stores or serves.
+   * @returns The masked text.
+   * @example this.maskRunText('Login failed for hunter2') // => 'Login failed for [masked]'
+   */
+  private readonly maskRunText = (text: string): string =>
+    maskLearnerSecretText(
+      this.maskText?.(text) ?? text,
+      this.learnerSecretValues,
+    )
   /** Masks only env-file and script values in the module text a Vite run keeps ({@link archivedModuleText}); absent for a Next run. */
   private maskModuleText?: (text: string) => string
   /** The masked copy of each bundle, kept so a read does not mask the same module again; a re-sealed bundle is a new object, so its entry is never stale. */
@@ -649,6 +715,40 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /** Whether `[::1]` at the port is the run's own, so the origin checks accept it. */
   private ownsIpv6Loopback = false
   private operation?: ConfiguredRuntimeView['operation']
+  /** The version 3 configuration of this run; absent for versions 1 and 2, whose single action keeps its own path. */
+  private readonly operationsConfiguration?: OperationsRepositoryConfiguration
+  /** The progress of each declared operation of a version 3 run, in declared order. */
+  private readonly operationRecords: OperationRecord[] = []
+  /** How many operations `action` reserved; the next one is `operationsAccepted + 1`. */
+  private operationsAccepted = 0
+  /** How many operations had their first input event sent; a stop declared `afterOperation: k` is armed once this reaches `k`. */
+  private operationsDispatched = 0
+  /** Whether {@link armSecretGate} is waiting for the gate to arm; a failure of the gate then becomes that operation's own not-sent refusal. */
+  private armingSecretGate = false
+  /** The operation each `action` key reserved, so a repeat of a key finds its operation. */
+  private readonly operationIndexByKey = new Map<string, number>()
+  /** The id and the key of each reserved operation, in order. */
+  private readonly operationIds: string[] = []
+  private readonly operationKeys: string[] = []
+  /** The operations whose completion was started, so each is completed once. */
+  private readonly operationsSettling = new Set<number>()
+  /** The journal clock of the page's last main-frame navigation; the settle wait reads it. */
+  private lastNavigationAtMs = Number.NEGATIVE_INFINITY
+  /** The stops whose breakpoint was requested: a version 3 stop is armed in its operation's turn, never earlier. */
+  private readonly armedStops = new Set<PreparedStop>()
+  private operationFailure?: OperationFailure
+  /** The secrets the learner typed for `secret: "ask-learner"` operations: in memory only, never persisted or served; the sinks that mask exact occurrences read it through {@link learnerSecrets}. */
+  private readonly learnerSecretValues = new Set<string>()
+
+  /**
+   * Gives the secrets the learner typed for ask-learner operations, for the sinks that mask every exact occurrence of them (ENG-4).
+   * The set lives in memory for the run's life and is never persisted, logged or served.
+   * @returns The learner's secrets so far; empty for a run without an ask-learner operation.
+   * @example for (const secret of run.learnerSecrets) text = text.replaceAll(secret, '[masked]')
+   */
+  get learnerSecrets(): ReadonlySet<string> {
+    return this.learnerSecretValues
+  }
   private snapshot?: ConfiguredRuntimeSnapshot
   private snapshotReady = false
   private readonly failures: string[] = []
@@ -672,11 +772,27 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.definition.configurationHash
     )
       throw new Error('Configured intent hash changed')
+    const configuration = this.definition.configuration
+    if (configuration.version === OPERATIONS_CONFIG_VERSION) {
+      this.operationsConfiguration = configuration
+      for (const [index, operation] of configuration.operations.entries())
+        this.operationRecords.push({
+          index: index + 1,
+          kind: operation.kind,
+          title: operation.title,
+          state: 'not-run',
+          ack: 'pending',
+          valueCheck: operation.kind === 'click' ? 'n/a' : 'pending',
+          effect: 'pending',
+        })
+    }
     this.evidence = new Evidence(join(options.directory, this.id), {
       maxEvents: MAX_EVENTS,
       retainedBytes: MAX_RETAINED_EVENT_BYTES,
       queuedBytes: MAX_QUEUED_EVIDENCE_BYTES,
     })
+    // Every journal event and saved JSON file hides the learner's secrets by value (ENG-4).
+    this.evidence.learnerSecrets = () => this.learnerSecretValues
     this.sources = new RepositorySourceService(options.workspace)
     this.browser = new HostBrowser(
       options.host,
@@ -687,6 +803,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       (reason) => this.fail(reason),
       options.createViewport,
     )
+    this.browser.setSecretFrameGate(this.secretFrameGate)
     options.control?.signal.addEventListener('abort', this.cancel, {
       once: true,
     })
@@ -889,7 +1006,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     this.setupStep = VITE_SETUP_STEPS.writingInputs
     this.nextSetupStep = NEXT_SETUP_STEPS.writingInputs
-    const inputs = this.definition.configuration.initialInputs ?? []
+    const inputs = this.preparedInputs()
     // A Pages page can still leave its entry path on the client after its router was ready; nothing is written then.
     if (this.pagesRun && inputs.length)
       await this.refusePagesPathLeft('before-input')
@@ -907,6 +1024,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         inserting: (inFlight) => {
           this.inputInFlight = inFlight
         },
+        classified: async (index, secret, selector, passwordControl) => {
+          // Fixed before the text is sent, so no later write holds a secret text.
+          this.preparedStates[index] = secret ? 'secret' : 'plain'
+          // A secret text into a password input arms the frame gate before it is sent, as an ask-learner operation does; into any other control the browser draws it as typed, as in 0.2.70.0, so it is masked by state and value only.
+          if (secret && passwordControl)
+            await this.armPreparedSecretGate(selector, inputs[index]!.text)
+          else if (
+            secret &&
+            inputs[index]!.text.length >= SECRET_FRAME_VALUE_COPY_MIN_CHARS
+          )
+            this.learnerSecretValues.add(inputs[index]!.text)
+        },
       },
     )
     this.pendingInputSelector = undefined
@@ -916,7 +1045,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // Every declared input is written: a deadline from here names arming the first stop, not an input.
     this.nextSetupStep = NEXT_SETUP_STEPS.armingFirstStop
     // Only the next expected stop is armed: a later stop's line may run before its turn and must not pause then. {@link continue} arms each later stop.
-    await this.armStop(this.stops[0]!)
+    // A version 3 stop is armed in its operation's turn: a first stop declared after a later operation waits for that operation's dispatch.
+    if (this.isStopDueBy(this.stops[0]!, 1)) {
+      await this.armStop(this.stops[0]!)
+      this.armedStops.add(this.stops[0]!)
+    }
     // A later browser stop is armed only in its turn, but a module that is already loaded can be compared with its sealed bundle now, before any application effect.
     for (const laterStop of this.stops.slice(1))
       if (laterStop.participant === 'browser' && laterStop.script)
@@ -1053,9 +1186,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const first = this.stops[0]!
     const { itemId, bookTitle, nodeTitle, anchors, citationContext } =
       this.definition.descriptor
-    const bound = {
-      configurationHash: this.definition.configurationHash,
-      configuration: this.definition.configuration,
+    this.sealedManifest = {
       descriptor: { itemId, bookTitle, nodeTitle, anchors, citationContext },
       itemId,
       sourceHash: first.verifier.hashes.typescript,
@@ -1064,7 +1195,6 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       // Only a Vite run names its version, so a Next manifest and its hash are what they were.
       ...(this.viteVersion ? { viteVersion: this.viteVersion } : {}),
     }
-    this.manifest = { ...bound, hash: sha256(JSON.stringify(bound)) }
     // Later stops are armed only in their turn, so a line that can never bind is refused here, before any application effect.
     const unmappedStop = this.unbindableStop()
     if (unmappedStop)
@@ -1151,6 +1281,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // Only the run's own main frame, after the run asked for the entry page.
     if (this.cleaning || event.frame.parentId || !this.navigationRequested)
       return
+    this.lastNavigationAtMs = performance.now()
+    // A Next version 3 run follows client-side navigation, but a full document load before its last operation ends it; Vite keeps its own rule below.
+    if (this.operationsConfiguration && this.adapter?.name !== 'vite-dev') {
+      this.onOperationsNavigation()
+      return
+    }
     if (!this.firstNavigationSeen) {
       this.firstNavigationSeen = true
       return
@@ -4054,6 +4190,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     let observedScripts = 0
     cdp.on('Debugger.scriptParsed', (event) => {
+      // The secret frame gate's own expressions are no page script: not listed, not bound.
+      if (event.url === SECRET_FRAME_SOURCE_URL) return
       // The journal lists only the first scripts; a pause in a later one still needs its URL.
       participant.scriptUrls.set(event.scriptId, event.url)
       if (observedScripts++ < REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT)
@@ -4071,7 +4209,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       'Debugger.paused',
       'Debugger.resumed',
     ]
-    if (name === 'browser' && this.adapter?.name === 'vite-dev') {
+    // A version 3 run on any adapter also watches main-frame loads: its settle wait reads them, and a load before the last operation ends the run.
+    if (
+      name === 'browser' &&
+      (this.adapter?.name === 'vite-dev' || this.operationsConfiguration)
+    ) {
       cdp.on('Page.frameNavigated', (event) => this.onPageNavigated(event))
       events.push('Page.frameNavigated')
     }
@@ -4373,15 +4515,51 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /** Names the declared stop whose pause may arrive next, for {@link expectedStop}: the one after a continuation in flight, otherwise the current one from the moment the input is sent until its snapshot is ready. Before the input and after the last continuation there is none. @example this.nextStopToPause() // stops[1] while stop 0 is being continued */
   private nextStopToPause(): PreparedStop | undefined {
-    if (this.continuation) return this.stops[this.stopIndex + 1]
+    if (this.continuation) {
+      const next = this.stops[this.stopIndex + 1]
+      // A version 3 stop declared after a later operation has no turn until that operation's input is sent.
+      return next && this.isStopDueBy(next, this.operationsDispatched)
+        ? next
+        : undefined
+    }
     // The first stop's turn begins when the input is sent, not when the action is accepted: its line can run while the input is still being checked.
     if (this.isBeforeFirstInput()) return undefined
     return this.snapshotReady ? undefined : this.stops[this.stopIndex]
   }
 
-  /** Tells {@link nextStopToPause} whether the first stop's turn has not begun: no stop was committed yet and the input was not sent. @example this.isBeforeFirstInput() // true while the action is accepted and its input is still being checked */
+  /** Tells {@link nextStopToPause} whether the current stop's turn has not begun: for versions 1 and 2, no stop was committed yet and the input was not sent; for version 3, the operation the stop follows was not sent. @example this.isBeforeFirstInput() // true while the action is accepted and its input is still being checked */
   private isBeforeFirstInput(): boolean {
+    if (this.operationsConfiguration) {
+      const stop = this.stops[this.stopIndex]
+      return !stop || !this.isStopDueBy(stop, this.operationsDispatched)
+    }
     return this.stopIndex === 0 && !this.operation?.inputDispatched
+  }
+
+  /**
+   * Tells {@link onEvent} whether a participant's `stopped` came before the input the current stop waits for was sent, so the event is rejected as no stop of the declared operation.
+   * Version 3 asks {@link isBeforeFirstInput} (the operation the stop follows); versions 1 and 2 ask whether the action's input was dispatched, for every stop of the run.
+   * @returns `true` while the current stop's input is still unsent.
+   * @example this.isBeforeStopInput() // true for a version 3 stop declared afterOperation 2 while only operation 1 was sent
+   */
+  private isBeforeStopInput(): boolean {
+    // Version 3 stops each follow their own operation; versions 1 and 2 share the action's one input.
+    return this.operationsConfiguration
+      ? this.isBeforeFirstInput()
+      : !this.operation?.inputDispatched
+  }
+
+  /**
+   * Tells whether a stop's turn has begun once a number of operations were sent: a version 3 stop is armed once the operation it follows was sent (ENG-1); the stops of versions 1 and 2 are due as soon as any input is.
+   * Called by {@link nextStopToPause}, {@link isBeforeFirstInput}, {@link armStopsOfOperation} and {@link prepareOwned}.
+   * @param stop - The declared stop.
+   * @param operationsSent - How many operations had their input sent.
+   * @returns `true` when the stop's operation is among the sent ones.
+   * @example this.isStopDueBy(stop, 1) // true for a stop declared afterOperation 1
+   */
+  private isStopDueBy(stop: PreparedStop, operationsSent: number): boolean {
+    const afterOperation = afterOperationOf(stop)
+    return afterOperation === undefined || afterOperation <= operationsSent
   }
 
   /** Gives {@link admitPause} the stop a participant's pause may belong to; a participant whose turn it is not has none. @example this.expectedStop('browser') // undefined while a server stop is next */
@@ -4908,8 +5086,19 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     return true
   }
 
-  /** Reserves one declared input synchronously; its protocol ACK never blocks state or continuation. @example run.action('click-once', 'repository-click') */
-  action(key: string, action: RuntimeAction) {
+  /**
+   * Reserves one declared input synchronously; its protocol ACK never blocks state or continuation.
+   * A version 3 run reserves its next declared operation ({@link reserveOperation}); versions 1 and 2 reserve their one click.
+   * @param options - `learnerSecret`: the value the learner typed for an ask-learner operation (version 3 only).
+   * @example run.action('click-once', 'repository-click')
+   */
+  action(
+    key: string,
+    action: RuntimeAction,
+    options?: { learnerSecret?: string },
+  ): { id: string; operationIndex?: number } {
+    if (this.operationsConfiguration)
+      return this.reserveOperation(key, action, options?.learnerSecret)
     if (this.operation?.key === key && action === REPOSITORY_BROWSER_ACTION)
       return { id: this.operation.id }
     if (
@@ -4937,6 +5126,723 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.track(this.dispatchInput())
     return { id: this.operation.id }
   }
+  /**
+   * Lists the prepared text inputs a run writes at setup: the `initialInputs` of versions 1 and 2, none for version 3, whose texts are operations sent one by one.
+   * @returns The selectors and texts to write before the first stop is armed.
+   * @example this.preparedInputs() // => [{ selector: '#email', text: 'a@b.c' }] for a version 1 run that declares one
+   */
+  private preparedInputs(): { selector: string; text: string }[] {
+    const configuration = this.definition.configuration
+    return 'initialInputs' in configuration
+      ? (configuration.initialInputs ?? [])
+      : []
+  }
+
+  /**
+   * Reserves the next declared operation of a version 3 run for `codebook_action`, and starts sending it in the background.
+   * Why: the receipt returns at once and never waits on the page's acknowledgement or the value check; the operation's progress lives in {@link view}'s `operations`.
+   * @param key - The action's key; a repeat of a reserved key finds its operation again.
+   * @param action - Must be `repository-operation`.
+   * @param learnerSecret - The value the learner typed for an ask-learner operation; required for one, kept in memory only.
+   * @returns The operation's id and its 1-based index.
+   * @throws `conflict:` when the action is another one, the run is not `ready`, or every operation was reserved; an ask-learner operation without its secret.
+   * @example run.action('op-1', 'repository-operation') // => { id: '…', operationIndex: 1 }
+   */
+  private reserveOperation(
+    key: string,
+    action: RuntimeAction,
+    learnerSecret: string | undefined,
+  ): { id: string; operationIndex: number } {
+    const configuration = this.operationsConfiguration!
+    const known = this.operationIndexByKey.get(key)
+    if (known !== undefined && action === REPOSITORY_OPERATION_ACTION)
+      return { id: this.operationIds[known - 1]!, operationIndex: known }
+    const index = this.operationsAccepted + 1
+    if (
+      action !== REPOSITORY_OPERATION_ACTION ||
+      index > configuration.operations.length ||
+      this.cleaning ||
+      this.status !== 'ready'
+    )
+      throw new Error('conflict: wrong, repeated or unavailable input')
+    this.alive()
+    const operation = configuration.operations[index - 1]!
+    const isAskLearner = operation.kind === 'text' && operation.secret
+    if (isAskLearner && learnerSecret === undefined)
+      throw new Error('conflict: the learner secret was not supplied')
+    // The secret is known to the run from this moment, so every sink that masks exact occurrences covers it.
+    if (learnerSecret !== undefined && isAskLearner)
+      this.learnerSecretValues.add(learnerSecret)
+    const id = randomUUID()
+    this.operationIds.push(id)
+    this.operationKeys.push(key)
+    this.operationIndexByKey.set(key, index)
+    this.operationsAccepted = index
+    // The aggregate `operation` keeps the first operation's id and key; its dispatch and acknowledgement flags only move forward (a saved checkpoint must never take one back), and each operation's own progress lives in its record.
+    this.operation ??= {
+      id,
+      key,
+      inputDispatched: false,
+      inputAcknowledged: false,
+      afterVerified: false,
+    }
+    this.status = 'acting'
+    // The stop this operation's input leads to opens its causal window with the input.
+    const stop = this.stops[this.stopIndex]
+    if (stop && afterOperationOf(stop) === index)
+      this.openCausalWindowOfStop(this.stopIndex)
+    this.progressDeadline(ACTIVE_TIMEOUT_MS, () =>
+      this.unreachedOperationReason(index),
+    )
+    this.evidence.record('input.accepted', {
+      id,
+      key,
+      operationIndex: index,
+    })
+    this.logOperation(index, 'info', `accepted (${operation.kind})`)
+    this.track(this.dispatchOperation(index, learnerSecret))
+    return { id, operationIndex: index }
+  }
+
+  /**
+   * Words the failure of an operation whose input or stop did not follow within the active bound, read when the progress deadline expires.
+   * @param index - The operation in flight (1-based).
+   * @returns The declared stop's reason when the operation's stop was not hit, otherwise that the input was not sent or acknowledged.
+   * @example this.unreachedOperationReason(2) // 'Operation 2 reached no verified pause: declared stop app/ui/form.tsx:22 was not hit within 20 s of the accepted action; its line must execute after the input'
+   */
+  private unreachedOperationReason(index: number): string {
+    const stop = this.stops[this.stopIndex]
+    const opening = `Operation ${index} reached no verified pause`
+    if (
+      stop &&
+      afterOperationOf(stop) === index &&
+      this.operationsDispatched >= index
+    ) {
+      const paused = this.unannouncedStopPlace(stop)
+      if (paused)
+        return `${opening}: declared stop ${this.declaredAt(stop)} is paused at ${paused}, but the debugger did not announce that stop within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s of the accepted action`
+      return this.notHitFirstStopReason(stop, opening)
+    }
+    return this.operationsDispatched >= index
+      ? `Operation ${index} was sent, but its input was not acknowledged within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s`
+      : `Operation ${index} was accepted, but its input was not sent within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s`
+  }
+
+  /**
+   * Sends one operation of a version 3 run: verifies the sources, arms the stops that follow it, waits for the page to settle, resolves its control, then sends its input once.
+   * Why: a reserved operation is sent in the background so its receipt never waits on the page; called by {@link reserveOperation} through {@link track}, so a failure fails the run with its code.
+   * @param index - The reserved operation (1-based).
+   * @param learnerSecret - The ask-learner value, when the operation declares one.
+   * @throws {@link OperationRefusal} for a refusal that sent nothing or a failure of the input; the run's own errors (a changed source, a registration) as they are.
+   * @example this.track(this.dispatchOperation(1, undefined))
+   */
+  private async dispatchOperation(
+    index: number,
+    learnerSecret: string | undefined,
+  ): Promise<void> {
+    const configuration = this.operationsConfiguration!
+    const total = configuration.operations.length
+    const operation = configuration.operations[index - 1]!
+    const record = this.operationRecords[index - 1]!
+    this.moveForward(record, { state: 'sending' })
+    await this.verifySources()
+    await this.armStopsOfOperation(index)
+    for (const stop of this.armedServerStops()) {
+      await this.registeredStop(stop)
+      this.alive()
+    }
+    // A Pages page that already left its entry path is refused first, as before the one click of version 1 and 2.
+    if (index === 1 && this.pagesRun && (await this.pagesPathLeftBeforeClick()))
+      return
+    const port = this.operationPort()
+    let hookFailure: unknown
+    try {
+      await waitForSettledPage(port, index)
+      this.alive()
+      await this.assertOperationConditions(index, total)
+      const prepare = (): Promise<PreparedOperation> =>
+        prepareOperation(port, { index, total, operation, learnerSecret })
+      let prepared = await prepare()
+      // The page reads yielded to the adapter's news: a place the source map alone refused is judged by the break locations first, and the control is resolved again.
+      if (await this.judgeNewsRefusedBeforeInput()) {
+        await prepared.discard()
+        prepared = await prepare()
+      }
+      const hooks = this.operationHooks(index, operation)
+      // Every image path is gated from before the secret is typed (ENG-5); a control that is no safe password control gets no input.
+      if (prepared.isSecret)
+        await this.armSecretGate(index, operation.selector, learnerSecret)
+      await prepared.send({
+        ...hooks,
+        beforeInput: () => {
+          try {
+            hooks.beforeInput()
+          } catch (error) {
+            hookFailure = error
+            throw error
+          }
+        },
+      })
+    } catch (error) {
+      throw this.refusalOfOperationFailure(index, error, hookFailure)
+    }
+    this.settleOperation(index)
+  }
+
+  /**
+   * Fails the run because the secret control stopped being safe to draw; capture stops for the rest of the run and the images stored before stay.
+   * Called by the secret frame gate's failure hook; a version 3 run keeps the operation's failure fields (DX-5).
+   * @param reason - Why the gate failed.
+   * @example this.failSecretVisible('control-not-password')
+   */
+  private failSecretVisible(reason: string): void {
+    // Arming reports its own refusal for this operation (not sent); the gate's synchronous failure must not fail the run first as the previous operation.
+    if (this.armingSecretGate) return
+    const message = `The control that received a secret stopped being a safe password control (${reason}); Codebook stopped recording and kept no image from that time.`
+    if (this.operationsConfiguration && this.operationsDispatched > 0)
+      this.failOperation(
+        new OperationRefusal('SECRET_BECAME_VISIBLE', message, {
+          operationIndex: this.operationsDispatched,
+          sent: 'sent',
+        }),
+      )
+    else this.fail(`SECRET_BECAME_VISIBLE: ${message}`)
+  }
+
+  /**
+   * Arms the secret frame gate on the control that is about to receive a version 1 or 2 prepared secret text, and refuses the text unsent when the gate failed at once.
+   * Called from the setup's classification hook of {@link prepareRepositoryInputs}; the value is armed with itself and joins the run's secret set (masked by value everywhere). A value shorter than {@link SECRET_FRAME_VALUE_COPY_MIN_CHARS} characters cannot be told from page text, so it is refused before it is typed, as the ask-learner box refuses it.
+   * @param selector - The selector of the control that receives the text.
+   * @param text - The prepared text about to be typed. Never logged.
+   * @throws When the text is too short to watch, the control is no safe password control or the page could not answer; nothing was sent.
+   * @example await this.armPreparedSecretGate('#password', 'correct horse')
+   */
+  private async armPreparedSecretGate(
+    selector: string,
+    text: string,
+  ): Promise<void> {
+    // A short value cannot be watched without withholding every image, so nothing is armed and nothing is sent.
+    if (text.length < SECRET_FRAME_VALUE_COPY_MIN_CHARS)
+      throw new Error(
+        `SECRET_INPUT_VISIBLE: The prepared text for ${selector} was not sent: a secret shorter than ${SECRET_FRAME_VALUE_COPY_MIN_CHARS} characters cannot be told from page text, so a copy of it could reach the recorded frames. Use a test password of ${SECRET_FRAME_VALUE_COPY_MIN_CHARS} or more characters.`,
+      )
+    this.learnerSecretValues.add(text)
+    this.armingSecretGate = true
+    try {
+      await this.secretFrameGate.arm(selector, text)
+    } finally {
+      this.armingSecretGate = false
+    }
+    this.alive()
+    const reason = this.secretFrameGate.failure
+    if (reason !== undefined)
+      throw new Error(
+        `SECRET_BECAME_VISIBLE: The prepared text was not sent: its control is not a safe password control (${reason}).`,
+      )
+  }
+
+  /**
+   * Arms the secret frame gate on the control that is about to receive the learner's secret, and refuses the input when the gate failed at once.
+   * Called by {@link dispatchOperation} right before the input of an ask-learner operation; the gate stays armed for the rest of the run.
+   * @param index - The operation (1-based).
+   * @param selector - The selector of the secret control.
+   * @param learnerSecret - The value about to be typed; the observer counts its occurrences in the page text before the input, so the copy baseline never depends on listener order. Never logged.
+   * @throws {@link OperationRefusal} `SECRET_BECAME_VISIBLE` when the control is not a password control, or the page could not answer; nothing was sent.
+   * @example await this.armSecretGate(2, '#password')
+   */
+  private async armSecretGate(
+    index: number,
+    selector: string,
+    learnerSecret: string | undefined,
+  ): Promise<void> {
+    this.armingSecretGate = true
+    try {
+      await this.secretFrameGate.arm(selector, learnerSecret)
+    } finally {
+      this.armingSecretGate = false
+    }
+    this.alive()
+    const reason = this.secretFrameGate.failure
+    if (reason !== undefined)
+      throw new OperationRefusal(
+        'SECRET_BECAME_VISIBLE',
+        `Operation ${index} was not sent: the control for the secret is not a safe password control (${reason}).`,
+        { operationIndex: index, path: `operations[${index - 1}].selector` },
+      )
+  }
+
+  /**
+   * Gives what the run lets the operation engine use.
+   * @returns The page channel, the navigation clock, the click-point reader and the run's liveness check.
+   * @example prepareOperation(this.operationPort(), { index: 1, total: 4, operation })
+   */
+  private operationPort(): OperationPort {
+    return {
+      pageCdp: () => this.ownedPageCdp(),
+      origins: () => loopbackOriginsOf(this.origin!, this.ownsIpv6Loopback),
+      assertCurrent: (): void => this.alive(),
+      millisecondsSinceNavigation: () =>
+        performance.now() - this.lastNavigationAtMs,
+      sleep: (delayMs) =>
+        sleep(delayMs, undefined, { signal: this.abort.signal }),
+      readClickPoint: async (selector) => {
+        const scrolled = await this.scrollTargetIntoView(selector)
+        const target = await this.readConditions([], selector)
+        this.alive()
+        if (!target.ready)
+          throw new Error(
+            `${selector} is not a unique visible enabled target (${target.failure?.reason ?? 'unavailable'})`,
+          )
+        return this.clickPoint(target, scrolled)
+      },
+    }
+  }
+
+  /**
+   * Checks the run-level conditions that guard one operation, right before it is sent: the `before` conditions hold before the first, and the `after` conditions do not hold yet before the last (a result already true cannot prove the operation caused it).
+   * @param index - The operation about to be sent (1-based).
+   * @param total - How many operations the run declares.
+   * @throws {@link OperationRefusal} `INPUT_NOT_ACCEPTED` naming `before` or `after` when a condition is not as required; nothing was sent.
+   * @example await this.assertOperationConditions(1, 4)
+   */
+  private async assertOperationConditions(
+    index: number,
+    total: number,
+  ): Promise<void> {
+    const configuration = this.operationsConfiguration!
+    if (index === 1) {
+      const before = await this.readConditions(configuration.before)
+      this.alive()
+      if (!before.ready)
+        throw new OperationRefusal(
+          'INPUT_NOT_ACCEPTED',
+          `Operation 1 was not sent: the run's before conditions no longer hold on the page (${before.failure?.reason ?? 'unavailable'}).`,
+          { operationIndex: 1, path: 'before' },
+        )
+    }
+    if (index === total) {
+      const prior = await this.readConditions(configuration.after)
+      this.alive()
+      if (prior.ready)
+        throw new OperationRefusal(
+          'INPUT_NOT_ACCEPTED',
+          `Operation ${index} was not sent: the run's after conditions already hold before the last operation, so its result could not prove the operation caused it. Declare an after condition that only the result satisfies.`,
+          { operationIndex: index, path: 'after' },
+        )
+    }
+  }
+
+  /**
+   * Builds the moments of one operation's input for the engine: the dispatch, the acknowledgement and the value check each move the operation's record forward and are journaled without any text.
+   * @param index - The operation (1-based).
+   * @param operation - Its declaration, of which only the kind and selector are journaled.
+   * @returns The hooks the engine calls.
+   * @example await prepared.send(this.operationHooks(1, operation))
+   */
+  private operationHooks(
+    index: number,
+    operation: OperationsRepositoryConfiguration['operations'][number],
+  ) {
+    const record = this.operationRecords[index - 1]!
+    return {
+      beforeInput: (): void => {
+        this.assertServerRegistrationsHeld()
+        this.operationsDispatched = index
+        this.operation!.inputDispatched = true
+        this.evidence.record('input.dispatched', {
+          key: this.operationKeys.at(index - 1),
+          operationIndex: index,
+          kind: operation.kind,
+        })
+        this.logOperation(index, 'info', `sending (${operation.kind})`)
+      },
+      acknowledged: (): void => {
+        this.moveForward(record, { ack: 'yes' })
+        this.operation!.inputAcknowledged = true
+        this.evidence.record('input.acknowledged', { operationIndex: index })
+        this.logOperation(index, 'info', 'acknowledged')
+      },
+      valueChecked: (passed: boolean): void => {
+        this.moveForward(record, { valueCheck: passed ? 'passed' : 'failed' })
+        this.logOperation(
+          index,
+          'info',
+          `value check ${passed ? 'passed' : 'failed'}`,
+        )
+      },
+    }
+  }
+
+  /**
+   * Arms the first stop that follows an operation, just before that operation's input; a version 3 stop is never armed earlier, so its line cannot pause the run before its turn (ENG-1).
+   * Later stops of the same operation are armed inside the continuation that precedes them, as before ({@link continue}).
+   * @param index - The operation about to be sent (1-based).
+   * @example await this.armStopsOfOperation(2)
+   */
+  private async armStopsOfOperation(index: number): Promise<void> {
+    const stop = this.stops[this.stopIndex]
+    if (!stop || afterOperationOf(stop) !== index || this.armedStops.has(stop))
+      return
+    await this.armStop(stop)
+    this.armedStops.add(stop)
+    this.alive()
+  }
+
+  /**
+   * Moves an operation's record forward; a value never goes back, and `done` or `failed` is final (ENG-2).
+   * @param record - The operation's record.
+   * @param patch - The fields to advance.
+   * @example this.moveForward(record, { ack: 'yes' })
+   */
+  private moveForward(
+    record: OperationRecord,
+    patch: Partial<
+      Pick<OperationRecord, 'state' | 'ack' | 'valueCheck' | 'effect'>
+    >,
+  ): void {
+    if (record.state === 'done' || record.state === 'failed') return
+    const stateRank = {
+      'not-run': 0,
+      sending: 1,
+      paused: 2,
+      done: 3,
+      failed: 3,
+    }
+    const effectRank = { pending: 0, dispatched: 1, 'after-verified': 2 }
+    if (patch.state && stateRank[patch.state] >= stateRank[record.state])
+      record.state = patch.state
+    if (patch.ack) record.ack = patch.ack
+    if (patch.valueCheck && record.valueCheck === 'pending')
+      record.valueCheck = patch.valueCheck
+    if (patch.effect && effectRank[patch.effect] >= effectRank[record.effect])
+      record.effect = patch.effect
+  }
+
+  /**
+   * Marks the operation a committed stop belongs to as paused; called when the stop's observation is published.
+   * @param stop - The stop whose pause was committed.
+   * @example this.markOperationPaused(stop)
+   */
+  private markOperationPaused(stop: PreparedStop): void {
+    const index = afterOperationOf(stop)
+    const record =
+      index === undefined ? undefined : this.operationRecords[index - 1]
+    if (record) this.moveForward(record, { state: 'paused' })
+  }
+
+  /**
+   * Gives the stop a continuation arms before it resumes: the stop after the one being continued, except that a version 3 stop that follows a later operation is armed in that operation's turn ({@link armStopsOfOperation}), not inside this continuation.
+   * @param continuedStop - The stop being continued.
+   * @returns The next declared stop to arm now; `undefined` when there is none, or it follows a later operation.
+   * @example this.stopArmedAfter(this.stops[0]!) // this.stops[1] for a version 1 run, undefined for a version 3 stop declared after the next operation
+   */
+  private stopArmedAfter(
+    continuedStop: PreparedStop,
+  ): PreparedStop | undefined {
+    const nextStop = this.stops[this.stopIndex + 1]
+    if (!nextStop || !this.operationsConfiguration) return nextStop
+    return afterOperationOf(nextStop) === afterOperationOf(continuedStop)
+      ? nextStop
+      : undefined
+  }
+
+  /**
+   * Returns the run to `ready` for the next operation, or observes the result after the last one, once an operation is done: its input was acknowledged, its value checked, and every stop declared for it continued (ENG-1).
+   * Called after an operation's input returned ({@link dispatchOperation}) and after the last stop of an operation was continued ({@link beginAfter}); it acts once per operation.
+   * @param index - The operation (1-based).
+   * @example this.settleOperation(1)
+   */
+  private settleOperation(index: number): void {
+    const record = this.operationRecords[index - 1]
+    const stop = this.stops[this.stopIndex]
+    // A stop of this operation (or an earlier one) is still ahead or paused: the operation is not done.
+    const hasPendingStop =
+      stop !== undefined && (afterOperationOf(stop) ?? Infinity) <= index
+    if (
+      !record ||
+      this.cleaning ||
+      this.status === 'failed' ||
+      record.state === 'done' ||
+      record.ack !== 'yes' ||
+      record.valueCheck === 'pending' ||
+      hasPendingStop ||
+      this.operationsSettling.has(index)
+    )
+      return
+    this.operationsSettling.add(index)
+    this.track(this.completeOperation(index))
+  }
+
+  /**
+   * Finishes one operation after its input and stops: checks its own `after` conditions, then offers the next operation (`ready`) or, after the last, observes the run-level `after` conditions.
+   * @param index - The operation (1-based).
+   * @throws {@link OperationRefusal} `OPERATION_AFTER_NOT_MET` when the operation's `after` conditions do not hold in time.
+   * @example this.track(this.completeOperation(2))
+   */
+  private async completeOperation(index: number): Promise<void> {
+    const configuration = this.operationsConfiguration!
+    const operation = configuration.operations[index - 1]!
+    const record = this.operationRecords[index - 1]!
+    const isLast = index === configuration.operations.length
+    // Which wait the run's deadline, armed before both and ending first, interrupts: it words that wait's failure.
+    let waiting: OperationWait = 'pauses'
+    this.lastOperationAfterFailure = undefined
+    this.progressDeadline(ACTIVE_TIMEOUT_MS, () =>
+      this.operationDeadlineText(index, waiting),
+    )
+    try {
+      await waitUntil(
+        () => this.adapterPausesRetired(),
+        ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION,
+        ACTIVE_TIMEOUT_MS,
+        this.abort.signal,
+      )
+      this.alive()
+      // The operation's own conditions prove its effect; the last operation without any takes the run's, observed below.
+      waiting = operation.after ? 'after' : 'run-after'
+      if (operation.after) {
+        await this.waitForConditions(operation.after)
+        this.alive()
+        this.moveForward(record, { effect: 'after-verified' })
+      } else if (!isLast) this.moveForward(record, { effect: 'dispatched' })
+    } catch (error) {
+      this.alive()
+      throw this.refusalOfOperationFailure(index, error, undefined)
+    }
+    if (isLast) {
+      this.status = 'resuming'
+      // The operation's own conditions held; from here the run-level conditions are what the progress deadline interrupts.
+      waiting = 'run-after'
+      await this.observeAfter(undefined)
+      return
+    }
+    this.moveForward(record, { state: 'done' })
+    this.logOperation(index, 'info', `done (${record.effect})`)
+    clearTimeout(this.progressTimer)
+    this.status = 'ready'
+    await this.persist()
+  }
+
+  /**
+   * Words the failure of the wait {@link completeOperation} was in when the progress deadline expired; it records the operation's failure fields first.
+   * The deadline and the waits share one bound and the deadline was armed first, so it ends them: the adapter pause wait fails as an unexpected failure with its log id, the operation's own after conditions as `OPERATION_AFTER_NOT_MET` naming the condition that did not hold.
+   * @param index - The operation (1-based).
+   * @param waiting - The wait that was running; `run-after` is the last operation's run-level after wait, worded by {@link afterDeadlineReason}.
+   * @returns The coded failure text.
+   * @example this.operationDeadlineText(4, 'after') // 'OPERATION_AFTER_NOT_MET: Operation 4 (Create Invoice) was sent, but …'
+   */
+  private operationDeadlineText(index: number, waiting: OperationWait): string {
+    let refusal: OperationRefusal
+    if (waiting === 'pauses')
+      refusal = this.unexpectedOperationRefusal(
+        index,
+        waitTimeoutText(ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION),
+      )
+    else if (waiting === 'after')
+      refusal = this.afterNotMet(
+        index,
+        this.operationAfterTimeoutText(),
+        'operation',
+      )
+    else refusal = this.afterNotMet(index, this.afterDeadlineReason(), 'run')
+    this.recordOperationFailure(refusal)
+    return formatRefusalFailure(refusal.code, refusal.message)
+  }
+
+  /**
+   * Words the timeout of the current operation's own after conditions, naming the condition that did not hold when the page answered one.
+   * @returns The timeout text, shared by the wait's own error and the run's deadline.
+   * @example this.operationAfterTimeoutText() // "Timed out waiting for the operation's after conditions: condition 2 not-visible"
+   */
+  private operationAfterTimeoutText(): string {
+    const failure = this.lastOperationAfterFailure
+    return `Timed out waiting for the operation's after conditions${failure ? `: condition ${(failure.conditionIndex ?? 0) + 1} ${failure.reason}` : ''}`
+  }
+
+  /**
+   * Builds the `OPERATION_AFTER_NOT_MET` refusal of an operation that was sent whose result did not show in time.
+   * @param index - The operation (1-based).
+   * @param detail - What the page showed or did not show.
+   * @param scope - The conditions that failed: the operation's own `after`, or the run-level `after` the last operation takes as its result (also after its own `after` held).
+   * @returns The refusal, which names the configuration path of the conditions that failed.
+   * @example this.afterNotMet(4, 'Timed out waiting for configured after conditions', 'run')
+   */
+  private afterNotMet(
+    index: number,
+    detail: string,
+    scope: 'operation' | 'run',
+  ): OperationRefusal {
+    const configuration = this.operationsConfiguration!
+    const operation = configuration.operations[index - 1]!
+    const isRunLevel = scope === 'run'
+    return new OperationRefusal(
+      'OPERATION_AFTER_NOT_MET',
+      `Operation ${index} (${operation.title}) was sent, but its result could not be confirmed: ${detail}`,
+      {
+        operationIndex: index,
+        path: isRunLevel ? 'after' : `operations[${index - 1}].after`,
+        sent: 'sent',
+      },
+    )
+  }
+
+  /**
+   * Turns what stopped an operation into the refusal the run fails with: a refusal stays as it is, the run's own errors and a hook's refusal stay as they are, and anything the page or the transport raised becomes `RUN_FAILED_UNEXPECTEDLY` with a log id (the cause goes to Output > Codebook only).
+   * @param index - The operation (1-based).
+   * @param error - What was thrown.
+   * @param hookFailure - The error the run's own `beforeInput` hook raised, which reaches the run unchanged.
+   * @returns What to throw.
+   * @example throw this.refusalOfOperationFailure(2, error, hookFailure)
+   */
+  private refusalOfOperationFailure(
+    index: number,
+    error: unknown,
+    hookFailure: unknown,
+  ): unknown {
+    if (
+      error instanceof OperationRefusal ||
+      error instanceof StudyError ||
+      error === hookFailure ||
+      this.cleaning ||
+      this.abort.signal.aborted ||
+      this.status === 'failed'
+    )
+      return error
+    // Only the wait for the operation's own after conditions means the result did not show; any other timeout is unexpected.
+    if (error instanceof OperationAfterTimeoutError)
+      return this.afterNotMet(index, thrownMessage(error), 'operation')
+    return this.unexpectedOperationRefusal(index, thrownMessage(error))
+  }
+
+  /**
+   * Builds the `RUN_FAILED_UNEXPECTEDLY` refusal of an operation, journaling the cause to Output > Codebook only.
+   * @param index - The operation (1-based).
+   * @param cause - What went wrong; never shown to the agent.
+   * @returns The refusal with the log id; `sent` follows whether the operation's input was dispatched.
+   * @example throw this.unexpectedOperationRefusal(2, 'Timed out waiting for adapter pause retirement')
+   */
+  private unexpectedOperationRefusal(
+    index: number,
+    cause: string,
+  ): OperationRefusal {
+    const operation = this.operationsConfiguration!.operations[index - 1]!
+    this.logOperation(index, 'error', `unexpected failure: ${cause}`)
+    return new OperationRefusal(
+      'RUN_FAILED_UNEXPECTEDLY',
+      `Operation ${index} (${operation.title}) failed unexpectedly. See Output > Codebook, log id ${this.operationLogId(index)}.`,
+      {
+        operationIndex: index,
+        sent: this.operationsDispatched >= index ? 'sent' : 'not-sent',
+      },
+    )
+  }
+
+  /**
+   * Fails the run with an operation's coded refusal and keeps its fields for the run resource and the error the agent reads (DX-5).
+   * Called by {@link track} for any {@link OperationRefusal} an activity throws and by {@link onOperationsNavigation}.
+   * @param refusal - The refusal.
+   * @example this.failOperation(new OperationRefusal('OPTION_NOT_AVAILABLE', '…', { operationIndex: 1 }))
+   */
+  private failOperation(refusal: OperationRefusal): void {
+    if (
+      this.cleaning ||
+      this.status === 'failed' ||
+      this.status === 'completed'
+    )
+      return
+    this.recordOperationFailure(refusal)
+    this.fail(formatRefusalFailure(refusal.code, refusal.message))
+  }
+
+  /**
+   * Records an operation's first failure: the record turns `failed`, the fields are kept for the resource, and one Output > Codebook line carries the log id.
+   * @param refusal - The refusal.
+   * @example this.recordOperationFailure(refusal)
+   */
+  private recordOperationFailure(refusal: OperationRefusal): void {
+    if (this.operationFailure) return
+    const record = this.operationRecords[refusal.operationIndex - 1]
+    if (record) this.moveForward(record, { state: 'failed' })
+    // An earlier operation of the run reached the page, so a rerun would repeat it: the side effects are unknown whatever this operation's own fact is.
+    const earlierDispatched =
+      Math.min(this.operationsDispatched, refusal.operationIndex - 1) >= 1
+    const sideEffects = earlierDispatched ? 'unknown' : refusal.sideEffects
+    this.operationFailure = {
+      code: refusal.code,
+      operationIndex: refusal.operationIndex,
+      path: refusal.path,
+      sent: refusal.sent,
+      sideEffects,
+      logId: this.operationLogId(refusal.operationIndex),
+    }
+    this.logOperation(
+      refusal.operationIndex,
+      'error',
+      `refused ${refusal.code} (sent: ${refusal.sent}, side effects: ${sideEffects})`,
+    )
+  }
+
+  /**
+   * Names the Output > Codebook line of an operation: the run's address and the operation's index.
+   * @param index - The operation (1-based).
+   * @returns `<runId>#<index>`.
+   * @example this.operationLogId(2) // => '4f1c…#2'
+   */
+  private operationLogId(index: number): string {
+    return `${this.options.control?.runId ?? this.id}#${index}`
+  }
+
+  /**
+   * Writes one structured line to Output > Codebook for an operation event; the line holds the run, the operation and the event, never a typed value.
+   * @param index - The operation (1-based).
+   * @param level - `error` for a refusal or failure.
+   * @param text - The event.
+   * @example this.logOperation(1, 'info', 'sending (click)')
+   */
+  private logOperation(
+    index: number,
+    level: 'info' | 'error',
+    text: string,
+  ): void {
+    const total = this.operationsConfiguration?.operations.length ?? 0
+    try {
+      this.options.control?.outputLog?.({
+        level,
+        text: this.maskRunText(
+          `Run ${this.options.control.runId ?? this.id}: operation ${index}/${total} ${text} [log ${this.operationLogId(index)}]`,
+        ),
+      })
+    } catch {
+      // The line is also in the run's journal; the channel has nowhere to write.
+    }
+  }
+
+  /**
+   * Ends a Next version 3 run whose page loaded a new document before the last operation was sent; called for each main-frame load after the entry page.
+   * A load before the first operation is the entry page or its redirect, and a load after the last operation is the result.
+   * @example this.onOperationsNavigation()
+   */
+  private onOperationsNavigation(): void {
+    if (!this.firstNavigationSeen) {
+      this.firstNavigationSeen = true
+      return
+    }
+    const total = this.operationsConfiguration!.operations.length
+    const sent = this.operationsDispatched
+    if (sent === 0) return
+    if (sent >= total) {
+      this.evidence.record('page.navigated-after-last-operation')
+      return
+    }
+    this.failOperation(
+      new OperationRefusal(
+        'NAVIGATION_BEFORE_LAST_OPERATION',
+        `The page loaded a new document after operation ${sent} and before operation ${sent + 1} could be sent, so the next operation would act on another page.`,
+        { operationIndex: sent, sent: 'sent' },
+      ),
+    )
+  }
+
   /** Verifies sources, exact origin and a unique enabled center immediately before the one mouse sequence. The page is read once more, and only once, when the adapter's news about a server stop's breakpoint arrived during the first read and had to be judged by the debugger's break locations ({@link judgeNewsRefusedBeforeInput}); the synchronous receipt check stays the last step before the input. @example await this.dispatchInput() */
   private async dispatchInput(): Promise<void> {
     await this.verifySources()
@@ -4999,7 +5905,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    */
   private async pagesPathLeftBeforeClick(): Promise<boolean> {
     const moment =
-      (this.definition.configuration.initialInputs ?? []).length > 0
+      this.preparedInputs().length > 0
         ? 'before-click-after-inputs'
         : 'before-click-no-inputs'
     try {
@@ -5018,8 +5924,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /** Lists the server stops whose owned breakpoint exists, for the receipt reads of {@link dispatchInput}, {@link judgeNewsRefusedBeforeInput} and {@link assertServerRegistrationsHeld}. @example this.armedServerStops() // [stops[0]] before the first input of a run whose first stop is a server stop */
   private armedServerStops(): PreparedStop[] {
+    // A retired breakpoint belongs to a stop already continued (a later operation of a version 3 run), whose registration is no longer read.
     return this.stops.filter(
-      (candidate) => candidate.participant === 'server' && candidate.breakpoint,
+      (candidate) =>
+        candidate.participant === 'server' &&
+        candidate.breakpoint &&
+        !candidate.breakpoint.retired,
     )
   }
 
@@ -5081,7 +5991,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * ```
    */
   private clickPoint(
-    target: Awaited<ReturnType<ConfiguredBrowserRun['readDom']>>,
+    target: z.infer<typeof domResultSchema>,
     scrolled: boolean,
   ): { x: number; y: number } {
     if (!target.ready)
@@ -5107,11 +6017,21 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * ```
    */
   private async scrollClickTargetIntoView(): Promise<boolean> {
+    // Only versions 1 and 2 reach this: they declare the one click's selector.
+    return this.scrollTargetIntoView(this.declaredAction().selector!)
+  }
+
+  /**
+   * Scrolls a click target to the middle of the viewport when its centre lies outside it; the body of {@link scrollClickTargetIntoView} and the click step of a version 3 operation.
+   * @param selector - The click target.
+   * @returns `true` when the page answered that it scrolled; `false` for a target it left in place, and for any other answer.
+   * @throws When the page left its owned application origin, or the run is no longer alive.
+   * @example await this.scrollTargetIntoView('button[type=submit]')
+   */
+  private async scrollTargetIntoView(selector: string): Promise<boolean> {
     const cdp = await this.ownedPageCdp()
     const response = await cdp.request('Runtime.evaluate', {
-      expression: configuredScrollExpression(
-        this.definition.configuration.action.selector,
-      ),
+      expression: configuredScrollExpression(selector),
       returnByValue: true,
     })
     this.alive()
@@ -5289,7 +6209,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       if (
         this.stops[this.stopIndex]?.participant !== name ||
         !Number.isInteger(body.threadId) ||
-        !this.operation?.inputDispatched ||
+        this.isBeforeStopInput() ||
         this.acceptedStop
       ) {
         this.evidence.record('dap.rejected-stop', {
@@ -6470,7 +7390,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       callFrame.callFrameId,
       stop.inspections,
       current,
-      this.maskText,
+      this.maskRunText,
     )
     current()
     const debuggerSnapshot = await captureReplayDebugSnapshot({
@@ -6486,7 +7406,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       assertCurrent: current,
       signal: this.abort.signal,
       workspaceRoot: this.options.workspace,
-      maskKnownText: this.maskText,
+      maskKnownText: this.maskRunText,
     })
     current()
     let inspectionFailure: Error | undefined
@@ -6591,6 +7511,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     // The paused state is published in one step with the observation (above) and the continuation it offers (the ready snapshot), so no read sees one without the others.
     this.status = phase
+    this.markOperationPaused(stop)
     this.snapshotReady = true
     await this.persist()
   }
@@ -6628,10 +7549,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         participant.gate.current?.generation !== pause.generation
       )
         throw new Error('conflict: pause changed before continue')
-      const nextStop = this.stops[this.stopIndex + 1]
+      const nextStop = this.stopArmedAfter(stop)
       if (nextStop) {
         try {
           await this.armStop(nextStop)
+          this.armedStops.add(nextStop)
         } catch (error) {
           // Nothing has been resumed yet, so the record says exactly that instead of an uncertain continuation.
           this.fail(
@@ -6661,7 +7583,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       })
       participant.expectedResumeRequests++
       // The continuation's next declared stop is the run's, so its window opens with the continuation.
-      this.openCausalWindowOfStop(this.stopIndex + 1)
+      this.openCausalWindowOfNextStop(nextStop)
       this.evidence.record('continue.accepted', pause)
       this.progressDeadline(
         ACTIVE_TIMEOUT_MS,
@@ -6744,10 +7666,39 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return
     continuation.afterStarted = true
     this.operation!.continuedPause = continuation.pause
-    if (
-      this.stopIndex + 1 <
-      configuredStops(this.definition.configuration).length
-    ) {
+    const continuedStop = this.stops[this.stopIndex]
+    const followingStop = this.stops[this.stopIndex + 1]
+    // A version 3 run advances within an operation only to a stop declared for the same operation; otherwise the operation is done with its stops.
+    const advancesToNextStop = this.operationsConfiguration
+      ? followingStop !== undefined &&
+        afterOperationOf(followingStop) === afterOperationOf(continuedStop!)
+      : this.stopIndex + 1 <
+        configuredStops(this.definition.configuration).length
+    if (this.operationsConfiguration && !advancesToNextStop) {
+      // A pause queued during this continuation belongs to no declared stop of this operation (an undeclared or learner breakpoint); versions 1 and 2 fail such a pause, and so does this branch before the operation settles.
+      const queuedStop = this.pendingCdpStop ?? this.pendingDapStop
+      if (queuedStop) {
+        this.pendingCdpStop = undefined
+        this.pendingDapStop = undefined
+        this.fail(
+          `Unexpected or additional ${queuedStop.participant} stop invalidated the declared operation`,
+        )
+        return
+      }
+      const operationIndex = afterOperationOf(continuedStop!)!
+      this.stopIndex++
+      this.acceptedStop = false
+      this.snapshotReady = false
+      this.continuation = undefined
+      this.status = 'acting'
+      this.progressDeadline(ACTIVE_TIMEOUT_MS, () =>
+        this.unreachedOperationReason(operationIndex),
+      )
+      // The operation is done with its stops once its input and value check are too.
+      this.settleOperation(operationIndex)
+      return
+    }
+    if (advancesToNextStop) {
       this.stopIndex++
       this.acceptedStop = false
       this.snapshotReady = false
@@ -6776,7 +7727,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.track(this.observeAfter(continuation))
   }
   /** Confirms input, declared DOM conditions and renderer ACK while no additional pause has invalidated the original completion, waits until no participant is still paused at a pause the adapter made for itself, and reads the conditions once more after the after image, failing the run when they no longer hold; the run completes with the save of its final events and run record, and fails when that save fails. @example await this.observeAfter(continuation) */
-  private async observeAfter(continuation: Continuation): Promise<void> {
+  private async observeAfter(
+    continuation: Continuation | undefined,
+  ): Promise<void> {
     const current = (): void => {
       this.alive()
       if (
@@ -6784,9 +7737,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         Object.values(this.participants).some(
           (participant) => participant.gate.current,
         ) ||
-        !continuation.dap ||
-        !continuation.cdp ||
-        !continuation.response
+        // A version 3 run whose last operation had no stop to continue has no continuation to own the completion.
+        (continuation &&
+          (!continuation.dap || !continuation.cdp || !continuation.response))
       )
         throw new Error('Original continuation no longer owns completion')
     }
@@ -6794,7 +7747,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     await this.waitForDom('after')
     current()
     await waitUntil(
-      () => this.operation?.inputAcknowledged,
+      // A version 3 run waits for the acknowledgement of the operation in flight, which its own record keeps.
+      () =>
+        this.operationsConfiguration
+          ? this.operationRecords[this.operationsAccepted - 1]?.ack === 'yes'
+          : this.operation?.inputAcknowledged,
       'single input acknowledgement',
       ACTIVE_TIMEOUT_MS,
       this.abort.signal,
@@ -6828,10 +7785,25 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       current()
     } while (!this.adapterPausesRetired())
     if (!afterCapture.ready) {
-      this.fail(this.changedAfterCaptureReason(afterCapture.failure))
+      if (this.operationsConfiguration)
+        this.failOperation(
+          this.afterNotMet(
+            this.operationsConfiguration.operations.length,
+            this.changedAfterCaptureReason(afterCapture.failure),
+            'run',
+          ),
+        )
+      else this.fail(this.changedAfterCaptureReason(afterCapture.failure))
       return
     }
     this.operation!.afterVerified = true
+    // The last operation takes the run-level after conditions as its own result (CEO-S33).
+    const lastRecord = this.operationRecords.at(-1)
+    if (lastRecord) {
+      this.moveForward(lastRecord, { effect: 'after-verified' })
+      this.moveForward(lastRecord, { state: 'done' })
+      this.logOperation(lastRecord.index, 'info', 'done (after-verified)')
+    }
     this.status = 'completed'
     // The completion is the result only once its final save settled ({@link isSavingCompletion}).
     this.savingCompletion = true
@@ -6840,7 +7812,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     clearTimeout(this.runTimer)
     this.evidence.record('screen.observed', {
       snapshotId: this.snapshot!.id,
-      pause: continuation.pause,
+      pause: continuation?.pause ?? this.operation!.continuedPause,
       actionId: REPOSITORY_BROWSER_ACTION,
     })
     try {
@@ -6894,19 +7866,73 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /** Evaluates owned DOM data only after origin verification; it only reads the page, and invalid selectors/conditions never dispatch input. @example await this.readDom('before') */
   private async readDom(phase: 'before' | 'after') {
+    const action = this.declaredAction()
+    return this.readConditions(
+      action[phase],
+      phase === 'before' ? action.selector : undefined,
+    )
+  }
+  /**
+   * Gives the conditions the run-level phases read: the `action` of versions 1 and 2 (its click target included), or the `before` and `after` of version 3, which has no one click target.
+   * @returns The selector of the click target when there is one, and the conditions of both phases.
+   * @example this.declaredAction().after[0]?.kind // 'visible'
+   */
+  private declaredAction(): {
+    selector?: string
+    before: RepositoryCondition[]
+    after: RepositoryCondition[]
+  } {
+    const configuration = this.definition.configuration
+    return 'action' in configuration
+      ? configuration.action
+      : { before: configuration.before, after: configuration.after }
+  }
+  /**
+   * Reads declared conditions, and optionally a click target's centre, from the owned page, after the origin check; it only reads, and an invalid selector never dispatches input.
+   * Called by {@link readDom} for the run-level phases and by version 3's operation checks.
+   * @param conditions - The conditions to read.
+   * @param selector - The click target to locate, when the read is also for a click.
+   * @returns The page's counts and reasons ({@link inspectDom}'s answer).
+   * @example await this.readConditions([{ kind: 'visible', selector: 'table' }])
+   */
+  private async readConditions(
+    conditions: RepositoryCondition[],
+    selector?: string,
+  ) {
     const cdp = await this.ownedPageCdp()
-    const action = this.definition.configuration.action
     const response = await cdp.request('Runtime.evaluate', {
-      expression: configuredDomExpression(
-        action[phase],
-        phase === 'before' ? action.selector : undefined,
-      ),
+      expression: configuredDomExpression(conditions, selector),
       returnByValue: true,
     })
     this.alive()
     if (response.exceptionDetails)
       throw new Error('Declared DOM conditions could not be evaluated')
     return domResultSchema.parse(response.result.value)
+  }
+  /**
+   * Waits until an operation's own `after` conditions hold, bounded as the run-level wait.
+   * @param conditions - The operation's conditions.
+   * @throws The wait's timeout, which names the first condition that did not hold.
+   * @example await this.waitForConditions(operation.after)
+   */
+  private async waitForConditions(
+    conditions: RepositoryCondition[],
+  ): Promise<void> {
+    try {
+      await waitUntil(
+        async () => {
+          const last = await this.readConditions(conditions)
+          this.lastOperationAfterFailure = last.ready ? undefined : last.failure
+          return last.ready
+        },
+        "the operation's after conditions",
+        ACTIVE_TIMEOUT_MS,
+        this.abort.signal,
+      )
+    } catch (error) {
+      if (!(error instanceof WaitTimeoutError)) throw error
+      throw new OperationAfterTimeoutError(this.operationAfterTimeoutText())
+    }
   }
   /**
    * Words the failure of the deadline armed when the last continuation began, read when it expires (see {@link beginAfter}).
@@ -6981,7 +8007,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ) {
     return conditionIndex === undefined
       ? undefined
-      : this.definition.configuration.action[phase][conditionIndex]
+      : this.declaredAction()[phase][conditionIndex]
   }
   /**
    * Words the failure of a run whose after conditions held before the after image was captured and no longer held when {@link observeAfter} read them again after it, so such a run is never certified as demonstrated.
@@ -7021,6 +8047,64 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     throw new Error(
       `Invalid CSS selector in configured ${phase} ${location}; use browser-native CSS, not Playwright-specific pseudo selectors.`,
     )
+  }
+
+  /**
+   * The canonical redacted configuration and its hash: every prepared text not resolved as plain is masked (ENG-3).
+   * Called by {@link servedDefinition} and {@link currentManifest}; the hash is the existing configuration hash over this form.
+   * @returns The configuration and its SHA-256.
+   * @example
+   * this.canonicalConfiguration().hash // => the hash a saved study carries
+   */
+  private canonicalConfiguration(): {
+    configuration: ConfiguredDefinition['configuration']
+    hash: string
+  } {
+    const canonical = canonicalDefinition(this.definition, this.preparedStates)
+    return {
+      configuration: canonical.configuration,
+      hash: canonical.configurationHash,
+    }
+  }
+  /**
+   * The definition the run resource and `runtime.json` show: prepared texts as `[pending]`, masked or plain, with the canonical hash.
+   * `[pending]` is a view state only; it is in no hashed form.
+   * @example
+   * this.servedDefinition().configuration.initialInputs?.[0]?.text // => '[pending]' before the control is resolved
+   */
+  private servedDefinition(): ConfiguredDefinition {
+    if (preparedInputsOf(this.definition.configuration) === undefined)
+      return this.definition
+    return {
+      ...this.definition,
+      configuration: redactPreparedConfiguration(
+        this.definition.configuration,
+        this.preparedStates,
+        'view',
+      ),
+      configurationHash: this.canonicalConfiguration().hash,
+    }
+  }
+  /**
+   * The manifest the run resource serves: the sealed fields with the canonical configuration, rebuilt as prepared texts are resolved.
+   * @returns The manifest, or `undefined` before the stops are sealed.
+   * @example
+   * this.currentManifest()?.configuration.initialInputs?.[0]?.text // => '[pending]' before apply, '[masked]' after a secret
+   */
+  private currentManifest(): ConfiguredRuntimeView['manifest'] {
+    if (!this.sealedManifest) return undefined
+    const canonical = this.canonicalConfiguration()
+    const bound = {
+      configurationHash: canonical.hash,
+      configuration: canonical.configuration,
+      ...this.sealedManifest,
+    }
+    return {
+      ...bound,
+      // The served configuration shows the pending mark; the hash is over the canonical form.
+      configuration: this.servedDefinition().configuration,
+      hash: sha256(JSON.stringify(bound)),
+    }
   }
 
   /**
@@ -7116,6 +8200,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.captures[phase] = { status: 'pending' }
     this.evidence.record('capture.requested', { phase, pause })
     try {
+      const requestedAtMs = Date.now()
       const result = await this.requireCdp().request(
         'Page.captureScreenshot',
         { format: 'png' },
@@ -7124,9 +8209,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       current()
       const bytes = Buffer.from(result.data, 'base64'),
         hash = sha256(bytes)
-      // Record receipt-time pixels before disk/renderer waits; only the later exact-pause receipt confirms correspondence.
+      // A stop screenshot keeps no pixel from a window the secret gate cannot call safe; it reaches the recorder in order with the stream frames.
+      if (
+        (await this.browser.recordCapture(
+          result.data,
+          phase,
+          requestedAtMs,
+        )) === 'drop'
+      )
+        throw new Error('Image withheld: a secret control was not safe to draw')
+      current()
+      // Receipt-time pixels went to the recording before disk/renderer waits; only the later exact-pause receipt confirms correspondence.
       this.evidence.record('capture.response-received', { phase, pause, hash })
-      this.browser.recordCapture(result.data, phase)
       const file = pause ? `${phase}-${pause.generation}.png` : `${phase}.png`
       await this.evidence.save(file, bytes)
       current()
@@ -7274,8 +8368,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     return {
       runId: this.id,
       profile: REPOSITORY_BROWSER_PROFILE,
-      definition: this.definition,
-      manifest: this.manifest,
+      definition: this.servedDefinition(),
+      preparedTextStates: [...this.preparedStates],
+      manifest: this.currentManifest(),
       applicationOrigin: this.origin,
       applicationPortSource: this.portSource,
       viteVersion: this.viteVersion,
@@ -7301,21 +8396,40 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       },
       snapshots: [...this.snapshots],
       operation: this.operation,
-      nextAction:
-        this.status === 'ready' && !this.operation
-          ? REPOSITORY_BROWSER_ACTION
-          : undefined,
+      // Only a version 3 run lists its operations and, after a refusal or failure, the fields that decide a retry.
+      ...(this.operationsConfiguration
+        ? {
+            operations: this.operationRecords.map((record) => ({ ...record })),
+            ...(this.operationFailure
+              ? { operationFailure: { ...this.operationFailure } }
+              : {}),
+          }
+        : {}),
+      nextAction: this.offeredAction(),
       observed: this.operation?.afterVerified
         ? { afterVerified: true }
         : undefined,
       links: [],
       captures: this.captures,
       snapshotCaptures: { ...this.snapshotCaptures },
-      failures: [...this.failures],
+      failures: this.failures.map(this.maskRunText),
       events: this.evidence.events,
       artifactDirectory: this.evidence.directory,
       activeSessionIds: [...this.activeSessions],
     }
+  }
+  /**
+   * Names the action the run offers now: the one click of versions 1 and 2 while nothing was reserved, or `repository-operation` for a version 3 run that is `ready` with an operation left.
+   * @returns The action, or `undefined` while the run is not ready, paused, or has reserved every operation.
+   * @example this.offeredAction() // 'repository-operation' between operations
+   */
+  private offeredAction(): ConfiguredRuntimeView['nextAction'] {
+    if (this.status !== 'ready') return undefined
+    if (this.operationsConfiguration)
+      return this.operationsAccepted < this.operationRecords.length
+        ? REPOSITORY_OPERATION_ACTION
+        : undefined
+    return this.operation ? undefined : REPOSITORY_BROWSER_ACTION
   }
   /** Exposes only the matching participant's current snapshot and continuation receipt. @example this.participantView('server') */
   private participantView(
@@ -7371,13 +8485,19 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
   /**
    * Fails the run: records the reason, revokes every completion token, journals `run.failed` and schedules the cleanup; the body of {@link fail} for a run that may still fail, and called by {@link observeAfter} for a completed run whose final save failed, which {@link fail} leaves completed (Cycle 0047 row 197).
-   * @param reason - The failure, as the run's failures and its journal name it.
+   * @param unmaskedReason - The failure before masking; the run's failures and its journal keep its masked form.
    * @example this.enterFailure('Error: ENOSPC: no space left on device, write')
    */
-  private enterFailure(reason: string): void {
+  private enterFailure(unmaskedReason: string): void {
+    // A failure sentence may quote what the page was given.
+    const reason = this.maskRunText(unmaskedReason)
     this.failures.push(reason)
     this.status = 'failed'
     this.continuation = undefined
+    // An operation that was being sent or was paused when the run failed is recorded failed, so a partial replay shows how far the flow got.
+    for (const record of this.operationRecords)
+      if (record.state === 'sending' || record.state === 'paused')
+        this.moveForward(record, { state: 'failed' })
     codebookStopLedger.closeWindow(this.participantSessionIds())
     for (const participant of Object.values(this.participants))
       participant.gate.invalidate(true)
@@ -7413,6 +8533,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    */
   private openCausalWindowOfStop(stopIndex: number): void {
     this.openCausalWindow(this.stops[stopIndex]?.participant)
+  }
+  /**
+   * Opens the causal window of the stop a continuation arms, called by {@link continue}; no stop armed, no window.
+   * @param nextStop - The stop {@link stopArmedAfter} gave, if any.
+   * @example this.openCausalWindowOfNextStop(this.stopArmedAfter(stop))
+   */
+  private openCausalWindowOfNextStop(nextStop: PreparedStop | undefined): void {
+    this.openCausalWindow(nextStop?.participant)
   }
   /**
    * Ends the causal window of a session whose program the learner pauses, so the stop the pause makes is the learner's; called by {@link onRequest} for every request, before it looks at resumes only. A resume the run did not make ends the window through {@link fail}.
@@ -7486,14 +8614,22 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         journalLimit: REPOSITORY_STOP_MODULE_JOURNAL_LIMIT,
       })
     this.evidence.record('cleanup.started')
+    // Teardown frames are not history: the history ends at once and queued images get their verdict while the page still answers, later ones are discarded.
+    const historyEnded = this.browser
+      .endRecordingHistory()
+      .catch(() => undefined)
+    // No operation input may start once cleanup began, so the run closes before the bounded drain below (the drain depends on neither the flag nor the signal).
+    this.cleaning = true
+    this.abort.abort()
+    await historyEnded
     this.forgetCausalSessions()
     this.scriptAnnouncements.clear()
     if (this.transientBrowserPause) {
       clearTimeout(this.transientBrowserPause.timer)
       this.transientBrowserPause = undefined
     }
-    this.cleaning = true
-    this.abort.abort()
+    // The gate's last counts are journaled once, with the run's other closing facts.
+    this.secretFrameGate.flushSummary()
     this.continuation = undefined
     for (const participant of Object.values(this.participants))
       participant.gate.invalidate()
@@ -7616,7 +8752,6 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private async persist(): Promise<void> {
     await this.evidence.save('runtime.json', {
       ...this.view(),
-      definition: this.definition,
       host: this.options.host,
     })
     await this.evidence.flush()
@@ -7700,7 +8835,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const tracked = activity
       .then(() => undefined)
       .catch((error) => {
-        if (!this.cleaning) this.fail(String(error))
+        if (this.cleaning) return
+        // An operation's refusal keeps its code and fields; any other failure keeps its text.
+        if (error instanceof OperationRefusal) this.failOperation(error)
+        else this.fail(String(error))
       })
       .finally(() => this.activities.delete(tracked))
     this.activities.add(tracked)

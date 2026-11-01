@@ -257,6 +257,8 @@ export async function nativeParticipantsHarness(
   // The failure a participant's channel answers the run's next read of its earlier pauses with, once.
   let earlierPauseReadFailure:
     { participant: Participant; message: string } | undefined
+  if (!('action' in definition.configuration))
+    throw new Error('The harness runs the single-action configurations.')
   const afterExpression = configuredDomExpression(
     definition.configuration.action.after,
   )
@@ -728,6 +730,18 @@ export async function nativeParticipantsHarness(
       }
       throw new Error(`Unexpected inspector method: ${method}`)
     },
+    /** The quiet path answers as the journaled one does; only the real Cdp differs in what it journals. */
+    requestQuietly(
+      method: string,
+      parameters?: Record<string, unknown>,
+      timeout?: number,
+    ) {
+      return (
+        this as unknown as {
+          request(m: string, p?: unknown, t?: number): Promise<unknown>
+        }
+      ).request(method, parameters, timeout)
+    },
   })
   const proxies = { browser: proxy('browser'), server: proxy('server') }
   const parentServerProxy = proxy('server')
@@ -896,8 +910,10 @@ export async function nativeParticipantsHarness(
             run.addSession(sessions.browser)
           }
           async attachViewport(): Promise<void> {}
+          setSecretFrameGate(): void {}
           async reveal(): Promise<void> {}
           resumeViewport(): void {}
+          async endRecordingHistory(): Promise<void> {}
           recordCapture(data: string, phase: string): void {
             const observer = recordingObserver()
             observer?.frame({

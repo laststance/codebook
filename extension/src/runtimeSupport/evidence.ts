@@ -3,8 +3,11 @@ import { join } from 'node:path'
 
 import { EVENT_DETAIL_LIMIT_BYTES } from '../constants'
 import { cutTextToFit } from '../utils/cutTextToFit'
+import { maskLearnerSecretData } from '../utils/maskLearnerSecretData'
 
 import { NANOSECONDS_PER_MILLISECOND } from './constants'
+
+const NO_SECRETS: ReadonlySet<string> = new Set()
 
 export interface RecordedEvent {
   sequence: number
@@ -39,6 +42,11 @@ export class Evidence {
   readonly events: RecordedEvent[] = []
   readonly started = process.hrtime.bigint()
   failure?: string
+  /**
+   * Gives the secrets the learner typed for the run, read at each write; every journal event and every saved JSON file is masked by them (ENG-4). Set by the run that owns the evidence; absent for a run with no learner secret.
+   * @example evidence.learnerSecrets = () => run.learnerSecrets
+   */
+  learnerSecrets?: () => ReadonlySet<string>
   private pending: Promise<void>
   private retainedBytes = 0
   private queuedBytes = 0
@@ -111,7 +119,11 @@ export class Evidence {
       elapsedMs: this.elapsedMs(),
       wallTime: new Date().toISOString(),
       type,
-      detail,
+      // A learner's secret never reaches the journal, whatever text carried it.
+      detail: maskLearnerSecretData(
+        detail,
+        this.learnerSecrets?.() ?? NO_SECRETS,
+      ),
     }
     const serialized = JSON.stringify(event) + '\n'
     return { event, serialized, bytes: Buffer.byteLength(serialized) }
@@ -181,7 +193,14 @@ export class Evidence {
     const bytes =
       typeof contents === 'string' || Buffer.isBuffer(contents)
         ? contents
-        : JSON.stringify(contents, null, 2) + '\n'
+        : JSON.stringify(
+            maskLearnerSecretData(
+              contents,
+              this.learnerSecrets?.() ?? NO_SECRETS,
+            ),
+            null,
+            2,
+          ) + '\n'
     const byteCount = Buffer.byteLength(bytes)
     if (
       this.limits &&

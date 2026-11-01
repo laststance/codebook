@@ -1,5 +1,7 @@
 import { configuredObservationSchema } from '../configuredStudySchemas'
 import {
+  OPERATIONS_CONFIG_VERSION,
+  OPERATIONS_STUDY_VERSION,
   RECORDED_LOCATION_STUDY_VERSION,
   REPOSITORY_BROWSER_ACTION,
   REPOSITORY_BROWSER_PROFILE,
@@ -12,6 +14,9 @@ import type { StudyRecord, StudyService } from '../service'
 
 import { decodeRetainedStudy } from './decodeRetainedStudy'
 import { describeStudy } from './describeStudy'
+import { maskLearningSummaryText } from './maskLearningSummaryText'
+import { projectSavedOperations } from './projectSavedOperations'
+import { redactPreparedConfiguration } from './redactPreparedConfiguration'
 
 /** Copies only committed canonical evidence for {@link StudyWorkspace}; a changed read is discarded. @example await captureStudy(service, record, workspaceKey) */
 export async function captureStudy(
@@ -65,9 +70,10 @@ export async function captureStudy(
       .filter((value) => value.snapshotUri === snapshotUri)
       .map((value) => ({
         id: value.id,
-        text: value.agentInterpretation,
+        // The chat's words and the facts it quoted are masked by the learner's secrets (ENG-4).
+        text: service.maskLearnerSecretsInText(value.agentInterpretation),
         createdAt: value.createdAt,
-        facts: value.capturedFacts,
+        facts: service.maskLearnerSecretsInData(value.capturedFacts),
       }))
     // Versioned validators reject mixed evidence before any history or recording writer can accept it.
     if (snapshot.actionId === REPOSITORY_BROWSER_ACTION) {
@@ -158,11 +164,12 @@ export async function captureStudy(
               : capture.status === 'pending'
                 ? 'pending'
                 : 'absent',
-          reason:
+          reason: service.maskLearnerSecretsInText(
             capture.error ??
-            (capture.status === 'pending'
-              ? 'Capturing this observation…'
-              : 'No confirmed image for this phase.'),
+              (capture.status === 'pending'
+                ? 'Capturing this observation…'
+                : 'No confirmed image for this phase.'),
+          ),
         })
     }
   }
@@ -172,16 +179,32 @@ export async function captureStudy(
     .filter((value) => value.learningSummary)
     .at(-1)
   const learningSummary = summaryExplanation?.learningSummary && {
-    content: summaryExplanation.learningSummary,
+    // Only the free-text fields are masked; ids, references, evidence and from/to are structure the study checks again.
+    content: maskLearningSummaryText(
+      summaryExplanation.learningSummary,
+      (text) => service.maskLearnerSecretsInText(text),
+    ),
     explanationId: summaryExplanation.id,
     createdAt: summaryExplanation.createdAt,
   }
+  // The saved study carries the canonical redacted configuration (secret and unresolved prepared texts masked), never the declared texts.
+  // The states are frozen at the first capture: a text still unresolved then stays masked in every later checkpoint, so the saved configuration and its hash never change (ENG-3).
+  record.canonicalTextStates ??= [...(runtime?.preparedTextStates ?? [])]
+  const canonicalConfiguration = redactPreparedConfiguration(
+    record.configuration,
+    record.canonicalTextStates,
+    'canonical',
+  )
   const configured =
     record.profile === REPOSITORY_BROWSER_PROFILE
       ? {
-          version: RECORDED_LOCATION_STUDY_VERSION,
-          configuration: record.configuration,
-          configurationHash: sha256(JSON.stringify(record.configuration)),
+          // A study of ordered operations has its own format, so an older Codebook lists it as saved by a newer one instead of failing on its schema.
+          version:
+            canonicalConfiguration.version === OPERATIONS_CONFIG_VERSION
+              ? OPERATIONS_STUDY_VERSION
+              : RECORDED_LOCATION_STUDY_VERSION,
+          configuration: canonicalConfiguration,
+          configurationHash: sha256(JSON.stringify(canonicalConfiguration)),
           descriptor: record.definition?.descriptor,
           // A Vite study names the Vite it ran on; a Next study carries no such field.
           ...(runtime?.profile === REPOSITORY_BROWSER_PROFILE &&
@@ -192,6 +215,15 @@ export async function captureStudy(
             runtime?.profile === REPOSITORY_BROWSER_PROFILE
               ? runtime.operation
               : undefined,
+          // Every declared operation with the state it reached, as the run resource lists it when this checkpoint is taken.
+          ...(runtime?.operations
+            ? {
+                operations: projectSavedOperations(
+                  runtime.operations,
+                  runtime.events,
+                ),
+              }
+            : {}),
         }
       : {}
   return decodeRetainedStudy(
@@ -208,7 +240,10 @@ export async function captureStudy(
       terminal: record.stopped || state.resourcesReleased,
       finalOutcome: state.finalOutcome,
       materialSignature: signature,
-      reason: state.terminalReason ?? state.cleanupError?.message,
+      reason:
+        service.maskLearnerSecretsInText(
+          state.terminalReason ?? state.cleanupError?.message ?? '',
+        ) || undefined,
       learningSummary,
       observations,
       captures,

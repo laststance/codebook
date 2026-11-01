@@ -2,10 +2,21 @@ import type { ErrorCode } from '../errors'
 import { NEXT_REFUSAL_CODES, nextSetupDeadlineRecovery } from '../nextRefusals'
 import { viteFailureOf, type ViteRefusalCode } from '../viteRefusals'
 
-/** The codes a run's failure text can lead with besides the Vite ones: every Next Pages refusal, and a source change found during a run (a Fast Refresh of a sealed module). */
+/** The codes a run's failure text can lead with besides the Vite ones: every Next Pages refusal, a source change found during a run (a Fast Refresh of a sealed module) and a secret control that stopped being a safe password control. */
 const CODED_FAILURE_CODES = [
   ...NEXT_REFUSAL_CODES,
   'SOURCE_CHANGED',
+  // The failures of one operation of a version 3 run, raised by timers and events after the action's receipt.
+  'OPTION_NOT_AVAILABLE',
+  'INPUT_NOT_ACCEPTED',
+  'CONTROL_KIND_NOT_SUPPORTED',
+  'SECRET_INPUT_FROM_CHAT',
+  'SECRET_INPUT_VISIBLE',
+  'NAVIGATION_BEFORE_LAST_OPERATION',
+  'NAVIGATION_NOT_SETTLED',
+  'OPERATION_AFTER_NOT_MET',
+  'RUN_FAILED_UNEXPECTEDLY',
+  'SECRET_BECAME_VISIBLE',
 ] as const satisfies readonly ErrorCode[]
 
 /** A code a run's failure text can lead with, so the service restores it as a coded error. */

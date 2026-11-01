@@ -527,6 +527,491 @@ async function check(page, options, collected) {
   await page.screenshot({
     path: `${options.output}/sequence-focus-restored.png`,
   })
+
+  // Cycle 0070: the replay's operation row. A host answer to a seek is simulated by publishing the Study message that follows it.
+  /** Derives a Study message's revision from the first message's by its distance in the flow, so no case carries a bare revision number of its own. @example revisionAt(1) // the second message's revision */
+  const revisionAt = (step) => options.message.revision + step
+  const sentPlayback = () =>
+    page.evaluate(() =>
+      window.sent.filter((message) => message.type === 'playback'),
+    )
+  const markOf = (index) => page.locator(`[data-operation-mark="${index}"]`)
+  const fourMarks = [
+    {
+      index: 1,
+      total: 4,
+      kind: 'choose',
+      title: 'Customer',
+      atMs: 1000,
+      state: 'done',
+    },
+    {
+      index: 2,
+      total: 4,
+      kind: 'text',
+      title: 'Amount',
+      atMs: 1500,
+      state: 'done',
+    },
+    {
+      index: 3,
+      total: 4,
+      kind: 'click',
+      title: 'Pending',
+      atMs: 3500,
+      state: 'failed',
+    },
+    {
+      index: 4,
+      total: 4,
+      kind: 'click',
+      title: 'Create Invoice',
+      atMs: undefined,
+      state: 'pending',
+    },
+  ]
+  /** A browser replay message of the Study page with the given operations, presented position and learning summary; `step` is its distance from the first message. */
+  const operationReplay = (step, overrides = {}) => ({
+    ...options.message,
+    revision: revisionAt(step),
+    contentTab: 'recording',
+    recording: {
+      revision: 1,
+      mode: 'paused',
+      readiness: 'ready',
+      presentedMs: 0,
+      range: { startMs: 0, endMs: 8000, endKnown: true },
+      recordingStatus: 'finalized',
+      historyTimeline: {
+        status: 'mapped',
+        gaps: [{ startMs: 5000, endMs: 5600 }],
+        recordedPoints: [2000],
+      },
+      operations: fourMarks,
+      ...overrides,
+    },
+  })
+  const waitUntilRendered = (revision) =>
+    page.waitForFunction(
+      (awaitedRevision) =>
+        window.sent.some(
+          (message) =>
+            message.type === 'rendered' && message.revision === awaitedRevision,
+        ),
+      revision,
+    )
+  /** Reads what the learner sees of the row: the focused mark, the announcement, the caption, the position and whether the row, Play and the 4A text lie inside the viewport. */
+  const readRow = () =>
+    page.evaluate(() => {
+      const box = (id) => document.getElementById(id).getBoundingClientRect()
+      const visible = (id) => document.getElementById(id).checkVisibility()
+      return {
+        focusedMark: document.activeElement?.dataset?.operationMark ?? null,
+        announcement: document.getElementById('operation-status').textContent,
+        caption: visible('operation-caption')
+          ? document.getElementById('operation-caption').textContent
+          : '',
+        playhead: document.getElementById('playhead').value,
+        status: document.getElementById('recording-status').textContent,
+        currentMark:
+          document.querySelector('[data-operation-mark][aria-current=true]')
+            ?.dataset.operationMark ?? null,
+        rowVisible: visible('operation-row'),
+        insideViewport: [
+          'operation-row',
+          'playback-toggle',
+          'playback-position',
+          'recording-status',
+        ].every((id) => visible(id) && box(id).right <= window.innerWidth + 1),
+        previousDisabled:
+          document.getElementById('previous-operation').disabled,
+        nextDisabled: document.getElementById('next-operation').disabled,
+      }
+    })
+  for (const width of [960, 480]) {
+    // Arrange: a replay of four operations, the third failed and the fourth never sent, opened at the start.
+    await page.setViewportSize({ width, height: 640 })
+    await render(operationReplay(0))
+    await markOf(1).focus()
+    // Act: Tab to mark 3 and press Enter.
+    await page.keyboard.press('Tab')
+    await page.keyboard.press('Tab')
+    await page.keyboard.press('Enter')
+    const afterEnter = await readRow()
+    const seeks = await sentPlayback()
+    // The host presents the moment: the Study message that follows the seek.
+    await publish(operationReplay(1, { presentedMs: 3500 }))
+    await waitUntilRendered(revisionAt(1))
+    const presented = await readRow()
+    // Assert
+    cases.push({
+      name: `Tab to mark 3 and Enter seeks to its moment, announces it, keeps the focus on the mark and captions the moment at ${width} px`,
+      actual: { afterEnter, seeks, presented },
+      passed:
+        afterEnter.focusedMark === '3' &&
+        afterEnter.announcement === 'Moved to operation 3' &&
+        seeks.length === 1 &&
+        seeks[0].action === 'seek' &&
+        seeks[0].positionMs === 3500 &&
+        presented.playhead === '3500' &&
+        presented.focusedMark === '3' &&
+        presented.currentMark === '3' &&
+        presented.caption ===
+          'Operation 3 · Pending · showing the last frame before it was sent' &&
+        presented.insideViewport,
+    })
+  }
+  // Space also seeks, and the mark's accessible name carries its place, kind, title, time and state.
+  await page.setViewportSize({ width: 960, height: 640 })
+  await render(operationReplay(0))
+  await markOf(2).focus()
+  await page.keyboard.press(' ')
+  const names = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-operation-mark]')].map((mark) =>
+      mark.getAttribute('aria-label'),
+    ),
+  )
+  const spaceSeeks = await sentPlayback()
+  // protects=a screen reader reads a sent mark's time as "at <t> s" and a never-sent mark as "not sent"; fails_when=the never-sent mark's name reads "at not sent"; why_changed=the local CodeRabbit CLI (Cycle 0070 pt1) found that phrase, which is not English; no_claim=how a real screen reader speaks the name (stand-ins: the Study messages the host posts)
+  cases.push({
+    name: 'Space seeks to the mark and every mark is named with its place, kind, title, time and state',
+    actual: { names, spaceSeeks: spaceSeeks.map((seek) => seek.positionMs) },
+    passed:
+      spaceSeeks.at(-1)?.positionMs === 1500 &&
+      names[0] === 'Operation 1 of 4, choose, Customer, at 1.00 s, done' &&
+      names[2] === 'Operation 3 of 4, click, Pending, at 3.50 s, failed' &&
+      names[3] ===
+        'Operation 4 of 4, click, Create Invoice, not sent, not finished',
+  })
+  // Done, failed and pending differ by shape and text, not colour alone; a mark that was never sent has no moment to move to.
+  const shapes = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-operation-mark]')].map(
+      (mark) => mark.textContent,
+    ),
+  )
+  await markOf(4).click()
+  const notSent = await readRow()
+  cases.push({
+    name: 'done, failed and pending marks differ by text, and a mark never sent announces that it has no moment',
+    actual: { shapes, notSent },
+    passed:
+      shapes[0] === '1' &&
+      shapes[1] === '2' &&
+      shapes[2] === '3 ✕ failed' &&
+      shapes[3] === '4 ?' &&
+      notSent.announcement ===
+        'Operation 4 was not sent, so there is no moment to show',
+  })
+  // Previous and Next operation step between sent operations.
+  await render(operationReplay(0, { presentedMs: 2000 }))
+  await page.locator('#next-operation').click()
+  const nextSeek = (await sentPlayback()).at(-1)
+  await render(operationReplay(0, { presentedMs: 2000 }))
+  await page.locator('#previous-operation').click()
+  const previousSeek = (await sentPlayback()).at(-1)
+  cases.push({
+    name: 'Previous operation and Next operation seek to the sent operation before and after the position',
+    actual: { previous: previousSeek?.positionMs, next: nextSeek?.positionMs },
+    passed: previousSeek?.positionMs === 1500 && nextSeek?.positionMs === 3500,
+  })
+  // The operation the learner sought belongs to the replay it was sought in: opening another saved replay in the same webview forgets it.
+  await render(operationReplay(0, { studyId: 'replay-a' }))
+  await markOf(3).click()
+  // The same webview opens another saved replay (`publish`, not a fresh page).
+  await publish(operationReplay(1, { studyId: 'replay-b', presentedMs: 2000 }))
+  await waitUntilRendered(revisionAt(1))
+  const sentBeforeSwitchedNext = (await sentPlayback()).length
+  // A disabled button gets no click, as in the learner's page; the case then reports no seek.
+  await page.evaluate(() => document.getElementById('next-operation').click())
+  const switchedSeeks = (await sentPlayback()).slice(sentBeforeSwitchedNext)
+  cases.push({
+    name: 'Next operation after opening another replay is computed from that replay, not from the operation sought in the previous one',
+    actual: switchedSeeks.map((message) => message.positionMs),
+    passed: switchedSeeks.length === 1 && switchedSeeks[0].positionMs === 3500,
+  })
+  // Value: protects=after the learner moved to operation 2 here and another pane (the sidebar's Learning summary) then moved the same replay to 4.00 s, Previous and Next operation and their disabled state count from 4.00 s; fails_when=this page keeps stepping from operation 2's moment, so Next seeks operation 3 (3.50 s), which lies behind the shown moment, and Previous seeks operation 1; why_new=CodeRabbit CLI Cycle 0070 pt1 finding 6; seam=none; no_claim=the host's broadcast of one replay's position to both panes (studyWorkspace tests) (stand-ins: the Study messages the host posts)
+  // Arrange: operation 2 is sought and presented here, then the host presents 4.00 s after a move this page did not send.
+  await render(operationReplay(0))
+  await markOf(2).click()
+  await publish(operationReplay(1, { presentedMs: 1500 }))
+  await waitUntilRendered(revisionAt(1))
+  await publish(operationReplay(2, { presentedMs: 4000 }))
+  await waitUntilRendered(revisionAt(2))
+  const movedElsewhere = await readRow()
+  const sentBeforeMovedElsewhereSteps = (await sentPlayback()).length
+  // Act: press Next operation, then Previous operation, as the page offers them (a disabled button gets no click and sends no seek).
+  await page.evaluate(() => document.getElementById('next-operation').click())
+  await page.evaluate(() =>
+    document.getElementById('previous-operation').click(),
+  )
+  const movedElsewhereSeeks = (await sentPlayback())
+    .slice(sentBeforeMovedElsewhereSteps)
+    .map((message) => message.positionMs)
+  // Assert
+  cases.push({
+    name: 'after another pane moves the replay past operation 3, Next operation is disabled and Previous operation seeks operation 3, not the steps around the operation sought here',
+    actual: { movedElsewhere, movedElsewhereSeeks },
+    passed:
+      movedElsewhere.nextDisabled === true &&
+      movedElsewhere.previousDisabled === false &&
+      movedElsewhere.caption === '' &&
+      movedElsewhereSeeks.length === 1 &&
+      movedElsewhereSeeks[0] === 3500,
+  })
+  // Value: protects=an operation sent at a fractional moment (1.5005 s) and presented at whole milliseconds (1.500 s) counts as the shown position, so the caption stays and Next operation moves on to operation 3; fails_when=the steps count from the presented 1.500 s alone and Next seeks operation 2 again; why_new=CodeRabbit CLI Cycle 0070 pt1 finding 6 keeps this rule while it drops a sought operation the replay no longer shows; seam=none; no_claim=how the host rounds a presented moment (playbackController tests) (stand-ins: the Study messages the host posts)
+  // Arrange: operation 2 sent at 1500.5 ms is sought and the host presents 1500 ms.
+  const fractional = [
+    { ...fourMarks[0] },
+    { ...fourMarks[1], atMs: 1500.5 },
+    { ...fourMarks[2] },
+    { ...fourMarks[3] },
+  ]
+  await render(operationReplay(0, { operations: fractional }))
+  await markOf(2).click()
+  await publish(
+    operationReplay(1, { operations: fractional, presentedMs: 1500 }),
+  )
+  await waitUntilRendered(revisionAt(1))
+  const fractionalShown = await readRow()
+  const sentBeforeFractionalNext = (await sentPlayback()).length
+  // Act: press Next operation.
+  await page.locator('#next-operation').click()
+  const fractionalNext = (await sentPlayback())
+    .slice(sentBeforeFractionalNext)
+    .map((message) => message.positionMs)
+  // Assert
+  cases.push({
+    name: 'Next operation from an operation sent at a fractional moment and presented at the whole millisecond seeks the following operation, not the same one',
+    actual: { fractionalShown, fractionalNext },
+    passed:
+      fractionalShown.caption ===
+        'Operation 2 · Amount · showing the last frame before it was sent' &&
+      fractionalShown.previousDisabled === false &&
+      fractionalShown.nextDisabled === false &&
+      fractionalNext.length === 1 &&
+      fractionalNext[0] === 3500,
+  })
+  // Inside an unrecorded interval the transport keeps its own text and the caption is not shown.
+  const inGap = [
+    { ...fourMarks[0] },
+    { ...fourMarks[1], atMs: 5200 },
+    { ...fourMarks[2], atMs: 6000 },
+    { ...fourMarks[3] },
+  ]
+  await render(operationReplay(0, { operations: inGap }))
+  await markOf(2).click()
+  await publish(operationReplay(1, { operations: inGap, presentedMs: 5200 }))
+  await waitUntilRendered(revisionAt(1))
+  const gap = await readRow()
+  cases.push({
+    name: 'a seek to an operation inside an unrecorded interval keeps the Not recorded text and shows no caption',
+    actual: gap,
+    passed:
+      gap.status.includes('Not recorded at this moment') &&
+      gap.caption === '' &&
+      gap.focusedMark === '2',
+  })
+  // Marks closer than 24 px stack vertically and none overlaps another.
+  const crowded = [
+    { ...fourMarks[0], atMs: 1000 },
+    { ...fourMarks[1], atMs: 1010 },
+    { ...fourMarks[2], atMs: 1020 },
+    { ...fourMarks[3], atMs: 7000, state: 'done' },
+  ]
+  await render(operationReplay(0, { operations: crowded }))
+  const tops = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-operation-mark]')].map(
+      (mark) => mark.getBoundingClientRect().top,
+    ),
+  )
+  const crowdedLayout = await page.evaluate(() => ({
+    rowWidth: document.getElementById('operation-row').getBoundingClientRect()
+      .width,
+    lefts: [...document.querySelectorAll('[data-operation-mark]')].map(
+      (mark) => mark.style.left,
+    ),
+  }))
+  cases.push({
+    name: 'operation marks closer than 24 px stack on separate lines',
+    actual: { tops, crowdedLayout },
+    passed:
+      new Set(tops.slice(0, 3)).size === 3 && tops[3] === Math.min(...tops),
+  })
+  // Value: protects=a fresh page's first replay message places the operation marks on the shown row before the page reports the message rendered, so the host and a case reading the page then see the marks where they stay; fails_when=the marks are placed on the row of no width the still hidden content had (marks 1, 2 and 4 at the row's start on three lines, mark 3 on a fourth, tops 0px|28px|84px|56px) and only the next frame's resize notification moves them; why_new=the case above failed on PR 177's CI and in 1 of 4, 2 of 9 and 1 of 20 local runs when it read the row before that frame; seam=none; no_claim=what the learner sees painted, which the resize observer corrected before the next paint already (stand-ins: the Study messages the host posts)
+  // Arrange: a fresh page whose host stand-in reads the marks in the task that reports a message rendered.
+  await page.goto(options.url)
+  await page.evaluate(() => {
+    window.sent = []
+    window.acquireVsCodeApi = () => ({
+      getState: () => undefined,
+      setState() {},
+      postMessage: (message) => {
+        if (message.type === 'rendered')
+          window.marksAtRendered = [
+            ...document.querySelectorAll('[data-operation-mark]'),
+          ].map((mark) => ({ left: mark.style.left, top: mark.style.top }))
+        window.sent.push(message)
+      },
+    })
+  })
+  await page.setContent(options.html)
+  // Act: the page's first Study message opens the crowded replay; two frames later every resize notification has been handled.
+  await publish(operationReplay(0, { operations: crowded }))
+  await waitUntilRendered(revisionAt(0))
+  const marksAtRendered = await page.evaluate(() => window.marksAtRendered)
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  )
+  const marksAfterFrames = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-operation-mark]')].map((mark) => ({
+      left: mark.style.left,
+      top: mark.style.top,
+    })),
+  )
+  // Assert
+  cases.push({
+    name: 'a fresh page places the crowded operation marks on the shown row before it reports its first replay message rendered',
+    actual: { marksAtRendered, marksAfterFrames },
+    passed:
+      (marksAtRendered ?? []).map((mark) => mark.top).join('|') ===
+        '0px|28px|56px|0px' &&
+      JSON.stringify(marksAtRendered) === JSON.stringify(marksAfterFrames),
+  })
+  // Below 480 px the labels hide and the numbers stay.
+  await page.setViewportSize({ width: 479, height: 640 })
+  await render(operationReplay(0))
+  const narrow = await page.evaluate(() => ({
+    labelDisplays: [...document.querySelectorAll('.operation-mark-label')].map(
+      (label) => getComputedStyle(label).display,
+    ),
+    numbers: [...document.querySelectorAll('[data-operation-mark]')].map(
+      (mark) => mark.firstElementChild.textContent,
+    ),
+  }))
+  cases.push({
+    name: 'below a 480 px webview the failed label hides and the numbers stay',
+    actual: narrow,
+    passed:
+      narrow.labelDisplays.every((display) => display === 'none') &&
+      narrow.numbers.join('|') === '1|2|3 ✕|4 ?',
+  })
+  // A replay without operations shows no row and no operation buttons.
+  await page.setViewportSize({ width: 960, height: 640 })
+  await render(operationReplay(0, { operations: [] }))
+  const without = await page.evaluate(() => ({
+    rowVisible: document.getElementById('operation-row').checkVisibility(),
+    marks: document.querySelectorAll('[data-operation-mark]').length,
+    groupVisible: document.getElementById('playback-events').checkVisibility(),
+  }))
+  cases.push({
+    name: 'a replay without operations shows no operation row and no operation buttons',
+    actual: without,
+    passed: !without.rowVisible && without.marks === 0 && !without.groupVisible,
+  })
+  // Switching in one webview from a replay with operations to one without: the row's width changes to zero when it hides, and the resize observer that follows must not draw the previous replay's marks again.
+  await render(operationReplay(0))
+  await publish(operationReplay(1, { operations: [] }))
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  )
+  const withoutAfterResize = await page.evaluate(() => ({
+    rowVisible: document.getElementById('operation-row').checkVisibility(),
+    marks: document.querySelectorAll('[data-operation-mark]').length,
+    groupVisible: document.getElementById('playback-events').checkVisibility(),
+  }))
+  cases.push({
+    name: 'a replay without operations stays without marks after the hidden row is resized',
+    actual: withoutAfterResize,
+    passed:
+      !withoutAfterResize.rowVisible &&
+      withoutAfterResize.marks === 0 &&
+      !withoutAfterResize.groupVisible,
+  })
+  // Switching from a browser replay with operations to a test (or Server or Extension) replay in one webview: the row hides, and the resize observer that follows must neither draw the old marks nor hide Previous and Next event.
+  await page.setViewportSize({ width: 960, height: 640 })
+  await render(operationReplay(0))
+  await publish({
+    ...options.message,
+    revision: revisionAt(1),
+    replayFamily: 'test',
+    recording: undefined,
+  })
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  )
+  const afterTestReplay = await page.evaluate(() => ({
+    rowVisible: document.getElementById('operation-row').checkVisibility(),
+    marks: document.querySelectorAll('[data-operation-mark]').length,
+    previousOperationVisible: document
+      .getElementById('previous-operation')
+      .checkVisibility(),
+    previousEventVisible: document
+      .getElementById('previous-event')
+      .checkVisibility(),
+    nextEventVisible: document.getElementById('next-event').checkVisibility(),
+  }))
+  cases.push({
+    name: 'switching to a test replay leaves no operation marks or buttons and keeps Previous and Next event visible',
+    actual: afterTestReplay,
+    passed:
+      !afterTestReplay.rowVisible &&
+      afterTestReplay.marks === 0 &&
+      !afterTestReplay.previousOperationVisible &&
+      afterTestReplay.previousEventVisible &&
+      afterTestReplay.nextEventVisible,
+  })
+  // A summary step links to its mark when the host names a valid operation, and stays unlinked otherwise.
+  const learning = {
+    explanationId: '44444444-4444-4444-8444-444444444444',
+    createdAt: '2026-09-27T00:00:00.000Z',
+    content: {
+      question: 'How is an invoice created?',
+      title: 'Create invoice',
+      summary: 'The form posts.',
+      participants: [{ id: 'ui', label: 'UI' }],
+      steps: ['amount', 'ghost', 'plain'].map((id) => ({
+        id,
+        from: 'ui',
+        to: 'ui',
+        label: id,
+        explanation: `The ${id} step.`,
+        evidence: 'unknown',
+      })),
+    },
+    positions: [],
+    operationLinks: [
+      { stepId: 'amount', operationIndex: 2 },
+      { stepId: 'ghost', operationIndex: 9 },
+    ],
+  }
+  await render(operationReplay(0, { learningSummary: learning }))
+  const links = await page.evaluate(() =>
+    [
+      ...document.querySelectorAll(
+        '#learning-sequence button[data-operation-mark]',
+      ),
+    ].map((link) => link.textContent),
+  )
+  await page.locator('#learning-sequence button[data-operation-mark]').click()
+  const linkSeek = (await sentPlayback()).at(-1)
+  cases.push({
+    name: 'a summary step links to the mark of its operation, a step naming an operation the replay lacks stays unlinked',
+    actual: { links, linkSeek: linkSeek?.positionMs },
+    passed:
+      links.length === 1 &&
+      links[0] === 'Go to operation 2 · Amount' &&
+      linkSeek?.positionMs === 1500,
+  })
+  await page.screenshot({ path: `${options.output}/operation-row.png` })
 }
 
 const report = {

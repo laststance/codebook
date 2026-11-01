@@ -562,6 +562,7 @@ test('a start that reuses the key of a refused run with other arguments begins a
   const started = await startRunWithStorage(context, 1, 'study')
   await waitUntil(() => started.record.stopped, 'the end of the refused run')
   const configuration = started.harness.definition.configuration
+  assert.ok('action' in configuration)
   // Act: the same key with another action title.
   const receipt = started.service.start({
     instanceId: started.service.instanceId,

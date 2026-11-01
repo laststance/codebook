@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.2.71.0] - 2026-11-01 (development candidate)
+
+Cycle 0070 part 1 ([Issue #176](https://github.com/laststance/codebook/issues/176)), a feature cycle: a web app run now drives an **ordered flow of several operations** (type, choose, click) instead of one click, and a password in that flow is **typed by you in the editor**, never by the chat. The saved session that lets a run start signed in comes in the next part.
+
+**Declare a web flow as operations.** A `repository-browser` run with configuration version 3 declares one to eight operations: `text` into an input, a textarea or a number input, `choose` an option of a native `<select>`, and `click`. The chat sends them one at a time with `codebook_action` `repository-operation`. The answer only accepts the operation, and each operation's progress (`state`, `ack`, `valueCheck`, `effect`) is in the run resource. Each stop names the operation it belongs to (`afterOperation`) and pauses only after that operation was sent, so the chat can explain the client code and the server action behind each step. Before each operation Codebook waits for the page to settle (at most 10 s). A new page load before the last operation, an option that is not there, a value the control refuses or a result whose `after` conditions do not hold ends the run with its own code and recovery, and it never sends an operation twice.
+
+**Secrets are typed by you.** An operation declared `secret: "ask-learner"` opens a masked input box in the editor titled with the repository and the operation. The value you type goes into the page and never reaches the chat. The box asks for at least 4 characters. Text from the chat for a password control is refused with `SECRET_INPUT_FROM_CHAT`, and a secret into a control that the browser draws as plain text with `SECRET_INPUT_VISIBLE`. The typed value reads `[masked]` wherever Codebook stores or serves it: run resource, journal, saved study, MCP answers, errors and Output. Its URL-encoded, form-encoded and HTML-escaped copies are masked too; the source a run recorded at its stops keeps its exact text.
+
+**Recorded frames are checked while a secret is on the page.** From the moment a secret is typed, every recorded image passes a check. If the password control stops being a password input, or the page copies the value into visible text, an attribute or canvas text, the image is left out as an unrecorded interval and the run fails with `SECRET_BECAME_VISIBLE`. Content inside a cross-origin frame or a closed shadow root, WebGL, an image drawn onto a canvas and CSS `content` with a literal string cannot be checked; the help says so.
+
+**While it runs, and after it.** The status bar reads `Operation <k>/<m> · <title> · sending`, `paused in code`, `<m>/<m> sent · checking result`, `Done · <m> operations` or `Stopped at operation <k> · <reason>`. When this or an earlier operation already reached the page, a failure says to ask you before running the flow again, because changes the app made are not undone. Once a stop begins, no further operation is sent.
+
+**Saved and replayed with its operations.** A version 3 run is saved in study format 7. Each operation's state and time is kept, and a failed or stopped run is saved as a partial replay. The replay draws a row of numbered operation buttons above the playhead, with **Previous operation** and **Next operation**. Choosing one shows the last frame before that operation was sent, and a Learning summary step can link to its operation. Codebook 0.2.70.0 lists a format 7 study, refuses to open it and keeps the file.
+
+**Two behavior changes in version 1 and 2 runs.**
+- Prepared text typed into a password or other secret control now reads `[masked]` in the run resource, the saved study and the configuration hash, and any prepared text reads `[pending]` until its control is resolved. A prepared password arms the same frame check as a version 3 secret, and one shorter than 4 characters is refused with `SECRET_INPUT_VISIBLE` before it is typed.
+- A failed `repository-browser` run now answers `isError: true` with the run state, as server and extension runs do.
+
+**Also fixed.**
+- When the Study placement guard refuses a presentation, the answer names the real recovery: **Restore Study arrangement** in the Study pane, or **Codebook: Open Study Workspace**.
+- A chrome-extension click input into a secret control reads `[masked]`, as version 1 and 2 inputs do.
+
+Native evidence (development, no final-row credit): the sign-in code of `nextjs-dashboard`, explained in VS Code 1.144.0 (Copilot Chat, GPT-6.1 Terra, candidate `91db267a`) and Cursor 3.27.22 (Agent, Grok 4.6 High Fast, candidate `0881dd09`) on macOS 26. Each host ran three operations with an ask-learner password and stops in the client form and the server action, then saved and replayed the run with its operation row. The typed password was found in none of the files Codebook wrote. The trials and the review findings fixed since then are recorded in [Issue #176](https://github.com/laststance/codebook/issues/176).
+
+**Known limits.** A Chrome extension run's frames are not checked against a page that reveals a password. A version 1 or 2 secret typed into a control that is not a password input is drawn as typed, as before. The frame check cannot see into cross-origin frames; that limit is recorded as an open defect for the next cycle.
+
+**Compatibility.** MCP API 1.14 adds configuration version 3, the `repository-operation` action, the run resource's operation records and the operation error codes, and changes the two version 1 and 2 behaviors above. Bundled skill 1.0.63. Saved studies of earlier versions open unchanged. To update, install this VSIX, reopen the work window and run **Codebook: Set Up AI Chat** so Cursor's managed skill updates.
+
 ## [0.2.70.0] - 2026-11-01 (development candidate)
 
 Cycle 0069 ([Issue #174](https://github.com/laststance/codebook/issues/174)), a feature cycle: a Chrome extension run that the chat explained live is now **saved and replayed** in VS Code and in Cursor. Before this version an extension run was live only and its save was refused.

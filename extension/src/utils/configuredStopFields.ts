@@ -24,7 +24,7 @@ export function configuredStopFields(
   if (stopIndex === 0) return firstStop
   // Later stops are named by their position in additionalStops.
   const additional = `configuration.additionalStops[${stopIndex - 1}]`
-  if (version !== 2)
+  if (version === 1)
     return { source: additional, anchorIndex: firstStop.anchorIndex }
   return {
     source: `${additional}.source`,

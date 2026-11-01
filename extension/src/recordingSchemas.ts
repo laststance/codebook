@@ -19,6 +19,7 @@ import {
   RECORDING_VERSION,
   REFERENCE_LENGTH_LIMIT,
   REPOSITORY_BROWSER_PROFILE,
+  REPOSITORY_OPERATION_LIMIT,
 } from './constants'
 import { studyIdSchema } from './legacyStudySchemas'
 import { capturePhaseSchema, profileSchema } from './studySchemas'
@@ -218,9 +219,27 @@ export const recordingContextSchema = z.strictObject({
     )
     .max(MAX_STUDY_CAPTURES_V2),
 })
+/**
+ * One declared operation of a version 3 run on the recording clock: the moment its input was sent and the final effect the run resource reported (not the dispatch receipt).
+ * The replay's operation marks seek to `atMs`; `atMs` is absent for an operation that was never sent. No recording entry type carries it.
+ */
+const recordingOperationSchema = z.strictObject({
+  index: z.number().int().min(1).max(REPOSITORY_OPERATION_LIMIT),
+  kind: z.enum(['text', 'choose', 'click']),
+  title: z.string().min(1).max(REFERENCE_LENGTH_LIMIT),
+  atMs: elapsed.optional(),
+  outcome: z.enum(['pending', 'dispatched', 'after-verified']),
+})
+export type RecordingOperation = z.infer<typeof recordingOperationSchema>
 export const configuredRecordingContextSchema = recordingContextSchema.extend({
   version: z.literal(CONFIGURED_RECORDING_VERSION),
   study: configuredStudySchema.omit({ captures: true }),
+  // Present for a version 3 run only: its operations on the recording clock.
+  operations: z
+    .array(recordingOperationSchema)
+    .min(1)
+    .max(REPOSITORY_OPERATION_LIMIT)
+    .optional(),
   pausedIntervals: z
     .array(recordingContextSchema.shape.pausedIntervals.unwrap().element)
     .max(CONFIGURED_OBSERVATION_LIMIT)

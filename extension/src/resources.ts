@@ -40,6 +40,7 @@ import { nextHelp, REPOSITORY_BROWSER_START_HERE } from './nextHelp'
 import type { NodeHistorySummary } from './nodeHistorySummary'
 import { nodeServerHelp } from './nodeServerHelp'
 import { nodeTestConfigSchema } from './nodeTestConfigSchemas'
+import { operationsHelp } from './operationsHelp'
 import { retainedRepositoryConfigSchema } from './repositoryConfigSchemas'
 import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 import { sha256 } from './runtimeSupport/utils/sha256'
@@ -48,7 +49,7 @@ import { describeStudy } from './utils/describeStudy'
 import { omittedDetail } from './utils/omittedDetail'
 import { readBoundedFile } from './utils/readBoundedFile'
 import { readExtensionHistoryResource } from './utils/readExtensionHistoryResource'
-import { readJsonPage } from './utils/readJsonPage'
+import { readMaskedJsonPage } from './utils/readMaskedJsonPage'
 import { readRecordingResource } from './utils/readRecordingResource'
 import { readRepositoryResource } from './utils/readRepositoryResource'
 import { readServerHistoryResource } from './utils/readServerHistoryResource'
@@ -116,6 +117,8 @@ export type ResourceContent =
       text: string
       /** A cited source's lines, each after its one-based number and a tab; `codebook_read_resource` answers it in place of the exact text, and an MCP resource read answers the exact text alone. */
       numberedText?: string
+      /** Set when the learner's secrets are already handled: a paged JSON resource was masked before it was sliced, and a sealed source is returned as its exact bytes. The protocol layer then masks nothing in it. */
+      masked?: true
     }
   | { uri: string; mimeType: string; blob: string }
 
@@ -143,7 +146,8 @@ export async function readResource(
     const histories: NodeHistorySummary[] = service.nodeHistoryRepository
       ? await service.nodeHistoryRepository.list()
       : await service.nodeHistoryStore.list()
-    return readJsonPage(
+    return readMaskedJsonPage(
+      service,
       'codebook://node-history',
       histories.map((history) => ({
         ...history,
@@ -229,7 +233,12 @@ export async function readResource(
       const cursor = nodeHistoryMatch[2].startsWith('learning-material/pages/')
         ? nodeHistoryMatch[2].slice('learning-material/'.length)
         : undefined
-      return readJsonPage(`${baseUri}/learning-material`, data, cursor)
+      return readMaskedJsonPage(
+        service,
+        `${baseUri}/learning-material`,
+        data,
+        cursor,
+      )
     }
     // The result and the learning coverage come from the store's one summary, which Saved studies and Save read too (Design 13); only the history's own page needs them, not its events or learning material pages (F14).
     const summary = await withKnownNodeHistory(store, studyId, () =>
@@ -250,7 +259,7 @@ export async function readResource(
       ...learning,
       eventsUri: `${baseUri}/events`,
     }
-    return readJsonPage(baseUri, body, nodeHistoryMatch[2])
+    return readMaskedJsonPage(service, baseUri, body, nodeHistoryMatch[2])
   }
   if (uri === 'codebook://help/repository-browser')
     return json({
@@ -259,6 +268,8 @@ export async function readResource(
       // The Vite quick start, support table and refusal anchors (API 1.11), then the Next quick start, Pages support table and refusal anchors.
       ...viteHelp(),
       ...nextHelp(),
+      // The version 3 quick start, the operations and secrets sections and the error table (API 1.14).
+      ...operationsHelp(),
       profile: CONFIGURED_PROFILE,
       configurationSchema: z.toJSONSchema(retainedRepositoryConfigSchema, {
         io: 'input',
@@ -421,7 +432,8 @@ export async function readResource(
   )
   if (suffix === 'manifest' || manifestPage) {
     if (record.profile === NODE_TEST_PROFILE && record.nodePrepared)
-      return readJsonPage(
+      return readMaskedJsonPage(
+        service,
         service.uri(record.id, 'manifest'),
         {
           profile: NODE_TEST_PROFILE,
@@ -438,7 +450,8 @@ export async function readResource(
           : undefined,
       )
     if (record.profile === NODE_SERVER_PROFILE && record.nodeServer?.prepared)
-      return readJsonPage(
+      return readMaskedJsonPage(
+        service,
         service.uri(record.id, 'manifest'),
         {
           profile: NODE_SERVER_PROFILE,
@@ -454,12 +467,13 @@ export async function readResource(
       record.profile === CHROME_EXTENSION_PROFILE &&
       record.chromeExtension?.prepared
     )
-      return readJsonPage(
+      return readMaskedJsonPage(
+        service,
         service.uri(record.id, 'manifest'),
         {
           profile: CHROME_EXTENSION_PROFILE,
-          configurationHash: record.chromeExtension.prepared.configurationHash,
-          configuration: record.chromeExtension.prepared.configuration,
+          // One call: the configuration and its hash come from the same input states.
+          ...service.extensionManifestFields(record),
         },
         manifestPage
           ? `pages/${manifestPage[1]}/${manifestPage[2]}`
@@ -543,7 +557,12 @@ export async function readResource(
         throw new EvidenceIntegrityError(
           'The cited Node source no longer matches its retained hash.',
         )
-      return { uri, mimeType: 'text/typescript', text: source.text }
+      return {
+        uri,
+        mimeType: 'text/typescript',
+        text: source.text,
+        masked: true,
+      }
     }
     const data = {
       index,
@@ -559,7 +578,8 @@ export async function readResource(
       facts: stop.facts,
       debuggerSnapshot: stop.debuggerSnapshot,
     }
-    return readJsonPage(
+    return readMaskedJsonPage(
+      service,
       service.uri(record.id, `node-stops/${index}`),
       data,
       nodeStopMatch[2]
@@ -658,7 +678,8 @@ export async function readResource(
         line: boundPlace.declaredLine,
         column: boundPlace.declaredColumn,
       }
-    return readJsonPage(
+    return readMaskedJsonPage(
+      service,
       `${snapshotUri}/inspection`,
       {
         snapshotUri,
@@ -758,6 +779,8 @@ export async function readResource(
       uri,
       mimeType: selection.mimeType,
       text: returnedText,
+      // A sealed source is the repository's own code: its exact bytes are bound by its seal hash.
+      masked: true,
     }
   }
   throw new StudyError('NOT_FOUND', 'Unknown resource kind.')

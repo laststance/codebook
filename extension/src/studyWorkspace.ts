@@ -60,6 +60,7 @@ import {
   PRESENTATION_FOCUS_COMMAND_PROBE_MS,
   PRESENTATION_PREFERENCE_VERSION,
   APPLICATION_TAB_KEEP_PROBE_MS,
+  PLACEMENT_REFUSED_RECOVERY,
   PRESENTATION_READY_TIMEOUT_MS,
   PRESENTATION_SETTLE_CEILING_MS,
   READ_ENDED_FOR_AGENT_KEYBOARD_MESSAGE,
@@ -124,6 +125,7 @@ import {
   ReplayDebuggerStartError,
   StudyError,
   StudyRemovedWithItsRecordingError,
+  PlacementRefusalError,
   UnreportedEditorFocusError,
 } from './errors'
 import { ExtensionReplayFrameCache } from './extensionReplayFrameCache'
@@ -301,6 +303,7 @@ import {
   NODE_SERVER_REPLAY_TEXT,
 } from './utils/describeNodeServerReplay'
 import { describeNodeTestReplay } from './utils/describeNodeTestReplay'
+import { describeOperationStatus } from './utils/describeOperationStatus'
 import { describePaneIdentity } from './utils/describePaneIdentity'
 import { describeStudy } from './utils/describeStudy'
 import {
@@ -6145,6 +6148,10 @@ export class StudyWorkspace {
         'PRESENTATION_UNAVAILABLE',
         'The presentation was not confirmed. Prior mode is retained; inspect the actual panes and restore explicitly.',
         String(error),
+        // The editor moved a group, tab or the focus meanwhile: the chat is told the real controls, not a generic retry (native trial N70a).
+        error instanceof PlacementRefusalError
+          ? PLACEMENT_REFUSED_RECOVERY
+          : undefined,
       )
     } finally {
       windowFocus?.dispose()
@@ -12167,7 +12174,7 @@ export class StudyWorkspace {
       this.hideLearningSaveItem()
       return
     }
-    const text =
+    const saveText =
       saved?.status === 'saving'
         ? '$(sync~spin) Saving learning…'
         : saved?.status === 'saved'
@@ -12177,6 +12184,17 @@ export class StudyWorkspace {
             : saved?.status === 'failed'
               ? '$(error) Learning save failed · Retry'
               : `${record.stopped ? '$(save) Recording finished' : '$(record) Recording explanation'} · Save learning replay`
+    // A version 3 run's progress follows the capture and save state, which stay leftmost and always visible (DES-5).
+    const runView = record.runtime?.view()
+    const operationStatus =
+      runView?.profile === REPOSITORY_BROWSER_PROFILE
+        ? describeOperationStatus(
+            runView.operations,
+            record.stopped ? 'stopped' : runView.status,
+            runView.operationFailure,
+          )
+        : undefined
+    const text = operationStatus ? `${saveText} · ${operationStatus}` : saveText
     const tooltip =
       saved?.detail ??
       'Finish this Codebook recording and save learning replay. This stops only its owned runtime; missing history or summary is reported as partial.'
@@ -24261,7 +24279,7 @@ export class StudyWorkspace {
    * The sentence the learner reads is unchanged; the entry carries the guard's call site and failed checks when it names them, the groups before and after with each group's front tab, the focused tab at arming against the active tab now, the editor's events since the guard was armed (group changes, tab operations, pane view-state changes, the active text editor) and the native effects Codebook itself issued since then (N55-F4, Cycle 0056 task 17).
    * @param armed - What {@link armPlacementReport} noted.
    * @param failedChecks - The comparisons that failed, when the guard keeps them apart.
-   * @returns The error with the refusal sentence.
+   * @returns A {@link PlacementRefusalError} with the refusal sentence; the presentation boundary words it with {@link PLACEMENT_REFUSED_RECOVERY}.
    * @example throw this.refusePlacement(armed, ['focus group'])
    */
   private refusePlacement(
@@ -24305,7 +24323,8 @@ export class StudyWorkspace {
       ),
     })
     this.diagnostics?.log({ surface: 'presentation:placement-refused', cause })
-    return new Error(
+    // A marked error, so the presentation boundary words it with the recovery that names real controls.
+    return new PlacementRefusalError(
       'Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.',
     )
   }

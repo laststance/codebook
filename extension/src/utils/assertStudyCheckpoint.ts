@@ -1,5 +1,7 @@
 import type { RetainedStudy } from '../retainedStudySchemas'
 
+import { assertOperationRecordsAdvance } from './assertOperationRecordsAdvance'
+
 /** Preserves accepted identity/evidence when {@link LearningLibrary} advances a checkpoint under its writer lock. @example assertStudyCheckpoint(previous, next) // throws if captured facts changed */
 export function assertStudyCheckpoint(
   prior: RetainedStudy,
@@ -23,6 +25,8 @@ export function assertStudyCheckpoint(
       JSON.stringify(prior.descriptor) !== JSON.stringify(study.descriptor)
     )
       throw new Error('Configured article/source descriptor changed.')
+    // Operation records only move forward (not-run, sending, paused, then done or failed).
+    assertOperationRecordsAdvance(prior.operations, study.operations)
     const previous = prior.operation,
       next = study.operation
     const oldPause = previous?.continuedPause,

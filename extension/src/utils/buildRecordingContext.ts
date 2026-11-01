@@ -20,6 +20,7 @@ import { decodeRetainedStudy } from './decodeRetainedStudy'
 import { describeStudy } from './describeStudy'
 import { isCrossRuntimeStudy } from './isCrossRuntimeStudy'
 import { pausedIntervalBoundary } from './pausedIntervalBoundary'
+import { recordingOperationOf } from './recordingOperationOf'
 
 const phaseDetailSchema = z.object({
   phase: z.string(),
@@ -139,5 +140,8 @@ export function buildRecordingContext(
     interpretationAvailability,
     phases,
     pausedIntervals,
+    ...(study.operations
+      ? { operations: study.operations.map(recordingOperationOf) }
+      : {}),
   })
 }

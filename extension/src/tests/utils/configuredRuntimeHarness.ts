@@ -9,12 +9,16 @@ import type * as ConfiguredBrowserRunModule from '../../configuredBrowserRun'
 import { configuredDefinitionSchema } from '../../configuredStudySchemas'
 import {
   CROSS_RUNTIME_CONFIG_VERSION,
+  SECRET_FRAME_OBSERVER_GLOBAL,
   REPOSITORY_LITERAL_LIMIT_CHARS,
 } from '../../constants'
 import { StudyError } from '../../errors'
 import type * as OwnedRepositoryBreakpointModule from '../../ownedRepositoryBreakpoint'
 import type { BundleSource } from '../../repositoryBundle'
-import type { RepositoryConfiguration } from '../../repositoryConfigSchemas'
+import type {
+  RepositoryConfiguration,
+  RepositoryOperation,
+} from '../../repositoryConfigSchemas'
 import type { RuntimeControl } from '../../runtime'
 import type { ViewportRecordingObserver } from '../../runtimeSupport/browserViewport'
 import type { ProfileLeft } from '../../runtimeSupport/hostBrowser'
@@ -65,6 +69,22 @@ interface BeforeFailure {
   textDifference?: string
   /** The page's control counts, sent with a missing click target. */
   candidates?: { button: number; link: number; field: number }
+}
+
+/** What the stand-in page reports of one control a version 3 operation names; a control without an entry is an ordinary text input. */
+export interface FakeControl {
+  tagName?: 'input' | 'textarea' | 'select'
+  /** The `<input type>`; `text` by default. */
+  type?: string
+  /** The type the secret frame gate's in-page observer finds on the control, when it differs from `type`. */
+  observedType?: string
+  name?: string
+  id?: string
+  autocomplete?: string
+  /** A `<select multiple>`. */
+  multiple?: boolean
+  /** The options of a select. */
+  options?: { value: string; disabled?: boolean }[]
 }
 
 /** The source of a fixture that gives none: one statement on line 1 and an empty line 2, declared with `var` so that the stop on line 1, which requires value:nextTheme, stays on its declared line. */
@@ -127,7 +147,7 @@ export async function configuredRuntimeHarness(
     /** Names the executed module's source map lists (its `names`), such as an env value an inlined constant carries. */
     sourceMapNames?: string[]
     /** The text the debugger reports for `nextTheme` (its variable and the declared inspection) instead of `dark`. */
-    capturedValue?: string
+    capturedValue?: string | number | boolean
     /** Makes the Vite stand-in reload the page, serving changed module bytes, right after the entry page was requested and before the run waits for the page to settle. */
     reloadDuringEntryLoad?: boolean
     /** Runs the Next configuration in a workspace with a Pages folder: the stand-in server answers the structured entry check, the `.next/dev` build is written around the cited source, and the page reports `window.next.router` ({@link NextPagesHarnessOptions}). */
@@ -138,8 +158,15 @@ export async function configuredRuntimeHarness(
     participant?: 'browser' | 'server'
     /** The configuration's initial inputs; the stand-in page has one editable control for each selector. */
     initialInputs?: RepositoryConfiguration['initialInputs']
+    /** What the focus phase of an initial input reports about its control, by selector: type, name, id and autocomplete. */
+    preparedControls?: Record<
+      string,
+      { type?: string; name?: string; id?: string; autocomplete?: string }
+    >
     /** Makes the stand-in page never answer the text insert of an initial input, as a page whose reply is lost. */
     holdInputInsert?: boolean
+    /** Makes the stand-in browser's end of the recording history wait until {@link releaseRecordingHistoryEnd} is called, as a drain of queued image verdicts that takes its whole bound. */
+    holdRecordingHistoryEnd?: boolean
     /** Makes the stand-in server's readiness check (`ready` and `readyEntry`) reject with this message, as a server that exits before it listens does. */
     launchFailure?: string
     /** Makes the stand-in server's structured entry check (`readyEntry`) never answer until the run is cancelled, as a first compile that is still running does. */
@@ -148,10 +175,32 @@ export async function configuredRuntimeHarness(
     appEntryConfirmationHangs?: boolean
     /** Makes the stand-in page never answer a screenshot until the run is cancelled, so the run stays at the end of its setup, after the inputs were written. */
     holdScreenshot?: boolean
+    /**
+     * Runs a version 3 configuration of ordered operations instead of the single action: the first stop and each of `additionalStops` follow the operation `stopOperations` names (the first stop first). A stop's pause is reported inside the input of its operation, which the page answers only once the operation's last stop was continued, as a handler paused in the debugger does.
+     */
+    operations?: {
+      operations: RepositoryOperation[]
+      stopOperations: number[]
+      /** The controls the stand-in page reports, by selector. */
+      controls?: Record<string, FakeControl>
+      /** Selectors whose text the page reads back differently after the insert, as a control that rewrites its value does. */
+      failValueCheck?: string[]
+      /** The reason the page gives when a text's value check fails, in place of the default; a page may quote what it holds. */
+      failValueCheckReason?: string
+      /** Selectors of native-value controls (number, select) whose page call applies nothing, as a select without the declared option does. */
+      unappliedNativeValue?: string[]
+      /** Makes the page's answer to resolving a control throw an error with this message, as a transport failure that quotes text does. */
+      selectControlFailsWith?: string
+    }
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
+  let releaseHistoryEnd: () => void = () => {}
+  const historyEndReleased = new Promise<void>((resolve) => {
+    releaseHistoryEnd = resolve
+  })
   context.after(async () => {
+    releaseHistoryEnd()
     await owned?.stop()
   })
   const repository = await repositoryHarness(context),
@@ -175,13 +224,40 @@ export async function configuredRuntimeHarness(
   if (options.initialInputs)
     reference.configuration.initialInputs = options.initialInputs
   // A version 2 configuration names the first stop's participant; its other fields are the version 1 ones.
-  const configuration = options.participant
+  const configuration = options.operations
     ? {
-        ...reference.configuration,
-        version: CROSS_RUNTIME_CONFIG_VERSION,
-        participant: options.participant,
+        version: 3 as const,
+        adapter: reference.configuration.adapter,
+        book: reference.configuration.book,
+        source: reference.configuration.source,
+        participant: 'browser' as const,
+        afterOperation: options.operations.stopOperations[0]!,
+        before: reference.configuration.action.before,
+        after: reference.configuration.action.after,
+        operations: options.operations.operations,
+        inspections: reference.configuration.inspections,
+        additionalStops: additionalStops.map((stop, index) => ({
+          participant: 'browser' as const,
+          source: {
+            ...reference.configuration.source,
+            line: stop.line,
+            column: stop.column,
+          },
+          anchorIndex: reference.configuration.book.anchorIndex,
+          inspections: stop.inspections,
+          afterOperation: options.operations!.stopOperations[index + 1]!,
+        })),
+        ...(reference.configuration.entryPath
+          ? { entryPath: reference.configuration.entryPath }
+          : {}),
       }
-    : reference.configuration
+    : options.participant
+      ? {
+          ...reference.configuration,
+          version: CROSS_RUNTIME_CONFIG_VERSION,
+          participant: options.participant,
+        }
+      : reference.configuration
   // Each of these changes makes the frozen intent hash stale.
   if (
     additionalStops.length ||
@@ -191,7 +267,8 @@ export async function configuredRuntimeHarness(
     options.sourcePath ||
     options.nextPages?.entryPath ||
     options.initialInputs ||
-    options.participant
+    options.participant ||
+    options.operations
   )
     reference.configurationHash = sha256(JSON.stringify(configuration))
   for (const source of reference.descriptor!.sources)
@@ -209,12 +286,13 @@ export async function configuredRuntimeHarness(
     configurationHash: reference.configurationHash,
     descriptor: reference.descriptor,
   })
-  const afterExpression = configuredDomExpression(
-    definition.configuration.action.after,
-  )
-  const scrollExpression = configuredScrollExpression(
-    definition.configuration.action.selector,
-  )
+  // A version 3 configuration has no one click target; its run-level after conditions stand for the action's.
+  const declaredAction =
+    'action' in definition.configuration
+      ? definition.configuration.action
+      : { after: definition.configuration.after, selector: '#unused' }
+  const afterExpression = configuredDomExpression(declaredAction.after)
+  const scrollExpression = configuredScrollExpression(declaredAction.selector)
   const sourcePath = join(
       repository.directory,
       definition.configuration.source.path,
@@ -304,6 +382,8 @@ export async function configuredRuntimeHarness(
   // The answers an App replay of the structured entry check was asked to judge.
   const appEntryConfirmations: NextEntryResponse[] = []
   let emitInputPause = true,
+    // Whether the debugger reports `stopped` for the pause of a version 3 input; without it the runtime's pause stays unannounced.
+    announceInputPause = true,
     emitPreparationResume = false,
     stopAtStartupBreakpoint = false,
     removedAck = true,
@@ -358,6 +438,7 @@ export async function configuredRuntimeHarness(
     requiredValueUndefined = false
   let hideViewportAtPause = false,
     viewportReady = true
+  let secretVisibleSince: number | null = null
   let controlledContinuation = false,
     continuationEntered = (): void => {},
     acknowledgeContinuation = (): void => {},
@@ -415,7 +496,7 @@ export async function configuredRuntimeHarness(
               name: 'nextTheme',
               value: requiredValueUndefined
                 ? 'undefined'
-                : (options.capturedValue ?? 'dark'),
+                : String(options.capturedValue ?? 'dark'),
               type: requiredValueUndefined ? 'undefined' : 'string',
               variablesReference: 0,
             },
@@ -446,7 +527,11 @@ export async function configuredRuntimeHarness(
         })
         listeners.get('Debugger.resumed')?.({})
         const next = additionalStops[stopCount - 1]
-        if (next) {
+        // A version 3 stop pauses only inside the input of its own operation.
+        const nextBelongsToLatestInput =
+          !operationsOption ||
+          operationsOption.stopOperations[stopCount] === inputsSeen
+        if (next && nextBelongsToLatestInput) {
           // A debugger that verifies only some lines pauses a later stop where its breakpoint was requested.
           const requestedLater = verifiableLines
             ? breakpoints.find((candidate) =>
@@ -509,13 +594,15 @@ export async function configuredRuntimeHarness(
       }),
     )
   }
-  const emitPause = (column = 1, line = 1): void => {
+  const emitPause = (column = 1, line = 1, announced = true): void => {
     currentColumn = column
     currentLine = line
     stopCount++
     // A real debugger may reveal an existing source tab over the leased application panel.
     if (hideViewportAtPause) viewportReady = false
     emitCdpPause()
+    // A debugger that never announces the pause sends no `stopped` for it; the runtime stays paused all the same.
+    if (!announced) return
     run.onEvent(selected, {
       seq: ++requestSequence,
       type: 'event',
@@ -528,17 +615,108 @@ export async function configuredRuntimeHarness(
   let clickTargetScrolled = false
   let screenshot =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII='
+  // The read expression of an operation's own after conditions, by expression, with the failure the page answers while a test keeps them from holding.
+  const operationAfterFailures = new Map<string, BeforeFailure>()
+  // The version 3 operations the stand-in page received an input for, and the stops it reported.
+  let inputsSeen = 0
+  const operationsOption = options.operations
+  /** Tells whether the result of the action is visible: the single input was sent, or the last operation of a version 3 run was acknowledged. */
+  const isResultVisible = (): boolean => {
+    const view = run.view()
+    return view.operations
+      ? view.operations.at(-1)?.ack === 'yes'
+      : Boolean(view.operation?.inputDispatched)
+  }
+  /** Tells whether a declared stop follows the operation the page just received an input for and pauses its handler; after {@link suppressInputPause} the input runs past that stop's line and is answered at once. */
+  const stopPausesLatestInput = (): boolean =>
+    emitInputPause &&
+    (operationsOption?.stopOperations.includes(inputsSeen) ?? false)
+  /** Keeps the page's answer to an input open until the last stop of its operation was continued. */
+  const holdInputUntilContinued = (): Promise<void> =>
+    new Promise<void>((resolve, reject) => {
+      inputResolve = resolve
+      inputReject = reject
+    })
+  /** Reports the first stop that follows the operation the page just received an input for. */
+  const emitFirstStopOfLatestInput = (): void => {
+    const index = operationsOption!.stopOperations.indexOf(inputsSeen)
+    emitPause(
+      index === 0 ? 1 : additionalStops[index - 1]!.column,
+      index === 0 ? 1 : additionalStops[index - 1]!.line,
+      announceInputPause,
+    )
+  }
+  /** Answers one call of a function in a control the run resolved. */
+  const answerFunctionCall = (parameters: {
+    objectId?: string
+    functionDeclaration?: string
+    arguments?: { value?: Record<string, unknown> }[]
+  }): unknown => {
+    const declaration = parameters.functionDeclaration ?? ''
+    const argument = parameters.arguments?.[0]?.value ?? {}
+    const selector = parameters.objectId?.startsWith('control:')
+      ? parameters.objectId.slice('control:'.length)
+      : String(argument.selector ?? '')
+    const control = operationsOption?.controls?.[selector]
+    if (declaration.includes('describeOperationControl'))
+      return {
+        ready: true,
+        tagName: control?.tagName ?? 'input',
+        type: control?.type ?? (control?.tagName === 'select' ? '' : 'text'),
+        name: control?.name ?? '',
+        id: control?.id ?? '',
+        autocomplete: control?.autocomplete ?? '',
+        multiple: control?.multiple ?? false,
+        isContentEditable: false,
+        isFocused: true,
+      }
+    if (declaration.includes('checkSelectOption')) {
+      const option = control?.options?.find(
+        (candidate) => candidate.value === argument.value,
+      )
+      return {
+        state: !option ? 'missing' : option.disabled ? 'disabled' : 'available',
+      }
+    }
+    if (declaration.includes('applyNativeValue')) {
+      if (operationsOption?.unappliedNativeValue?.includes(selector))
+        return { applied: false, reason: 'option-missing' }
+      return {
+        applied: true,
+        valueMatches: true,
+        isValid: true,
+        rule: { min: '1' },
+      }
+    }
+    if (
+      argument.phase === 'verify' &&
+      operationsOption?.failValueCheck?.includes(String(argument.selector))
+    )
+      return {
+        ready: false,
+        reason:
+          operationsOption?.failValueCheckReason ?? 'input-result-changed',
+      }
+    // A prepared input's focus phase reports the control its selector resolved to; a selector without a declared control reports none.
+    const preparedControl =
+      typeof argument.selector === 'string' && argument.phase === 'focus'
+        ? options.preparedControls?.[argument.selector]
+        : undefined
+    return { ready: true, ...(preparedControl && { control: preparedControl }) }
+  }
   /** Answers what the page evaluates: its location, and the configured DOM conditions, of which the after conditions hold only once the input was sent. */
   const pageEvaluation = (expression: string | undefined): unknown => {
     if (expression === NEXT_PAGES_STATE_EXPRESSION) return nextPagesState()
+    if (expression === 'document.readyState') return 'complete'
     if (expression === 'location.href') return 'about:blank'
     if (expression === 'location.origin') return pageOrigin
     if (expression === scrollExpression)
       return { scrolled: clickTargetScrolled }
-    if (
-      expression === afterExpression &&
-      !run.view().operation?.inputDispatched
-    )
+    // An operation's own after conditions that a test chose never to hold.
+    const operationAfterAnswer = operationAfterFailures.get(expression ?? '')
+    if (operationAfterAnswer)
+      return { ready: false, failure: operationAfterAnswer }
+    if (expression === afterExpression && !isResultVisible())
       return {
         ready: false,
         failure: { conditionIndex: 0, reason: 'not-visible' },
@@ -589,6 +767,9 @@ export async function configuredRuntimeHarness(
         start?: ScriptPlace
         end?: ScriptPlace
         text?: string
+        objectId?: string
+        functionDeclaration?: string
+        arguments?: { value?: Record<string, unknown> }[]
       },
       timeout?: number,
     ) {
@@ -598,7 +779,7 @@ export async function configuredRuntimeHarness(
       if (
         method === 'Runtime.evaluate' &&
         parameters?.expression === afterExpression &&
-        run.view().operation?.inputDispatched
+        isResultVisible()
       ) {
         afterReadCount++
         if (afterFailure)
@@ -629,17 +810,97 @@ export async function configuredRuntimeHarness(
         parameters?.expression?.startsWith('(function selectInput')
       )
         return { result: { subtype: 'node', objectId: 'input-control' } }
-      if (method === 'Runtime.callFunctionOn')
-        return { result: { value: { ready: true } } }
+      // A version 3 operation's control: its selector travels in the object id, so a later call on it knows which control it is.
+      if (
+        method === 'Runtime.evaluate' &&
+        parameters?.expression?.startsWith('(function selectControl')
+      ) {
+        if (operationsOption?.selectControlFailsWith)
+          throw new Error(operationsOption.selectControlFailsWith)
+        const quoted = /\)\(("(?:[^"\\]|\\.)*"),\[/.exec(
+          parameters.expression,
+        )?.[1]
+        return {
+          result: {
+            subtype: 'node',
+            objectId: `control:${quoted ? JSON.parse(quoted) : ''}`,
+          },
+        }
+      }
+      if (method === 'Runtime.callFunctionOn') {
+        const answer = {
+          result: { value: answerFunctionCall(parameters ?? {}) },
+        }
+        // A number or select value is the operation's input: its stop, if any, pauses inside the page's handlers.
+        if (parameters?.functionDeclaration?.includes('applyNativeValue')) {
+          inputsSeen++
+          if (stopPausesLatestInput()) {
+            emitFirstStopOfLatestInput()
+            await holdInputUntilContinued()
+          }
+        }
+        return answer
+      }
       if (method === 'Runtime.releaseObject') return {}
       if (method === 'Input.insertText') {
         insertedTexts.push(String(parameters?.text))
+        if (operationsOption) {
+          inputsSeen++
+          if (stopPausesLatestInput()) {
+            emitFirstStopOfLatestInput()
+            await holdInputUntilContinued()
+          }
+          return {}
+        }
         // A held insert is answered only by the transport closing, as a lost reply is.
         if (options.holdInputInsert)
           return new Promise<never>((_resolve, reject) => {
             rejectHeldInsert = reject
           })
         return {}
+      }
+      // The secret frame gate's in-page observer: installed on a password control, it reports the time a script made the control draw its text.
+      if (
+        method === 'Runtime.evaluate' &&
+        parameters?.expression?.includes(SECRET_FRAME_OBSERVER_GLOBAL)
+      ) {
+        const expression = parameters.expression
+        if (expression.startsWith('window['))
+          return {
+            result: {
+              value: {
+                now: Date.now(),
+                open: secretVisibleSince,
+                unsafe: [],
+                ...(secretVisibleSince !== null && {
+                  reason: 'control-not-password',
+                }),
+              },
+            },
+          }
+        const quoted = /\)\(("(?:[^"\\]|\\.)*"),/.exec(expression)?.[1]
+        const observedSelector = quoted ? JSON.parse(quoted) : ''
+        // A version 1 or 2 prepared control is described by `preparedControls`; an operation's by its own controls.
+        const control =
+          operationsOption?.controls?.[observedSelector] ??
+          options.preparedControls?.[observedSelector]
+        // A prepared input whose control the test never described is no secret control the stand-in observer could dispute: it reads as a safe password control.
+        const undescribedPreparedInput =
+          control === undefined &&
+          options.initialInputs?.some(
+            (input) => input.selector === observedSelector,
+          ) === true
+        return {
+          result: {
+            value:
+              undescribedPreparedInput ||
+              ((control && 'observedType' in control
+                ? control.observedType
+                : undefined) ?? control?.type) === 'password'
+                ? { ok: true, origin: 1 }
+                : { ok: false, reason: 'control-not-password' },
+          },
+        }
       }
       if (method === 'Runtime.evaluate')
         return { result: { value: pageEvaluation(parameters?.expression) } }
@@ -721,6 +982,13 @@ export async function configuredRuntimeHarness(
       if (method === 'Input.dispatchMouseEvent') {
         mouse.push({ type: parameters?.type, timeout })
         if (parameters?.type === 'mousePressed') return {}
+        // A version 3 click: answered at once unless a stop follows it and pauses inside the click's handler.
+        if (operationsOption) {
+          inputsSeen++
+          if (!stopPausesLatestInput()) return {}
+          emitFirstStopOfLatestInput()
+          return holdInputUntilContinued().then(() => ({}))
+        }
         const pending = new Promise<void>((resolve, reject) => {
           inputResolve = resolve
           inputReject = reject
@@ -767,6 +1035,18 @@ export async function configuredRuntimeHarness(
         return answer
       }
       throw new Error(`Unexpected CDP request: ${method}`)
+    },
+    /** The quiet path answers as the journaled one does; only the real Cdp differs in what it journals. */
+    requestQuietly(
+      method: string,
+      parameters?: Record<string, unknown>,
+      timeout?: number,
+    ) {
+      return (
+        this as unknown as {
+          request(m: string, p?: unknown, t?: number): Promise<unknown>
+        }
+      ).request(method, parameters, timeout)
     },
   }
   const documents = [
@@ -924,10 +1204,14 @@ export async function configuredRuntimeHarness(
             run.addSession(selected)
           }
           async attachViewport(): Promise<void> {}
+          setSecretFrameGate(): void {}
           async reveal(): Promise<void> {
             viewportReady = true
           }
           resumeViewport(): void {}
+          async endRecordingHistory(): Promise<void> {
+            if (options.holdRecordingHistoryEnd) await historyEndReleased
+          }
           recordCapture(data: string, phase: string): void {
             const observer = recordingObserver()
             observer?.frame({
@@ -1182,6 +1466,10 @@ export async function configuredRuntimeHarness(
     releases,
     emitPause,
     emitCdpPause,
+    /** How many operation inputs the stand-in page received (version 3 runs). */
+    inputsSeen: (): number => inputsSeen,
+    /** How many owned stop breakpoints the run has requested so far (a retired one still counts), so a test sees whether a stop was armed yet. */
+    ownedBreakpointsRequested: (): number => breakpointCount,
     /** Sets the source position the debugger reports as the paused top frame, for a pause a test sends in parts. */
     setPausedFrame(column: number, line = 1): void {
       currentColumn = column
@@ -1216,9 +1504,15 @@ export async function configuredRuntimeHarness(
         debuggerPausedEvent({ callFrameId: 'adapter-frame', ...place }),
       )
     },
+    /** Makes the stand-in page draw the secret control's text from now on, as a show-password toggle does; `false` restores the dots. */
+    setSecretVisible(visible: boolean): void {
+      secretVisibleSince = visible ? Date.now() : null
+    },
     setScreenshot(base64: string): void {
       screenshot = base64
     },
+    /** Lets a held end of the recording history finish. @example harness.releaseRecordingHistoryEnd() */
+    releaseRecordingHistoryEnd: (): void => releaseHistoryEnd(),
     /** Makes the page report this `location.origin`, as after a redirect to another loopback name. @example harness.setPageOrigin('http://localhost:4321') */
     setPageOrigin(origin: string): void {
       pageOrigin = origin
@@ -1373,8 +1667,13 @@ export async function configuredRuntimeHarness(
     useObjectValue(): void {
       requiredValueObject = true
     },
+    /** Lets the input run past its declared stop's line without a pause, as a handler that skips that line does: a version 1 or 2 click stays unanswered, a version 3 input is answered at once. @example harness.suppressInputPause() */
     suppressInputPause(): void {
       emitInputPause = false
+    },
+    /** Makes the pause of a version 3 input at its declared stop reach the run from the runtime alone, with no debugger `stopped`, as a debugger that never announces that stop does; the input stays unanswered. @example harness.withholdInputStopAnnouncement() */
+    withholdInputStopAnnouncement(): void {
+      announceInputPause = false
     },
     resumeDuringPreparation(): void {
       emitPreparationResume = true
@@ -1384,6 +1683,15 @@ export async function configuredRuntimeHarness(
     },
     hideViewportOnPause(): void {
       hideViewportAtPause = true
+    },
+    /** Reports a debugger `stopped` event of the browser session with no runtime pause, as a breakpoint of the learner's own does. @example harness.emitDapStopOnly() */
+    emitDapStopOnly(threadId = 1): void {
+      run.onEvent(selected, {
+        seq: ++requestSequence,
+        type: 'event',
+        event: 'stopped',
+        body: { threadId, reason: 'breakpoint' },
+      })
     },
     manualResume(): void {
       listeners.get('Debugger.resumed')?.({})
@@ -1433,6 +1741,15 @@ export async function configuredRuntimeHarness(
     /** Makes the after conditions answer this failure on every read after the input, as an owned page whose result never appears does. */
     failAfterWith(failure: BeforeFailure): void {
       afterFailure = failure
+    },
+    /** Makes the own `after` conditions of a version 3 operation answer this failure on every read, as an owned page whose result never appears does. @example harness.failOperationAfterWith(1, { conditionIndex: 1, reason: 'not-visible' }) */
+    failOperationAfterWith(
+      operationIndex: number,
+      failure: BeforeFailure,
+    ): void {
+      const conditions = operationsOption?.operations[operationIndex - 1]?.after
+      if (!conditions) throw new Error('The operation declares no after')
+      operationAfterFailures.set(configuredDomExpression(conditions), failure)
     },
     /** How many times the run read the after conditions after the input. */
     afterReads(): number {

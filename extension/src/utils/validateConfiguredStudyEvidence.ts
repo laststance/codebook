@@ -1,5 +1,7 @@
 import type { ConfiguredStudy } from '../configuredStudySchemas'
 import {
+  OPERATIONS_CONFIG_VERSION,
+  OPERATIONS_STUDY_VERSION,
   RECORDED_LOCATION_STUDY_VERSION,
   REPOSITORY_CAPTURED_TYPES,
 } from '../constants'
@@ -11,6 +13,7 @@ import { isCrossRuntimeStudy } from './isCrossRuntimeStudy'
 import { isSavedBindingReceiptAtStop } from './isSavedBindingReceiptAtStop'
 import { isSavedSourceAtStop } from './isSavedSourceAtStop'
 import { legacyStudyFormatOfConfiguration } from './legacyStudyFormatOfConfiguration'
+import { validateOperationRecords } from './validateOperationRecords'
 
 /** Validates sealed configured facts for archive and recording readers without requiring current files or granting runtime authority. @example validateConfiguredStudyEvidence(study, workspaceKey) // rejects altered source or pause */
 export function validateConfiguredStudyEvidence(
@@ -18,10 +21,13 @@ export function validateConfiguredStudyEvidence(
   workspaceKey: string,
 ): void {
   const configuration = study.configuration
-  // A new save is the current format; an older archive keeps the format its configuration implied when it was saved.
+  // A new save is the current format of its kind: the operations format for a version 3 configuration, the recorded-location format for versions 1 and 2; an older archive keeps the format its configuration implied when it was saved.
   if (
-    study.version !== RECORDED_LOCATION_STUDY_VERSION &&
-    study.version !== legacyStudyFormatOfConfiguration(configuration)
+    configuration.version === OPERATIONS_CONFIG_VERSION
+      ? study.version !== OPERATIONS_STUDY_VERSION
+      : study.version === OPERATIONS_STUDY_VERSION ||
+        (study.version !== RECORDED_LOCATION_STUDY_VERSION &&
+          study.version !== legacyStudyFormatOfConfiguration(configuration))
   )
     throw new Error('Configured archive and intent versions disagree.')
   if (
@@ -44,6 +50,8 @@ export function validateConfiguredStudyEvidence(
   const stops = configuredStops(configuration)
   if (study.observations.length > stops.length)
     throw new Error('Configured observations exceed the declared stops.')
+  // A version 3 study keeps one record per declared operation; every operation's pauses and result are checked against it.
+  validateOperationRecords(study)
   const continuedIndex = study.observations.findIndex(
     (observation) =>
       JSON.stringify(observation.pause) ===

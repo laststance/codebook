@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { PlacementRefusalError } from '../errors'
 import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 
 import { readerSeams, workspaceHarness } from './studyWorkspaceHarness'
@@ -324,6 +325,40 @@ test('closing the Study workspace ends without an error when the editor already 
 
     // Assert
     assert.equal(await closing, 'closed')
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the type the presentation boundary reads to give the chat the real recovery after a placement refusal (native trial N70a); fails_when=the guard throws a bare Error, so the refusal is worded with the generic recovery and the chat invents a command; why_new=Cycle 0070 pt1 fix round 9; seam=workspaceHarness with two groups, the guard armed through its seam and refused by Codebook's own focus move; no_claim=the words of the recovery (studyWorkspaceEntry.test.ts pins them through changePresentation)
+test('a refused placement guard is marked so the presentation answer can name the Study pane Restore button and the Open Study Workspace command', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  try {
+    harness.focusMutableDraft('first.ts', 1)
+    harness.focusMutableDraft('second.ts', 2)
+    const assertPlacement = harness.reader['retainPresentationPlacement'](
+      'exampleCaller/assertExample',
+    )
+    await harness.reader['executeEditorCommand'](
+      'workbench.action.focusFirstEditorGroup',
+    )
+
+    // Act
+    let refusal: unknown
+    try {
+      assertPlacement()
+    } catch (error) {
+      refusal = error
+    }
+
+    // Assert
+    assert.ok(refusal instanceof PlacementRefusalError)
+    assert.equal(
+      String(refusal),
+      'Error: Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.',
+    )
   } finally {
     await harness.close()
   }

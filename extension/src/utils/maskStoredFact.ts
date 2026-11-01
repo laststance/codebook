@@ -2,6 +2,25 @@ import {
   configuredFactValueSchema,
   type ConfiguredObservation,
 } from '../configuredStudySchemas'
+import { REDACTION_MASK } from '../constants'
+
+/**
+ * Masks one fact: a text by its secrets, and a number or boolean whose string form is itself a secret.
+ *
+ * Why it exists: an app may convert a learner secret with `Number(value)` or a parse to `true`/`false`, and an inspected number or boolean is not a string the text mask reaches. Only a value whose whole string form is masked is replaced, so protocol numbers and numbers that merely contain a secret's digits stay as they are.
+ * @param fact - The fact after name and shape redaction.
+ * @param maskKnownText - Masks the secrets in a text.
+ * @returns The masked text, the mask for a number or boolean that equals a secret, or the fact unchanged.
+ */
+function maskFactValue(
+  fact: ConfiguredObservation['values'][string],
+  maskKnownText: (text: string) => string,
+): ConfiguredObservation['values'][string] {
+  if (typeof fact === 'string') return maskKnownText(fact)
+  if (typeof fact !== 'number' && typeof fact !== 'boolean') return fact
+  // The text mask replaces the whole string form only when it equals a secret.
+  return maskKnownText(String(fact)) === REDACTION_MASK ? REDACTION_MASK : fact
+}
 
 /**
  * Masks the known env values in one captured fact and keeps it only while it still fits the stored bound.
@@ -21,7 +40,7 @@ export function maskStoredFact(
   fact: ConfiguredObservation['values'][string],
   maskKnownText: (text: string) => string,
 ): ConfiguredObservation['values'][string] | undefined {
-  const masked = typeof fact === 'string' ? maskKnownText(fact) : fact
+  const masked = maskFactValue(fact, maskKnownText)
   return configuredFactValueSchema.safeParse(masked).success
     ? masked
     : undefined

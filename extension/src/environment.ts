@@ -44,6 +44,7 @@ import { checkNodeTestFiles } from './utils/checkNodeTestFiles'
 import { chromeExtensionPrerequisiteGaps } from './utils/chromeExtensionPrerequisiteGaps'
 import { configuredStops } from './utils/configuredStops'
 import { createChromeExecutableLookup } from './utils/createChromeExecutableLookup'
+import { createLearnerSecretAsker } from './utils/createLearnerSecretAsker'
 import { createMemoryOrphanStore } from './utils/createMemoryOrphanStore'
 import { createNodeServerRunUtilities } from './utils/createNodeServerRunUtilities'
 import { listVitestForRootClaim } from './utils/listVitestForRootClaim'
@@ -342,6 +343,19 @@ export async function createEnvironment(
         { modal: true, detail },
         ...items,
       ),
+  )
+  // The learner types an ask-learner secret into the editor's own masked input box, never into the chat.
+  const askLearnerSecret = createLearnerSecretAsker(
+    (options, token: vscode.CancellationToken) =>
+      vscode.window.showInputBox(options, token),
+    () => {
+      const source = new vscode.CancellationTokenSource()
+      return {
+        token: source.token,
+        cancel: (): void => source.cancel(),
+        dispose: (): void => source.dispose(),
+      }
+    },
   )
   return {
     workspace,
@@ -693,6 +707,7 @@ export async function createEnvironment(
       })
     },
     confirmStateChangingRequest: askToSendStateChangingRequest,
+    askLearnerSecret,
     dispose(): void {
       tracker.dispose()
       termination.dispose()

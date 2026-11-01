@@ -31,6 +31,7 @@ import type {
   NODE_TEST_PROFILE,
   REPOSITORY_BROWSER_ACTION,
   REPOSITORY_BROWSER_PROFILE,
+  REPOSITORY_OPERATION_ACTION,
 } from './constants'
 import type { ErrorCode, StudyError } from './errors'
 import type { NodeServerConfiguration } from './nodeServerConfigSchemas'
@@ -51,6 +52,7 @@ import type {
 } from './utils/listVitestTestFiles'
 import type { NodeTestExecutionPlan } from './utils/planNodeTestExecution'
 import type { RepositoryAdapterReadiness } from './utils/readRepositoryAdapterReadiness'
+import type { PreparedTextState } from './utils/redactPreparedTexts'
 import type { CauseRoots } from './utils/sanitizeCause'
 import type { NodeTestVitestSearch } from './utils/searchRepositoryVitest'
 
@@ -266,6 +268,8 @@ export type ChromeExtensionOutputLine = {
 /** What a chrome-extension run shows the service: the run resource's `chromeExtension` block and `claimable` come from it (SR17, CR5, CR9, CR10, ER16, DXR7). */
 export type ChromeExtensionView = {
   phase: ChromeExtensionPhase
+  /** How far each click's prepared input texts were resolved (`secret` or `plain` once typed), by click then input; the texts are never in the view. */
+  inputStates?: PreparedTextState[][]
   /** Set once `starting` resolved the configuration; absent while the run is still resolving it or when it refused before. */
   extension?: {
     id: string
@@ -361,12 +365,42 @@ export type ConfiguredRuntimeSnapshot = Omit<
   'snapshotUri' | 'interpretations'
 >
 export type RuntimeSnapshot = ConfiguredRuntimeSnapshot
-export type RuntimeAction = typeof REPOSITORY_BROWSER_ACTION
+export type RuntimeAction =
+  typeof REPOSITORY_BROWSER_ACTION | typeof REPOSITORY_OPERATION_ACTION
+/**
+ * The progress of one declared operation of a version 3 run, as the run resource lists it in `operations` (ENG-2): it moves forward only.
+ * `ack` and `valueCheck` stay `pending` while a stop inside the control's `input` or `change` handler is paused; `effect` becomes `after-verified` once the operation's own `after` conditions held (for the last operation, the run's).
+ */
+export type OperationRecord = {
+  /** 1-based, as in `afterOperation` and every receipt. */
+  index: number
+  kind: 'text' | 'choose' | 'click'
+  title: string
+  state: 'not-run' | 'sending' | 'paused' | 'done' | 'failed'
+  ack: 'pending' | 'yes'
+  valueCheck: 'pending' | 'passed' | 'failed' | 'n/a'
+  effect: 'pending' | 'dispatched' | 'after-verified'
+}
+/** The first failure of an operation of a version 3 run, with the fields that decide a retry (DX-5); the service adds the run's address. */
+export type OperationFailure = {
+  code: string
+  operationIndex: number
+  /** The configuration path the fix is made at, such as `operations[2].selector`. */
+  path?: string
+  sent: 'not-sent' | 'sent'
+  sideEffects: 'none' | 'unknown'
+  /** `<runId>#<operationIndex>`: the id of the structured Output > Codebook line that records the failure. */
+  logId: string
+}
 export type RuntimeDefinition = ConfiguredDefinition
 export type RuntimeControl = Readonly<{
   signal: AbortSignal
   deadlineAt: number
   preparationDeadlineAt: number
+  /** The service's id of the run, which an operation's log id (`<runId>#<operationIndex>`) and Output > Codebook lines name; the run's own id when absent. */
+  runId?: string
+  /** Receives one plain Output > Codebook line per operation event of a version 3 run (dispatch, receipt, effect, refusal); the lines never hold a secret. */
+  outputLog?: (line: { level: 'info' | 'error'; text: string }) => void
 }>
 export type RuntimeSource = {
   source: string
@@ -420,6 +454,8 @@ export type ConfiguredRuntimeView = {
   activeSessionIds: string[]
   profile: typeof REPOSITORY_BROWSER_PROFILE
   definition: ConfiguredDefinition
+  /** How far the run resolved each `initialInputs` text (`pending`, `secret` or `plain`); the texts themselves are never in the view. A view without it counts every text as unresolved. */
+  preparedTextStates?: PreparedTextState[]
   manifest?: {
     hash: string
     configurationHash: string
@@ -437,7 +473,14 @@ export type ConfiguredRuntimeView = {
   participants: { browser: RuntimeParticipant; server?: RuntimeParticipant }
   snapshots: ConfiguredRuntimeSnapshot[]
   operation: ConfiguredStudy['operation']
-  nextAction: typeof REPOSITORY_BROWSER_ACTION | undefined
+  /** The progress of each declared operation of a version 3 run, in declared order; absent for versions 1 and 2. */
+  operations?: OperationRecord[]
+  /** The first failure of an operation of a version 3 run; absent otherwise. */
+  operationFailure?: OperationFailure
+  nextAction:
+    | typeof REPOSITORY_BROWSER_ACTION
+    | typeof REPOSITORY_OPERATION_ACTION
+    | undefined
   observed: { afterVerified: true } | undefined
   links: never[]
 }
@@ -455,9 +498,20 @@ export interface StudyRuntime {
     | 'directory'
     | 'elapsedMs'
   >
+  /** The secrets the learner typed for ask-learner operations, in memory only; every sink that stores or serves run data masks them (ENG-4). Runtimes without ask-learner operations omit it. */
+  readonly learnerSecrets?: ReadonlySet<string>
   prepare(): Promise<void>
   view(): RuntimeView
-  action(key: string, action: RuntimeAction): { id: string }
+  /**
+   * Reserves the next declared input synchronously; its protocol acknowledgement never blocks state or continuation.
+   * @param options - `learnerSecret`: the value the learner typed for a `secret: "ask-learner"` operation, which the run types into the page and keeps only in memory.
+   * @returns The operation's id, and for a version 3 run its 1-based `operationIndex`.
+   */
+  action(
+    key: string,
+    action: RuntimeAction,
+    options?: { learnerSecret?: string },
+  ): { id: string; operationIndex?: number }
   continue(participant: Participant, pause: PauseIdentity): Promise<void>
   stop(): Promise<void>
   fail(reason: string): void
@@ -577,4 +631,14 @@ export interface StudyEnvironment {
     request: StateChangingRequestQuestion,
     signal: AbortSignal,
   ): Promise<boolean>
+  /**
+   * Asks the learner, in the editor's password input box, for the secret of a `secret: "ask-learner"` operation; the chat never sees the answer.
+   * @param question - The run, the repository folder name and the operation's title, which the box shows as `<repository> · <title>`.
+   * @param signal - Closes the box when the run stops or the wait ends.
+   * @returns The typed secret, or `undefined` when the learner dismissed the box or the signal aborted.
+   */
+  askLearnerSecret?(
+    question: { runId: string; repository: string; title: string },
+    signal: AbortSignal,
+  ): Promise<string | undefined>
 }

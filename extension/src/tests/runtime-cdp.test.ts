@@ -207,3 +207,24 @@ test('recording telemetry summarizes frame acknowledgements without hiding input
     detail: { sinceMs: 100, untilMs: 100, sent: 101, responses: 100 },
   })
 })
+
+test('a quiet request journals nothing for a success but still journals a failed response', async () => {
+  // Arrange
+  const socket = new TestSocket()
+  const journal: string[] = []
+  const cdp = new Cdp(socket, (type) => void journal.push(type))
+  // Act
+  const ok = cdp.requestQuietly('Runtime.evaluate', { expression: '1' })
+  socket.reply(1, { result: { value: 1 } })
+  await ok
+  const failed = cdp.requestQuietly('Runtime.evaluate', { expression: '2' })
+  socket.dispatchEvent(
+    new MessageEvent('message', {
+      data: JSON.stringify({ id: 2, error: { message: 'no context' } }),
+    }),
+  )
+  await assert.rejects(failed)
+  // Assert
+  assert.deepEqual(journal, ['cdp.response'])
+  cdp.close()
+})

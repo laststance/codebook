@@ -1,8 +1,11 @@
 import { z } from 'zod'
 
 import {
+  ASK_LEARNER_SECRET,
   CONFIGURED_OBSERVATION_LIMIT,
   CROSS_RUNTIME_CONFIG_VERSION,
+  OPERATIONS_CONFIG_VERSION,
+  REPOSITORY_OPERATION_LIMIT,
   BOOK_MAX_ANCHORS,
   BOOK_TITLE_LIMIT_CHARS,
   REPOSITORY_ATTRIBUTE_LIMIT_CHARS,
@@ -269,6 +272,132 @@ const crossRuntimeConfigurationShape = repositoryConfigurationShape.extend({
     .optional(),
 })
 
+/** The optional conditions that prove one operation took effect; the run-level `after` takes this place for the last operation that declares none. */
+const operationAfterSchema = { after: conditionsSchema.optional() }
+/** The title every operation carries: 1 to the book title limit, distinct within a run. */
+const operationTitleSchema = z.string().min(1).max(BOOK_TITLE_LIMIT_CHARS)
+/**
+ * One declared operation of a version 3 run: `text` into a text-like or number input (its `text`, or `secret: "ask-learner"` for a secret control, never both), `choose` an option of a native single `<select>`, or `click` a unique visible enabled target.
+ * Read by {@link operationsConfigurationShape}; {@link ConfiguredBrowserRun} sends each one through its own `repository-operation` action.
+ */
+const repositoryOperationSchema = z.discriminatedUnion('kind', [
+  z
+    .strictObject({
+      kind: z.literal('text'),
+      title: operationTitleSchema,
+      selector: selectorSchema,
+      text: literalSchema.optional(),
+      secret: z.literal(ASK_LEARNER_SECRET).optional(),
+      ...operationAfterSchema,
+    })
+    .refine(
+      (operation) =>
+        (operation.text === undefined) !== (operation.secret === undefined),
+      'A text operation declares exactly one of text and secret: "ask-learner".',
+    ),
+  z.strictObject({
+    kind: z.literal('choose'),
+    title: operationTitleSchema,
+    selector: selectorSchema,
+    value: literalSchema,
+    ...operationAfterSchema,
+  }),
+  z.strictObject({
+    kind: z.literal('click'),
+    title: operationTitleSchema,
+    selector: selectorSchema,
+    ...operationAfterSchema,
+  }),
+])
+/** The stop-to-operation link every stop of a version 3 run declares: the 1-based operation after whose input the stop is armed. */
+const afterOperationSchema = z
+  .number()
+  .int()
+  .min(1)
+  .max(REPOSITORY_OPERATION_LIMIT)
+
+/**
+ * The version 3 configuration: version 2's fields without `initialInputs` and `action`, the run-level `before` and `after`, 1 to 8 ordered `operations`, and an `afterOperation` on every stop.
+ * Called through {@link operationsRepositoryConfigSchema}, which adds the cross-field rules.
+ */
+const operationsConfigurationShape = z.strictObject({
+  version: z.literal(OPERATIONS_CONFIG_VERSION),
+  adapter: z.enum(['next-dev-webpack', 'vite-dev']),
+  book: repositoryBookSelectionSchema,
+  source: repositorySourceStopSchema,
+  participant: z.enum(['browser', 'server']),
+  afterOperation: afterOperationSchema,
+  before: conditionsSchema,
+  after: conditionsSchema,
+  operations: z
+    .array(repositoryOperationSchema)
+    .min(1)
+    .max(REPOSITORY_OPERATION_LIMIT),
+  inspections: stopInspectionsSchema,
+  additionalStops: z
+    .array(
+      z.strictObject({
+        participant: z.enum(['browser', 'server']),
+        source: repositorySourceStopSchema,
+        anchorIndex: repositoryBookSelectionSchema.shape.anchorIndex,
+        inspections: stopInspectionsSchema,
+        afterOperation: afterOperationSchema,
+      }),
+    )
+    .max(CONFIGURED_OBSERVATION_LIMIT - 1)
+    .optional(),
+  entryPath: repositoryEntryPathSchema.optional(),
+  initialStorage: storageSchema.optional(),
+})
+
+/**
+ * Refuses the version 3 rules a field schema cannot state: distinct operation titles, and an `afterOperation` on every stop that names a declared operation and never decreases along the declared stop order.
+ * Called by {@link operationsRepositoryConfigSchema}.
+ * @param configuration - A parsed version 3 configuration.
+ * @param context - The refinement context that receives one issue per violation.
+ * @example validateOperations(configuration, context) // adds an issue at ['operations', 1, 'title'] for a repeated title
+ */
+function validateOperations(
+  configuration: z.infer<typeof operationsConfigurationShape>,
+  context: z.RefinementCtx,
+): void {
+  const titles = new Set<string>()
+  for (const [index, operation] of configuration.operations.entries()) {
+    // A repeated title makes two operations indistinguishable in the run resource and the replay.
+    if (titles.has(operation.title))
+      context.addIssue({
+        code: 'custom',
+        path: ['operations', index, 'title'],
+        message: `Operation titles must be distinct; "${operation.title}" is declared twice.`,
+      })
+    titles.add(operation.title)
+  }
+  const declared = [
+    { path: ['afterOperation'], value: configuration.afterOperation },
+    ...(configuration.additionalStops ?? []).map((stop, index) => ({
+      path: ['additionalStops', index, 'afterOperation'],
+      value: stop.afterOperation,
+    })),
+  ]
+  let previous = 0
+  for (const { path, value } of declared) {
+    if (value > configuration.operations.length)
+      context.addIssue({
+        code: 'custom',
+        path,
+        message: `afterOperation ${value} is declared at configuration.${path.join('.')}, but the run declares ${configuration.operations.length} operations.`,
+      })
+    // A later stop cannot belong to an earlier operation than the stop before it: the stops are taken in declared order.
+    if (value < previous)
+      context.addIssue({
+        code: 'custom',
+        path,
+        message: `afterOperation ${value} at configuration.${path.join('.')} is lower than the ${previous} of the stop before it; declare the stops in the order of their operations.`,
+      })
+    previous = Math.max(previous, value)
+  }
+}
+
 /**
  * Refuses a server participant under `adapter: "vite-dev"`, which seals and debugs browser modules only.
  * Called by {@link validateInspections} for both configuration versions, so the public schema, not a later start, rejects it.
@@ -279,7 +408,8 @@ const crossRuntimeConfigurationShape = repositoryConfigurationShape.extend({
 function refuseViteServerParticipants(
   configuration:
     | z.infer<typeof repositoryConfigurationShape>
-    | z.infer<typeof crossRuntimeConfigurationShape>,
+    | z.infer<typeof crossRuntimeConfigurationShape>
+    | z.infer<typeof operationsConfigurationShape>,
   context: z.RefinementCtx,
 ): void {
   if (configuration.adapter !== 'vite-dev' || !('participant' in configuration))
@@ -304,7 +434,8 @@ function refuseViteServerParticipants(
 function validateInspections(
   configuration:
     | z.infer<typeof repositoryConfigurationShape>
-    | z.infer<typeof crossRuntimeConfigurationShape>,
+    | z.infer<typeof crossRuntimeConfigurationShape>
+    | z.infer<typeof operationsConfigurationShape>,
   context: z.RefinementCtx,
 ): void {
   refuseViteServerParticipants(configuration, context)
@@ -357,14 +488,25 @@ export const repositoryConfigSchema =
   repositoryConfigurationShape.superRefine(validateInspections)
 export const crossRuntimeRepositoryConfigSchema =
   crossRuntimeConfigurationShape.superRefine(validateInspections)
+/** The version 3 configuration (ordered operations); `codebook_start` accepts it for the `repository-browser` profile and the saved study retains it. */
+export const operationsRepositoryConfigSchema =
+  operationsConfigurationShape.superRefine((configuration, context) => {
+    validateInspections(configuration, context)
+    validateOperations(configuration, context)
+  })
 export const retainedRepositoryConfigSchema = z.union([
   repositoryConfigSchema,
   crossRuntimeRepositoryConfigSchema,
+  operationsRepositoryConfigSchema,
 ])
 export type RepositoryConfiguration = z.infer<typeof repositoryConfigSchema>
 export type RetainedRepositoryConfiguration = z.infer<
   typeof retainedRepositoryConfigSchema
 >
+export type OperationsRepositoryConfiguration = z.infer<
+  typeof operationsRepositoryConfigSchema
+>
+export type RepositoryOperation = z.infer<typeof repositoryOperationSchema>
 export type RepositoryInspection = z.infer<typeof repositoryInspectionSchema>
 export type RepositoryCondition = z.infer<typeof repositoryConditionSchema>
 export type ConfiguredDomFailure = z.infer<typeof configuredDomFailureSchema>

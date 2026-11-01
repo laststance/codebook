@@ -5,6 +5,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.14 adds configuration version 3 to the `repository-browser` profile (up to 8 ordered `operations` of kind `text`, `choose` or `click`, each stop declaring `afterOperation`), the `repository-operation` action (one `codebook_action` per operation, answering an acceptance receipt with `operationIndex` and `accepted`), the run resource's `operations` records (`state`, `ack`, `valueCheck`, `effect`), a secret `text` operation declared as `secret: "ask-learner"` (the learner types it in the editor), and the codes `OPERATIONS_NOT_CONFIRMED`, `OPTION_NOT_AVAILABLE`, `INPUT_NOT_ACCEPTED`, `CONTROL_KIND_NOT_SUPPORTED`, `SECRET_INPUT_FROM_CHAT`, `SECRET_INPUT_VISIBLE`, `NAVIGATION_BEFORE_LAST_OPERATION`, `NAVIGATION_NOT_SETTLED`, `OPERATION_AFTER_NOT_MET` and `RUN_FAILED_UNEXPECTEDLY`; `BUSY` gains `reason`, `expected`, `sent` and a retry rule. It also changes two behaviours of version 1 and 2 runs: a prepared secret text reads `[masked]` (an unresolved one `[pending]`) in the run resource, the saved study and the configuration hash, and a failed `repository-browser` run answers `isError: true` with the run state, as node-server and chrome-extension runs do.
  * 1.13 is additive: a chrome-extension run is saved as an Extension replay. `codebook_explain_node_history` accepts a chrome-extension history's material (steps citing a captured stop with its sourceHash and context, a pause or the result), the run resource gains `chromeExtension.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing`, `materialRevision` and `captureMissing`, `nextActions` offers `save-node-learning`, and a save while the history records is refused with `HISTORY_STILL_RECORDING`.
  * 1.12 is additive: Next Pages Router pages on the `next-dev-webpack` adapter (the `next-dev-webpack` readiness gains `routerKind`, `preparation` and `notes`, the repository-browser profile names its `nextRouters`, the resource of a Next run in a workspace with a Pages folder names its `nextRoute` (not a Next run in a workspace without one), the `NEXT_*` refusal codes and `SOURCE_CHANGED` for a Pages module replaced during the run, and `codebook://help/repository-browser` gains `startHere`, the Next quick start, the Pages support table and the Next refusal anchors). It also changes the click of every `repository-browser` run, App Router and Vite runs included: a click target whose centre lies outside the viewport is first scrolled to the middle of the viewport, where 1.11 read it as obscured (`click-target-obscured`); App Router and Vite runs are otherwise unchanged.
  * 1.11 is additive: the `vite-dev` adapter of the `repository-browser` profile (the adapter enum of the configuration, `codebook_status` adapter readiness under `profiles[].prerequisites.adapters`, the optional `viteVersion` of a Vite run manifest and resource, the `ADAPTER_MISROUTE` and `VITE_*` refusal codes, the Vite quick start and refusal anchors of `codebook://help/repository-browser`); a Vite study is saved in study format 5.
@@ -12,8 +13,8 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.13'
-export const EXTENSION_VERSION = '0.2.70'
+export const API_VERSION = '1.14'
+export const EXTENSION_VERSION = '0.2.71'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -1504,6 +1505,18 @@ export const NODE_TEST_EXIT_GRACE_MS = 2_000
 /** Budget for each owned Node test phase: attach through the entry pause, reaching a declared stop while the test runs, and capturing it. */
 export const NODE_TEST_ATTACH_TIMEOUT_MS = 45_000
 export const REPOSITORY_BROWSER_ACTION = 'repository-click'
+/** The action of a version 3 run: it sends the next declared operation. */
+export const REPOSITORY_OPERATION_ACTION = 'repository-operation'
+/** The most operations a version 3 run declares. */
+export const REPOSITORY_OPERATION_LIMIT = 8
+/** The only value of a secret `text` operation: the learner types it in the editor, so it never passes through the chat. */
+export const ASK_LEARNER_SECRET = 'ask-learner'
+/** How long the page must be `complete` with no main-frame navigation before an operation is sent. */
+export const OPERATION_SETTLE_QUIET_MS = 500
+/** How long the wait for a settled page may last before the run fails with `NAVIGATION_NOT_SETTLED`. */
+export const OPERATION_SETTLE_BOUND_MS = 10_000
+/** How often the settle wait reads the page's `readyState` and its last navigation time. */
+export const OPERATION_SETTLE_POLL_MS = 50
 /** The first extension version that offers the node-server profile, for the profile entry of `codebook_status`. */
 export const NODE_SERVER_MINIMUM_EXTENSION_VERSION = '0.2.51'
 /** The longest sanitized failure cause a node-server event and its Output entry keep; the run resource keeps the error whole (up to {@link MAX_UI_TEXT_CHARS}). */
@@ -1523,19 +1536,35 @@ export const NODE_SERVER_STATE_CHANGING_METHODS = [
 ]
 export const REPOSITORY_CONFIG_VERSION = 1
 export const CROSS_RUNTIME_CONFIG_VERSION = 2
+/** The configuration version that declares ordered operations (`text`, `choose`, `click`) instead of prepared inputs and one action. */
+export const OPERATIONS_CONFIG_VERSION = 3
 export const CONFIGURED_STUDY_VERSION = 3
 export const CROSS_RUNTIME_STUDY_VERSION = 4
 /** The format of a repository-browser study made with the `vite-dev` adapter; an older Codebook lists it as saved by a newer one. */
 export const VITE_STUDY_VERSION = 5
 /** The format of every configured study saved since replay frames below the top keep their recorded location; an older Codebook lists it as saved by a newer one and keeps it. The kind of study still comes from its configuration. */
 export const RECORDED_LOCATION_STUDY_VERSION = 6
+/** The format of a study saved from a version 3 (ordered operations) configuration: it stores `operations[]`; an older Codebook lists it as saved by a newer one and keeps it. Studies of versions 1 and 2 keep the earlier format. */
+export const OPERATIONS_STUDY_VERSION = 7
 /** The highest study format this Codebook reads; a saved study above it is listed as saved by a newer Codebook. */
-export const READABLE_STUDY_VERSION = RECORDED_LOCATION_STUDY_VERSION
+export const READABLE_STUDY_VERSION = OPERATIONS_STUDY_VERSION
+/** The replay's operation marks closer than this many pixels stack vertically instead of overlapping. */
+export const OPERATION_MARK_STACK_PX = 24
+/** Below this webview width in pixels the operation marks show their numbers only. */
+export const OPERATION_MARK_LABELS_MIN_WIDTH_PX = 480
+/** The replay still presents an operation's moment while its presented position lies less than this many milliseconds from it: a fractional moment (250.5 ms) is presented at whole milliseconds (250 ms). */
+export const OPERATION_MOMENT_TOLERANCE_MS = 1
 export const CONFIGURED_STUDY_SUFFIX = '.study.v3.json'
 export const CONFIGURED_STUDY_METADATA_SUFFIX = '.study.meta.v3.json'
 // Highest existing version owns a logical study, including when its bytes are corrupt.
 // A change of the saved study format that an older Codebook cannot read takes the next format number and its own `.study.v<n>.json` suffix in this table; an older Codebook then lists such a study as saved by a newer one and keeps it, instead of failing on its schema.
 export const STUDY_STORAGE_FORMATS = [
+  {
+    version: OPERATIONS_STUDY_VERSION,
+    format: 'v7',
+    archiveSuffix: '.study.v7.json',
+    metadataSuffix: '.study.meta.v7.json',
+  },
   {
     version: RECORDED_LOCATION_STUDY_VERSION,
     format: 'v6',
@@ -2100,6 +2129,48 @@ export const SUMMARY_CHOICE_DROPPED_NOTICE_PREFIX =
 /** The text that replaces a secret value or a secret-named value in every captured fact, variable, snapshot, output and cause ({@link redactSecretText}). */
 export const REDACTION_MASK = '[masked]'
 
+/** What the run resource shows for a prepared text whose control is not yet resolved; a view state only, never stored or hashed ({@link redactPreparedTexts}). */
+export const PREPARED_TEXT_PENDING_MARK = '[pending]'
+
+/** The `autocomplete` tokens that make a control secret besides a password type or a secret name or id ({@link classifySecretControl}, CEO-S21). */
+export const SECRET_AUTOCOMPLETE_TOKENS: ReadonlySet<string> = new Set([
+  'current-password',
+  'new-password',
+  'one-time-code',
+  'cc-number',
+  'cc-csc',
+])
+
+/** How much page-clock time around a frame's capture the secret frame gate still treats as unsafe, so a frame captured just next to an unsafe interval is not trusted (ms). */
+export const SECRET_FRAME_MARGIN_MS = 50
+
+/** How long cleanup waits for images still queued for the secret frame gate's verdict while the page is alive (ms). */
+export const SECRET_FRAME_DRAIN_TIMEOUT_MS = 1_500
+
+/** How long the secret frame gate waits for its in-page observer to answer one verification before it calls the observer unresponsive (ms). */
+export const SECRET_FRAME_OBSERVER_TIMEOUT_MS = 2_000
+
+/** The shortest secret value the secret frame observer checks for a copy into visible text; shorter values would match ordinary text (characters). */
+export const SECRET_FRAME_VALUE_COPY_MIN_CHARS = 4
+
+/** How many document replacements in a row the secret frame gate follows before it gives up and fails the run. */
+export const SECRET_FRAME_MAX_REPLACEMENTS_IN_A_ROW = 5
+
+/** The name of the page-global record of unsafe intervals that the secret frame observer keeps. */
+export const SECRET_FRAME_OBSERVER_GLOBAL = '__codebookSecretFrameGate'
+
+/**
+ * The fewest milliseconds between two verification requests the secret frame gate sends to the page.
+ * Why 100: the screencast delivers at most about 30 images per second, and one verification answers every image captured before it was sent, so ten a second keep an image's wait for its verdict near 100 ms plus one round trip while the page and the evidence journal see 10 requests a second instead of one per image.
+ */
+export const SECRET_FRAME_MIN_VERIFICATION_INTERVAL_MS = 100
+
+/** How often the secret frame gate journals its counts of verifications, passes, drops and failures (ms); a summary is also written when the run ends. */
+export const SECRET_FRAME_SUMMARY_INTERVAL_MS = 5_000
+
+/** The `sourceURL` the run marks the secret frame gate's own page expressions with, so the script journal leaves them out. */
+export const SECRET_FRAME_SOURCE_URL = 'codebook-secret-frame-gate'
+
 /** The most characters of an incomplete trailing token or private-key block an output redactor holds back; past it the held part is released masked ({@link createOutputRedactor}). 8 KiB. */
 export const OUTPUT_REDACTION_HOLD_LIMIT_CHARS = 8_192
 
@@ -2526,3 +2597,10 @@ export const VITE_LAUNCHER_MESSAGES = {
   /** Report answering {@link VITE_LAUNCHER_MESSAGES.awaitOptimizer}: the optimizer has nothing left to process. */
   optimizerIdle: 'vite-optimizer-idle',
 } as const
+
+/**
+ * What an agent reads as the recovery when the Study placement guard refuses a presentation or an arrangement because the editor changed a group, a tab or the focus while Codebook arranged the Study.
+ * Set as the {@link StudyError.recoveryOverride} by {@link StudyWorkspace.refusePlacement}; names the two real controls (the Study pane's Restore button, the Open Study Workspace command), what was not done, and that the learner's arrangement stays as it is.
+ */
+export const PLACEMENT_REFUSED_RECOVERY =
+  'The editor changed the layout (a group, a tab or the focus) while Codebook arranged the Study, so Codebook stopped; no run was started, no application input was sent, and the learner\u2019s own tabs and groups were left as they are. Do not invent a command. Ask the learner to choose Restore Study arrangement in the Study pane, or to run Codebook: Open Study Workspace from the Command Palette, then call codebook_presentation once more with fresh identities from codebook_status. Never start or continue a run to repair the layout.'

@@ -1371,6 +1371,7 @@ test('the pre-input configured manifest retains the full accepted intent and com
   // Assert
   assert.ok(manifest)
   assert.equal(manifest.configuration.source.path, 'src/theme.ts')
+  assert.ok('action' in manifest.configuration)
   assert.equal(manifest.configuration.action.title, 'Change theme')
   assert.equal(manifest.descriptor.itemId, 'repository/interface/theme')
   assert.equal(manifest.descriptor.citationContext.anchors.length, 2)

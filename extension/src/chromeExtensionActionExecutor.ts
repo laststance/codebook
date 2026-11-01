@@ -12,6 +12,10 @@ import {
   REPOSITORY_RUN_TIMEOUT_MS,
 } from './constants'
 import { StudyError } from './errors'
+import {
+  controlReadinessSchema,
+  isSecretControl,
+} from './utils/isSecretControl'
 import { locateClickCentre } from './utils/locateClickCentre'
 import { inspectInput, selectInput } from './utils/prepareRepositoryInputs'
 import { redactSecretText } from './utils/redactSecretText'
@@ -79,12 +83,15 @@ export type ExtensionExecutorInput = {
   returnBoundMs?: number
   /** How long no stop settles the work; defaults to {@link EXTENSION_OBSERVE_SETTLE_MS}. */
   settleMs?: number
+  /** Told, after an input's control is resolved and before its text is sent, whether the text is secret; `clickIndex` and `inputIndex` are one-based like the click numbers. */
+  onInputClassified?: (
+    clickIndex: number,
+    inputIndex: number,
+    secret: boolean,
+  ) => void
 }
 
-const readySchema = z.object({
-  ready: z.boolean(),
-  reason: z.string().optional(),
-})
+const readySchema = controlReadinessSchema
 const centreSchema = z.discriminatedUnion('ready', [
   z.object({ ready: z.literal(true), x: z.number(), y: z.number() }),
   z.object({ ready: z.literal(false), reason: z.string() }),
@@ -429,6 +436,12 @@ class ClickExecution {
         focused.data?.reason,
       )
     }
+    // A control the page did not describe counts as secret: its text is masked wherever it is kept.
+    this.input.onInputClassified?.(
+      this.click.index,
+      index + 1,
+      focused.data.control ? isSecretControl(focused.data.control) : true,
+    )
   }
 
   private async insertInput(index: number, text: string): Promise<void> {

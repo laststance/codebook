@@ -29,7 +29,7 @@ const NEXT_SETUP_DEADLINE_SCOPE = `at its early steps (${NEXT_SETUP_STEPS.starti
  * Served before both quick starts, so an agent reads it before either.
  */
 export const REPOSITORY_BROWSER_START_HERE =
-  'Read codebook_status first: profiles[].prerequisites.adapters names the adapter that is ready for this workspace, and the next-dev-webpack readiness names routerKind (app, pages, both or none); then read the matching section of this help, nextQuickStart for a Next app (App Router or Pages Router) or viteQuickStart for a Vite app.'
+  'Read codebook_status first: profiles[].prerequisites.adapters names the adapter that is ready for this workspace, and the next-dev-webpack readiness names routerKind (app, pages, both or none); then read the matching section of this help, nextQuickStart for a Next app (App Router or Pages Router) or viteQuickStart for a Vite app. For a flow of several steps (type, choose an option, click) or a secret typed by the learner, read operationsQuickStart (configuration version 3) after it.'
 
 /**
  * A minimal valid `next-dev-webpack` configuration, generic on purpose: every identity and hash is a placeholder the agent replaces with the value the step named in {@link NEXT_QUICK_START_COPY_FROM} returned.
