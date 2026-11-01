@@ -110,6 +110,7 @@ import {
   type HostConfiguration,
 } from './runtimeSupport/hostBrowser'
 import { PauseGate, type PauseIdentity } from './runtimeSupport/pauseGate'
+import { SecretFrameGate } from './runtimeSupport/secretFrameGate'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { isStopCausedByCodebook } from './runtimeSupport/utils/isStopCausedByCodebook'
 import { settleCleanup } from './runtimeSupport/utils/settleCleanup'
@@ -132,6 +133,7 @@ import {
   type BreakLocationsOnTheWay,
   type MappedBreakLocation,
 } from './utils/breakLocationLinesOnTheWay'
+import { canonicalDefinition } from './utils/canonicalDefinition'
 import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
 import { causeRootsFor } from './utils/causeRootsFor'
 import {
@@ -209,6 +211,8 @@ import { readNextServerOnlyReason } from './utils/readNextServerOnlyReason'
 import { readPagesDevelopmentBundle } from './utils/readPagesDevelopmentBundle'
 import { readNextInstallation } from './utils/readRepositoryAdapterReadiness'
 import { redactNextEntryPath } from './utils/redactNextEntryPath'
+import { redactPreparedConfiguration } from './utils/redactPreparedConfiguration'
+import type { PreparedTextState } from './utils/redactPreparedTexts'
 import { resolveArmedPlace } from './utils/resolveArmedPlace'
 import {
   resolveNextPagesEntry,
@@ -568,7 +572,31 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private sealedGeneration = 0
   private preparation?: Promise<void>
   private cleanupPromise?: Promise<void>
-  private manifest?: ConfiguredRuntimeView['manifest']
+  /** The sealed part of the manifest; the configuration and its hash are added by {@link currentManifest} from the redacted form. */
+  private sealedManifest?: Omit<
+    NonNullable<ConfiguredRuntimeView['manifest']>,
+    'hash' | 'configuration' | 'configurationHash'
+  >
+  /**
+   * Gate every stored image passes once a secret operation was sent (ENG-5). Inert until the operation engine arms it; its failure fails the run with `SECRET_BECAME_VISIBLE`.
+   */
+  readonly secretFrameGate = new SecretFrameGate({
+    evaluate: async (expression, timeoutMs) => {
+      const answer = await this.requireCdp().request(
+        'Runtime.evaluate',
+        { expression, returnByValue: true },
+        timeoutMs,
+      )
+      return answer.result.value
+    },
+    onFailure: (reason) =>
+      this.fail(
+        `SECRET_BECAME_VISIBLE: The control that received a secret stopped being a safe password control (${reason}); Codebook stopped recording and kept no image from that time.`,
+      ),
+    onDrop: (detail) => this.evidence.record('secret-frame.dropped', detail),
+  })
+  /** Where each prepared text stands; the real texts never leave {@link definition}'s memory. */
+  private readonly preparedStates: PreparedTextState[] = []
   private continuation?: Continuation
   private acceptedStop = false
   private stopIndex = 0
@@ -752,6 +780,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       (reason) => this.fail(reason),
       options.createViewport,
     )
+    this.browser.setSecretFrameGate(this.secretFrameGate)
     options.control?.signal.addEventListener('abort', this.cancel, {
       once: true,
     })
@@ -972,6 +1001,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         inserting: (inFlight) => {
           this.inputInFlight = inFlight
         },
+        classified: (index, secret) => {
+          // Fixed before the text is sent, so no later write holds a secret text.
+          this.preparedStates[index] = secret ? 'secret' : 'plain'
+        },
       },
     )
     this.pendingInputSelector = undefined
@@ -1122,9 +1155,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const first = this.stops[0]!
     const { itemId, bookTitle, nodeTitle, anchors, citationContext } =
       this.definition.descriptor
-    const bound = {
-      configurationHash: this.definition.configurationHash,
-      configuration: this.definition.configuration,
+    this.sealedManifest = {
       descriptor: { itemId, bookTitle, nodeTitle, anchors, citationContext },
       itemId,
       sourceHash: first.verifier.hashes.typescript,
@@ -1133,7 +1164,6 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       // Only a Vite run names its version, so a Next manifest and its hash are what they were.
       ...(this.viteVersion ? { viteVersion: this.viteVersion } : {}),
     }
-    this.manifest = { ...bound, hash: sha256(JSON.stringify(bound)) }
     // Later stops are armed only in their turn, so a line that can never bind is refused here, before any application effect.
     const unmappedStop = this.unbindableStop()
     if (unmappedStop)
@@ -7835,6 +7865,64 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * The canonical redacted configuration and its hash: every prepared text not resolved as plain is masked (ENG-3).
+   * Called by {@link servedDefinition} and {@link currentManifest}; the hash is the existing configuration hash over this form.
+   * @returns The configuration and its SHA-256.
+   * @example
+   * this.canonicalConfiguration().hash // => the hash a saved study carries
+   */
+  private canonicalConfiguration(): {
+    configuration: ConfiguredDefinition['configuration']
+    hash: string
+  } {
+    const canonical = canonicalDefinition(this.definition, this.preparedStates)
+    return {
+      configuration: canonical.configuration,
+      hash: canonical.configurationHash,
+    }
+  }
+  /**
+   * The definition the run resource and `runtime.json` show: prepared texts as `[pending]`, masked or plain, with the canonical hash.
+   * `[pending]` is a view state only; it is in no hashed form.
+   * @example
+   * this.servedDefinition().configuration.initialInputs?.[0]?.text // => '[pending]' before the control is resolved
+   */
+  private servedDefinition(): ConfiguredDefinition {
+    if (this.definition.configuration.initialInputs === undefined)
+      return this.definition
+    return {
+      ...this.definition,
+      configuration: redactPreparedConfiguration(
+        this.definition.configuration,
+        this.preparedStates,
+        'view',
+      ),
+      configurationHash: this.canonicalConfiguration().hash,
+    }
+  }
+  /**
+   * The manifest the run resource serves: the sealed fields with the canonical configuration, rebuilt as prepared texts are resolved.
+   * @returns The manifest, or `undefined` before the stops are sealed.
+   * @example
+   * this.currentManifest()?.configuration.initialInputs?.[0]?.text // => '[pending]' before apply, '[masked]' after a secret
+   */
+  private currentManifest(): ConfiguredRuntimeView['manifest'] {
+    if (!this.sealedManifest) return undefined
+    const canonical = this.canonicalConfiguration()
+    const bound = {
+      configurationHash: canonical.hash,
+      configuration: canonical.configuration,
+      ...this.sealedManifest,
+    }
+    return {
+      ...bound,
+      // The served configuration shows the pending mark; the hash is over the canonical form.
+      configuration: this.servedDefinition().configuration,
+      hash: sha256(JSON.stringify(bound)),
+    }
+  }
+
+  /**
    * Polls the declared DOM conditions without repeating application input; setup ({@link prepareOwned}) and after verification ({@link observeAfter}) call it.
    * Once they hold, a text condition that held on one of several elements is journaled ({@link journalTextReadings}).
    * @param phase - Whether the conditions guard the input or prove the result.
@@ -7927,11 +8015,19 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.captures[phase] = { status: 'pending' }
     this.evidence.record('capture.requested', { phase, pause })
     try {
+      const requestedAtMs = Date.now()
       const result = await this.requireCdp().request(
         'Page.captureScreenshot',
         { format: 'png' },
         CAPTURE_TIMEOUT_MS,
       )
+      current()
+      // A stop screenshot keeps no pixel from a window the secret gate cannot call safe.
+      if (
+        (await this.secretFrameGate.admitCapture(requestedAtMs, Date.now())) ===
+        'drop'
+      )
+        throw new Error('Image withheld: a secret control was not safe to draw')
       current()
       const bytes = Buffer.from(result.data, 'base64'),
         hash = sha256(bytes)
@@ -8085,8 +8181,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     return {
       runId: this.id,
       profile: REPOSITORY_BROWSER_PROFILE,
-      definition: this.definition,
-      manifest: this.manifest,
+      definition: this.servedDefinition(),
+      preparedTextStates: [...this.preparedStates],
+      manifest: this.currentManifest(),
       applicationOrigin: this.origin,
       applicationPortSource: this.portSource,
       viteVersion: this.viteVersion,
@@ -8458,7 +8555,6 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private async persist(): Promise<void> {
     await this.evidence.save('runtime.json', {
       ...this.view(),
-      definition: this.definition,
       host: this.options.host,
     })
     await this.evidence.flush()

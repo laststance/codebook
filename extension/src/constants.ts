@@ -2115,6 +2115,30 @@ export const SUMMARY_CHOICE_DROPPED_NOTICE_PREFIX =
 /** The text that replaces a secret value or a secret-named value in every captured fact, variable, snapshot, output and cause ({@link redactSecretText}). */
 export const REDACTION_MASK = '[masked]'
 
+/** What the run resource shows for a prepared text whose control is not yet resolved; a view state only, never stored or hashed ({@link redactPreparedTexts}). */
+export const PREPARED_TEXT_PENDING_MARK = '[pending]'
+
+/** The `autocomplete` tokens that make a control secret besides a password type or a secret name or id ({@link classifySecretControl}, CEO-S21). */
+export const SECRET_AUTOCOMPLETE_TOKENS: ReadonlySet<string> = new Set([
+  'current-password',
+  'new-password',
+  'one-time-code',
+  'cc-number',
+  'cc-csc',
+])
+
+/** How much page-clock time around a frame's capture the secret frame gate still treats as unsafe, so a frame captured just next to an unsafe interval is not trusted (ms). */
+export const SECRET_FRAME_MARGIN_MS = 50
+
+/** How long the secret frame gate waits for its in-page observer to answer one verification before it calls the observer unresponsive (ms). */
+export const SECRET_FRAME_OBSERVER_TIMEOUT_MS = 2_000
+
+/** The shortest secret value the secret frame observer checks for a copy into visible text; shorter values would match ordinary text (characters). */
+export const SECRET_FRAME_VALUE_COPY_MIN_CHARS = 4
+
+/** The name of the page-global record of unsafe intervals that the secret frame observer keeps. */
+export const SECRET_FRAME_OBSERVER_GLOBAL = '__codebookSecretFrameGate'
+
 /** The most characters of an incomplete trailing token or private-key block an output redactor holds back; past it the held part is released masked ({@link createOutputRedactor}). 8 KiB. */
 export const OUTPUT_REDACTION_HOLD_LIMIT_CHARS = 8_192
 

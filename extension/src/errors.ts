@@ -193,6 +193,8 @@ export const ERROR_RECOVERY = {
     "Audience: chat. Operation <n> was sent, but its result could not be confirmed. Changes the app made are not undone. Read the run's operation record and save the partial replay if useful. Do not run the flow again unless the learner asks. See codebook://help/repository-browser#OPERATION_AFTER_NOT_MET.",
   RUN_FAILED_UNEXPECTEDLY:
     "Audience: chat. An operation failed in a way Codebook did not expect; the error carries a log id that matches one line in Output > Codebook. Tell the learner the log id, read the run's operation record to see how far the flow got, and start a new run only if the learner asks. Recovery: ask the learner. Side effects: unknown. See codebook://help/repository-browser#RUN_FAILED_UNEXPECTEDLY.",
+  SECRET_BECAME_VISIBLE:
+    'Audience: chat. Tell the learner the control that received a secret stopped being a password control, so Codebook stopped recording and kept no frame of it. Start one new run only if the learner asks. Recovery: new run, at most one. Side effects: the secret was typed. See codebook://help/repository-browser#SECRET_BECAME_VISIBLE.',
   PLAYBACK_PROFILE_UNSUPPORTED:
     'codebook_playback controls browser recordings only. Do not start, continue or stop a run to open a test replay; ask the learner to open it.',
 } as const

@@ -45,6 +45,7 @@ import type {
   ProfileLeft,
 } from './runtimeSupport/hostBrowser'
 import type { PauseIdentity, PauseGate } from './runtimeSupport/pauseGate'
+import type { SecretFrameGate } from './runtimeSupport/secretFrameGate'
 import type { StateChangingRequestQuestion } from './utils/askToSendStateChangingRequest'
 import type {
   RetryVitestListingRelease,
@@ -52,6 +53,7 @@ import type {
 } from './utils/listVitestTestFiles'
 import type { NodeTestExecutionPlan } from './utils/planNodeTestExecution'
 import type { RepositoryAdapterReadiness } from './utils/readRepositoryAdapterReadiness'
+import type { PreparedTextState } from './utils/redactPreparedTexts'
 import type { CauseRoots } from './utils/sanitizeCause'
 import type { NodeTestVitestSearch } from './utils/searchRepositoryVitest'
 
@@ -267,6 +269,8 @@ export type ChromeExtensionOutputLine = {
 /** What a chrome-extension run shows the service: the run resource's `chromeExtension` block and `claimable` come from it (SR17, CR5, CR9, CR10, ER16, DXR7). */
 export type ChromeExtensionView = {
   phase: ChromeExtensionPhase
+  /** How far each click's prepared input texts were resolved (`secret` or `plain` once typed), by click then input; the texts are never in the view. */
+  inputStates?: PreparedTextState[][]
   /** Set once `starting` resolved the configuration; absent while the run is still resolving it or when it refused before. */
   extension?: {
     id: string
@@ -355,6 +359,8 @@ export type ChromeExtensionRunInput = {
   ) => Promise<ChromeExtensionHistorySink | undefined>
   /** Why no history started, once `beginHistory` resolved to `undefined`; the Application view's header words it as `Not recorded · <reason>`. */
   historyUnavailable?: () => string | undefined
+  /** The gate a pause screenshot passes once a secret input was sent; absent → every screenshot is kept. */
+  secretFrameGate?: SecretFrameGate
 }
 
 export type ConfiguredRuntimeSnapshot = Omit<
@@ -451,6 +457,8 @@ export type ConfiguredRuntimeView = {
   activeSessionIds: string[]
   profile: typeof REPOSITORY_BROWSER_PROFILE
   definition: ConfiguredDefinition
+  /** How far the run resolved each `initialInputs` text (`pending`, `secret` or `plain`); the texts themselves are never in the view. A view without it counts every text as unresolved. */
+  preparedTextStates?: PreparedTextState[]
   manifest?: {
     hash: string
     configurationHash: string

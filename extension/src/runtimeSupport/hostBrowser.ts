@@ -37,6 +37,7 @@ import {
   type Scenario,
 } from './constants'
 import { CursorCdpBridge } from './cursorCdpBridge'
+import type { SecretFrameGate } from './secretFrameGate'
 import { awaitResponse } from './utils/awaitResponse'
 import { managedProfileRoot } from './utils/managedProfileRoot'
 import { profileProcesses } from './utils/profileProcesses'
@@ -205,6 +206,7 @@ export class HostBrowser {
   private managedProfileRemoved = false
   private leftProfile?: ProfileLeft
   private viewport?: BrowserViewport
+  private secretFrameGate?: SecretFrameGate
   /** The sweep of the profile folders a killed editor left, started by a managed {@link launch} without waiting for it ({@link startAbandonedProfileSweep}) and awaited by {@link close} for at most {@link ABANDONED_PROFILE_SWEEP_CLOSE_WAIT_MS}; it never rejects, and none is started once the browser is closing. */
   private abandonedProfileSweep?: Promise<void>
   /** Set once {@link close} stopped waiting for a sweep that was still running: the run's journal is complete then, and the sweep's later result is not journaled. */
@@ -574,7 +576,19 @@ export class HostBrowser {
       'browser.runtime-version',
       await cdp.request('Browser.getVersion', undefined),
     )
+    if (this.secretFrameGate)
+      this.viewport.setSecretFrameGate(this.secretFrameGate)
     await this.viewport.attach(cdp, signal)
+  }
+
+  /**
+   * Sets the gate the owned viewport's frames pass once a secret was sent; it takes effect when the viewport attaches.
+   * Called by {@link ConfiguredBrowserRun} before it attaches the viewport.
+   * @param gate - The run's {@link SecretFrameGate}.
+   * @example browser.setSecretFrameGate(gate)
+   */
+  setSecretFrameGate(gate: SecretFrameGate): void {
+    this.secretFrameGate = gate
   }
 
   /** Connects immutable captured pixels to an exact renderer acknowledgement in managed mode. @example await browser.presentCapture(png, 'paused-1') */

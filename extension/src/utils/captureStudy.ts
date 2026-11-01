@@ -12,6 +12,7 @@ import type { StudyRecord, StudyService } from '../service'
 
 import { decodeRetainedStudy } from './decodeRetainedStudy'
 import { describeStudy } from './describeStudy'
+import { redactPreparedConfiguration } from './redactPreparedConfiguration'
 
 /** Copies only committed canonical evidence for {@link StudyWorkspace}; a changed read is discarded. @example await captureStudy(service, record, workspaceKey) */
 export async function captureStudy(
@@ -176,12 +177,18 @@ export async function captureStudy(
     explanationId: summaryExplanation.id,
     createdAt: summaryExplanation.createdAt,
   }
+  // The saved study carries the canonical redacted configuration (secret and unresolved prepared texts masked), never the declared texts.
+  const canonicalConfiguration = redactPreparedConfiguration(
+    record.configuration,
+    runtime?.preparedTextStates ?? [],
+    'canonical',
+  )
   const configured =
     record.profile === REPOSITORY_BROWSER_PROFILE
       ? {
           version: RECORDED_LOCATION_STUDY_VERSION,
-          configuration: record.configuration,
-          configurationHash: sha256(JSON.stringify(record.configuration)),
+          configuration: canonicalConfiguration,
+          configurationHash: sha256(JSON.stringify(canonicalConfiguration)),
           descriptor: record.definition?.descriptor,
           // A Vite study names the Vite it ran on; a Next study carries no such field.
           ...(runtime?.profile === REPOSITORY_BROWSER_PROFILE &&

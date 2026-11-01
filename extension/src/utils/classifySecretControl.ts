@@ -1,13 +1,6 @@
-import { isSecretName } from './isSecretName'
+import { SECRET_AUTOCOMPLETE_TOKENS } from '../constants'
 
-/** The `autocomplete` tokens that mark a control as holding a secret, besides its type and its name or id (CEO-S21). */
-const SECRET_AUTOCOMPLETE_TOKENS: ReadonlySet<string> = new Set([
-  'current-password',
-  'new-password',
-  'one-time-code',
-  'cc-number',
-  'cc-csc',
-])
+import { isSecretName } from './isSecretName'
 
 /** What {@link classifySecretControl} reads of a control: the attributes the owned page reports, never its value. */
 export type SecretControlAttributes = {

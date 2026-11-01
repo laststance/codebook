@@ -3,9 +3,20 @@ import { z } from 'zod'
 import type { RepositoryConfiguration } from '../repositoryConfigSchemas'
 import type { Cdp } from '../runtimeSupport/cdp'
 
+import { isSecretControl, type ControlIdentity } from './isSecretControl'
+
 const resultSchema = z.object({
   ready: z.boolean(),
   reason: z.string().optional(),
+  /** The resolved control's identity, reported by the focus phase so its text can be classified before it is sent. */
+  control: z
+    .object({
+      type: z.string().optional(),
+      name: z.string().optional(),
+      id: z.string().optional(),
+      autocomplete: z.string().optional(),
+    })
+    .optional(),
 })
 
 /** What {@link prepareRepositoryInputs} reports while it writes, so a setup deadline can name the input and say whether its text may already be in the page. */
@@ -16,6 +27,8 @@ export type RepositoryInputProgress = {
   inserting(inFlight: boolean): void
   /** The last look at the resolved control, after it took the focus and before any text is sent; throwing here sends nothing. Receives the control's remote object id. */
   beforeInsert?(objectId: string): Promise<void> | void
+  /** Told, after the control is resolved and before its text is sent, whether the text is secret; `index` is the input's place in the declaration. */
+  classified?(index: number, secret: boolean): void
 }
 
 /** Prepares declared text controls on the owned page before its learning breakpoint is armed; uncertain inserts are never retried. @param progress - Told which input is being written and whether its text is in flight, for the setup-deadline text of a Next Pages run; optional. @example await prepareRepositoryInputs(cdp, inputs, origins, assertCurrent) */
@@ -34,6 +47,7 @@ export async function prepareRepositoryInputs(
       assertCurrent,
       `Input ${index + 1}`,
       progress,
+      index,
     )
 }
 
@@ -45,7 +59,8 @@ export async function prepareRepositoryInputs(
  * @param origins - The loopback origins the page may be at.
  * @param assertCurrent - Throws when the run is no longer alive; called between the steps.
  * @param label - How a failure names the input (`Input 2`, `Operation 3`).
- * @param progress - Told which input is being written, whether its text is in flight, and, through `beforeInsert`, offered the last look at the resolved control before any text is sent.
+ * @param progress - Told which input is being written, whether its text is in flight and whether it is secret, and, through `beforeInsert`, offered the last look at the resolved control before any text is sent.
+ * @param index - The input's place in its declaration, passed to `progress.classified`.
  * @throws When the control is not unique, not editable or obscured, when the text did not land, and what `beforeInsert` throws; the failure names `label` and the step (`focus` or `verify`).
  * @example await writeTextInput(cdp, { selector: '#email', text: 'a@b.c' }, origins, assertCurrent, 'Input 1')
  */
@@ -56,6 +71,7 @@ export async function writeTextInput(
   assertCurrent: () => void,
   label: string,
   progress?: RepositoryInputProgress,
+  index = 0,
 ): Promise<void> {
   assertCurrent()
   progress?.started(input.selector)
@@ -72,7 +88,9 @@ export async function writeTextInput(
       !objectId
     )
       throw new Error(`${label} has no unique owned target.`)
-    const inspect = async (phase: 'focus' | 'verify'): Promise<void> => {
+    const inspect = async (
+      phase: 'focus' | 'verify',
+    ): Promise<ControlIdentity | undefined> => {
       assertCurrent()
       const result = await cdp.request('Runtime.callFunctionOn', {
         objectId,
@@ -86,9 +104,12 @@ export async function writeTextInput(
         throw new Error(
           `${label} ${phase} failed: ${parsed.success ? (parsed.data.reason ?? 'unavailable') : 'invalid response'}`,
         )
+      return parsed.data.control
     }
-    await inspect('focus')
+    const control = await inspect('focus')
     assertCurrent()
+    // A control the page did not describe is treated as secret: the text is masked wherever it is kept.
+    progress?.classified?.(index, control ? isSecretControl(control) : true)
     await progress?.beforeInsert?.(objectId)
     assertCurrent()
     progress?.inserting(true)
@@ -169,5 +190,11 @@ export function inspectInput(
   return {
     ready: document.activeElement === element,
     reason: 'input-focus-changed',
+    control: {
+      type: element instanceof HTMLInputElement ? element.type : 'textarea',
+      name: element.getAttribute('name') ?? undefined,
+      id: element.getAttribute('id') ?? undefined,
+      autocomplete: element.getAttribute('autocomplete') ?? undefined,
+    },
   }
 }

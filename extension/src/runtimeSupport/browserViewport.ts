@@ -20,6 +20,7 @@ import {
   type Scenario,
 } from './constants'
 import { FrameDelivery, type ViewFrame } from './frameDelivery'
+import type { SecretFrameGate } from './secretFrameGate'
 import { awaitResponse } from './utils/awaitResponse'
 import { cssSizeOf } from './utils/cssSizeOf'
 import { isStackFrameItem } from './utils/isStackFrameItem'
@@ -179,6 +180,9 @@ export class BrowserViewport {
   private lastFrameAtMs?: number
   private readonly listeners: vscode.Disposable[] = []
   private observerFailed = false
+  private secretFrameGate?: SecretFrameGate
+  /** The chain of frames waiting on the secret frame gate; absent until the gate was used. */
+  private gatedFrames?: Promise<void>
   private observerClosed = false
   private summaryAt = 0
   private readonly liveCounts = new Map<string, number>()
@@ -371,14 +375,7 @@ export class BrowserViewport {
         .catch((error) =>
           this.record('viewport.stream-ack-failed', { error: String(error) }),
         )
-      this.observe(() =>
-        this.observer!.frame({
-          data: frame.data,
-          elapsedMs: this.observer!.elapsedMs(),
-          kind: 'stream',
-          browserTimestamp: frame.metadata.timestamp,
-        }),
-      )
+      this.deliverStreamFrame(frame.data, frame.metadata.timestamp)
       this.latestLive = {
         data: frame.data,
         hash: sha256(Buffer.from(frame.data, 'base64')),
@@ -1081,6 +1078,59 @@ export class BrowserViewport {
         error: String(error),
       }),
     )
+  }
+
+  /**
+   * Sets the gate that every stored image of this viewport passes once a secret was sent; until it is armed every frame passes.
+   * Called by {@link HostBrowser} and the extension run's viewport owner when the run creates its gate.
+   * @param gate - The run's {@link SecretFrameGate}.
+   * @example viewport.setSecretFrameGate(gate)
+   */
+  setSecretFrameGate(gate: SecretFrameGate): void {
+    this.secretFrameGate = gate
+  }
+
+  /**
+   * Hands one screencast frame to the recording observer, through the secret frame gate when it is armed.
+   * Frames are verified one after another so the recording keeps its order; a dropped frame is simply absent, which the recorder reads as an unrecorded gap.
+   * @param data - The frame's base64 image.
+   * @param browserTimestamp - The frame's capture time in seconds since the epoch, as the browser reports it.
+   * @example this.deliverStreamFrame(frame.data, frame.metadata.timestamp)
+   */
+  private deliverStreamFrame(data: string, browserTimestamp?: number): void {
+    const deliver = (): void =>
+      this.observe(() =>
+        this.observer!.frame({
+          data,
+          elapsedMs: this.observer!.elapsedMs(),
+          kind: 'stream',
+          browserTimestamp,
+        }),
+      )
+    const gate = this.secretFrameGate
+    if (!gate?.armed) {
+      // Frames still waiting on the gate keep their place before this one.
+      if (this.gatedFrames) this.gatedFrames = this.gatedFrames.then(deliver)
+      else deliver()
+      return
+    }
+    const capturedAtMs = (browserTimestamp ?? Date.now() / 1000) * 1000
+    // Verification can take a round trip, so the elapsed time is read when the frame arrives, not when it passes.
+    const elapsedMs = this.observer?.elapsedMs() ?? 0
+    this.gatedFrames = (this.gatedFrames ?? Promise.resolve())
+      .then(() => gate.admitFrame(capturedAtMs))
+      .then((verdict) => {
+        if (verdict === 'pass' && !this.closed)
+          this.observe(() =>
+            this.observer!.frame({
+              data,
+              elapsedMs,
+              kind: 'stream',
+              browserTimestamp,
+            }),
+          )
+      })
+      .catch(() => undefined)
   }
 
   /** Contains optional recorder exceptions so no failed observer can prevent input, rendering or cleanup. @example this.observe(() => observer.frame(frame)) */

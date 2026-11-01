@@ -134,6 +134,7 @@ import {
 } from './schemas'
 import type { StudyWorkspace } from './studyWorkspace'
 import { buildRecordingContext } from './utils/buildRecordingContext'
+import { canonicalDefinition } from './utils/canonicalDefinition'
 import { causeRootsFor } from './utils/causeRootsFor'
 import { configuredStops } from './utils/configuredStops'
 import { createChromeExtensionJournal } from './utils/createChromeExtensionJournal'
@@ -195,10 +196,12 @@ import {
 } from './utils/projectNodeTestOutcome'
 import { readerNotFollowingRunRefusal } from './utils/readerNotFollowingRunRefusal'
 import type { RepositoryAdapterReadiness } from './utils/readRepositoryAdapterReadiness'
+import { redactExtensionInputs } from './utils/redactExtensionInputs'
 import { refusalFailureOf } from './utils/refusalFailureOf'
 import { releaseVitestListings } from './utils/releaseVitestListings'
 import { repositoryBrowserStartPrerequisites } from './utils/repositoryBrowserStartPrerequisites'
 import { resolveCapturedFactPaths } from './utils/resolveCapturedFactPaths'
+import { sameAcceptedDefinition } from './utils/sameAcceptedDefinition'
 import {
   createRootHider,
   sanitizeCause,
@@ -2364,8 +2367,9 @@ export class StudyService {
         runtime?.finalOutcome !== 'demonstrated' ||
         !runtime.operation?.afterVerified ||
         !runtime.operation.inputAcknowledged ||
+        !record.definition ||
         step.reference.configurationHash !==
-          record.definition?.configurationHash ||
+          this.canonicalConfigurationHash(record, record.definition) ||
         runtime.captures.after?.status !== 'captured' ||
         step.reference.captureHash !== runtime.captures.after.renderer?.hash
       )
@@ -2978,6 +2982,24 @@ export class StudyService {
       'INVALID_REFERENCE',
       'Snapshot is absent, uncommitted, or belongs to another run.',
     )
+  }
+
+  /**
+   * The configuration hash a run resource and a terminal reference carry: the existing hash over the canonical redacted configuration (ENG-3).
+   * @param record - A repository-browser run.
+   * @param definition - Its accepted definition.
+   * @returns The hash.
+   * @example
+   * this.canonicalConfigurationHash(record) // => the hash a saved study of this run carries
+   */
+  private canonicalConfigurationHash(
+    record: StudyRecord,
+    definition: NonNullable<StudyRecord['definition']>,
+  ): string {
+    return canonicalDefinition(
+      definition,
+      record.runtime?.view().preparedTextStates,
+    ).configurationHash
   }
 
   /**
@@ -3648,7 +3670,8 @@ export class StudyService {
         runtime?.manifest?.hash ?? record.nodePrepared?.configurationHash,
       configurationHash:
         record.profile === REPOSITORY_BROWSER_PROFILE
-          ? record.definition?.configurationHash
+          ? record.definition &&
+            this.canonicalConfigurationHash(record, record.definition)
           : undefined,
       itemId:
         record.profile === REPOSITORY_BROWSER_PROFILE
@@ -3727,7 +3750,10 @@ export class StudyService {
         record.definition
           ? {
               kind: 'terminal' as const,
-              configurationHash: record.definition.configurationHash,
+              configurationHash: this.canonicalConfigurationHash(
+                record,
+                record.definition,
+              ),
               captureHash: runtime.captures.after.renderer.hash,
             }
           : undefined,
@@ -3930,6 +3956,35 @@ export class StudyService {
   }
 
   /**
+   * The declaration and hash a chrome-extension run's manifest resource serves: click input texts shown as `[pending]` until typed, masked when secret, with the hash over the canonical redacted form.
+   * Called by {@link chromeExtensionMaterial} and the manifest resource.
+   * @param record - A chrome-extension run whose declaration is prepared.
+   * @returns The served configuration and its hash, or `undefined` before the declaration is prepared.
+   * @example
+   * service.extensionManifestFields(record)?.configuration.clicks[0]?.inputs?.[0]?.text // => '[masked]' for a password
+   */
+  extensionManifestFields(record: {
+    chromeExtension?: ChromeExtensionStudyRecord['chromeExtension']
+  }) {
+    const prepared = record.chromeExtension?.prepared
+    if (!prepared) return undefined
+    const states = record.chromeExtension?.run?.view().inputStates ?? []
+    const canonical = redactExtensionInputs(
+      prepared.configuration,
+      states,
+      'canonical',
+    )
+    return {
+      configuration: redactExtensionInputs(
+        prepared.configuration,
+        states,
+        'view',
+      ),
+      configurationHash: sha256(JSON.stringify(canonical)),
+    }
+  }
+
+  /**
    * Gives the fields of the run resource that a chrome-extension run replaces: its state, its `chromeExtension` block, `claimable`, the manifest it freezes and its failure; read by {@link StudyService.state}.
    * @param record - The chrome-extension run.
    * @param extension - Its projection ({@link projectChromeExtensionState}).
@@ -3941,6 +3996,7 @@ export class StudyService {
     extension: ReturnType<typeof projectChromeExtensionState>,
   ) {
     const prepared = record.chromeExtension.prepared
+    const manifestFields = this.extensionManifestFields(record)
     const view = record.chromeExtension.run?.view()
     return {
       state: extension.state,
@@ -3953,7 +4009,7 @@ export class StudyService {
       runtimeRunId: record.chromeExtension.run?.id,
       chromeExtension: extension.chromeExtension && {
         ...extension.chromeExtension,
-        configurationHash: prepared?.configurationHash,
+        configurationHash: manifestFields?.configurationHash,
         ...projectChromeExtensionHistory({
           recorder: record.chromeExtension.history,
           unavailable: record.chromeExtension.historyUnavailable,
@@ -3962,7 +4018,7 @@ export class StudyService {
       },
       claimable: extension.claimable,
       manifestUri: prepared ? this.uri(record.id, 'manifest') : undefined,
-      manifestHash: prepared?.configurationHash,
+      manifestHash: manifestFields?.configurationHash,
       // A run that failed shows its failure even before the service adopted it.
       error:
         record.error?.describe() ??
@@ -4592,7 +4648,7 @@ export class StudyService {
         const acquired = record.runtime.view()
         if (
           acquired.profile !== record.profile ||
-          JSON.stringify(acquired.definition) !== JSON.stringify(definition)
+          !sameAcceptedDefinition(acquired.definition, definition)
         )
           throw new StudyError(
             'RUNTIME_FAILED',

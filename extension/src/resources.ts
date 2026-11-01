@@ -458,8 +458,9 @@ export async function readResource(
         service.uri(record.id, 'manifest'),
         {
           profile: CHROME_EXTENSION_PROFILE,
-          configurationHash: record.chromeExtension.prepared.configurationHash,
-          configuration: record.chromeExtension.prepared.configuration,
+          configurationHash:
+            service.extensionManifestFields(record)?.configurationHash,
+          configuration: service.extensionManifestFields(record)?.configuration,
         },
         manifestPage
           ? `pages/${manifestPage[1]}/${manifestPage[2]}`
