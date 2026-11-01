@@ -2,15 +2,26 @@
 export const SAVED_PROFILE_PLACEHOLDER = '<saved-session>'
 
 /**
+ * A `--user-data-dir` value that no known spelling of the folder covered: a quoted value whole, else every word up to the next `--` switch, the line's end or a quote. A value already hidden (also in quotes) is left as it is.
+ * Why the words after a space: the saved folder lies below "Application Support" on macOS, so a value cut at its first space would leave the rest of the path, with the repository's hash, in the text.
+ */
+const UNKNOWN_USER_DATA_DIR = new RegExp(
+  String.raw`(--?user-data-dir=)(?!["']?${SAVED_PROFILE_PLACEHOLDER})(?:"[^"\r\n]*"?|'[^'\r\n]*'?|[^\s"']+(?:[ \t]+(?!--)[^\s"']+)*)`,
+  'g',
+)
+
+/**
  * Replaces every spelling of a saved-session folder in a text, so no journal record, error or Output line names where the learner's saved session lives.
  *
  * Why it exists: the folder's path holds the repository hash and the user's home, and Chrome's command line carries it as `--user-data-dir`. Called by {@link HostBrowser} for each journal record and error text of a run that opened a saved profile.
- * The folder is replaced as a whole (a path with a space stays one piece); a `--user-data-dir=` value that is left is cut to its switch, so a spelling the caller did not know (a `/private` prefix on macOS) does not survive either.
+ * The folder is replaced as a whole (a path with a space stays one piece); a `--user-data-dir=` value that is left is cut to its switch, up to the next `--` switch or the end of its quotes or line, so a spelling the caller did not know (a `/private` prefix, another case on a case-insensitive volume) does not survive either, also when it holds a space.
  * @param text - The text to clean.
  * @param folders - The folder's spellings: the lease's path and its real path.
  * @returns The text with the folder replaced by {@link SAVED_PROFILE_PLACEHOLDER}.
  * @example
  * hideSavedProfilePath('chrome --user-data-dir=/Users/a b/x/sign-in-profiles/9f2 --headless=new', ['/Users/a b/x/sign-in-profiles/9f2'])
+ * // => 'chrome --user-data-dir=<saved-session> --headless=new'
+ * hideSavedProfilePath('chrome --user-data-dir=/users/a b/x/sign-in-profiles/9f2 --headless=new', ['/Users/a b/x/sign-in-profiles/9f2'])
  * // => 'chrome --user-data-dir=<saved-session> --headless=new'
  */
 export function hideSavedProfilePath(
@@ -24,8 +35,5 @@ export function hideSavedProfilePath(
   let hidden = text
   for (const folder of ordered)
     hidden = hidden.split(folder).join(SAVED_PROFILE_PLACEHOLDER)
-  return hidden.replace(
-    /(--?user-data-dir=)(?!<saved-session>)[^\s"']+/g,
-    `$1${SAVED_PROFILE_PLACEHOLDER}`,
-  )
+  return hidden.replace(UNKNOWN_USER_DATA_DIR, `$1${SAVED_PROFILE_PLACEHOLDER}`)
 }

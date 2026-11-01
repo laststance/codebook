@@ -215,6 +215,27 @@ test('every spelling of the saved folder is replaced in a command line, also wit
   )
 })
 
+// Value: protects=R8 path hiding for a spelling the run did not know; fails_when=a --user-data-dir value in another case (a case-insensitive volume) is cut at its first space and the rest of the path, with the repository hash, stays, or a quoted value stays whole; no_claim=a spelling outside the --user-data-dir switch (the known spellings cover those)
+test('a saved folder named in an unknown spelling with a space is hidden up to the next switch, also in quotes', () => {
+  // Arrange
+  const folder =
+    '/Users/ada/Library/Application Support/Code/sign-in-profiles/h1'
+  const otherCase =
+    '/users/ada/library/application support/code/sign-in-profiles/h1'
+
+  // Act
+  const hidden = hideSavedProfilePath(
+    `chrome --user-data-dir=${otherCase} --headless=new\nchrome --user-data-dir="${otherCase}" --remote-debugging-pipe --user-data-dir="${folder}"`,
+    [folder],
+  )
+
+  // Assert
+  assert.equal(
+    hidden,
+    'chrome --user-data-dir=<saved-session> --headless=new\nchrome --user-data-dir=<saved-session> --remote-debugging-pipe --user-data-dir="<saved-session>"',
+  )
+})
+
 // Value: protects=CEO-V3; fails_when=a non-loopback origin passes or a loopback one is refused; no_claim=none beyond protects
 test('the saved session opens only on a loopback origin', () => {
   // Act and assert
