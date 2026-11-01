@@ -546,62 +546,72 @@ test('a torn append leaves an interrupted history whose valid prefix replays', a
 })
 
 // protects=E-C: a failed seal write abandons the writer and the history reads as interrupted in a fresh store with everything before it replayable; fails_when=the history reads recording or sealed, or the run's stop fails; no_claim=the Output wording (the service test)
-test('a failed seal write leaves an interrupted history readable in a fresh store', async (context) => {
-  // Arrange
-  const { recorder, store, header, learningDirectory } =
-    await recorderOver(context)
-  openCaptured(recorder, pauseOf(1, 'page'))
-  recorder.resultObserved(CHANGED_RESULT)
-  await entriesDurable(store, header.studyId, 3)
-  // A folder that accepts no new file makes the seal's publication fail.
-  const directory = recorder.writer.historyDirectory
-  await chmod(directory, 0o500)
+test(
+  'a failed seal write leaves an interrupted history readable in a fresh store',
+  // chmod denies nothing to root or on Windows, so the injected failure would not happen there.
+  { skip: process.platform === 'win32' || process.getuid?.() === 0 },
+  async (context) => {
+    // Arrange
+    const { recorder, store, header, learningDirectory } =
+      await recorderOver(context)
+    openCaptured(recorder, pauseOf(1, 'page'))
+    recorder.resultObserved(CHANGED_RESULT)
+    await entriesDurable(store, header.studyId, 3)
+    // A folder that accepts no new file makes the seal's publication fail.
+    const directory = recorder.writer.historyDirectory
+    await chmod(directory, 0o500)
 
-  // Act
-  await recorder.seal({}, 5_000)
-  await chmod(directory, 0o700)
-  // The editor that wrote it is gone: its writer record would otherwise name this live test process.
-  await rm(join(directory, NODE_TEST_HISTORY_WRITER_FILE), { force: true })
-  const history = await reopenedStore(learningDirectory).read(header.studyId)
+    // Act
+    await recorder.seal({}, 5_000)
+    await chmod(directory, 0o700)
+    // The editor that wrote it is gone: its writer record would otherwise name this live test process.
+    await rm(join(directory, NODE_TEST_HISTORY_WRITER_FILE), { force: true })
+    const history = await reopenedStore(learningDirectory).read(header.studyId)
 
-  // Assert
-  assert.equal(recorder.status, 'failed')
-  assert.equal(history.status, 'interrupted')
-  assert.equal(history.entries.length >= 3, true)
-})
+    // Assert
+    assert.equal(recorder.status, 'failed')
+    assert.equal(history.status, 'interrupted')
+    assert.equal(history.entries.length >= 3, true)
+  },
+)
 
 // protects=E-C: an append that fails without tearing the journal still seals partial and names EXTENSION_HISTORY_APPEND_FAILED, and a fresh store reads that partial seal; fails_when=the failure is unnamed, the seal is complete or the history reads interrupted; no_claim=the disk error text
-test('an append that fails cleanly seals partial naming the failed append', async (context) => {
-  // Arrange
-  const faults: unknown[] = []
-  const { recorder, store, header, learningDirectory } = await recorderOver(
-    context,
-    { onFault: (error) => faults.push(error) },
-  )
-  const page = pauseOf(1, 'page')
-  openCaptured(recorder, page)
-  await entriesDurable(store, header.studyId, 2)
-  await chmod(join(recorder.writer.historyDirectory, 'events.jsonl'), 0o400)
+test(
+  'an append that fails cleanly seals partial naming the failed append',
+  // chmod denies nothing to root or on Windows, so the injected failure would not happen there.
+  { skip: process.platform === 'win32' || process.getuid?.() === 0 },
+  async (context) => {
+    // Arrange
+    const faults: unknown[] = []
+    const { recorder, store, header, learningDirectory } = await recorderOver(
+      context,
+      { onFault: (error) => faults.push(error) },
+    )
+    const page = pauseOf(1, 'page')
+    openCaptured(recorder, page)
+    await entriesDurable(store, header.studyId, 2)
+    await chmod(join(recorder.writer.historyDirectory, 'events.jsonl'), 0o400)
 
-  // Act
-  recorder.pauseClosed(page.pauseId, 'continue')
-  await recorder.seal({}, 5_000)
-  const history = await reopenedStore(learningDirectory).read(header.studyId)
+    // Act
+    recorder.pauseClosed(page.pauseId, 'continue')
+    await recorder.seal({}, 5_000)
+    const history = await reopenedStore(learningDirectory).read(header.studyId)
 
-  // Assert
-  assert.equal(history.status, 'partial')
-  assert.equal(
-    history.seal?.reasons.some(
-      (reason) => reason.code === 'EXTENSION_HISTORY_APPEND_FAILED',
-    ),
-    true,
-  )
-  assert.equal(faults.length, 1)
-  assert.deepEqual(
-    history.entries.map((entry) => entry.type),
-    ['pause-open', 'capture'],
-  )
-})
+    // Assert
+    assert.equal(history.status, 'partial')
+    assert.equal(
+      history.seal?.reasons.some(
+        (reason) => reason.code === 'EXTENSION_HISTORY_APPEND_FAILED',
+      ),
+      true,
+    )
+    assert.equal(faults.length, 1)
+    assert.deepEqual(
+      history.entries.map((entry) => entry.type),
+      ['pause-open', 'capture'],
+    )
+  },
+)
 
 // protects=E-C: a failed frame blob write ends the filmstrip, is reported once, and leaves the stops, the result and a partial seal that names the filmstrip; a fresh store reads it; fails_when=the stop evidence is lost, the failure is reported twice or the seal is complete; no_claim=which blob failed
 test('a failed frame blob write seals partial naming the filmstrip and reports the cause once', async (context) => {
