@@ -51,7 +51,7 @@ async function startRecordedRun(
   const receipt = harness.service.start({
     instanceId: harness.service.instanceId,
     profile: CHROME_EXTENSION_PROFILE,
-    key: 'extension-history',
+    key: 'history',
     configuration: chromeExtensionConfigurationOf(harness),
   })
   const record = harness.service.record(receipt)

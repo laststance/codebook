@@ -711,7 +711,7 @@ test('Open replay of a just-saved extension run opens the Extension replay befor
     const receipt = service.start({
       instanceId: service.instanceId,
       profile: CHROME_EXTENSION_PROFILE,
-      key: 'extension-just-saved',
+      key: 'saved',
       configuration: chromeExtensionConfigurationOf(harness),
     })
     const record = service.record(receipt)

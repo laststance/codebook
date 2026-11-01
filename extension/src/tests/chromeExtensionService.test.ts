@@ -523,7 +523,7 @@ test('a chrome-extension start while the reader shows a saved replay is refused 
   const reader = readerShowingReplay(harness.service)
   // Act
   const refused = await startFakeChromeExtensionRun(harness, {
-    key: 'over-replay',
+    key: 'replay',
   })
   await waitUntil(() => refused.record.stopped, 'the refused run ended')
   reader.returnToCurrent()
