@@ -913,6 +913,7 @@ export async function nativeParticipantsHarness(
           setSecretFrameGate(): void {}
           async reveal(): Promise<void> {}
           resumeViewport(): void {}
+          async endRecordingHistory(): Promise<void> {}
           recordCapture(data: string, phase: string): void {
             const observer = recordingObserver()
             observer?.frame({

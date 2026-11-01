@@ -2950,6 +2950,106 @@ test('closing the viewport while frames wait for the secret check declares a gap
   assert.deepEqual(calls, ['gap', 'closed'])
 })
 
+// protects=a stream frame captured after the run's result image is not history: ending the history discards it with no gap, so a normal secret run seals complete; fails_when=a teardown frame is stored or declared a gap; no_claim=the recording writer or a real browser (the observer records calls; a fake page answers the gate)
+test('a stream frame captured after the result image leaves no gap when the history ends', async () => {
+  // Arrange
+  const calls: string[] = []
+  const gate = gateOverPage(0, { value: false })
+  await gate.arm('#password', 'typed-secret')
+  const { harness, sendFrame } = await attachedStreamViewport({
+    elapsedMs: () => 10,
+    frame: (frame) => calls.push(frame.kind),
+    closed: () => calls.push('closed'),
+    gap: () => calls.push('gap'),
+  })
+  harness.viewport.setSecretFrameGate(gate)
+  await harness.viewport.recordCapture('bGF0ZXI=', 'after', Date.now())
+  // Act
+  sendFrame((Date.now() + 200) / 1000)
+  await harness.viewport.endHistory(500)
+  harness.viewport.close()
+  await delay(50)
+  // Assert
+  assert.deepEqual(calls, ['phase', 'closed'])
+})
+
+// protects=a frame captured before history ends that is still waiting for its secret check is verified while the page answers and recorded in order; fails_when=the drain is skipped and the frame becomes a gap; no_claim=real screencast timing (a fake page answers after 30 ms)
+test('a frame in flight when the history ends is recorded once the gate answers within the bound', async () => {
+  // Arrange
+  const calls: string[] = []
+  const gate = gateOverPage(30, { value: false })
+  await gate.arm('#password', 'typed-secret')
+  const { harness, sendFrame } = await attachedStreamViewport({
+    elapsedMs: () => 10,
+    frame: (frame) => calls.push(frame.kind),
+    closed: () => calls.push('closed'),
+    gap: () => calls.push('gap'),
+  })
+  harness.viewport.setSecretFrameGate(gate)
+  sendFrame(Date.now() / 1000)
+  // Act
+  await harness.viewport.endHistory(1_000)
+  harness.viewport.close()
+  // Assert
+  assert.deepEqual(calls, ['stream', 'closed'])
+})
+
+// protects=a frame captured before history ends that cannot be verified within the bound still produces a gap, so the recording honestly seals partial; fails_when=an unverified pre-result frame is discarded silently; no_claim=a real browser (a fake page answers after 400 ms)
+test('a frame captured before the history ended that cannot be verified in time still declares a gap', async () => {
+  // Arrange
+  const calls: string[] = []
+  const gate = gateOverPage(400, { value: false })
+  await gate.arm('#password', 'typed-secret')
+  const { harness, sendFrame } = await attachedStreamViewport({
+    elapsedMs: () => 10,
+    frame: () => calls.push('frame'),
+    closed: () => calls.push('closed'),
+    gap: () => calls.push('gap'),
+  })
+  harness.viewport.setSecretFrameGate(gate)
+  sendFrame(Date.now() / 1000)
+  // Act
+  await harness.viewport.endHistory(30)
+  harness.viewport.close()
+  await delay(700)
+  // Assert
+  assert.deepEqual(calls, ['gap', 'closed'])
+})
+
+// protects=an unsafe interval during the run still drops the frame it covers and declares a gap even though the history later ends normally; fails_when=ending the history forgives frames the gate withheld; no_claim=a real password control (a fake page reports the unsafe interval)
+test('a frame inside an unsafe interval is still declared a gap when the history ends', async () => {
+  // Arrange
+  const calls: string[] = []
+  const frameAtMs = Date.now()
+  const gate = new SecretFrameGate({
+    evaluate: async (expression) => {
+      if (expression === 'performance.timeOrigin') return 1
+      if (expression.includes('query()'))
+        return {
+          now: Date.now(),
+          open: null,
+          unsafe: [[frameAtMs - 100, frameAtMs + 100]],
+          reason: 'control-not-password',
+        }
+      return { ok: true, origin: 1 }
+    },
+  })
+  await gate.arm('#password', 'typed-secret')
+  const { harness, sendFrame } = await attachedStreamViewport({
+    elapsedMs: () => 10,
+    frame: () => calls.push('frame'),
+    closed: () => calls.push('closed'),
+    gap: () => calls.push('gap'),
+  })
+  harness.viewport.setSecretFrameGate(gate)
+  sendFrame(frameAtMs / 1000)
+  // Act
+  await harness.viewport.endHistory(1_000)
+  harness.viewport.close()
+  // Assert
+  assert.deepEqual(calls, ['gap', 'closed'])
+})
+
 // protects=a stop capture and the stream frames reach the recorder in the order they arrived, so the receipt clock never moves backwards; fails_when=a capture skips the frames waiting on the gate; no_claim=real screencast timing
 test('with a gate, a capture that arrives after a stream frame is recorded after it', async () => {
   // Arrange

@@ -2142,6 +2142,9 @@ export const SECRET_AUTOCOMPLETE_TOKENS: ReadonlySet<string> = new Set([
 /** How much page-clock time around a frame's capture the secret frame gate still treats as unsafe, so a frame captured just next to an unsafe interval is not trusted (ms). */
 export const SECRET_FRAME_MARGIN_MS = 50
 
+/** How long cleanup waits for images still queued for the secret frame gate's verdict while the page is alive (ms). */
+export const SECRET_FRAME_DRAIN_TIMEOUT_MS = 1_500
+
 /** How long the secret frame gate waits for its in-page observer to answer one verification before it calls the observer unresponsive (ms). */
 export const SECRET_FRAME_OBSERVER_TIMEOUT_MS = 2_000
 

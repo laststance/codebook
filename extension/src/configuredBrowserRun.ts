@@ -8558,6 +8558,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         journalLimit: REPOSITORY_STOP_MODULE_JOURNAL_LIMIT,
       })
     this.evidence.record('cleanup.started')
+    // Teardown frames are not history: queued images get their verdict while the page still answers, later ones are discarded.
+    await this.browser.endRecordingHistory().catch(() => undefined)
     this.forgetCausalSessions()
     this.scriptAnnouncements.clear()
     if (this.transientBrowserPause) {

@@ -20,6 +20,7 @@ import {
   MANAGED_PROFILE_REMOVAL_RETRIES,
   MANAGED_PROFILE_REMOVAL_RETRY_DELAY_MS,
   PROCESS_LISTING_POLL_INTERVAL_MS_ON_WINDOWS,
+  SECRET_FRAME_DRAIN_TIMEOUT_MS,
 } from '../constants'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
 import { currentUserName } from '../utils/currentUserName'
@@ -617,6 +618,15 @@ export class HostBrowser {
       (await this.secretFrameGate?.admitCapture(requestedAtMs, Date.now())) ??
       'pass'
     )
+  }
+
+  /**
+   * Ends the recording's history while the page is still alive: queued images get their secret check within {@link SECRET_FRAME_DRAIN_TIMEOUT_MS}, later stream frames are discarded.
+   * Called by {@link ConfiguredBrowserRun} at the start of cleanup, before sessions and the viewport close.
+   * @example await browser.endRecordingHistory()
+   */
+  async endRecordingHistory(): Promise<void> {
+    await this.viewport?.endHistory(SECRET_FRAME_DRAIN_TIMEOUT_MS)
   }
 
   /** Retires only viewport pause presentation; debugger control remains in {@link ConfiguredBrowserRun}. @example browser.resumeViewport() */

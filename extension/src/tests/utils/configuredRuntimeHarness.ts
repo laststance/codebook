@@ -1178,6 +1178,7 @@ export async function configuredRuntimeHarness(
             viewportReady = true
           }
           resumeViewport(): void {}
+          async endRecordingHistory(): Promise<void> {}
           recordCapture(data: string, phase: string): void {
             const observer = recordingObserver()
             observer?.frame({
