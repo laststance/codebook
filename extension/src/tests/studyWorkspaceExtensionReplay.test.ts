@@ -764,6 +764,38 @@ test('reselecting the shown extension stop after the learner ends the replay deb
   }
 })
 
+// protects=an Extension replay whose first debugger launch failed presents the same stop again when the learner reselects it; fails_when=the failed launch is remembered as a shown native moment and the reselect repaints nothing, leaving debuggerAvailable false; no_claim=the wording of the launch failure
+test('reselecting the stop whose debugger launch failed starts the debugger again', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await writeExtensionHistoryFor(harness, RUN)
+    harness.failNextHistoricalDebugPresentation(new Error('launch refused'))
+    await openExtensionReplay(harness, history.studyId)
+    assert.equal(
+      lastView(harness)?.nodeHistoryPosition?.debuggerAvailable,
+      false,
+    )
+
+    // Act
+    await selectExtensionEvent(harness, history.studyId, OPEN1)
+    await waitUntil(
+      () => lastView(harness)?.nodeHistoryPosition?.debuggerAvailable === true,
+      'the reselected stop is presented in the debugger',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(harness.historicalDebugPresentations.length, 1)
+    assert.equal(
+      lastView(harness)?.nodeHistoryPosition?.debuggerAvailable,
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // protects=a frame event inside a stop keeps the stop's inspection state (source available, debugger available) and accepts Inspect; fails_when=the frame inside the stop drops sourceAvailable and debuggerAvailable, or node-history-stop rejects the frame's sequence; no_claim=the debugger's drawing
 test('a frame inside a stop keeps the stop inspection state and accepts Inspect', async () => {
   // Arrange

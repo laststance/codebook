@@ -927,6 +927,8 @@ export class StudyWorkspace {
   private extensionShownFrame?: ExtensionShownFrame
   /** What the native surfaces show of the committed Extension moment ({@link extensionNativeKey}); they repaint only when it changes. */
   private extensionNativeShown?: string
+  /** The selection request whose debugger launch failed and was kept open, so its moment must not count as shown natively. */
+  private extensionDebuggerFailedRequest?: number
   /** The saved Extension replays Saved studies lists, listed with {@link nodeHistoryCatalog} ({@link listNodeHistoryCatalog}). */
   private nodeExtensionHistoryCatalog: ExtensionHistorySummary[] = []
   private selectedNodeHistoryPage = 0
@@ -27389,7 +27391,13 @@ export class StudyWorkspace {
       return
     }
     // The frame and what the native surfaces show commit in the same synchronous block as the moment.
-    this.commitExtensionMoment(extension, loadedFrame, slot === 'failed')
+    // A debugger launch that failed and was kept open leaves the surfaces on no shown moment, so Retry and a reselect present it again.
+    this.commitExtensionMoment(
+      extension,
+      loadedFrame,
+      slot === 'failed',
+      request,
+    )
     // The slot's stopped line and label commit with the moment, and the Study position and the Application header stop waiting for it.
     this.nodeHistoryLeftFor = undefined
     this.nodeSurfacesSequence = slot === 'failed' ? undefined : entry.sequence
@@ -27419,16 +27427,20 @@ export class StudyWorkspace {
    * @param extension - The moment's Extension presentation; nothing is committed for the other replays.
    * @param frame - The frame loaded for the moment.
    * @param slotFailed - Whether the source slot failed to open, which leaves the native surfaces on no known moment.
-   * @example this.commitExtensionMoment(extension, { sequence: 5, src }, false)
+   * @param request - The selection's request token; a debugger launch that failed and was kept open for it also leaves the surfaces on no known moment.
+   * @example this.commitExtensionMoment(extension, { sequence: 5, src }, false, 3)
    */
   private commitExtensionMoment(
     extension: ExtensionMomentPresentation | undefined,
     frame: ExtensionShownFrame | undefined,
     slotFailed: boolean,
+    request: number,
   ): void {
     if (!extension) return
     this.extensionShownFrame = frame
-    this.extensionNativeShown = slotFailed ? undefined : extension.nativeKey
+    const launchFailed = this.extensionDebuggerFailedRequest === request
+    this.extensionNativeShown =
+      slotFailed || launchFailed ? undefined : extension.nativeKey
   }
 
   /**
@@ -27715,7 +27727,8 @@ export class StudyWorkspace {
       return 'superseded'
     if (request !== this.selectedNodeHistoryRequest) return 'superseded'
     if (!this.nodeSourceSlot) return 'not-shown'
-    if (presentDebugger) this.extensionNativeShown = extension?.nativeKey
+    if (presentDebugger && this.extensionDebuggerFailedRequest !== request)
+      this.extensionNativeShown = extension?.nativeKey
     this.nodeSourceSlot = { ...this.nodeSourceSlot, stop }
     this.nodeSurfacesSequence = this.selectedNodeHistorySequence
     this.settleNodeSourceSlotRow()
@@ -27823,6 +27836,7 @@ export class StudyWorkspace {
       if (request !== this.selectedNodeHistoryRequest) return false
       this.selectedNodeHistoryDebugAvailable = false
       this.selectedNodeHistoryValuesUninspected = false
+      this.extensionDebuggerFailedRequest = request
       this.reportTestReplayFailure(
         'replay-debugger',
         error,
