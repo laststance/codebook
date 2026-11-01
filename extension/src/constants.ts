@@ -2595,3 +2595,10 @@ export const VITE_LAUNCHER_MESSAGES = {
   /** Report answering {@link VITE_LAUNCHER_MESSAGES.awaitOptimizer}: the optimizer has nothing left to process. */
   optimizerIdle: 'vite-optimizer-idle',
 } as const
+
+/**
+ * What an agent reads as the recovery when the Study placement guard refuses a presentation or an arrangement because the editor changed a group, a tab or the focus while Codebook arranged the Study.
+ * Set as the {@link StudyError.recoveryOverride} by {@link StudyWorkspace.refusePlacement}; names the two real controls (the Study pane's Restore button, the Open Study Workspace command), what was not done, and that the learner's arrangement stays as it is.
+ */
+export const PLACEMENT_REFUSED_RECOVERY =
+  'The editor changed the layout (a group, a tab or the focus) while Codebook arranged the Study, so Codebook stopped; no run was started, no application input was sent, and the learner\u2019s own tabs and groups were left as they are. Do not invent a command. Ask the learner to choose Restore Study arrangement in the Study pane, or to run Codebook: Open Study Workspace from the Command Palette, then call codebook_presentation once more with fresh identities from codebook_status. Never start or continue a run to repair the layout.'

@@ -248,6 +248,14 @@ export class UnreportedEditorFocusError extends StudyError {
 }
 
 /**
+ * Marks the refusal of the Study placement guard (the editor changed a group, a tab or the focus while Codebook arranged the Study), so the presentation boundary gives the chat the real recovery by type and never by wording.
+ *
+ * {@link StudyWorkspace.refusePlacement} throws it; the presentation change reads the type to set {@link PLACEMENT_REFUSED_RECOVERY} on the {@link StudyError} it answers with. It stays a plain Error otherwise, so its text reads `Error: ...` as before.
+ * @example throw new PlacementRefusalError('Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.')
+ */
+export class PlacementRefusalError extends Error {}
+
+/**
  * Marks sealed evidence whose bytes are no longer the saved ones, as distinct from evidence a newer checkpoint withdrew.
  *
  * {@link readResource} raises it for tampered or edited images and sources, and {@link readBoundedFile} for a file that
