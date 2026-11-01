@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mock, test } from 'node:test'
+import { test } from 'node:test'
 
 import { SECRET_FRAME_OBSERVER_GLOBAL } from '../constants'
 import {
@@ -382,9 +382,10 @@ test('a late image from an early cross-origin interval stays withheld after repl
 })
 
 // protects=the journal's summary counts every cross-origin drop in the interval it happened in, also when that drop closes the interval; fails_when=the drop is counted in `drops` of the closing summary while its cross-origin count lands in the next interval (more cross-origin drops than drops there, or never journalled when nothing else follows); no_claim=the journal writer (onSummary is collected here)
-test('a cross-origin drop that closes a summary interval is journalled as a cross-origin drop in that summary', async () => {
+test('a cross-origin drop that closes a summary interval is journalled as a cross-origin drop in that summary', async (context) => {
   // Arrange
-  mock.timers.enable({ apis: ['Date'], now: 4_000_000 })
+  // The test's own mock: node:test restores the real clock when the test ends, also when an await rejects first.
+  context.mock.timers.enable({ apis: ['Date'], now: 4_000_000 })
   const summaries: SecretFrameGateSummary[] = []
   const gate = new SecretFrameGate({
     evaluate: async (expression) => {
@@ -403,10 +404,9 @@ test('a cross-origin drop that closes a summary interval is journalled as a cros
   await gate.arm('#password', 'typed-secret')
   const first = await gate.admitFrame(4_000_000)
   // Act
-  mock.timers.tick(5_000)
+  context.mock.timers.tick(5_000)
   const closing = await gate.admitFrame(3_999_900)
   gate.flushSummary()
-  mock.timers.reset()
   // Assert
   assert.deepEqual(
     [first, closing],
