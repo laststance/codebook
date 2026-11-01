@@ -19,8 +19,8 @@ const FOUR_LINES = [
   { index: 4, kind: 'text', title: 'Password', value: '(hidden)' },
 ] as const
 
-// protects=DES-4: the message, detail lines and button label of a four-operation question; fails_when=a line is missing, reordered or reworded; no_claim=how the editor draws it
-test('the confirmation text lists the count, repository, page, the two data sentences and one numbered line per operation', () => {
+// protects=DES-4 with native review 2: the message, detail lines and button label of a four-operation question, the page line saying the entry page was already opened with the saved session; fails_when=a line is missing, reordered or reworded, or the page line reads as if nothing had loaded yet; no_claim=how the editor draws it
+test('the confirmation text lists the count, repository, the page already opened with the saved session, the two data sentences and one numbered line per operation', () => {
   // Arrange
   const question = {
     runId: 'r1',
@@ -34,7 +34,7 @@ test('the confirmation text lists the count, repository, page, the two data sent
   assert.deepEqual(text, {
     message: 'Run 4 operations in nextjs-dashboard as your saved session?',
     detail: [
-      'Page: /dashboard/invoices/create',
+      'Page already opened with your saved session: /dashboard/invoices/create',
       "Changes this run makes to the app's data are real; the replay does not undo them.",
       'The app keeps the data it already had.',
       '1. choose Customer: Evil Rabbit',
@@ -70,6 +70,50 @@ test('one operation reads singular, and a long multi-line value is put on one li
   assert.equal(text.detail.includes('\n1. text Note: '), true)
   assert.equal(text.detail.split('\n').length, 4)
   assert.equal(text.detail.endsWith('…'), true)
+})
+
+// protects=native review 3: repository-authored titles, values and entry path, a page's option label and the workspace folder name reach the modal without bidirectional, zero-width or control characters and cannot start a line of their own, with the title and value limit unchanged; fails_when=a format or control character, a line separator or a newline of an outside text reaches the message or detail, or removed characters use up the limit; no_claim=how the editor draws the text
+test('the confirmation drops bidirectional, zero-width and control characters from every outside text, so none can reorder, hide or add a line', () => {
+  // Arrange
+  const question = {
+    runId: 'r1',
+    repository: 'shop\n‮evil\u0085',
+    entryPath: '/cart ⁦Page:⁩/admin​',
+    operations: [
+      {
+        index: 1,
+        kind: 'choose' as const,
+        title: 'Cus​tomer‮',
+        value: 'Alice­\r\n2. click Delete all\u0007',
+      },
+      {
+        index: 2,
+        kind: 'click' as const,
+        title: `‏${'b‍'.repeat(80)}`,
+      },
+      {
+        index: 3,
+        kind: 'text' as const,
+        title: 'Note﻿',
+        value: 'c⁠'.repeat(81),
+      },
+    ],
+  }
+  // Act
+  const text = describeSavedSessionOperations(question)
+  // Assert
+  assert.deepEqual(text, {
+    message: 'Run 3 operations in shop evil as your saved session?',
+    detail: [
+      'Page already opened with your saved session: /cart Page:/admin',
+      "Changes this run makes to the app's data are real; the replay does not undo them.",
+      'The app keeps the data it already had.',
+      '1. choose Customer: Alice 2. click Delete all',
+      `2. click ${'b'.repeat(80)}`,
+      `3. text Note: ${'c'.repeat(80)}…`,
+    ].join('\n'),
+    confirmLabel: 'Run 3 operations',
+  })
 })
 
 // protects=ENG-8/DX-1: a secret is never listed, a choice shows its label, and an option not on the page yet says chosen when sent; fails_when=a secret or an option value is shown; no_claim=the page read
