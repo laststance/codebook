@@ -437,9 +437,17 @@ test('a pin is still recorded after the stream frames reached the journal reserv
     streamFrame(recorder, `frame ${index}`)
   }
 
-  // Act
+  // Act: the pin is awaited durable before the seal, so a loaded runner's slow frame writes cannot make the 2 s drain deadline drop it.
   clock.nowMs += 60
   pin(recorder, page.pauseId, 'the stop')
+  await waitUntil(
+    async () =>
+      (await store.read(header.studyId)).entries.some(
+        (entry) => entry.type === 'frame' && entry.kind === 'pin',
+      ),
+    'the pin to be durable',
+    20_000,
+  )
   recorder.pauseClosed(page.pauseId, 'continue')
   recorder.resultObserved(CHANGED_RESULT)
   await recorder.seal({}, 5_000)
