@@ -397,20 +397,23 @@ export async function prepareOperation(
   const configPath = (field: string): string =>
     `operations[${index - 1}].${field}`
   if (operation.kind === 'click') {
-    let point: { x: number; y: number }
-    try {
-      point = await port.readClickPoint(operation.selector)
-    } catch (error) {
-      port.assertCurrent()
-      throw new OperationRefusal(
-        'INPUT_NOT_ACCEPTED',
-        `Operation ${index} (${operation.title}) was not sent: ${thrownMessage(error)}`,
-        { operationIndex: index, path: configPath('selector') },
-      )
+    // The same read prepares the click and, again, right before the press, so a target that moved, hid or was replaced in between is refused as the preparation would.
+    const readPoint = async (): Promise<{ x: number; y: number }> => {
+      try {
+        return await port.readClickPoint(operation.selector)
+      } catch (error) {
+        port.assertCurrent()
+        throw new OperationRefusal(
+          'INPUT_NOT_ACCEPTED',
+          `Operation ${index} (${operation.title}) was not sent: ${thrownMessage(error)}`,
+          { operationIndex: index, path: configPath('selector') },
+        )
+      }
     }
+    await readPoint()
     return {
       isSecret: false,
-      send: (hooks): Promise<void> => sendClick(port, point, hooks),
+      send: (hooks): Promise<void> => sendClick(port, readPoint, hooks),
       discard: async (): Promise<void> => {},
     }
   }
@@ -934,17 +937,18 @@ async function sendTextLike(
 /**
  * Presses and releases the left mouse button once at a click target's centre.
  * @param port - What the run lets the engine use.
- * @param point - The target's centre in viewport coordinates.
+ * @param readPoint - Reads the unique visible enabled target's centre in viewport coordinates; called again right before the press because the gates and the arming that precede it yield to the page.
  * @param hooks - The run's moments of the input.
- * @throws {@link OperationRefusal} `RUN_FAILED_UNEXPECTEDLY` when the transport fails after the press; the click is never retried.
- * @example await sendClick(port, { x: 120, y: 48 }, hooks)
+ * @throws {@link OperationRefusal} `INPUT_NOT_ACCEPTED` when the target is no longer a unique visible enabled target (nothing was sent); `RUN_FAILED_UNEXPECTEDLY` when the transport fails after the press; the click is never retried.
+ * @example await sendClick(port, () => port.readClickPoint('#pay'), hooks)
  */
 async function sendClick(
   port: OperationPort,
-  point: { x: number; y: number },
+  readPoint: () => Promise<{ x: number; y: number }>,
   hooks: OperationSendHooks,
 ): Promise<void> {
   const cdp = await port.pageCdp()
+  const point = await readPoint()
   hooks.beforeInput()
   for (const type of ['mousePressed', 'mouseReleased'] as const) {
     await cdp.request(

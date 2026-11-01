@@ -482,6 +482,69 @@ test('a control that turns into a password between resolution and the input rece
 })
 
 // protects=the settle wait returns once the page is complete and quiet for the window, and ends with NAVIGATION_NOT_SETTLED when navigation never stops; fails_when=an operation is sent into a page that still loads, or a quiet page waits for the bound; no_claim=Chrome's real load events (the run records main-frame navigations); a fake channel stands in for the page's readyState, as the configured run tests do
+// protects=a click target is read again right before the press: a target that moved is pressed where it now is, and one that disappeared is refused as INPUT_NOT_ACCEPTED, not sent, with no mouse event; fails_when=the press goes to the centre read at preparation, or a vanished target is pressed; no_claim=a real page (a scripted port answers the two reads and records the mouse events)
+test('a click re-reads its target right before the press and refuses one that is gone', async () => {
+  // Arrange
+  const mouseEvents: { type: string; x: number; y: number }[] = []
+  const cdp = {
+    request: async (
+      _method: string,
+      parameters: { type: string; x: number; y: number },
+    ) => {
+      mouseEvents.push({
+        type: parameters.type,
+        x: parameters.x,
+        y: parameters.y,
+      })
+      return {}
+    },
+  } as unknown as Cdp
+  const answers: ({ x: number; y: number } | Error)[] = [
+    // The two preparations read first, then each send reads again.
+    { x: 10, y: 10 },
+    { x: 10, y: 10 },
+    { x: 50, y: 60 },
+    new Error('#go is not a unique visible enabled target (not-visible)'),
+  ]
+  const port: OperationPort = {
+    pageCdp: async () => cdp,
+    origins: () => [],
+    assertCurrent: (): void => {},
+    millisecondsSinceNavigation: () => Number.POSITIVE_INFINITY,
+    sleep: (): Promise<void> => delay(1),
+    readClickPoint: async () => {
+      const answer = answers.shift()!
+      if (answer instanceof Error) throw answer
+      return answer
+    },
+  }
+  const operation: RepositoryOperation = {
+    kind: 'click',
+    title: 'Go',
+    selector: '#go',
+  }
+  const moved = await prepareOperation(port, { index: 1, total: 1, operation })
+  const gone = await prepareOperation(port, { index: 1, total: 1, operation })
+  const moments = recordingHooks()
+  // Act
+  await moved.send(moments.hooks)
+  const mouseEventsAfterMove = [...mouseEvents]
+  mouseEvents.length = 0
+  const refusal = await gone.send(recordingHooks().hooks).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.deepEqual(mouseEventsAfterMove, [
+    { type: 'mousePressed', x: 50, y: 60 },
+    { type: 'mouseReleased', x: 50, y: 60 },
+  ])
+  assert.ok(refusal instanceof OperationRefusal)
+  assert.equal(refusal.code, 'INPUT_NOT_ACCEPTED')
+  assert.equal(refusal.sent, 'not-sent')
+  assert.deepEqual(mouseEvents, [])
+})
+
 test('the settle wait passes a quiet complete page and refuses a page that keeps navigating', async () => {
   // Arrange
   const states = ['loading', 'loading', 'complete']
