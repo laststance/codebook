@@ -49,10 +49,13 @@ const STUDY_SEQUENCE_LAYOUT = {
 const BROWSER_PLAYHEAD_SELECTOR = '#playhead:not([data-replay-family="test"])'
 /** The shared slider while it shows a test replay. */
 const TEST_PLAYHEAD_SELECTOR =
-  '#playhead[data-replay-family="test"]:not([data-replay-profile="node-server"])'
+  '#playhead[data-replay-family="test"]:not([data-replay-profile])'
 /** The shared slider while it shows a server replay: the page marks it with its profile, so a server replay's shortcut entries name a server replay and never a test. */
 const SERVER_PLAYHEAD_SELECTOR =
   '#playhead[data-replay-family="test"][data-replay-profile="node-server"]'
+/** The shared slider while it shows an Extension replay: the page marks it with its profile, so an Extension replay's shortcut entries name an Extension replay and never a test. */
+const EXTENSION_PLAYHEAD_SELECTOR =
+  '#playhead[data-replay-family="test"][data-replay-profile="chrome-extension"]'
 /** The test replay timeline's keys (C2 and DS-C): arrows step by event, Page keys by stop (Page Up forward, as for a recording), Home and End select the first and last event. */
 const TEST_REPLAY_TIMELINE_SHORTCUTS: ShortcutHelpEntry[] = (
   [
@@ -75,6 +78,13 @@ const SERVER_REPLAY_TIMELINE_SHORTCUTS: ShortcutHelpEntry[] =
     ...entry,
     context: 'Focused server replay timeline',
     selector: SERVER_PLAYHEAD_SELECTOR,
+  }))
+/** The Extension replay timeline's keys: the test replay's, under the Extension replay's own name and slider. */
+const EXTENSION_REPLAY_TIMELINE_SHORTCUTS: ShortcutHelpEntry[] =
+  TEST_REPLAY_TIMELINE_SHORTCUTS.map((entry) => ({
+    ...entry,
+    context: 'Focused Extension replay timeline',
+    selector: EXTENSION_PLAYHEAD_SELECTOR,
   }))
 export const STUDY_SHORTCUTS: ShortcutHelpEntry[] = [
   {
@@ -126,6 +136,7 @@ export const STUDY_SHORTCUTS: ShortcutHelpEntry[] = [
   },
   ...TEST_REPLAY_TIMELINE_SHORTCUTS,
   ...SERVER_REPLAY_TIMELINE_SHORTCUTS,
+  ...EXTENSION_REPLAY_TIMELINE_SHORTCUTS,
   {
     action: 'Previous / next content tab',
     keys: '← / →',
@@ -226,9 +237,8 @@ export const STUDY_UI_OPTIONS = {
     (entry) => `${entry.action} — ${entry.keys} (${entry.context})`,
   ).join('; '),
   // The same tooltip while the slider shows an Extension replay: its own name for the context.
-  extensionReplayTimelineTitle: TEST_REPLAY_TIMELINE_SHORTCUTS.map(
-    (entry) =>
-      `${entry.action} — ${entry.keys} (Focused Extension replay timeline)`,
+  extensionReplayTimelineTitle: EXTENSION_REPLAY_TIMELINE_SHORTCUTS.map(
+    (entry) => `${entry.action} — ${entry.keys} (${entry.context})`,
   ).join('; '),
   // The shared slider's keyboard shortcuts while it shows a test replay, for its `aria-keyshortcuts`.
   testReplayTimelineKeys:

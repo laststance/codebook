@@ -2944,9 +2944,9 @@ function studyClient(
   ): void => {
     const range = testReplayPlayheadRange(playbackState)
     playheadInput.dataset.replayFamily = 'test'
-    // The page names the slider's profile, so the shortcut list says server replay for a server replay.
-    if (current?.nodeReplayProfile === 'node-server')
-      playheadInput.dataset.replayProfile = 'node-server'
+    // The page names the slider's profile, so the shortcut list says server or Extension replay for those replays.
+    if (current?.nodeReplayProfile)
+      playheadInput.dataset.replayProfile = current.nodeReplayProfile
     else delete playheadInput.dataset.replayProfile
     playheadInput.title =
       current?.nodeReplayProfile === 'node-server'
