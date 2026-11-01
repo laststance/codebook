@@ -405,14 +405,19 @@ function installSecretFrameObserver(
     state.unsafe.push([state.open, now])
     state.open = null
   }
+  // Whether a box is non-empty and overlaps its own window's viewport.
+  const boxInViewport = (box: DOMRect, view: Window): boolean =>
+    box.width > 0 &&
+    box.height > 0 &&
+    box.right > 0 &&
+    box.bottom > 0 &&
+    box.left < view.innerWidth &&
+    box.top < view.innerHeight
   // Whether an element is drawn on screen: a non-empty box, not hidden by display/visibility/opacity/content-visibility, inside its own window's viewport, and inside a drawn host frame.
   const isDrawn = (element: Element): boolean => {
     const view = element.ownerDocument.defaultView
     if (view === null) return false
-    const box = element.getBoundingClientRect()
-    if (box.width <= 0 || box.height <= 0) return false
-    if (box.right <= 0 || box.bottom <= 0) return false
-    if (box.left >= view.innerWidth || box.top >= view.innerHeight) return false
+    if (!boxInViewport(element.getBoundingClientRect(), view)) return false
     const visible = element.checkVisibility?.({
       checkOpacity: true,
       checkVisibilityCSS: true,
