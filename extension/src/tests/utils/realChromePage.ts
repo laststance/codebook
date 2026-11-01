@@ -108,13 +108,13 @@ export async function openRealChromePage(
     server.closeAllConnections()
     await new Promise<void>((resolve) => server.close(() => resolve()))
   })
-  // The fixture is ready once its document finished loading.
+  // The fixture is ready once its own document finished loading: a new tab's first document is about:blank, which can read complete before the fixture's navigation commits (seen under load).
   for (let attempt = 0; attempt < 100; attempt++) {
     const state = await cdp.request('Runtime.evaluate', {
-      expression: 'document.readyState',
+      expression: `location.origin === ${JSON.stringify(origin)} && document.readyState === 'complete'`,
       returnByValue: true,
     })
-    if (state.result.value === 'complete') return { cdp, origin }
+    if (state.result.value === true) return { cdp, origin }
     await delay(50)
   }
   throw new Error('The fixture page did not finish loading.')

@@ -118,12 +118,16 @@ export async function launchRealHeadlessPage(
         { url: `data:text/html;charset=utf-8,${encodeURIComponent(html)}` },
         sessionId,
       )
-      // The page is ready when its document answers.
+      // The page is ready when its own document answers: the about:blank before it can still read complete until the navigation commits.
       for (let attempt = 0; attempt < 100; attempt++) {
         const state = await cdp
           .request(
             'Runtime.evaluate',
-            { expression: 'document.readyState', returnByValue: true },
+            {
+              expression:
+                "location.protocol === 'data:' ? document.readyState : 'previous-document'",
+              returnByValue: true,
+            },
             sessionId,
           )
           .then(
