@@ -28,14 +28,20 @@ async function readAllText(folder: string): Promise<string> {
 }
 
 /** Runs a version 3 study whose password the learner typed, on the controlled runtime, until its first stop is committed. */
-async function pausedSecretRun(context: TestContext) {
+async function pausedSecretRun(
+  context: TestContext,
+  captured: { secret: string; value: string | number } = {
+    secret: SECRET,
+    value: SECRET,
+  },
+) {
   let service: StudyService | undefined, books: RepositoryBookStore | undefined
   context.after(async () => {
     await service?.shutdown()
     books?.dispose()
   })
   const harness = await configuredRuntimeHarness(context, undefined, [], {
-    capturedValue: SECRET,
+    capturedValue: captured.value,
     operations: {
       operations: [
         {
@@ -103,7 +109,7 @@ async function pausedSecretRun(context: TestContext) {
   await record.preparation
   service.action(
     { ...receipt, key: 'one', action: 'repository-operation' },
-    { learnerSecret: SECRET },
+    { learnerSecret: captured.secret },
   )
   await waitUntil(
     () => harness.run.view().snapshots.length === 1,
@@ -136,4 +142,25 @@ test('a copy of the typed secret is masked in the saved study, the recording con
   ] as const)
     assert.equal(text.includes(SECRET), false, `${name} holds the secret`)
   assert.match(JSON.stringify(archive), /\[masked\]/)
+})
+
+// protects=learner secret as a number: a digits-only secret the app converted with Number() is masked in the saved study's captured values and the run resource; fails_when=the inspected number 582104 reaches the saved study or the run resource unmasked; no_claim=the real debugger: the controlled runtime reports the number as the evaluated value
+test('a digits-only secret the app turned into a number is masked in the saved study and the run resource', async (context) => {
+  // Arrange
+  const { service, record, library } = await pausedSecretRun(context, {
+    secret: '582104',
+    value: 582104,
+  })
+  // Act
+  const archive = await captureStudy(service, record, library.workspaceKey)
+  assert.ok(archive)
+  // Assert
+  const saved = JSON.stringify(archive)
+  assert.equal(saved.includes('582104'), false, 'saved study holds the number')
+  assert.equal(
+    JSON.stringify(service.state(record)).includes('582104'),
+    false,
+    'run resource holds the number',
+  )
+  assert.match(saved, /\[masked\]/)
 })

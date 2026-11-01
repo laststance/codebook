@@ -14,6 +14,7 @@ import type { StudyRecord, StudyService } from '../service'
 
 import { decodeRetainedStudy } from './decodeRetainedStudy'
 import { describeStudy } from './describeStudy'
+import { maskLearningSummaryText } from './maskLearningSummaryText'
 import { projectSavedOperations } from './projectSavedOperations'
 import { redactPreparedConfiguration } from './redactPreparedConfiguration'
 
@@ -178,9 +179,10 @@ export async function captureStudy(
     .filter((value) => value.learningSummary)
     .at(-1)
   const learningSummary = summaryExplanation?.learningSummary && {
-    // The text is masked; each step's reference is a generated identity the study checks again, so the shared identifier rule keeps its bytes.
-    content: service.maskLearnerSecretsInData(
+    // Only the free-text fields are masked; ids, references, evidence and from/to are structure the study checks again.
+    content: maskLearningSummaryText(
       summaryExplanation.learningSummary,
+      (text) => service.maskLearnerSecretsInText(text),
     ),
     explanationId: summaryExplanation.id,
     createdAt: summaryExplanation.createdAt,

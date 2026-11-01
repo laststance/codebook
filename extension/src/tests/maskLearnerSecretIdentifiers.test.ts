@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import type { LearningSummary } from '../learningSummarySchemas'
+import {
+  learningSummarySchema,
+  type LearningSummary,
+} from '../learningSummarySchemas'
 import { maskLearnerSecretData } from '../utils/maskLearnerSecretData'
 import { maskLearnerSecretJsonText } from '../utils/maskLearnerSecretJsonText'
+import { maskLearningSummaryText } from '../utils/maskLearningSummaryText'
 
 const SHORT_SECRET = 'cafe'
 const SOURCE_HASH = `00${SHORT_SECRET}${'1'.repeat(58)}`
@@ -94,4 +98,53 @@ test('the JSON text mask produces its text from the masked structure', () => {
     '{"ok":true,"uri":"codebook://x/true-1","note":"typed [masked]"}',
   )
   assert.equal(untouched, text)
+})
+
+// protects=a learner secret equal to an evidence enum or a participant id masks the summary's prose but leaves its structure, so the saved summary still passes its schema; fails_when=the evidence, from, to or an id becomes [masked] and the schema refuses the summary; no_claim=the service's own text mask, replaced here by a plain string replace
+test('a learner secret equal to an evidence value or a participant id leaves the summary structure valid and masks its text', () => {
+  // Arrange
+  const summary: LearningSummary = {
+    question: 'Why does observed matter?',
+    title: 'The observed step',
+    summary: 'The learner typed observed.',
+    participants: [{ id: 'observed', label: 'observed' }],
+    steps: [
+      {
+        id: 'step-1',
+        from: 'observed',
+        to: 'observed',
+        label: 'observed',
+        explanation: 'The page showed observed.',
+        evidence: 'observed',
+        reference: { snapshotUri: SNAPSHOT_URI, sourceHash: SOURCE_HASH },
+      },
+    ],
+  }
+  // Act
+  const masked = maskLearningSummaryText(summary, (text) =>
+    text.replaceAll('observed', '[masked]'),
+  )
+  const parsed = learningSummarySchema.safeParse(masked)
+  // Assert
+  assert.equal(parsed.success, true)
+  assert.deepEqual(
+    {
+      title: masked.title,
+      participant: masked.participants[0],
+      step: masked.steps[0],
+    },
+    {
+      title: 'The [masked] step',
+      participant: { id: 'observed', label: '[masked]' },
+      step: {
+        id: 'step-1',
+        from: 'observed',
+        to: 'observed',
+        label: '[masked]',
+        explanation: 'The page showed [masked].',
+        evidence: 'observed',
+        reference: { snapshotUri: SNAPSHOT_URI, sourceHash: SOURCE_HASH },
+      },
+    },
+  )
 })
