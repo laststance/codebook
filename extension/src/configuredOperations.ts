@@ -297,6 +297,31 @@ const confirmationControlsSchema = z.array(
 )
 
 /**
+ * Words one control the page found for the saved-session confirmation: whether it is secret and, when it is not, which option a choose names.
+ * Called by {@link readOperationConfirmationFacts} for every non-click operation whose control was found; a secret control keeps its option label off the dialog.
+ * @param entry - The page's description of the found control; absent attributes read as empty text.
+ * @returns `secret`, plus `optionLabel` only for a non-secret control that has one.
+ * @example describeFoundControl({ found: true, type: 'password', optionLabel: 'Key' }) // => { secret: true }
+ */
+function describeFoundControl(
+  entry: NonNullable<z.infer<typeof confirmationControlsSchema>[number]>,
+): { secret: boolean; optionLabel?: string } {
+  const secret =
+    classifySecretControl({
+      type: entry.type ?? '',
+      name: entry.name ?? '',
+      id: entry.id ?? '',
+      autocomplete: entry.autocomplete ?? '',
+    }) !== undefined
+  return {
+    secret,
+    ...(!secret && entry.optionLabel !== undefined
+      ? { optionLabel: entry.optionLabel }
+      : {}),
+  }
+}
+
+/**
  * Reads from the page, without any input event, the facts the saved-session confirmation words its lines with (ENG-8): which control is secret and which option a choose names.
  * Called by {@link ConfiguredBrowserRun.readOperationConfirmationFacts} when the service builds the confirmation question; it sends one `Runtime.evaluate`.
  * @param port - The run's page channel.
@@ -332,21 +357,7 @@ export async function readOperationConfirmationFacts(
     const entry = described[position]
     if (operation.kind === 'click') return { index, found: true, secret: false }
     if (!entry?.found) return { index, found: false, secret: false }
-    const secret =
-      classifySecretControl({
-        type: entry.type ?? '',
-        name: entry.name ?? '',
-        id: entry.id ?? '',
-        autocomplete: entry.autocomplete ?? '',
-      }) !== undefined
-    return {
-      index,
-      found: true,
-      secret,
-      ...(!secret && entry.optionLabel !== undefined
-        ? { optionLabel: entry.optionLabel }
-        : {}),
-    }
+    return { index, found: true, ...describeFoundControl(entry) }
   })
 }
 
