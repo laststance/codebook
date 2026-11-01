@@ -498,7 +498,7 @@ function studyClient(
       soughtOperation = undefined
   }
   /**
-   * The sought operation while the replay still presents its moment, read by {@link renderOperationCaption} and {@link operationStep}; a move made elsewhere (another pane's Learning summary) leaves this page's sought operation set but presents another moment, so it no longer counts.
+   * The sought operation while the replay still presents its moment, read by {@link captionedOperation} and {@link operationStep}; a move made elsewhere (another pane's Learning summary) leaves this page's sought operation set but presents another moment, so it no longer counts.
    * A fractional moment is presented at whole milliseconds, so "still presents" means less than the operation moment tolerance of {@link STUDY_UI_OPTIONS} (1 ms) away.
    * @param recording - The browser replay's state.
    * @returns The sought operation, or `undefined` when none was sought in this replay or the replay presents another moment.
@@ -707,6 +707,45 @@ function studyClient(
     return control
   }
   /**
+   * The operation the caption names, read by {@link renderOperationCaption}: the sought operation while a ready, paused replay still presents its moment and that moment is a recorded one.
+   * An unrecorded interval keeps the transport's own "Not recorded at this moment" text, so no operation is captioned there.
+   * @param recording - The browser replay's state.
+   * @param selectedHistoryGap - Whether the shown moment lies in an unrecorded interval.
+   * @returns The captioned operation, or `undefined` while the replay loads, plays, shows an unrecorded moment or presents another moment than the sought one.
+   * @example captionedOperation(recording, false)?.index // => 3 while operation 3's moment is shown paused
+   */
+  const captionedOperation = (
+    recording: NonNullable<StudyViewMessage['recording']>,
+    selectedHistoryGap: boolean,
+  ): { index: number; atMs: number } | undefined => {
+    const isCaptionMoment =
+      recording.readiness === 'ready' &&
+      recording.mode === 'paused' &&
+      !selectedHistoryGap
+    return isCaptionMoment ? soughtMomentShown(recording) : undefined
+  }
+  /**
+   * Marks the captioned operation's mark as the current one and every other mark as not current; called by {@link renderOperationCaption}.
+   * @param captioned - The captioned operation, `undefined` when none is captioned, which leaves no mark current.
+   * @example markCurrentOperation({ index: 3, atMs: 1500 }) // the mark numbered 3 gets aria-current="true", the others "false"
+   */
+  const markCurrentOperation = (
+    captioned: { index: number } | undefined,
+  ): void => {
+    for (const control of Array.from(
+      element('operation-row').querySelectorAll<HTMLButtonElement>(
+        '[data-operation-mark]',
+      ),
+    ))
+      control.setAttribute(
+        'aria-current',
+        String(
+          captioned !== undefined &&
+            control.dataset.operationMark === String(captioned.index),
+        ),
+      )
+  }
+  /**
    * Writes the caption of the learner's last move to an operation and marks that operation as current, only while the replay still shows that moment and it is a recorded one; called by {@link renderOperationRow}.
    * @param recording - The browser replay's state.
    * @param selectedHistoryGap - Whether the shown moment lies in an unrecorded interval.
@@ -716,34 +755,19 @@ function studyClient(
     recording: NonNullable<StudyViewMessage['recording']>,
     selectedHistoryGap: boolean,
   ): void => {
-    const sought = soughtMomentShown(recording)
-    const isCaptionShown =
-      sought !== undefined &&
-      recording.readiness === 'ready' &&
-      recording.mode === 'paused' &&
-      !selectedHistoryGap
-    const soughtMark = recording.operations?.find(
-      (mark) => mark.index === sought?.index,
+    const captioned = captionedOperation(recording, selectedHistoryGap)
+    // No captioned operation finds no mark, since every mark has a number.
+    const captionMark = recording.operations?.find(
+      (mark) => mark.index === captioned?.index,
     )
-    element('operation-caption').hidden = !isCaptionShown || !soughtMark
+    element('operation-caption').hidden = !captionMark
     text(
       'operation-caption',
-      isCaptionShown && soughtMark
-        ? `Operation ${soughtMark.index} · ${soughtMark.title} · showing the last frame before it was sent`
+      captionMark
+        ? `Operation ${captionMark.index} · ${captionMark.title} · showing the last frame before it was sent`
         : '',
     )
-    for (const control of Array.from(
-      element('operation-row').querySelectorAll<HTMLButtonElement>(
-        '[data-operation-mark]',
-      ),
-    ))
-      control.setAttribute(
-        'aria-current',
-        String(
-          isCaptionShown &&
-            control.dataset.operationMark === String(sought?.index),
-        ),
-      )
+    markCurrentOperation(captioned)
   }
   // The last input of {@link renderOperationRow} and the rounded row width its marks stand on, so a change of the row's width draws the marks again where the new width puts them.
   let lastOperationRow:
