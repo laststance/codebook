@@ -5298,21 +5298,25 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Arms the secret frame gate on the control that is about to receive a version 1 or 2 prepared secret text, and refuses the text unsent when the gate failed at once.
-   * Called from the setup's classification hook of {@link prepareRepositoryInputs}; a value of at least {@link SECRET_FRAME_VALUE_COPY_MIN_CHARS} characters is armed with its value and joins the run's secret set (masked by value everywhere), a shorter one is armed by control only so the gate never enters its unverifiable state and masking by value cannot hide unrelated text.
+   * Called from the setup's classification hook of {@link prepareRepositoryInputs}; the value is armed with itself and joins the run's secret set (masked by value everywhere). A value shorter than {@link SECRET_FRAME_VALUE_COPY_MIN_CHARS} characters cannot be told from page text, so it is refused before it is typed, as the ask-learner box refuses it.
    * @param selector - The selector of the control that receives the text.
    * @param text - The prepared text about to be typed. Never logged.
-   * @throws When the control is no safe password control or the page could not answer; nothing was sent.
+   * @throws When the text is too short to watch, the control is no safe password control or the page could not answer; nothing was sent.
    * @example await this.armPreparedSecretGate('#password', 'correct horse')
    */
   private async armPreparedSecretGate(
     selector: string,
     text: string,
   ): Promise<void> {
-    const watchesValue = text.length >= SECRET_FRAME_VALUE_COPY_MIN_CHARS
-    if (watchesValue) this.learnerSecretValues.add(text)
+    // A short value cannot be watched without withholding every image, so nothing is armed and nothing is sent.
+    if (text.length < SECRET_FRAME_VALUE_COPY_MIN_CHARS)
+      throw new Error(
+        `SECRET_INPUT_VISIBLE: The prepared text for ${selector} was not sent: a secret shorter than ${SECRET_FRAME_VALUE_COPY_MIN_CHARS} characters cannot be told from page text, so a copy of it could reach the recorded frames. Use a test password of ${SECRET_FRAME_VALUE_COPY_MIN_CHARS} or more characters.`,
+      )
+    this.learnerSecretValues.add(text)
     this.armingSecretGate = true
     try {
-      await this.secretFrameGate.arm(selector, watchesValue ? text : undefined)
+      await this.secretFrameGate.arm(selector, text)
     } finally {
       this.armingSecretGate = false
     }

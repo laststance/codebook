@@ -218,7 +218,7 @@ export function operationsHelp() {
       passwordInputOnly:
         'An ask-learner secret goes only into an <input type="password">, which the browser draws as dots; into any other control the operation answers SECRET_INPUT_VISIBLE.',
       masked: [
-        "In version 1 and 2 runs, prepared text (initialInputs, and a chrome-extension click's inputs) typed into a secret control reads [masked] in the manifest, the run resource, the saved study and the configuration hash; every prepared text reads [pending] in the run resource until its control is resolved. The page still receives the real text. This changes what a version 1 or 2 run served before API 1.14.",
+        `In version 1 and 2 runs, prepared text (initialInputs, and a chrome-extension click's inputs) typed into a secret control reads [masked] in the manifest, the run resource, the saved study and the configuration hash; every prepared text reads [pending] in the run resource until its control is resolved. The page still receives the real text. A prepared secret text into an input of type password is armed on the frame gate with its value before it is typed; one shorter than ${SECRET_FRAME_VALUE_COPY_MIN_CHARS} characters cannot be told from page text, so the run fails with SECRET_INPUT_VISIBLE and sends nothing: use a test password of that length or more. This changes what a version 1 or 2 run served before API 1.14.`,
         'A value the learner typed for an ask-learner operation is masked wherever Codebook writes or serves run data: inspection values, debugger previews and recorded snapshots, errors, logs, tool results and saved studies.',
       ],
       frames:

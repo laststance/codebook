@@ -498,7 +498,7 @@ export class SecretFrameGate {
     toMs: number,
     kind: 'frame' | 'capture',
   ): Promise<'pass' | 'drop'> {
-    // Fail-closed default for any caller that arms with a value shorter than the copy minimum: Codebook cannot verify any later image, so it is an unrecorded gap; the run itself goes on. The run's own callers never reach this: the ask-learner box refuses such a value and a prepared short value is armed by control only (no value).
+    // Fail-closed default for any caller that arms with a value shorter than the copy minimum: Codebook cannot verify any later image, so it is an unrecorded gap; the run itself goes on. The run's own callers never reach this: the ask-learner box and a prepared password both refuse such a value before it is typed.
     if (
       this.unverifiableSinceMs !== undefined &&
       toMs >= this.unverifiableSinceMs

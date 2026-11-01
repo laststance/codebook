@@ -295,8 +295,8 @@ test('a prepared secret text into a plain secret-named control is sent and maske
   assert.equal(run.learnerSecrets.has('token-value-1234'), true)
 })
 
-// protects=ENG-5: a prepared password too short to tell from page text is armed by control only, so the run still gets its images; fails_when=the short value makes the gate unverifiable and every later image is dropped; no_claim=a real page
-test('a three-character prepared password keeps the run recording its images', async (context) => {
+// protects=a prepared password too short to tell from page text is refused before it is typed, so no copy of it can reach the recorded frames; fails_when=the short value is typed (armed by control only) or the run does not fail with SECRET_INPUT_VISIBLE or the value shows in the run view; no_claim=a real page: the harness stands in for the insertion and the gate's observer
+test('a three-character prepared password is refused before it is typed', async (context) => {
   // Arrange
   const { run, insertedTexts } = await preparedControlRun(context, {
     text: 'abc',
@@ -304,14 +304,34 @@ test('a three-character prepared password keeps the run recording its images', a
     name: 'password',
   })
   // Act
-  await run.prepare()
-  const frame = await run.secretFrameGate.admitFrame(Date.now())
+  const refusal = await run.prepare().then(
+    () => undefined,
+    (error: unknown) => String(error),
+  )
   // Assert
-  assert.deepEqual(insertedTexts, ['abc'])
+  assert.deepEqual(insertedTexts, [])
+  assert.match(
+    refusal ?? '',
+    /SECRET_INPUT_VISIBLE: The prepared text for #field was not sent: a secret shorter than 4 characters cannot be told from page text/,
+  )
+  assert.equal(JSON.stringify(run.view()).includes('abc'), false)
+})
+
+// protects=a four-character prepared password is typed and watched by value, the shortest length the gate can tell from page text; fails_when=the minimum is raised so it is refused, or the value is typed without arming the gate or joining the secret set; no_claim=a real page: the harness stands in for the insertion and the gate's observer
+test('a four-character prepared password is typed and watched by value', async (context) => {
+  // Arrange
+  const { run, insertedTexts } = await preparedControlRun(context, {
+    text: 'abcd',
+    type: 'password',
+    name: 'password',
+  })
+  // Act
+  await run.prepare()
+  // Assert
+  assert.deepEqual(insertedTexts, ['abcd'])
   assert.equal(run.secretFrameGate.armed, true)
-  assert.equal(frame, 'pass')
-  assert.equal(run.view().status, 'ready')
-  assert.equal(Boolean(run.view().captures.before), true)
+  assert.equal(run.learnerSecrets.has('abcd'), true)
+  assert.equal(run.view().failures.length, 0)
 })
 
 // protects=ENG-4: a prepared password's copy in an inspection preview reads [masked]; fails_when=the prepared value is missing from the run's secret set; no_claim=a real debugger: the harness's stop local variable holds the copy
