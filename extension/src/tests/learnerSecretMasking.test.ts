@@ -353,12 +353,15 @@ test('the gate releases after a full navigation and still fails when the same do
   await redirectedGate.arm('#password')
   await lostGate.arm('#password')
   // Act
+  // The first frame was captured before the replacement was noticed, so no observer verified it; the second one is captured after the release.
+  const beforeRelease = await redirectedGate.admitFrame(Date.now())
+  await new Promise((resolve) => setTimeout(resolve, 5))
   const afterRedirect = await redirectedGate.admitFrame(Date.now())
   const afterLoss = await lostGate.admitFrame(Date.now())
   // Assert
   assert.deepEqual(
-    [afterRedirect, redirected, redirectedGate.armed],
-    ['pass', [], false],
+    [beforeRelease, afterRedirect, redirected, redirectedGate.armed],
+    ['drop', 'pass', [], false],
   )
   assert.deepEqual([afterLoss, lost], ['drop', ['observer-unanswered']])
 })

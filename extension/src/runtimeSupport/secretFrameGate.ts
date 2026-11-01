@@ -153,6 +153,10 @@ export class SecretFrameGate {
   private firstUnsafeMs?: number
   private intervals: [number, number][] = []
   private lastAnswerMs = 0
+  /** When the observer was last installed (host clock), where an observer that never answered started to vouch for the page. */
+  private armedAtMs = 0
+  /** Times between the last verified-safe answer of an observer and the release that followed its document's replacement; no image from them is verified. */
+  private unverifiedGaps: [number, number][] = []
   private openSinceMs: number | null = null
   private failureReported = false
   /** The `performance.timeOrigin` of the document the observer was installed in; another value means the page loaded a new document. */
@@ -181,6 +185,7 @@ export class SecretFrameGate {
   async arm(selector: string): Promise<void> {
     if (this.armedSelector === selector) return
     this.armedSelector = selector
+    this.armedAtMs = Date.now()
     try {
       const result = await this.options.evaluate(
         `(${installSecretFrameObserver.toString()})(${JSON.stringify(selector)},${JSON.stringify(SECRET_FRAME_OBSERVER_GLOBAL)},${SECRET_FRAME_VALUE_COPY_MIN_CHARS})`,
@@ -230,12 +235,12 @@ export class SecretFrameGate {
     toMs: number,
     kind: 'frame' | 'capture',
   ): Promise<'pass' | 'drop'> {
-    // Unarmed: nothing secret was sent, every image passes as before.
-    if (!this.armed) return 'pass'
+    // Unarmed: nothing secret was sent, every image passes as before, except those of a gap left by a document replacement.
+    if (!this.armed) return this.admitUnarmed(fromMs, toMs, kind)
     // A verification must answer after the capture; one answered earlier is not reused.
     if (this.lastAnswerMs < toMs + SECRET_FRAME_MARGIN_MS) await this.refresh()
-    // The page loaded a new document while the answer was awaited: the secret control is gone and the image shows the new page.
-    if (!this.armed) return 'pass'
+    // The page loaded a new document while the answer was awaited: the secret control is gone and the image shows the new page, unless it was captured in the gap before the replacement was noticed.
+    if (!this.armed) return this.admitUnarmed(fromMs, toMs, kind)
     const safe =
       this.lastAnswerMs >= toMs &&
       !this.overlapsUnsafe(
@@ -243,6 +248,20 @@ export class SecretFrameGate {
         toMs + SECRET_FRAME_MARGIN_MS,
       )
     if (safe) return 'pass'
+    this.options.onDrop?.({ kind, atMs: toMs })
+    return 'drop'
+  }
+
+  /** Passes an image of a gate that is not (or no longer) armed unless it overlaps a gap no observer verified. */
+  private admitUnarmed(
+    fromMs: number,
+    toMs: number,
+    kind: 'frame' | 'capture',
+  ): 'pass' | 'drop' {
+    const inGap = this.unverifiedGaps.some(
+      ([start, end]) => fromMs <= end && toMs >= start,
+    )
+    if (!inGap) return 'pass'
     this.options.onDrop?.({ kind, atMs: toMs })
     return 'drop'
   }
@@ -305,6 +324,11 @@ export class SecretFrameGate {
    */
   private release(): void {
     if (this.failureReason !== undefined) return
+    // Images captured after the old observer last vouched for the page and before this release (a show-password toggle followed at once by a submit that navigates) were never verified.
+    this.unverifiedGaps.push([
+      this.lastAnswerMs > 0 ? this.lastAnswerMs : this.armedAtMs,
+      Date.now(),
+    ])
     this.armedSelector = undefined
     this.documentOrigin = undefined
     this.intervals = []

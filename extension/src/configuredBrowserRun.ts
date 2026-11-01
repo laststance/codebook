@@ -710,6 +710,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private operationsAccepted = 0
   /** How many operations had their first input event sent; a stop declared `afterOperation: k` is armed once this reaches `k`. */
   private operationsDispatched = 0
+  /** Whether {@link armSecretGate} is waiting for the gate to arm; a failure of the gate then becomes that operation's own not-sent refusal. */
+  private armingSecretGate = false
   /** The operation each `action` key reserved, so a repeat of a key finds its operation. */
   private readonly operationIndexByKey = new Map<string, number>()
   /** The id and the key of each reserved operation, in order. */
@@ -5263,6 +5265,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @example this.failSecretVisible('control-not-password')
    */
   private failSecretVisible(reason: string): void {
+    // Arming reports its own refusal for this operation (not sent); the gate's synchronous failure must not fail the run first as the previous operation.
+    if (this.armingSecretGate) return
     const message = `The control that received a secret stopped being a safe password control (${reason}); Codebook stopped recording and kept no image from that time.`
     if (this.operationsConfiguration && this.operationsDispatched > 0)
       this.failOperation(
@@ -5283,7 +5287,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @example await this.armSecretGate(2, '#password')
    */
   private async armSecretGate(index: number, selector: string): Promise<void> {
-    await this.secretFrameGate.arm(selector)
+    this.armingSecretGate = true
+    try {
+      await this.secretFrameGate.arm(selector)
+    } finally {
+      this.armingSecretGate = false
+    }
     this.alive()
     const reason = this.secretFrameGate.failure
     if (reason !== undefined)

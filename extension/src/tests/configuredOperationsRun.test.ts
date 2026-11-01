@@ -369,6 +369,56 @@ test('an ask-learner operation types the learner value, calls the secret hook be
   assert.doesNotMatch(serialized, /typed-by-learner/)
 })
 
+// protects=ENG-5: when the secret gate cannot arm for operation 2, the run fails as operation 2 (not sent, no side effects) with SECRET_BECAME_VISIBLE and nothing is typed; fails_when=the failure names operation 1 or says sent, or the secret is typed; no_claim=a real page (the harness stands in for the gate's observer, which finds a plain text control)
+test('a secret gate that cannot arm for operation 2 fails the run as operation 2, not sent', async (context) => {
+  // Arrange
+  const { run, insertedTexts } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    {
+      operations: {
+        operations: [
+          amount,
+          {
+            kind: 'text',
+            title: 'Password',
+            selector: '#password',
+            secret: 'ask-learner',
+          },
+        ],
+        stopOperations: [2],
+        controls: {
+          '#password': {
+            tagName: 'input',
+            type: 'password',
+            observedType: 'text',
+          },
+        },
+      },
+    },
+  )
+  await run.prepare()
+  run.action('op-1', OPERATION_ACTION)
+  await waitUntil(() => run.view().operations?.[0]?.state === 'done', 'op 1')
+  insertedTexts.length = 0
+  // Act
+  run.action('op-2', OPERATION_ACTION, { learnerSecret: 'typed-by-learner' })
+  await waitUntil(() => run.view().status === 'failed', 'the refusal')
+  // Assert
+  const view = run.view()
+  assert.match(view.failures[0] ?? '', /^SECRET_BECAME_VISIBLE: Operation 2 /)
+  assert.deepEqual(plain(view.operationFailure), {
+    code: 'SECRET_BECAME_VISIBLE',
+    operationIndex: 2,
+    path: 'operations[1].selector',
+    sent: 'not-sent',
+    sideEffects: 'none',
+    logId: `${run.id}#2`,
+  })
+  assert.deepEqual(insertedTexts, [])
+})
+
 // protects=an ask-learner operation cannot be reserved without the learner's secret; fails_when=the run accepts the operation and types nothing; no_claim=the learner is asked by the service (service tests)
 test('an ask-learner operation without the learner secret is not accepted', async (context) => {
   // Arrange

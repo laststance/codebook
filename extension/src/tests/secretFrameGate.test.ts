@@ -91,6 +91,41 @@ test('an observer that stops answering drops every frame and fails once', async 
   assert.equal(gate.failure, 'observer-unanswered')
 })
 
+// protects=ENG-5: frames captured after the old observer last verified the page and before the document replacement was noticed are dropped as an unrecorded gap, and frames after the release pass; fails_when=a show-password toggle followed at once by a navigating submit leaves its frames in the replay, or a frame after the release is dropped; no_claim=a real navigation (the evaluate function stands in for the page and its document time origin)
+test('frames between the last verified answer and a document replacement are dropped, later frames pass', async () => {
+  // Arrange
+  let replaced = false
+  let lastAnswer = 0
+  const dropped: number[] = []
+  const gate = new SecretFrameGate({
+    evaluate: async (expression) => {
+      if (expression === 'performance.timeOrigin') return replaced ? 2 : 1
+      if (expression.includes('query()')) {
+        if (replaced) return null
+        lastAnswer = Date.now()
+        return { now: lastAnswer, open: null, unsafe: [] }
+      }
+      return { ok: true, origin: 1 }
+    },
+    onDrop: (detail) => void dropped.push(detail.atMs),
+  })
+  await gate.arm('#password')
+  const verified = await gate.admitFrame(Date.now())
+  await delay(10)
+  const capturedBeforeReplacement = lastAnswer + 5
+  await delay(10)
+  replaced = true
+  // Act
+  const inGap = await gate.admitFrame(capturedBeforeReplacement)
+  await delay(10)
+  const afterRelease = await gate.admitFrame(Date.now())
+  // Assert
+  assert.deepEqual(
+    [verified, inGap, afterRelease, dropped, gate.armed],
+    ['pass', 'drop', 'pass', [capturedBeforeReplacement], false],
+  )
+})
+
 // protects=a safe password control lets its frames pass; fails_when=a verification of a safe control drops frames; no_claim=pixels, the gate does not read them
 test(
   'frames of a control that stays a password control pass',
