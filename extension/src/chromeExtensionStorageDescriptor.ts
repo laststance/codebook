@@ -126,6 +126,7 @@ export function createExtensionStorageDescriptor(options?: {
   return {
     profile: CHROME_EXTENSION_PROFILE,
     directoryName: CHROME_EXTENSION_HISTORY_DIRECTORY,
+    removable: true,
     journalLimitBytes: EXTENSION_HISTORY_JOURNAL_LIMIT_BYTES,
     sealLimitBytes: EXTENSION_HISTORY_SEAL_LIMIT_BYTES,
     words: {

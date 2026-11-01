@@ -1390,13 +1390,6 @@ function studyClient(
       ],
       [
         chosen.format === 'node-test-history' &&
-          chosen.profile === 'chrome-extension',
-        message.removalWithoutTrash
-          ? options.extensionHistoryRefusal.withoutTrash
-          : options.extensionHistoryRefusal.withTrash,
-      ],
-      [
-        chosen.format === 'node-test-history' &&
           chosen.profile === 'node-server',
         message.removalWithoutTrash
           ? options.serverHistoryRefusal.withoutTrash

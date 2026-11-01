@@ -88,6 +88,11 @@ export function studyRemovalMessages(
     /** The dialog's detail: which study, and what the removal does and keeps. */
     confirmDetail: (identityLine: string): string =>
       `${identityLine}\n\nAny saved recording moves with it, and so does the raw evidence of its run unless another Codebook window may still be using it. What you marked as understood is kept. Repository Wiki links to this study will show as unavailable.`,
+    /** The dialog's detail for an Extension replay: which replay, and what the removal does and keeps. */
+    confirmExtensionDetail: (identityLine: string): string =>
+      `${identityLine}\n\nIts recorded stops and frames move with it. Learning saved with the replay moves with it too. Repository Wiki links to this replay will show as unavailable.`,
+    /** The success line of an Extension replay's removal. */
+    extensionMoved: `Extension replay moved to the ${trashName}.`,
     moving: `Moving the saved study to the ${trashName}…`,
     /** The success line: the library's room after the removal, the next step when the removal made room for a refused run, and the evidence that stayed because another window may still use it. */
     moved: (

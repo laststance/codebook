@@ -90,7 +90,8 @@ import {
   STUDY_REFRESH_INTERVAL_MS,
   STUDY_REMOVAL_REFUSALS,
   STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH,
-  STUDY_REMOVAL_EXTENSION_HISTORY_REFUSAL,
+  STUDY_REMOVAL_EXTENSION_HISTORY_REFUSALS,
+  STUDY_REMOVAL_EXTENSION_HISTORY_TRASH_REFUSED,
   STUDY_REMOVAL_SERVER_HISTORY_REFUSAL,
   STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE,
   STUDY_SOURCE_SCHEME,
@@ -25907,6 +25908,14 @@ export class StudyWorkspace {
       this.studyRemovalAvailability() === 'no-trash'
         ? STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH
         : STUDY_REMOVAL_REFUSALS
+    // An Extension replay is no saved study of the library: its own refusals apply, and the library's (unlisted, newer format, unstopped run, open Recording) do not.
+    const extension = this.nodeExtensionHistoryCatalog.find(
+      (history) => history.studyId === studyId,
+    )
+    if (extension)
+      return this.studyOpening()
+        ? sentences.studyOpening
+        : this.extensionRemovalRefusal(extension)
     const refusals: [applies: boolean, sentence: string][] = [
       // The pane may still show the entry before the one the learner chose; a delete names what is shown once it has opened.
       [this.studyOpening(), sentences.studyOpening],
@@ -25923,14 +25932,6 @@ export class StudyWorkspace {
           : STUDY_REMOVAL_SERVER_HISTORY_REFUSAL.withTrash,
       ],
       [
-        this.nodeExtensionHistoryCatalog.some(
-          (history) => history.studyId === studyId,
-        ),
-        this.studyRemovalAvailability() === 'no-trash'
-          ? STUDY_REMOVAL_EXTENSION_HISTORY_REFUSAL.withoutTrash
-          : STUDY_REMOVAL_EXTENSION_HISTORY_REFUSAL.withTrash,
-      ],
-      [
         !this.catalog.some((entry) => entry.id === studyId),
         sentences.unavailable,
       ],
@@ -25945,6 +25946,23 @@ export class StudyWorkspace {
       [this.recordingOpenOrOpening(), sentences.recordingOpen],
     ]
     return refusals.find(([applies]) => applies)?.[1]
+  }
+
+  /**
+   * Says why an Extension replay cannot be deleted now: its run still records, or the reader shows it. A window without a Trash deletes nothing, so only listing its files is asked there and nothing refuses.
+   * @param history - The replay's catalog summary.
+   * @returns The refusal sentence, or `undefined` when the replay can be deleted (or its files listed).
+   * @example this.extensionRemovalRefusal(summary) // => 'Stop the run before deleting its Extension replay.'
+   */
+  private extensionRemovalRefusal(
+    history: ExtensionHistorySummary,
+  ): string | undefined {
+    if (this.studyRemovalAvailability() === 'no-trash') return undefined
+    if (history.status === 'recording')
+      return STUDY_REMOVAL_EXTENSION_HISTORY_REFUSALS.recording
+    if (this.selectedNodeHistory?.header.studyId === history.studyId)
+      return STUDY_REMOVAL_EXTENSION_HISTORY_REFUSALS.open
+    return undefined
   }
 
   /** Says whether a saved study or a Node test history the learner chose is still opening; until it is shown, a removal's neighbour and a delete request give way to it. @example if (this.studyOpening()) return */
@@ -26040,6 +26058,15 @@ export class StudyWorkspace {
     studyId: string,
   ): Promise<string[] | undefined> {
     try {
+      // An Extension replay is one folder of the history store: removing it by hand removes the journal, blobs and learning together.
+      const repository = this.nodeHistoryRepository
+      if (
+        repository &&
+        this.nodeExtensionHistoryCatalog.some(
+          (history) => history.studyId === studyId,
+        )
+      )
+        return [repository.extensionHistories.historyDirectory(studyId)]
       const evidence = await this.studyEvidenceToMove(studyId)
       return await this.library!.studyFiles(studyId, evidence.directory)
     } catch (error) {
@@ -26211,15 +26238,19 @@ export class StudyWorkspace {
   /**
    * Asks the learner in a native dialog whether the named study moves to the system Trash; while the dialog is open the removal is `confirming`.
    * Cancel, Escape and a dialog the host could not show all leave the study and the status line untouched.
-   * @param entry - The catalog entry the dialog names.
+   * @param studyId - The entry the dialog names.
+   * @param detail - The dialog's detail: which study, and what the removal does and keeps.
    * @returns Whether the learner pressed the confirming button.
-   * @example if (!(await this.askStudyRemoval(entry))) return
+   * @example if (!(await this.askStudyRemoval(entry.id, messages.confirmDetail(identityLine)))) return
    */
-  private async askStudyRemoval(entry: StudyCatalogEntry): Promise<boolean> {
+  private async askStudyRemoval(
+    studyId: string,
+    detail: string,
+  ): Promise<boolean> {
     const messages = studyRemovalMessages()
     this.studyRemoval = this.withRemovalRequest({
       status: 'confirming',
-      studyId: entry.id,
+      studyId,
     })
     this.publish()
     let confirmed = false
@@ -26227,10 +26258,7 @@ export class StudyWorkspace {
       confirmed =
         (await vscode.window.showWarningMessage(
           messages.confirmTitle,
-          {
-            modal: true,
-            detail: messages.confirmDetail(savedStudyIdentityLine(entry)),
-          },
+          { modal: true, detail },
           messages.confirmButton,
         )) === messages.confirmButton
     } finally {
@@ -26250,8 +26278,18 @@ export class StudyWorkspace {
   private async studyRemovalConfirmed(studyId: string): Promise<boolean> {
     if (this.refuseStudyRemoval(studyId)) return false
     if (await this.refuseRemovalWithoutTrash(studyId)) return false
+    const extension = this.nodeExtensionHistoryCatalog.find(
+      (candidate) => candidate.studyId === studyId,
+    )
     const entry = this.catalog.find((candidate) => candidate.id === studyId)
-    if (!entry || !(await this.askStudyRemoval(entry))) return false
+    const detail = extension
+      ? studyRemovalMessages().confirmExtensionDetail(
+          describeExtensionReplayRow(extension),
+        )
+      : entry &&
+        studyRemovalMessages().confirmDetail(savedStudyIdentityLine(entry))
+    if (detail === undefined || !(await this.askStudyRemoval(studyId, detail)))
+      return false
     return !this.refuseStudyRemoval(studyId)
   }
 
@@ -26378,6 +26416,12 @@ export class StudyWorkspace {
    * @example await this.moveSavedStudy(studyId)
    */
   private async moveSavedStudy(studyId: string): Promise<void> {
+    if (
+      this.nodeExtensionHistoryCatalog.some(
+        (history) => history.studyId === studyId,
+      )
+    )
+      return this.moveExtensionReplay(studyId)
     const messages = studyRemovalMessages()
     // A saved study or Node test history chosen from here on owns the reader; the neighbour gives way to it. Other actions that take a history request number (an item, a return, repository evidence) choose no entry.
     const choiceGeneration = this.studyChoices
@@ -26429,6 +26473,62 @@ export class StudyWorkspace {
     } finally {
       this.removalFollowersShowing--
     }
+  }
+
+  /**
+   * Removes a confirmed Extension replay: the history store renames its folder out of the listing under the storage lock ({@link NodeHistoryStore.removeHistory}), then the folder goes to the system Trash; called by {@link moveSavedStudy}.
+   * The outcome line says which: refused with the store's reason (nothing changed), moved, or removed from the list with the Trash refusing the folder, whose path the line names.
+   * @param studyId - The confirmed Extension replay.
+   * @example await this.moveExtensionReplay(studyId)
+   */
+  private async moveExtensionReplay(studyId: string): Promise<void> {
+    const messages = studyRemovalMessages()
+    const repository = this.nodeHistoryRepository
+    if (!repository) {
+      this.settleStudyRemoval({
+        status: 'refused',
+        studyId,
+        text: STUDY_REMOVAL_EXTENSION_HISTORY_REFUSALS.unknown,
+      })
+      return
+    }
+    const removal = await repository.extensionHistories.removeHistory(
+      studyId,
+      // The reader shows it, or is opening some history that may be it.
+      () =>
+        this.selectedNodeHistory?.header.studyId === studyId ||
+        this.pendingNodeHistory !== undefined,
+    )
+    if (removal.outcome === 'refused') {
+      this.settleStudyRemoval({
+        status: 'refused',
+        studyId,
+        text: STUDY_REMOVAL_EXTENSION_HISTORY_REFUSALS[removal.reason],
+      })
+      return
+    }
+    let trashError: unknown
+    try {
+      await vscode.workspace.fs.delete(
+        vscode.Uri.file(removal.stagedDirectory),
+        { recursive: true, useTrash: true },
+      )
+      this.service?.recordStudyRemoval(true)
+    } catch (error) {
+      trashError = error
+      this.service?.recordStudyRemoval(false)
+    }
+    // The replay left the listing at the rename, whatever the Trash answered.
+    await this.listNodeHistoryCatalog(repository)
+    this.settleStudyRemoval(
+      trashError === undefined
+        ? { status: 'moved', studyId, text: messages.extensionMoved }
+        : {
+            status: 'failed',
+            studyId,
+            text: `${STUDY_REMOVAL_EXTENSION_HISTORY_TRASH_REFUSED} ${removal.stagedDirectory}`,
+          },
+    )
   }
 
   /** Reads the catalog and the ledger again after a removal that moved no file, so the reader shows what the library holds now; a failed read is reported in its own line. @example await this.rereadLibraryAfterUnmovedRemoval() */

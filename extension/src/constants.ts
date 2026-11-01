@@ -2310,12 +2310,21 @@ export const EXTENSION_HISTORY_REASON_CODES = {
 } as const
 /** The most decoded frames an Extension replay keeps in memory; a frame is loaded lazily by its hash and the least recently shown one leaves first. */
 export const EXTENSION_REPLAY_FRAME_CACHE_SIZE = 8
-/** Why an Extension replay cannot be removed from Saved studies in this version, as a window with a Trash and one without word it (the removal operation of the extension profile is a later part of the cycle). */
-export const STUDY_REMOVAL_EXTENSION_HISTORY_REFUSAL = {
-  withTrash: 'Extension replays cannot be deleted here yet.',
-  withoutTrash:
-    'Codebook cannot list the files of an Extension replay for removal by hand yet.',
+/** The folder under the learning directory a removed history's folder is renamed into before it goes to the Trash; no listing or count scans it, so the rename is the removal's one atomic step. */
+export const NODE_HISTORY_REMOVAL_DIRECTORY = 'removed-histories.v1'
+/** Why an Extension replay cannot be removed from Saved studies right now, as the history store's removal and the Study workspace word it; nothing was deleted in any of these cases. */
+export const STUDY_REMOVAL_EXTENSION_HISTORY_REFUSALS = {
+  recording: 'Stop the run before deleting its Extension replay.',
+  open: 'Choose Overview or Live to leave the Extension replay before deleting it.',
+  saving: 'Wait for the Extension replay to finish saving before deleting it.',
+  unknown: 'This Extension replay is no longer listed.',
+  unsupported: 'Codebook cannot delete this replay here yet.',
+  renameFailed:
+    'The Extension replay could not be moved out of Saved studies. Nothing was deleted.',
 } as const
+/** What Saved studies says when the Trash refused the folder of a removed Extension replay: the replay is no longer listed, and its files stay in the folder the line names after this sentence. */
+export const STUDY_REMOVAL_EXTENSION_HISTORY_TRASH_REFUSED =
+  'The Extension replay left Saved studies, but the Trash refused its files. Delete this folder by hand:'
 /** What a listing says of a chrome-extension history one of whose entries names a context this build does not know. */
 export const EXTENSION_HISTORY_FORMAT_NEWER_TEXT =
   'Recorded by a newer Codebook; update Codebook to open it.'

@@ -151,6 +151,8 @@ export type HistoryStorageDescriptor<Types extends HistoryTypes> = {
   readonly profile: Types['Header']['profile']
   /** The folder under the learning directory. */
   readonly directoryName: string
+  /** Whether the store may remove a history of this profile ({@link NodeHistoryStore.removeHistory}); set for the chrome-extension profile only, so test and server histories keep refusing removal. */
+  readonly removable?: boolean
   readonly journalLimitBytes: number
   readonly sealLimitBytes: number
   /** What the store words when it meets a journal that does not verify. */

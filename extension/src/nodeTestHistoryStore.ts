@@ -1,9 +1,11 @@
+import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import {
   chmod,
   mkdir,
   open,
   readdir,
+  rename,
   readFile,
   lstat,
   rm,
@@ -12,6 +14,7 @@ import { join } from 'node:path'
 
 import {
   NODE_HISTORY_CITABLE_MEMO_LIMIT,
+  NODE_HISTORY_REMOVAL_DIRECTORY,
   NODE_HISTORY_SUMMARY_READ_CONCURRENCY,
   NODE_TEST_HISTORY_WRITER_FILE,
   NODE_TEST_WRITER_RECHECK_MS,
@@ -98,6 +101,15 @@ type SummaryMemo<Types extends HistoryTypes> = {
   transient?: boolean
 }
 
+/** Why {@link NodeHistoryStore.removeHistory} moved nothing; each is worded by `STUDY_REMOVAL_EXTENSION_HISTORY_REFUSALS`, and `unsupported` is a profile whose histories cannot be removed yet (test and server). */
+export type HistoryRemovalRefusal =
+  'unsupported' | 'unknown' | 'recording' | 'open' | 'saving' | 'renameFailed'
+
+/** What {@link NodeHistoryStore.removeHistory} did: the folder it renamed out of the listing (the caller moves it to the Trash), or why nothing changed. */
+export type HistoryRemoval =
+  | { outcome: 'removed'; stagedDirectory: string }
+  | { outcome: 'refused'; reason: HistoryRemovalRefusal }
+
 /** A history as a summary counts it: its header, entries (a recording keeps only its stops and result), status and reason, with its citable events and, for a recording, the scan to continue from. */
 type LoadedHistory<Types extends HistoryTypes> = {
   history: Pick<
@@ -120,6 +132,8 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
   >()
   /** The histories this window ever started: a writer record of one of them never makes it a history another window writes, whatever a failed removal left ({@link writtenElsewhere}). */
   private readonly startedHere = new Set<string>()
+  /** The histories whose removal is running; a material or position write for one is dropped at once, so none recreates its folder. */
+  private readonly removing = new Set<string>()
   private readonly readerPositionWrites = new Map<string, Promise<void>>()
   private readonly learningMaterialWrites = new Map<
     string,
@@ -1113,6 +1127,8 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
     expectedRevision: number,
     content: Types['MaterialContent'],
   ): Promise<Types['Material']> {
+    if (this.removing.has(studyId))
+      throw new Error('No Node history has this study id.')
     const previous =
       this.learningMaterialWrites.get(studyId) ?? Promise.resolve(undefined)
     // The journal is read and the citations checked before the storage lock is taken, so the lock is held only for the revision check and the write; a refusal waits for the revision check, which has always come first.
@@ -1132,10 +1148,21 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
         ),
       )
     this.learningMaterialWrites.set(studyId, operation)
-    return operation.finally(() => {
-      if (this.learningMaterialWrites.get(studyId) === operation)
-        this.learningMaterialWrites.delete(studyId)
-    })
+    return operation
+      .catch((error: unknown): never => {
+        // A removable history whose folder was removed meanwhile answers the study-id refusal, never the raw failure with the private path; test and server histories keep their raw failure.
+        if (
+          this.descriptor.removable &&
+          systemErrorCode(error) === 'ENOENT' &&
+          !this.holdsHistoryFolder(studyId)
+        )
+          throw new Error('No Node history has this study id.')
+        throw error
+      })
+      .finally(() => {
+        if (this.learningMaterialWrites.get(studyId) === operation)
+          this.learningMaterialWrites.delete(studyId)
+      })
   }
 
   /**
@@ -1217,6 +1244,9 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
       entries: readonly Pick<Types['Entry'], 'sequence'>[]
     },
   ): Promise<void> {
+    // A history being removed takes no position: the write would race its rename.
+    if (this.removing.has(studyId))
+      return Promise.reject(new Error('No Node history has this study id.'))
     const previous = this.readerPositionWrites.get(studyId) ?? Promise.resolve()
     const operation = previous
       .catch(() => undefined)
@@ -1295,6 +1325,105 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
    */
   historyDirectory(studyId: string): string {
     return this.path(studyId)
+  }
+
+  /**
+   * Removes one history from the listing and the shared limit by renaming its folder out of the profile directory, for a profile whose descriptor allows it; called by the Study workspace when the learner deletes an Extension replay from Saved studies.
+   * Under the storage lock it refuses a history with a live writer in any window, one the reader has open, and one with a material or position write queued; the atomic rename is the linearization point, so a failed rename leaves the history listed and unchanged. A late material or position write finds no folder and is dropped, never recreating it. The place is released once: counts read the directory, and a second removal finds no folder.
+   * @param studyId - The history's study id.
+   * @param isOpen - Says whether the reader shows the history; read under the lock, right before the rename.
+   * @returns `removed` with the staged folder (the caller moves it to the Trash), or `refused` with the reason; nothing changed then.
+   * @example await store.removeHistory(studyId, () => false) // => { outcome: 'removed', stagedDirectory: '<learning>/removed-histories.v1/<studyId>.<uuid>' }
+   */
+  async removeHistory(
+    studyId: string,
+    isOpen: () => boolean,
+  ): Promise<HistoryRemoval> {
+    if (!this.descriptor.removable)
+      return { outcome: 'refused', reason: 'unsupported' }
+    if (!isNodeHistoryIdentity(studyId))
+      return { outcome: 'refused', reason: 'unknown' }
+    // A second removal of the same history, while the first runs, is a no-op refusal.
+    if (this.removing.has(studyId))
+      return { outcome: 'refused', reason: 'unknown' }
+    // A write already queued at the request keeps the history; asked again under the lock, for a write that queued while the lock was awaited.
+    if (this.hasQueuedWrite(studyId))
+      return { outcome: 'refused', reason: 'saving' }
+    // Marked before the lock so a write accepted from now on is dropped instead of racing the rename.
+    this.removing.add(studyId)
+    try {
+      return await withStorageLock(this.learningDirectory, () =>
+        this.renameOutOfListing(studyId, isOpen),
+      )
+    } finally {
+      this.removing.delete(studyId)
+    }
+  }
+
+  /**
+   * Checks the refusals and renames the folder; the body of {@link removeHistory}, run under the storage lock.
+   * @param studyId - The history's study id.
+   * @param isOpen - Says whether the reader shows the history.
+   * @returns What {@link removeHistory} returns.
+   * @example await this.renameOutOfListing(studyId, () => false)
+   */
+  private async renameOutOfListing(
+    studyId: string,
+    isOpen: () => boolean,
+  ): Promise<HistoryRemoval> {
+    const folder = this.path(studyId)
+    if (!existsSync(folder)) return { outcome: 'refused', reason: 'unknown' }
+    // A writer of this window, or one of another window that is judged live or cannot be judged, keeps the history.
+    if (
+      this.active.has(studyId) ||
+      (await this.hasUnjudgedOrLiveWriter(studyId))
+    )
+      return { outcome: 'refused', reason: 'recording' }
+    if (isOpen()) return { outcome: 'refused', reason: 'open' }
+    // A write queued before the mark keeps the history: its outcome is not yet known.
+    if (this.hasQueuedWrite(studyId))
+      return { outcome: 'refused', reason: 'saving' }
+    const stagingDirectory = join(
+      this.learningDirectory,
+      NODE_HISTORY_REMOVAL_DIRECTORY,
+    )
+    const stagedDirectory = join(stagingDirectory, `${studyId}.${randomUUID()}`)
+    try {
+      await mkdir(stagingDirectory, {
+        recursive: true,
+        mode: PRIVATE_DIRECTORY_MODE,
+      })
+      // The one atomic step: before it the history is listed, after it nothing lists or counts it.
+      await rename(folder, stagedDirectory)
+    } catch {
+      return { outcome: 'refused', reason: 'renameFailed' }
+    }
+    this.forgetSummary(studyId)
+    this.startedHere.delete(studyId)
+    return { outcome: 'removed', stagedDirectory }
+  }
+
+  /** Says whether a learning-material or reader-position write of this window for the history is queued or in flight; read by {@link removeHistory}. @example if (this.hasQueuedWrite(studyId)) … */
+  private hasQueuedWrite(studyId: string): boolean {
+    return (
+      this.learningMaterialWrites.has(studyId) ||
+      this.readerPositionWrites.has(studyId)
+    )
+  }
+
+  /**
+   * Says whether another window may still write an unsealed history: its writer record is judged anew and anything but "gone" counts; called by {@link renameOutOfListing}.
+   * @param studyId - The history's study id.
+   * @returns `true` for a live or unreadable writer record on a history without a seal; `false` for a sealed history, one without a record and one whose writer is gone.
+   * @example if (await this.hasUnjudgedOrLiveWriter(studyId)) …
+   */
+  private async hasUnjudgedOrLiveWriter(studyId: string): Promise<boolean> {
+    const directory = this.path(studyId)
+    if (existsSync(join(directory, HISTORY_SEAL_FILE))) return false
+    if (!existsSync(join(directory, NODE_TEST_HISTORY_WRITER_FILE)))
+      return false
+    if (this.startedHere.has(studyId)) return false
+    return (await this.writerJudge.judge(directory)) !== 'gone'
   }
 
   private path(studyId: string): string {
