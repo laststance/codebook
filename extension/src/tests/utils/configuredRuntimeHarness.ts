@@ -22,6 +22,11 @@ import type {
 import type { RuntimeControl } from '../../runtime'
 import type { ViewportRecordingObserver } from '../../runtimeSupport/browserViewport'
 import type { ProfileLeft } from '../../runtimeSupport/hostBrowser'
+import type {
+  AppCookieKind,
+  SavedSessionRunLease,
+  SignInRequiredReason,
+} from '../../runtimeSupport/savedSessionTypes'
 import {
   WITHHOLD_REASON_OF_VERDICT,
   type SecretFrameGate,
@@ -179,6 +184,25 @@ export async function configuredRuntimeHarness(
     launchFailure?: string
     /** Makes the stand-in server's structured entry check (`readyEntry`) never answer until the run is cancelled, as a first compile that is still running does. */
     entryHangs?: boolean
+    /**
+     * Binds a stand-in saved-session store to the run, as `createRuntime` does for a version 3 run: `admission` is what the store answers (the saved session with a lease, or a fresh profile with the reason), `refuse` makes it throw a coded refusal instead, and `appCookies` is the lease's cookie kind.
+     * The stand-in browser then takes the lease like the real one (`prepareForLaunch` at launch, `recordBrowser` after it), and the page reports its navigations.
+     */
+    savedSession?: {
+      admission: 'saved' | 'no-saved-session' | 'setup-not-finished'
+      refuse?: StudyError
+      appCookies?: AppCookieKind
+    }
+    /** The structured answer of the stand-in server's entry check (`readyEntry`) for a version 3 run: the status and the `Location` it redirects to. */
+    entryAnswer?: { status: number; location?: string }
+    /** The origin the stand-in server reports as its own (default `http://127.0.0.1:4321`). */
+    serverOrigin?: string
+    /** The configuration's entry path (default: none, so `/`). */
+    entryPath?: string
+    /** Makes the stand-in browser's first `close` fail, as a close that could not confirm Chrome's exit does; the second succeeds. */
+    closeFailsOnce?: boolean
+    /** The path the stand-in page lands on after each `Page.navigate` of a saved-session run (default: the path asked for). */
+    navigationLandsOn?: string
     /** Makes the stand-in server's App verdict (`confirmAppEntry`) record its answer and then never settle until the run is cancelled, as a redirected root whose second request does not answer. */
     appEntryConfirmationHangs?: boolean
     /** Makes the stand-in page never answer a screenshot until the run is cancelled, so the run stays at the end of its setup, after the inputs were written. */
@@ -199,6 +223,10 @@ export async function configuredRuntimeHarness(
       unappliedNativeValue?: string[]
       /** Makes the page's answer to resolving a control throw an error with this message, as a transport failure that quotes text does. */
       selectControlFailsWith?: string
+      /** The configuration's `signInPaths`. */
+      signInPaths?: string[]
+      /** The configuration's `session: "fresh"`. */
+      session?: 'fresh'
     }
   } = {},
 ) {
@@ -227,8 +255,9 @@ export async function configuredRuntimeHarness(
   if (fixture?.declaredColumn)
     reference.configuration.source.column = fixture.declaredColumn
   if (options.sourcePath) relocateFirstSource(reference, options.sourcePath)
-  if (options.nextPages?.entryPath)
-    reference.configuration.entryPath = options.nextPages.entryPath
+  if (options.entryPath ?? options.nextPages?.entryPath)
+    reference.configuration.entryPath =
+      options.entryPath ?? options.nextPages?.entryPath
   if (options.initialInputs)
     reference.configuration.initialInputs = options.initialInputs
   // A version 2 configuration names the first stop's participant; its other fields are the version 1 ones.
@@ -258,6 +287,12 @@ export async function configuredRuntimeHarness(
         ...(reference.configuration.entryPath
           ? { entryPath: reference.configuration.entryPath }
           : {}),
+        ...(options.operations.signInPaths
+          ? { signInPaths: options.operations.signInPaths }
+          : {}),
+        ...(options.operations.session
+          ? { session: options.operations.session }
+          : {}),
       }
     : options.participant
       ? {
@@ -274,6 +309,7 @@ export async function configuredRuntimeHarness(
     options.adapter ||
     options.sourcePath ||
     options.nextPages?.entryPath ||
+    options.entryPath ||
     options.initialInputs ||
     options.participant ||
     options.operations
@@ -385,6 +421,48 @@ export async function configuredRuntimeHarness(
   const insertedTexts: string[] = []
   // The method of every `Input.*` CDP request the run sent to the page, in order (no parameters, so no typed value is kept).
   const inputRequests: string[] = []
+  // The calls the run made to the stand-in saved-session store and its lease, in order, and the folders the stand-in browser was told to open.
+  const savedSessionCalls: string[] = []
+  const savedProfileFolders: string[] = []
+  const signInNotices: SignInRequiredReason[] = []
+  // The pathname the stand-in page reports; a landing replaces it.
+  let pagePathname = options.entryPath ?? '/'
+  let closeAttempts = 0
+  const serverOrigin = options.serverOrigin ?? 'http://127.0.0.1:4321'
+  const savedLease: SavedSessionRunLease = {
+    profile: '/stand-in/Application Support/sign-in-profiles/0123abcd',
+    setupAt: '2026-11-02T00:00:00.000Z',
+    appCookies: options.savedSession?.appCookies ?? 'persistent',
+    recordBrowser: async () => {
+      savedSessionCalls.push('recordBrowser')
+    },
+    prepareForLaunch: async () => {
+      savedSessionCalls.push('prepare')
+    },
+    release: async () => {
+      savedSessionCalls.push('release')
+      releases.push('saved session')
+    },
+  }
+  // The store bound to the repository, as `createRuntime` hands it to a version 3 run.
+  const savedSessionPort = options.savedSession
+    ? {
+        repositoryName: 'shop',
+        acquire: async (runId: string, session: string) => {
+          savedSessionCalls.push(`acquire:${runId}:${session}`)
+          // The order against the server's start is what a test reads.
+          releases.push('saved session acquired')
+          if (options.savedSession?.refuse) throw options.savedSession.refuse
+          const { admission } = options.savedSession!
+          return admission === 'saved'
+            ? ({ session: 'saved', lease: savedLease } as const)
+            : ({ session: 'fresh', signInRequiredReason: admission } as const)
+        },
+        rememberSignInPaths: async (): Promise<void> => {
+          savedSessionCalls.push('remember')
+        },
+      }
+    : undefined
   let screenshotCount = 0
   // Ends a held insert of an initial input when the page's transport closes.
   let rejectHeldInsert = (_error: Error): void => {}
@@ -724,6 +802,7 @@ export async function configuredRuntimeHarness(
     if (expression === NEXT_PAGES_STATE_EXPRESSION) return nextPagesState()
     if (expression === 'document.readyState') return 'complete'
     if (expression === 'location.href') return 'about:blank'
+    if (expression === 'location.pathname') return pagePathname
     if (expression === 'location.origin') return pageOrigin
     if (expression === scrollExpression)
       return { scrolled: clickTargetScrolled }
@@ -924,6 +1003,20 @@ export async function configuredRuntimeHarness(
         return { result: { value: pageEvaluation(parameters?.expression) } }
       if (method === 'Page.navigate') {
         navigations.push(String(parameters?.url))
+        // A saved-session run's page reports the document it commits: the path asked for, or the one a test chose it lands on.
+        if (options.savedSession) {
+          // The landing may carry a query, as a redirect to sign-in carries its callback; the page's pathname has none.
+          const landing =
+            options.navigationLandsOn ??
+            new URL(String(parameters?.url)).pathname
+          pagePathname = landing.split('?')[0]!
+          listeners.get('Page.frameNavigated')?.({
+            frame: {
+              id: 'main',
+              url: `http://localhost:4321${landing}`,
+            },
+          })
+        }
         if (options.adapter)
           listeners.get('Page.frameNavigated')?.({
             frame: { id: 'main', url: String(parameters?.url) },
@@ -1158,10 +1251,14 @@ export async function configuredRuntimeHarness(
       readyEntryPaths.push(entryPath)
       if (options.launchFailure) throw new Error(options.launchFailure)
       releases.push('application acquired')
-      return 'http://127.0.0.1:4321'
+      return serverOrigin
     },
     // The structured entry check of a Pages-capable run: the scripted answer, described by the real code, never fetched.
-    readyEntry: async (signal: AbortSignal, entryPath: string) => {
+    readyEntry: async (
+      signal: AbortSignal,
+      entryPath: string,
+      signInPaths?: readonly string[],
+    ) => {
       entryChecks.push(entryPath)
       // A first compile that has not finished answers only when the run is cancelled.
       if (options.entryHangs)
@@ -1170,8 +1267,9 @@ export async function configuredRuntimeHarness(
         )
       if (options.launchFailure) throw new Error(options.launchFailure)
       releases.push('application acquired')
-      const origin = 'http://127.0.0.1:4321',
-        answer = options.nextPages?.entry ?? { status: 200 }
+      const origin = serverOrigin,
+        answer = options.entryAnswer ??
+          options.nextPages?.entry ?? { status: 200 }
       return {
         origin,
         entry: describeNextEntryResponse(
@@ -1179,6 +1277,7 @@ export async function configuredRuntimeHarness(
           answer.location ?? null,
           `${origin}${entryPath}`,
           origin,
+          signInPaths,
         ),
       }
     },
@@ -1213,9 +1312,19 @@ export async function configuredRuntimeHarness(
       './runtimeSupport/hostBrowser': {
         HostBrowser: class {
           profileLeft?: ProfileLeft
+          private lease?: SavedSessionRunLease
+          useSavedProfile(lease: SavedSessionRunLease): void {
+            this.lease = lease
+            savedProfileFolders.push(lease.profile)
+          }
+          async recordSavedBrowser(): Promise<void> {
+            await this.lease?.recordBrowser({ executable: 'chrome', pid: 4242 })
+          }
           async launch(
             configuration: DebugSession['configuration'],
           ): Promise<void> {
+            // The real browser asks the lease to clear stale Chrome locks right before it launches.
+            await this.lease?.prepareForLaunch()
             launchConfigurations.push(configuration)
             root.configuration.name = configuration.name
             run.addSession(root)
@@ -1276,6 +1385,11 @@ export async function configuredRuntimeHarness(
             releases.push('acquisitions')
           }
           async close(): Promise<void> {
+            // A close that cannot confirm Chrome's exit throws once, as the real one does for a failed process listing.
+            if (options.closeFailsOnce && closeAttempts++ === 0)
+              throw new Error(
+                'The saved-session Chrome exit could not be confirmed',
+              )
             releases.push('browser')
             this.profileLeft = options.browserProfileLeft
           }
@@ -1484,6 +1598,8 @@ export async function configuredRuntimeHarness(
     definition,
     control,
     assertWorkspace() {},
+    savedSession: savedSessionPort,
+    onSignInRequired: ({ reason }) => signInNotices.push(reason),
     revealSource: async () => {
       releases.push('captured source')
     },
@@ -1576,6 +1692,27 @@ export async function configuredRuntimeHarness(
     insertedTexts,
     /** The method of every `Input.*` request the run sent to the page (`Input.insertText`, `Input.dispatchMouseEvent`, …), in order; the saved-session lanes assert that a refusal or a facts read sends none. */
     inputRequests,
+    /** The calls the run made to the stand-in saved-session store and its lease, in order: `acquire:<runId>`, `remember`, `prepare`, `recordBrowser`, `release`. */
+    savedSessionCalls,
+    /** The folders the stand-in browser was told to open as the saved session. */
+    savedProfileFolders,
+    /** The reasons of the notices the run asked the editor to show. */
+    signInNotices,
+    /** The stand-in lease's folder, which no journal record or error may name. */
+    savedProfileFolder: savedLease.profile,
+    /** Reports that the page reached this path, as a redirect does: a full document load, or a client-side navigation inside the document. @example harness.landOn('/login', 'document') */
+    landOn(path: string, kind: 'document' | 'within-document'): void {
+      // The page's pathname has no query; the event's URL keeps it, as a redirect to sign-in carries a callback.
+      pagePathname = path.split('?')[0]!
+      const url = `http://localhost:4321${path}`
+      if (kind === 'document')
+        listeners.get('Page.frameNavigated')?.({ frame: { id: 'main', url } })
+      else
+        listeners.get('Page.navigatedWithinDocument')?.({
+          frameId: 'main',
+          url,
+        })
+    },
     /** How many screenshots the run asked the stand-in page for. */
     screenshotRequests: () => screenshotCount,
     /** The answers the run asked the stand-in server to judge the App way (`app.confirmAppEntry`), in order. */

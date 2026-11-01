@@ -165,6 +165,10 @@ import { describeNodeTestResult } from './utils/describeNodeTestResult'
 import { describeOperationFailureDetails } from './utils/describeOperationFailureDetails'
 import { describeOperationStatus } from './utils/describeOperationStatus'
 import {
+  describeSignInRequiredDetails,
+  type SignInRunFacts,
+} from './utils/describeSignInRequiredDetails'
+import {
   explanationPlace,
   type ExplanationPlace,
 } from './utils/explanationPlace'
@@ -237,6 +241,7 @@ import { vitestSearchField } from './utils/vitestSearchField'
 import { waitForNextRunState } from './utils/waitForNextRunState'
 import { waitWithin } from './utils/waitWithin'
 import { withKnownNodeHistory } from './utils/withKnownNodeHistory'
+import { withRunStartRefusalDetails } from './utils/withRunStartRefusalDetails'
 
 /** What the run resource tells an agent after the result while no explanation of the run carries a learning summary; `codebook://help/studies` describes the step in the last entry of its sequence. */
 const SAVE_LEARNING_SUMMARY_ADVICE =
@@ -849,6 +854,32 @@ export class StudyService {
       this.sanitizedCause(error.message),
       this.sanitizedCause(error.causeDetail),
       error.recoveryOverride,
+      undefined,
+      this.sanitizedDetails(error.details),
+    )
+  }
+
+  /**
+   * Keeps the structured fields of a domain error (a refusal's reason, whether it was sent, the retry rule) through sanitizing, with every string value sanitized like the message.
+   * @param details - The error's `details`, if any.
+   * @returns The same fields with sanitized strings, nested objects included; `undefined` without details.
+   * @example this.sanitizedDetails({ reason: 'profile-in-use', heldBy: 'run' }) // => { reason: 'profile-in-use', heldBy: 'run' }
+   */
+  private sanitizedDetails(
+    details: StudyError['details'],
+  ): StudyError['details'] {
+    if (!details) return undefined
+    const sanitize = (value: unknown): unknown => {
+      if (typeof value === 'string') return this.sanitizedCause(value)
+      if (Array.isArray(value)) return value.map(sanitize)
+      if (value && typeof value === 'object')
+        return Object.fromEntries(
+          Object.entries(value).map(([key, entry]) => [key, sanitize(entry)]),
+        )
+      return value
+    }
+    return Object.fromEntries(
+      Object.entries(details).map(([key, value]) => [key, sanitize(value)]),
     )
   }
 
@@ -3397,8 +3428,28 @@ export class StudyService {
     runtimeFailure: string,
     operationFailure?: OperationFailure,
     runUri?: string,
+    run?: SignInRunFacts,
   ): StudyError {
     const refusal = refusalFailureOf(runtimeFailure)
+    // A page that asked for sign-in carries the reason, the profile the run used and the setup command (DES-3), also when no operation was sent yet.
+    if (refusal?.code === 'SIGN_IN_REQUIRED' && refusal.details)
+      return new StudyError(
+        refusal.code,
+        refusal.message,
+        refusal.message,
+        refusal.recoveryOverride,
+        undefined,
+        describeSignInRequiredDetails({
+          reason: refusal.details.reason,
+          session: run?.session,
+          savedSession: run?.savedSession,
+          sent: operationFailure?.sent ?? 'not-sent',
+          sideEffects: operationFailure?.sideEffects,
+          operationIndex: operationFailure?.operationIndex,
+          runUri,
+          logId: operationFailure?.logId ?? `${run?.runId ?? 'run'}#start`,
+        }),
+      )
     // An operation's refusal carries the fields that decide a retry (DX-5), and its static recovery names the operation (OPERATION_AFTER_NOT_MET).
     if (refusal && operationFailure && operationFailure.code === refusal.code)
       return new StudyError(
@@ -3733,6 +3784,16 @@ export class StudyService {
               : {}),
           }
         : {}),
+      // A version 3 run says which profile it used (the saved session or a fresh one), whether it kept the app's data, and the saved-session status it read at its start; the other runs have none of these.
+      ...(runtime?.session
+        ? {
+            session: runtime.session,
+            ...(runtime.appState ? { appState: runtime.appState } : {}),
+            ...(runtime.savedSession
+              ? { savedSession: runtime.savedSession }
+              : {}),
+          }
+        : {}),
       observed: runtime?.observed,
       links: runtime?.links,
       nodeTest:
@@ -3849,6 +3910,11 @@ export class StudyService {
               runtimeFailure,
               runtime?.operationFailure,
               this.uri(record.id),
+              {
+                runId: record.id,
+                session: runtime?.session,
+                savedSession: runtime?.savedSession,
+              },
             ).describe()
           : undefined),
       cleanupError: record.cleanupError?.describe(),
@@ -4874,13 +4940,30 @@ export class StudyService {
         ? undefined
         : refusalFailureOf(runtimeFailure)
     if (refusal && !(error instanceof StudyError))
-      return new StudyError(
-        refusal.code,
-        refusal.message,
-        refusal.message,
-        refusal.recoveryOverride,
+      // A sign-in refusal carries the reason and the profile the run used; every other refusal keeps its words and recovery as before.
+      return refusal.code === 'SIGN_IN_REQUIRED'
+        ? this.runtimeFailureError(
+            runtimeFailure!,
+            runtime?.operationFailure,
+            this.uri(record.id),
+            {
+              runId: record.id,
+              session: runtime?.session,
+              savedSession: runtime?.savedSession,
+            },
+          )
+        : new StudyError(
+            refusal.code,
+            refusal.message,
+            refusal.message,
+            refusal.recoveryOverride,
+          )
+    // A saved-session refusal of the run's start gets the fields that decide a retry (DX-5).
+    if (error instanceof StudyError)
+      return studyErrorNamingCause(
+        withRunStartRefusalDetails(error, this.uri(record.id), record.id),
       )
-    if (!runtime || !runtimeFailure || error instanceof StudyError)
+    if (!runtime || !runtimeFailure)
       return studyErrorNamingCause(domainError(error))
     // A failure naming the run's evidence directory is a failed evidence write's raw failure, which a removal of the study words by its own sentence (row 724).
     if (runtimeFailure.includes(runtime.artifactDirectory)) {

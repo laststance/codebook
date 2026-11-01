@@ -34,6 +34,7 @@ import {
   MAX_QUEUED_EVIDENCE_BYTES,
   MAX_RETAINED_EVENT_BYTES,
   MILLISECONDS_PER_SECOND,
+  OPERATION_SETTLE_BOUND_MS,
   REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT,
   REPOSITORY_ADAPTER_PAUSE_LIMIT_MS,
   REPOSITORY_ANNOUNCED_PAUSE_RESUME_LIMIT_MS,
@@ -115,7 +116,9 @@ import {
 } from './runtimeSupport/hostBrowser'
 import { PauseGate, type PauseIdentity } from './runtimeSupport/pauseGate'
 import type {
+  SavedSessionRunLease,
   SavedSessionRunPort,
+  SavedSessionStatus,
   SignInRequiredReason,
 } from './runtimeSupport/savedSessionTypes'
 import {
@@ -138,6 +141,7 @@ import {
   assertDevelopmentWorkspace,
   type DevelopmentLockIdentity,
 } from './utils/assertDevelopmentWorkspace'
+import { assertSavedSessionOrigin } from './utils/assertSavedSessionOrigin'
 import { refuseViteMisroute } from './utils/assessViteWorkspace'
 import { boundColumnOfInstance } from './utils/boundColumnOfInstance'
 import {
@@ -192,6 +196,7 @@ import { launchDevelopmentServer } from './utils/launchDevelopmentServer'
 import { maskLearnerSecretText } from './utils/maskLearnerSecretText'
 import { maskNextServerOutput } from './utils/maskNextServerOutput'
 import { maskSourceMapText } from './utils/maskSourceMapText'
+import { matchSignInPath } from './utils/matchSignInPath'
 import {
   nextEntryLeftMessage,
   type NextEntryLeftMoment,
@@ -201,6 +206,7 @@ import { nextServedChunkFetcher } from './utils/nextServedChunkFetcher'
 import { nextServerOnlyFileReason } from './utils/nextServerOnlyFileReason'
 import { nextServerOnlyStopMessage } from './utils/nextServerOnlyStopMessage'
 import { OperationAfterTimeoutError } from './utils/operationAfterTimeoutError'
+import { operationRefusalText } from './utils/operationRefusalText'
 import {
   browserOriginOf,
   isOwnedApplicationOrigin,
@@ -236,6 +242,7 @@ import {
 import { sameScriptUrl } from './utils/sameScriptUrl'
 import { sanitizeCause } from './utils/sanitizeCause'
 import { selfDeclaredInspectionHint } from './utils/selfDeclaredInspectionHint'
+import { signInRequiredMessage } from './utils/signInRequiredMessage'
 import type { MappedPositionsScan } from './utils/sourceMapMappedPositions'
 import {
   startIpv6LoopbackForwarder,
@@ -751,6 +758,27 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /** The stops whose breakpoint was requested: a version 3 stop is armed in its operation's turn, never earlier. */
   private readonly armedStops = new Set<PreparedStop>()
   private operationFailure?: OperationFailure
+  /** Which profile a version 3 run opened, once admitted ({@link admitSession}): the learner's saved session or a fresh one. */
+  private session?: 'saved' | 'fresh'
+  /** The hold on the saved-session folder, from admission until the browser's exit was confirmed ({@link releaseSessionLease}). */
+  private sessionLease?: SavedSessionRunLease
+  /** The saved-session status read at admission, served as the run resource's `savedSession`; absent when the run declared a fresh profile. */
+  private savedSessionAtStart?: SavedSessionStatus
+  /** Why a `SIGN_IN_REQUIRED` of a run that started fresh names, as the store's admission gave it. */
+  private freshSignInReason: Extract<
+    SignInRequiredReason,
+    'no-saved-session' | 'setup-not-finished'
+  > = 'no-saved-session'
+  /** Whether the readiness check found the entry redirected to a sign-in path, so a saved run loads it once in its browser before sealing ({@link warmEntryBehindSignIn}). */
+  private entryBehindSignIn = false
+  /** The declared sign-in path the page reached after the last operation was sent; it fails the run only when the run-level `after` does not hold. */
+  private signInLandingAfterLast?: string
+  /** Whether the editor was told once that this run needs a saved session. */
+  private signInNoticeSent = false
+  /** The id of the page's main frame, read from its first navigation, so a client-side navigation of a child frame is not taken for the page's. */
+  private mainFrameId?: string
+  /** Whether {@link launchOwnedBrowser} ran: a saved run that warms its entry opens the browser before the seal, every other run after it. */
+  private browserLaunched = false
   /** The secrets the learner typed for `secret: "ask-learner"` operations: in memory only, never persisted or served; the sinks that mask exact occurrences read it through {@link learnerSecrets}. */
   private readonly learnerSecretValues = new Set<string>()
 
@@ -891,6 +919,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
     await this.evidence.initialize()
     this.alive()
+    // A version 3 run asks the store once, before any server starts, whether it runs with the saved session; versions 1 and 2 never touch it.
+    await this.admitSession()
+    this.alive()
     this.preparedSources = await this.sources.prepare(
       this.definition.descriptor.anchors,
       { signal: this.abort.signal, deadlineAt },
@@ -946,12 +977,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // The server binds 127.0.0.1; the browser opens `localhost` at its port, the name the project's own origin settings use (D65).
     this.setupStep = VITE_SETUP_STEPS.waitingForServer
     this.nextSetupStep = NEXT_SETUP_STEPS.waitingForServer
-    const ownedOrigin = hasPagesFolder
-      ? await this.readyPagesCapableEntry(started.port)
-      : await this.app!.ready(
-          this.abort.signal,
-          this.definition.configuration.entryPath,
-        )
+    const ownedOrigin = await this.proveServerReady(
+      adapter,
+      hasPagesFolder,
+      started.port,
+    )
     this.origin = browserOriginOf(ownedOrigin)
     // `localhost` may resolve to ::1: Codebook owns that endpoint for the whole run, or the host has none (D66).
     this.ipv6Forwarder = await startIpv6LoopbackForwarder(declaredPort.port)
@@ -960,6 +990,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.ownedDevelopmentLock = await adapter.readOwnedLock(
       this.options.workspace,
     )
+    // An entry behind sign-in compiles only for a request that carries the session: the saved-session browser loads it once, before the seal reads the compiled route.
+    await this.warmEntryBehindSignIn(adapter)
     this.setupStep = VITE_SETUP_STEPS.sealingStops
     this.nextSetupStep = NEXT_SETUP_STEPS.sealingStops
     for (const [index, stop] of configuredStops(
@@ -973,25 +1005,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.freezeSealedStops()
     if (needsServer) await this.selectServer()
     this.alive()
-    this.setupStep = VITE_SETUP_STEPS.openingBrowser
-    this.nextSetupStep = NEXT_SETUP_STEPS.openingBrowser
-    await this.browser.launch(
-      {
-        name: `codebook repository ${this.id}`,
-        type: 'pwa-chrome',
-        request: 'launch',
-        url: 'about:blank',
-        ...adapter.browserDebugFields(this.options.workspace),
-        timeout: ACTIVE_TIMEOUT_MS,
-      },
-      this.abort.signal,
-    )
-    this.alive()
-    await this.selectPage()
-    this.alive()
+    await this.launchOwnedBrowser(adapter)
     const cdp = this.requireCdp()
-    await this.observeParticipant('browser')
-    this.alive()
     cdp.aggregateScreencastTelemetry(() => this.evidence.elapsedMs())
     await this.browser.attachViewport(cdp, this.abort.signal)
     this.alive()
@@ -1002,15 +1017,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       })
       this.alive()
     }
-    this.setupStep = VITE_SETUP_STEPS.loadingEntryPage
-    this.nextSetupStep = NEXT_SETUP_STEPS.loadingEntryPage
-    this.navigationRequested = true
-    await cdp.request('Page.navigate', {
-      url: `${this.origin}${this.definition.configuration.entryPath ?? '/'}`,
-    })
-    this.alive()
+    await this.navigateToEntry(cdp)
     await this.waitForDom('before')
     this.alive()
+    // The before conditions held, but the page may sit on a sign-in path: that is the refusal, whatever else the page shows.
+    await this.refuseSignInPageNow()
     // A Pages page must still be at its entry path, with its router ready on the resolved route.
     if (this.pagesRun) await this.confirmPagesEntryAfterLoad(this.pagesRun)
     // Vite's dependency optimizer may reload the page once after the first load; each reload before the inputs starts a new page generation.
@@ -1075,6 +1086,393 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     clearTimeout(this.progressTimer)
     this.status = 'ready'
     await this.persist()
+  }
+
+  /**
+   * Asks the saved-session store once whether this version 3 run starts with the learner's saved session or with a fresh profile, and takes the hold on the saved folder when it does.
+   *
+   * Why it exists: the answer decides the browser's profile, the refusals that start nothing (a setup open, a folder in use or unusable) and the reason a later `SIGN_IN_REQUIRED` names. It runs after the evidence started and before any server, so a refusal starts no server and no Chrome. The id sent is the service's run id, so the store's lock names the run that Stop run and remove stops. Versions 1 and 2 never call the store. Called first by {@link prepareOwned}.
+   * @throws The store's coded refusal (`SIGN_IN_IN_PROGRESS`, `BUSY` with reason `profile-in-use`, `SIGN_IN_PROFILE_IN_USE`, `SIGN_IN_PROFILE_UNUSABLE`), after one Output > Codebook line naming its code.
+   * @example await this.admitSession() // this.session === 'saved' and the browser opens the saved folder
+   */
+  private async admitSession(): Promise<void> {
+    const configuration = this.operationsConfiguration
+    if (!configuration) return
+    const port = this.options.savedSession
+    const runId = this.options.control?.runId ?? this.id
+    if (!port) {
+      this.session = 'fresh'
+      this.evidence.record('run.session', { session: 'fresh', store: false })
+      return
+    }
+    // The last declared paths seed the next setup; a failure is only noted, since the run does not depend on it.
+    if (configuration.signInPaths)
+      void port.rememberSignInPaths(configuration.signInPaths).catch(() => {
+        this.evidence.record('run.sign-in-paths-not-remembered')
+      })
+    const admission = await port
+      .acquire(
+        runId,
+        configuration.session === 'fresh' ? 'fresh' : 'saved-if-available',
+        this.options.host.chrome?.version ?? '',
+        this.abort.signal,
+      )
+      .catch((error: unknown) => {
+        if (error instanceof StudyError)
+          this.logRunStart(
+            'error',
+            `refused ${error.code} before any server started [log ${runId}#start]`,
+          )
+        throw error
+      })
+    if (admission.session === 'saved') {
+      this.session = 'saved'
+      this.sessionLease = admission.lease
+      this.savedSessionAtStart = {
+        available: true,
+        state: 'saved',
+        setupAt: admission.lease.setupAt,
+      }
+      this.browser.useSavedProfile(admission.lease)
+      this.evidence.record('run.session', {
+        session: 'saved',
+        setupAt: admission.lease.setupAt,
+        appCookies: admission.lease.appCookies,
+      })
+    } else {
+      this.session = 'fresh'
+      this.freshSignInReason = admission.signInRequiredReason
+      // A run that declared a fresh profile says nothing about the saved session; one that found none or an unfinished setup says which.
+      if (configuration.session !== 'fresh')
+        this.savedSessionAtStart = {
+          available: false,
+          state:
+            admission.signInRequiredReason === 'setup-not-finished'
+              ? 'unconfirmed'
+              : 'none',
+        }
+      this.evidence.record('run.session', {
+        session: 'fresh',
+        because: admission.signInRequiredReason,
+      })
+    }
+    this.logRunStart('info', `web app session: ${this.session}`)
+  }
+
+  /**
+   * Writes one Output > Codebook line about the run's start (the session it uses, or the refusal of its admission); the line holds no path, cookie or token.
+   * @param level - `error` for a refusal.
+   * @param text - The event.
+   * @example this.logRunStart('info', 'web app session: saved')
+   */
+  private logRunStart(level: 'info' | 'error', text: string): void {
+    try {
+      this.options.control?.outputLog?.({
+        level,
+        text: this.maskRunText(
+          `Run ${this.options.control.runId ?? this.id}: ${text}`,
+        ),
+      })
+    } catch {
+      // The line is also in the run's journal; the channel has nowhere to write.
+    }
+  }
+
+  /**
+   * Names the profile a version 3 run reports in its view: the saved session or a fresh one, whether it kept the app's data, and the saved-session status it read at admission.
+   * Called by {@link view}; versions 1 and 2, and a run not yet admitted, report none of the three.
+   * @returns The fields to spread into the view.
+   * @example this.sessionView() // => { session: 'saved', appState: 'kept', savedSession: { available: true, state: 'saved', setupAt: '…' } }
+   */
+  private sessionView(): Pick<
+    ConfiguredRuntimeView,
+    'session' | 'appState' | 'savedSession'
+  > {
+    if (!this.operationsConfiguration || !this.session) return {}
+    return {
+      session: this.session,
+      ...(this.session === 'saved' ? { appState: 'kept' as const } : {}),
+      ...(this.savedSessionAtStart
+        ? { savedSession: { ...this.savedSessionAtStart } }
+        : {}),
+    }
+  }
+
+  /**
+   * Releases the hold on the saved-session folder; called only after the browser's close confirmed that no process names the folder any more, and again on a retried Stop.
+   * A failed release keeps the hold, so the next Stop retries and a removal stays refused meanwhile.
+   * @example await this.releaseSessionLease()
+   */
+  private async releaseSessionLease(): Promise<void> {
+    const lease = this.sessionLease
+    if (!lease) return
+    await lease.release()
+    this.sessionLease = undefined
+    this.evidence.record('run.saved-session-released')
+  }
+
+  /**
+   * Proves the owned server ready by the check that fits the run, and refuses to open the saved session on an origin that is not loopback.
+   * Called by {@link prepareOwned}: a Pages-capable workspace takes the structured entry check, a version 3 Next run with `signInPaths` the sign-in aware one, every other run today's readiness.
+   * @param adapter - The run's development-server adapter.
+   * @param hasPagesFolder - Whether the workspace has a Pages folder.
+   * @param port - The port the server was started on.
+   * @returns The origin the owned server listens on.
+   * @throws The readiness failures; `SIGN_IN_ORIGIN_REFUSED` for a saved run on another origin.
+   * @example const ownedOrigin = await this.proveServerReady(adapter, false, 3000) // 'http://127.0.0.1:3000'
+   */
+  private async proveServerReady(
+    adapter: DevelopmentServerAdapter,
+    hasPagesFolder: boolean,
+    port: number,
+  ): Promise<string> {
+    let ownedOrigin: string
+    if (hasPagesFolder) ownedOrigin = await this.readyPagesCapableEntry(port)
+    else if (
+      this.operationsConfiguration?.signInPaths &&
+      adapter.name === 'next-dev-webpack'
+    )
+      ownedOrigin = await this.readyOperationsEntry()
+    else
+      ownedOrigin = await this.app!.ready(
+        this.abort.signal,
+        this.definition.configuration.entryPath,
+      )
+    // The saved session opens only on the loopback origin of the server Codebook started, and nothing is launched before this is judged.
+    if (this.session === 'saved') assertSavedSessionOrigin(ownedOrigin)
+    return ownedOrigin
+  }
+
+  /**
+   * Proves a version 3 Next run ready when the server may answer its entry path with a redirect to a declared sign-in path, for an App-only workspace.
+   *
+   * Why it exists: Codebook's own server check carries no cookies, so a route behind sign-in answers it with a redirect that the plain check refuses. A run that started fresh is refused at once with `SIGN_IN_REQUIRED`, before the browser opens; a run with the saved session goes on and loads the entry once in its browser ({@link warmEntryBehindSignIn}). Any other answer keeps today's verdict. Called by {@link prepareOwned} instead of `ready`.
+   * @returns The origin the owned server listens on.
+   * @throws The launch failure with the preparation notes; today's App readiness failures; a `SIGN_IN_REQUIRED` failure for a fresh run.
+   * @example const ownedOrigin = await this.readyOperationsEntry() // 'http://127.0.0.1:3000'
+   */
+  private async readyOperationsEntry(): Promise<string> {
+    const entryPath = this.definition.configuration.entryPath ?? '/'
+    const { origin, entry } = await this.app!.readyEntry(
+      this.abort.signal,
+      entryPath,
+      this.operationsConfiguration!.signInPaths,
+    )
+    this.alive()
+    if (entry.redirectsToSignIn !== undefined) {
+      if (this.session === 'saved') {
+        this.entryBehindSignIn = true
+        this.evidence.record('application.entry-behind-sign-in')
+        return origin
+      }
+      this.failSignInRequired(this.freshSignInReason, entry.redirectsToSignIn)
+      this.alive()
+    }
+    await this.app!.confirmAppEntry(this.abort.signal, entryPath, entry)
+    return origin
+  }
+
+  /**
+   * Opens the owned browser on the saved session and loads the entry page once, so the route behind sign-in is compiled before the seal reads it.
+   *
+   * Why it exists: a request that the app's proxy redirects compiles no route, so the seal would find no manifest; the saved session's browser carries the cookies that let the route compile. The load runs before any stop is sealed, so no script it parses is bound to a declared stop (the real load binds them), and before the viewport attaches, so no frame of it is recorded. A landing on a sign-in path ends the run with `SIGN_IN_REQUIRED`. Called by {@link prepareOwned} for a saved run whose entry the readiness check found redirected to sign-in.
+   * @param adapter - The run's development-server adapter.
+   * @throws A failed run's error when the page lands on a sign-in path; a coded failure when the page does not settle.
+   * @example await this.warmEntryBehindSignIn(adapter) // journal: application.entry-warmed-with-saved-session
+   */
+  private async warmEntryBehindSignIn(
+    adapter: DevelopmentServerAdapter,
+  ): Promise<void> {
+    // Only a saved run whose entry the readiness check found redirected to sign-in loads it ahead of the seal.
+    if (!this.entryBehindSignIn) return
+    await this.launchOwnedBrowser(adapter)
+    await this.navigateToEntry(this.requireCdp())
+    // The quiet window starts at the request; a redirect or a commit moves it.
+    this.lastNavigationAtMs = performance.now()
+    await waitForSettledPage(this.operationPort(), 1).catch(
+      (error: unknown) => {
+        if (!(error instanceof OperationRefusal)) throw error
+        throw new Error(
+          `The entry page did not finish loading and stay still within ${OPERATION_SETTLE_BOUND_MS / MILLISECONDS_PER_SECOND} s while Codebook loaded it once with the saved session.`,
+        )
+      },
+    )
+    this.alive()
+    await this.refuseSignInPageNow()
+    this.evidence.record('application.entry-warmed-with-saved-session')
+    // The real entry load is the first navigation of the run again.
+    this.navigationRequested = false
+    this.firstNavigationSeen = false
+    this.lastNavigationAtMs = Number.NEGATIVE_INFINITY
+  }
+
+  /**
+   * Asks the owned page to load the configured entry path, from which main-frame navigations count for the run.
+   * Called by {@link prepareOwned} for the run's real entry load and by {@link warmEntryBehindSignIn} for the load that compiles the route first.
+   * @param cdp - The selected page's channel.
+   * @example await this.navigateToEntry(cdp) // the page loads http://localhost:3000/dashboard
+   */
+  private async navigateToEntry(cdp: Cdp): Promise<void> {
+    this.setupStep = VITE_SETUP_STEPS.loadingEntryPage
+    this.nextSetupStep = NEXT_SETUP_STEPS.loadingEntryPage
+    this.navigationRequested = true
+    await cdp.request('Page.navigate', {
+      url: `${this.origin}${this.definition.configuration.entryPath ?? '/'}`,
+    })
+    this.alive()
+  }
+
+  /**
+   * Launches the owned Chrome, selects its blank page and observes it; the saved-session marker is written once the main Chrome process is proven.
+   * Called once by {@link prepareOwned}: before the seal for a saved run that warms its entry, after it for every other run.
+   * @param adapter - The run's development-server adapter, which names the browser's debug fields.
+   * @example await this.launchOwnedBrowser(adapter)
+   */
+  private async launchOwnedBrowser(
+    adapter: DevelopmentServerAdapter,
+  ): Promise<void> {
+    // The warm load of a saved run already opened it.
+    if (this.browserLaunched) return
+    this.setupStep = VITE_SETUP_STEPS.openingBrowser
+    this.nextSetupStep = NEXT_SETUP_STEPS.openingBrowser
+    await this.browser.launch(
+      {
+        name: `codebook repository ${this.id}`,
+        type: 'pwa-chrome',
+        request: 'launch',
+        url: 'about:blank',
+        ...adapter.browserDebugFields(this.options.workspace),
+        timeout: ACTIVE_TIMEOUT_MS,
+      },
+      this.abort.signal,
+    )
+    this.alive()
+    await this.selectPage()
+    this.alive()
+    await this.browser.recordSavedBrowser(this.abort.signal)
+    this.alive()
+    await this.observeParticipant('browser')
+    this.alive()
+    this.browserLaunched = true
+  }
+
+  /**
+   * Reads the page's pathname and ends the run when it is one of the declared sign-in paths; the backstop of the navigation events at the entry load and before each operation.
+   * @throws The failed run's error (via {@link alive}) after a match; nothing otherwise.
+   * @example await this.refuseSignInPageNow()
+   */
+  private async refuseSignInPageNow(): Promise<void> {
+    const signInPaths = this.operationsConfiguration?.signInPaths
+    if (!signInPaths) return
+    const read = await this.requireCdp().request('Runtime.evaluate', {
+      expression: 'location.pathname',
+      returnByValue: true,
+    })
+    this.alive()
+    const matched = matchSignInPath(String(read.result.value), signInPaths)
+    if (matched !== undefined && this.landedOnSignIn(matched)) this.alive()
+  }
+
+  /**
+   * Judges a landing on a declared sign-in path by how far the run is: before the first operation it fails the run, between operations it fails the operation last sent, after the last operation it only remembers the landing.
+   * Called by the navigation events and by {@link refuseSignInPageNow}. A sign-in landing wins over the navigation refusals of {@link onOperationsNavigation} (E4).
+   * @param landedOn - The declared path the page is on.
+   * @returns `true` when the run failed now.
+   * @example if (this.landedOnSignIn('/login')) return
+   */
+  private landedOnSignIn(landedOn: string): boolean {
+    if (
+      this.cleaning ||
+      this.status === 'failed' ||
+      this.status === 'completed'
+    )
+      return false
+    const sent = this.operationsDispatched
+    const total = this.operationsConfiguration!.operations.length
+    if (sent >= total) {
+      // A sign-out flow ends on its sign-in page: the run-level after decides (D13).
+      this.signInLandingAfterLast = landedOn
+      this.evidence.record('page.sign-in-after-last-operation')
+      return false
+    }
+    this.failSignInRequired(
+      this.signInReasonOfLanding(),
+      landedOn,
+      sent > 0 ? sent : undefined,
+    )
+    return true
+  }
+
+  /**
+   * Names why a landing on a sign-in path means what it means: a run that started fresh names how it started, a run with the saved session names an expired session or a session cookie that cannot be kept.
+   * @returns The `SIGN_IN_REQUIRED` reason.
+   * @example this.signInReasonOfLanding() // 'redirected-to-sign-in'
+   */
+  private signInReasonOfLanding(): SignInRequiredReason {
+    if (this.session !== 'saved') return this.freshSignInReason
+    return this.sessionLease?.appCookies === 'session-only'
+      ? 'session-cookie-only'
+      : 'redirected-to-sign-in'
+  }
+
+  /**
+   * Fails the run with `SIGN_IN_REQUIRED`, once, and tells the editor to offer Set Up Saved Session…; nothing further is sent.
+   * @param reason - Why the page asked for sign-in.
+   * @param landedOn - The declared path the page is on or was redirected to.
+   * @param operationIndex - The operation last sent, when the page left an operation's page; absent before the first operation.
+   * @example this.failSignInRequired('redirected-to-sign-in', '/login', 2)
+   */
+  private failSignInRequired(
+    reason: SignInRequiredReason,
+    landedOn: string,
+    operationIndex?: number,
+  ): void {
+    const message = signInRequiredMessage(
+      reason,
+      this.options.savedSession?.repositoryName ?? 'this repository',
+      landedOn,
+      operationIndex,
+    )
+    if (operationIndex === undefined)
+      this.fail(formatRefusalFailure('SIGN_IN_REQUIRED', message, reason))
+    else
+      this.failOperation(
+        new OperationRefusal('SIGN_IN_REQUIRED', message, {
+          operationIndex,
+          path: 'signInPaths',
+          sent: 'sent',
+          reason,
+        }),
+      )
+    this.notifySignInRequired(reason)
+  }
+
+  /**
+   * Tells the editor once per run that the run needs a saved session, so it shows its notice with Set Up Saved Session….
+   * @param reason - Why the page asked for sign-in.
+   * @example this.notifySignInRequired('no-saved-session')
+   */
+  private notifySignInRequired(reason: SignInRequiredReason): void {
+    if (this.signInNoticeSent) return
+    this.signInNoticeSent = true
+    this.options.onSignInRequired?.({ reason })
+  }
+
+  /**
+   * Reads a main-frame navigation or a same-document navigation of the page and ends the run when it reaches a declared sign-in path.
+   * Called first by {@link onPageNavigated} and by the `Page.navigatedWithinDocument` observer of {@link observeParticipant}.
+   * @param url - The URL the page navigated to.
+   * @returns `true` when the navigation was a sign-in landing, so the caller does no further judgement of it.
+   * @example if (this.onSignInLanding(event.frame.url)) return
+   */
+  private onSignInLanding(url: string): boolean {
+    const matched = matchSignInPath(
+      url,
+      this.operationsConfiguration?.signInPaths,
+    )
+    if (matched === undefined) return false
+    this.landedOnSignIn(matched)
+    return true
   }
 
   /**
@@ -1296,6 +1694,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (this.cleaning || event.frame.parentId || !this.navigationRequested)
       return
     this.lastNavigationAtMs = performance.now()
+    this.mainFrameId ??= event.frame.id
+    // A landing on a declared sign-in path is judged before any navigation rule, so it is never reported as another refusal (E4).
+    if (this.onSignInLanding(event.frame.url)) return
     // A Next version 3 run follows client-side navigation, but a full document load before its last operation ends it; Vite keeps its own rule below.
     if (this.operationsConfiguration && this.adapter?.name !== 'vite-dev') {
       this.onOperationsNavigation()
@@ -4231,6 +4632,19 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       cdp.on('Page.frameNavigated', (event) => this.onPageNavigated(event))
       events.push('Page.frameNavigated')
     }
+    // A client-side navigation to a sign-in path commits no new document, so it is watched on its own event.
+    if (name === 'browser' && this.operationsConfiguration?.signInPaths) {
+      cdp.on('Page.navigatedWithinDocument', (event) => {
+        if (
+          this.cleaning ||
+          !this.navigationRequested ||
+          event.frameId !== this.mainFrameId
+        )
+          return
+        this.onSignInLanding(event.url)
+      })
+      events.push('Page.navigatedWithinDocument')
+    }
     await cdp.subscribe(events)
     this.alive()
   }
@@ -5273,6 +5687,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     try {
       await waitForSettledPage(port, index)
       this.alive()
+      // A page that settled on a sign-in path ends the run before this operation is resolved or sent.
+      await this.refuseSignInPageNow()
       await this.assertOperationConditions(index, total)
       const prepare = (): Promise<PreparedOperation> =>
         prepareOperation(port, { index, total, operation, learnerSecret })
@@ -5660,7 +6076,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
     else refusal = this.afterNotMet(index, this.afterDeadlineReason(), 'run')
     this.recordOperationFailure(refusal)
-    return formatRefusalFailure(refusal.code, refusal.message)
+    return operationRefusalText(refusal)
   }
 
   /**
@@ -5689,6 +6105,24 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const configuration = this.operationsConfiguration!
     const operation = configuration.operations[index - 1]!
     const isRunLevel = scope === 'run'
+    // The page reached a sign-in path after the last operation and the after conditions did not hold there: the session asked again (D13), which is not a missing result.
+    if (
+      this.signInLandingAfterLast !== undefined &&
+      index === configuration.operations.length
+    ) {
+      const reason = this.signInReasonOfLanding()
+      this.notifySignInRequired(reason)
+      return new OperationRefusal(
+        'SIGN_IN_REQUIRED',
+        signInRequiredMessage(
+          reason,
+          this.options.savedSession?.repositoryName ?? 'this repository',
+          this.signInLandingAfterLast,
+          index,
+        ),
+        { operationIndex: index, path: 'signInPaths', sent: 'sent', reason },
+      )
+    }
     return new OperationRefusal(
       'OPERATION_AFTER_NOT_MET',
       `Operation ${index} (${operation.title}) was sent, but its result could not be confirmed: ${detail}`,
@@ -5765,7 +6199,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
       return
     this.recordOperationFailure(refusal)
-    this.fail(formatRefusalFailure(refusal.code, refusal.message))
+    this.fail(operationRefusalText(refusal))
   }
 
   /**
@@ -5788,6 +6222,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       sent: refusal.sent,
       sideEffects,
       logId: this.operationLogId(refusal.operationIndex),
+      ...(refusal.reason === undefined ? {} : { reason: refusal.reason }),
     }
     this.logOperation(
       refusal.operationIndex,
@@ -8150,6 +8585,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
     } catch (error) {
       if (!(error instanceof WaitTimeoutError)) throw error
+      // A page parked on a sign-in path is the sign-in refusal, not a missing before condition.
+      if (phase === 'before') await this.refuseSignInPageNow()
       // A Pages page that left its entry path while its before conditions were awaited is refused as the redirect it is, not as a missing condition.
       if (phase === 'before' && this.pagesRun)
         await this.refusePagesPathLeftAfterWait()
@@ -8445,6 +8882,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       cleaned: this.cleaned,
       resourcesReleased: this.resourcesReleased,
       browserProfileLeft: this.browser.profileLeft,
+      ...this.sessionView(),
       runtimeOutcome,
       captureOutcome,
       finalOutcome: !this.cleaned
@@ -8762,7 +9200,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         },
         {
           description: 'owned browser close',
-          release: (): Promise<void> => this.browser.close(),
+          release: async (): Promise<void> => {
+            await this.browser.close()
+            // The saved session is freed only after the close confirmed the exit of every process naming it; a failed close keeps the hold for the retried Stop.
+            await this.releaseSessionLease()
+          },
         },
         {
           description: 'owned sessions exit',

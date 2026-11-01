@@ -74,6 +74,7 @@ import {
 } from './utils/resolveExternalNodeExecutable'
 import { sanitizeCause } from './utils/sanitizeCause'
 import type { CauseRoots } from './utils/sanitizeCause'
+import { savedSessionPortOf } from './utils/savedSessionPortOf'
 import { searchRepositoryVitest } from './utils/searchRepositoryVitest'
 import { showPlainNotice } from './utils/showPlainNotice'
 
@@ -553,6 +554,9 @@ export async function createEnvironment(
             )
         },
         createViewport: presentation?.createViewport,
+        // Only a version 3 run reads the store; the run decides, and versions 1 and 2 never call it.
+        savedSession: savedSessionPortOf(context.savedSessions, workspace),
+        onSignInRequired: ({ reason }) => context.showSignInRequired?.(reason),
         revealSource: async (snapshot) => {
           const index = run
             .view()

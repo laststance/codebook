@@ -910,6 +910,7 @@ export async function nativeParticipantsHarness(
             run.addSession(sessions.browser)
           }
           async attachViewport(): Promise<void> {}
+          async recordSavedBrowser(): Promise<void> {}
           setSecretFrameGate(): void {}
           async reveal(): Promise<void> {}
           resumeViewport(): void {}

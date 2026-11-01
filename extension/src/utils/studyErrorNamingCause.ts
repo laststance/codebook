@@ -25,5 +25,7 @@ export function studyErrorNamingCause(failure: StudyError): StudyError {
         message,
         failure.causeDetail,
         failure.recoveryOverride,
+        undefined,
+        failure.details,
       )
 }

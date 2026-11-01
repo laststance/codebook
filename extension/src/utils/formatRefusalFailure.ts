@@ -1,3 +1,4 @@
+import type { SignInRequiredReason } from '../constants'
 import type { NextSetupDeadlineVariant } from '../nextRefusals'
 
 import type { RefusalFailureCode } from './refusalFailureOf'
@@ -22,13 +23,18 @@ export function formatRefusalFailure(
   variant: NextSetupDeadlineVariant,
 ): string
 export function formatRefusalFailure(
+  code: 'SIGN_IN_REQUIRED',
+  message: string,
+  variant: SignInRequiredReason,
+): string
+export function formatRefusalFailure(
   code: RefusalFailureCode,
   message: string,
 ): string
 export function formatRefusalFailure(
   code: RefusalFailureCode,
   message: string,
-  variant?: NextSetupDeadlineVariant,
+  variant?: NextSetupDeadlineVariant | SignInRequiredReason,
 ): string {
   return variant === undefined
     ? `${code}: ${message}`

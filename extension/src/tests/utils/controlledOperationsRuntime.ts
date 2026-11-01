@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import type { OperationConfirmationFact } from '../../operationsConfirmationTypes'
 import type {
+  ConfiguredRuntimeView,
   OperationFailure,
   OperationRecord,
   RuntimeAction,
@@ -20,8 +21,12 @@ export class ControlledOperationsRuntime extends ControlledConfiguredRuntime {
   readonly learnerSecrets: (string | undefined)[] = []
   /** The first failure of an operation, which a test sets when it fails the run. */
   failure?: OperationFailure
-  /** The profile the run reports; a test sets `'saved'` as the stand-in for the saved-session decision of lane B. */
+  /** The profile a version 3 run reports, as the real run does once it was admitted: the saved session or a fresh one. */
   session?: 'saved' | 'fresh'
+  /** `kept` for a run that started with the saved session. */
+  appState?: 'kept'
+  /** The saved-session status the run read at its start. */
+  savedSession?: ConfiguredRuntimeView['savedSession']
   /** What the page read returns for the saved-session confirmation. */
   confirmationFacts?: OperationConfirmationFact[]
   /** Makes the page read of the confirmation fail. */
@@ -104,8 +109,10 @@ export class ControlledOperationsRuntime extends ControlledConfiguredRuntime {
     return {
       ...super.view(),
       operations: this.records.map((record) => ({ ...record })),
-      ...(this.session ? { session: this.session } : {}),
       ...(this.failure ? { operationFailure: this.failure } : {}),
+      ...(this.session ? { session: this.session } : {}),
+      ...(this.appState ? { appState: this.appState } : {}),
+      ...(this.savedSession ? { savedSession: this.savedSession } : {}),
       nextAction:
         this.status === 'ready' &&
         this.records.some((record) => record.state === 'not-run')

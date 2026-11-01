@@ -10,6 +10,7 @@ import {
   SECRET_FRAME_VALUE_COPY_MIN_CHARS,
 } from './constants'
 import { ERROR_RECOVERY, type ErrorCode } from './errors'
+import { operationsSavedSessionRunsHelp } from './operationsSavedSessionRunsHelp'
 
 /**
  * Every code a version 3 run adds, in the order the help's error table lists them: the refusals of one operation, then the failures that end a run.
@@ -254,6 +255,7 @@ export function operationsHelp() {
       limits:
         'Other secrets are masked by name and by format only: a session token, or a secret copied into a plainly named variable or printed as ordinary text, can stay visible in a captured value. Use a local test account, never a real one, for any flow that signs in.',
     },
+    ...operationsSavedSessionRunsHelp(),
     operationsErrorCodes: {
       anchor: 'codebook://help/repository-browser#error-codes',
       codes: Object.fromEntries(

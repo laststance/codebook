@@ -377,6 +377,7 @@ export function launchDevelopmentServer(
      * Why it exists: such a run decides from the route manifests whether the App or the Pages path serves the entry, so a 3xx or a 404 is kept as data for that decision ({@link resolveNextPagesEntry}) instead of failing here. Only a redacted same-origin path, or the fact of another origin, is kept from a `Location` ({@link describeNextEntryResponse}); a cross-origin target is never fetched. Called by {@link ConfiguredBrowserRun} instead of `ready`.
      * @param signal - Ends the wait and the request when the run is cancelled.
      * @param entryPath - The configured entry path.
+     * @param signInPaths - The configuration's `signInPaths`, so a redirect to one of them is named in the answer.
      * @returns The origin and the structured answer.
      * @throws What the listener wait throws (an exit before listening carries the masked output tail), and a failed request.
      * @example
@@ -385,6 +386,7 @@ export function launchDevelopmentServer(
     async readyEntry(
       signal: AbortSignal,
       entryPath: string,
+      signInPaths?: readonly string[],
     ): Promise<{ origin: string; entry: NextEntryResponse }> {
       repositoryEntryPathSchema.parse(entryPath)
       const listening = await waitForListener(signal),
@@ -402,6 +404,7 @@ export function launchDevelopmentServer(
         response.headers.get('location'),
         requestUrl,
         listening,
+        signInPaths,
       )
       // Only the status and the redacted target are journaled; the raw Location never leaves this method.
       record('application.entry-answered', {

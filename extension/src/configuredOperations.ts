@@ -7,6 +7,7 @@ import {
   OPERATION_SETTLE_POLL_MS,
   OPERATION_SETTLE_QUIET_MS,
   REPOSITORY_RUN_TIMEOUT_MS,
+  type SignInRequiredReason,
 } from './constants'
 import type { OperationConfirmationFact } from './operationsConfirmationTypes'
 import type { RepositoryOperation } from './repositoryConfigSchemas'
@@ -30,6 +31,7 @@ export type OperationRefusalCode =
   | 'OPERATION_AFTER_NOT_MET'
   | 'RUN_FAILED_UNEXPECTEDLY'
   | 'SECRET_BECAME_VISIBLE'
+  | 'SIGN_IN_REQUIRED'
 
 /** Whether anything of the operation reached the page before the failure, and what a retry may rely on. */
 export type OperationSideEffects = 'none' | 'unknown'
@@ -45,6 +47,8 @@ export class OperationRefusal extends Error {
   readonly path: string | undefined
   readonly sent: 'not-sent' | 'sent'
   readonly sideEffects: OperationSideEffects
+  /** Why the page asked for sign-in; set only for `SIGN_IN_REQUIRED`. */
+  readonly reason: SignInRequiredReason | undefined
   constructor(
     readonly code: OperationRefusalCode,
     message: string,
@@ -53,9 +57,11 @@ export class OperationRefusal extends Error {
       path?: string
       sent?: 'not-sent' | 'sent'
       sideEffects?: OperationSideEffects
+      reason?: SignInRequiredReason
     },
   ) {
     super(message)
+    this.reason = where.reason
     this.operationIndex = where.operationIndex
     this.path = where.path
     this.sent = where.sent ?? 'not-sent'
