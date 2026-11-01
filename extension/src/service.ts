@@ -5260,10 +5260,12 @@ export class StudyService {
       record.nodeHistoryStatus = complete ? 'complete' : 'partial'
       record.nodeHistoryEntryCount = writer.entryCount
       record.nodeHistoryReason = reason
+      const captureMissing = await this.captureMissingOf(writer.header.studyId)
+      // The material is read after that wait: a save landing during it finds no count yet to refresh, so this count must include it.
       record.nodeLearning = this.nodeLearningOf(
         writer.learningNeeds(),
         record.nodeLearningMaterial,
-        await this.captureMissingOf(writer.header.studyId),
+        captureMissing,
       )
     } catch (error) {
       writer.abandon()
