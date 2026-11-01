@@ -11,7 +11,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import type { DebugAdapterTrackerFactory, DebugSession } from 'vscode'
@@ -1203,4 +1203,158 @@ test('missing Node Chrome and debugger prerequisites identify configuration keys
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+// Value: protects=Set Up AI Chat for saved sessions refusing while a Codebook run of this window still holds the development port, then offering node, chrome and adapters once the run is released; fails_when=setup starts beside a live run, the refusal sentence changes or stops naming the folder, or a released run keeps refusing; why_new=savedSessionSetupInputs had no test (Cycle 0070 CRAP gate); seam=the run class and host effects are fakes, the environment's run map and prerequisite decisions are real; no_claim=the saved session server start
+test('saved session setup refuses while a Codebook run is live and returns node, chrome and adapters after it is released', async (context) => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-setup-inputs-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  await writeFile(
+    join(directory, 'product.json'),
+    JSON.stringify({ version: '3.21.13', commit: 'fixture' }),
+  )
+  const filesystem = await import('node:fs/promises'),
+    instances: LiveRun[] = []
+  class LiveRun {
+    readonly id = `configured-run-${instances.length + 1}`
+    readonly activeSessions = new Set<string>()
+    readonly evidence = { record(): void {} }
+    cleaned = false
+    constructor() {
+      instances.push(this)
+    }
+    owner() {
+      return false
+    }
+    addSession(): void {}
+    onRequest(): void {}
+    onResponse(): void {}
+    onEvent(): void {}
+    view() {
+      return { status: 'ready', cleaned: this.cleaned, snapshots: [] }
+    }
+    terminated(): void {}
+    fail(): void {}
+    ownsDevelopmentLock() {
+      return undefined
+    }
+    isCleaning() {
+      return false
+    }
+  }
+  const disposable = { dispose(): void {} }
+  const boundary = await loadModule<typeof EnvironmentModule>(
+    resolve(__dirname, '../environment.js'),
+    {
+      './configuredBrowserRun': { ConfiguredBrowserRun: LiveRun },
+      './utils/resolveExternalNodeExecutable': {
+        resolveExternalNodeExecutable: async () => '/external/node',
+      },
+      'node:fs/promises': { ...filesystem, access: async () => undefined },
+      'node:util': {
+        promisify: () => async (file: string) => ({
+          stdout:
+            file === 'node'
+              ? JSON.stringify({
+                  version: '24.21.0',
+                  executable: '/external/node',
+                })
+              : 'Chrome fixture',
+        }),
+      },
+      vscode: {
+        workspace: {
+          isTrusted: true,
+          workspaceFolders: [{ uri: { scheme: 'file', fsPath: directory } }],
+          getConfiguration: () => ({
+            get: (_key: string, fallback: string) => fallback,
+          }),
+        },
+        env: { appRoot: directory, appName: 'Cursor' },
+        version: '1.128.0',
+        extensions: { getExtension: () => ({}) },
+        debug: {
+          registerDebugAdapterTrackerFactory: () => disposable,
+          onDidTerminateDebugSession: () => disposable,
+          onDidChangeActiveDebugSession: () => disposable,
+        },
+      },
+    },
+  )
+  const environment = await boundary.createEnvironment({
+    extensionPath: resolve(__dirname, '../..'),
+  })
+  context.after(() => environment.dispose())
+  const fixture = createConfiguredStudy()
+  const definition = configuredDefinitionSchema.parse({
+    configuration: fixture.configuration,
+    configurationHash: fixture.configurationHash,
+    descriptor: fixture.descriptor,
+  })
+  await environment.createRuntime(join(directory, 'first'), definition)
+  // Act
+  const whileLive = await environment.savedSessionSetupInputs!()
+  instances[0]!.cleaned = true
+  const afterRelease = await environment.savedSessionSetupInputs!()
+  // Assert
+  assert.deepEqual(JSON.parse(JSON.stringify(whileLive)), {
+    ready: false,
+    missing: [
+      `A Codebook run is using ${basename(directory)}; stop it before setup.`,
+    ],
+  })
+  assert.equal(afterRelease.ready, true)
+  if (!afterRelease.ready) return
+  assert.equal(afterRelease.node, '/external/node')
+  assert.deepEqual(Object.keys(afterRelease.adapters), [
+    'next-dev-webpack',
+    'vite-dev',
+  ])
+})
+
+// Value: protects=Set Up AI Chat for saved sessions naming the missing Node and Chrome settings instead of starting setup; fails_when=setup reports ready or loses the missing list when Node or Chrome is not configured; why_new=the not-ready branch of savedSessionSetupInputs had no test (Cycle 0070 CRAP gate); seam=the editor and its settings are fakes, the prerequisite decisions are real; no_claim=the host's settings UI
+test('saved session setup returns the missing Node and Chrome settings when they are not configured', async (context) => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-setup-missing-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  await writeFile(
+    join(directory, 'product.json'),
+    JSON.stringify({ version: '1.138.0', commit: 'fixture' }),
+  )
+  const disposable = { dispose(): void {} }
+  const boundary = await loadModule<typeof EnvironmentModule>(
+    resolve(__dirname, '../environment.js'),
+    {
+      './configuredBrowserRun': {},
+      vscode: {
+        workspace: {
+          isTrusted: true,
+          workspaceFolders: [{ uri: { scheme: 'file', fsPath: directory } }],
+          getConfiguration: () => ({
+            get: () => join(directory, 'absent-executable'),
+          }),
+        },
+        env: { appRoot: directory, appName: 'Visual Studio Code' },
+        version: '1.138.0',
+        extensions: { getExtension: () => ({}) },
+        debug: {
+          registerDebugAdapterTrackerFactory: () => disposable,
+          onDidTerminateDebugSession: () => disposable,
+          onDidChangeActiveDebugSession: () => disposable,
+        },
+      },
+    },
+  )
+  const environment = await boundary.createEnvironment({
+    extensionPath: resolve(__dirname, '../..'),
+  })
+  context.after(() => environment.dispose())
+  // Act
+  const inputs = await environment.savedSessionSetupInputs!()
+  // Assert
+  assert.equal(inputs.ready, false)
+  if (inputs.ready) return
+  assert.match(inputs.missing.join('\n'), /codebook.nodeExecutable/)
+  assert.match(inputs.missing.join('\n'), /codebook.chromeExecutable/)
 })
