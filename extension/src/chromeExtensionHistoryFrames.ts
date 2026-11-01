@@ -61,6 +61,10 @@ export class ExtensionHistoryFrameWriter {
   private lastStreamMs = -Infinity
   private readonly knownHashes = new Set<string>()
   private readonly pinnedPauses = new Set<string>()
+  /** Pauses whose pin the run handed over, whatever became of it. */
+  private readonly requestedPins = new Set<string>()
+  /** Pauses whose pin frame entry is durable in the journal. */
+  private readonly storedPins = new Set<string>()
   private frameCount = 0
   private blobBytes = 0
   private accepting = true
@@ -88,6 +92,8 @@ export class ExtensionHistoryFrameWriter {
    * @example frames.offer({ data: pngBase64, kind: 'stream', capturedAtMs: 120 }) // => 'queued'
    */
   offer(frame: OfferedFrame): ExtensionFrameOffer {
+    if (frame.kind === 'pin' && frame.pauseId !== undefined)
+      this.requestedPins.add(frame.pauseId)
     if (!this.accepting) return 'dropped'
     if (frame.kind === 'pin') {
       // The pin's moment is after every frame already seen, so the pending one is recorded first.
@@ -129,6 +135,19 @@ export class ExtensionHistoryFrameWriter {
       this.isIncomplete = true
       this.isAbandoned = true
     }
+  }
+
+  /**
+   * The pauses whose pinned frame the run handed over and the history did not store: refused by a budget, offered after finalizing, failed to write or still queued at the drain deadline. A second pin for a stored pause is no loss.
+   * @returns The pause ids; read after {@link ExtensionHistoryFrameWriter.drain}.
+   * @example frames.lostPins() // => new Set(['run:1:page:1'])
+   */
+  lostPins(): ReadonlySet<string> {
+    return new Set(
+      [...this.requestedPins].filter(
+        (pauseId) => !this.storedPins.has(pauseId),
+      ),
+    )
   }
 
   /** Removes the temporary blobs this writer or a crashed one left; called once the history sealed or the queue was abandoned. @example await frames.removeTemporaryBlobs() */
@@ -258,5 +277,7 @@ export class ExtensionHistoryFrameWriter {
       height,
       capturedAtMs: frame.capturedAtMs,
     })
+    if (frame.kind === 'pin' && frame.pauseId !== undefined)
+      this.storedPins.add(frame.pauseId)
   }
 }

@@ -38,10 +38,12 @@ const EXTENSION_SAVE_CODE_HELP: Record<
     listedIn: 'captureMissing',
   },
   pinnedFrameMissing: {
-    meaning: 'The surface frame pinned at a pause was not recorded.',
-    evidenceKept: 'The pause, its captured values and the source at the stop.',
+    meaning:
+      'The live run captured the surface frame pinned at a pause, but the history could not keep it (the frame budget, the history already finalizing, or a failed write). The stop still replays with the last recorded frame and its distance from the stop; saving again cannot recover it.',
+    evidenceKept:
+      'The pause, its captured values, the source at the stop and the filmstrip frames.',
     action:
-      'Cite the stop, not a picture; start a new run only if that frame matters.',
+      'Cite the stop and the last recorded frame with its distance label; start a new run only if the exact pause frame matters.',
     retryHelps: false,
     listedIn: 'captureMissing',
   },

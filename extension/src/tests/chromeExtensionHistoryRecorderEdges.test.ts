@@ -11,6 +11,7 @@ import {
 import { join } from 'node:path'
 import { before, test } from 'node:test'
 
+import type { ExtensionFrameBudget } from '../chromeExtensionHistoryFrames'
 import { ChromeExtensionHistoryRecorder } from '../chromeExtensionHistoryRecorder'
 import type { ExtensionHistoryPause } from '../chromeExtensionHistorySink'
 import type { ExtensionHistoryJournalLimits } from '../chromeExtensionHistoryWriter'
@@ -54,6 +55,7 @@ async function recorderOver(
   context: Parameters<typeof openExtensionStore>[0],
   options: {
     limits?: ExtensionHistoryJournalLimits
+    frameBudget?: ExtensionFrameBudget
     onFault?: (error: unknown) => void
   } = {},
 ) {
@@ -70,6 +72,7 @@ async function recorderOver(
     summarize: (studyId) => store.summarize(studyId),
     retryDelay: async () => undefined,
     ...(options.onFault ? { onFault: options.onFault } : {}),
+    ...(options.frameBudget ? { frameBudget: options.frameBudget } : {}),
   })
   assert.ok('recorder' in begun)
   return { recorder: begun.recorder, store, header, learningDirectory, clock }
@@ -166,6 +169,67 @@ test('a pinned pause frame is recorded as a pin naming its pause and no pinned f
   )
 })
 
+// protects=E-B: a pause the live run never pinned (a paused page that did not answer its screenshot) is no recording loss, so a history whose other parts are present seals complete with nothing missing; fails_when=a pause without a pin frame is named EXTENSION_HISTORY_PINNED_FRAME_MISSING or makes the capture partial; no_claim=a pin the run captured and the history lost (next tests)
+test('a sealed history whose pauses the live run never pinned reads complete with nothing missing', async (context) => {
+  // Arrange
+  const { recorder, store, header } = await recorderOver(context)
+  const page = pauseOf(1, 'page')
+  const worker = pauseOf(2, 'service-worker')
+
+  // Act
+  openCaptured(recorder, page)
+  recorder.pauseClosed(page.pauseId, 'continue')
+  openCaptured(recorder, worker)
+  recorder.pauseClosed(worker.pauseId, 'continue')
+  recorder.resultObserved(CHANGED_RESULT)
+  streamFrame(recorder, 'surface')
+  await recorder.seal({}, 5_000)
+  const history = await store.read(header.studyId)
+
+  // Assert
+  assert.equal(history.status, 'complete')
+  assert.deepEqual(history.seal?.reasons, [])
+  assert.equal(
+    history.entries.some(
+      (entry) => entry.type === 'frame' && entry.kind === 'pin',
+    ),
+    false,
+  )
+})
+
+// protects=E-B: a pin the live run captured and the frame budget refused is a missing recorded part, named with its stop, and the capture reads partial; fails_when=the refused pin is silent or the history reads complete; no_claim=the production budget sizes (injected small)
+test('a captured pin the frame budget refuses is named missing and the capture reads partial', async (context) => {
+  // Arrange
+  const { recorder, store, header } = await recorderOver(context, {
+    frameBudget: {
+      frames: 1,
+      pngBytes: 1_000_000,
+      pinReserveFrames: 0,
+      pinReserveBytes: 0,
+    },
+  })
+  const page = pauseOf(1, 'page')
+  const worker = pauseOf(2, 'service-worker')
+  openCaptured(recorder, page)
+  openCaptured(recorder, worker)
+  streamFrame(recorder, 'surface')
+
+  // Act
+  pin(recorder, page.pauseId, 'refused by the budget')
+  recorder.pauseClosed(page.pauseId, 'continue')
+  recorder.pauseClosed(worker.pauseId, 'continue')
+  recorder.resultObserved(CHANGED_RESULT)
+  await recorder.seal({}, 5_000)
+  const history = await store.read(header.studyId)
+
+  // Assert
+  assert.equal(history.status, 'partial')
+  assert.deepEqual(
+    history.seal?.reasons.map((reason) => [reason.code, reason.params]),
+    [['EXTENSION_HISTORY_PINNED_FRAME_MISSING', { stop: 1 }]],
+  )
+})
+
 // protects=E-B: a pin that arrives after the history began finalizing is dropped and the pause is named as having no pinned frame; fails_when=the pin is written after the seal began, or the pause is not named; no_claim=how long the run waits (it never waits)
 test('a pin arriving after the history began finalizing is dropped and the pause is named without a pinned frame', async (context) => {
   // Arrange
@@ -217,6 +281,12 @@ test('a second pin for a pause and a pin for an unknown pause are ignored', asyn
   assert.deepEqual(
     history.seal?.reasons.map((reason) => reason.code),
     ['EXTENSION_HISTORY_STOP_NOT_REACHED'],
+  )
+  assert.equal(
+    history.seal?.reasons.some((reason) =>
+      reason.code.endsWith('PINNED_FRAME_MISSING'),
+    ),
+    false,
   )
   assert.equal(
     history.entries.filter(

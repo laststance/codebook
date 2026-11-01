@@ -18,6 +18,8 @@ export type ExtensionCaptureFacts = {
   filmstripIncomplete?: boolean
   /** Whether the surface closed while the run lived. */
   surfaceEnded?: boolean
+  /** Pause ids whose pinned frame the live run captured and handed over, but the history did not store (a budget, finalizing, a failed write, a drain deadline). A pause the run never pinned is not here: that is no recording loss. */
+  lostPinnedPauses?: ReadonlySet<string>
 }
 
 /**
@@ -36,6 +38,7 @@ export function describeLastExtensionEntry(
 function stopReasons(
   header: Pick<ExtensionHistoryHeader, 'declaredStops'>,
   entries: readonly ExtensionHistoryEntry[],
+  facts: ExtensionCaptureFacts,
 ): ExtensionHistorySealReason[] {
   const reasons: ExtensionHistorySealReason[] = []
   const opened = entries.filter((entry) => entry.type === 'pause-open')
@@ -66,7 +69,7 @@ function stopReasons(
       text: `The executed source of stop ${stop ?? '?'} was not stored.`,
     })
   }
-  // A pause with no pin frame: the live run pins best-effort, and a pin that arrived late or was refused by a budget is not stored.
+  // A pin the live run captured and the history lost; a pause the run never pinned (the live run pins best-effort) is no loss, the replay then shows the last filmstrip frame with its distance.
   const pinnedPauses = new Set(
     entries.flatMap((entry) =>
       entry.type === 'frame' && entry.kind === 'pin' && entry.pauseId
@@ -75,7 +78,10 @@ function stopReasons(
     ),
   )
   for (const pause of opened)
-    if (!pinnedPauses.has(pause.pauseId))
+    if (
+      facts.lostPinnedPauses?.has(pause.pauseId) &&
+      !pinnedPauses.has(pause.pauseId)
+    )
       reasons.push({
         code: CODES.pinnedFrameMissing,
         params: { stop: pause.stopIndex },
@@ -155,7 +161,7 @@ function writerReasons(
 
 /**
  * Decides which parts of a chrome-extension history are missing, from its journal and the facts only the writer knows; the seal keeps the result and an unsealed (interrupted) history is judged by it again on every read.
- * Detects: declared stops never reached, pauses without a capture or a pinned frame, captures without their source, no result, the surface ending, a bound reached, a failed append and a filmstrip with no frames or dropped ones.
+ * Detects: declared stops never reached, pauses without a capture, pinned frames the live run captured but the history lost, captures without their source, no result, the surface ending, a bound reached, a failed append and a filmstrip with no frames or dropped ones.
  * @param header - The history's header, whose declared stops say what had to be reached.
  * @param entries - The verified entries.
  * @param facts - What only the writer knows.
@@ -168,7 +174,7 @@ export function evaluateExtensionHistoryCapture(
   facts: ExtensionCaptureFacts,
 ): ExtensionHistorySealReason[] {
   return [
-    ...stopReasons(header, entries),
+    ...stopReasons(header, entries, facts),
     ...endingReasons(entries, facts),
     ...writerReasons(facts),
   ]

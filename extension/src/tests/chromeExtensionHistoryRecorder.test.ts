@@ -70,15 +70,6 @@ function streamFrame(
   })
 }
 
-/** Pins a pause the way the run hands its screenshot over. */
-function pin(
-  recorder: ChromeExtensionHistoryRecorder,
-  pauseId: string,
-  salt: string,
-): void {
-  recorder.pinned(pauseId, pngOf(720, 640, salt).toString('base64'))
-}
-
 // protects=a page stop then a service-worker stop are journaled as pause-open, capture and pause-close with their target identity and source hash, then the result, and the history seals complete; fails_when=an event, a target URL, a worker generation, a source hash or the complete seal is missing; no_claim=a real Chrome or debugger (the pauses are told by hand)
 test('a page stop then a service-worker stop are journaled with their target identity and the history seals complete', async (context) => {
   // Arrange
@@ -91,14 +82,12 @@ test('a page stop then a service-worker stop are journaled with their target ide
     capturedStop({ stopIndex: 1, context: 'page' }),
   )
   streamFrame(recorder, 'surface')
-  pin(recorder, PAGE_PAUSE.pauseId, 'page pin')
   recorder.pauseClosed(PAGE_PAUSE.pauseId, 'continue')
   recorder.pauseOpened(WORKER_PAUSE)
   recorder.captured(
     WORKER_PAUSE.pauseId,
     capturedStop({ stopIndex: 2, context: 'service-worker' }),
   )
-  pin(recorder, WORKER_PAUSE.pauseId, 'worker pin')
   recorder.pauseClosed(WORKER_PAUSE.pauseId, 'continue')
   recorder.resultObserved({
     kind: 'text',
@@ -183,7 +172,6 @@ test('a surface lost at an open pause seals partial naming the surface end and t
     history.seal?.reasons.map((reason) => reason.code),
     [
       'EXTENSION_HISTORY_STOP_NOT_REACHED',
-      'EXTENSION_HISTORY_PINNED_FRAME_MISSING',
       'EXTENSION_HISTORY_RESULT_MISSING',
       'EXTENSION_HISTORY_SURFACE_ENDED',
       'EXTENSION_HISTORY_FILMSTRIP_MISSING',
@@ -232,7 +220,6 @@ test('a history whose writer is abandoned reads as interrupted with its recorded
     summary?.captureMissing.map((reason) => reason.code),
     [
       'EXTENSION_HISTORY_STOP_NOT_REACHED',
-      'EXTENSION_HISTORY_PINNED_FRAME_MISSING',
       'EXTENSION_HISTORY_RESULT_MISSING',
       'EXTENSION_HISTORY_FILMSTRIP_MISSING',
     ],
@@ -427,14 +414,12 @@ test('a run that ends before its result was read keeps a terminal event and name
     capturedStop({ stopIndex: 1, context: 'page' }),
   )
   streamFrame(recorder, 'surface')
-  pin(recorder, PAGE_PAUSE.pauseId, 'page pin')
   recorder.pauseClosed(PAGE_PAUSE.pauseId, 'continue')
   recorder.pauseOpened(WORKER_PAUSE)
   recorder.captured(
     WORKER_PAUSE.pauseId,
     capturedStop({ stopIndex: 2, context: 'service-worker' }),
   )
-  pin(recorder, WORKER_PAUSE.pauseId, 'worker pin')
   recorder.pauseClosed(WORKER_PAUSE.pauseId, 'continue')
 
   // Act

@@ -89,8 +89,8 @@ test('a run hands the pinned pause screenshot to its history as the pin of that 
   assert.deepEqual(pins, ['run-1:1:page:1'])
 })
 
-// protects=E-B: a stop while the pause screenshot never answers settles at once and the history seals naming the pause as having no pinned frame; the recorder never waits for the screenshot; fails_when=the stop or the seal waits for the screenshot, or the pause is not named; no_claim=the 10 s production stop bound (not reached)
-test('a stop while the pause screenshot never answers settles and the history names the missing pinned frame', async (context) => {
+// protects=E-B: a stop while the pause screenshot never answers settles at once and the history seals without naming a missing pin, because the live run never captured one; the recorder never waits for the screenshot; fails_when=the stop or the seal waits for the screenshot, or the unpinned pause is named missing; no_claim=the 10 s production stop bound (not reached)
+test('a stop while the pause screenshot never answers settles and the history names no missing pinned frame', async (context) => {
   // Arrange
   const { repository, kept, beginHistory } = await recordingOver(context)
   const harness = createRunHarness({
@@ -118,7 +118,7 @@ test('a stop while the pause screenshot never answers settles and the history na
     history.seal?.reasons
       .filter((reason) => reason.code.endsWith('PINNED_FRAME_MISSING'))
       .map((reason) => reason.params),
-    [{ stop: 1 }],
+    [],
   )
 })
 

@@ -1,5 +1,8 @@
 import type { CapturedExtensionStop } from './chromeExtensionContracts'
-import { ExtensionHistoryFrameWriter } from './chromeExtensionHistoryFrames'
+import {
+  type ExtensionFrameBudget,
+  ExtensionHistoryFrameWriter,
+} from './chromeExtensionHistoryFrames'
 import type { ExtensionPauseCloseReason } from './chromeExtensionHistorySchemas'
 import type {
   ChromeExtensionHistorySink,
@@ -39,6 +42,8 @@ export type ExtensionHistoryBeginInput = {
   summarize: (studyId: string) => Promise<ExtensionHistorySummary | undefined>
   /** Told once with the first fault of an append or a frame (the service writes it to Output › Codebook); the history is already marked failed. */
   onFault?: (error: unknown) => void
+  /** The frame budget; the production budget unless a test names a smaller one to reach it. */
+  frameBudget?: ExtensionFrameBudget
   /** Waits before the one retry of a transient seal failure. */
   retryDelay?: (milliseconds: number) => Promise<void>
 }
@@ -93,7 +98,7 @@ export class ChromeExtensionHistoryRecorder implements ChromeExtensionHistorySin
     readonly writer: ChromeExtensionHistoryWriter,
     private readonly input: ExtensionHistoryBeginInput,
   ) {
-    this.frames = new ExtensionHistoryFrameWriter(writer)
+    this.frames = new ExtensionHistoryFrameWriter(writer, input.frameBudget)
     this.frameObserver = {
       elapsedMs: () => writer.nowMs(),
       frame: (frame): void => {
@@ -168,9 +173,8 @@ export class ChromeExtensionHistoryRecorder implements ChromeExtensionHistorySin
   }
 
   private pinnedNow(pauseId: string, pngBase64: string): void {
-    // A pin for a pause the history never opened would break the journal's order; a pin after the seal began finds the frame writer closed. Either way the pause reads as having no pinned frame.
-    if (this.sealOperation !== undefined || !this.knownPauseIds.has(pauseId))
-      return
+    // A pin for a pause the history never opened would break the journal's order and names no stop. A pin after the seal began finds the frame writer closed: it is dropped, and the writer remembers the captured pin as lost.
+    if (!this.knownPauseIds.has(pauseId)) return
     this.frames.offer({
       data: pngBase64,
       kind: 'pin',
@@ -399,6 +403,7 @@ export class ChromeExtensionHistoryRecorder implements ChromeExtensionHistorySin
         this.writer.seal({
           filmstripIncomplete: this.frames.isIncomplete,
           surfaceEnded: this.didSurfaceEnd,
+          lostPinnedPauses: this.frames.lostPins(),
         }),
       this.input.retryDelay,
     )

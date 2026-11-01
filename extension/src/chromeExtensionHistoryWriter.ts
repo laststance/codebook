@@ -63,8 +63,10 @@ class ExtensionWriterRules implements HistoryWriterRules<ExtensionHistoryTypes> 
   private readonly progress = newExtensionJournalProgress()
   private lastEntry?: ExtensionHistoryEntry
   /** What only the recorder knows; set before the seal. */
-  facts: Pick<ExtensionCaptureFacts, 'filmstripIncomplete' | 'surfaceEnded'> =
-    {}
+  facts: Pick<
+    ExtensionCaptureFacts,
+    'filmstripIncomplete' | 'surfaceEnded' | 'lostPinnedPauses'
+  > = {}
 
   constructor(
     private readonly header: ExtensionHistoryHeader,
@@ -265,7 +267,7 @@ export class ChromeExtensionHistoryWriter extends HistoryJournalWriter<Extension
 
   /**
    * Seals the history: from this call the writer is closed to new appends (an entry offered later is not written and is no failure), the entries accepted before it are written, then `sealed.json`. The status and reasons are decided by the evidence.
-   * @param facts - What only the recorder knows: the filmstrip lost frames, the surface ended.
+   * @param facts - What only the recorder knows: the filmstrip lost frames, the surface ended, the pinned frames the history lost.
    * @returns The sealed journal's hash; `undefined` for a writer abandoned before the call or a history that held nothing to replay.
    * @throws When the seal cannot be written (the history then reads as interrupted) or the writer is abandoned while it is in flight.
    * @example await writer.seal({ filmstripIncomplete: false })
@@ -273,7 +275,7 @@ export class ChromeExtensionHistoryWriter extends HistoryJournalWriter<Extension
   seal(
     facts: Pick<
       ExtensionCaptureFacts,
-      'filmstripIncomplete' | 'surfaceEnded'
+      'filmstripIncomplete' | 'surfaceEnded' | 'lostPinnedPauses'
     > = {},
   ): Promise<string | undefined> {
     if (this.sealOperation) return this.sealOperation
