@@ -398,8 +398,8 @@ test('a stalled summary read does not hold the seal past its bound and the seale
   assert.ok('recorder' in begun)
   let didSettle = false
 
-  // Act
-  const sealing = begun.recorder.seal({}, 50).then(() => {
+  // Act: the bound also covers the drain and the temporary-blob cleanup, so it leaves room for a loaded runner while the summary read never answers.
+  const sealing = begun.recorder.seal({}, 1_000).then(() => {
     didSettle = true
   })
   await waitUntil(() => didSettle, 'the seal to settle', 5_000)
