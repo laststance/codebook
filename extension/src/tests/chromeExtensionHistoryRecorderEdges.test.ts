@@ -820,3 +820,28 @@ test('a capture refused by the size limit ends the timeline and the entries afte
     ),
   )
 })
+
+// protects=a result that cannot be written as JSON does not use up the result slot: the seal still records its unavailable result; fails_when=the history has no result entry after such a read; no_claim=the cause text
+test('a result read that cannot be serialized still leaves the seal to record an unavailable result', async (context) => {
+  // Arrange
+  const { recorder, store, header } = await recorderOver(context)
+  const page = pauseOf(1, 'page')
+  openCaptured(recorder, page)
+  recorder.pauseClosed(page.pauseId, 'continue')
+
+  // Act
+  recorder.resultObserved({
+    ...CHANGED_RESULT,
+    // A BigInt makes JSON serialization throw.
+    before: { value: 1n },
+  })
+  await recorder.seal({}, 5_000)
+  const history = await store.read(header.studyId)
+
+  // Assert
+  const results = history.entries.filter((entry) => entry.type === 'result')
+  assert.deepEqual(
+    results.map((entry) => entry.outcome),
+    ['unavailable'],
+  )
+})

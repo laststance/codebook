@@ -239,18 +239,18 @@ export class ChromeExtensionHistoryRecorder implements ChromeExtensionHistorySin
 
   private resultObservedNow(observed: ChromeExtensionObserved): void {
     if (this.didWriteResult) return
-    this.didWriteResult = true
     const outcome = extensionObservationResult(observed)
-    this.write(
-      this.writer.appendResult({
-        outcome,
-        before: toJson(observed.before),
-        after: toJson(observed.after),
-        ...('unavailable' in observed.after
-          ? { cause: observed.after.cause }
-          : {}),
-      }),
-    )
+    // Serialized and queued before the flag is set: a throw leaves the slot free for the seal's fallback result.
+    const queued = this.writer.appendResult({
+      outcome,
+      before: toJson(observed.before),
+      after: toJson(observed.after),
+      ...('unavailable' in observed.after
+        ? { cause: observed.after.cause }
+        : {}),
+    })
+    this.didWriteResult = true
+    this.write(queued)
   }
 
   surfaceEnded(): void {
