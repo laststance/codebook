@@ -633,6 +633,8 @@ export type StartAnswer = ReturnType<StudyService['start']> & {
 export class StudyService {
   readonly instanceId = randomUUID()
   readonly records = new Map<string, StudyRecord>()
+  /** The learner secrets of runs this service forgot; kept in memory only, so texts about those runs stay masked. */
+  private readonly forgottenLearnerSecrets = new Set<string>()
   recordings?: RecordingStore
   /** Whether this window can remove a saved study: what the window itself says at first (a remote window has no Trash), then what the last removal that moved its study or met the Trash's refusal told; written only by {@link recordStudyRemoval}. */
   private removalAvailability: StudyRemovalAvailability
@@ -737,7 +739,8 @@ export class StudyService {
    * @example this.learnerSecretsOfRuns().size // => 1 after one password was typed
    */
   private learnerSecretsOfRuns(): ReadonlySet<string> {
-    const secrets = new Set<string>()
+    // Secrets of runs this service forgot stay masked, in memory only, for the service's lifetime.
+    const secrets = new Set<string>(this.forgottenLearnerSecrets)
     for (const record of this.records.values())
       for (const secret of record.runtime?.learnerSecrets ?? [])
         // A runtime without ask-learner operations lists none.
@@ -1784,6 +1787,9 @@ export class StudyService {
    * this.forgetRecord(refused) // this.records.has(refused.id) === false
    */
   private forgetRecord(record: StudyRecord): void {
+    // Later texts about this run (Output lines, answers) must still hide its typed secrets.
+    for (const secret of record.runtime?.learnerSecrets ?? [])
+      if (typeof secret === 'string') this.forgottenLearnerSecrets.add(secret)
     this.records.delete(record.id)
     for (const [key, keyedRecord] of this.startKeys)
       if (keyedRecord === record) this.startKeys.delete(key)
@@ -5301,7 +5307,11 @@ export class StudyService {
           },
           signal,
         )
-        .catch(() => undefined)
+        .catch((error: unknown) => {
+          // An abort or timeout is an unanswered ask; any other throw is a fault of the editor's input box.
+          if (signal.aborted) return undefined
+          throw this.inputBoxFault(record, next, error)
+        })
       // An empty answer types nothing into the control, so it counts as no answer.
       if (secret === undefined || secret === '')
         throw new StudyError(
@@ -5748,6 +5758,43 @@ export class StudyService {
     logged.add(identity)
     this.writeOutputLine(
       describeNodeServerFailureLine(record.id, failure.code, failure.message),
+    )
+  }
+
+  /**
+   * Words the refusal for an editor input box that threw, instead of reading the fault as a declined ask; called by {@link StudyService.sendOperation} when the learner-secret asker rejects.
+   * The cause is masked and written once to Output › Codebook; the box never returned a typed value, so none can appear.
+   * @param record - The run that asked.
+   * @param next - The ask-learner operation.
+   * @param error - What the asker threw.
+   * @returns `PREREQUISITE_MISSING` with the masked cause; the key stays unused.
+   * @example this.inputBoxFault(record, next, new Error('box failed')) // => StudyError PREREQUISITE_MISSING
+   */
+  private inputBoxFault(
+    record: StudyRecord,
+    next: { index: number; title: string },
+    error: unknown,
+  ): StudyError {
+    const cause = this.maskLearnerSecretsInText(
+      error instanceof Error ? error.message : String(error),
+    )
+    const message = `The editor's input box failed for operation ${next.index} (${next.title}), so nothing was sent: ${cause}`
+    this.writeOutputLine({
+      level: 'error',
+      text: `Run ${record.id}: ${message}`,
+    })
+    return new StudyError(
+      'PREREQUISITE_MISSING',
+      message,
+      undefined,
+      undefined,
+      undefined,
+      {
+        operationIndex: next.index,
+        sent: 'not-sent',
+        sideEffects: 'none',
+        runUri: this.uri(record.id),
+      },
     )
   }
 

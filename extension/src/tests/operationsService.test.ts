@@ -574,3 +574,41 @@ test('the run resource carries the operation status words for the chat as the ru
   assert.equal(sendingLast, 'Operation 2/2 · Last · sending')
   assert.equal(finished, 'Done · 2 operations')
 })
+
+// protects=a thrown error from the editor's input box answers PREREQUISITE_MISSING while a declined box stays OPERATIONS_NOT_CONFIRMED; fails_when=an input-box fault reads as a declined ask; no_claim=the real input box (extension test), the asker is a stand-in
+test('an input box that throws answers PREREQUISITE_MISSING and one that resolves nothing answers OPERATIONS_NOT_CONFIRMED', async (context) => {
+  // Arrange
+  const { service, receipt, runtime, environment } = await startOperationsRun(
+    context,
+    'ask',
+  )
+  await service.performAction({
+    ...receipt,
+    key: 'op-1',
+    action: OPERATION_ACTION,
+  })
+  runtime.finish(1)
+  environment.askLearnerSecret = async () => {
+    throw new Error('input box crashed')
+  }
+  // Act
+  const faulted = await errorOf(() =>
+    service.performAction({
+      ...receipt,
+      key: 'op-2',
+      action: OPERATION_ACTION,
+    }),
+  )
+  environment.askLearnerSecret = async () => undefined
+  const declined = await errorOf(() =>
+    service.performAction({
+      ...receipt,
+      key: 'op-2',
+      action: OPERATION_ACTION,
+    }),
+  )
+  // Assert
+  assert.equal(faulted.code, 'PREREQUISITE_MISSING')
+  assert.match(faulted.message, /input box crashed/)
+  assert.equal(declined.code, 'OPERATIONS_NOT_CONFIRMED')
+})

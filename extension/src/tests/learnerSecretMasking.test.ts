@@ -467,18 +467,63 @@ test('a secret-named variable holding a session token is masked and an ordinary 
   assert.equal(values.ordinary, `'${token}'`)
 })
 
+const SEALED_TEXT = 'const hunter2 = 1'
+
 // protects=ENG-4: the deep mask hides a secret in strings and keys but leaves a sealed source record (text bound by a hash) whole; fails_when=a hash-bound source is rewritten so its seal breaks, or a secret in a string stays; no_claim=class instances, which the round trip turns into their JSON form
 test('the data mask keeps a hash-bound source whole and masks every other string', () => {
   // Arrange
   const value = {
     failure: 'login failed for hunter2',
-    source: { text: 'const hunter2 = 1', hash: 'abc' },
+    source: { text: SEALED_TEXT, hash: sha256(SEALED_TEXT) },
   }
   // Act
   const masked = maskLearnerSecretData(value, new Set(['hunter2']))
   // Assert
   assert.deepEqual(masked, {
     failure: 'login failed for [masked]',
-    source: { text: 'const hunter2 = 1', hash: 'abc' },
+    source: { text: SEALED_TEXT, hash: sha256(SEALED_TEXT) },
   })
+})
+
+// protects=ENG-4: after a run that took a secret is forgotten, the service still masks a text holding that secret; fails_when=the forgotten run's secrets leave the union and an Output line or answer about it shows the value; no_claim=eviction order (the test forgets the record directly)
+test('a forgotten run keeps its typed secret masked in later texts', async (context) => {
+  // Arrange
+  const harness = await configuredServiceHarness(
+    context,
+    undefined,
+    (directory, definition) =>
+      new ControlledOperationsRuntime(directory, definition),
+  )
+  const { service, configuration, environment } = harness
+  environment.askLearnerSecret = async () => SECRET
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'forget',
+    configuration: {
+      version: 3,
+      adapter: configuration.adapter,
+      book: configuration.book,
+      source: configuration.source,
+      participant: 'browser',
+      afterOperation: 1,
+      before: configuration.action.before,
+      after: configuration.action.after,
+      operations: [...PASSWORD_OPERATIONS],
+      inspections: configuration.inspections,
+    },
+  })
+  const record = service.record(receipt)
+  await record.preparation
+  await service.performAction({
+    ...receipt,
+    key: 'op-1',
+    action: OPERATION_ACTION,
+  })
+  // Act
+  service['forgetRecord'](record)
+  const masked = service.maskLearnerSecretsInText(`failed for ${SECRET}`)
+  // Assert
+  assert.equal(service.records.has(record.id), false)
+  assert.equal(masked, 'failed for [masked]')
 })

@@ -37,6 +37,25 @@ function isGeneratedIdentifier(key: string, value: unknown): boolean {
 }
 
 /**
+ * Keeps an identifier's bytes unless it is exactly a secret.
+ *
+ * Why it exists: `{ apiKey: '<secret>' }` is learner text under an identifier-shaped key; only a secret merely inside an identifier is exempt. Called by {@link maskRunSecretsDeep} for each identifier property.
+ * @param value - A string, an array of strings, or a generated-value object under an identifier key.
+ * @param secrets - The run-scoped secret values.
+ * @returns The value with each string that equals a secret replaced by the mask; other values unchanged.
+ * @example
+ * keepIdentifier(['x', 'hunter2'], new Set(['hunter2'])) // => ['x', '[masked]']
+ */
+function keepIdentifier(value: unknown, secrets: ReadonlySet<string>): unknown {
+  if (typeof value === 'string')
+    return secrets.has(value) ? REDACTION_MASK : value
+  if (Array.isArray(value))
+    return value.map((entry) => keepIdentifier(entry, secrets))
+  // A generated-value key holds an object that is kept whole.
+  return value
+}
+
+/**
  * Replaces every exact occurrence of each run secret in a text by the redaction mask.
  *
  * Why it exists: a value the learner typed through ask-learner has no recognizable shape, so a copy of it in a preview, an error message or a log can only be hidden by its value (ENG-4). Called by every serialization of a run (inspection values, debugger previews, errors, MCP results, saved studies) through {@link maskRunSecretsDeep}.
@@ -93,7 +112,7 @@ function maskValue(
         key,
         // Generated identifiers keep their bytes; everything else is masked.
         isGeneratedIdentifier(key, entry)
-          ? entry
+          ? keepIdentifier(entry, secrets)
           : maskValue(entry, secrets, ordered, keep),
       ]),
     )

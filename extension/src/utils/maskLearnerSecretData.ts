@@ -1,10 +1,16 @@
+import { sha256 } from '../runtimeSupport/utils/sha256'
+
+import { expandLearnerSecretForms } from './expandLearnerSecretForms'
 import { maskRunSecretsDeep } from './maskRunSecrets'
 
-/** Whether a record is a sealed source: its text is bound by a hash, so masking it would break the seal. */
+/** Whether a record is a sealed source: its `hash` is the SHA-256 of its string `text`, so masking it would break the seal. */
 function isSealedSourceRecord(record: object): boolean {
   const candidate = record as { text?: unknown; hash?: unknown }
   return (
-    typeof candidate.text === 'string' && typeof candidate.hash === 'string'
+    typeof candidate.text === 'string' &&
+    typeof candidate.hash === 'string' &&
+    /^[0-9a-f]{64}$/.test(candidate.hash) &&
+    sha256(candidate.text) === candidate.hash
   )
 }
 
@@ -26,5 +32,10 @@ export function maskLearnerSecretData<T>(
   if (secrets.size === 0 || value === undefined) return value
   // Round-trip first so a value with a method such as `toJSON` is masked in the form it is written.
   const plain = JSON.parse(JSON.stringify(value)) as T
-  return maskRunSecretsDeep(plain, secrets, isSealedSourceRecord)
+  // URL-encoded and HTML-escaped copies (a page URL, a location fact) are masked like the raw value.
+  return maskRunSecretsDeep(
+    plain,
+    expandLearnerSecretForms(secrets, false),
+    isSealedSourceRecord,
+  )
 }

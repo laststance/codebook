@@ -243,6 +243,19 @@ async function continueToolResult(
 function textResourceToolResult(
   resource: Extract<ResourceContent, { text: string }>,
 ): CallToolResult {
+  const result = buildTextResourceToolResult(resource)
+  // The learner-secret mask of the tool wrapper must not touch an answer whose text was masked, or is exempt, at the read.
+  if (resource.masked) alreadyMaskedResults.add(result)
+  return result
+}
+
+/** Tool results whose text was masked, or is a sealed source, where the resource was read; {@link maskToolResult} returns them as they are. */
+const alreadyMaskedResults = new WeakSet<CallToolResult>()
+
+/** Builds the result of {@link textResourceToolResult} before it is marked. */
+function buildTextResourceToolResult(
+  resource: Extract<ResourceContent, { text: string }>,
+): CallToolResult {
   const content: CallToolResult['content'] = [
     { type: 'text', text: resource.text },
   ]
@@ -309,6 +322,7 @@ function maskToolResult(
   service: StudyService,
   result: CallToolResult,
 ): CallToolResult {
+  if (alreadyMaskedResults.has(result)) return result
   const structured = result.structuredContent as
     { text?: unknown; numberedText?: unknown } | undefined
   return {
@@ -549,8 +563,10 @@ export function createProtocol(service: StudyService): McpServer {
             : {
                 uri: resource.uri,
                 mimeType: resource.mimeType,
-                text:
-                  resource.mimeType === 'application/json'
+                // A paged or sealed-source resource was masked, or is exempt, where it was read.
+                text: resource.masked
+                  ? resource.text
+                  : resource.mimeType === 'application/json'
                     ? service.maskLearnerSecretsInJsonText(resource.text)
                     : service.maskLearnerSecretsInText(resource.text),
               },
