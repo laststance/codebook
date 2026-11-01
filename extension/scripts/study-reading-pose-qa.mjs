@@ -672,6 +672,7 @@ async function check(page, options, collected) {
     ),
   )
   const spaceSeeks = await sentPlayback()
+  // protects=a screen reader reads a sent mark's time as "at <t> s" and a never-sent mark as "not sent"; fails_when=the never-sent mark's name reads "at not sent"; why_changed=the local CodeRabbit CLI (Cycle 0070 pt1) found that phrase, which is not English; no_claim=how a real screen reader speaks the name (stand-ins: the Study messages the host posts)
   cases.push({
     name: 'Space seeks to the mark and every mark is named with its place, kind, title, time and state',
     actual: { names, spaceSeeks: spaceSeeks.map((seek) => seek.positionMs) },
@@ -680,7 +681,7 @@ async function check(page, options, collected) {
       names[0] === 'Operation 1 of 4, choose, Customer, at 1.00 s, done' &&
       names[2] === 'Operation 3 of 4, click, Pending, at 3.50 s, failed' &&
       names[3] ===
-        'Operation 4 of 4, click, Create Invoice, at not sent, not finished',
+        'Operation 4 of 4, click, Create Invoice, not sent, not finished',
   })
   // Done, failed and pending differ by shape and text, not colour alone; a mark that was never sent has no moment to move to.
   const shapes = await page.evaluate(() =>

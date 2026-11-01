@@ -627,9 +627,14 @@ function studyClient(
     control.style.left = `${place?.x ?? 0}px`
     control.style.top = `${(place?.line ?? 0) * options.operations.lineHeightPx}px`
     control.title = `${mark.index} · ${mark.kind} · ${mark.title}`
+    // A sent operation has a moment ("at 1.50 s"); one never sent has none, so its name says "not sent" alone.
+    const momentPhrase =
+      mark.atMs === undefined
+        ? options.operations.notSent
+        : `at ${seconds(mark.atMs)}`
     control.setAttribute(
       'aria-label',
-      `Operation ${mark.index} of ${mark.total}, ${mark.kind}, ${mark.title}, at ${mark.atMs === undefined ? options.operations.notSent : seconds(mark.atMs)}, ${stateWord}`,
+      `Operation ${mark.index} of ${mark.total}, ${mark.kind}, ${mark.title}, ${momentPhrase}, ${stateWord}`,
     )
     const number = document.createElement('span')
     number.textContent = `${mark.index}${mark.state === 'failed' ? ' ✕' : mark.state === 'pending' ? ' ?' : ''}`
