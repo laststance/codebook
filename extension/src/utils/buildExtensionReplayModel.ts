@@ -259,14 +259,7 @@ function deriveExtensionMoments(
   return events.map((event): ExtensionReplayMoment => {
     const pause = event.pauseId ? pauses.get(event.pauseId) : undefined
     if (event.type === 'frame' && event.frame) lastStream = event.frame
-    if (event.type === 'pause-open' && pause) {
-      pause.precedingStream = lastStream
-      open.push(pause)
-    }
-    if (event.type === 'pause-close' && pause) {
-      const at = open.lastIndexOf(pause)
-      if (at >= 0) open.splice(at, 1)
-    }
+    trackOpenPause(event.type, pause, open, lastStream)
     const stop = open.at(-1)
     return {
       event,
@@ -274,6 +267,33 @@ function deriveExtensionMoments(
       frame: frameOfMoment(stop, lastStream),
     }
   })
+}
+
+/**
+ * Keeps the list of open pauses in step with one timeline event: a pause that opens joins it with the stream frame received before it, and a pause that closes leaves it; called by {@link deriveExtensionMoments} for each event.
+ * @param type - The event's type.
+ * @param pause - The event's pause, absent for a frame or the result.
+ * @param open - The pauses open before the event, most recently opened last; changed in place.
+ * @param lastStream - The last stream frame received before the event.
+ * @example trackOpenPause('pause-open', pause, open, frame) // open now ends with pause
+ */
+function trackOpenPause(
+  type: ExtensionReplayEvent['type'],
+  pause: ExtensionReplayPause | undefined,
+  open: ExtensionReplayPause[],
+  lastStream: ExtensionReplayFrame | undefined,
+): void {
+  if (!pause) return
+  if (type === 'pause-open') {
+    pause.precedingStream = lastStream
+    open.push(pause)
+    return
+  }
+  // A close ends the latest opening of that pause; a close of a pause that is not open changes nothing.
+  if (type === 'pause-close') {
+    const at = open.lastIndexOf(pause)
+    if (at >= 0) open.splice(at, 1)
+  }
 }
 
 /**
