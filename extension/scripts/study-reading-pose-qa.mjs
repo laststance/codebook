@@ -527,6 +527,312 @@ async function check(page, options, collected) {
   await page.screenshot({
     path: `${options.output}/sequence-focus-restored.png`,
   })
+
+  // Cycle 0070: the replay's operation row. A host answer to a seek is simulated by publishing the Study message that follows it.
+  /** Derives a Study message's revision from the first message's by its distance in the flow, so no case carries a bare revision number of its own. @example revisionAt(1) // the second message's revision */
+  const revisionAt = (step) => options.message.revision + step
+  const sentPlayback = () =>
+    page.evaluate(() =>
+      window.sent.filter((message) => message.type === 'playback'),
+    )
+  const markOf = (index) => page.locator(`[data-operation-mark="${index}"]`)
+  const fourMarks = [
+    {
+      index: 1,
+      total: 4,
+      kind: 'choose',
+      title: 'Customer',
+      atMs: 1000,
+      state: 'done',
+    },
+    {
+      index: 2,
+      total: 4,
+      kind: 'text',
+      title: 'Amount',
+      atMs: 1500,
+      state: 'done',
+    },
+    {
+      index: 3,
+      total: 4,
+      kind: 'click',
+      title: 'Pending',
+      atMs: 3500,
+      state: 'failed',
+    },
+    {
+      index: 4,
+      total: 4,
+      kind: 'click',
+      title: 'Create Invoice',
+      atMs: undefined,
+      state: 'pending',
+    },
+  ]
+  /** A browser replay message of the Study page with the given operations, presented position and learning summary; `step` is its distance from the first message. */
+  const operationReplay = (step, overrides = {}) => ({
+    ...options.message,
+    revision: revisionAt(step),
+    contentTab: 'recording',
+    recording: {
+      revision: 1,
+      mode: 'paused',
+      readiness: 'ready',
+      presentedMs: 0,
+      range: { startMs: 0, endMs: 8000, endKnown: true },
+      recordingStatus: 'finalized',
+      historyTimeline: {
+        status: 'mapped',
+        gaps: [{ startMs: 5000, endMs: 5600 }],
+        recordedPoints: [2000],
+      },
+      operations: fourMarks,
+      ...overrides,
+    },
+  })
+  const waitUntilRendered = (revision) =>
+    page.waitForFunction(
+      (awaitedRevision) =>
+        window.sent.some(
+          (message) =>
+            message.type === 'rendered' && message.revision === awaitedRevision,
+        ),
+      revision,
+    )
+  /** Reads what the learner sees of the row: the focused mark, the announcement, the caption, the position and whether the row, Play and the 4A text lie inside the viewport. */
+  const readRow = () =>
+    page.evaluate(() => {
+      const box = (id) => document.getElementById(id).getBoundingClientRect()
+      const visible = (id) => document.getElementById(id).checkVisibility()
+      return {
+        focusedMark: document.activeElement?.dataset?.operationMark ?? null,
+        announcement: document.getElementById('operation-status').textContent,
+        caption: visible('operation-caption')
+          ? document.getElementById('operation-caption').textContent
+          : '',
+        playhead: document.getElementById('playhead').value,
+        status: document.getElementById('recording-status').textContent,
+        currentMark:
+          document.querySelector('[data-operation-mark][aria-current=true]')
+            ?.dataset.operationMark ?? null,
+        rowVisible: visible('operation-row'),
+        insideViewport: [
+          'operation-row',
+          'playback-toggle',
+          'playback-position',
+          'recording-status',
+        ].every((id) => visible(id) && box(id).right <= window.innerWidth + 1),
+        previousDisabled:
+          document.getElementById('previous-operation').disabled,
+        nextDisabled: document.getElementById('next-operation').disabled,
+      }
+    })
+  for (const width of [960, 480]) {
+    // Arrange: a replay of four operations, the third failed and the fourth never sent, opened at the start.
+    await page.setViewportSize({ width, height: 640 })
+    await render(operationReplay(0))
+    await markOf(1).focus()
+    // Act: Tab to mark 3 and press Enter.
+    await page.keyboard.press('Tab')
+    await page.keyboard.press('Tab')
+    await page.keyboard.press('Enter')
+    const afterEnter = await readRow()
+    const seeks = await sentPlayback()
+    // The host presents the moment: the Study message that follows the seek.
+    await publish(operationReplay(1, { presentedMs: 3500 }))
+    await waitUntilRendered(revisionAt(1))
+    const presented = await readRow()
+    // Assert
+    cases.push({
+      name: `Tab to mark 3 and Enter seeks to its moment, announces it, keeps the focus on the mark and captions the moment at ${width} px`,
+      actual: { afterEnter, seeks, presented },
+      passed:
+        afterEnter.focusedMark === '3' &&
+        afterEnter.announcement === 'Moved to operation 3' &&
+        seeks.length === 1 &&
+        seeks[0].action === 'seek' &&
+        seeks[0].positionMs === 3500 &&
+        presented.playhead === '3500' &&
+        presented.focusedMark === '3' &&
+        presented.currentMark === '3' &&
+        presented.caption ===
+          'Operation 3 · Pending · showing the last frame before it was sent' &&
+        presented.insideViewport,
+    })
+  }
+  // Space also seeks, and the mark's accessible name carries its place, kind, title, time and state.
+  await page.setViewportSize({ width: 960, height: 640 })
+  await render(operationReplay(0))
+  await markOf(2).focus()
+  await page.keyboard.press(' ')
+  const names = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-operation-mark]')].map((mark) =>
+      mark.getAttribute('aria-label'),
+    ),
+  )
+  const spaceSeeks = await sentPlayback()
+  cases.push({
+    name: 'Space seeks to the mark and every mark is named with its place, kind, title, time and state',
+    actual: { names, spaceSeeks: spaceSeeks.map((seek) => seek.positionMs) },
+    passed:
+      spaceSeeks.at(-1)?.positionMs === 1500 &&
+      names[0] === 'Operation 1 of 4, choose, Customer, at 1.00 s, done' &&
+      names[2] === 'Operation 3 of 4, click, Pending, at 3.50 s, failed' &&
+      names[3] ===
+        'Operation 4 of 4, click, Create Invoice, at not sent, not finished',
+  })
+  // Done, failed and pending differ by shape and text, not colour alone; a mark that was never sent has no moment to move to.
+  const shapes = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-operation-mark]')].map(
+      (mark) => mark.textContent,
+    ),
+  )
+  await markOf(4).click()
+  const notSent = await readRow()
+  cases.push({
+    name: 'done, failed and pending marks differ by text, and a mark never sent announces that it has no moment',
+    actual: { shapes, notSent },
+    passed:
+      shapes[0] === '1' &&
+      shapes[1] === '2' &&
+      shapes[2] === '3 ✕ failed' &&
+      shapes[3] === '4 ?' &&
+      notSent.announcement ===
+        'Operation 4 was not sent, so there is no moment to show',
+  })
+  // Previous and Next operation step between sent operations.
+  await render(operationReplay(0, { presentedMs: 2000 }))
+  await page.locator('#next-operation').click()
+  const nextSeek = (await sentPlayback()).at(-1)
+  await render(operationReplay(0, { presentedMs: 2000 }))
+  await page.locator('#previous-operation').click()
+  const previousSeek = (await sentPlayback()).at(-1)
+  cases.push({
+    name: 'Previous operation and Next operation seek to the sent operation before and after the position',
+    actual: { previous: previousSeek?.positionMs, next: nextSeek?.positionMs },
+    passed: previousSeek?.positionMs === 1500 && nextSeek?.positionMs === 3500,
+  })
+  // Inside an unrecorded interval the transport keeps its own text and the caption is not shown.
+  const inGap = [
+    { ...fourMarks[0] },
+    { ...fourMarks[1], atMs: 5200 },
+    { ...fourMarks[2], atMs: 6000 },
+    { ...fourMarks[3] },
+  ]
+  await render(operationReplay(0, { operations: inGap }))
+  await markOf(2).click()
+  await publish(operationReplay(1, { operations: inGap, presentedMs: 5200 }))
+  await waitUntilRendered(revisionAt(1))
+  const gap = await readRow()
+  cases.push({
+    name: 'a seek to an operation inside an unrecorded interval keeps the Not recorded text and shows no caption',
+    actual: gap,
+    passed:
+      gap.status.includes('Not recorded at this moment') &&
+      gap.caption === '' &&
+      gap.focusedMark === '2',
+  })
+  // Marks closer than 24 px stack vertically and none overlaps another.
+  const crowded = [
+    { ...fourMarks[0], atMs: 1000 },
+    { ...fourMarks[1], atMs: 1010 },
+    { ...fourMarks[2], atMs: 1020 },
+    { ...fourMarks[3], atMs: 7000, state: 'done' },
+  ]
+  await render(operationReplay(0, { operations: crowded }))
+  const tops = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-operation-mark]')].map(
+      (mark) => mark.getBoundingClientRect().top,
+    ),
+  )
+  const crowdedLayout = await page.evaluate(() => ({
+    rowWidth: document.getElementById('operation-row').getBoundingClientRect()
+      .width,
+    lefts: [...document.querySelectorAll('[data-operation-mark]')].map(
+      (mark) => mark.style.left,
+    ),
+  }))
+  cases.push({
+    name: 'operation marks closer than 24 px stack on separate lines',
+    actual: { tops, crowdedLayout },
+    passed:
+      new Set(tops.slice(0, 3)).size === 3 && tops[3] === Math.min(...tops),
+  })
+  // Below 480 px the labels hide and the numbers stay.
+  await page.setViewportSize({ width: 479, height: 640 })
+  await render(operationReplay(0))
+  const narrow = await page.evaluate(() => ({
+    labelDisplays: [...document.querySelectorAll('.operation-mark-label')].map(
+      (label) => getComputedStyle(label).display,
+    ),
+    numbers: [...document.querySelectorAll('[data-operation-mark]')].map(
+      (mark) => mark.firstElementChild.textContent,
+    ),
+  }))
+  cases.push({
+    name: 'below a 480 px webview the failed label hides and the numbers stay',
+    actual: narrow,
+    passed:
+      narrow.labelDisplays.every((display) => display === 'none') &&
+      narrow.numbers.join('|') === '1|2|3 ✕|4 ?',
+  })
+  // A replay without operations shows no row and no operation buttons.
+  await page.setViewportSize({ width: 960, height: 640 })
+  await render(operationReplay(0, { operations: [] }))
+  const without = await page.evaluate(() => ({
+    rowVisible: document.getElementById('operation-row').checkVisibility(),
+    marks: document.querySelectorAll('[data-operation-mark]').length,
+    groupVisible: document.getElementById('playback-events').checkVisibility(),
+  }))
+  cases.push({
+    name: 'a replay without operations shows no operation row and no operation buttons',
+    actual: without,
+    passed: !without.rowVisible && without.marks === 0 && !without.groupVisible,
+  })
+  // A summary step links to its mark when the host names a valid operation, and stays unlinked otherwise.
+  const learning = {
+    explanationId: '44444444-4444-4444-8444-444444444444',
+    createdAt: '2026-09-27T00:00:00.000Z',
+    content: {
+      question: 'How is an invoice created?',
+      title: 'Create invoice',
+      summary: 'The form posts.',
+      participants: [{ id: 'ui', label: 'UI' }],
+      steps: ['amount', 'ghost', 'plain'].map((id) => ({
+        id,
+        from: 'ui',
+        to: 'ui',
+        label: id,
+        explanation: `The ${id} step.`,
+        evidence: 'unknown',
+      })),
+    },
+    positions: [],
+    operationLinks: [
+      { stepId: 'amount', operationIndex: 2 },
+      { stepId: 'ghost', operationIndex: 9 },
+    ],
+  }
+  await render(operationReplay(0, { learningSummary: learning }))
+  const links = await page.evaluate(() =>
+    [
+      ...document.querySelectorAll(
+        '#learning-sequence button[data-operation-mark]',
+      ),
+    ].map((link) => link.textContent),
+  )
+  await page.locator('#learning-sequence button[data-operation-mark]').click()
+  const linkSeek = (await sentPlayback()).at(-1)
+  cases.push({
+    name: 'a summary step links to the mark of its operation, a step naming an operation the replay lacks stays unlinked',
+    actual: { links, linkSeek: linkSeek?.positionMs },
+    passed:
+      links.length === 1 &&
+      links[0] === 'Go to operation 2 · Amount' &&
+      linkSeek?.positionMs === 1500,
+  })
+  await page.screenshot({ path: `${options.output}/operation-row.png` })
 }
 
 const report = {

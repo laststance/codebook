@@ -499,7 +499,7 @@ function studyClient(
    */
   const seekToOperation = (index: number): void => {
     const recording = current?.recording
-    const mark = recording?.operations.find((value) => value.index === index)
+    const mark = recording?.operations?.find((value) => value.index === index)
     if (!recording || !mark || recording.readiness !== 'ready') return
     if (mark.atMs === undefined) {
       text(
@@ -525,7 +525,7 @@ function studyClient(
     const position = soughtOperation?.atMs ?? recording?.presentedMs
     if (!recording || recording.readiness !== 'ready' || position === undefined)
       return undefined
-    const timed = recording.operations.flatMap((mark) =>
+    const timed = (recording.operations ?? []).flatMap((mark) =>
       mark.atMs === undefined ? [] : [{ index: mark.index, atMs: mark.atMs }],
     )
     return direction === 'previous'
@@ -548,6 +548,139 @@ function studyClient(
       element(id).hidden = showEvents
   }
   /**
+   * Places the operation marks on lines: by time on the row's width, an operation never sent at the end, and each mark on the first line where it is at least the stack distance from the previous mark of that line.
+   * @param marks - The replay's operation marks.
+   * @param range - The recording's range.
+   * @param rowWidth - The row's width in pixels.
+   * @returns Each mark's pixel place and line, by the mark's number, and how many lines the marks use.
+   * @example placeOperationMarks(marks, { startMs: 0, endMs: 8000 }, 400).lineCount // => 1
+   */
+  const placeOperationMarks = (
+    marks: NonNullable<StudyViewMessage['recording']>['operations'],
+    range: { startMs: number; endMs: number },
+    rowWidth: number,
+  ) => {
+    const duration = Math.max(1, range.endMs - range.startMs)
+    const showsLabels = window.innerWidth >= options.operations.labelsMinWidthPx
+    // A mark is at least the stack distance wide; a mark not done carries a symbol, and a failed one its word while labels show.
+    const widthOf = (mark: (typeof marks)[number]): number =>
+      options.operations.stackPx +
+      (mark.state === 'done' ? 0 : options.operations.symbolWidthPx) +
+      (mark.state === 'failed' && showsLabels
+        ? options.operations.labelWidthPx
+        : 0)
+    const placed = marks
+      .map((mark) => {
+        const half = widthOf(mark) / 2
+        const x =
+          mark.atMs === undefined
+            ? rowWidth
+            : ((mark.atMs - range.startMs) / duration) * rowWidth
+        // A mark stays inside the row, so it never widens the page.
+        return {
+          mark,
+          half,
+          x: Math.min(Math.max(x, half), Math.max(half, rowWidth - half)),
+        }
+      })
+      .sort(
+        (left, right) => left.x - right.x || left.mark.index - right.mark.index,
+      )
+    const lineEnds: { x: number; half: number }[] = []
+    const places = new Map<number, { x: number; line: number }>()
+    for (const { mark, x, half } of placed) {
+      // The first line where this mark clears the previous mark of that line.
+      let line = lineEnds.findIndex((end) => x - end.x >= end.half + half)
+      if (line < 0) line = lineEnds.length
+      lineEnds[line] = { x, half }
+      places.set(mark.index, { x, line })
+    }
+    return { places, lineCount: lineEnds.length }
+  }
+  /**
+   * Builds one operation mark: a button with the operation's number (a cross and the word failed for a failed one, a question mark for one not finished), its tooltip and its accessible name.
+   * @param mark - The operation.
+   * @param place - Its pixel place and line.
+   * @example createOperationMark(marks[0], { x: 120, line: 0 })
+   */
+  const createOperationMark = (
+    mark: NonNullable<StudyViewMessage['recording']>['operations'][number],
+    place: { x: number; line: number } | undefined,
+  ): HTMLButtonElement => {
+    const control = document.createElement('button')
+    const stateWord = options.operations.stateWords[mark.state]
+    control.type = 'button'
+    control.className = 'operation-mark'
+    control.dataset.operationMark = String(mark.index)
+    control.dataset.state = mark.state
+    control.style.left = `${place?.x ?? 0}px`
+    control.style.top = `${(place?.line ?? 0) * options.operations.lineHeightPx}px`
+    control.title = `${mark.index} · ${mark.kind} · ${mark.title}`
+    control.setAttribute(
+      'aria-label',
+      `Operation ${mark.index} of ${mark.total}, ${mark.kind}, ${mark.title}, at ${mark.atMs === undefined ? options.operations.notSent : seconds(mark.atMs)}, ${stateWord}`,
+    )
+    const number = document.createElement('span')
+    number.textContent = `${mark.index}${mark.state === 'failed' ? ' ✕' : mark.state === 'pending' ? ' ?' : ''}`
+    control.append(number)
+    if (mark.state === 'failed') {
+      const label = document.createElement('span')
+      label.className = 'operation-mark-label'
+      label.textContent = ` ${stateWord}`
+      control.append(label)
+    }
+    return control
+  }
+  /**
+   * Writes the caption of the learner's last move to an operation and marks that operation as current, only while the replay still shows that moment and it is a recorded one; called by {@link renderOperationRow}.
+   * @param recording - The browser replay's state.
+   * @param selectedHistoryGap - Whether the shown moment lies in an unrecorded interval.
+   * @example renderOperationCaption(recording, false)
+   */
+  const renderOperationCaption = (
+    recording: NonNullable<StudyViewMessage['recording']>,
+    selectedHistoryGap: boolean,
+  ): void => {
+    const sought = soughtOperation
+    const isCaptionShown =
+      sought !== undefined &&
+      recording.readiness === 'ready' &&
+      recording.mode === 'paused' &&
+      recording.presentedMs !== undefined &&
+      Math.abs(recording.presentedMs - sought.atMs) < 1 &&
+      !selectedHistoryGap
+    const soughtMark = recording.operations?.find(
+      (mark) => mark.index === sought?.index,
+    )
+    element('operation-caption').hidden = !isCaptionShown || !soughtMark
+    text(
+      'operation-caption',
+      isCaptionShown && soughtMark
+        ? `Operation ${soughtMark.index} · ${soughtMark.title} · showing the last frame before it was sent`
+        : '',
+    )
+    for (const control of Array.from(
+      element('operation-row').querySelectorAll<HTMLButtonElement>(
+        '[data-operation-mark]',
+      ),
+    ))
+      control.setAttribute(
+        'aria-current',
+        String(
+          isCaptionShown &&
+            control.dataset.operationMark === String(sought?.index),
+        ),
+      )
+  }
+  // The last input of {@link renderOperationRow}, so a change of the row's width draws the marks again where the new width puts them.
+  let lastOperationRow:
+    | {
+        recording: NonNullable<StudyViewMessage['recording']>
+        isTransportShown: boolean
+        selectedHistoryGap: boolean
+      }
+    | undefined
+  /**
    * Draws the browser replay's operation row above the playhead: one numbered button per operation at its moment (filled when done, with a cross and the word failed when failed, outlined with a question mark otherwise), marks closer than the stack distance on further lines, the caption of the last move, and Previous and Next operation. A replay without operations draws no row.
    * @param recording - The browser replay's state.
    * @param isTransportShown - Whether this pane shows the transport.
@@ -559,7 +692,7 @@ function studyClient(
     isTransportShown: boolean,
     selectedHistoryGap: boolean,
   ): void => {
-    const marks = recording.operations
+    const marks = recording.operations ?? []
     const range = recording.range
     const row = element('operation-row')
     const isShown = isTransportShown && marks.length > 0 && Boolean(range)
@@ -572,60 +705,17 @@ function studyClient(
       return
     }
     const rowWidth = row.getBoundingClientRect().width
-    const duration = Math.max(1, range.endMs - range.startMs)
-    // Marks are placed by time; an operation never sent has no time and stands at the end. Each mark takes the first line where it is at least the stack distance from the previous mark of that line.
-    const placed = marks
-      .map((mark) => ({
-        mark,
-        x:
-          mark.atMs === undefined
-            ? rowWidth
-            : ((mark.atMs - range.startMs) / duration) * rowWidth,
-      }))
-      .sort(
-        (left, right) => left.x - right.x || left.mark.index - right.mark.index,
-      )
-    const lineEnds: number[] = []
-    const lines = new Map<number, { x: number; line: number }>()
-    for (const { mark, x } of placed) {
-      let line = lineEnds.findIndex(
-        (end) => x - end >= options.operations.stackPx,
-      )
-      if (line < 0) line = lineEnds.length
-      lineEnds[line] = x
-      lines.set(mark.index, { x, line })
-    }
-    row.style.height = `${lineEnds.length * options.operations.lineHeightPx}px`
+    lastOperationRow = { recording, isTransportShown, selectedHistoryGap }
+    const { places, lineCount } = placeOperationMarks(marks, range, rowWidth)
+    row.style.height = `${lineCount * options.operations.lineHeightPx}px`
     const focusedIndex = document.activeElement?.getAttribute(
       'data-operation-mark',
     )
-    replace('operation-row', [marks, [...lines.values()]], () =>
-      marks.map((mark) => {
-        const place = lines.get(mark.index)
-        const control = document.createElement('button')
-        const stateWord = options.operations.stateWords[mark.state]
-        control.type = 'button'
-        control.className = 'operation-mark'
-        control.dataset.operationMark = String(mark.index)
-        control.dataset.state = mark.state
-        control.style.left = `${place?.x ?? 0}px`
-        control.style.top = `${(place?.line ?? 0) * options.operations.lineHeightPx}px`
-        control.title = `${mark.index} · ${mark.kind} · ${mark.title}`
-        control.setAttribute(
-          'aria-label',
-          `Operation ${mark.index} of ${mark.total}, ${mark.kind}, ${mark.title}, at ${mark.atMs === undefined ? options.operations.notSent : seconds(mark.atMs)}, ${stateWord}`,
-        )
-        const number = document.createElement('span')
-        number.textContent = `${mark.index}${mark.state === 'failed' ? ' ✕' : mark.state === 'pending' ? ' ?' : ''}`
-        control.append(number)
-        if (mark.state === 'failed') {
-          const label = document.createElement('span')
-          label.className = 'operation-mark-label'
-          label.textContent = ` ${stateWord}`
-          control.append(label)
-        }
-        return control
-      }),
+    replace(
+      'operation-row',
+      [marks, Math.round(rowWidth), [...places.values()]],
+      () =>
+        marks.map((mark) => createOperationMark(mark, places.get(mark.index))),
     )
     // A rebuilt row must not drop the learner's keyboard place.
     if (
@@ -636,32 +726,7 @@ function studyClient(
       row
         .querySelector<HTMLElement>(`[data-operation-mark="${focusedIndex}"]`)
         ?.focus({ preventScroll: true })
-    const sought = soughtOperation
-    const isCaptionShown =
-      sought !== undefined &&
-      recording.readiness === 'ready' &&
-      recording.mode === 'paused' &&
-      recording.presentedMs !== undefined &&
-      Math.abs(recording.presentedMs - sought.atMs) < 1 &&
-      !selectedHistoryGap
-    const soughtMark = marks.find((mark) => mark.index === sought?.index)
-    element('operation-caption').hidden = !isCaptionShown || !soughtMark
-    text(
-      'operation-caption',
-      isCaptionShown && soughtMark
-        ? `Operation ${soughtMark.index} · ${soughtMark.title} · showing the last frame before it was sent`
-        : '',
-    )
-    for (const control of Array.from(
-      row.querySelectorAll<HTMLButtonElement>('[data-operation-mark]'),
-    ))
-      control.setAttribute(
-        'aria-current',
-        String(
-          isCaptionShown &&
-            control.dataset.operationMark === String(sought?.index),
-        ),
-      )
+    renderOperationCaption(recording, selectedHistoryGap)
     setDisabled('previous-operation', !operationStep('previous'))
     setDisabled('next-operation', !operationStep('next'))
   }
@@ -1019,6 +1084,21 @@ function studyClient(
     else if (control === 'play' || control === 'pause')
       nodeHistoryPlayback(control)
   }
+  // The marks stand at pixel places of the row's width, which is not known while the pane is hidden and changes with the pane's width.
+  let operationRowWidth = 0
+  new ResizeObserver(() => {
+    const width = Math.round(
+      element('operation-row').getBoundingClientRect().width,
+    )
+    if (width === operationRowWidth) return
+    operationRowWidth = width
+    if (lastOperationRow)
+      renderOperationRow(
+        lastOperationRow.recording,
+        lastOperationRow.isTransportShown,
+        lastOperationRow.selectedHistoryGap,
+      )
+  }).observe(element('operation-row'))
   element('previous-operation').addEventListener('click', () => {
     const target = operationStep('previous')
     if (target) seekToOperation(target.index)
@@ -4433,10 +4513,10 @@ function studyClient(
               (value) => value.stepId === step.id,
             )?.elapsedMs
             // A step that names an operation of this run links to its mark; an operation number the replay does not have leaves the step unlinked.
-            const operation = learning.operationLinks.find(
+            const operation = learning.operationLinks?.find(
               (value) => value.stepId === step.id,
             )
-            const operationMark = recording?.operations.find(
+            const operationMark = recording?.operations?.find(
               (value) => value.index === operation?.operationIndex,
             )
             const operationLink = operationMark

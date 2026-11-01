@@ -191,6 +191,12 @@ export const STUDY_UI_OPTIONS = {
     stackPx: OPERATION_MARK_STACK_PX,
     /** The height of one stacked line of marks. */
     lineHeightPx: OPERATION_MARK_STACK_PX + 4,
+    /** Below this webview width the failed mark's word hides, so its place counts the number and symbol only. */
+    labelsMinWidthPx: OPERATION_MARK_LABELS_MIN_WIDTH_PX,
+    /** What the cross or question mark of a mark not done adds to its width. */
+    symbolWidthPx: 12,
+    /** What the word "failed" adds to a failed mark's width while labels show. */
+    labelWidthPx: 52,
     stateWords: { done: 'done', failed: 'failed', pending: 'not finished' },
     notSent: 'not sent',
     /** The announcement of a move; `{n}` is the operation number. */
