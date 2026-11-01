@@ -6,6 +6,7 @@ import {
   MAX_EXPLANATION_CHARS,
   NODE_TEST_FACT_PATH_LIMIT_CHARS,
   NODE_TEST_FACT_TYPE_LIMIT_CHARS,
+  HISTORY_SHARED_MAX_SEQUENCE,
   NODE_TEST_HISTORY_MAX_ENTRIES,
   NODE_TEST_HISTORY_HEADER_VERSION,
   NODE_TEST_HISTORY_VERSION,
@@ -129,7 +130,8 @@ export const nodeTestHistoryIndexSchema = z.strictObject({
 export const nodeTestHistoryReaderPositionSchema = z.strictObject({
   version: z.literal(NODE_TEST_READER_POSITION_VERSION),
   studyId: studyIdSchema,
-  sequence: z.number().int().positive().max(NODE_TEST_HISTORY_MAX_ENTRIES),
+  // Shared by the three stores, so it takes the largest profile's bound; the store checks the sequence exists in the one history.
+  sequence: z.number().int().positive().max(HISTORY_SHARED_MAX_SEQUENCE),
   updatedAt: z.iso.datetime(),
 })
 

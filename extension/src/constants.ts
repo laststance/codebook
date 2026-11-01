@@ -2269,6 +2269,12 @@ export const CHROME_EXTENSION_HISTORY_DIRECTORY = 'chrome-extensions.v1'
 export const CHROME_EXTENSION_HISTORY_FORMAT_VERSION = 1
 /** The most entries one chrome-extension history holds: every frame the budget admits ({@link MAX_RECORDING_FRAMES}) plus 1,000 for pauses, captures, closes and the result. */
 export const EXTENSION_HISTORY_MAX_ENTRIES = 13_100
+/** The largest sequence any history profile can hold, for the schemas that profiles share (learning citations across profiles, the saved reader position): the service and the store still check the sequence against the one history, so the node-test and node-server limits keep their own bounds where one profile is parsed alone. */
+export const HISTORY_SHARED_MAX_SEQUENCE = Math.max(
+  NODE_TEST_HISTORY_MAX_ENTRIES,
+  NODE_SERVER_HISTORY_MAX_ENTRIES,
+  EXTENSION_HISTORY_MAX_ENTRIES,
+)
 /** Entries kept free of stream frames, so the closes and the result of a busy surface's run still fit. */
 export const EXTENSION_HISTORY_TERMINAL_RESERVE_ENTRIES = 100
 /** Bytes of the frame blobs ({@link MAX_RECORDING_PNG_BYTES}) kept for pinned pause frames: stream frames stop 32 MiB earlier, so a busy surface cannot crowd out stop frames. */

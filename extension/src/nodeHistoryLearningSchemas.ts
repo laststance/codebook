@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 import { chromeExtensionLearningReferenceSchema } from './chromeExtensionLearningSchemas'
-import { NODE_SERVER_HISTORY_MAX_ENTRIES } from './constants'
+import { HISTORY_SHARED_MAX_SEQUENCE } from './constants'
 import { nodeServerLearningReferenceSchema } from './nodeServerLearningSchemas'
 import { buildNodeLearningMaterialContentSchema } from './nodeTestHistorySchemas'
 
@@ -13,14 +13,21 @@ const [
   responseReference,
   requestFailedReference,
 ] = nodeServerLearningReferenceSchema.options
+// Citations of either profile share one schema, so every sequence takes the largest history's bound; the service parses again with the study's own profile schema.
+const sharedSequence = z
+  .number()
+  .int()
+  .positive()
+  .max(HISTORY_SHARED_MAX_SEQUENCE)
 const nodeHistoryReferenceSchema = z.discriminatedUnion('type', [
-  requestReference,
-  outputReference,
-  responseReference,
-  requestFailedReference,
+  requestReference.extend({ sequence: sharedSequence }),
+  outputReference.extend({ sequence: sharedSequence }),
+  responseReference.extend({ sequence: sharedSequence }),
+  requestFailedReference.extend({ sequence: sharedSequence }),
   // A stop of a node-server history, or of a chrome-extension history (which also names its context, and optionally its target URL or worker generation).
   z.strictObject({
     ...serverStopReference.shape,
+    sequence: sharedSequence,
     context: z.string().min(1).max(64).optional(),
     targetUrl: z.string().min(1).max(2_048).optional(),
     workerGeneration: z.number().int().nonnegative().optional(),
@@ -29,7 +36,7 @@ const nodeHistoryReferenceSchema = z.discriminatedUnion('type', [
   chromeExtensionLearningReferenceSchema.options[1],
   z.strictObject({
     type: z.literal('result'),
-    sequence: z.number().int().positive().max(NODE_SERVER_HISTORY_MAX_ENTRIES),
+    sequence: sharedSequence,
   }),
 ])
 
