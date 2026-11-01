@@ -15,11 +15,14 @@ export function extensionCaptureHasSource(
   const frame = capture.debuggerSnapshot.frames[0]
   const source = frame?.source
   if (!source) return false
-  return [
-    source.name === capture.path,
-    source.line === capture.line,
-    source.hash === capture.sourceHash,
-    sha256(source.text) === source.hash,
-    frame.line === capture.line,
-  ].every(Boolean)
+  // Cheap comparisons first; hash the source text only when they all pass.
+  if (
+    source.name !== capture.path ||
+    source.line !== capture.line ||
+    source.hash !== capture.sourceHash ||
+    frame.line !== capture.line
+  ) {
+    return false
+  }
+  return sha256(source.text) === source.hash
 }
