@@ -898,6 +898,7 @@ export async function nativeParticipantsHarness(
             run.addSession(sessions.browser)
           }
           async attachViewport(): Promise<void> {}
+          setSecretFrameGate(): void {}
           async reveal(): Promise<void> {}
           resumeViewport(): void {}
           recordCapture(data: string, phase: string): void {
