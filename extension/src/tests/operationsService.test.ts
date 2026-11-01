@@ -498,6 +498,60 @@ test('an action sent to a failed run answers isError with the error and the run 
   assert.equal(structured.state?.state, 'failed')
 })
 
+// protects=DX-2 for codebook_action: a used key resent with another action to a failed run answers why that request was refused (IDEMPOTENCY_CONFLICT), with the run's own failure kept in the state beside it; fails_when=the answer's error is the run's failure (OPERATION_AFTER_NOT_MET) instead of the refusal, or the state loses the run's failure; no_claim=the real run's failure (run tests); the synthetic runtime fails when the test says so
+test('a used key resent with another action to a failed run answers IDEMPOTENCY_CONFLICT with the run failure in its state', async (context) => {
+  // Arrange
+  const { service, receipt, runtime } = await startOperationsRun(
+    context,
+    'dx2-conflict',
+    [{ kind: 'click', title: 'Create Invoice', selector: '#submit' }],
+  )
+  await service.performAction({
+    ...receipt,
+    key: 'op-1',
+    action: OPERATION_ACTION,
+  })
+  runtime.records[0]!.state = 'failed'
+  runtime.failure = {
+    code: 'OPERATION_AFTER_NOT_MET',
+    operationIndex: 1,
+    path: 'after',
+    sent: 'sent',
+    sideEffects: 'unknown',
+    logId: `${receipt.runId}#1`,
+  }
+  runtime.failures.push(
+    'OPERATION_AFTER_NOT_MET: Operation 1 (Create Invoice) was sent, but its result could not be confirmed: Timed out waiting for configured after conditions',
+  )
+  runtime.status = 'failed'
+  const client = await connectMcpClient(context, service)
+  // Act
+  const result = await client.callTool({
+    name: 'codebook_action',
+    arguments: {
+      instanceId: receipt.instanceId,
+      runId: receipt.runId,
+      key: 'op-1',
+      action: 'repository-click',
+    },
+  })
+  // Assert
+  assert.equal(result.isError, true)
+  const structured = result.structuredContent as {
+    ok: boolean
+    error: { code: string; message: string }
+    state?: { state: string; error?: { code: string } }
+  }
+  assert.equal(structured.ok, false)
+  assert.equal(structured.error.code, 'IDEMPOTENCY_CONFLICT')
+  assert.equal(
+    structured.error.message,
+    'Action key already names different arguments.',
+  )
+  assert.equal(structured.state?.state, 'failed')
+  assert.equal(structured.state?.error?.code, 'OPERATION_AFTER_NOT_MET')
+})
+
 // protects=DX-7: a key whose run failed afterwards still answers its first receipt, so a lost response is recovered without a second operation; fails_when=the repeat is refused as not ready or takes another operation; no_claim=none beyond protects
 test('a key answers its first receipt after the run failed', async (context) => {
   // Arrange

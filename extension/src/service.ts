@@ -6056,10 +6056,11 @@ export class StudyService {
   /**
    * Gives a tool call that failed on a repository-browser run that has already failed its error with the run's partial state beside it (DX-2); read by the protocol for `codebook_action`.
    * Why: an action sent to a run that ended in a failure answers a plain refusal otherwise, and the agent loses where the run stood.
+   * The failure is what the call threw (an `IDEMPOTENCY_CONFLICT` stays one), as {@link StudyService.failedExtensionRunState} answers; the run's own failure stays readable as `state.error`.
    * @param error - What the call threw.
    * @param input - The run named by the call.
-   * @returns The described error and the run's state when the run is a repository-browser run whose state is `failed`; `undefined` otherwise, which the caller answers as a plain error.
-   * @example service.failedBrowserRunState(error, run)?.state.state // => 'failed'
+   * @returns The described thrown error and the run's state when the run is a repository-browser run whose state is `failed`; `undefined` otherwise, which the caller answers as a plain error.
+   * @example service.failedBrowserRunState(conflict, run) // => { failure: { code: 'IDEMPOTENCY_CONFLICT', … }, state: { state: 'failed', error: { code: 'OPERATION_AFTER_NOT_MET', … }, … } }
    */
   failedBrowserRunState(error: unknown, input: RunInput) {
     if (!(error instanceof StudyError)) return undefined
@@ -6067,8 +6068,8 @@ export class StudyService {
     if (!record || record.profile !== REPOSITORY_BROWSER_PROFILE)
       return undefined
     const state = this.state(record)
-    return state.state === 'failed' && state.error
-      ? { failure: state.error, state }
+    return state.state === 'failed'
+      ? { failure: this.sanitizedError(error).describe(), state }
       : undefined
   }
 
