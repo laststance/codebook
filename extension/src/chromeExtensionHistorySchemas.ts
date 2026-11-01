@@ -115,6 +115,8 @@ const extensionHistoryEntrySchema = z.discriminatedUnion('type', [
     ...base,
     pauseId,
     reason: z.enum(EXTENSION_PAUSE_CLOSE_REASONS),
+    /** When the pause left the debugger's open set, on the run clock, for a close journaled later (a Continue pressed in the editor's toolbar is learned at the next pause-set change). At most `elapsedMs` and not before the pause opened; the replay ends the stop here. Absent: the stop ended when the entry was appended. */
+    endedAtMs: z.number().finite().nonnegative().optional(),
   }),
   z.strictObject({
     type: z.literal('frame'),

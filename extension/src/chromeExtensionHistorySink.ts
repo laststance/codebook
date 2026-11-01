@@ -34,8 +34,17 @@ export interface ChromeExtensionHistorySink {
   pinned(pauseId: string, pngBase64: string): void
   /** The pause's asynchronous capture finished. */
   captured(pauseId: string, capture: CapturedExtensionStop): void
-  /** The pause ended on its own account: it was continued, or its worker went away. */
-  pauseClosed(pauseId: string, reason: 'continue' | 'worker-lost'): void
+  /** The history's run clock in milliseconds since the run began; the tracker reads it when a pause vanishes, to date a close it journals later. */
+  nowMs(): number
+  /**
+   * The pause ended on its own account: it was continued, or its worker went away.
+   * @param endedAtMs - When the pause left the debugger's open set, when that was earlier than this call.
+   */
+  pauseClosed(
+    pauseId: string,
+    reason: 'continue' | 'worker-lost',
+    endedAtMs?: number,
+  ): void
   /** The run read its observation. */
   resultObserved(observed: ChromeExtensionObserved): void
   /** The surface or the test browser ended while the run lived. */

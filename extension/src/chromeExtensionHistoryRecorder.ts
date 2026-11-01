@@ -222,15 +222,16 @@ export class ChromeExtensionHistoryRecorder implements ChromeExtensionHistorySin
     )
   }
 
-  pauseClosed(pauseId: string, reason: 'continue' | 'worker-lost'): void {
-    this.safely(() => this.pauseClosedNow(pauseId, reason))
+  nowMs(): number {
+    return this.writer.nowMs()
   }
 
-  private pauseClosedNow(
+  pauseClosed(
     pauseId: string,
     reason: 'continue' | 'worker-lost',
+    endedAtMs?: number,
   ): void {
-    this.closePause(pauseId, reason)
+    this.safely(() => this.closePause(pauseId, reason, endedAtMs))
   }
 
   resultObserved(observed: ChromeExtensionObserved): void {
@@ -351,9 +352,19 @@ export class ChromeExtensionHistoryRecorder implements ChromeExtensionHistorySin
   }
 
   /** Journals the end of a pause once. */
-  private closePause(pauseId: string, reason: ExtensionPauseCloseReason): void {
+  private closePause(
+    pauseId: string,
+    reason: ExtensionPauseCloseReason,
+    endedAtMs?: number,
+  ): void {
     if (!this.openPauses.delete(pauseId)) return
-    this.write(this.writer.appendPauseClose({ pauseId, reason }))
+    this.write(
+      this.writer.appendPauseClose({
+        pauseId,
+        reason,
+        ...(endedAtMs === undefined ? {} : { endedAtMs }),
+      }),
+    )
   }
 
   /** Runs one sink call so that nothing it throws reaches the run; the fault is reported once. */

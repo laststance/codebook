@@ -16,7 +16,11 @@ export class ExtensionHistoryPauseTracker {
   private readonly opened = new Map<number, ExtensionHistoryPause>()
   private readonly captured = new Set<string>()
   private readonly continued = new Set<number>()
-  private readonly undecided: ExtensionHistoryPause[] = []
+  /** Pauses that vanished with no known reason, each with the run-clock time it was seen gone. */
+  private readonly undecided: {
+    recorded: ExtensionHistoryPause
+    vanishedAtMs: number
+  }[] = []
 
   constructor(
     private readonly runId: string,
@@ -90,7 +94,7 @@ export class ExtensionHistoryPauseTracker {
    * Decides the pauses that vanished with no observed continue, now that the run has had time to learn whether its browser is gone.
    * Why: the debugger's pause set can change before the run hears of a killed browser, so the decision is taken on a later check, never at the vanishing itself.
    * Alive: a Continue pressed in the editor's debug toolbar, which the debugger does not report, so the pause closes as a continue and the replay's following interval is a no-stop moment. Not alive: left open, so the recorder's seal names surface-lost, worker-lost or run-ended.
-   * Residual window: a manual resume is journaled at the next pause-set change or at the run's end, before the later pause opens or the seal, not at the instant it happened (the writer stamps its own clock and takes no time). No timer is armed: a recorded run adds no timer an unrecorded one lacks.
+   * Residual window: a manual resume is journaled at the next pause-set change or at the run's end, before the later pause opens or the seal, but dated with the time the pause was seen gone (`endedAtMs`), so the replay ends the stop there and the running interval is a no-stop moment. No timer is armed: a recorded run adds no timer an unrecorded one lacks.
    * @param isAlive - Whether the run's browser and surface are still alive and the run has not ended.
    * @param history - Where the events go.
    * @example tracker.settleUndecided(() => !run.isBrowserGone, history)
@@ -101,8 +105,8 @@ export class ExtensionHistoryPauseTracker {
   ): void {
     const waiting = this.undecided.splice(0)
     if (!isAlive()) return
-    for (const recorded of waiting)
-      history.pauseClosed(recorded.pauseId, 'continue')
+    for (const { recorded, vanishedAtMs } of waiting)
+      history.pauseClosed(recorded.pauseId, 'continue', vanishedAtMs)
   }
 
   /**
@@ -127,7 +131,7 @@ export class ExtensionHistoryPauseTracker {
         workerGeneration !== recorded.workerGeneration
       )
         history.pauseClosed(recorded.pauseId, 'worker-lost')
-      else this.undecided.push(recorded)
+      else this.undecided.push({ recorded, vanishedAtMs: history.nowMs() })
     }
   }
 }

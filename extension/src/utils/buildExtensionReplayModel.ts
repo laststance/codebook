@@ -161,13 +161,15 @@ function closeExtensionPause(
   entry: ExtensionHistoryEntryOf<'pause-close'>,
 ): void {
   const pause = collected.pauses.get(entry.pauseId)
+  // A close journaled after the fact stands where the pause left the debugger, not where the entry was appended.
+  const endedMs = entry.endedAtMs ?? entry.elapsedMs
   if (pause && pause.closeSequence === undefined) {
     pause.closeSequence = entry.sequence
-    pause.closeMs = entry.elapsedMs
+    pause.closeMs = endedMs
   }
   collected.events.push({
     sequence: entry.sequence,
-    timeMs: entry.elapsedMs,
+    timeMs: endedMs,
     type: 'pause-close',
     pauseId: entry.pauseId,
     closeReason: entry.reason,

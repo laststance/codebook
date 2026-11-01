@@ -39,6 +39,8 @@ export type ExtensionScriptStep =
       pauseId: string
       /** Why the pause closed; a continue when omitted. */
       reason?: ExtensionPauseCloseReason
+      /** When the pause left the open set, for a close journaled later. */
+      endedAtMs?: number
     }
   | {
       at: number
@@ -132,6 +134,7 @@ export async function writeExtensionHistory(
       await writer.appendPauseClose({
         pauseId: step.pauseId,
         reason: step.reason ?? 'continue',
+        ...(step.endedAtMs === undefined ? {} : { endedAtMs: step.endedAtMs }),
       })
     else if (step.type === 'frame') {
       const width = step.width ?? 720

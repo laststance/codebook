@@ -11,6 +11,8 @@ export type ExtensionJournalPause = {
   targetUrl: string
   workerGeneration: number
   isOpen: boolean
+  /** The run-clock time the pause opened: a close dated by `endedAtMs` is never earlier. */
+  openedMs: number
   isCaptured: boolean
   isPinned: boolean
 }
@@ -110,6 +112,7 @@ function applyEntryRule(
         targetUrl: entry.targetUrl,
         workerGeneration: entry.workerGeneration,
         isOpen: true,
+        openedMs: entry.elapsedMs,
         isCaptured: false,
         isPinned: false,
       })
@@ -125,6 +128,13 @@ function applyEntryRule(
       const pause = pauseOf(progress, entry.pauseId)
       if (!pause.isOpen)
         throw new Error('Chrome extension history closes a pause twice.')
+      if (
+        entry.endedAtMs !== undefined &&
+        (entry.endedAtMs > entry.elapsedMs || entry.endedAtMs < pause.openedMs)
+      )
+        throw new Error(
+          'Chrome extension history dates a pause end outside its open time and its entry.',
+        )
       pause.isOpen = false
       return
     }

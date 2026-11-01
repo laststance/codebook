@@ -21,6 +21,7 @@ import { createExtensionStorageDescriptor } from '../chromeExtensionStorageDescr
 import { NODE_TEST_HISTORY_WRITER_FILE } from '../constants'
 import { NodeHistoryStore } from '../nodeTestHistoryStore'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { buildExtensionReplayModel } from '../utils/buildExtensionReplayModel'
 
 import {
   capturedStop,
@@ -30,6 +31,7 @@ import {
   pngOf,
 } from './utils/chromeExtensionHistoryFixture'
 import { realProcessStart } from './utils/realProcessStart'
+import { writeExtensionHistory } from './utils/sealedExtensionHistory'
 
 before(async () => {
   await realProcessStart(process.pid)
@@ -759,6 +761,61 @@ test('a paused page stop resumed from the debug toolbar is closed as continue be
       'pause-close:run-ended',
     ],
   )
+})
+
+// protects=AC-LIVE (PRODUCT_GOAL: never carry a stopped state forward as current): a stop resumed from the debug toolbar at 200 ms ends at 200 ms in the replay even though its close is journaled at the next stop (1000 ms), so a frame at 500 ms is a no-stop moment; fails_when=the close is dated by its append time and the replay shows the old stop's source, values and frame at 500 ms; no_claim=the real debugger's pause events
+test('a stop resumed from the debug toolbar ends in the replay when it was resumed, not when the next stop opens', async (context) => {
+  // Arrange
+  const { recorder, store, header, clock } = await recorderOver(context)
+  const tracker = newTracker()
+  tracker.sync([declaredPauseView(1, 'page')], 1, recorder, () => true)
+
+  // Act
+  clock.nowMs = 200
+  tracker.sync([], 1, recorder, () => true)
+  clock.nowMs = 500
+  streamFrame(recorder, 'while-running')
+  clock.nowMs = 1_000
+  tracker.sync([declaredPauseView(2, 'page')], 1, recorder, () => true)
+  await recorder.seal({}, 5_000)
+  const model = buildExtensionReplayModel(await store.read(header.studyId))
+
+  // Assert
+  const frameMoment = model.moments.find(
+    (moment) => moment.event.type === 'frame',
+  )
+  assert.equal(frameMoment?.event.timeMs, 500)
+  assert.equal(frameMoment?.stop, undefined)
+  assert.deepEqual(
+    model.events.map((event) => `${event.type}@${event.timeMs}`),
+    [
+      'pause-open@10',
+      'pause-close@200',
+      'frame@500',
+      'pause-open@1000',
+      'pause-close@1000',
+      'result@1000',
+    ],
+  )
+})
+
+// protects=N69: a journal that dates a pause end after its own entry or before the pause opened is refused; fails_when=an endedAtMs outside the open time and the entry time is accepted and the replay places a stop end in the future or before its open; no_claim=the recorder's own dating
+test('a pause end dated after its journal entry is refused as a damaged history', async (context) => {
+  // Arrange
+  const { learningDirectory } = await openExtensionStore(context)
+
+  // Act
+  const write = writeExtensionHistory(
+    learningDirectory,
+    EXTENSION_WORKSPACE_KEY,
+    [
+      { at: 100, type: 'open', pauseId: 'p1', stopIndex: 1, context: 'page' },
+      { at: 200, type: 'close', pauseId: 'p1', endedAtMs: 300 },
+    ],
+  )
+
+  // Assert
+  await assert.rejects(write, /dates a pause end/)
 })
 
 // protects=N69: a pause this run asked to continue is journaled continue when it leaves the debugger; fails_when=a continue the chat asked for is journaled as lost or run-ended
