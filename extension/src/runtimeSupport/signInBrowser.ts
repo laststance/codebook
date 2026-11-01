@@ -20,6 +20,7 @@ import type { ListedProcess } from './utils/listProcesses'
 import { listProcesses } from './utils/listProcesses'
 import { ownedChromeArguments } from './utils/ownedChromeArguments'
 import { profileProcesses } from './utils/profileProcesses'
+import { SignInBrowserStopUnconfirmedError } from './utils/signInBrowserStopUnconfirmedError'
 import {
   REAL_PROCESS_STOPPER,
   stopListedProcesses,
@@ -43,7 +44,7 @@ export interface SignInBrowserDependencies {
 
 /**
  * How a close ended.
- * `graceful`: Browser.close was honoured, the process exited and no process names the folder; `forced`: the bound passed, the group was stopped and a fresh listing shows no process on the folder; `unconfirmed`: neither could be shown, so the folder may still be in use and the caller keeps its lock and may retry.
+ * `graceful`: Browser.close was honoured, the process exited and no process names the folder, and no earlier attempt had to stop it; `forced`: the bound passed, the group was stopped and a fresh listing shows no process on the folder (also a retry after an attempt that sent a stop, since that browser may not have saved its cookies); `unconfirmed`: neither could be shown, so the folder may still be in use and the caller keeps its lock and may retry.
  */
 export type SignInBrowserCloseResult = 'graceful' | 'forced' | 'unconfirmed'
 
@@ -160,18 +161,21 @@ async function waitForEmptyProfile(
   return false
 }
 
+/** What one forced stop did: whether it sent a stop to any process, and whether the stop result and a fresh listing then agree that nothing runs on the folder. */
+type ForceStopResult = { hasSentStop: boolean; isStopConfirmed: boolean }
+
 /**
  * Stops the browser's processes and says whether a fresh listing then shows nothing on the folder.
- * Why: a forced close is only a close once both the stop result and a fresh listing agree (Codex correction 4). The main process leads its own group, so its group is signalled only while it is still running; after it exited only the listed helpers are signalled, never a recycled pid.
+ * Why: a forced close is only a close once both the stop result and a fresh listing agree (Codex correction 4). While the main process runs it is Codebook's own unreaped child leading its own group, so neither its id nor its group can name another process: it is stopped even when the first listing cannot be made, so a failed listing never leaves it running on the folder. After it exited only the listed helpers are signalled, never a recycled pid; without a fresh listing nothing is confirmed.
+ * Called by the setup browser's close after the graceful bound, and by a failed launch (again on each retry).
  */
 async function forceStop(
   browser: PipedBrowserProcess,
   dependencies: SignInBrowserDependencies,
   profile: string,
-): Promise<boolean> {
-  const listing = await lookAtProfile(dependencies, profile)
-  // Without a listing nothing can be proven, so nothing is signalled and nothing is confirmed.
-  if (listing === undefined) return false
+): Promise<ForceStopResult> {
+  // An unavailable listing names no helper; the main process is still stopped, and the fresh listing below decides.
+  const listing = (await lookAtProfile(dependencies, profile)) ?? []
   const mainPid = browser.hasExited() ? undefined : browser.pid
   const pids = [
     ...new Set([
@@ -183,7 +187,10 @@ async function forceStop(
     groupLeaders: mainPid === undefined ? [] : [mainPid],
   })
   const after = await lookAtProfile(dependencies, profile)
-  return didStop && after?.length === 0
+  return {
+    hasSentStop: pids.length > 0,
+    isStopConfirmed: didStop && after?.length === 0,
+  }
 }
 
 /**
@@ -192,7 +199,7 @@ async function forceStop(
  * @param options - The Chrome executable, the folder, the sign-in URL, a signal and the marker writer.
  * @param dependencies - The process, listing, signals and timer; the real ones in the product.
  * @returns The running browser.
- * @throws When the browser cannot start or does not answer within {@link SIGN_IN_BROWSER_START_BOUND_MS}; whatever started has been stopped first.
+ * @throws When the browser cannot start or does not answer within {@link SIGN_IN_BROWSER_START_BOUND_MS}; whatever started has been stopped first. When that stop could not be confirmed, a {@link SignInBrowserStopUnconfirmedError} carrying the failure and a retry, so the caller keeps the folder's lock.
  * @example
  * const browser = await launchSignInBrowser({ executable, profile, url, signal, recordBrowser })
  * await browser.close() // => 'graceful'
@@ -211,6 +218,8 @@ export async function launchSignInBrowser(
   const closedListeners = new Set<() => void>()
   let hasHadPage = false
   let didAskClose = false
+  // Set once a close attempt sent a stop: that browser may not have saved its cookies, so no later attempt reads as graceful.
+  let hasForcedStop = false
   let didTellLearnerClosed = false
   const tellClosedByLearner = (): void => {
     if (didAskClose || didTellLearnerClosed) return
@@ -271,22 +280,25 @@ export async function launchSignInBrowser(
           )
         ) {
           cdp.close()
-          return 'graceful'
+          return hasForcedStop ? 'forced' : 'graceful'
         }
-        const isStopped = await forceStop(
-          browser,
-          dependencies,
-          options.profile,
-        )
+        const stop = await forceStop(browser, dependencies, options.profile)
+        hasForcedStop ||= stop.hasSentStop
         cdp.close()
-        return isStopped ? 'forced' : 'unconfirmed'
+        return stop.isStopConfirmed ? 'forced' : 'unconfirmed'
       },
     }
   } catch (error) {
-    // Whatever started is stopped before the failure is thrown; an unconfirmed stop is the failure's own business.
+    // Whatever started is stopped before the failure is thrown; a stop that cannot be confirmed is thrown as such, so the caller keeps the folder's lock and retries (Codex correction 4).
     didAskClose = true
     cdp.close()
-    await forceStop(browser, dependencies, options.profile).catch(() => false)
+    const stopAgain = (): Promise<boolean> =>
+      forceStop(browser, dependencies, options.profile).then(
+        (stop) => stop.isStopConfirmed,
+        () => false,
+      )
+    if (!(await stopAgain()))
+      throw new SignInBrowserStopUnconfirmedError(error, stopAgain)
     throw error
   }
 }

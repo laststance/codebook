@@ -23,7 +23,7 @@ export type SignInRecordFields = {
 
 /**
  * The hold a setup takes on one saved-session folder, from `acquireForSetup` to the confirmed exit of its Chrome.
- * The store (lane A1) implements it; `release` is called only after the setup browser's exit was confirmed, so an unconfirmed close keeps the lock and can be retried.
+ * The store (lane A1) implements it; `release` is called only after the setup browser's exit was confirmed, also after a failed or cancelled start, so an unconfirmed close or launch-failure stop keeps the lock (and the owned-browser marker) and can be retried.
  */
 export interface SavedSessionSetupLease {
   /** The user-data-dir the setup browser opens; never journaled or logged. */

@@ -4,11 +4,39 @@ import { test } from 'node:test'
 import {
   launchSignInBrowser,
   signInBrowserArguments,
+  type SignInBrowserDependencies,
 } from '../runtimeSupport/signInBrowser'
+import { SignInBrowserStopUnconfirmedError } from '../runtimeSupport/utils/signInBrowserStopUnconfirmedError'
 
 import { exitOf, fakeSetupChrome } from './utils/fakeSetupChrome'
 
 const URL = 'http://localhost:3165/login'
+
+/** The fake's dependencies with a stopper that records every process it is asked to stop (a signal other than the null probe, or `taskkill`). */
+function recordingStops(fake: Awaited<ReturnType<typeof fakeSetupChrome>>): {
+  dependencies: SignInBrowserDependencies
+  stopped: () => number[]
+} {
+  const stopped = new Set<number>()
+  const { stopper } = fake.dependencies
+  return {
+    dependencies: {
+      ...fake.dependencies,
+      stopper: {
+        ...stopper,
+        signal: (pid, signal): void => {
+          if (signal !== 0) stopped.add(Math.abs(pid))
+          stopper.signal(pid, signal)
+        },
+        taskkill: (pid): Promise<void> => {
+          stopped.add(pid)
+          return stopper.taskkill(pid)
+        },
+      },
+    },
+    stopped: () => [...stopped],
+  }
+}
 
 /** Launches the setup browser on a fake Chrome; the marker writes are collected. */
 async function launch(
@@ -93,9 +121,12 @@ test('a close whose exit cannot be confirmed answers unconfirmed, and a retry wi
   const browser = await launch(fake)
   fake.failListing(true)
   const bound = new AbortController()
-  bound.abort()
   // Act
-  const first = await browser.close(bound.signal)
+  const closing = browser.close(bound.signal)
+  // The fake honours Browser.close and exits by itself; only the listing is missing, so nothing is stopped and the bound then ends the wait.
+  await exitOf(fake.child())
+  bound.abort()
+  const first = await closing
   fake.failListing(false)
   const second = await browser.close()
   // Assert
@@ -207,4 +238,52 @@ test('a launch whose marker cannot be written stops the browser it started and t
   // Assert
   await assert.rejects(failure, /marker write failed/)
   await exitOf(fake.child())
+})
+
+// protects=OCR 38, OCR 27, Codex 4 (a launch failure whose stop cannot be confirmed tells the caller to keep the lock, and its own running browser is still stopped); fails_when=the failure reads as an ordinary one (the caller releases the lock), the browser keeps running because the listing failed, or a retry cannot confirm the stop; no_claim=real Chrome, real process listings
+test('a launch that fails while the process listing is unavailable still stops its browser, reports the stop as unconfirmed, and a retry confirms it', async (context) => {
+  // Arrange
+  const fake = await fakeSetupChrome(context)
+  const stops = recordingStops(fake)
+  fake.failListing(true)
+  // Act / Assert
+  const failure = await launchSignInBrowser(
+    {
+      executable: process.execPath,
+      profile: '/saved/session',
+      url: URL,
+      signal: new AbortController().signal,
+      recordBrowser: async () => {
+        throw new Error('marker write failed')
+      },
+    },
+    stops.dependencies,
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  assert.ok(failure instanceof SignInBrowserStopUnconfirmedError)
+  assert.equal(failure.message, 'marker write failed')
+  assert.deepEqual(stops.stopped(), [fake.child().pid])
+  await exitOf(fake.child())
+  fake.failListing(false)
+  assert.equal(await failure.retryStop(), true)
+})
+
+// protects=OCR 31 (a retry after a close that sent a stop is never graceful, so a Done is saved only for a browser that closed by itself); fails_when=the retry of a force-stopped browser reads as graceful; no_claim=Chrome flushing cookies
+test('a retry after a close that had to stop the browser reads as forced, never graceful', async (context) => {
+  // Arrange
+  const fake = await fakeSetupChrome(context, 'ignore-close')
+  const browser = await launch(fake)
+  fake.failListing(true)
+  const bound = new AbortController()
+  bound.abort()
+  // Act
+  const first = await browser.close(bound.signal)
+  await exitOf(fake.child())
+  fake.failListing(false)
+  const second = await browser.close()
+  // Assert
+  assert.equal(first, 'unconfirmed')
+  assert.equal(second, 'forced')
 })

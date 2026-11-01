@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import { StudyError } from '../errors'
 import type { SignInRecordFields } from '../runtimeSupport/savedSessionSetupTypes'
 import type { SignInBrowserCloseResult } from '../runtimeSupport/signInBrowser'
+import { SignInBrowserStopUnconfirmedError } from '../runtimeSupport/utils/signInBrowserStopUnconfirmedError'
 import {
   SavedSessionSetup,
   type SavedSessionSetupInput,
@@ -30,6 +31,11 @@ function harness(
     launchError?: Error
     acquireError?: Error
     writeError?: Error
+    releaseError?: Error
+    /** The folder is handed over only once this settles. */
+    acquireGate?: Promise<void>
+    /** The server never answers; it rejects once the start is cancelled. */
+    serverWaitsForAbort?: boolean
   } = {},
 ) {
   const calls: string[] = []
@@ -40,8 +46,12 @@ function harness(
   const clock = createManualClock()
   const closeResults = [...(options.closeResults ?? ['graceful'])]
   let closedByLearner: () => void = () => undefined
-  let offer: (choice: 'Done' | 'Close setup' | undefined) => void = () =>
-    undefined
+  // Every Done notice stays answerable, as VS Code keeps notices with buttons in its notification center.
+  const offers: ((choice: 'Done' | 'Close setup' | undefined) => void)[] = []
+  const noticeAnswers: {
+    message: string
+    answer: (action: string | undefined) => void
+  }[] = []
   let warn: (choice: 'Done' | undefined) => void = () => undefined
   let serverCloses = 0
   let releases = 0
@@ -49,6 +59,7 @@ function harness(
     store: {
       acquireForSetup: async () => {
         calls.push('acquire')
+        await options.acquireGate
         if (options.acquireError) throw options.acquireError
         return {
           profile: PROFILE,
@@ -61,12 +72,17 @@ function harness(
           release: async (): Promise<void> => {
             calls.push('release')
             releases += 1
+            if (options.releaseError) throw options.releaseError
           },
         }
       },
     },
-    startServer: async () => {
+    startServer: async (_adapter, _path, signal) => {
       calls.push('startServer')
+      if (options.serverWaitsForAbort)
+        await new Promise<never>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason))
+        })
       return {
         origin: 'http://localhost:3165',
         port: 3165,
@@ -96,16 +112,18 @@ function harness(
       showStatus: (phase) => statuses.push(phase),
       offerDoneOrClose: () =>
         new Promise((resolve) => {
-          offer = resolve
+          offers.push(resolve)
         }),
       warnClosingSoon: () =>
         new Promise((resolve) => {
           warn = resolve
           logs.push('warned')
         }),
-      notify: async (severity, message, ...actions) => {
+      notify: (severity, message, ...actions) => {
         notices.push({ severity, message, actions })
-        return undefined
+        return new Promise((answer) => {
+          noticeAnswers.push({ message, answer })
+        })
       },
       log: (level, line) => logs.push(`${level}: ${line}`),
       showLog: () => logs.push('showLog'),
@@ -124,7 +142,16 @@ function harness(
     logs,
     statuses,
     clock,
-    chooseInOffer: (choice: 'Done' | 'Close setup'): void => offer(choice),
+    /** Answers a Done notice: the latest one unless `which` names an earlier one. */
+    chooseInOffer: (
+      choice: 'Done' | 'Close setup',
+      which = offers.length - 1,
+    ): void => offers[which]?.(choice),
+    /** Presses a button of the earliest notice with this message. */
+    pressInNotice: (message: string, action: string): void =>
+      noticeAnswers
+        .find((notice) => notice.message === message)
+        ?.answer(action),
     learnerClosesWindow: (): void => closedByLearner(),
     answerWarning: (): void => warn('Done'),
     serverCloses: () => serverCloses,
@@ -244,8 +271,8 @@ test('a setup whose browser fails to start stops the server, writes no record an
   ])
 })
 
-// protects=E7, CEO-S35; fails_when=a second Chrome opens although the store refused; no_claim=real windows
-test('setup refused by the store because another setup is open starts no server and no browser', async () => {
+// protects=E7, CEO-S35, OCR 35 (the refusal says what to do next); fails_when=a second Chrome opens although the store refused, or the notice gives no next step; no_claim=real windows
+test('setup refused by the store because another setup is open starts no server and no browser, and says to finish that setup first', async () => {
   // Arrange
   const test = harness({
     acquireError: new StudyError(
@@ -259,7 +286,7 @@ test('setup refused by the store because another setup is open starts no server 
   assert.deepEqual(test.calls, ['acquire'])
   assert.equal(
     test.notices[0]?.message,
-    'A saved-session setup is open in another window.',
+    'A saved-session setup is open in another window. Finish that setup with Done or close it with Close setup, then try again.',
   )
 })
 
@@ -326,5 +353,239 @@ test('setup log lines name start, route, Done and failure, and never a folder pa
     'info: Saved session setup: starting for shop.',
     'info: Saved session setup: open at /login.',
     'info: Saved session setup: done for shop.',
+  ])
+})
+
+const STUCK_NOTICE =
+  'Setup could not confirm that the Codebook browser exited, so the saved session stays locked. Quit that browser, then retry.'
+const DONE_NOTICE_FOR_SHOP =
+  'Saved session for shop. Runs can now start with it; a run still checks the page before it acts.'
+
+// protects=OCR 28 (a window closing while setup takes the folder starts nothing and frees the folder before the window goes); fails_when=the server or browser starts after the window closed, or dispose returns before the lock is released; no_claim=the agent server's own stop guard
+test('closing the window while setup is still taking the folder starts no server or browser and frees the folder before the window goes', async () => {
+  // Arrange
+  let handOverFolder: () => void = () => undefined
+  const test = harness({
+    acquireGate: new Promise((resolve) => {
+      handOverFolder = resolve
+    }),
+  })
+  const starting = test.setup.start(INPUT)
+  // Act
+  const disposing = test.setup.dispose()
+  handOverFolder()
+  await disposing
+  const releasesWhenDisposed = test.releases()
+  await starting
+  // Assert
+  assert.equal(releasesWhenDisposed, 1)
+  assert.deepEqual(test.calls, ['acquire', 'release'])
+  assert.deepEqual(test.records, [])
+  assert.deepEqual(test.notices, [])
+  assert.equal(test.setup.phase?.phase, 'ended')
+})
+
+// protects=OCR 28 (dispose waits for a cancelled start's cleanup); fails_when=dispose returns before the folder is released, or a browser opens after the window closed; no_claim=the real dev server's own stop
+test('closing the window while the app starts waits until setup freed the folder, and opens no browser', async () => {
+  // Arrange
+  const test = harness({ serverWaitsForAbort: true })
+  void test.setup.start(INPUT)
+  await flush()
+  // Act
+  await test.setup.dispose()
+  // Assert
+  assert.equal(test.releases(), 1)
+  assert.deepEqual(test.calls, ['acquire', 'startServer', 'release'])
+  assert.deepEqual(test.notices, [])
+  assert.equal(test.setup.phase?.phase, 'ended')
+})
+
+// protects=OCR 29, E11 (Close setup while starting closes both and keeps the previous saved session); fails_when=Close setup is ignored while the app starts, a browser opens afterwards, or a record is written; no_claim=the status item's menu wording
+test('Close setup while the app is still starting cancels the setup: no browser opens, no record is written and the folder is freed', async () => {
+  // Arrange
+  const test = harness({ serverWaitsForAbort: true })
+  void test.setup.start(INPUT)
+  await flush()
+  // Act
+  await test.setup.closeSetup('closed')
+  // Assert
+  assert.deepEqual(test.calls, ['acquire', 'startServer', 'release'])
+  assert.deepEqual(test.records, [])
+  assert.equal(test.setup.phase?.phase, 'ended')
+  assert.deepEqual(
+    test.notices.map((notice) => notice.message),
+    [
+      'Setup closed while it was starting, so the saved session was not changed.',
+    ],
+  )
+  assert.ok(
+    test.logs.includes('info: Saved session setup: cancelled for shop.'),
+  )
+})
+
+// protects=OCR 27, OCR 38, Codex 4 (a launch failure whose browser stop is unconfirmed keeps the lock); fails_when=the folder is released while the browser may still run, a record is written, or Retry cannot free it; no_claim=real process listings
+test('a setup whose browser fails to start and cannot be confirmed stopped keeps the folder locked, and Retry frees it once the browser is stopped', async () => {
+  // Arrange
+  let isBrowserStopped = false
+  const test = harness({
+    launchError: new SignInBrowserStopUnconfirmedError(
+      new Error('Chrome did not answer within 20 s'),
+      async () => isBrowserStopped,
+    ),
+  })
+  // Act
+  await test.setup.start(INPUT)
+  const phaseAfterStart = test.setup.phase?.phase
+  const releasesAfterStart = test.releases()
+  test.pressInNotice(STUCK_NOTICE, 'Retry')
+  await flush()
+  const phaseAfterFirstRetry = test.setup.phase?.phase
+  isBrowserStopped = true
+  await test.setup.closeSetup('closed')
+  // Assert
+  assert.equal(phaseAfterStart, 'stuck')
+  assert.equal(releasesAfterStart, 0)
+  assert.equal(phaseAfterFirstRetry, 'stuck')
+  assert.equal(test.serverCloses(), 1)
+  assert.equal(test.releases(), 1)
+  assert.deepEqual(test.records, [])
+  assert.equal(test.setup.phase?.phase, 'ended')
+  assert.deepEqual(
+    test.notices.map((notice) => notice.message),
+    [
+      'Setup could not start: Chrome did not answer within 20 s. See Output › Codebook.',
+      STUCK_NOTICE,
+      STUCK_NOTICE,
+      'The Codebook browser of the setup has stopped, so the saved session is free again. Set it up again when you are ready.',
+    ],
+  )
+})
+
+// protects=OCR 31 (a retry after a stuck Done keeps the learner's Done); fails_when=the retry writes confirmed false or drops the cookie kind read at Done; no_claim=real processes
+test('a Done whose browser exit was first unconfirmed still saves a confirmed session when the retry then confirms the exit', async () => {
+  // Arrange
+  const test = harness({ closeResults: ['unconfirmed', 'graceful'] })
+  await test.setup.start(INPUT)
+  await test.setup.done()
+  // Act
+  await test.setup.closeSetup('closed')
+  // Assert
+  assert.deepEqual(test.records, [
+    {
+      confirmed: true,
+      setupAt: '2026-11-02T12:10:00.000Z',
+      signInPaths: ['/login', '/signin'],
+      chromeMajor: 154,
+      appCookies: 'persistent',
+    },
+  ])
+  assert.equal(test.notices.at(-1)?.message, DONE_NOTICE_FOR_SHOP)
+})
+
+// protects=OCR 32 (notice answers are tied to their setup); fails_when=a late Close setup on an earlier setup's notice ends the setup open now and writes confirmed false; no_claim=VS Code's notification center
+test('an answer to the Done notice of an earlier setup never ends the setup that is open now', async () => {
+  // Arrange
+  const test = harness()
+  await test.setup.start(INPUT)
+  await test.setup.done()
+  await test.setup.start(INPUT)
+  // Act
+  test.chooseInOffer('Close setup', 0)
+  await flush()
+  // Assert
+  assert.equal(test.setup.phase?.phase, 'open')
+  assert.equal(test.records.length, 1)
+})
+
+// protects=OCR 32 (Retry is tied to the stuck setup that offered it); fails_when=an old Retry ends a later setup before sign-in and overwrites the saved session; no_claim=VS Code's notification center
+test('Retry on the notice of an earlier stuck setup never ends the setup that is open now', async () => {
+  // Arrange
+  const test = harness({ closeResults: ['unconfirmed', 'graceful'] })
+  await test.setup.start(INPUT)
+  await test.setup.done()
+  await test.setup.closeSetup('closed')
+  await test.setup.start(INPUT)
+  // Act
+  test.pressInNotice(STUCK_NOTICE, 'Retry')
+  await flush()
+  // Assert
+  assert.equal(test.setup.phase?.phase, 'open')
+  assert.equal(test.records.length, 1)
+})
+
+// protects=OCR 33 (a failed lock release never leaves the setup finishing); fails_when=Done rejects, the setup stays active, or the cause names the folder; no_claim=the store's own release
+test('a lock release that fails after Done still ends the setup, logs the cause without the folder path and says the session was saved', async () => {
+  // Arrange
+  const test = harness({
+    releaseError: new Error(
+      `EACCES: permission denied, unlink '${PROFILE}.signin.lock'`,
+    ),
+  })
+  await test.setup.start(INPUT)
+  // Act
+  await test.setup.done()
+  // Assert
+  assert.equal(test.setup.isActive, false)
+  assert.equal(test.setup.phase?.phase, 'ended')
+  assert.ok(
+    test.logs.includes(
+      "error: Saved session setup: the lock was not released: EACCES: permission denied, unlink '<saved-session>.signin.lock'",
+    ),
+  )
+  assert.equal(test.notices.at(-1)?.message, DONE_NOTICE_FOR_SHOP)
+})
+
+// protects=OCR 30, CEO-R7 (no folder path in a start failure, also before a lease is held); fails_when=the notice or the Output line names the home folder, the store or the repository hash; no_claim=every error text of Node
+test('a setup that cannot prepare its folder names the failure without the folder path, also before the folder was handed over', async () => {
+  // Arrange
+  const storeFile =
+    '/Users/learner/Library/Application Support/Code/User/globalStorage/laststance.codebook/sign-in-profiles/abc123/Default/Preferences.tmp'
+  const test = harness({
+    acquireError: Object.assign(
+      new Error(`ENOSPC: no space left on device, open '${storeFile}'`),
+      { code: 'ENOSPC', path: storeFile },
+    ),
+  })
+  // Act
+  await test.setup.start(INPUT)
+  // Assert
+  assert.deepEqual(test.notices, [
+    {
+      severity: 'error',
+      message:
+        "Setup could not start: ENOSPC: no space left on device, open '<saved-session>'. See Output › Codebook.",
+      actions: ['Show log'],
+    },
+  ])
+  assert.ok(
+    test.logs.includes(
+      "error: Saved session setup: could not start for shop: ENOSPC: no space left on device, open '<saved-session>'",
+    ),
+  )
+  assert.equal(
+    JSON.stringify([test.logs, test.notices]).includes('Application Support'),
+    false,
+  )
+})
+
+// protects=OCR 35 (a coded refusal at setup start gives the learner's next step); fails_when=an unusable saved session blocks every setup without saying to remove it first; no_claim=the chat's recovery text
+test('a setup refused because the saved session is unusable tells the learner to remove it first', async () => {
+  // Arrange
+  const test = harness({
+    acquireError: new StudyError(
+      'SIGN_IN_PROFILE_UNUSABLE',
+      'Codebook cannot use the saved session of shop (unreadable-record).',
+    ),
+  })
+  // Act
+  await test.setup.start(INPUT)
+  // Assert
+  assert.deepEqual(test.notices, [
+    {
+      severity: 'error',
+      message:
+        'Codebook cannot use the saved session of shop (unreadable-record). Run Codebook: Remove Saved Session…, then set it up again.',
+      actions: [],
+    },
   ])
 })
