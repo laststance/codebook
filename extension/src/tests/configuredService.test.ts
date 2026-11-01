@@ -4825,7 +4825,7 @@ test('API 1.8 discovery exposes the bounded configured profile and its executabl
       recovery: z.string(),
     })
     .parse(JSON.parse(help.text))
-  assert.deepEqual(profile.configurationVersions, [1, 2])
+  assert.deepEqual(profile.configurationVersions, [1, 2, 3])
   assert.deepEqual(
     contract.configurationSchema.anyOf.map((variant) => variant.required),
     [
@@ -4838,6 +4838,18 @@ test('API 1.8 discovery exposes the bounded configured profile and its executabl
         'action',
         'inspections',
         'participant',
+      ],
+      [
+        'version',
+        'adapter',
+        'book',
+        'source',
+        'participant',
+        'afterOperation',
+        'before',
+        'after',
+        'operations',
+        'inspections',
       ],
     ],
   )

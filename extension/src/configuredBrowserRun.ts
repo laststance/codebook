@@ -8208,6 +8208,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.failures.push(reason)
     this.status = 'failed'
     this.continuation = undefined
+    // An operation that was being sent or was paused when the run failed is recorded failed, so a partial replay shows how far the flow got.
+    for (const record of this.operationRecords)
+      if (record.state === 'sending' || record.state === 'paused')
+        this.moveForward(record, { state: 'failed' })
     codebookStopLedger.closeWindow(this.participantSessionIds())
     for (const participant of Object.values(this.participants))
       participant.gate.invalidate(true)
