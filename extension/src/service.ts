@@ -658,6 +658,16 @@ export class StudyService {
   private readonly repositoryRetirement = new AbortController()
   private readonly repositoryOpens = new Set<Promise<unknown>>()
   private readonly startKeys = new Map<string, StudyRecord>()
+  /** Each Extension history's summary read in flight, by study id; an entry is removed when its read settles. */
+  private readonly extensionSummaryReads = new Map<
+    string,
+    Promise<
+      | Awaited<
+          ReturnType<NodeHistoryRepository['extensionHistories']['summarize']>
+        >
+      | undefined
+    >
+  >()
   /** Each server history's summary read in flight, by study id; an entry is removed when its read settles. */
   private readonly nodeServerSummaryReads = new Map<
     string,
@@ -2619,18 +2629,71 @@ export class StudyService {
   }
 
   /**
+   * Finds the run this window holds for a history's study id.
+   * @param studyId - The history's id, `<instance id>_<run id>`.
+   * @returns The run's record, or `undefined` for a run another window holds.
+   * @example this.recordOfStudyId(`${this.instanceId}_${record.id}`) // => record
+   */
+  private recordOfStudyId(studyId: string): StudyRecord | undefined {
+    return [...this.records.values()].find(
+      (candidate) => `${this.instanceId}_${candidate.id}` === studyId,
+    )
+  }
+
+  /**
+   * Starts a stored summary read, or joins the one in flight for the study, so a stalled store holds one pending read and not one per run resource poll; the entry lives only until its read settles.
+   * @param reads - The in-flight reads of one history kind, by study id.
+   * @param studyId - The history to summarize.
+   * @param summarize - Starts the stored read.
+   * @param joinReadInFlight - `true` for a resource read, which may share the read in flight; a read after a material save starts its own.
+   * @param timeoutMs - How long the caller waits; a read that outlives it keeps running.
+   * @returns The summary, or `undefined` for a failed or too slow read.
+   * @example const reading = this.sharedSummaryRead(this.extensionSummaryReads, studyId, () => histories.summarize(studyId), true, 5_000)
+   */
+  private async sharedSummaryRead<Summary>(
+    reads: Map<string, Promise<Summary | undefined>>,
+    studyId: string,
+    summarize: () => Promise<Summary>,
+    joinReadInFlight: boolean,
+    timeoutMs: number,
+  ): Promise<Summary | undefined> {
+    let reading = joinReadInFlight ? reads.get(studyId) : undefined
+    if (!reading) {
+      const started = summarize().catch(() => undefined)
+      reading = started
+      reads.set(studyId, started)
+      void started.finally(() => {
+        if (reads.get(studyId) === started) reads.delete(studyId)
+      })
+    }
+    return waitWithin(reading, {
+      timeoutMs,
+      signal: new AbortController().signal,
+      sleep: sleepUntilAborted,
+    })
+  }
+
+  /**
    * Reads an extension history's verdicts again after its material was saved, so the run resource reads the coverage of the latest material; a run this window does not hold, or one not sealed yet, keeps nothing to refresh.
    * @param studyId - The history the material explains.
    * @example await this.refreshExtensionSummary(studyId)
    */
-  private async refreshExtensionSummary(studyId: string): Promise<void> {
-    const sealed = [...this.records.values()].find(
-      (candidate) => `${this.instanceId}_${candidate.id}` === studyId,
-    )?.chromeExtension?.history?.sealed
+  private async refreshExtensionSummary(
+    studyId: string,
+    joinReadInFlight = false,
+  ): Promise<void> {
+    const sealed =
+      this.recordOfStudyId(studyId)?.chromeExtension?.history?.sealed
     const histories = this.nodeHistoryRepository?.extensionHistories
     if (!sealed || !histories) return
-    const summary = await histories.summarize(studyId).catch(() => undefined)
-    // A failed read keeps the sealed summary.
+    const summary = await this.sharedSummaryRead(
+      this.extensionSummaryReads,
+      studyId,
+      () => histories.summarize(studyId),
+      joinReadInFlight,
+      this.chromeExtensionHistorySealBoundMs,
+    )
+    // A failed or too slow read keeps the sealed summary.
     if (summary) sealed.summary = summary
   }
 
@@ -2642,7 +2705,7 @@ export class StudyService {
    */
   async refreshExtensionVerdicts(record: StudyRecord): Promise<void> {
     if (record.profile !== CHROME_EXTENSION_PROFILE) return
-    await this.refreshExtensionSummary(`${this.instanceId}_${record.id}`)
+    await this.refreshExtensionSummary(`${this.instanceId}_${record.id}`, true)
   }
 
   /**
@@ -2671,9 +2734,7 @@ export class StudyService {
     studyId: string,
     joinReadInFlight = false,
   ): Promise<void> {
-    const sealed = [...this.records.values()].find(
-      (candidate) => `${this.instanceId}_${candidate.id}` === studyId,
-    )?.nodeServer?.history?.sealed
+    const sealed = this.recordOfStudyId(studyId)?.nodeServer?.history?.sealed
     const histories = this.nodeHistoryRepository?.serverHistories
     // Without a repository there is nothing to read again; the summary the seal read stays.
     if (!sealed || !histories) return
@@ -2681,25 +2742,14 @@ export class StudyService {
     const request = (sealed.summaryReads ?? 0) + 1
     sealed.summaryReads = request
     // A `summarize` that outlives the bound keeps running; its late answer is applied below only if no newer read started meanwhile.
-    let reading = joinReadInFlight
-      ? this.nodeServerSummaryReads.get(studyId)
-      : undefined
-    // Run resource reads of one study share the read in flight, so a stalled store holds one pending read, not one per poll; a read after a material save always starts its own, since the one in flight may predate the save.
-    if (!reading) {
-      const started = histories.summarize(studyId).catch(() => undefined)
-      reading = started
-      this.nodeServerSummaryReads.set(studyId, started)
-      // The entry lives only as long as its read, so no entry outlives a settled read or a forgotten run.
-      void started.finally(() => {
-        if (this.nodeServerSummaryReads.get(studyId) === started)
-          this.nodeServerSummaryReads.delete(studyId)
-      })
-    }
-    const summary = await waitWithin(reading, {
-      timeoutMs: this.nodeServerHistorySealBoundMs,
-      signal: new AbortController().signal,
-      sleep: sleepUntilAborted,
-    })
+    // A read after a material save always starts its own, since the one in flight may predate the save.
+    const summary = await this.sharedSummaryRead(
+      this.nodeServerSummaryReads,
+      studyId,
+      () => histories.summarize(studyId),
+      joinReadInFlight,
+      this.nodeServerHistorySealBoundMs,
+    )
     // A failed, empty or too slow read keeps the sealed summary, and an older read never overwrites a newer one.
     if (summary && sealed.summaryReads === request) sealed.summary = summary
   }
@@ -2763,9 +2813,7 @@ export class StudyService {
     studyId: string,
     material: { revision: number; content: NodeTestLearningMaterialContent },
   ): Promise<void> {
-    const record = [...this.records.values()].find(
-      (candidate) => `${this.instanceId}_${candidate.id}` === studyId,
-    )
+    const record = this.recordOfStudyId(studyId)
     if (!record) return
     record.nodeLearningMaterial = {
       revision: material.revision,
