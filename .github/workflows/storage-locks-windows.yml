@@ -39,6 +39,8 @@ on:
       - extension/src/runtimeSupport/utils/removeAbandonedProfiles.ts
       - extension/src/runtimeSupport/utils/sha256.ts
       - extension/src/runtimeSupport/utils/stopListedProcesses.ts
+      - extension/src/runtimeSupport/utils/stopOrphanBrowser.ts
+      - extension/src/runtimeSupport/utils/stopperGuardedByStart.ts
       - extension/src/runtimeSupport/utils/windowsCommandLineArguments.ts
       - extension/src/tests/canJudgeOwnerHere.test.ts
       - extension/src/tests/claimWikiUpdateMarker.test.ts
@@ -84,6 +86,7 @@ on:
       - extension/src/tests/utils/realProcessStart.ts
       - extension/src/tests/utils/removeAsNodeOnWindows.ts
       - extension/src/tests/utils/requireOwnPidNamespace.ts
+      - extension/src/tests/utils/savedSessionEditorStubs.ts
       - extension/src/tests/utils/standInForPs.ts
       - extension/src/tests/utils/startOfKilledWindow.ts
       - extension/src/tests/utils/within.ts
