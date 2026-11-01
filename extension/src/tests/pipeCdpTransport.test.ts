@@ -2,8 +2,59 @@ import assert from 'node:assert/strict'
 import { PassThrough } from 'node:stream'
 import { test } from 'node:test'
 
+import { SIGN_IN_BROWSER_FRAME_LIMIT_BYTES } from '../constants'
 import { WebSocketFlatCdp } from '../runtimeSupport/flatCdpConnection'
 import { createPipeCdpTransport } from '../runtimeSupport/pipeCdpTransport'
+
+/** One mebibyte of `a`, written again and again: the stream keeps references to it, so a frame of the full limit costs no memory of its own. */
+const MEBIBYTE_WITHOUT_NUL = Buffer.alloc(1024 * 1024, 0x61)
+
+/**
+ * Writes chunks as the browser's end of the pipe, then waits until the transport has read every one of them.
+ * @param fromBrowser - The browser's end.
+ * @param chunks - What the browser sends, in order.
+ */
+async function sendFromBrowser(
+  fromBrowser: PassThrough,
+  chunks: readonly (Buffer | string)[],
+): Promise<void> {
+  for (const chunk of chunks.slice(0, -1)) fromBrowser.write(chunk)
+  await new Promise<void>((resolve) => {
+    fromBrowser.write(chunks.at(-1) ?? '', () => resolve())
+  })
+  await new Promise((resolve) => setImmediate(resolve))
+}
+
+/** The chunks of one frame of exactly the limit, still without its NUL. */
+function frameOfTheLimitWithoutNul(): Buffer[] {
+  return Array.from(
+    { length: SIGN_IN_BROWSER_FRAME_LIMIT_BYTES / MEBIBYTE_WITHOUT_NUL.length },
+    () => MEBIBYTE_WITHOUT_NUL,
+  )
+}
+
+/** A transport on two in-memory pipes whose events are noted in order. */
+function observedTransport(): {
+  toBrowser: PassThrough
+  fromBrowser: PassThrough
+  events: string[]
+} {
+  const toBrowser = new PassThrough()
+  const fromBrowser = new PassThrough()
+  const transport = createPipeCdpTransport(toBrowser, fromBrowser)
+  const events: string[] = []
+  transport.addEventListener('message', (event: { data: string }) => {
+    events.push(`message of ${event.data.length} bytes`)
+  })
+  // The transport's error event carries its reason as `data`, which a WebSocket's error event lacks.
+  transport.addEventListener('error', (event: Event) => {
+    events.push(`error: ${String(Reflect.get(event, 'data'))}`)
+  })
+  transport.addEventListener('close', () => {
+    events.push('close')
+  })
+  return { toBrowser, fromBrowser, events }
+}
 
 // protects=CEO-R3 pipe transport; fails_when=split or joined chunks are misframed, a request is not NUL-terminated, or its answer does not settle it; no_claim=Chrome's own pipe implementation
 test('CDP messages cross the pipe framed by NUL bytes, also when a frame arrives in pieces', async () => {
@@ -79,4 +130,35 @@ test('a reduced request hands the caller only the reduction, and a failing reduc
   assert.equal(await reduced, 1)
   const failure = await failing.catch((error: unknown) => String(error))
   assert.equal(failure.includes('SECRET'), false)
+})
+
+// protects=native 8 (the pipe's pending frame is bounded); fails_when=a browser that never sends a NUL grows the buffer past the limit without an error, the limit itself is refused, or the pipe stays open; no_claim=Chrome's own framing
+test('a browser frame that grows past the limit without its NUL closes the pipe with an error that names the limit', async () => {
+  // Arrange
+  const { toBrowser, fromBrowser, events } = observedTransport()
+  // Act
+  await sendFromBrowser(fromBrowser, frameOfTheLimitWithoutNul())
+  const eventsAtTheLimit = [...events]
+  await sendFromBrowser(fromBrowser, ['a'])
+  // Assert
+  assert.deepEqual(eventsAtTheLimit, [])
+  assert.deepEqual(events, [
+    'error: The browser sent a CDP frame longer than 134217728 bytes; Codebook closed its debugging pipe.',
+    'close',
+  ])
+  assert.equal(fromBrowser.destroyed, true)
+  assert.equal(toBrowser.writableEnded, true)
+})
+
+// protects=native 8 (a frame past the limit is never assembled); fails_when=a frame one byte past the limit is handed on because its NUL arrived in the same chunk; no_claim=frames below the limit (the framing test above)
+test('a browser frame one byte past the limit is refused even when its NUL arrives with its last byte', async () => {
+  // Arrange
+  const { fromBrowser, events } = observedTransport()
+  // Act
+  await sendFromBrowser(fromBrowser, [...frameOfTheLimitWithoutNul(), 'a\0'])
+  // Assert
+  assert.deepEqual(events, [
+    'error: The browser sent a CDP frame longer than 134217728 bytes; Codebook closed its debugging pipe.',
+    'close',
+  ])
 })

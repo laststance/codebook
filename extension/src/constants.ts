@@ -1582,6 +1582,11 @@ export const SIGN_IN_BROWSER_START_BOUND_MS = 20_000
 export const SIGN_IN_BROWSER_CLOSE_BOUND_MS = 15_000
 /** How long the setup browser's close waits between two looks at the process listing. */
 export const SIGN_IN_PROFILE_POLL_MS = 100
+/**
+ * The most bytes one CDP frame from the setup browser's debugging pipe may hold; a frame that grows past it closes the pipe ({@link createPipeCdpTransport}), so a browser that never sends the frame's NUL cannot grow the editor's memory without end.
+ * 128 MiB is about twice the largest answer the setup asks for (`Storage.getCookies` of a full cookie store: at most 3,300 cookies of at most about 6 KB of text each, which JSON escaping can at most triple) and well below the longest string V8 can make of a frame.
+ */
+export const SIGN_IN_BROWSER_FRAME_LIMIT_BYTES = 128 * 1024 * 1024
 /** How long Stop run and remove waits for the run's cleanup to release the saved session. */
 export const SIGN_IN_STOP_RUN_BOUND_MS = 30_000
 /** The sign-in routes a setup offers first when the repository has such a route, in this order. */
