@@ -208,3 +208,71 @@ test('a burst of frames against a blocked disk is dropped past the pending byte 
   assert.deepEqual(results, ['queued', 'queued', 'dropped', 'dropped'])
   assert.equal(frames.isIncomplete, true)
 })
+
+// protects=E-D: a pin is queued even when stream frames fill the pending byte bound, since the pending bound is for stream frames; fails_when=a pin is dropped because stream frames wait on a slow disk; no_claim=the pin's own reserve
+test('a pin is queued while stream frames fill the pending byte bound', async (context) => {
+  // Arrange
+  const { frames, writer, clock } = await framesOver(context)
+  clock.nowMs = 10_000
+  writer.appendFrame = (): Promise<void> => new Promise<void>(() => undefined)
+  const bigSalt = 'x'.repeat(3 * 1024 * 1024)
+  for (const index of [0, 1, 2])
+    frames.offer({
+      data: pngOf(720, 640, `${index}${bigSalt}`).toString('base64'),
+      kind: 'stream',
+      capturedAtMs: 100 * (index + 1),
+    })
+
+  // Act
+  const offered = frames.offer({
+    data: pngOf(720, 640, `pin${bigSalt}`).toString('base64'),
+    kind: 'pin',
+    pauseId: 'run:1:page:1',
+    capturedAtMs: 500,
+  })
+
+  // Assert
+  assert.equal(offered, 'queued')
+})
+
+// protects=one frame the history cannot accept is dropped alone: later frames and pins are still stored; fails_when=an unreadable frame stops every later frame and pin; no_claim=a failed disk write, which ends the filmstrip on purpose
+test('a frame that is not a readable PNG is dropped and the next stream frame and pin are still stored', async (context) => {
+  // Arrange
+  const { frames, writer, store, header, clock } = await framesOver(context)
+  clock.nowMs = 10_000
+  await writer.appendPauseOpen({
+    pauseId: 'run:1:page:1',
+    generation: 1,
+    context: 'page',
+    stopIndex: 1,
+    targetUrl: 'chrome-extension://abc/popup.html',
+    workerGeneration: 0,
+  })
+
+  // Act
+  const bad = frames.offer({
+    data: Buffer.from('not a png at all').toString('base64'),
+    kind: 'stream',
+    capturedAtMs: 100,
+  })
+  const good = frames.offer({
+    data: pngOf(720, 640, 'good').toString('base64'),
+    kind: 'stream',
+    capturedAtMs: 300,
+  })
+  const pin = frames.offer({
+    data: pngOf(720, 640, 'pinned').toString('base64'),
+    kind: 'pin',
+    pauseId: 'run:1:page:1',
+    capturedAtMs: 400,
+  })
+  await frames.drain(5_000)
+
+  // Assert
+  assert.deepEqual([bad, good, pin], ['dropped', 'queued', 'queued'])
+  assert.deepEqual(
+    (await frameEntries(store, header.studyId)).map((entry) => entry.kind),
+    ['stream', 'pin'],
+  )
+  assert.equal(frames.isIncomplete, true)
+})

@@ -192,8 +192,12 @@ export class ExtensionHistoryFrameWriter {
       const bytes = Buffer.from(frame.data, 'base64')
       const { width, height } = readPngDimensions(bytes)
       // Reserved before any I/O, so the queue holds at most the pending bound.
-      if (this.pendingBytes + bytes.byteLength > MAX_RECORDING_PENDING_BYTES) {
-        if (isStream) this.isIncomplete = true
+      // Only stream frames wait for this bound: the room for pins is kept by their own budget, so a slow disk cannot crowd a stop's pin out.
+      if (
+        isStream &&
+        this.pendingBytes + bytes.byteLength > MAX_RECORDING_PENDING_BYTES
+      ) {
+        this.isIncomplete = true
         return 'dropped'
       }
       const hash = sha256(bytes)
@@ -242,9 +246,9 @@ export class ExtensionHistoryFrameWriter {
           this.pendingBytes -= bytes.byteLength
         })
       return 'queued'
-    } catch (error) {
-      this.failure ??= error
-      this.isIncomplete = true
+    } catch {
+      // A frame that cannot be accepted (too large, unreadable PNG) is dropped alone; a lost pin is counted by lostPins, and later frames go on. Only a failed write sets `failure`.
+      if (isStream) this.isIncomplete = true
       return 'dropped'
     }
   }
