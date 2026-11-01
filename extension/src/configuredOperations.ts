@@ -171,20 +171,33 @@ function describeOperationControl(
     return { ready: false, reason: 'unique-control-required' }
   const rect = this.getBoundingClientRect(),
     style = getComputedStyle(this),
-    isDisabled =
-      (this instanceof HTMLInputElement ||
-        this instanceof HTMLTextAreaElement ||
-        this instanceof HTMLSelectElement) &&
-      this.disabled,
-    isVisible =
-      rect.width > 0 &&
-      rect.height > 0 &&
-      style.display !== 'none' &&
-      style.visibility === 'visible' &&
-      style.opacity !== '0'
+    formControl =
+      this instanceof HTMLInputElement ||
+      this instanceof HTMLTextAreaElement ||
+      this instanceof HTMLSelectElement
+        ? this
+        : undefined,
+    isHidden = [
+      rect.width <= 0,
+      rect.height <= 0,
+      style.display === 'none',
+      style.visibility !== 'visible',
+      style.opacity === '0',
+    ].some(Boolean),
+    // The first thing that stops the control from taking a value; a read-only input takes no typed or set value, as the text path's last look refuses it.
+    blocker = [
+      [isHidden, 'control-not-visible'],
+      [formControl?.disabled === true, 'control-disabled'],
+      [
+        formControl !== undefined &&
+          'readOnly' in formControl &&
+          formControl.readOnly,
+        'control-readonly',
+      ],
+    ].find(([isBlocking]) => isBlocking)?.[1]
   return {
-    ready: isVisible && !isDisabled,
-    reason: !isVisible ? 'control-not-visible' : 'control-disabled',
+    ready: blocker === undefined,
+    reason: blocker,
     tagName: this.tagName.toLowerCase(),
     type: this instanceof HTMLInputElement ? this.type : '',
     name: this.getAttribute('name') ?? '',
@@ -207,7 +220,8 @@ function checkSelectOption(this: Element, input: { value: string }) {
     (candidate) => candidate.value === input.value,
   )
   if (!option) return { state: 'missing' }
-  return { state: option.disabled ? 'disabled' : 'available' }
+  // `:disabled` also covers an option inside a disabled `<optgroup>`, whose own `disabled` stays false.
+  return { state: option.matches(':disabled') ? 'disabled' : 'available' }
 }
 
 /**
@@ -270,8 +284,13 @@ function applyNativeValue(
     [!isUnique(), 'unique-control-required'],
     [!control || !sameKind(control), 'control-changed'],
     [Boolean(control?.disabled), 'control-disabled'],
+    // The same editability check as the text path: a read-only number input receives no value.
+    [
+      control instanceof HTMLInputElement && control.readOnly,
+      'control-readonly',
+    ],
     [control instanceof HTMLSelectElement && !option, 'option-missing'],
-    [Boolean(option?.disabled), 'option-disabled'],
+    [Boolean(option?.matches(':disabled')), 'option-disabled'],
   ]
   const refusal = checks.find(([failed]) => failed)
   if (refusal || !control) return { applied: false, reason: refusal?.[1] }
@@ -866,6 +885,8 @@ async function sendTextLike(
       label,
       {
         started: () => {},
+        // A learning stop in the control's handler holds the insert until it is continued, so it waits as long as the run allows a pause, as the number and select paths do.
+        insertTimeoutMs: REPOSITORY_RUN_TIMEOUT_MS,
         // The classification is read again on the exact control, right before the first character is sent.
         beforeInsert: async (insertObjectId) => {
           const again = await describeControl(

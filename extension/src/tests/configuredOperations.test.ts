@@ -9,6 +9,7 @@ import {
   type OperationPort,
   type OperationSendHooks,
 } from '../configuredOperations'
+import { REPOSITORY_RUN_TIMEOUT_MS } from '../constants'
 import type { RepositoryOperation } from '../repositoryConfigSchemas'
 import type { Cdp } from '../runtimeSupport/cdp'
 import { classifySecretControl } from '../utils/classifySecretControl'
@@ -28,6 +29,8 @@ const FIXTURE = `<!doctype html><html><body>
 <form id="f" onsubmit="return false">
 <select id="customer"><option value="">Choose</option><option value="c1">Alice</option><option value="c2" disabled>Bob</option></select>
 <input id="amount" type="number" min="1" max="1000" step="1">
+<input id="locked" type="number" readonly>
+<select id="grouped"><optgroup label="Closed" disabled><option value="g1">Closed one</option></optgroup><optgroup id="open" label="Open"><option value="g2">Open one</option></optgroup></select>
 <input id="email" type="email" name="email">
 <input id="memo" type="text" name="memo">
 <input id="password" type="password" name="password">
@@ -578,4 +581,105 @@ test('the settle wait passes a quiet complete page and refuses a page that keeps
   assert.equal(refusal.code, 'NAVIGATION_NOT_SETTLED')
   assert.equal(refusal.operationIndex, 2)
   assert.equal(refusal.sent, 'not-sent')
+})
+
+// protects=a read-only number input is refused as INPUT_NOT_ACCEPTED in preparation and right before the send, and keeps its value; fails_when=the native setter writes into a read-only control; no_claim=none beyond protects; real headless Chrome
+test('text into a read-only number input is refused before and after preparation and writes nothing', async (context) => {
+  // Arrange
+  const page = await openRealChromePage(context, FIXTURE)
+  if (!page) return
+  const operation: RepositoryOperation = {
+    kind: 'text',
+    title: 'Locked',
+    selector: '#locked',
+    text: '5',
+  }
+  // Act
+  const atPreparation = await refusalOf(page, operation)
+  await read(page, 'document.getElementById("locked").readOnly = false')
+  const prepared = await prepareOperation(portOf(page), {
+    index: 1,
+    total: 1,
+    operation,
+  })
+  await read(page, 'document.getElementById("locked").readOnly = true')
+  const beforeSend = await prepared
+    .send(recordingHooks().hooks)
+    .then(() => undefined)
+    .catch((error: unknown) => error)
+  // Assert
+  assert.equal(atPreparation.code, 'INPUT_NOT_ACCEPTED')
+  assert.ok(beforeSend instanceof OperationRefusal)
+  assert.equal(beforeSend.code, 'INPUT_NOT_ACCEPTED')
+  assert.equal(await read(page, 'document.getElementById("locked").value'), '')
+})
+
+// protects=an option inside a disabled optgroup is OPTION_NOT_AVAILABLE in preparation and right before the send; fails_when=the option's own disabled flag alone decides, so the choice is applied; no_claim=none beyond protects; real headless Chrome
+test('choose refuses an option inside a disabled optgroup before and after preparation', async (context) => {
+  // Arrange
+  const page = await openRealChromePage(context, FIXTURE)
+  if (!page) return
+  const choose = (value: string): RepositoryOperation => ({
+    kind: 'choose',
+    title: 'Group',
+    selector: '#grouped',
+    value,
+  })
+  const prepared = await prepareOperation(portOf(page), {
+    index: 1,
+    total: 1,
+    operation: choose('g2'),
+  })
+  await read(page, 'document.getElementById("open").disabled = true')
+  // Act
+  const atPreparation = await refusalOf(page, choose('g1'))
+  const beforeSend = await prepared
+    .send(recordingHooks().hooks)
+    .then(() => undefined)
+    .catch((error: unknown) => error)
+  // Assert
+  assert.equal(atPreparation.code, 'OPTION_NOT_AVAILABLE')
+  assert.ok(beforeSend instanceof OperationRefusal)
+  assert.equal(beforeSend.code, 'OPTION_NOT_AVAILABLE')
+  // The select still holds its first usable option from the page load.
+  assert.equal(
+    await read(page, 'document.getElementById("grouped").value'),
+    'g2',
+  )
+})
+
+// protects=a text insert held by a learning stop in the control's handler waits as long as a pause may be held, not the channel's default; fails_when=the insert is requested with the default 20 s deadline; no_claim=the stop itself (the channel records the deadline it is given and the real insert answers at once)
+test('a text operation requests its insert with the pause-length deadline', async (context) => {
+  // Arrange
+  const page = await openRealChromePage(context, FIXTURE)
+  if (!page) return
+  const insertDeadlines: (number | undefined)[] = []
+  const recording = new Proxy(page.cdp, {
+    get(target, property) {
+      if (property !== 'request') return Reflect.get(target, property)
+      return (method: string, params: object, timeoutMs?: number) => {
+        if (method === 'Input.insertText') insertDeadlines.push(timeoutMs)
+        return (
+          target.request as (
+            ...parameters: [string, object, number | undefined]
+          ) => Promise<unknown>
+        ).call(target, method, params, timeoutMs)
+      }
+    },
+  })
+  const port = { ...portOf(page), pageCdp: async () => recording }
+  // Act
+  const prepared = await prepareOperation(port, {
+    index: 1,
+    total: 1,
+    operation: {
+      kind: 'text',
+      title: 'Email',
+      selector: '#email',
+      text: 'learner@example.invalid',
+    },
+  })
+  await prepared.send(recordingHooks().hooks)
+  // Assert
+  assert.deepEqual(insertDeadlines, [REPOSITORY_RUN_TIMEOUT_MS])
 })

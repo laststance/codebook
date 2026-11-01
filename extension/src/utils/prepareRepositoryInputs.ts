@@ -20,6 +20,8 @@ export type RepositoryInputProgress = {
   beforeInsert?(objectId: string): Promise<void> | void
   /** Told, after the control is resolved and before its text is sent, whether the text is secret; `index` is the input's place in the declaration. */
   classified?(index: number, secret: boolean): void
+  /** How long the page may take to answer the text insertion; a learning stop declared in the control's `input` handler holds the answer until it is continued. Omitted: the channel's default. */
+  insertTimeoutMs?: number
 }
 
 /** Prepares declared text controls on the owned page before its learning breakpoint is armed; uncertain inserts are never retried. @param progress - Told which input is being written and whether its text is in flight, for the setup-deadline text of a Next Pages run; optional. @example await prepareRepositoryInputs(cdp, inputs, origins, assertCurrent) */
@@ -104,7 +106,11 @@ export async function writeTextInput(
     await progress?.beforeInsert?.(objectId)
     assertCurrent()
     progress?.inserting(true)
-    await cdp.request('Input.insertText', { text: input.text })
+    await cdp.request(
+      'Input.insertText',
+      { text: input.text },
+      progress?.insertTimeoutMs,
+    )
     progress?.inserting(false)
     assertCurrent()
     await inspect('verify')
