@@ -4537,6 +4537,19 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Tells {@link onEvent} whether a participant's `stopped` came before the input the current stop waits for was sent, so the event is rejected as no stop of the declared operation.
+   * Version 3 asks {@link isBeforeFirstInput} (the operation the stop follows); versions 1 and 2 ask whether the action's input was dispatched, for every stop of the run.
+   * @returns `true` while the current stop's input is still unsent.
+   * @example this.isBeforeStopInput() // true for a version 3 stop declared afterOperation 2 while only operation 1 was sent
+   */
+  private isBeforeStopInput(): boolean {
+    // Version 3 stops each follow their own operation; versions 1 and 2 share the action's one input.
+    return this.operationsConfiguration
+      ? this.isBeforeFirstInput()
+      : !this.operation?.inputDispatched
+  }
+
+  /**
    * Tells whether a stop's turn has begun once a number of operations were sent: a version 3 stop is armed once the operation it follows was sent (ENG-1); the stops of versions 1 and 2 are due as soon as any input is.
    * Called by {@link nextStopToPause}, {@link isBeforeFirstInput}, {@link armStopsOfOperation} and {@link prepareOwned}.
    * @param stop - The declared stop.
@@ -6196,9 +6209,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       if (
         this.stops[this.stopIndex]?.participant !== name ||
         !Number.isInteger(body.threadId) ||
-        (this.operationsConfiguration
-          ? this.isBeforeFirstInput()
-          : !this.operation?.inputDispatched) ||
+        this.isBeforeStopInput() ||
         this.acceptedStop
       ) {
         this.evidence.record('dap.rejected-stop', {
