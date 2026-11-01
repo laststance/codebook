@@ -119,6 +119,10 @@ import type {
   StudyRuntime,
 } from './runtime'
 import type { RecordedEvent } from './runtimeSupport/evidence'
+import type {
+  SavedSessionStatus,
+  SavedSessionStorePort,
+} from './runtimeSupport/savedSessionTypes'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import {
   explainNodeHistorySchema,
@@ -653,6 +657,8 @@ export class StudyService {
     | 'publishLearningSave'
   >
   repository?: RepositoryBookStore
+  /** The saved-session store that answers `savedSession` in {@link StudyService.status}; set by the extension at start. */
+  savedSessions?: Pick<SavedSessionStorePort, 'describe'>
   nodeHistoryStore?: NodeTestHistoryStore
   /** The workspace's history repository, which resolves a study id to the test or server store that holds it; set with {@link nodeHistoryStore}. */
   nodeHistoryRepository?: NodeHistoryRepository
@@ -990,6 +996,25 @@ export class StudyService {
     this.removalAvailability = movedToTrash ? 'available' : 'trash-refused'
   }
 
+  /**
+   * Builds the `savedSession` member of {@link StudyService.status}: the saved session's state with no path, hash or cookie (DX-6); a store that cannot answer reads as unusable, and a window without a store adds nothing.
+   * @returns `{ savedSession }` or an empty object.
+   * @example
+   * await service.savedSessionField() // => { savedSession: { available: true, state: 'saved', setupAt: '2026-11-02T12:10:00.000Z' } }
+   */
+  private async savedSessionField(): Promise<{
+    savedSession?: SavedSessionStatus
+  }> {
+    if (!this.savedSessions) return {}
+    const savedSession = await this.savedSessions
+      .describe(this.environment.workspace)
+      .catch((): SavedSessionStatus => ({
+        available: false,
+        state: 'unusable',
+      }))
+    return { savedSession }
+  }
+
   /** Describes actual capabilities before an agent chooses an operation; called by discovery. @example await service.status() */
   async status() {
     const [reportedPrerequisites, repository] = await Promise.all([
@@ -1061,6 +1086,7 @@ export class StudyService {
       build: { ...this.environment.build, scope: 'codebook-extension-source' },
       workspaceGitStatus: 'not-inspected',
       prerequisites,
+      ...(await this.savedSessionField()),
       stopping: this.stopping,
       profiles: [
         {

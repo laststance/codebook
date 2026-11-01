@@ -705,3 +705,38 @@ test('on Linux a process whose exact arguments cannot be trusted or read is matc
     { matched: [81, 82, 83, 84], read: [81, 82, 83, 84, 85] },
   )
 })
+
+// Value: protects=the macOS text match that the saved session's Singleton removal relies on, for a folder below "Application Support" (the editor's real globalStorage on macOS); fails_when=a live Chrome whose profile path holds a space is not matched, so its lock entries would be removed under it, or a folder that only starts with the same path is matched; no_claim=Windows quoting (covered above); seam=ps command text and a real folder
+test('a macOS ps line naming a profile below "Application Support" matches that folder and not a longer sibling', async (context) => {
+  // Arrange
+  const parent = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-profile-spaced-')),
+  )
+  context.after(() => rm(parent, { recursive: true, force: true }))
+  const profile = join(
+    parent,
+    'Application Support',
+    'sign-in-profiles',
+    'ab12',
+  )
+  await mkdir(profile, { recursive: true })
+  const listing = [
+    {
+      pid: 1,
+      command: `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --remote-debugging-pipe --user-data-dir=${profile} --disk-cache-size=52428800 http://localhost:3165/login`,
+    },
+    {
+      pid: 2,
+      command: `chrome --user-data-dir=${profile}-other --no-first-run`,
+    },
+  ]
+
+  // Act
+  const named = await profileProcesses(profile, listing, { platform: 'darwin' })
+
+  // Assert
+  assert.deepEqual(
+    named.map(({ pid }) => pid),
+    [1],
+  )
+})

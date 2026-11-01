@@ -9,6 +9,12 @@ export type OwnedBrowserMarker = {
   executable: string
   /** The spawned browser's process id; absent while the browser has not been spawned yet. It is the id of the browser's process group on POSIX. */
   pid?: number
+  /**
+   * The browser process's own start ({@link readProcessStart}) when the pid was recorded; a saved-session profile records it so that a reused pid of another Chrome is never signalled. Absent in a managed run's marker and in an older one.
+   */
+  processStart?: string
+  /** How the browser was spawned: `detached` leads a process group of its own (so one signal reaches its helpers), `attached` does not (a js-debug launch). Absent means the group is not proven. */
+  launchKind?: 'detached' | 'attached'
 }
 
 /**
@@ -53,9 +59,16 @@ export async function readOwnedBrowserMarker(
   if (typeof parsed !== 'object' || parsed === null) return undefined
   const executable = Reflect.get(parsed, 'executable')
   const pid = Reflect.get(parsed, 'pid')
+  const processStart = Reflect.get(parsed, 'processStart')
+  const launchKind = Reflect.get(parsed, 'launchKind')
   if (typeof executable !== 'string' || executable === '') return undefined
   return {
     executable,
     ...(typeof pid === 'number' && Number.isInteger(pid) && pid > 0 && { pid }),
+    ...(typeof processStart === 'string' &&
+      processStart !== '' && { processStart }),
+    ...((launchKind === 'detached' || launchKind === 'attached') && {
+      launchKind,
+    }),
   }
 }

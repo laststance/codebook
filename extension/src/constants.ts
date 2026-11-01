@@ -1594,6 +1594,10 @@ export const CHROME_SINGLETON_ENTRIES = [
 ] as const
 /** The entry Chrome leaves at a profile's top level on Windows. */
 export const CHROME_WINDOWS_LOCK_FILE = 'lockfile'
+/** How often removal tries again when the system answers that a saved-session entry is still busy. */
+export const SIGN_IN_REMOVE_RETRIES = 5
+/** The pause before the first retry of a busy removal; each further retry waits one more multiple. */
+export const SIGN_IN_REMOVE_RETRY_DELAY_MS = 100
 /** The priority of the saved-session status bar item. */
 export const SAVED_SESSION_STATUS_PRIORITY = -1
 /** The command that sets up a saved session for the workspace repository; the one definition every lane uses. */
