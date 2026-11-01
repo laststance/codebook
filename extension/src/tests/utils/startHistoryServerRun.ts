@@ -1,4 +1,7 @@
-import { NODE_SERVER_PROFILE } from '../../constants'
+import {
+  NODE_SERVER_HISTORY_START_BOUND_MS,
+  NODE_SERVER_PROFILE,
+} from '../../constants'
 import type { NodeHistoryRepository } from '../../nodeHistoryRepository'
 import type { NodeServerHistorySink } from '../../nodeServerHistorySink'
 import type { NodeServerResponse } from '../../runtime'
@@ -10,6 +13,9 @@ import {
   nodeServerConfigurationOf,
   type startFakeNodeServerRun,
 } from './startFakeNodeServerRun'
+
+/** The history start bound of a service test that needs its history: far above any load stall, so only a start that never answers (a test's own hold) runs unrecorded. */
+const HISTORY_TEST_START_BOUND_MS = 60_000
 
 /** The fake run of a service test whose request, stops and response also reach the history sink the service handed it, as the real run's do. */
 export class HistoryFakeNodeServerRuntime extends FakeNodeServerRuntime {
@@ -73,6 +79,12 @@ export async function startHistoryServerRun(
   const repository =
     options.repository ??
     (await openServerRepository(context, options.repositoryOptions)).repository
+  // The production start bound (2 s) is wall-clock: a history start that storage under CPU load stretches past it launches the run unrecorded, so a test that needs its history would read none. A test that names its own bound keeps it.
+  if (
+    harness.service.nodeServerHistoryStartBoundMs ===
+    NODE_SERVER_HISTORY_START_BOUND_MS
+  )
+    harness.service.nodeServerHistoryStartBoundMs = HISTORY_TEST_START_BOUND_MS
   harness.service.nodeHistoryRepository = repository
   harness.service.nodeHistoryStore = repository.testHistories
   const run = new HistoryFakeNodeServerRuntime()

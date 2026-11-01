@@ -752,3 +752,33 @@ test('a published seal that faults late with a stalled summary read still ends w
   assert.equal(record.nodeServer?.history?.sealed?.summary, undefined)
   assert.ok(elapsedMs < boundMs * 1.35, `stop took ${elapsedMs} ms`)
 })
+
+// protects=a service test whose history start is stretched past the production start bound by a loaded disk still gets its history, so its stop seals it; fails_when=the harness keeps the 2 s production bound and the run launches unrecorded (the flake of the full coverage run); why_new=Cycle 0070 full-suite run under c8 load; seam=none; no_claim=the production bound itself (the test above names its own)
+test('a history start slower than the production bound still records the run in a history test', async (context) => {
+  // Arrange
+  const harness = await createHarness()
+  context.after(() => harness.close())
+  const { repository } = await openServerRepository(context)
+  const realStart = repository.serverHistories.start.bind(
+    repository.serverHistories,
+  )
+  repository.serverHistories.start = async (...starting) => {
+    // gstack-timing-ok: the storage stall must outlast the 2 s production start bound; it stands for a disk stretched by CPU load
+    await new Promise((resolve) => setTimeout(resolve, 2_500))
+    return realStart(...starting)
+  }
+  const { service, record, run } = await startHistoryServerRun(
+    harness,
+    context,
+    { repository },
+  )
+  await run.sendRequest('k1')
+  run.respond()
+
+  // Act
+  await service.stop({ instanceId: service.instanceId, runId: record.id })
+
+  // Assert
+  assert.equal(record.nodeServer?.historyUnavailable, undefined)
+  assert.equal(record.nodeServer?.history?.status, 'sealed')
+})
