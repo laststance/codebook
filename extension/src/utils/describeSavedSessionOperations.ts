@@ -12,7 +12,7 @@ const SPACE_OR_CONTROL_RUNS = /[\s\p{Cc}]+/gu
  * Puts a text that comes from outside Codebook on one plain line, so a repository-authored title, value or entry path, a page's option label or the workspace folder's name cannot fake a line of the modal, reorder it or hide part of what the learner confirms.
  * @param text - A declared title, value or entry path, an option label or the repository name.
  * @returns The text without format characters, with every run of whitespace and control characters as one space, trimmed.
- * @example plainLine('Pay‮evil​\nnow') // => 'Payevil now'
+ * @example plainLine('Pay\u202eevil\u200b\nnow') // => 'Payevil now'
  */
 function plainLine(text: string): string {
   return text

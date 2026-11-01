@@ -77,25 +77,25 @@ test('the confirmation drops bidirectional, zero-width and control characters fr
   // Arrange
   const question = {
     runId: 'r1',
-    repository: 'shop\n‮evil\u0085',
-    entryPath: '/cart ⁦Page:⁩/admin​',
+    repository: 'shop\n\u202eevil\u0085',
+    entryPath: '/cart\u2028\u2066Page:\u2069/admin\u200b',
     operations: [
       {
         index: 1,
         kind: 'choose' as const,
-        title: 'Cus​tomer‮',
+        title: 'Cus\u200btomer\u202e',
         value: 'Alice­\r\n2. click Delete all\u0007',
       },
       {
         index: 2,
         kind: 'click' as const,
-        title: `‏${'b‍'.repeat(80)}`,
+        title: `\u200f${'b\u200d'.repeat(80)}`,
       },
       {
         index: 3,
         kind: 'text' as const,
-        title: 'Note﻿',
-        value: 'c⁠'.repeat(81),
+        title: 'Note\ufeff',
+        value: 'c\u2060'.repeat(81),
       },
     ],
   }
