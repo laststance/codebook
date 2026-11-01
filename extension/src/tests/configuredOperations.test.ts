@@ -840,3 +840,49 @@ test('the confirmation read names an enabled option by its label, hides secrets,
     false,
   )
 })
+
+// Value: protects=ENG-8 confirmation facts are built from the page's description of each control without a browser: click, absent, secret by type, name, id or autocomplete, and option label; fails_when=a secret select keeps its label, a missing control reads as found, a click needs the page, or an attribute-less control reads as secret; why_new=the real-Chrome test above is skipped where no Chrome exists, so these branches went unmeasured; seam=scripted Runtime.evaluate answer on the OperationPort; no_claim=the in-page description (covered in configuredOperationsPage.test.ts)
+test('the confirmation facts mark a control secret by any one attribute, keep a plain option label and report absent controls as not found', async () => {
+  // Arrange
+  const described = [
+    null,
+    { found: false },
+    { found: true, type: 'password' },
+    { found: true, name: 'accessToken' },
+    { found: true, autocomplete: 'one-time-code', optionLabel: 'Hidden' },
+    { found: true, type: 'text', name: 'memo', optionLabel: 'Alice' },
+    { found: true },
+  ]
+  const port: OperationPort = {
+    pageCdp: async () =>
+      ({
+        request: async () => ({ result: { value: described } }),
+      }) as unknown as Cdp,
+    origins: () => ['http://127.0.0.1:1'],
+    assertCurrent: (): void => {},
+    millisecondsSinceNavigation: () => Number.POSITIVE_INFINITY,
+    sleep: async (): Promise<void> => {},
+    readClickPoint: async () => ({ x: 0, y: 0 }),
+  }
+  const operations: RepositoryOperation[] = [
+    { kind: 'click', title: 'Go', selector: '#go' },
+    { kind: 'text', title: 'Absent', selector: '#absent', text: 'x' },
+    { kind: 'text', title: 'Pw', selector: '#pw', secret: 'ask-learner' },
+    { kind: 'text', title: 'Token', selector: '#t', text: 'x' },
+    { kind: 'choose', title: 'Otp', selector: '#otp', value: 'v' },
+    { kind: 'choose', title: 'Customer', selector: '#c', value: 'c1' },
+    { kind: 'text', title: 'Bare', selector: '#bare', text: 'x' },
+  ]
+  // Act
+  const facts = await readOperationConfirmationFacts(port, operations)
+  // Assert
+  assert.deepEqual(facts, [
+    { index: 1, found: true, secret: false },
+    { index: 2, found: false, secret: false },
+    { index: 3, found: true, secret: true },
+    { index: 4, found: true, secret: true },
+    { index: 5, found: true, secret: true },
+    { index: 6, found: true, secret: false, optionLabel: 'Alice' },
+    { index: 7, found: true, secret: false },
+  ])
+})
