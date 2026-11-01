@@ -11,7 +11,9 @@ import {
 import { join } from 'node:path'
 import { before, test } from 'node:test'
 
+import type { ExtensionPauseView } from '../chromeExtensionDebugger'
 import type { ExtensionFrameBudget } from '../chromeExtensionHistoryFrames'
+import { ExtensionHistoryPauseTracker } from '../chromeExtensionHistoryPauseTracker'
 import { ChromeExtensionHistoryRecorder } from '../chromeExtensionHistoryRecorder'
 import type { ExtensionHistoryPause } from '../chromeExtensionHistorySink'
 import type { ExtensionHistoryJournalLimits } from '../chromeExtensionHistoryWriter'
@@ -660,4 +662,90 @@ test('a frame blob that goes missing after the seal leaves the sealed history re
     2,
   )
   assert.equal(existsSync(frames), true)
+})
+
+/** The debugger's view of a declared pause, as the pause tracker reads it. */
+function declaredPauseView(
+  generation: number,
+  context: 'page' | 'service-worker',
+): ExtensionPauseView {
+  return {
+    generation,
+    sessionId: 'session',
+    threadId: 1,
+    context,
+    reason: 'breakpoint',
+    kind: 'declared',
+    stopIndex: generation,
+    status: 'capturing',
+    pausedAtMs: 1,
+  }
+}
+
+/** A pause tracker over the fixture extension's surface and worker. */
+function newTracker(): ExtensionHistoryPauseTracker {
+  return new ExtensionHistoryPauseTracker(
+    'run',
+    `${EXTENSION_URL}/popup.html`,
+    `${EXTENSION_URL}/worker.js`,
+  )
+}
+
+/** The reasons of the journal's pause-close entries, in order. */
+function pauseCloseReasons(history: {
+  entries: readonly { type: string; reason?: unknown }[]
+}): unknown[] {
+  return history.entries.flatMap((entry) =>
+    entry.type === 'pause-close' ? [entry.reason] : [],
+  )
+}
+
+// protects=N69: a page pause that vanishes from the debugger with no continue (the test browser was killed) and whose run then ends with the surface lost is journaled surface-lost; fails_when=the pause-close reason is continue, so the replay says the run went past a stop it never left; no_claim=the real CDP socket close
+test('a paused page stop that vanishes when the browser dies is journaled surface-lost, not continued', async (context) => {
+  // Arrange
+  const { recorder, store, header } = await recorderOver(context)
+  const tracker = newTracker()
+  tracker.sync([declaredPauseView(1, 'page')], 1, recorder)
+
+  // Act
+  recorder.surfaceEnded()
+  tracker.sync([], 1, recorder)
+  await recorder.seal({ failureCode: 'BROWSER_LOST' }, 5_000)
+  const history = await store.read(header.studyId)
+
+  // Assert
+  assert.deepEqual(pauseCloseReasons(history), ['surface-lost'])
+})
+
+// protects=N69: a pause this run asked to continue is journaled continue when it leaves the debugger; fails_when=a continue the chat asked for is journaled as lost or run-ended
+test('a paused page stop the run continued is journaled continue', async (context) => {
+  // Arrange
+  const { recorder, store, header } = await recorderOver(context)
+  const tracker = newTracker()
+  tracker.sync([declaredPauseView(1, 'page')], 1, recorder)
+
+  // Act
+  tracker.noteContinue(1)
+  tracker.sync([], 1, recorder)
+  await recorder.seal({}, 5_000)
+  const history = await store.read(header.studyId)
+
+  // Assert
+  assert.deepEqual(pauseCloseReasons(history), ['continue'])
+})
+
+// protects=N69: a service-worker pause that vanishes because the worker was replaced is journaled worker-lost; fails_when=it is journaled continue or left for the seal
+test('a paused service-worker stop whose worker was replaced is journaled worker-lost', async (context) => {
+  // Arrange
+  const { recorder, store, header } = await recorderOver(context)
+  const tracker = newTracker()
+  tracker.sync([declaredPauseView(1, 'service-worker')], 1, recorder)
+
+  // Act
+  tracker.sync([], 2, recorder)
+  await recorder.seal({}, 5_000)
+  const history = await store.read(header.studyId)
+
+  // Assert
+  assert.deepEqual(pauseCloseReasons(history), ['worker-lost'])
 })

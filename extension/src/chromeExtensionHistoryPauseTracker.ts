@@ -28,7 +28,7 @@ export class ExtensionHistoryPauseTracker {
     return this.opened.get(generation)?.pauseId
   }
 
-  /** Remembers that this run asked to continue the pause, so its end is told apart from a worker that went away. @example tracker.noteContinue(2) */
+  /** Remembers that this run asked to continue the pause, so its end is journaled as a continue and not as a lost surface or worker. @example tracker.noteContinue(2) */
   noteContinue(generation: number): void {
     this.continued.add(generation)
   }
@@ -81,7 +81,10 @@ export class ExtensionHistoryPauseTracker {
     return recorded
   }
 
-  /** Closes the pauses that are no longer open: continued here, or a service worker that was replaced. */
+  /**
+   * Closes the pauses that are no longer open when the run knows why: it continued them, or their service worker was replaced.
+   * A pause that vanished with no such reason (the browser died, or a Continue pressed in the editor's debug toolbar, which the debugger does not report) is left open in the history: the recorder's seal closes it as surface-lost, worker-lost or run-ended, so a pause nobody continued is never journaled as continued.
+   */
   private closeGone(
     open: ReadonlySet<number>,
     workerGeneration: number,
@@ -90,14 +93,16 @@ export class ExtensionHistoryPauseTracker {
     for (const [generation, recorded] of [...this.opened]) {
       if (open.has(generation)) continue
       this.opened.delete(generation)
-      const workerWentAway =
-        !this.continued.has(generation) &&
+      if (this.continued.has(generation)) {
+        history.pauseClosed(recorded.pauseId, 'continue')
+        continue
+      }
+      // Without an observed continue only a replaced worker is a known end; anything else waits for the seal.
+      if (
         recorded.context === 'service-worker' &&
         workerGeneration !== recorded.workerGeneration
-      history.pauseClosed(
-        recorded.pauseId,
-        workerWentAway ? 'worker-lost' : 'continue',
       )
+        history.pauseClosed(recorded.pauseId, 'worker-lost')
     }
   }
 }
