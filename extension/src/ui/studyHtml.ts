@@ -865,6 +865,115 @@ function studyClient(
     learning: NonNullable<StudyViewMessage['recording']>['learningSummary'],
     recording: StudyViewMessage['recording'],
   ): unknown[] => [learning, recording?.operations]
+  /** A browser replay's projected learning summary, whose steps {@link learningStepAction} links to recorded moments and operation marks. */
+  type ReplayLearningSummary = NonNullable<
+    NonNullable<StudyViewMessage['recording']>['learningSummary']
+  >
+  /** One step of a {@link ReplayLearningSummary}, as {@link sequenceView} hands it to {@link learningStepAction}. */
+  type ReplayLearningStep = ReplayLearningSummary['content']['steps'][number]
+  /**
+   * Builds a Learning summary step's link to the mark of the operation of this run it names, so the learner can move to the moment that input was sent; called by {@link learningStepAction}.
+   * @param stepId - The summary step's id.
+   * @param learning - The replay's learning summary, which names each linked step's operation.
+   * @param recording - The browser replay's state, whose operation marks the link moves to.
+   * @returns
+   * - A `Go to operation <n> · <title>` button carrying `data-operation-mark` when the step names an operation the replay has
+   * - `undefined` when the step names no operation, or one the replay does not have
+   * @example learningOperationLink('amount', learning, recording) // => <button data-operation-mark="2">Go to operation 2 · Amount</button>
+   */
+  const learningOperationLink = (
+    stepId: string,
+    learning: ReplayLearningSummary,
+    recording: StudyViewMessage['recording'],
+  ): HTMLButtonElement | undefined => {
+    const operation = learning.operationLinks?.find(
+      (value) => value.stepId === stepId,
+    )
+    const operationMark = recording?.operations?.find(
+      (value) => value.index === operation?.operationIndex,
+    )
+    // An operation number the replay does not have leaves the step unlinked.
+    if (!operationMark) return undefined
+    const operationLink = document.createElement('button')
+    operationLink.className = 'link'
+    operationLink.dataset.operationMark = String(operationMark.index)
+    operationLink.textContent = `Go to operation ${operationMark.index} · ${operationMark.title}`
+    return operationLink
+  }
+  /**
+   * Builds a Learning summary step's link to its recorded position, worded for a verified result frame or a referenced stop; called by {@link learningStepAction} for a step with a recorded position.
+   * @param step - The summary step.
+   * @param positionMs - The recorded position the step stands for, in milliseconds.
+   * @returns A button carrying `data-summary-step`, such as `Inspect referenced stop · 2.00 s`.
+   * @example learningStepSeekLink(step, 2000) // => <button data-summary-step="submit">Inspect referenced stop · 2.00 s</button>
+   */
+  const learningStepSeekLink = (
+    step: ReplayLearningStep,
+    positionMs: number,
+  ): HTMLButtonElement => {
+    const link = document.createElement('button')
+    link.className = 'link'
+    link.dataset.summaryStep = step.id
+    link.textContent = `${step.reference && 'captureHash' in step.reference ? 'Inspect verified result' : 'Inspect referenced stop'} · ${seconds(positionMs)}`
+    return link
+  }
+  /**
+   * Builds the note a Learning summary step shows when it links to no recorded position and no operation; called by {@link learningStepAction}.
+   * @returns A muted paragraph reading `No recorded evidence is linked to this step.`
+   * @example learningStepWithoutEvidence().textContent // => 'No recorded evidence is linked to this step.'
+   */
+  const learningStepWithoutEvidence = (): HTMLParagraphElement => {
+    const missing = document.createElement('p')
+    missing.className = 'muted'
+    missing.textContent = 'No recorded evidence is linked to this step.'
+    return missing
+  }
+  /**
+   * Joins a Learning summary step's seek link and its operation link, separated by a space, when it has both; called by {@link learningStepAction}.
+   * @param seekLink - The step's link to its recorded position.
+   * @param operationLink - The step's link to its operation mark, if it names one of this run.
+   * @returns
+   * - `seekLink` alone when there is no operation link
+   * - A span holding `seekLink`, a space and `operationLink` otherwise
+   * @example withOperationLink(seekLink, undefined) // => seekLink
+   */
+  const withOperationLink = (
+    seekLink: HTMLButtonElement,
+    operationLink: HTMLButtonElement | undefined,
+  ): HTMLButtonElement | HTMLSpanElement => {
+    if (!operationLink) return seekLink
+    const both = document.createElement('span')
+    both.append(seekLink, ' ', operationLink)
+    return both
+  }
+  /**
+   * Builds the action that follows a browser replay's Learning summary step: its seek link, its operation link, both, or a note that no recorded evidence is linked; the Study message handler passes it to {@link sequenceView} for the learning sequence.
+   * @param step - The summary step.
+   * @param learning - The replay's learning summary, which holds the steps' recorded positions and operation links.
+   * @param recording - The browser replay's state, whose operation marks the steps link to.
+   * @returns
+   * - The seek link, joined with the operation link when the step names an operation of this run, for a step with a recorded position
+   * - The operation link alone for a step with no recorded position that names an operation of this run
+   * - The `No recorded evidence is linked to this step.` note otherwise
+   * @example learningStepAction(step, learning, recording) // => <span><button data-summary-step="amount">…</button> <button data-operation-mark="2">…</button></span>
+   */
+  const learningStepAction = (
+    step: ReplayLearningStep,
+    learning: ReplayLearningSummary,
+    recording: StudyViewMessage['recording'],
+  ): Node => {
+    const position = learning.positions.find(
+      (value) => value.stepId === step.id,
+    )?.elapsedMs
+    const operationLink = learningOperationLink(step.id, learning, recording)
+    // A step with no recorded position links to its operation alone, or says no evidence is linked.
+    if (position === undefined)
+      return operationLink ?? learningStepWithoutEvidence()
+    return withOperationLink(
+      learningStepSeekLink(step, position),
+      operationLink,
+    )
+  }
   const nodeHistoryPlayback = (
     action: 'play' | 'pause' | 'seek',
     positionMs?: number,
@@ -4645,41 +4754,7 @@ function studyClient(
         sequenceView(
           learning.content,
           `Sequence for ${learning.content.title}. Numbered interactions are described below.`,
-          (step) => {
-            const position = learning.positions.find(
-              (value) => value.stepId === step.id,
-            )?.elapsedMs
-            // A step that names an operation of this run links to its mark; an operation number the replay does not have leaves the step unlinked.
-            const operation = learning.operationLinks?.find(
-              (value) => value.stepId === step.id,
-            )
-            const operationMark = recording?.operations?.find(
-              (value) => value.index === operation?.operationIndex,
-            )
-            const operationLink = operationMark
-              ? document.createElement('button')
-              : undefined
-            if (operationLink && operationMark) {
-              operationLink.className = 'link'
-              operationLink.dataset.operationMark = String(operationMark.index)
-              operationLink.textContent = `Go to operation ${operationMark.index} · ${operationMark.title}`
-            }
-            if (position !== undefined) {
-              const link = document.createElement('button')
-              link.className = 'link'
-              link.dataset.summaryStep = step.id
-              link.textContent = `${step.reference && 'captureHash' in step.reference ? 'Inspect verified result' : 'Inspect referenced stop'} · ${seconds(position)}`
-              if (!operationLink) return link
-              const both = document.createElement('span')
-              both.append(link, ' ', operationLink)
-              return both
-            }
-            if (operationLink) return operationLink
-            const missing = document.createElement('p')
-            missing.className = 'muted'
-            missing.textContent = 'No recorded evidence is linked to this step.'
-            return missing
-          },
+          (step) => learningStepAction(step, learning, recording),
         ),
       )
       for (const control of Array.from(
