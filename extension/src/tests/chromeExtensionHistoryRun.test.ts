@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -173,7 +173,7 @@ test('a run records a page stop, a service-worker stop and the result into a com
 })
 
 // protects=recording never changes what the live run does or shows: against a writer that never finishes an append, the run's phase, result, captures and observation equal those of the same run with no history; fails_when=a stalled history changes any of them or holds a click, continue or stop; no_claim=timing on a real disk
-test('a run records through a writer that never finishes and shows exactly what the unrecorded run shows', async () => {
+test('a run records through a writer that never finishes and shows exactly what the unrecorded run shows', async (context) => {
   // Arrange
   class StalledWriter extends ChromeExtensionHistoryWriter {
     protected override append(): Promise<void> {
@@ -183,6 +183,7 @@ test('a run records through a writer that never finishes and shows exactly what 
   const directory = await mkdtemp(
     join(tmpdir(), 'codebook-extension-run-stalled-'),
   )
+  context.after(() => rm(directory, { recursive: true, force: true }))
   const header = parseExtensionHistoryHeader({
     ...extensionHistoryHeader(EXTENSION_WORKSPACE_KEY),
     formatVersion: 1,

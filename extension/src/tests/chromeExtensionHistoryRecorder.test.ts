@@ -205,8 +205,11 @@ test('a history whose writer is abandoned reads as interrupted with its recorded
     capturedStop({ stopIndex: 1, context: 'page' }),
   )
   // Both entries are durable before the editor "closes".
-  while ((await store.read(header.studyId)).entries.length < 2)
-    await new Promise((resolve) => setTimeout(resolve, 5))
+  await waitUntil(
+    async () => (await store.read(header.studyId)).entries.length >= 2,
+    'the pause and its capture to be durable',
+    5_000,
+  )
 
   // Act
   recorder.writer.abandon()
@@ -227,7 +230,7 @@ test('a history whose writer is abandoned reads as interrupted with its recorded
 })
 
 // protects=a writer that fails every append is reported once and never makes a recorder call throw into the live run; fails_when=a call throws, the fault is reported twice or not at all; no_claim=the wording of the cause
-test('a writer whose appends fail is reported once and no recorder call throws', async () => {
+test('a writer whose appends fail is reported once and no recorder call throws', async (context) => {
   // Arrange
   class FailingWriter extends ChromeExtensionHistoryWriter {
     protected override append(): Promise<void> {
@@ -235,6 +238,7 @@ test('a writer whose appends fail is reported once and no recorder call throws',
     }
   }
   const directory = await mkdtemp(join(tmpdir(), 'codebook-extension-failing-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
   const header = parseExtensionHistoryHeader({
     ...extensionHistoryHeader(EXTENSION_WORKSPACE_KEY),
     formatVersion: 1,
@@ -264,7 +268,7 @@ test('a writer whose appends fail is reported once and no recorder call throws',
 })
 
 // protects=the recorder never waits for a disk: against a writer that never finishes an append, hundreds of pauses, captures and frames return at once; fails_when=a recorder call awaits the writer; no_claim=wall-clock timing of a real disk
-test('recorder calls return at once while the writer never finishes an append', async () => {
+test('recorder calls return at once while the writer never finishes an append', async (context) => {
   // Arrange
   class StalledWriter extends ChromeExtensionHistoryWriter {
     protected override append(): Promise<void> {
@@ -272,6 +276,7 @@ test('recorder calls return at once while the writer never finishes an append', 
     }
   }
   const directory = await mkdtemp(join(tmpdir(), 'codebook-extension-stalled-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
   const header = parseExtensionHistoryHeader({
     ...extensionHistoryHeader(EXTENSION_WORKSPACE_KEY),
     formatVersion: 1,

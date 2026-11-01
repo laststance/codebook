@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -158,7 +158,7 @@ test('a pause screenshot answered after its continue is not recorded as the pin'
 })
 
 // protects=AC 7d / E-J: with recording on and a writer that never finishes, the run's click and stop add no wait: the same calls in the same order, the same timers armed with the same delays, and no timer fired by hand; fails_when=recording makes the click or stop await the history, arm another timer or change a call; no_claim=a real disk's speed (the writer never answers)
-test('a run with a stalled recording clicks and stops with the same calls and timers as an unrecorded run', async () => {
+test('a run with a stalled recording clicks and stops with the same calls and timers as an unrecorded run', async (context) => {
   // Arrange
   class StalledWriter extends ChromeExtensionHistoryWriter {
     protected override append(): Promise<void> {
@@ -168,6 +168,7 @@ test('a run with a stalled recording clicks and stops with the same calls and ti
   const directory = await mkdtemp(
     join(tmpdir(), 'codebook-extension-run-timing-'),
   )
+  context.after(() => rm(directory, { recursive: true, force: true }))
   const header = parseExtensionHistoryHeader({
     ...extensionHistoryHeader(EXTENSION_WORKSPACE_KEY),
     formatVersion: 1,
