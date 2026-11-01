@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { TestContext } from 'node:test'
@@ -8,6 +8,8 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { connectFlatCdp } from '../../runtimeSupport/flatCdpConnection'
 import { readDevToolsActivePort } from '../../runtimeSupport/utils/readDevToolsActivePort'
 import { resolveChromeExecutable } from '../../utils/resolveChromeExecutable'
+
+import { removeTestBrowserProfile } from './removeTestBrowserProfile'
 
 /** Says whether a path is an executable file. */
 function isExecutable(path: string): Promise<boolean> {
@@ -79,7 +81,7 @@ export async function launchRealHeadlessPage(
       child.kill('SIGKILL')
       await exited
     }
-    await rm(profile, { recursive: true, force: true })
+    await removeTestBrowserProfile(profile)
   })
   let endpoint: ReturnType<typeof readDevToolsActivePort>
   for (let attempt = 0; attempt < 100 && !endpoint; attempt++) {

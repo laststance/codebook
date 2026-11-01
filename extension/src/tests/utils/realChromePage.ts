@@ -1,5 +1,5 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, stat } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -11,6 +11,8 @@ import { promisify } from 'node:util'
 import { CHROME_EXTENSION_MIN_VERSION } from '../../constants'
 import { Cdp } from '../../runtimeSupport/cdp'
 import { resolveChromeExecutable } from '../../utils/resolveChromeExecutable'
+
+import { removeTestBrowserProfile } from './removeTestBrowserProfile'
 
 /** A fixture page open in a real headless Chrome, with the channel a run's operations are sent through. */
 export type RealChromePage = {
@@ -137,7 +139,7 @@ export async function closeRealChrome(): Promise<void> {
     chrome.process.kill('SIGKILL')
     await exited
   }
-  await rm(chrome.profile, { recursive: true, force: true })
+  await removeTestBrowserProfile(chrome.profile)
 }
 
 /** Starts the file's one headless Chrome on a fresh profile folder and waits for its debugging port. */
