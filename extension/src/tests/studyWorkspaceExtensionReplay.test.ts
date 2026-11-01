@@ -453,6 +453,7 @@ test('a slow frame load of an earlier selection never replaces the later moment'
       releaseFirst = resolve
     })
     let heldOne = false
+    let heldLoadSettled = false
     context.mock.method(
       cache,
       'load',
@@ -461,6 +462,9 @@ test('a slow frame load of an earlier selection never replaces the later moment'
         if (!heldOne && frame.hash === history.hashes.get(5)) {
           heldOne = true
           await held
+          const loaded = await load(frame)
+          heldLoadSettled = true
+          return loaded
         }
         return load(frame)
       },
@@ -476,10 +480,12 @@ test('a slow frame load of an earlier selection never replaces the later moment'
     await selectExtensionEvent(harness, history.studyId, C)
     releaseFirst()
     await waitUntil(
-      () => heldOne,
-      'the held load was reached',
+      () => heldLoadSettled,
+      'the held earlier load to finish',
       READER_RESULT_BOUND_MS,
     )
+    // The earlier selection's late frame is applied on the tick after its load returns.
+    await new Promise<void>((resolve) => setImmediate(resolve))
     const finalMoment = shownExtensionMoment(harness)
     const finalFrame = shownApplicationView(harness)?.frame
 
