@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { mock, test } from 'node:test'
 
 import { SECRET_FRAME_OBSERVER_GLOBAL } from '../constants'
 import {
   SecretFrameGate,
   type SecretFrameFailureReason,
+  type SecretFrameGateSummary,
 } from '../runtimeSupport/secretFrameGate'
 
 import {
@@ -264,4 +265,158 @@ test('a late image of a replaced document captured while its frame from another 
   // Assert
   assert.equal(late, 'drop-cross-origin-frame')
   assert.equal(gate.failure, undefined)
+})
+
+// protects=the start of a cross-origin interval is backdated to the last check that read every root, so images captured between the frame's appearance and the next full check are withheld; fails_when=a per-paint check, which skips shadow roots and frame documents attached since the last full check, moves the dated start to its own time and those images pass; no_claim=a real cross-site frame or a same-origin frame's own navigation (an open shadow root attached after the last full check stands in for a root no mutation observer covers)
+test('a frame from another origin that appears where only a full check looks is withheld from before it appeared, not from the last paint', async (context) => {
+  // Arrange
+  const page = await launchRealHeadlessPage(context)
+  if (!page) return
+  const { failures } = await armedPage(page, `${PAGE}<div id="host"></div>`)
+  // Act
+  // A shadow root attached now raises no mutation the observer sees; the clock moves on and two paints run (per-paint checks) before the next full check reads the report.
+  const appearedAt = (await page.evaluate(`new Promise((resolve) => {
+    const shadow = document.getElementById('host').attachShadow({ mode: 'open' })
+    shadow.innerHTML = '<iframe sandbox srcdoc="<p>widget</p>" style="width:200px;height:80px"></iframe>'
+    const appearedAt = Date.now()
+    while (Date.now() === appearedAt) {}
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve(appearedAt)))
+  })`)) as number
+  const report = await readObserverReport(page)
+  // Assert
+  assert.ok(
+    report.crossOriginOpen !== null && report.crossOriginOpen <= appearedAt,
+    `the interval opened at ${report.crossOriginOpen}, after the frame appeared at ${appearedAt}`,
+  )
+  assert.deepEqual(failures, [])
+})
+
+// protects=a page that shows and hides a frame from another origin more often than the report holds (a carousel, an ad rotator) keeps its earliest drawn time in the record the gate reads, and the record stays bounded; fails_when=the observer reports only its last 100 closed intervals, so an image queued from an early interval passes; no_claim=the gate's verdict math (the fake-evaluate tests), memory use
+test('a frame from another origin toggled more often than the report holds keeps its earliest drawn time in the record', async (context) => {
+  // Arrange
+  const page = await launchRealHeadlessPage(context)
+  if (!page) return
+  const { failures } = await armedPage(
+    page,
+    `${PAGE}${CROSS_ORIGIN_WIDGET.replace('style="', 'style="display:none;')}`,
+  )
+  // Act
+  // Each show and hide is followed by a full check (the observer's own query), so every toggle opens or closes one interval.
+  const firstShownAt = (await page.evaluate(`(() => {
+    const widget = document.getElementById('widget')
+    const observer = window['${SECRET_FRAME_OBSERVER_GLOBAL}1']
+    const toggle = (display) => { widget.style.display = display; observer.query() }
+    toggle('block')
+    const firstShownAt = Date.now()
+    toggle('none')
+    while (Date.now() === firstShownAt) {}
+    for (let shown = 0; shown < 120; shown += 1) { toggle('block'); toggle('none') }
+    return firstShownAt
+  })()`)) as number
+  const report = await readObserverReport(page)
+  // Assert
+  assert.equal(report.crossOrigin.length, 100)
+  assert.ok(
+    (report.crossOrigin[0]?.[0] ?? Infinity) <= firstShownAt,
+    `the earliest reported interval starts at ${report.crossOrigin[0]?.[0]}, after the frame was first shown at ${firstShownAt}`,
+  )
+  assert.equal(report.crossOriginOpen, null)
+  assert.deepEqual(failures, [])
+})
+
+// protects=a sign-in that redirects twice keeps the record of every third-party frame of the first page, however many intervals the replaced documents held; fails_when=the retired list keeps only its newest 100 intervals and a late image of the first page's early interval passes; no_claim=a real navigation, the observer's own record (the real-Chrome tests)
+test('a late image from an early cross-origin interval stays withheld after replaced documents held more intervals than the gate keeps', async () => {
+  // Arrange
+  const base = Date.now() - 10_000
+  let currentDocument = 1
+  const documentOfGlobal = new Map<string, number>()
+  // The first two documents' observers each report 100 closed intervals; the third shows no frame.
+  const intervalsOfDocument = new Map<number, [number, number][]>([
+    [
+      1,
+      Array.from({ length: 100 }, (_, index) => [
+        base + index * 10,
+        base + index * 10 + 5,
+      ]),
+    ],
+    [
+      2,
+      Array.from({ length: 100 }, (_, index) => [
+        base + 5_000 + index * 10,
+        base + 5_000 + index * 10 + 5,
+      ]),
+    ],
+    [3, []],
+  ])
+  const gate = new SecretFrameGate({
+    evaluate: async (expression) => {
+      if (expression === 'performance.timeOrigin') return currentDocument
+      const global =
+        /"(__codebookSecretFrameGate\d+)"/.exec(expression)?.[1] ?? ''
+      if (!expression.startsWith('window[')) {
+        documentOfGlobal.set(global, currentDocument)
+        return { ok: true, origin: currentDocument }
+      }
+      // An observer of a replaced document is gone with it.
+      if (documentOfGlobal.get(global) !== currentDocument) return null
+      return {
+        now: Date.now(),
+        open: null,
+        unsafe: [],
+        crossOriginOpen: null,
+        crossOrigin: intervalsOfDocument.get(currentDocument),
+      }
+    },
+  })
+  await gate.arm('#password', 'typed-secret')
+  await gate.admitFrame(Date.now())
+  currentDocument = 2
+  await gate.admitFrame(Date.now())
+  currentDocument = 3
+  await gate.admitFrame(Date.now())
+  // Act
+  const late = await gate.admitFrame(base + 2)
+  // Assert
+  assert.equal(late, 'drop-cross-origin-frame')
+  assert.equal(gate.failure, undefined)
+})
+
+// protects=the journal's summary counts every cross-origin drop in the interval it happened in, also when that drop closes the interval; fails_when=the drop is counted in `drops` of the closing summary while its cross-origin count lands in the next interval (more cross-origin drops than drops there, or never journalled when nothing else follows); no_claim=the journal writer (onSummary is collected here)
+test('a cross-origin drop that closes a summary interval is journalled as a cross-origin drop in that summary', async () => {
+  // Arrange
+  mock.timers.enable({ apis: ['Date'], now: 4_000_000 })
+  const summaries: SecretFrameGateSummary[] = []
+  const gate = new SecretFrameGate({
+    evaluate: async (expression) => {
+      if (expression.startsWith('window['))
+        return {
+          now: Date.now(),
+          open: null,
+          unsafe: [],
+          crossOriginOpen: 3_999_000,
+          crossOrigin: [],
+        }
+      return { ok: true, origin: 1 }
+    },
+    onSummary: (summary) => void summaries.push(summary),
+  })
+  await gate.arm('#password', 'typed-secret')
+  const first = await gate.admitFrame(4_000_000)
+  // Act
+  mock.timers.tick(5_000)
+  const closing = await gate.admitFrame(3_999_900)
+  gate.flushSummary()
+  mock.timers.reset()
+  // Assert
+  assert.deepEqual(
+    [first, closing],
+    ['drop-cross-origin-frame', 'drop-cross-origin-frame'],
+  )
+  assert.deepEqual(
+    summaries.map(({ drops, crossOriginDrops }) => ({
+      drops,
+      crossOriginDrops,
+    })),
+    [{ drops: 2, crossOriginDrops: 2 }],
+  )
 })

@@ -2,7 +2,7 @@
  * Stated limits of the in-page observer (what it cannot verify, so a green gate does not claim it):
  * - Canvas text is checked only through `fillText` and `strokeText` (2D and offscreen contexts, in every same-origin realm reached by the observer); WebGL, `drawImage` of pre-rendered images and a draw made in a frame before the observer first reaches it are not checked.
  * - Attributes are checked (CSS `attr()` content, `title` tooltips), but CSS `content` with a literal string in a stylesheet the page builds is not.
- * - Closed shadow roots have no readable content. A frame from another origin has none either: while one is drawn after a secret was sent, images are withheld as `drop-cross-origin-frame` (a gap, never a failure); one that navigates to another origin is noticed at the next check, and its start is dated to the last check that saw none.
+ * - Closed shadow roots have no readable content. A frame from another origin has none either: while one is drawn after a secret was sent, images are withheld as `drop-cross-origin-frame` (a gap, never a failure); one that navigates to another origin is noticed at the next check, and its start is dated to the last full check that saw none.
  *
  * The secret frame gate's invariant (every branch of the in-page observer and of the image paths below is checked against it):
  * while armed, and after a document replacement, an image passes only if a verification that answered after its capture time shows no armed control, and no other control or rendered text, showed the secret then.
@@ -17,9 +17,12 @@ import {
   SECRET_FRAME_SUMMARY_INTERVAL_MS,
   SECRET_FRAME_MAX_REPLACEMENTS_IN_A_ROW,
   SECRET_FRAME_OBSERVER_GLOBAL,
+  SECRET_FRAME_OBSERVER_INTERVALS_MAX,
   SECRET_FRAME_OBSERVER_TIMEOUT_MS,
   SECRET_FRAME_VALUE_COPY_MIN_CHARS,
 } from '../constants'
+
+import { coalesceOldestIntervals } from './utils/coalesceOldestIntervals'
 
 /** Why the gate stopped letting images through for the rest of the run. */
 export type SecretFrameFailureReason =
@@ -53,9 +56,9 @@ type ObserverReport = {
   unsafe: [number, number][]
   /** The first reason the control became unsafe, if it ever did. */
   reason?: SecretFrameFailureReason
-  /** When a drawn frame from another origin appeared and has not left since (backdated to the last check that saw none), or `null`. */
+  /** When a drawn frame from another origin appeared and has not left since (backdated to the last full check that saw none), or `null`. */
   crossOriginOpen?: number | null
-  /** The closed intervals `[from, to]` (page clock, ms) a frame from another origin was drawn, most recent last. */
+  /** The closed intervals `[from, to]` (page clock, ms) a frame from another origin was drawn, most recent last; past {@link SECRET_FRAME_OBSERVER_INTERVALS_MAX} the oldest one spans several. */
   crossOrigin?: [number, number][]
 }
 
@@ -105,6 +108,7 @@ export type SecretFrameGateOptions = {
  * @param copyMinChars - The shortest value checked for a copy into visible text.
  * @param embeddedDocumentSelector - The elements that hold another document; one whose document the page cannot read counts as an unreadable frame, and while one is drawn the observer keeps a cross-origin interval.
  * @param secretValue - The value the learner will type, when the caller has it: its occurrences in the rendered text are counted now, before the value is sent, so the baseline never depends on whether a page handler registered earlier copies the typed value first. Kept only inside this observer.
+ * @param intervalsMax - How many intervals of each kind a report holds ({@link SECRET_FRAME_OBSERVER_INTERVALS_MAX}); the cross-origin record merges its oldest instead of dropping them.
  * @returns `{ ok: true }` once watching, or the reason the control is not a password control now.
  */
 function installSecretFrameObserver(
@@ -113,6 +117,7 @@ function installSecretFrameObserver(
   copyMinChars: number,
   secretValue: string | undefined,
   embeddedDocumentSelector: string,
+  intervalsMax: number,
 ):
   | { ok: true; origin: number }
   | { ok: false; reason: SecretFrameFailureReason } {
@@ -439,21 +444,33 @@ function installSecretFrameObserver(
         isDrawn(element),
     )
   }
-  // The times a frame from another origin was drawn. An interval opens at the last check that saw none (a frame can navigate to another origin with no mutation in this page) and closes only on a full check.
+  // The times a frame from another origin was drawn. An interval opens at the last full check that saw none (a frame can navigate to another origin with no mutation in this page) and closes only on a full check.
   const crossOrigin: {
     open: number | null
     closed: [number, number][]
     clearSinceMs: number
   } = { open: null, closed: [], clearSinceMs: Date.now() }
+  // Ends the open interval at `now`. Past the cap the two oldest closed intervals become one that spans both: the record stays bounded and loses no drawn time (the gap between them is withheld too).
+  const closeCrossOrigin = (now: number): void => {
+    if (crossOrigin.open === null) return
+    crossOrigin.closed.push([crossOrigin.open, now])
+    crossOrigin.open = null
+    if (crossOrigin.closed.length <= intervalsMax) return
+    const oldest = crossOrigin.closed.splice(0, 2)
+    crossOrigin.closed.unshift([
+      Math.min(...oldest.map(([from]) => from)),
+      Math.max(...oldest.map(([, to]) => to)),
+    ])
+  }
   const checkCrossOrigin = (full: boolean): void => {
     const now = Date.now()
     if (unreadableEmbedDrawn(full))
       crossOrigin.open ??= crossOrigin.clearSinceMs
-    else if (full && crossOrigin.open !== null) {
-      crossOrigin.closed.push([crossOrigin.open, now])
-      crossOrigin.open = null
+    // Only a full check reads every root, so only it ends an interval or moves the time a new one is dated to: a per-paint check that saw none may have skipped the root that holds the frame (a frame's own navigation, a shadow root attached since).
+    else if (full) {
+      closeCrossOrigin(now)
+      crossOrigin.clearSinceMs = now
     }
-    if (crossOrigin.open === null) crossOrigin.clearSinceMs = now
   }
   // `full` reads the rendered text as well; a check that skips it can open an unsafe time but never ends one.
   const check = (full = true): void => {
@@ -486,15 +503,33 @@ function installSecretFrameObserver(
         return {
           now: Date.now(),
           open: state.open,
-          unsafe: state.unsafe.slice(-100),
+          unsafe: state.unsafe.slice(-intervalsMax),
           crossOriginOpen: crossOrigin.open,
-          crossOrigin: crossOrigin.closed.slice(-100),
+          crossOrigin: crossOrigin.closed.slice(),
           ...(state.reason !== undefined && { reason: state.reason }),
         }
       },
     },
   })
   return { ok: true, origin: performance.timeOrigin }
+}
+
+/**
+ * The page expression that installs one {@link installSecretFrameObserver} with the gate's constants.
+ * Built by {@link SecretFrameGate.arm} for an armed control and by the gate when it follows a document replacement (`selector` `null`).
+ * @param selector - The armed control's selector, or `null` in a replacing document.
+ * @param globalName - The page global the observer keeps its record under.
+ * @param secretValue - The typed value, when known; it stays inside the page observer.
+ * @returns The expression to evaluate in the page; its value is the observer's install result.
+ * @example
+ * observerInstallExpression('#pw', '__codebookSecretFrameGate1', undefined) // => '(function installSecretFrameObserver(…) {…})("#pw","__codebookSecretFrameGate1",4,undefined,"iframe, …",100)'
+ */
+function observerInstallExpression(
+  selector: string | null,
+  globalName: string,
+  secretValue: string | undefined,
+): string {
+  return `(${installSecretFrameObserver.toString()})(${JSON.stringify(selector)},${JSON.stringify(globalName)},${SECRET_FRAME_VALUE_COPY_MIN_CHARS},${JSON.stringify(secretValue)},${JSON.stringify(SECRET_FRAME_EMBEDDED_DOCUMENT_SELECTOR)},${SECRET_FRAME_OBSERVER_INTERVALS_MAX})`
 }
 
 /**
@@ -547,7 +582,7 @@ export class SecretFrameGate {
     drops: 0,
     crossOriginDrops: 0,
   }
-  /** The times a drawn frame from another origin was on screen in the current document, reported by its observers (page clock). Never a failure. */
+  /** The times a drawn frame from another origin was on screen in the current document, reported by its observers (page clock). Never a failure. Each report covers every interval its observer closed (the oldest merged past the cap), so the latest replaces the one before. */
   private crossOriginIntervals: [number, number][] = []
   /** When a drawn frame from another origin appeared and has not left (page clock), or `null`. */
   private crossOriginOpenSinceMs: number | null = null
@@ -616,7 +651,7 @@ export class SecretFrameGate {
     this.observers.push(entry)
     try {
       const result = await this.options.evaluate(
-        `(${installSecretFrameObserver.toString()})(${JSON.stringify(selector)},${JSON.stringify(entry.global)},${SECRET_FRAME_VALUE_COPY_MIN_CHARS},${JSON.stringify(secretValue)},${JSON.stringify(SECRET_FRAME_EMBEDDED_DOCUMENT_SELECTOR)})`,
+        observerInstallExpression(selector, entry.global, secretValue),
         SECRET_FRAME_OBSERVER_TIMEOUT_MS,
       )
       const parsed = result as {
@@ -710,14 +745,15 @@ export class SecretFrameGate {
     reason: SecretFrameWithholdReason,
   ): Exclude<SecretFrameVerdict, 'pass'> {
     this.options.onDrop?.({ kind, atMs, reason })
-    this.count('drops')
-    if (reason === 'cross-origin-frame') {
+    const verdict =
+      reason === 'cross-origin-frame' ? 'drop-cross-origin-frame' : 'drop'
+    if (verdict === 'drop-cross-origin-frame') {
       this.counts.crossOriginDrops += 1
       this.withheldTotals.crossOriginFrame += 1
-      return 'drop-cross-origin-frame'
-    }
-    this.withheldTotals.secretNotVerified += 1
-    return 'drop'
+    } else this.withheldTotals.secretNotVerified += 1
+    // Counted last: counting may hand the interval's summary over, and every count of this drop belongs to that summary.
+    this.count('drops')
+    return verdict
   }
 
   /** Whether `[fromMs, toMs]` (widened by the margin) touches a time a frame from another origin was drawn, in this document or a replaced one. */
@@ -936,7 +972,7 @@ export class SecretFrameGate {
       this.observers.push(entry)
       try {
         const result = (await this.options.evaluate(
-          `(${installSecretFrameObserver.toString()})(null,${JSON.stringify(entry.global)},${SECRET_FRAME_VALUE_COPY_MIN_CHARS},${JSON.stringify(secretValue)},${JSON.stringify(SECRET_FRAME_EMBEDDED_DOCUMENT_SELECTOR)})`,
+          observerInstallExpression(null, entry.global, secretValue),
           SECRET_FRAME_OBSERVER_TIMEOUT_MS,
         )) as { ok?: boolean; origin?: number } | null
         if (result?.ok !== true) this.fail('observer-unanswered', -Infinity)
@@ -961,14 +997,17 @@ export class SecretFrameGate {
   private retireObserversExcept(
     keep: (typeof this.observers)[number] | undefined,
   ): void {
-    // What the old document's observers saw of frames from another origin outlives them.
-    this.retiredCrossOriginIntervals = [
-      ...this.retiredCrossOriginIntervals,
-      ...this.crossOriginIntervals,
-      ...(this.crossOriginOpenSinceMs === null
-        ? []
-        : [[this.crossOriginOpenSinceMs, Date.now()] as [number, number]]),
-    ].slice(-SECRET_FRAME_RETIRED_INTERVALS_MAX)
+    // What the old document's observers saw of frames from another origin outlives them; past the cap the oldest are merged, never dropped, so a late image of an early interval stays withheld.
+    this.retiredCrossOriginIntervals = coalesceOldestIntervals(
+      [
+        ...this.retiredCrossOriginIntervals,
+        ...this.crossOriginIntervals,
+        ...(this.crossOriginOpenSinceMs === null
+          ? []
+          : [[this.crossOriginOpenSinceMs, Date.now()] as const]),
+      ],
+      SECRET_FRAME_RETIRED_INTERVALS_MAX,
+    )
     this.crossOriginIntervals = []
     this.crossOriginOpenSinceMs = null
     this.unverifiedGaps.push([

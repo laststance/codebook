@@ -2271,6 +2271,9 @@ export const SECRET_FRAME_EMBEDDED_DOCUMENT_SELECTOR =
 /** How many cross-origin intervals of replaced documents the secret frame gate keeps, so a late image of an old document is still withheld. */
 export const SECRET_FRAME_RETIRED_INTERVALS_MAX = 100
 
+/** How many intervals of each kind (unsafe, cross-origin) one secret frame observer reports; past it, its two oldest cross-origin intervals become one that spans both, so the record stays bounded and loses no drawn time. */
+export const SECRET_FRAME_OBSERVER_INTERVALS_MAX = 100
+
 /** The `sourceURL` the run marks the secret frame gate's own page expressions with, so the script journal leaves them out. */
 export const SECRET_FRAME_SOURCE_URL = 'codebook-secret-frame-gate'
 
