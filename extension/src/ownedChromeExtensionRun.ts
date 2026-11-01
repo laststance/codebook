@@ -556,6 +556,15 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     const { beginHistory } = this.input
     if (beginHistory === undefined) return
     try {
+      // What can throw is built before the history begins, so a failure here never leaves a begun recorder the run does not feed.
+      const pauses = new ExtensionHistoryPauseTracker(
+        this.id,
+        resolved.surfaceUrl,
+        new URL(
+          resolved.workerPath ?? '',
+          `chrome-extension://${resolved.extensionId}/`,
+        ).href,
+      )
       this.history = await beginHistory({
         extension: {
           id: resolved.extensionId,
@@ -571,15 +580,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
         })),
         chromeVersion: this.input.chromeVersion ?? 'unknown',
       })
-      if (this.history)
-        this.historyPauses = new ExtensionHistoryPauseTracker(
-          this.id,
-          resolved.surfaceUrl,
-          new URL(
-            resolved.workerPath ?? '',
-            `chrome-extension://${resolved.extensionId}/`,
-          ).href,
-        )
+      if (this.history) this.historyPauses = pauses
     } catch {
       // The history never fails the run.
       this.history = undefined

@@ -18,6 +18,7 @@ import {
 } from './utils/chromeExtensionHistoryFixture'
 import {
   createRunHarness,
+  resolvedHarnessRun,
   type HarnessBehaviour,
 } from './utils/chromeExtensionRunHarness'
 import { openServerRepository } from './utils/nodeServerHistoryFixture'
@@ -312,4 +313,24 @@ test('a run whose history is unavailable tells its view it is not recorded with 
     },
   ])
   await harness.run.stop()
+})
+
+// protects=a run whose pause tracker cannot be built (an extension id that makes the worker URL invalid) never begins a history it would not feed, and goes on unrecorded; fails_when=the history begins and the run drops its recorder unsealed; no_claim=the wording of the not-recorded cause
+test('a run whose worker URL cannot be built does not begin a history', async () => {
+  // Arrange
+  let begun = 0
+  const harness = createRunHarness({
+    resolved: resolvedHarnessRun({ extensionId: 'bad id' }),
+    beginHistory: async () => {
+      begun++
+      return undefined
+    },
+  })
+
+  // Act
+  const finished = await driveRun(harness)
+
+  // Assert
+  assert.equal(begun, 0)
+  assert.equal(finished.phase, 'completed')
 })
