@@ -38,6 +38,12 @@ export async function realRunInService(
 ) {
   const abort = new AbortController()
   context.after(() => abort.abort())
+  let service: StudyService | undefined, books: RepositoryBookStore | undefined
+  // Registered before the harness: node:test runs after hooks in registration order, so the service drains its writes before the harness removes its folder.
+  context.after(async () => {
+    await service?.shutdown()
+    books?.dispose()
+  })
   const harness = await configuredRuntimeHarness(
     context,
     {
@@ -63,7 +69,7 @@ export async function realRunInService(
     join(harness.directory, '.learning'),
     '0'.repeat(64),
   )
-  const books = new RepositoryBookStore(harness.sources, library)
+  books = new RepositoryBookStore(harness.sources, library)
   await books.publish({
     bookId: 'interface',
     expectedRevision: 0,
@@ -83,7 +89,7 @@ export async function realRunInService(
       edges: [],
     },
   })
-  const service = new StudyService(
+  service = new StudyService(
     {
       workspace: harness.directory,
       host: {
@@ -103,10 +109,6 @@ export async function realRunInService(
     join(harness.directory, '.service'),
   )
   service.repository = books
-  context.after(async () => {
-    await service.shutdown()
-    books.dispose()
-  })
   const receipt = service.start({
     instanceId: service.instanceId,
     profile: 'repository-browser',

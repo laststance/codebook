@@ -1,4 +1,9 @@
-import { SIGN_IN_PATH_LIMIT, SIGN_IN_REQUIRED_REASONS } from './constants'
+import {
+  SIGN_IN_PATH_LIMIT,
+  SIGN_IN_REQUIRED_REASONS,
+  SIGN_IN_SETUP_TIMEOUT_MS,
+} from './constants'
+import { describeMinutes } from './utils/describeMinutes'
 
 /**
  * Builds the "Set up a saved session" section of `codebook://help/repository-browser`: what the saved session is, what it keeps, where it lives, how to remove it, and how the chat waits for the learner and how a version 3 run uses the session and when it refuses (DX-6, DX-9, DX-10, DX-11). The confirmation before operation 1 is linked, not repeated.
@@ -20,7 +25,7 @@ export function savedSessionHelp() {
       whatIsKept:
         "The saved session keeps what that browser keeps for the app: cookies, local storage, IndexedDB, and an OAuth provider's session (for example GitHub) when the sign-in went through one. Password saving is turned off, so no password is stored.",
       where:
-        "One folder per editor and repository, private to the user (mode 0700 on macOS and Linux), in the editor's global storage for Codebook (sign-in-profiles). It is never in the repository, the VSIX, a recording or evidence, and Chrome encrypts its cookies there with the system keychain.",
+        "One folder per editor and repository, private to the user (mode 0700 on macOS and Linux), in the editor's global storage for Codebook (sign-in-profiles). It is never in the repository, the VSIX, a recording or evidence. Chrome protects its cookies there with the operating system's credential store where one is available.",
       remove:
         "Codebook: Remove Saved Session… deletes the folder directly, not to the Trash, because it holds the app's sign-in cookies. While a run uses it, the removal offers Stop run and remove.",
       status:
@@ -29,8 +34,7 @@ export function savedSessionHelp() {
         'After you relay SIGN_IN_REQUIRED, read codebook_status at most every 10 s for at most 5 minutes. Start one new run only when savedSession.state is saved with a newer setupAt; otherwise stop and tell the learner what to do. A second SIGN_IN_REQUIRED for the same repository without a newer setupAt: stop and ask the learner.',
       confirmation:
         'Before operation 1 of a run that uses the saved session the learner confirms the operations in an editor dialog: see codebook://help/repository-browser#saved-session-confirmation.',
-      setup:
-        'Codebook starts the app, opens its own Chrome window at the sign-in page and shows Done and Close setup. Close setup, closing the window or 10 minutes without Done keep what the browser saved, but runs do not use it until a later Done.',
+      setup: `Codebook starts the app, opens its own Chrome window at the sign-in page and shows Done and Close setup. Close setup, closing the window or ${describeMinutes(SIGN_IN_SETUP_TIMEOUT_MS)} without Done keep what the browser saved, but runs do not use it until a later Done.`,
       runs: 'A version 3 run of a repository with a saved session starts with it: Codebook\'s own Chrome opens the repository\'s saved-session folder, in VS Code and in Cursor alike, so the app keeps the data the saved session already had. The run resource reads session: "saved", appState: "kept" and savedSession { available, state, setupAt }; codebook_status holds the current value. Versions 1 and 2 always start with a fresh profile and never check for a sign-in page.',
       signInPaths: `For a flow behind sign-in, declare signInPaths: 1 to ${SIGN_IN_PATH_LIMIT} absolute paths without a query, such as ["/login"], read from the app's own sign-in route (its proxy or middleware, its auth configuration), never guessed. When the page lands on one of them, at the entry load or after an operation, the run ends with SIGN_IN_REQUIRED before anything more is sent. A path is compared with location.pathname after one trailing slash is removed, so /login/ and /login?callbackUrl=… match /login. A locale-prefixed path such as /en/login needs its own entry. The entry path itself cannot be a sign-in path: leave signInPaths out to explain the sign-in page.`,
       reasons: `SIGN_IN_REQUIRED carries details.reason, one of ${SIGN_IN_REQUIRED_REASONS.join(', ')}. no-saved-session: none is set up, or the run declared session: "fresh". setup-not-finished: the last setup was closed before Done. redirected-to-sign-in: the run used the saved session and the app still asked, so it may have expired. session-cookie-only: the app keeps its sign-in only while the browser stays open, so a saved session cannot keep it. Relay the editor's step to the learner. Never type a password to get past sign-in, and never resume the refused run.`,

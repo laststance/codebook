@@ -1683,7 +1683,6 @@ export async function configuredRuntimeHarness(
         debuggerPausedEvent({ callFrameId: 'adapter-frame', ...place }),
       )
     },
-    /** Makes the stand-in page draw the secret control's text from now on, as a show-password toggle does; `false` restores the dots. */
     /**
      * Shows or hides a frame from another origin on the stand-in page, as the observer would report it.
      * @returns The page time (ms since the epoch) it recorded.
@@ -1697,6 +1696,7 @@ export async function configuredRuntimeHarness(
       }
       return now
     },
+    /** Makes the stand-in page draw the secret control's text from now on, as a show-password toggle does; `false` restores the dots. */
     setSecretVisible(visible: boolean): void {
       secretVisibleSince = visible ? Date.now() : null
     },

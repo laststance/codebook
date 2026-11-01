@@ -15,13 +15,18 @@ import { isUnlinkedRegularFile } from './isUnlinkedRegularFile'
 /** The source file kinds a Vite sign-in path scan reads. */
 const VITE_SOURCE_PATTERN = /\.(?:tsx?|jsx?|vue|svelte)$/
 
-/** Says whether any default-extension page file exists at `<base>.<ext>`, links never followed. */
+/** Says whether any default-extension page file exists at `<base>.<ext>`, links never followed; a path whose status cannot be read (permission, I/O) counts as no file. */
 async function hasSourceWithExtension(
   workspace: string,
   base: string,
 ): Promise<boolean> {
   for (const extension of NEXT_PAGES_SOURCE_EXTENSIONS)
-    if (await isUnlinkedRegularFile(workspace, `${base}.${extension}`))
+    if (
+      // Discovery only orders the offered paths, so an unreadable folder hides its route instead of failing the setup command.
+      await isUnlinkedRegularFile(workspace, `${base}.${extension}`).catch(
+        () => false,
+      )
+    )
       return true
   return false
 }
@@ -165,7 +170,7 @@ async function discoverViteSignInPaths(
 /**
  * Finds which of the usual sign-in paths the repository has, so the setup offers the app's own route first.
  * Called by the Set Up Saved Session command before it asks where the app signs in (DX-14).
- * Next: a page file at the path in the App Router (directly or under one top-level route group) or the Pages Router; links are never followed. Vite has no route files, so a bounded scan of `src/` looks for the path as a quoted literal.
+ * Next: a page file at the path in the App Router (directly or under one top-level route group) or the Pages Router; links are never followed. Vite has no route files, so a bounded scan of `src/` looks for the path as a quoted literal. A folder or file that cannot be read counts as having no route, so discovery never fails the setup.
  * @param workspace - The opened repository.
  * @param adapter - The repository's development server adapter.
  * @param signal - Ends the scan.

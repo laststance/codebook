@@ -31,6 +31,24 @@ test('the saved-session help says what is kept, where it lives, how to remove it
     assert.ok(OPERATIONS_ERROR_CODES.includes(code), code)
 })
 
+// protects=OCR 57 (the help tells a chat only what holds): the setup bound it names is the one the setup enforces, and Chrome's cookie protection is not stated as keychain encryption on every system; fails_when=the help says Chrome encrypts the cookies with the system keychain (Linux without a Secret Service falls back to a fixed key), or the setup bound reads other than 10 minutes; no_claim=Chrome's cookie encryption itself, the README's own sentence
+test('the saved-session help names the 10-minute setup bound and never claims keychain encryption of the cookies', () => {
+  // Arrange
+  const { savedSession } = savedSessionHelp()
+  // Act
+  const help = JSON.stringify(savedSession)
+  // Assert
+  assert.match(
+    savedSession.setup,
+    /closing the window or 10 minutes without Done keep what the browser saved/,
+  )
+  assert.match(
+    savedSession.where,
+    /Chrome protects its cookies there with the operating system's credential store where one is available\./,
+  )
+  assert.doesNotMatch(help, /keychain/i)
+})
+
 // protects=cross-check 12 (one anchored saved-session section): setup and the run rules live under one key and one anchor, link the confirmation section, and no second saved-session key or repeated sentence remains; fails_when=a separate run section returns, a run rule goes missing, or a sentence is repeated; no_claim=wording
 test('the saved-session help is one section holding setup and run rules, linking the confirmation, with no repeated sentence', () => {
   // Arrange

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -61,6 +61,29 @@ test('a linked login folder is not offered as a route', async (context) => {
   // Assert
   assert.deepEqual(paths, [])
 })
+
+// protects=OCR 49 (discovery is only a hint, so Codebook: Set Up Saved Session… still reaches the path question); fails_when=a route group whose folder this user cannot read makes discovery reject instead of offering the routes it could read; no_claim=Windows ACLs, a root user (who reads every folder)
+test(
+  'a Next route group this user cannot read hides its routes and still offers the readable /login',
+  { skip: process.platform === 'win32' || process.getuid?.() === 0 },
+  async (context) => {
+    // Arrange
+    const root = await repository(context, {
+      'app/login/page.tsx': '',
+      'app/(admin)/sign-in/page.tsx': '',
+    })
+    const lockedGroup = join(root, 'app/(admin)')
+    await chmod(lockedGroup, 0o000)
+    // Act
+    const paths = await discoverSignInPaths(
+      root,
+      'next-dev-webpack',
+      signal,
+    ).finally(() => chmod(lockedGroup, 0o755))
+    // Assert
+    assert.deepEqual(paths, ['/login'])
+  },
+)
 
 // protects=DX-14 Vite (no route files); fails_when=a quoted literal is missed or a literal in node_modules counts; no_claim=router-specific syntax
 test('a Vite repository offers a sign-in path that src names as a quoted literal and ignores node_modules', async (context) => {
