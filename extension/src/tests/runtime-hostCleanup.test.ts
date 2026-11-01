@@ -9,6 +9,7 @@ import fsPromises, {
   writeFile,
   rm,
   stat,
+  symlink,
 } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import * as os from 'node:os'
@@ -21,6 +22,7 @@ import {
 } from 'node:timers/promises'
 import { runInNewContext } from 'node:vm'
 
+import { StudyError } from '../errors'
 import type { BrowserViewportFactory } from '../runtimeSupport/browserViewport'
 import { Cdp } from '../runtimeSupport/cdp'
 import * as runtimeConstants from '../runtimeSupport/constants'
@@ -1894,6 +1896,142 @@ test('a saved-session close that cannot confirm the exit rejects and never remov
       managed.events.some((event) =>
         event.type.startsWith('browser.managed-profile-'),
       ),
+      false,
+    )
+  }
+})
+
+// Value: protects=OCR 53 / R8 path hiding (no chat error or run.failed record names the saved folder); fails_when=a failed preparation of the saved folder (Preferences, Singleton entries) rejects the launch with the lease's path, or with the real path because the real spelling was learned only after the preparation; no_claim=the service's sanitizing of the error (service tests) and the store's own preparation (signInProfile tests)
+test('a saved-session launch whose folder preparation fails names the folder in no error, by the lease path or its real path', async (context) => {
+  // Arrange
+  const saved = await savedSessionFolder(context, [])
+  const sessions = dirname(saved.folder)
+  const linked = join(dirname(sessions), 'linked-profiles')
+  await symlink(sessions, linked, 'dir')
+  const leasePath = join(linked, basename(saved.folder))
+  const managed = await managedBrowser(context)
+  managed.browser.useSavedProfile({
+    ...saved.lease,
+    profile: leasePath,
+    async prepareForLaunch(): Promise<void> {
+      // A rename names both spellings, as Node's own error does for its two paths.
+      throw Object.assign(
+        new Error(
+          `EACCES: permission denied, rename '${leasePath}/Default/Preferences.tmp' -> '${saved.folder}/Default/Preferences'`,
+        ),
+        { code: 'EACCES' },
+      )
+    },
+  })
+
+  // Act
+  const failure: unknown = await managed.browser
+    .launch(
+      { type: 'editor-browser', name: 'owned', request: 'launch' },
+      new AbortController().signal,
+    )
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+  // Assert
+  assert.ok(failure instanceof Error)
+  assert.equal(
+    failure.message,
+    "EACCES: permission denied, rename '<saved-session>/Default/Preferences.tmp' -> '<saved-session>/Default/Preferences'",
+  )
+  assert.equal(Reflect.get(failure, 'code'), 'EACCES')
+  assert.equal(
+    String(failure.stack).includes('hash0123456789'),
+    false,
+    'the stack repeats no message that named the folder',
+  )
+  assert.equal(JSON.stringify(managed.events).includes('hash0123456789'), false)
+})
+
+// Value: protects=DX-5 (a run start refusal keeps its code, retry rule and log id) beside the path hiding; fails_when=hiding the saved folder turns the store's SIGN_IN_PROFILE_IN_USE refusal of the preparation into a plain error; no_claim=the refusal's wording (savedSessionRefusal tests)
+test('a saved-session preparation refused because the folder is in use reaches the run as the same coded refusal', async (context) => {
+  // Arrange
+  const saved = await savedSessionFolder(context, [])
+  const refusal = new StudyError(
+    'SIGN_IN_PROFILE_IN_USE',
+    'The saved session of dashboard is in use, so nothing was changed.',
+  )
+  const managed = await managedBrowser(context)
+  managed.browser.useSavedProfile({
+    ...saved.lease,
+    async prepareForLaunch(): Promise<void> {
+      throw refusal
+    },
+  })
+
+  // Act
+  const failure: unknown = await managed.browser
+    .launch(
+      { type: 'editor-browser', name: 'owned', request: 'launch' },
+      new AbortController().signal,
+    )
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+  // Assert
+  assert.equal(failure, refusal)
+})
+
+// Value: protects=OCR 53 / R8 path hiding after the launch; fails_when=a failed owned-browser marker write, or a process listing that cannot resolve the saved folder, rejects the run's preparation with the folder's path or hash; no_claim=the marker's content (signInProfile tests)
+test('a saved-session Chrome whose marker write or process listing fails names the folder in no error', async (context) => {
+  for (const scenario of ['marker write fails', 'listing fails'] as const) {
+    // Arrange
+    const saved = await savedSessionFolder(context, [])
+    const managed = await managedBrowser(context, {
+      processesOfProfile: () => [
+        {
+          pid: 4242,
+          command: `/Applications/Google Chrome --remote-debugging-pipe --user-data-dir=${saved.folder} --headless=new`,
+        },
+      ],
+    })
+    managed.browser.useSavedProfile({
+      ...saved.lease,
+      async recordBrowser(): Promise<void> {
+        throw Object.assign(
+          new Error(
+            `ENOSPC: no space left on device, write '${saved.folder}/codebook-owned-browser'`,
+          ),
+          { code: 'ENOSPC' },
+        )
+      },
+    })
+    const signal = new AbortController().signal
+    await managed.browser.launch(
+      { type: 'editor-browser', name: 'owned', request: 'launch' },
+      signal,
+    )
+    // A folder that is gone fails the listing's resolution of it with an error that names it.
+    if (scenario === 'listing fails')
+      await rm(saved.folder, { recursive: true, force: true })
+
+    // Act
+    const failure: unknown = await managed.browser
+      .recordSavedBrowser(signal)
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+
+    // Assert
+    assert.ok(failure instanceof Error, scenario)
+    assert.equal(
+      failure.message,
+      scenario === 'marker write fails'
+        ? "ENOSPC: no space left on device, write '<saved-session>/codebook-owned-browser'"
+        : "ENOENT: no such file or directory, realpath '<saved-session>'",
+    )
+    assert.equal(
+      JSON.stringify(managed.events).includes('hash0123456789'),
       false,
     )
   }
