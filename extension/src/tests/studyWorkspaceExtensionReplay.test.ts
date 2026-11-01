@@ -1049,3 +1049,50 @@ test('the timeline of an Extension replay marks the spans between recorded pause
     await harness.close()
   }
 })
+
+// protects=an Extension replay that cannot be read is logged in Output › Codebook as open:extension-replay with the chrome-extension profile, and its notice names the saved question, never the raw study id or a test replay; fails_when=the entry names open:test-replay or node-test, or the notice shows the study id; no_claim=the notice's remaining wording
+test('an Extension replay whose journal cannot be read is logged as open:extension-replay and named by its question', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  const logged: { surface?: string; studyId?: string; profile?: string }[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  try {
+    const history = await writeExtensionHistoryFor(harness, RUN, {
+      question: 'Why does Save fail?',
+    })
+    await harness.reader.action('retry')
+    context.mock.method(
+      repositoryOf(harness).extensionHistories,
+      'read',
+      async () => {
+        throw new Error('journal unreadable')
+      },
+    )
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () => harness.errorMessages.length > 0,
+      'the failure notice is shown',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(
+      logged.map((entry) => [entry.surface, entry.studyId, entry.profile]),
+      [['open:extension-replay', history.studyId, 'chrome-extension']],
+    )
+    assert.equal(
+      harness.errorMessages[0]?.startsWith(
+        'Codebook could not open the Extension replay "Why does Save fail?": journal unreadable.',
+      ),
+      true,
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})

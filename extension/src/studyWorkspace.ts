@@ -12853,12 +12853,15 @@ export class StudyWorkspace {
   /**
    * Names the Output › Codebook entry's surface and profile for a replay that did not open, from the catalogs, as the failure notification's wording does; called by {@link tellTestReplayOpenFailure} and {@link answerFailedTestReplayOpen}.
    * @param studyId - The replay's study id.
-   * @returns `open:server-replay` with profile `node-server` for a server replay (listed, or a node-server run of this window not yet listed); `open:test-replay` with `node-test` otherwise.
+   * @returns `open:server-replay` with profile `node-server` for a server replay (listed, or a node-server run of this window not yet listed); `open:extension-replay` with `chrome-extension` for an Extension replay ({@link isExtensionReplay}); `open:test-replay` with `node-test` otherwise.
    * @example this.replayOpenDiagnosticIdentity(studyId) // => { surface: 'open:server-replay', profile: 'node-server' }
    */
   private replayOpenDiagnosticIdentity(studyId: string): {
-    surface: 'open:server-replay' | 'open:test-replay'
-    profile: typeof NODE_SERVER_PROFILE | typeof NODE_TEST_PROFILE
+    surface: 'open:server-replay' | 'open:extension-replay' | 'open:test-replay'
+    profile:
+      | typeof NODE_SERVER_PROFILE
+      | typeof CHROME_EXTENSION_PROFILE
+      | typeof NODE_TEST_PROFILE
   } {
     const isListedTest = this.nodeHistoryCatalog.some(
       (history) => history.studyId === studyId,
@@ -12869,9 +12872,15 @@ export class StudyWorkspace {
         (history) => history.studyId === studyId,
       ) ||
         this.recordOfStudy(studyId)?.profile === NODE_SERVER_PROFILE)
-    return isServer
-      ? { surface: 'open:server-replay', profile: NODE_SERVER_PROFILE }
-      : { surface: 'open:test-replay', profile: NODE_TEST_PROFILE }
+    if (isServer)
+      return { surface: 'open:server-replay', profile: NODE_SERVER_PROFILE }
+    // An Extension replay is logged as its own surface, never as a test replay.
+    if (!isListedTest && this.isExtensionReplay(studyId))
+      return {
+        surface: 'open:extension-replay',
+        profile: CHROME_EXTENSION_PROFILE,
+      }
+    return { surface: 'open:test-replay', profile: NODE_TEST_PROFILE }
   }
 
   /** Whether the study is an Extension replay, listed or just saved by this window; worded as one in an open-failure notice. @example this.isExtensionReplay(studyId) // => true */
@@ -12910,6 +12919,9 @@ export class StudyWorkspace {
     const serverSummary = this.nodeServerHistoryCatalog.find(
       (history) => history.studyId === studyId,
     )
+    const extensionSummary = this.nodeExtensionHistoryCatalog.find(
+      (history) => history.studyId === studyId,
+    )
     const failure = describeNodeLearningSave({
       kind: 'open-failed',
       // A server replay that cannot open is worded as one, never as a test replay, also before Saved studies lists it.
@@ -12922,7 +12934,9 @@ export class StudyWorkspace {
         ? [summary.testFile, ...(summary.testTitles ?? [])].join(' › ')
         : serverSummary
           ? (serverSummary.title ?? serverSummary.question)
-          : studyId,
+          : extensionSummary
+            ? (extensionSummary.title ?? extensionSummary.question)
+            : studyId,
       cause,
     })
     // The answer is handled whenever it arrives, outside every entry's turn.
