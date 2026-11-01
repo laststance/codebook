@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
+import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import {
   parseCursorWikiCliResult,
   requestCursorWikiText,
@@ -114,27 +116,28 @@ test('excess Cursor Agent output terminates the isolated Wiki request', async ()
   }
 })
 
-test('cancelling an active Cursor Agent request removes its temporary workspace', async () => {
-  // Arrange
-  const fakeHome = await mkdtemp(join(tmpdir(), 'codebook-hanging-agent-'))
-  const binaryDirectory = join(fakeHome, '.local', 'bin')
-  await mkdir(binaryDirectory, { recursive: true })
-  await writeFile(
-    join(binaryDirectory, 'cursor-agent'),
-    `#!${process.execPath}\nprocess.stdin.resume(); setInterval(() => {}, 1000);\n`,
-    { mode: 0o755 },
-  )
-  const previousHome = process.env.HOME
-  process.env.HOME = fakeHome
-  const questionWorkspaces = async () =>
-    (await readdir(tmpdir()))
-      .filter((name) => name.startsWith('codebook-wiki-question-'))
-      .sort()
-  const before = await questionWorkspaces()
+/**
+ * Creates a Wiki request cancellation token that keeps VS Code's promise for late listeners.
+ *
+ * VS Code calls a listener registered on an already-cancelled token on the next tick, so a cancellation that lands
+ * while {@link requestCursorWikiText} is still preparing (before it subscribes) stops the request all the same.
+ * Used by the cancellation tests below in place of `vscode.CancellationTokenSource`, which the extension passes.
+ *
+ * @returns The token to pass to the request and the `cancel` the test calls.
+ * @example
+ * const { token, cancel } = cancellationTokenLikeVsCode()
+ * cancel() // later listeners run on the next tick
+ */
+function cancellationTokenLikeVsCode() {
   const listeners = new Set<(event: unknown) => unknown>()
   const token = {
     isCancellationRequested: false,
     onCancellationRequested(listener: (event: unknown) => unknown) {
+      // A cancelled token answers a late listener on the next tick, as VS Code's shortcut event does
+      if (token.isCancellationRequested) {
+        const handle = setTimeout(() => listener(undefined), 0)
+        return { dispose: (): void => clearTimeout(handle) }
+      }
       listeners.add(listener)
       return {
         dispose(): void {
@@ -143,22 +146,91 @@ test('cancelling an active Cursor Agent request removes its temporary workspace'
       }
     },
   }
-  const timer = setTimeout(() => {
+  const cancel = (): void => {
     token.isCancellationRequested = true
     for (const listener of listeners) listener(undefined)
-  }, 50)
-  try {
-    // Act / Assert
-    await assert.rejects(
-      requestCursorWikiText('Question: test', token),
-      /cancelled/,
-    )
-    assert.deepEqual(await questionWorkspaces(), before)
-  } finally {
-    clearTimeout(timer)
+  }
+  return { token, cancel }
+}
+
+/**
+ * Installs a fake Cursor Agent CLI that marks its start and never answers, under a temporary HOME.
+ *
+ * Lets a cancellation test choose whether it cancels before or after the agent process started.
+ *
+ * @returns The marker file the agent writes when it starts, and `restore`, which puts HOME back and removes the fake home.
+ * @example
+ * const agent = await installHangingCursorAgent()
+ * await agent.restore()
+ */
+async function installHangingCursorAgent() {
+  const fakeHome = await mkdtemp(join(tmpdir(), 'codebook-hanging-agent-'))
+  const binaryDirectory = join(fakeHome, '.local', 'bin')
+  const startedMarker = join(fakeHome, 'agent-started')
+  await mkdir(binaryDirectory, { recursive: true })
+  await writeFile(
+    join(binaryDirectory, 'cursor-agent'),
+    `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(startedMarker)}, ''); process.stdin.resume(); setInterval(() => {}, 1000);\n`,
+    { mode: 0o755 },
+  )
+  const previousHome = process.env.HOME
+  process.env.HOME = fakeHome
+  const restore = async (): Promise<void> => {
     if (previousHome === undefined) delete process.env.HOME
     else process.env.HOME = previousHome
     await rm(fakeHome, { recursive: true, force: true })
+  }
+  return { startedMarker, restore }
+}
+
+const questionWorkspaces = async () =>
+  (await readdir(tmpdir()))
+    .filter((name) => name.startsWith('codebook-wiki-question-'))
+    .sort()
+
+// protects=a Wiki question cancelled while Cursor Agent runs stops it and removes the temporary workspace; fails_when=the cancellation is ignored until the request times out, or the workspace stays behind; no_claim=a real Cursor Agent: a node script stands in for the CLI and a VS Code-like token for the editor's
+test('cancelling an active Cursor Agent request removes its temporary workspace', async () => {
+  // Arrange
+  const agent = await installHangingCursorAgent()
+  const before = await questionWorkspaces()
+  const { token, cancel } = cancellationTokenLikeVsCode()
+  try {
+    // Act
+    const request = requestCursorWikiText('Question: test', token)
+    const outcome = request.then(
+      () => 'answered',
+      (error: unknown) => String(error),
+    )
+    await waitUntil(
+      () => existsSync(agent.startedMarker),
+      'the Cursor Agent process to start',
+    )
+    cancel()
+    // Assert
+    assert.match(await outcome, /cancelled/)
+    assert.deepEqual(await questionWorkspaces(), before)
+  } finally {
+    await agent.restore()
+  }
+})
+
+// protects=a Wiki question cancelled while the request still prepares (before it subscribes to the token) stops at once; fails_when=the request waits for its 120 s timeout or leaves its temporary workspace; no_claim=a real Cursor Agent: a node script stands in for the CLI and a VS Code-like token for the editor's
+test('cancelling a Cursor Agent request before the agent starts stops it without waiting for the timeout', async () => {
+  // Arrange
+  const agent = await installHangingCursorAgent()
+  const before = await questionWorkspaces()
+  const { token, cancel } = cancellationTokenLikeVsCode()
+  const startedMs = performance.now()
+  try {
+    // Act
+    const request = requestCursorWikiText('Question: test', token)
+    cancel()
+    // Assert
+    await assert.rejects(request, /cancelled/)
+    assert.ok(performance.now() - startedMs < 5_000)
+    assert.deepEqual(await questionWorkspaces(), before)
+  } finally {
+    await agent.restore()
   }
 })
 
