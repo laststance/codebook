@@ -7596,6 +7596,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       : this.stopIndex + 1 <
         configuredStops(this.definition.configuration).length
     if (this.operationsConfiguration && !advancesToNextStop) {
+      // A pause queued during this continuation belongs to no declared stop of this operation (an undeclared or learner breakpoint); versions 1 and 2 fail such a pause, and so does this branch before the operation settles.
+      const queuedStop = this.pendingCdpStop ?? this.pendingDapStop
+      if (queuedStop) {
+        this.pendingCdpStop = undefined
+        this.pendingDapStop = undefined
+        this.fail(
+          `Unexpected or additional ${queuedStop.participant} stop invalidated the declared operation`,
+        )
+        return
+      }
       const operationIndex = afterOperationOf(continuedStop!)!
       this.stopIndex++
       this.acceptedStop = false

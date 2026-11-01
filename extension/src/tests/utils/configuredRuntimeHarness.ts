@@ -1631,6 +1631,15 @@ export async function configuredRuntimeHarness(
     hideViewportOnPause(): void {
       hideViewportAtPause = true
     },
+    /** Reports a debugger `stopped` event of the browser session with no runtime pause, as a breakpoint of the learner's own does. @example harness.emitDapStopOnly() */
+    emitDapStopOnly(threadId = 1): void {
+      run.onEvent(selected, {
+        seq: ++requestSequence,
+        type: 'event',
+        event: 'stopped',
+        body: { threadId, reason: 'breakpoint' },
+      })
+    },
     manualResume(): void {
       listeners.get('Debugger.resumed')?.({})
     },

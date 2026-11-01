@@ -609,6 +609,50 @@ test('an adapter pause that never retires fails the operation as an unexpected f
   })
 })
 
+// protects=a stop that arrives while the last stop of operation 1 is being continued, and belongs to no declared stop of operation 1, fails the run as an unexpected or additional stop before operation 1 settles; fails_when=the queued stop is silently dropped, so the run offers operation 2 or later fails with a misleading result message; no_claim=a real debugger (the harness reports the pause at the column of the stop declared for operation 2)
+test('a stop queued while the last stop of an operation is continued fails the run as an unexpected stop', async (context) => {
+  // Arrange
+  const { run, holdContinuation, emitDapStopOnly } =
+    await configuredRuntimeHarness(
+      context,
+      undefined,
+      [{ line: 1, column: 7, inspections: [...ENABLED_STOP] }],
+      {
+        operations: {
+          operations: [amount, submit],
+          stopOperations: [1, 2],
+          controls: { ...NUMBER_CONTROLS },
+        },
+      },
+    )
+  const receipts = holdContinuation()
+  await run.prepare()
+  run.action('op-1', OPERATION_ACTION)
+  const firstStop = await waitUntil(
+    () => run.view().participants.browser.snapshot,
+    'the stop of operation 1',
+  )
+  const continuation = run
+    .continue('browser', firstStop.pause)
+    .catch(() => undefined)
+  await receipts.started
+  // Act: a debugger stop of the same participant arrives, before operation 2 was sent.
+  emitDapStopOnly()
+  receipts.dap()
+  receipts.cdp()
+  receipts.input()
+  receipts.response()
+  await continuation
+  await waitUntil(() => run.view().status === 'failed', 'the failure')
+  // Assert
+  const view = run.view()
+  assert.match(
+    view.failures.join('\n'),
+    /Unexpected or additional browser stop invalidated the declared operation/,
+  )
+  assert.notEqual(view.operations?.[0]?.state, 'done')
+})
+
 // protects=E4: a full document load between operations ends a Next run with NAVIGATION_BEFORE_LAST_OPERATION, while the entry load and a load after the last operation are not failures; fails_when=a load before the last operation is followed silently, or the entry load fails the run; no_claim=Chrome's real frameNavigated events (harness reports them)
 test('a document load after operation 1 of 2 ends the run, and the entry load does not', async (context) => {
   // Arrange
