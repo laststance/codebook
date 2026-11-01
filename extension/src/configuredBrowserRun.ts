@@ -8474,7 +8474,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
   /**
    * Fails the run: records the reason, revokes every completion token, journals `run.failed` and schedules the cleanup; the body of {@link fail} for a run that may still fail, and called by {@link observeAfter} for a completed run whose final save failed, which {@link fail} leaves completed (Cycle 0047 row 197).
-   * @param reason - The failure, as the run's failures and its journal name it.
+   * @param unmaskedReason - The failure before masking; the run's failures and its journal keep its masked form.
    * @example this.enterFailure('Error: ENOSPC: no space left on device, write')
    */
   private enterFailure(unmaskedReason: string): void {
