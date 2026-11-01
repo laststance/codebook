@@ -8,6 +8,10 @@ import {
   SIGN_IN_PROFILE_DISK_CACHE_BYTES,
   SIGN_IN_PROFILE_POLL_MS,
 } from '../constants'
+import {
+  readProcessStart,
+  type ProcessStartReader,
+} from '../utils/readProcessStart'
 
 import { WebSocketFlatCdp, type FlatCdpTransport } from './flatCdpConnection'
 import type { BrowserProcess } from './ownedExtensionBrowser'
@@ -18,6 +22,7 @@ import { browserProcessOf } from './utils/browserProcessOf'
 import { readCdpString } from './utils/cdpFieldReaders'
 import type { ListedProcess } from './utils/listProcesses'
 import { listProcesses } from './utils/listProcesses'
+import type { OwnedBrowserMarker } from './utils/ownedBrowserMarker'
 import { ownedChromeArguments } from './utils/ownedChromeArguments'
 import { profileProcesses } from './utils/profileProcesses'
 import { SignInBrowserStopUnconfirmedError } from './utils/signInBrowserStopUnconfirmedError'
@@ -26,6 +31,7 @@ import {
   stopListedProcesses,
   type ProcessStopper,
 } from './utils/stopListedProcesses'
+import { stopperGuardedByStart } from './utils/stopperGuardedByStart'
 
 /** A browser Codebook spawned with a debugging pipe: its process and the transport to its commands. */
 export type PipedBrowserProcess = BrowserProcess & {
@@ -35,16 +41,18 @@ export type PipedBrowserProcess = BrowserProcess & {
 /** What the setup browser acts through; each is the real one unless a test names its own. */
 export interface SignInBrowserDependencies {
   spawnBrowser(executable: string, args: readonly string[]): PipedBrowserProcess
-  /** Lists the processes whose command line names the profile folder; rejects when the listing cannot be made (then no exit is confirmed). */
+  /** Lists the processes whose command line names the profile folder; rejects when the listing cannot be made (then no exit is confirmed). It only confirms an exit: a listed process is never signalled. */
   listProfileProcesses(profile: string): Promise<ListedProcess[]>
   stopper: ProcessStopper
+  /** Reads a process's start ({@link readProcessStart}): the proof that the pid a forced stop signals is still the browser Codebook spawned. */
+  readStart: ProcessStartReader
   /** Waits between two looks at the process listing. */
   sleep(ms: number): Promise<void>
 }
 
 /**
  * How a close ended.
- * `graceful`: Browser.close was honoured, the process exited and no process names the folder, and no earlier attempt had to stop it; `forced`: the bound passed, the group was stopped and a fresh listing shows no process on the folder (also a retry after an attempt that sent a stop, since that browser may not have saved its cookies); `unconfirmed`: neither could be shown, so the folder may still be in use and the caller keeps its lock and may retry.
+ * `graceful`: Browser.close was honoured, the process exited and no process names the folder, and no earlier attempt had to stop it; `forced`: the bound passed, the browser Codebook spawned was stopped with its group and a fresh listing shows no process on the folder (also a retry after an attempt that sent a stop, since that browser may not have saved its cookies); `unconfirmed`: neither could be shown, also while a process Codebook cannot prove it spawned names the folder (such a process is never signalled), so the folder may still be in use and the caller keeps its lock and may retry.
  */
 export type SignInBrowserCloseResult = 'graceful' | 'forced' | 'unconfirmed'
 
@@ -52,7 +60,7 @@ export type SignInBrowserCloseResult = 'graceful' | 'forced' | 'unconfirmed'
 export interface SignInBrowser {
   /** The browser's `product` text from `Browser.getVersion`, for example `Chrome/154.0.1.2`. */
   readonly chromeVersion: string
-  /** Calls the listener once when the learner closes the last page or the browser exits without a close having been asked; returns the unsubscribe. */
+  /** Calls the listener once when the learner closes the last page or the browser exits without a close having been asked; a close that came before the subscription (while the browser was still starting) is told right after the subscribing call returned, unless a close was asked by then. Returns the unsubscribe. */
   onClosedByLearner(listener: () => void): () => void
   /** Reads only the kind of the host's cookies; any failure answers `unknown`. No cookie value ever leaves this call. */
   readAppCookieKind(host: string): Promise<AppCookieKind>
@@ -104,6 +112,10 @@ export function signInBrowserArguments(
   })
 }
 
+/** How the setup browser is spawned: leading a process group of its own off Windows (`detached`), so one signal to the group reaches its helpers; on Windows `taskkill /T` reaches them through the process tree instead. */
+const SETUP_BROWSER_LAUNCH_KIND: NonNullable<OwnedBrowserMarker['launchKind']> =
+  process.platform === 'win32' ? 'attached' : 'detached'
+
 /** Starts the real Chrome with pipes on descriptors 3 and 4, leading its own process group on POSIX so one signal ends its helpers too. */
 function spawnPipedBrowser(
   executable: string,
@@ -112,7 +124,7 @@ function spawnPipedBrowser(
   const child = spawn(executable, [...args], {
     stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'],
     windowsHide: true,
-    detached: process.platform !== 'win32',
+    detached: SETUP_BROWSER_LAUNCH_KIND === 'detached',
   })
   // fd 3 is what Chrome reads (our write end); fd 4 is what Chrome writes (our read end).
   const toBrowser = child.stdio[3]
@@ -133,6 +145,7 @@ const REAL_SIGN_IN_BROWSER_DEPENDENCIES: SignInBrowserDependencies = {
   listProfileProcesses: async (profile) =>
     profileProcesses(profile, await listProcesses()),
   stopper: REAL_PROCESS_STOPPER,
+  readStart: readProcessStart,
   sleep: (ms) => delay(ms),
 }
 
@@ -161,34 +174,67 @@ async function waitForEmptyProfile(
   return false
 }
 
-/** What one forced stop did: whether it sent a stop to any process, and whether the stop result and a fresh listing then agree that nothing runs on the folder. */
+/** The setup browser's main process as a forced stop may signal it: its pid and the start read while Node had not reported its exit. */
+type ProvenMainProcess = { pid: number; processStart: string }
+
+/**
+ * Proves that the setup browser's main process is still the one Codebook spawned, and reads the start every later signal of the stop is checked against.
+ * Why: Node reaps its child only when it reports the exit, so while {@link BrowserProcess.hasExited} reads `false` both before and after the read, the pid has named the spawned browser all along and the start read is its own; {@link stopperGuardedByStart} re-reads it after every pause of the stop, so a pid that went to another process after the browser exited is never signalled.
+ * Called by {@link forceStop} at each attempt, so a start that could not be read once is read again by a retry.
+ * @param browser - The spawned browser.
+ * @param readStart - Reads a process's start now.
+ * @returns
+ * - The pid and start while the browser runs and its start can be read
+ * - `undefined` once the browser exited (nothing left is provably Codebook's), or when its start cannot be read (then nothing is signalled)
+ * @example
+ * await provenMainProcess(browser, readProcessStart) // => { pid: 4242, processStart: 'ps:Mon Nov  2 10:00:00 2026' }
+ */
+async function provenMainProcess(
+  browser: PipedBrowserProcess,
+  readStart: ProcessStartReader,
+): Promise<ProvenMainProcess | undefined> {
+  const { pid } = browser
+  if (pid === undefined || browser.hasExited()) return undefined
+  const processStart = await readStart(pid)
+  // An exit reported during the read may have freed the pid, so the start read may be another process's.
+  if (processStart === undefined || browser.hasExited()) return undefined
+  return { pid, processStart }
+}
+
+/** What one forced stop did: whether it sent a stop to the browser, and whether the stop result and a fresh listing then agree that nothing runs on the folder. */
 type ForceStopResult = { hasSentStop: boolean; isStopConfirmed: boolean }
 
 /**
- * Stops the browser's processes and says whether a fresh listing then shows nothing on the folder.
- * Why: a forced close is only a close once both the stop result and a fresh listing agree (Codex correction 4). While the main process runs it is Codebook's own unreaped child leading its own group, so neither its id nor its group can name another process: it is stopped even when the first listing cannot be made, so a failed listing never leaves it running on the folder. After it exited only the listed helpers are signalled, never a recycled pid; without a fresh listing nothing is confirmed.
+ * Stops the browser Codebook spawned and says whether a fresh listing then shows nothing on the folder.
+ * Why: a forced close is only a close once both the stop result and a fresh listing agree (Codex correction 4), and it may signal only what is proven Codebook's own: the main process while Node has not reported its exit, checked against its start before every later signal ({@link provenMainProcess}, {@link stopperGuardedByStart}), with its helpers reached through its process group (spawned detached) or `taskkill /T` (Windows). A process that only names the folder in its command line (a Chrome opened on it by hand, a reused pid) is never signalled: it keeps the stop unconfirmed, so the caller keeps the lock. Stopping the main process needs no listing, so a failed listing never leaves it running on the folder; without a fresh listing nothing is confirmed.
  * Called by the setup browser's close after the graceful bound, and by a failed launch (again on each retry).
+ * @param browser - The spawned browser.
+ * @param dependencies - The listing, signals and start reads.
+ * @param profile - The saved-session folder.
+ * @returns Whether a stop was sent, and whether the exit is confirmed.
+ * @example
+ * await forceStop(browser, dependencies, '/saved/session') // => { hasSentStop: true, isStopConfirmed: true }
  */
 async function forceStop(
   browser: PipedBrowserProcess,
   dependencies: SignInBrowserDependencies,
   profile: string,
 ): Promise<ForceStopResult> {
-  // An unavailable listing names no helper; the main process is still stopped, and the fresh listing below decides.
-  const listing = (await lookAtProfile(dependencies, profile)) ?? []
-  const mainPid = browser.hasExited() ? undefined : browser.pid
-  const pids = [
-    ...new Set([
-      ...(mainPid === undefined ? [] : [mainPid]),
-      ...listing.map((entry) => entry.pid),
-    ]),
-  ]
-  const didStop = await stopListedProcesses(pids, dependencies.stopper, {
-    groupLeaders: mainPid === undefined ? [] : [mainPid],
-  })
+  const main = await provenMainProcess(browser, dependencies.readStart)
+  // Without a proven main process nothing is signalled, and the fresh listing below decides alone.
+  const didStop =
+    main === undefined ||
+    (await stopListedProcesses(
+      [main.pid],
+      stopperGuardedByStart(dependencies.stopper, main, dependencies.readStart),
+      {
+        groupLeaders:
+          SETUP_BROWSER_LAUNCH_KIND === 'detached' ? [main.pid] : [],
+      },
+    ))
   const after = await lookAtProfile(dependencies, profile)
   return {
-    hasSentStop: pids.length > 0,
+    hasSentStop: main !== undefined,
     isStopConfirmed: didStop && after?.length === 0,
   }
 }
@@ -197,7 +243,7 @@ async function forceStop(
  * Opens the setup browser on the saved-session folder over a debugging pipe and tracks its pages.
  * Called by the setup state machine after the sign-in server answered. Sends only `Browser.getVersion`, `Target.setDiscoverTargets`, `Storage.getCookies` (reduced to a kind) and `Browser.close`: no screencast, screenshot or script evaluation, so nothing of the page is ever recorded.
  * @param options - The Chrome executable, the folder, the sign-in URL, a signal and the marker writer.
- * @param dependencies - The process, listing, signals and timer; the real ones in the product.
+ * @param dependencies - The process, listing, signals, start reads and timer; the real ones in the product.
  * @returns The running browser.
  * @throws When the browser cannot start or does not answer within {@link SIGN_IN_BROWSER_START_BOUND_MS}; whatever started has been stopped first. When that stop could not be confirmed, a {@link SignInBrowserStopUnconfirmedError} carrying the failure and a retry, so the caller keeps the folder's lock.
  * @example
@@ -232,7 +278,7 @@ export async function launchSignInBrowser(
       executable: options.executable,
       pid: browser.pid,
       // The setup browser leads its own process group (spawned detached off Windows), so a later window may signal the group.
-      launchKind: process.platform === 'win32' ? 'attached' : 'detached',
+      launchKind: SETUP_BROWSER_LAUNCH_KIND,
     })
     trackPages(cdp, pages, () => {
       if (pages.size > 0) hasHadPage = true
@@ -253,6 +299,11 @@ export async function launchSignInBrowser(
       chromeVersion,
       onClosedByLearner: (listener) => {
         closedListeners.add(listener)
+        // A close that came while the browser was starting had no listener yet: it is told now, after the subscriber's own synchronous steps, unless a close was asked meanwhile.
+        if (didTellLearnerClosed)
+          queueMicrotask(() => {
+            if (closedListeners.has(listener) && !didAskClose) listener()
+          })
         return (): void => {
           closedListeners.delete(listener)
         }

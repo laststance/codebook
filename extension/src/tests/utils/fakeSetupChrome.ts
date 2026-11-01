@@ -12,6 +12,7 @@ import type {
   SignInBrowserDependencies,
 } from '../../runtimeSupport/signInBrowser'
 import { REAL_PROCESS_STOPPER } from '../../runtimeSupport/utils/stopListedProcesses'
+import { readProcessStart } from '../../utils/readProcessStart'
 
 /** The fake Chrome: speaks NUL-framed CDP on descriptors 3 and 4 and logs every method it receives. */
 const FAKE_CHROME_SOURCE = String.raw`
@@ -21,6 +22,10 @@ process.on('uncaughtException', (error) => {
   fs.appendFileSync(logFile, 'ERR ' + error.stack + '\n')
   process.exit(1)
 })
+// A hung browser: only SIGKILL ends it.
+if (behaviour === 'ignore-close-and-sigterm') process.on('SIGTERM', () => {})
+const pageCreated = { method: 'Target.targetCreated', params: { targetInfo: { targetId: 'page-1', type: 'page' } } }
+const pageDestroyed = { method: 'Target.targetDestroyed', params: { targetId: 'page-1' } }
 // Sockets read the pipes without a blocking thread-pool read, so the process can exit while a read is pending.
 const net = require('node:net')
 const input = new net.Socket({ fd: 3, readable: true, writable: false })
@@ -39,13 +44,18 @@ input.on('data', (chunk) => {
     pending = pending.slice(cut + 1)
     fs.appendFileSync(logFile, message.method + '\n')
     if (message.method === 'Test.closePage') {
-      send({ method: 'Target.targetDestroyed', params: { targetId: 'page-1' } })
+      send(pageDestroyed)
       continue
     }
+    const isDiscovery = message.method === 'Target.setDiscoverTargets'
+    // The learner closes the only page before the setup's discovery is answered.
+    if (isDiscovery && behaviour === 'close-page-before-answer') {
+      send(pageCreated)
+      send(pageDestroyed)
+    }
     send({ id: message.id, result: (answers[message.method] ?? (() => ({})))() })
-    if (message.method === 'Target.setDiscoverTargets')
-      send({ method: 'Target.targetCreated', params: { targetInfo: { targetId: 'page-1', type: 'page' } } })
-    if (message.method === 'Browser.close' && behaviour !== 'ignore-close') setTimeout(() => process.exit(0), 20)
+    if (isDiscovery && behaviour !== 'close-page-before-answer') send(pageCreated)
+    if (message.method === 'Browser.close' && !behaviour.startsWith('ignore-close')) setTimeout(() => process.exit(0), 20)
   }
 })
 setInterval(() => {}, 1000)
@@ -67,13 +77,17 @@ export type FakeSetupChrome = {
 /**
  * Builds {@link SignInBrowserDependencies} whose browser is a small Node script speaking the pipe protocol, so the transport, the page tracking and the close wait run on real descriptors.
  * @param context - The test; at its end the fake is killed.
- * @param behaviour - `ignore-close` keeps the fake alive after Browser.close.
+ * @param behaviour - `ignore-close` keeps the fake alive after Browser.close; `ignore-close-and-sigterm` also survives SIGTERM, as a hung browser that only SIGKILL ends; `close-page-before-answer` destroys its only page before it answers `Target.setDiscoverTargets`, as a learner who closes the window while the setup still starts.
  * @param cookies - What the fake answers to Storage.getCookies.
- * @returns The dependencies and the test's views of the fake.
+ * @returns The dependencies (with the real start reads) and the test's views of the fake.
  */
 export async function fakeSetupChrome(
   context: TestContext,
-  behaviour: 'honour-close' | 'ignore-close' = 'honour-close',
+  behaviour:
+    | 'honour-close'
+    | 'ignore-close'
+    | 'ignore-close-and-sigterm'
+    | 'close-page-before-answer' = 'honour-close',
   cookies: readonly object[] = [],
 ): Promise<FakeSetupChrome> {
   const folder = await mkdtemp(join(tmpdir(), 'codebook-fake-chrome-'))
@@ -139,6 +153,7 @@ export async function fakeSetupChrome(
           : []
       },
       stopper: REAL_PROCESS_STOPPER,
+      readStart: readProcessStart,
       sleep: (ms): Promise<void> =>
         new Promise((resolve) => setTimeout(resolve, ms)),
     },

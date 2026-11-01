@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import type { ChildProcess } from 'node:child_process'
 import { test } from 'node:test'
 
 import {
@@ -9,8 +10,39 @@ import {
 import { SignInBrowserStopUnconfirmedError } from '../runtimeSupport/utils/signInBrowserStopUnconfirmedError'
 
 import { exitOf, fakeSetupChrome } from './utils/fakeSetupChrome'
+import { idleChild } from './utils/idleChild'
 
 const URL = 'http://localhost:3165/login'
+
+/** Says whether a child process still runs: neither an exit code nor a signal ended it. */
+function isRunning(child: ChildProcess): boolean {
+  return child.exitCode === null && child.signalCode === null
+}
+
+/**
+ * The fake's dependencies with a listing that also names the saved-session folder for another process while it runs, as a Chrome the learner opened on that folder by hand (or a reused pid) does.
+ * @param dependencies - The fake's dependencies.
+ * @param stranger - A running process Codebook did not spawn for the setup.
+ */
+function withStrangerOnFolder(
+  dependencies: SignInBrowserDependencies,
+  stranger: ChildProcess,
+): SignInBrowserDependencies {
+  return {
+    ...dependencies,
+    listProfileProcesses: async (profile) => [
+      ...(await dependencies.listProfileProcesses(profile)),
+      ...(isRunning(stranger) && stranger.pid !== undefined
+        ? [
+            {
+              pid: stranger.pid,
+              command: 'chrome --user-data-dir=/saved/session',
+            },
+          ]
+        : []),
+    ],
+  }
+}
 
 /** The fake's dependencies with a stopper that records every process it is asked to stop (a signal other than the null probe, or `taskkill`). */
 function recordingStops(fake: Awaited<ReturnType<typeof fakeSetupChrome>>): {
@@ -38,10 +70,11 @@ function recordingStops(fake: Awaited<ReturnType<typeof fakeSetupChrome>>): {
   }
 }
 
-/** Launches the setup browser on a fake Chrome; the marker writes are collected. */
+/** Launches the setup browser on a fake Chrome; the marker writes are collected. `dependencies` replaces the fake's own when a test wraps them. */
 async function launch(
   fake: Awaited<ReturnType<typeof fakeSetupChrome>>,
   markers: object[] = [],
+  dependencies: SignInBrowserDependencies = fake.dependencies,
 ) {
   return launchSignInBrowser(
     {
@@ -53,7 +86,7 @@ async function launch(
         markers.push(marker)
       },
     },
-    fake.dependencies,
+    dependencies,
   )
 }
 
@@ -286,4 +319,103 @@ test('a retry after a close that had to stop the browser reads as forced, never 
   // Assert
   assert.equal(first, 'unconfirmed')
   assert.equal(second, 'forced')
+})
+
+// protects=outside voice 3 (a forced close signals only the browser Codebook spawned), Codex 4 (the lock stays while the folder may be in use); fails_when=a process that merely names the folder after the setup browser exited gets SIGTERM, SIGKILL or taskkill, or the close reads as forced while it runs; no_claim=how a second Chrome came to open the folder
+test('after the setup browser exited, a forced close never stops another process that names the saved-session folder and keeps the folder locked', async (context) => {
+  // Arrange
+  const fake = await fakeSetupChrome(context)
+  const stranger = await idleChild(context)
+  const stops = recordingStops(fake)
+  const browser = await launch(
+    fake,
+    [],
+    withStrangerOnFolder(stops.dependencies, stranger),
+  )
+  const bound = new AbortController()
+  // Act
+  const closing = browser.close(bound.signal)
+  // The fake honours Browser.close and exits; the stranger keeps naming the folder, so the bound ends the graceful wait.
+  await exitOf(fake.child())
+  bound.abort()
+  const result = await closing
+  // Assert
+  assert.equal(result, 'unconfirmed')
+  assert.deepEqual(stops.stopped(), [])
+  assert.equal(isRunning(stranger), true)
+})
+
+// protects=outside voice 3 (only the spawned browser and its own group are signalled); fails_when=a process outside the setup browser's group that names the folder is signalled with it, or the close reads as forced while that process runs; no_claim=Chrome helpers that leave the group (they keep the close unconfirmed)
+test('a forced close stops the setup browser it started but never another process that names the folder, and stays unconfirmed while that process runs', async (context) => {
+  // Arrange
+  const fake = await fakeSetupChrome(context, 'ignore-close')
+  const stranger = await idleChild(context)
+  const stops = recordingStops(fake)
+  const browser = await launch(
+    fake,
+    [],
+    withStrangerOnFolder(stops.dependencies, stranger),
+  )
+  const bound = new AbortController()
+  bound.abort()
+  // Act
+  const result = await browser.close(bound.signal)
+  await exitOf(fake.child())
+  // Assert
+  assert.equal(result, 'unconfirmed')
+  assert.deepEqual(stops.stopped(), [fake.child().pid])
+  assert.equal(isRunning(stranger), true)
+})
+
+// protects=outside voice 3 (a pid that went to another process during the stop is never signalled), lane A1 start proof; fails_when=the stop sends SIGKILL after the browser's pid shows another start, or the close reads as forced; no_claim=the real start reads (readProcessStart tests) and a real pid reuse
+test('a forced close sends no SIGKILL once the setup browser pid shows another start than the one it had when the stop began', async (context) => {
+  // Arrange
+  const fake = await fakeSetupChrome(context, 'ignore-close-and-sigterm')
+  const signals: string[] = []
+  const { stopper } = fake.dependencies
+  let startReads = 0
+  const browser = await launch(fake, [], {
+    ...fake.dependencies,
+    stopper: {
+      ...stopper,
+      signal: (pid, signal): void => {
+        if (signal !== 0) signals.push(`${signal} ${pid}`)
+        stopper.signal(pid, signal)
+      },
+    },
+    // The first read proves the spawned browser; every later read finds another process under its pid.
+    readStart: async () => {
+      startReads += 1
+      return startReads === 1
+        ? 'ps:Mon Nov  2 10:00:00 2026'
+        : 'ps:Mon Nov  2 10:07:00 2026'
+    },
+  })
+  const bound = new AbortController()
+  bound.abort()
+  // Act
+  const result = await browser.close(bound.signal)
+  // Assert
+  const pid = fake.child().pid
+  assert.equal(result, 'unconfirmed')
+  // The group signal carries the negated pid; the SIGTERM went out while the start still matched.
+  assert.deepEqual(signals, [`SIGTERM -${pid}`])
+  assert.equal(isRunning(fake.child()), true)
+})
+
+// protects=structured review P2 (a close before the setup subscribes is not lost); fails_when=the learner closes the window while the setup browser still starts and the setup is never told, so the dev server and the lock stay until Close setup or the 10-minute timeout; no_claim=the setup state machine's own handling (savedSessionSetup tests)
+test('a setup browser whose last page closed while it was still starting tells the setup once it subscribes', async (context) => {
+  // Arrange
+  const fake = await fakeSetupChrome(context, 'close-page-before-answer')
+  const browser = await launch(fake)
+  const closed: string[] = []
+  // Act
+  browser.onClosedByLearner(() => {
+    closed.push('closed')
+  })
+  const toldDuringSubscription = [...closed]
+  await new Promise((resolve) => setImmediate(resolve))
+  // Assert
+  assert.deepEqual(toldDuringSubscription, [])
+  assert.deepEqual(closed, ['closed'])
 })
