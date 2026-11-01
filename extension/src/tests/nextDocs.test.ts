@@ -80,14 +80,14 @@ async function readNextReadmeSection(): Promise<string> {
 }
 
 /**
- * Reads the packaged README's API 1.12 compatibility note: from "API 1.12 is additive" to the API 1.11 note after it.
+ * Reads the packaged README's API 1.12 compatibility note: from "API 1.12 was additive too" to the API 1.11 note after it.
  * @returns The note, or an empty text when either end is missing.
  * @example
- * await readApi112ReadmeNote() // => 'API 1.12 is additive: it adds Next Pages Router pages to the `next-dev-webpack` adapter …'
+ * await readApi112ReadmeNote() // => 'API 1.12 was additive too: it adds Next Pages Router pages to the `next-dev-webpack` adapter …'
  */
 async function readApi112ReadmeNote(): Promise<string> {
   const readme = await readFile(join(__dirname, '../../README.md'), 'utf8')
-  const start = readme.indexOf('API 1.12 is additive')
+  const start = readme.indexOf('API 1.12 was additive too')
   const end = readme.indexOf('API 1.11 was additive', start)
   return start === -1 || end === -1 ? '' : readme.slice(start, end)
 }
