@@ -155,6 +155,11 @@ export async function configuredRuntimeHarness(
     participant?: 'browser' | 'server'
     /** The configuration's initial inputs; the stand-in page has one editable control for each selector. */
     initialInputs?: RepositoryConfiguration['initialInputs']
+    /** What the focus phase of an initial input reports about its control, by selector: type, name, id and autocomplete. */
+    preparedControls?: Record<
+      string,
+      { type?: string; name?: string; id?: string; autocomplete?: string }
+    >
     /** Makes the stand-in page never answer the text insert of an initial input, as a page whose reply is lost. */
     holdInputInsert?: boolean
     /** Makes the stand-in server's readiness check (`ready` and `readyEntry`) reject with this message, as a server that exits before it listens does. */
@@ -659,7 +664,12 @@ export async function configuredRuntimeHarness(
       operationsOption?.failValueCheck?.includes(String(argument.selector))
     )
       return { ready: false, reason: 'input-result-changed' }
-    return { ready: true }
+    // A prepared input's focus phase reports the control its selector resolved to; a selector without a declared control reports none.
+    const preparedControl =
+      typeof argument.selector === 'string' && argument.phase === 'focus'
+        ? options.preparedControls?.[argument.selector]
+        : undefined
+    return { ready: true, ...(preparedControl && { control: preparedControl }) }
   }
   /** Answers what the page evaluates: its location, and the configured DOM conditions, of which the after conditions hold only once the input was sent. */
   const pageEvaluation = (expression: string | undefined): unknown => {
@@ -1100,6 +1110,7 @@ export async function configuredRuntimeHarness(
             run.addSession(selected)
           }
           async attachViewport(): Promise<void> {}
+          setSecretFrameGate(): void {}
           async reveal(): Promise<void> {
             viewportReady = true
           }

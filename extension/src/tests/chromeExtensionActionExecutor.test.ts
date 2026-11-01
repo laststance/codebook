@@ -49,6 +49,12 @@ function executorFor(
     record?: (type: string, detail: unknown) => void
     /** The per-step source check (ER20); absent → none. */
     assertSourcesUnchanged?: () => void | Promise<void>
+    /** Hears whether each input's control reads as secret. */
+    onInputClassified?: (
+      clickIndex: number,
+      inputIndex: number,
+      secret: boolean,
+    ) => void
   } = {},
 ) {
   const surface = fakeExtensionSurface(answers)
@@ -62,6 +68,9 @@ function executorFor(
     assertActionCurrent: () => {},
     ...(options.assertSourcesUnchanged && {
       assertSourcesUnchanged: options.assertSourcesUnchanged,
+    }),
+    ...(options.onInputClassified && {
+      onInputClassified: options.onInputClassified,
     }),
     record:
       options.record ?? ((type, detail) => void events.push({ type, detail })),
@@ -1182,4 +1191,56 @@ test('a journal failure while answering a dialog is recorded as a masked debugge
   } finally {
     process.off('unhandledRejection', onUnhandled)
   }
+})
+
+// protects=an extension click's password input is reported secret before its text is sent, and a plain input is not; fails_when=the control the page reports is ignored, or the report arrives after Input.insertText; no_claim=real Chrome reporting the control; the surface is a scripted stand-in
+test('an extension password input is classified secret before its text is typed and an email input is not', async () => {
+  // Arrange
+  const reported: string[] = []
+  const controls: Record<string, { type: string; name: string }> = {
+    '#password': { type: 'password', name: 'password' },
+    '#email': { type: 'email', name: 'email' },
+  }
+  let selector = ''
+  const { executor, surface } = executorFor(
+    {
+      'Runtime.evaluate': (params) => {
+        selector = /"(#[a-z]+)"/.exec(String(params.expression))?.[1] ?? ''
+        return { result: { subtype: 'node', objectId: 'node-1' } }
+      },
+      'Runtime.callFunctionOn': (params) => {
+        const declaration = String(params.functionDeclaration)
+        if (declaration.includes('element-has-no-size'))
+          return { result: { value: { ready: true, x: 120, y: 48 } } }
+        return {
+          result: {
+            value: {
+              ready: true,
+              ...(inspectionPhase(params) === 'focus' && {
+                control: controls[selector],
+              }),
+            },
+          },
+        }
+      },
+    },
+    {
+      onInputClassified: (clickIndex, inputIndex, secret) =>
+        void reported.push(
+          `${clickIndex}.${inputIndex}:${secret ? 'secret' : 'plain'}@${surface.methods().filter((method) => method === 'Input.insertText').length}`,
+        ),
+    },
+  )
+  const click: ResolvedExtensionClick = {
+    ...CLICK,
+    inputs: [
+      { selector: '#email', text: 'learner@example.invalid' },
+      { selector: '#password', text: 'hunter2-extension' },
+    ],
+  }
+  // Act
+  const receipt = await executor.run(click)
+  await receipt.completed
+  // Assert
+  assert.deepEqual(reported, ['1.1:plain@0', '1.2:secret@1'])
 })

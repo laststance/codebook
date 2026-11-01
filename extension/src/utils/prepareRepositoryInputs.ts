@@ -191,10 +191,11 @@ export function inspectInput(
     ready: document.activeElement === element,
     reason: 'input-focus-changed',
     control: {
-      type: element instanceof HTMLInputElement ? element.type : 'textarea',
-      name: element.getAttribute('name') ?? undefined,
-      id: element.getAttribute('id') ?? undefined,
-      autocomplete: element.getAttribute('autocomplete') ?? undefined,
+      // Both control kinds expose these as strings (`textarea` reports its own type).
+      type: element.type,
+      name: element.name,
+      id: element.id,
+      autocomplete: element.autocomplete,
     },
   }
 }
