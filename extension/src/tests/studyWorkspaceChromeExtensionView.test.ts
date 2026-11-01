@@ -938,6 +938,10 @@ test('Save learning replay of an extension run without a history stores nothing 
     // Assert
     assert.deepEqual(await storage.readProgress(), progressBefore)
     assert.equal(record.stopped, false)
+    assert.deepEqual(
+      harness.informationMessages.map((notice) => notice.message),
+      ['Learning replay unavailable: no history was started.'],
+    )
   } finally {
     await harness.close()
   }

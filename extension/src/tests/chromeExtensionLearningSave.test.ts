@@ -85,6 +85,9 @@ test('the Save item of an extension run reads recording, finished and saved with
     expectedRevision: 0,
     content: extensionMaterial(await readExtensionEvents(service, studyId)),
   })
+  await save.save(record)
+  await new Promise((resolve) => setImmediate(resolve))
+  const saved = save.item(record, 'Run finished')
 
   // Assert
   assert.equal(
@@ -96,6 +99,8 @@ test('the Save item of an extension run reads recording, finished and saved with
     finished?.text,
     '$(save) Recording finished · Save learning replay',
   )
+  assert.equal(saved?.command?.command, 'codebook.openLearningReplay')
+  assert.equal(saved?.text, '$(warning) Learning partially saved · Open replay')
 })
 
 // protects=AC3 Save: Save while the run is live asks with the recorded stop count, stops the run, seals it and tells the learner the Extension replay saved as partial with the first reason and Open replay; fails_when=the question, the stop or the notice change; no_claim=the library row
