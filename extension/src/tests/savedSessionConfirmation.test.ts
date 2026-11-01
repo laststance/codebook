@@ -552,8 +552,12 @@ test('the Output lines record the confirmation without any operation value', asy
     }),
   )
   // Assert
-  const joined = lines.join('\n')
-  assert.match(joined, /confirmation of 4 operations shown/)
+  // The random run id may hold "120" or "c1", so it is taken out before the values are looked for
+  const joined = lines.join('\n').replaceAll(receipt.runId, '<run>')
+  assert.match(
+    joined,
+    /Run <run>: saved-session confirmation of 4 operations shown/,
+  )
   assert.match(joined, /declined/)
   assert.doesNotMatch(joined, /120|Evil Rabbit|c1/)
 })
