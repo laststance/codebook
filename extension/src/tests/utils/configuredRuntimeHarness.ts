@@ -382,6 +382,8 @@ export async function configuredRuntimeHarness(
   // The answers an App replay of the structured entry check was asked to judge.
   const appEntryConfirmations: NextEntryResponse[] = []
   let emitInputPause = true,
+    // Whether the debugger reports `stopped` for the pause of a version 3 input; without it the runtime's pause stays unannounced.
+    announceInputPause = true,
     emitPreparationResume = false,
     stopAtStartupBreakpoint = false,
     removedAck = true,
@@ -592,13 +594,15 @@ export async function configuredRuntimeHarness(
       }),
     )
   }
-  const emitPause = (column = 1, line = 1): void => {
+  const emitPause = (column = 1, line = 1, announced = true): void => {
     currentColumn = column
     currentLine = line
     stopCount++
     // A real debugger may reveal an existing source tab over the leased application panel.
     if (hideViewportAtPause) viewportReady = false
     emitCdpPause()
+    // A debugger that never announces the pause sends no `stopped` for it; the runtime stays paused all the same.
+    if (!announced) return
     run.onEvent(selected, {
       seq: ++requestSequence,
       type: 'event',
@@ -623,9 +627,10 @@ export async function configuredRuntimeHarness(
       ? view.operations.at(-1)?.ack === 'yes'
       : Boolean(view.operation?.inputDispatched)
   }
-  /** Tells whether a declared stop follows the operation the page just received an input for. */
-  const stopFollowsLatestInput = (): boolean =>
-    operationsOption?.stopOperations.includes(inputsSeen) ?? false
+  /** Tells whether a declared stop follows the operation the page just received an input for and pauses its handler; after {@link suppressInputPause} the input runs past that stop's line and is answered at once. */
+  const stopPausesLatestInput = (): boolean =>
+    emitInputPause &&
+    (operationsOption?.stopOperations.includes(inputsSeen) ?? false)
   /** Keeps the page's answer to an input open until the last stop of its operation was continued. */
   const holdInputUntilContinued = (): Promise<void> =>
     new Promise<void>((resolve, reject) => {
@@ -638,6 +643,7 @@ export async function configuredRuntimeHarness(
     emitPause(
       index === 0 ? 1 : additionalStops[index - 1]!.column,
       index === 0 ? 1 : additionalStops[index - 1]!.line,
+      announceInputPause,
     )
   }
   /** Answers one call of a function in a control the run resolved. */
@@ -828,7 +834,7 @@ export async function configuredRuntimeHarness(
         // A number or select value is the operation's input: its stop, if any, pauses inside the page's handlers.
         if (parameters?.functionDeclaration?.includes('applyNativeValue')) {
           inputsSeen++
-          if (stopFollowsLatestInput()) {
+          if (stopPausesLatestInput()) {
             emitFirstStopOfLatestInput()
             await holdInputUntilContinued()
           }
@@ -840,7 +846,7 @@ export async function configuredRuntimeHarness(
         insertedTexts.push(String(parameters?.text))
         if (operationsOption) {
           inputsSeen++
-          if (stopFollowsLatestInput()) {
+          if (stopPausesLatestInput()) {
             emitFirstStopOfLatestInput()
             await holdInputUntilContinued()
           }
@@ -976,10 +982,10 @@ export async function configuredRuntimeHarness(
       if (method === 'Input.dispatchMouseEvent') {
         mouse.push({ type: parameters?.type, timeout })
         if (parameters?.type === 'mousePressed') return {}
-        // A version 3 click: answered at once unless a stop follows it, which pauses inside the click's handler.
+        // A version 3 click: answered at once unless a stop follows it and pauses inside the click's handler.
         if (operationsOption) {
           inputsSeen++
-          if (!stopFollowsLatestInput()) return {}
+          if (!stopPausesLatestInput()) return {}
           emitFirstStopOfLatestInput()
           return holdInputUntilContinued().then(() => ({}))
         }
@@ -1661,8 +1667,13 @@ export async function configuredRuntimeHarness(
     useObjectValue(): void {
       requiredValueObject = true
     },
+    /** Lets the input run past its declared stop's line without a pause, as a handler that skips that line does: a version 1 or 2 click stays unanswered, a version 3 input is answered at once. @example harness.suppressInputPause() */
     suppressInputPause(): void {
       emitInputPause = false
+    },
+    /** Makes the pause of a version 3 input at its declared stop reach the run from the runtime alone, with no debugger `stopped`, as a debugger that never announces that stop does; the input stays unanswered. @example harness.withholdInputStopAnnouncement() */
+    withholdInputStopAnnouncement(): void {
+      announceInputPause = false
     },
     resumeDuringPreparation(): void {
       emitPreparationResume = true

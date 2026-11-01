@@ -881,3 +881,121 @@ test('an operation offered while a stop drains the recording sends nothing', asy
   assert.deepEqual(insertedTexts, [])
   assert.equal(run.view().operations?.[0]?.state, 'not-run')
 })
+
+// protects=the deadline of an operation that expires before its input was sent saying the input was not sent; fails_when=the text says the input was sent or blames the declared stop's line although nothing reached the page; no_claim=a slow page or verification: the harness clock expires the deadline in the turn the operation was accepted in
+test('an operation deadline that expires before the input was sent ends the run saying operation 1 was accepted but its input was not sent', async (context) => {
+  // Arrange
+  const { run, advance, inputsSeen } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    { operations: { operations: [submit], stopOperations: [1] } },
+  )
+  await run.prepare()
+  // Act: the deadline expires in the same turn the operation was accepted in, before its input could be dispatched.
+  run.action('op-1', OPERATION_ACTION)
+  advance(20_000)
+  await waitUntil(() => run.view().status === 'failed', 'the failure')
+  await run.stop()
+  // Assert
+  assert.equal(
+    run.view().failures[0],
+    'Operation 1 was accepted, but its input was not sent within 20 s',
+  )
+  assert.equal(inputsSeen(), 0)
+})
+
+// protects=the deadline of an operation whose input ran past its declared stop naming that stop, the operation in flight and that its line must run after the input; fails_when=the text names operation 1, says the input was not acknowledged, or names no stop; no_claim=a real handler that skips the line: the harness page answers the click at once without a pause
+test('a stop declared for operation 2 that its click runs past ends the run naming operation 2, the declared stop and that its line must run after the input', async (context) => {
+  // Arrange
+  const { run, advance, suppressInputPause } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    {
+      operations: {
+        operations: [choose, submit],
+        stopOperations: [2],
+        controls: CUSTOMER_CONTROLS,
+      },
+    },
+  )
+  suppressInputPause()
+  await run.prepare()
+  run.action('op-1', OPERATION_ACTION)
+  await waitUntil(() => run.view().operations?.[0]?.state === 'done', 'op 1')
+  run.action('op-2', OPERATION_ACTION)
+  await waitUntil(
+    () => run.view().operations?.[1]?.ack === 'yes',
+    'the acknowledged click of operation 2',
+  )
+  // Act: 20 s pass after operation 2 was accepted.
+  advance(20_000)
+  await waitUntil(() => run.view().status === 'failed', 'the failure')
+  await run.stop()
+  // Assert
+  assert.equal(
+    run.view().failures[0],
+    'Operation 2 reached no verified pause: declared stop src/theme.ts:1 was not hit within 20 s of the accepted action; its line must execute after the input',
+  )
+  assert.equal(run.view().snapshots.length, 0)
+})
+
+// protects=the deadline of an operation whose input the page never answers after its last stop was continued saying the input was sent but not acknowledged; fails_when=the text says the input was not sent or blames the stop that already paused; no_claim=a real handler that hangs: the harness holds the page's answer to the click and delivers the continuation's other three receipts
+test('an operation whose click is never answered after its stop was continued ends the run saying operation 1 was sent but its input was not acknowledged', async (context) => {
+  // Arrange
+  const { run, advance, holdContinuation } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    { operations: { operations: [submit], stopOperations: [1] } },
+  )
+  const receipts = holdContinuation()
+  await run.prepare()
+  run.action('op-1', OPERATION_ACTION)
+  const stop = await waitUntil(
+    () => run.view().participants.browser.snapshot,
+    'the stop of operation 1',
+  )
+  const continuation = run.continue('browser', stop.pause)
+  await receipts.started
+  // The debugger acknowledges the continuation in all three ways; the page never answers the click.
+  receipts.dap()
+  receipts.cdp()
+  receipts.response()
+  await continuation
+  await waitUntil(() => run.view().status === 'acting', 'the continued stop')
+  // Act: 20 s pass after the continuation.
+  advance(20_000)
+  await waitUntil(() => run.view().status === 'failed', 'the failure')
+  await run.stop()
+  // Assert
+  assert.equal(
+    run.view().failures[0],
+    'Operation 1 was sent, but its input was not acknowledged within 20 s',
+  )
+  assert.equal(run.view().operations?.[0]?.ack, 'pending')
+})
+
+// protects=the deadline of an operation whose declared stop paused the page without the debugger announcing it naming that stop and where the page is paused, never that its line did not run; fails_when=the text says the stop was not hit or names no paused place; no_claim=a real debugger that drops its stopped event: the harness reports the runtime's pause alone
+test('a stop of operation 1 whose pause the debugger never announces ends the run naming the declared stop and the place the page is paused at', async (context) => {
+  // Arrange
+  const { run, advance, inputsSeen, withholdInputStopAnnouncement } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      operations: { operations: [submit], stopOperations: [1] },
+    })
+  withholdInputStopAnnouncement()
+  await run.prepare()
+  run.action('op-1', OPERATION_ACTION)
+  await waitUntil(() => inputsSeen() === 1, 'the click that pauses the page')
+  // Act: 20 s pass after operation 1 was accepted.
+  advance(20_000)
+  await waitUntil(() => run.view().status === 'failed', 'the failure')
+  await run.stop()
+  // Assert
+  assert.equal(
+    run.view().failures[0],
+    'Operation 1 reached no verified pause: declared stop src/theme.ts:1 is paused at src/theme.ts:1, but the debugger did not announce that stop within 20 s of the accepted action',
+  )
+  assert.equal(run.view().snapshots.length, 0)
+})
