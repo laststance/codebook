@@ -230,6 +230,8 @@ export async function configuredRuntimeHarness(
       signInPaths?: string[]
       /** The configuration's `session: "fresh"`. */
       session?: 'fresh'
+      /** The configuration's `initialStorage`. */
+      initialStorage?: { key: string; value: string }[]
     }
   } = {},
 ) {
@@ -289,6 +291,10 @@ export async function configuredRuntimeHarness(
         })),
         ...(reference.configuration.entryPath
           ? { entryPath: reference.configuration.entryPath }
+          : {}),
+        // The schema's key order, which the intent hash reads: initialStorage before signInPaths and session.
+        ...(options.operations.initialStorage
+          ? { initialStorage: options.operations.initialStorage }
           : {}),
         ...(options.operations.signInPaths
           ? { signInPaths: options.operations.signInPaths }
@@ -426,6 +432,8 @@ export async function configuredRuntimeHarness(
   const insertedTexts: string[] = []
   // The method of every `Input.*` CDP request the run sent to the page, in order (no parameters, so no typed value is kept).
   const inputRequests: string[] = []
+  // The source of every script the run registered for each new document of the page (`initialStorage`'s writes), in order.
+  const newDocumentScripts: string[] = []
   // The calls the run made to the stand-in saved-session store and its lease, in order, and the folders the stand-in browser was told to open.
   const savedSessionCalls: string[] = []
   const savedProfileFolders: string[] = []
@@ -881,6 +889,7 @@ export async function configuredRuntimeHarness(
         objectId?: string
         functionDeclaration?: string
         arguments?: { value?: Record<string, unknown> }[]
+        source?: string
       },
       timeout?: number,
     ) {
@@ -1147,7 +1156,10 @@ export async function configuredRuntimeHarness(
           )
         return pending
       }
-      if (method === 'Page.addScriptToEvaluateOnNewDocument') return {}
+      if (method === 'Page.addScriptToEvaluateOnNewDocument') {
+        newDocumentScripts.push(parameters?.source ?? '')
+        return {}
+      }
       if (
         method === 'Debugger.getPossibleBreakpoints' &&
         possibleBreakLocations &&
@@ -1719,6 +1731,8 @@ export async function configuredRuntimeHarness(
     insertedTexts,
     /** The method of every `Input.*` request the run sent to the page (`Input.insertText`, `Input.dispatchMouseEvent`, …), in order; the saved-session lanes assert that a refusal or a facts read sends none. */
     inputRequests,
+    /** The source of every script the run registered for each new document of the page (`Page.addScriptToEvaluateOnNewDocument`), in order; `initialStorage` is written by one. */
+    newDocumentScripts,
     /** The calls the run made to the stand-in saved-session store and its lease, in order: `acquire:<runId>`, `remember`, `prepare`, `recordBrowser`, `release`. */
     savedSessionCalls,
     /** The folders the stand-in browser was told to open as the saved session. */

@@ -225,6 +225,13 @@ export const BUSY_AWAITING_CONFIRMATION_RECOVERY =
   'Wait for the learner to answer the editor question, then read the run resource; send the next operation with a new key only when it is ready. Nothing was sent.'
 
 /**
+ * The recovery of an `INVALID_CONFIGURATION` refusal with reason `saved-session-initial-storage`: a version 3 run would start with the saved session while its configuration declares `initialStorage`, which the page would write over the app data the saved session keeps before the learner confirms the operations.
+ * Set as the {@link StudyError.recoveryOverride} by `ConfiguredBrowserRun.admitSession`, before any server or browser started.
+ */
+export const SAVED_SESSION_INITIAL_STORAGE_RECOVERY =
+  'Audience: chat. A run with the saved session keeps the app data that session already has, so it never writes initialStorage: nothing started and no storage was written. Remove initialStorage to run this flow with the saved session, or declare session: "fresh" to use initialStorage in a fresh profile when the flow needs no sign-in; never use session: "fresh" to get around a sign-in refusal. Recovery: fix the configuration, then one new run. See codebook://help/repository-browser#set-up-a-saved-session.'
+
+/**
  * The recovery of a node-test run that Vitest itself ended before its first stop (its listing of the cited file failed or timed out, or the test exited before its declared stop), in place of the general `RUNTIME_FAILED` recovery, which is worded for a browser click.
  * Set as the {@link StudyError.recoveryOverride} by {@link OwnedNodeTestRun.prepare}; the `RUNTIME_FAILED` code stays so clients and `codebook://help/errors` read as before.
  */

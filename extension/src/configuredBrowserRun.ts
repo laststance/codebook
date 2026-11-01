@@ -69,7 +69,11 @@ import type {
   DevelopmentServerAdapter,
   DevelopmentServerAdapterName,
 } from './developmentServerAdapter'
-import { StudyError, type ErrorCode } from './errors'
+import {
+  SAVED_SESSION_INITIAL_STORAGE_RECOVERY,
+  StudyError,
+  type ErrorCode,
+} from './errors'
 import {
   nextRefusal,
   nextSetupDeadlineRecovery,
@@ -1135,21 +1139,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           this.logStartRefusal(error.code, 'before any server started')
         throw error
       })
-    if (admission.session === 'saved') {
-      this.session = 'saved'
-      this.sessionLease = admission.lease
-      this.savedSessionAtStart = {
-        available: true,
-        state: 'saved',
-        setupAt: admission.lease.setupAt,
-      }
-      this.browser.useSavedProfile(admission.lease)
-      this.evidence.record('run.session', {
-        session: 'saved',
-        setupAt: admission.lease.setupAt,
-        appCookies: admission.lease.appCookies,
-      })
-    } else {
+    if (admission.session === 'saved')
+      this.startWithSavedSession(
+        admission.lease,
+        configuration.initialStorage,
+        port.repositoryName,
+      )
+    else {
       this.session = 'fresh'
       // A declared fresh profile is no-saved-session whatever the store holds (as the help defines the reason); its sentence names the declaration.
       this.freshSignInReason =
@@ -1171,6 +1167,54 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       })
     }
     this.logRunStart('info', `web app session: ${this.session}`)
+  }
+
+  /**
+   * Starts a version 3 run with the saved session the store admitted (the saved folder, `session: 'saved'`, `appState: 'kept'`), or refuses it when its configuration declares `initialStorage`, before any server, browser or storage write.
+   *
+   * Why it exists: `initialStorage` is written into every new document of the run's page before the learner confirms the operations, so it would overwrite app data the saved session keeps even when the learner declines, and nothing restores it; a fresh profile, declared or found, keeps writing it. The lease is kept first, so a refusal's cleanup frees it after its browser close, as for every refusal after the admission. Called by {@link admitSession} for an admission of the saved session.
+   * @param lease - The store's hold on the saved folder.
+   * @param initialStorage - The configuration's `initialStorage`, if any.
+   * @param repositoryName - The repository's folder name for the refusal's message; never a path.
+   * @throws `INVALID_CONFIGURATION` with reason `saved-session-initial-storage` and its own recovery, after one Output > Codebook line naming its code, when `initialStorage` has an entry.
+   * @example
+   * this.startWithSavedSession(lease, undefined, 'shop') // this.session === 'saved'
+   * this.startWithSavedSession(lease, [{ key: 'draft', value: '' }], 'shop') // throws INVALID_CONFIGURATION; nothing started
+   */
+  private startWithSavedSession(
+    lease: SavedSessionRunLease,
+    initialStorage: OperationsRepositoryConfiguration['initialStorage'],
+    repositoryName: string,
+  ): void {
+    this.sessionLease = lease
+    // A run with the saved session never writes initialStorage: a declined confirmation could not undo the overwrite.
+    if (initialStorage?.length) {
+      const message = `This run would start with the saved session of ${repositoryName}, and configuration.initialStorage would overwrite the app data that session keeps before the learner confirms the operations, so nothing started and no storage was written.`
+      this.evidence.record('run.session-refused', {
+        reason: 'saved-session-initial-storage',
+      })
+      this.logStartRefusal('INVALID_CONFIGURATION', 'before any server started')
+      throw new StudyError(
+        'INVALID_CONFIGURATION',
+        message,
+        message,
+        SAVED_SESSION_INITIAL_STORAGE_RECOVERY,
+        undefined,
+        { reason: 'saved-session-initial-storage', field: 'initialStorage' },
+      )
+    }
+    this.session = 'saved'
+    this.savedSessionAtStart = {
+      available: true,
+      state: 'saved',
+      setupAt: lease.setupAt,
+    }
+    this.browser.useSavedProfile(lease)
+    this.evidence.record('run.session', {
+      session: 'saved',
+      setupAt: lease.setupAt,
+      appCookies: lease.appCookies,
+    })
   }
 
   /**

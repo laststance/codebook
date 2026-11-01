@@ -268,6 +268,47 @@ test('only the saved-session refusals of a run start gain the run, the retry rul
   )
 })
 
+// Value: protects=Codex outside voice 1 of the pt2 /ship pass (DX-5 for the new refusal): a saved run refused for declaring initialStorage carries the run, no side effects, its retry rule and the start log id, while any other INVALID_CONFIGURATION stays as it was; fails_when=the refusal lacks retry or logId, or every configuration error gains a saved-session retry; no_claim=the run's own refusal (configuredSavedSessionRun tests)
+test('a saved run refused for declaring initialStorage tells the chat to drop it or declare a fresh profile, and other configuration errors stay unchanged', () => {
+  // Arrange
+  const initialStorageRefusal = new StudyError(
+    'INVALID_CONFIGURATION',
+    'This run would start with the saved session of shop.',
+    undefined,
+    undefined,
+    undefined,
+    { reason: 'saved-session-initial-storage', field: 'initialStorage' },
+  )
+  const otherConfigurationError = new StudyError(
+    'INVALID_CONFIGURATION',
+    'operations[1].selector is not valid CSS.',
+  )
+  // Act
+  const completed = withRunStartRefusalDetails(
+    initialStorageRefusal,
+    'codebook://run/r1',
+    'r1',
+  )
+  // Assert
+  assert.deepEqual(completed.details, {
+    runUri: 'codebook://run/r1',
+    sideEffects: 'none',
+    retry:
+      'Remove initialStorage, or declare session: "fresh" when the flow needs no sign-in, then start one new run.',
+    logId: 'r1#start',
+    reason: 'saved-session-initial-storage',
+    field: 'initialStorage',
+  })
+  assert.equal(
+    withRunStartRefusalDetails(
+      otherConfigurationError,
+      'codebook://run/r1',
+      'r1',
+    ),
+    otherConfigurationError,
+  )
+})
+
 // Value: protects=OCR 17 and OCR 36 in the retry rule an agent reads: a run that declared session fresh is told to drop it, session-cookie-only sets up again only with the app's keep-me-signed-in choice, any other reason sets up; fails_when=either case says "set up the saved session, then start one new run", which repeats the same refusal; no_claim=the service's wiring (savedSessionService tests)
 test('the retry of a sign-in refusal drops a declared fresh profile, and sets up a session-only sign-in again only with the app keep-me-signed-in choice', () => {
   // Act

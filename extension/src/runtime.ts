@@ -500,7 +500,7 @@ export type ConfiguredRuntimeView = {
   operationFailure?: OperationFailure
   /** Which profile a version 3 run used: the learner's saved session or a fresh one; absent for versions 1 and 2 and until the run planned it. */
   session?: 'saved' | 'fresh'
-  /** `kept` for a run that started with the saved session: the app data the profile already had stays (`initialStorage` is written over it). */
+  /** `kept` for a run that started with the saved session: the app data the profile already had stays (such a run never writes `initialStorage`: a configuration that declares it is refused). */
   appState?: 'kept'
   /** The saved-session status the run read at admission; the run resource serves it as `savedSession`. */
   savedSession?: SavedSessionStatus

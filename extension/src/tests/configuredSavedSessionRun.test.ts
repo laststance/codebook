@@ -598,6 +598,102 @@ test('a saved run whose server reports a non-loopback origin is refused before t
   assert.equal(harness.savedSessionCalls.at(-1), 'release')
 })
 
+// Value: protects=Codex outside voice 1 of the pt2 /ship pass (appState kept): a run the store admits with the saved session while its configuration declares initialStorage is refused with INVALID_CONFIGURATION before any server, browser or storage write, so a declined confirmation never meets an overwritten draft, and the saved session is freed by the cleanup; fails_when=a script that writes localStorage is registered, a server or Chrome starts, the lease's launch check runs, the lease stays held, or the refusal lacks its reason, recovery or start log line; no_claim=the real page's localStorage (the stand-in page records the registered script only)
+test('a run with the saved session that declares initialStorage is refused before any server, browser or storage write, and frees the saved session', async (context) => {
+  // Arrange
+  const outputLines: string[] = []
+  const harness = await signInHarness(
+    context,
+    {
+      savedSession: { admission: 'saved' },
+      operations: {
+        operations: [pending, submit],
+        stopOperations: [2],
+        initialStorage: [{ key: 'draft', value: '' }],
+      },
+    },
+    [pending, submit],
+    outputLines,
+  )
+  // Act
+  const error = await harness.run.prepare().catch((failure: unknown) => failure)
+  await harness.run.stop()
+  // Assert
+  assert.ok(error instanceof StudyError)
+  assert.equal(error.code, 'INVALID_CONFIGURATION')
+  assert.deepEqual(plain(error.details), {
+    reason: 'saved-session-initial-storage',
+    field: 'initialStorage',
+  })
+  assert.match(
+    error.describe().recovery,
+    /Remove initialStorage to run this flow with the saved session, or declare session: "fresh" to use initialStorage in a fresh profile when the flow needs no sign-in/,
+  )
+  assert.deepEqual(harness.newDocumentScripts, [])
+  assert.equal(harness.launchConfigurations.length, 0)
+  assert.equal(harness.releases.includes('application acquired'), false)
+  assert.deepEqual(harness.savedSessionCalls, [
+    'remember',
+    `acquire:${SERVICE_RUN_ID}:saved-if-available`,
+    'release',
+  ])
+  assert.deepEqual(harness.savedProfileFolders, [])
+  assert.ok(
+    outputLines.some(
+      (line) =>
+        line.includes(
+          'refused INVALID_CONFIGURATION before any server started',
+        ) && line.endsWith(`[log ${SERVICE_RUN_ID}#start]`),
+    ),
+    outputLines.join('\n'),
+  )
+})
+
+// Value: protects=the same fix's boundary: a run with a fresh profile, declared with session fresh or found because no saved session exists, still writes initialStorage into each new document of its page before the entry loads; fails_when=the refusal also catches a fresh run, or the storage script is no longer registered; no_claim=the real page's localStorage (the stand-in page records the registered script only)
+test('a run with a fresh profile, declared or because no saved session exists, still writes initialStorage into its page', async (context) => {
+  // Arrange
+  const initialStorage = [{ key: 'draft', value: '' }]
+  // The store answers a declared fresh profile with a fresh one, whatever it holds.
+  const declaredFresh = await signInHarness(context, {
+    savedSession: { admission: 'no-saved-session' },
+    operations: {
+      operations: [pending, submit],
+      stopOperations: [2],
+      session: 'fresh',
+      initialStorage,
+    },
+  })
+  const noSavedSession = await signInHarness(context, {
+    savedSession: { admission: 'no-saved-session' },
+    operations: {
+      operations: [pending, submit],
+      stopOperations: [2],
+      initialStorage,
+    },
+  })
+  // Act
+  await declaredFresh.run.prepare()
+  await noSavedSession.run.prepare()
+  // Assert
+  assert.ok(
+    declaredFresh.savedSessionCalls.includes(`acquire:${SERVICE_RUN_ID}:fresh`),
+  )
+  assert.ok(
+    noSavedSession.savedSessionCalls.includes(
+      `acquire:${SERVICE_RUN_ID}:saved-if-available`,
+    ),
+  )
+  for (const harness of [declaredFresh, noSavedSession]) {
+    assert.equal(harness.run.view().status, 'ready')
+    assert.equal(harness.run.view().session, 'fresh')
+    assert.equal(harness.newDocumentScripts.length, 1)
+    assert.match(
+      harness.newDocumentScripts[0]!,
+      /for\(const entry of \[\{"key":"draft","value":""\}\]\)localStorage\.setItem\(entry\.key,entry\.value\);$/,
+    )
+  }
+})
+
 // Value: protects=D13 (E6 after the last operation): a sign-out flow whose after conditions hold on the sign-in page completes, and an expired session after submit, where they do not hold, answers SIGN_IN_REQUIRED instead of OPERATION_AFTER_NOT_MET; fails_when=a sign-out flow fails, or the expired session reads the after refusal; no_claim=a real sign-out
 test('a sign-in page reached after the last operation completes the run when the after conditions hold there and fails it as SIGN_IN_REQUIRED when they do not', async (context) => {
   // Arrange: a sign-out flow, whose result is the sign-in page.
