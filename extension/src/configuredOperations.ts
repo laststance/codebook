@@ -156,12 +156,12 @@ const UNSUPPORTED_ADVICE: Readonly<Record<string, string>> = {
 
 /**
  * Describes the control an operation names, inside the owned page; serialized with `toString()`, so everything it calls is declared inside it.
- * It reads attributes only and never the control's value, so a secret never leaves the page through it.
+ * It reads attributes only and never the control's value, so a secret never leaves the page through it. Sent by {@link describeControl}; exported so a Node test runs it against a fake page.
  * @param input - The operation's selector and the loopback origins the page may be at.
  * @returns `ready: false` with a reason when the page is at another origin or the selector does not name this one connected control; otherwise the control's tag, type, name, id, autocomplete, whether it is a multiple select or editable content, and `ready` only when it is visible and enabled.
  * @example describeOperationControl.call(element, { selector: '#amount', origins: ['http://localhost:3000'] }) // => { ready: true, tagName: 'input', type: 'number', … }
  */
-function describeOperationControl(
+export function describeOperationControl(
   this: Element,
   input: { selector: string; origins: readonly string[] },
 ) {
@@ -234,11 +234,12 @@ function checkSelectOption(this: Element, input: { value: string }) {
 /**
  * Sets a number input's or a single select's value the way a user's choice does, inside the owned page; serialized with `toString()`.
  * The element's native value setter bypasses a framework's value tracking, and the `input` and `change` events it dispatches make a React-controlled control see the value; a handler that pauses in the debugger keeps this call pending until the pause is continued.
+ * Sent by {@link sendNativeValue}; exported so a Node test runs it against a fake page.
  * @param input - The selector and origins that identify the control, the kind, the value, and the attributes the control had when it was classified.
  * @returns `applied: false` with a reason when nothing was changed (another origin, a control that is not the one classified, a missing or disabled option); otherwise whether the control then holds the value (`valueMatches`), whether the browser calls it valid (`isValid`) and, for a number input, its `min`, `max`, `step` and `pattern` rules.
  * @example applyNativeValue.call(input, { kind: 'number', value: '120', … }) // => { applied: true, valueMatches: true, isValid: true, rule: { min: '1' } }
  */
-function applyNativeValue(
+export function applyNativeValue(
   this: Element,
   input: {
     selector: string
