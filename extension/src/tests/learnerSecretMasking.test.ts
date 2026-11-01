@@ -1,6 +1,4 @@
 import assert from 'node:assert/strict'
-import { readdir, readFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -16,6 +14,7 @@ import { maskLearnerSecretData } from '../utils/maskLearnerSecretData'
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
 import { configuredServiceHarness } from './utils/configuredServiceHarness'
 import { ControlledOperationsRuntime } from './utils/controlledOperationsRuntime'
+import { readEvidenceText } from './utils/readEvidenceText'
 
 const OPERATION_ACTION = 'repository-operation'
 const SECRET = 'typed-by-learner'
@@ -32,22 +31,6 @@ const PASSWORD_OPERATIONS = [
 const PASSWORD_CONTROLS = {
   '#password': { tagName: 'input', type: 'password' },
 } as const
-
-/** Reads every file under a folder as text, so a test can search the private evidence for a secret. @example await readAllText(run.view().artifactDirectory) */
-async function readAllText(directory: string): Promise<string> {
-  const entries = await readdir(directory, {
-    recursive: true,
-    withFileTypes: true,
-  })
-  const texts = await Promise.all(
-    entries
-      .filter((entry) => entry.isFile() && !entry.name.endsWith('.png'))
-      .map((entry) =>
-        readFile(join(entry.parentPath, entry.name), 'utf8').catch(() => ''),
-      ),
-  )
-  return texts.join('\n')
-}
 
 // protects=ENG-4: a value the learner typed and the page copied into a variable (inspection value, debugger preview and saved snapshot) is masked in the run resource, the journal and every evidence file, while the page still received it; fails_when=any form of the run keeps the copy, or the typed text did not reach the page; no_claim=a real debugger or page: the harness stands in for the page, with the copied value as the stop's local variable
 test('a value copied from the typed secret into a variable is masked in the inspection, the debugger preview, the journal and runtime.json', async (context) => {
@@ -76,7 +59,7 @@ test('a value copied from the typed secret into a variable is masked in the insp
   const view = JSON.stringify(run.view())
   assert.doesNotMatch(view, new RegExp(SECRET))
   assert.match(view, /\[masked\]/)
-  const files = await readAllText(run.view().artifactDirectory)
+  const files = await readEvidenceText(run.view().artifactDirectory)
   assert.match(files, /runtime\.json|snapshot/)
   assert.doesNotMatch(files, new RegExp(SECRET))
 })
@@ -108,7 +91,7 @@ test('an exception message that quotes the typed secret is masked in the failure
   assert.match(view.failures.join('\n'), /INPUT_NOT_ACCEPTED/)
   assert.doesNotMatch(JSON.stringify(view), new RegExp(SECRET))
   assert.doesNotMatch(
-    await readAllText(view.artifactDirectory),
+    await readEvidenceText(view.artifactDirectory),
     new RegExp(SECRET),
   )
 })

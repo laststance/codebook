@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -11,21 +10,9 @@ import { buildRecordingContext } from '../utils/buildRecordingContext'
 import { captureStudy } from '../utils/captureStudy'
 
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
+import { readEvidenceText } from './utils/readEvidenceText'
 
 const SECRET = 'typed-by-learner'
-
-/** Reads every file under a folder as text, so a search covers the whole evidence journal. */
-async function readAllText(folder: string): Promise<string> {
-  let combined = ''
-  for (const entry of await readdir(folder, {
-    withFileTypes: true,
-    recursive: true,
-  })) {
-    if (!entry.isFile() || entry.name.endsWith('.png')) continue
-    combined += await readFile(join(entry.parentPath, entry.name), 'utf8')
-  }
-  return combined
-}
 
 /** Runs a version 3 study whose password the learner typed, on the controlled runtime, until its first stop is committed. */
 async function pausedSecretRun(
@@ -130,7 +117,7 @@ test('a copy of the typed secret is masked in the saved study, the recording con
     service.maskLearnerSecretsInData(harness.run.view().events),
     1,
   )
-  const journal = await readAllText(harness.run.view().artifactDirectory)
+  const journal = await readEvidenceText(harness.run.view().artifactDirectory)
   // Assert
   assert.deepEqual(harness.insertedTexts, [SECRET])
   assert.ok(journal.length > 0)

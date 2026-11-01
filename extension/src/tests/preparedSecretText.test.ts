@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -14,22 +13,10 @@ import { captureStudy } from '../utils/captureStudy'
 import { preparedInputsOf } from '../utils/preparedInputsOf'
 
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
+import { readEvidenceText } from './utils/readEvidenceText'
 
 const PASSWORD = 'hunter2-prepared-password'
 const EMAIL = 'learner@example.invalid'
-
-/** Reads every file under a folder as text, so a search covers the whole evidence journal. */
-async function readAllText(folder: string): Promise<string> {
-  let combined = ''
-  for (const entry of await readdir(folder, {
-    withFileTypes: true,
-    recursive: true,
-  })) {
-    if (!entry.isFile() || entry.name.endsWith('.png')) continue
-    combined += await readFile(join(entry.parentPath, entry.name), 'utf8')
-  }
-  return combined
-}
 
 /** Runs a repository-browser study with a password and an email prepared, on the controlled runtime, until its first stop is committed. */
 async function pausedPreparedRun(context: TestContext) {
@@ -118,7 +105,7 @@ test('a prepared password is masked in every stored and served form while the pa
     service.uri(record.id, 'manifest'),
   )
   const archive = await captureStudy(service, record, library.workspaceKey)
-  const journal = await readAllText(harness.run.view().artifactDirectory)
+  const journal = await readEvidenceText(harness.run.view().artifactDirectory)
   const runResource = JSON.stringify(service.state(record))
   // Assert
   assert.deepEqual(harness.insertedTexts, [EMAIL, PASSWORD])
