@@ -21,6 +21,7 @@ import {
   MANAGED_PROFILE_REMOVAL_RETRY_DELAY_MS,
   PROCESS_LISTING_POLL_INTERVAL_MS_ON_WINDOWS,
   SECRET_FRAME_DRAIN_TIMEOUT_MS,
+  SIGN_IN_PROFILE_DISK_CACHE_BYTES,
 } from '../constants'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
 import { currentUserName } from '../utils/currentUserName'
@@ -38,8 +39,15 @@ import {
   type Scenario,
 } from './constants'
 import { CursorCdpBridge } from './cursorCdpBridge'
-import type { SecretFrameGate } from './secretFrameGate'
+import type { SavedSessionRunLease } from './savedSessionTypes'
+import type { SecretFrameGate, SecretFrameVerdict } from './secretFrameGate'
 import { awaitResponse } from './utils/awaitResponse'
+import { errorWithPathHidden } from './utils/errorWithPathHidden'
+import {
+  hideSavedProfilePath,
+  SAVED_PROFILE_PLACEHOLDER,
+} from './utils/hideSavedProfilePath'
+import type { ListedProcess } from './utils/listProcesses'
 import { managedProfileRoot } from './utils/managedProfileRoot'
 import { profileProcesses } from './utils/profileProcesses'
 import { removeAbandonedProfiles } from './utils/removeAbandonedProfiles'
@@ -203,6 +211,12 @@ export class HostBrowser {
   private readonly acquisitions = new Set<Promise<unknown>>()
   private closing = false
   private managedProfile?: string
+  /** The hold on the learner's saved-session folder when this run opens it ({@link useSavedProfile}); the folder is then never made, marked or removed here, and no journal record names its path. */
+  private savedLease?: SavedSessionRunLease
+  /** The spellings of the saved folder (the lease's path and its real path), by which journal records and errors hide it. */
+  private savedFolders: string[] = []
+  /** The processes {@link proveOwnedChrome} found, kept so the proof is made and journaled once. */
+  private ownedProof?: ListedProcess[]
   /** Set once this run's profile folder is gone, so that a repeated {@link close} neither looks for its processes nor removes it again. */
   private managedProfileRemoved = false
   private leftProfile?: ProfileLeft
@@ -288,16 +302,7 @@ export class HostBrowser {
       signal.throwIfAborted()
       if (this.closing) throw new Error('Owned browser is closing')
       this.startAbandonedProfileSweep(owner)
-      const root = this.managedRoot
-      // The root of Windows (below the user's local application data folder) is made at the first run; /tmp is always there.
-      await mkdir(root, { recursive: true })
-      this.managedProfile = await madeProfileFolder(root, owner)
-      // The marker is the proof by which a later run may remove this folder, should this editor be killed before the run closes.
-      await writeOwnerMarker(this.managedProfile, owner)
-      this.record('browser.managed-profile', {
-        profile: this.managedProfile,
-        chrome: this.host.chrome,
-      })
+      await this.makeManagedProfile(owner)
       signal.throwIfAborted()
       const { BrowserViewport } = await import('./browserViewport.js')
       signal.throwIfAborted()
@@ -335,16 +340,14 @@ export class HostBrowser {
       )
       signal.throwIfAborted()
       if (this.closing) throw new Error('Owned browser is closing')
+      // The fresh listing and the removal of stale Chrome locks come right before the launch, after the viewport and the dev server took their time.
+      await this.openSavedProfile(signal)
       debugConfiguration = {
         ...debugConfiguration,
         type: 'pwa-chrome',
         request: 'launch',
         runtimeExecutable,
-        runtimeArgs: [
-          '--headless=new',
-          '--remote-debugging-pipe',
-          // No host-resolver rule (D78): a rule would map every `localhost` port and hide the learner's own `::1`-only API; the `[::1]` forwarder keeps the app's own port owned.
-        ],
+        runtimeArgs: this.managedRuntimeArgs(),
         userDataDir: this.managedProfile,
         cleanUp: 'wholeBrowser',
         browserLaunchLocation: 'workspace',
@@ -537,7 +540,125 @@ export class HostBrowser {
   /** Binds the owned viewport only after {@link ConfiguredBrowserRun} identifies the exact child/page. @example await browser.attachViewport(cdp, signal) */
   async attachViewport(cdp: Cdp, signal: AbortSignal): Promise<void> {
     if (!this.viewport || !this.managedProfile) return
-    const profile = this.managedProfile
+    await this.proveOwnedChrome(signal)
+    this.record(
+      'browser.runtime-version',
+      await cdp.request('Browser.getVersion', undefined),
+    )
+    if (this.secretFrameGate)
+      this.viewport.setSecretFrameGate(this.secretFrameGate)
+    await this.viewport.attach(cdp, signal)
+  }
+
+  /**
+   * Makes the next launch open the learner's saved-session folder instead of a fresh profile; called by {@link ConfiguredBrowserRun} once, before {@link launch}, for a run admitted with the saved session.
+   * The folder is held by the lease: this browser never makes, marks or removes it, adds the disk-cache cap to Chrome's arguments, and journals it only as {@link SAVED_PROFILE_PLACEHOLDER}.
+   * @param lease - The run's hold on the folder; `prepareForLaunch` runs right before the launch, and `release` stays with the caller until {@link close} confirmed Chrome's exit.
+   * @throws When the browser is not a managed one or already launched.
+   * @example browser.useSavedProfile(admission.lease)
+   */
+  useSavedProfile(lease: SavedSessionRunLease): void {
+    if (this.host.browserBackend !== 'managed' || this.managedProfile)
+      throw new Error('A saved profile needs a managed browser before launch')
+    this.savedLease = lease
+    // The lease's path is hidden from the first step on; the launch adds the real path before it touches the folder.
+    this.savedFolders = [lease.profile]
+  }
+
+  /**
+   * Records the launched Chrome's process in the saved session's marker, so a later window can stop an orphan this run leaves when the editor dies; called by {@link ConfiguredBrowserRun} right after {@link launch} of a saved profile.
+   * Proves the main Chrome process first (its command line names the folder and the pipe), and does nothing for a fresh profile.
+   * @param signal - Ends the wait when the run stops.
+   * @throws When no main Chrome process of the folder shows up, or the proof fails.
+   * @example await browser.recordSavedBrowser(signal)
+   */
+  async recordSavedBrowser(signal: AbortSignal): Promise<void> {
+    const lease = this.savedLease
+    if (!lease || !this.managedProfile) return
+    const processes = await this.proveOwnedChrome(signal)
+    // The browser process is the one without a --type switch; its helpers have one.
+    const main = processes.find((owned) => !/\s--type=/.test(owned.command))
+    if (!main || !this.host.chrome)
+      throw new Error('The saved-session Chrome main process was not found')
+    const marker = { executable: this.host.chrome.binary, pid: main.pid }
+    // A failed marker write names the file inside the saved folder.
+    await this.withSavedPathHidden(() => lease.recordBrowser(marker))
+  }
+
+  /**
+   * Hides the saved folder's path in a text or a record's detail when this run opened one; a fresh profile's text passes unchanged.
+   * @param text - A journal text or an error's words.
+   * @example this.hidden('chrome --user-data-dir=/x/y') // => 'chrome --user-data-dir=<saved-session>' for a saved profile
+   */
+  private hidden(text: string): string {
+    return this.savedLease
+      ? hideSavedProfilePath(text, this.savedFolders)
+      : text
+  }
+
+  /**
+   * Runs a step whose failure can name the saved folder and rethrows that failure with the folder hidden ({@link errorWithPathHidden}), so no chat error or `run.failed` record names where the learner's session lives; a fresh profile's failure, and one that names no folder, passes unchanged.
+   * Called by {@link openSavedProfile} for the lease's preparation, by {@link recordSavedBrowser} for the marker write and by {@link proveOwnedChrome} for the listing and the port file read.
+   * @param step - The step.
+   * @returns What the step returned.
+   * @throws The step's failure, its words without the saved folder.
+   * @example await this.withSavedPathHidden(() => lease.prepareForLaunch()) // EACCES on Default/Preferences => "EACCES: permission denied, open '<saved-session>/Default/Preferences'"
+   */
+  private async withSavedPathHidden<Value>(
+    step: () => Promise<Value>,
+  ): Promise<Value> {
+    try {
+      return await step()
+    } catch (error) {
+      throw errorWithPathHidden(error, (text) => this.hidden(text))
+    }
+  }
+
+  /**
+   * Starts the fresh listing and the clean-up of stale locks the lease owns, then names the folder for the run; called by {@link launch} right before the debugger starts.
+   * @param signal - Ends the work when the run stops.
+   */
+  private async openSavedProfile(signal: AbortSignal): Promise<void> {
+    const lease = this.savedLease
+    // A fresh profile was made by makeManagedProfile; nothing to open.
+    if (!lease) return
+    // Both spellings are known before the folder is touched, so a failure of its preparation is hidden by either.
+    const real = await realpath(lease.profile).catch(() => lease.profile)
+    this.savedFolders = [lease.profile, real]
+    await this.withSavedPathHidden(() => lease.prepareForLaunch())
+    signal.throwIfAborted()
+    this.managedProfile = lease.profile
+    // No path: the record says only that the run opened its saved session.
+    this.record('browser.saved-session-profile', { chrome: this.host.chrome })
+  }
+
+  /**
+   * Waits for the owned Chrome's processes and proves the declared pipe and the absent debugging port; the proof is made once and journaled once.
+   * Called by {@link attachViewport} and, for a saved profile, by {@link recordSavedBrowser} right after the launch.
+   * @param signal - Ends the wait when the run stops.
+   * @returns The processes that name the profile folder.
+   * @throws When Chrome does not use the pipe, or exposes a port; a failed listing or port file read of a saved profile names its folder only as {@link SAVED_PROFILE_PLACEHOLDER}.
+   */
+  private async proveOwnedChrome(
+    signal: AbortSignal,
+  ): Promise<ListedProcess[]> {
+    this.ownedProof ??= await this.withSavedPathHidden(() =>
+      this.observeOwnedChrome(signal),
+    )
+    return this.ownedProof
+  }
+
+  /**
+   * Makes the proof {@link proveOwnedChrome} keeps: lists the processes that name the profile folder until one shows up, checks the pipe and the absent port, and journals them.
+   * @param signal - Ends the wait when the run stops.
+   * @returns The processes that name the profile folder.
+   * @throws When no process shows up in time, the listing or the port file read fails, Chrome does not use the pipe, or it exposes a port.
+   * @example await this.observeOwnedChrome(signal) // => [{ pid: 4242, command: 'chrome --remote-debugging-pipe --user-data-dir=/tmp/codebook-browser-a1b2c3' }]
+   */
+  private async observeOwnedChrome(
+    signal: AbortSignal,
+  ): Promise<ListedProcess[]> {
+    const profile = this.managedProfile!
     const processes = await waitUntil(
       async () => {
         const observed = await profileProcesses(profile)
@@ -569,17 +690,15 @@ export class HostBrowser {
         'Owned Chrome unexpectedly exposed a browser debugging port',
       )
     this.record('browser.managed-processes', {
-      processes,
+      // A saved profile's command lines name the folder; the journal keeps the placeholder.
+      processes: processes.map((owned) => ({
+        ...owned,
+        command: this.hidden(owned.command),
+      })),
       pipe: true,
       devToolsPortFileAbsent: true,
     })
-    this.record(
-      'browser.runtime-version',
-      await cdp.request('Browser.getVersion', undefined),
-    )
-    if (this.secretFrameGate)
-      this.viewport.setSecretFrameGate(this.secretFrameGate)
-    await this.viewport.attach(cdp, signal)
+    return processes
   }
 
   /**
@@ -603,14 +722,14 @@ export class HostBrowser {
   /**
    * Forwards actual phase response pixels to optional recording before reveal/storage can delay them, through the run's secret frame gate.
    * @param requestedAtMs - When the screenshot was requested.
-   * @returns `drop` when the gate withheld the image; `pass` otherwise.
-   * @example if ((await browser.recordCapture(data, 'before', startedAt)) === 'drop') throw new Error('withheld')
+   * @returns `pass`, or a withheld verdict (`drop`, `drop-cross-origin-frame`) when the gate withheld the image.
+   * @example if ((await browser.recordCapture(data, 'before', startedAt)) !== 'pass') markWithheld()
    */
   async recordCapture(
     data: string,
     phase: string,
     requestedAtMs: number,
-  ): Promise<'pass' | 'drop'> {
+  ): Promise<SecretFrameVerdict> {
     if (this.viewport)
       return this.viewport.recordCapture(data, phase, requestedAtMs)
     // Without a viewport there is no recorder; the gate still decides whether the image may be kept.
@@ -807,13 +926,18 @@ export class HostBrowser {
             // Processes still there at the bound are a failed release. A listing that cannot be made proves nothing either way: the close goes on, so the folder this run made is removed and never left behind, also on a machine where no listing ever succeeds.
             if (error instanceof WaitTimeoutError) throw error
             this.record('browser.managed-exit-unverified', {
-              profile,
-              reason: String(error),
+              profile: this.journaledProfile(profile),
+              reason: this.hidden(String(error)),
             })
+            // A saved profile's lease is released only on a confirmed exit: an unverifiable listing is a cleanup failure, the lease is kept and Stop retries.
+            if (this.savedLease)
+              throw new Error(
+                'The saved-session Chrome exit could not be confirmed',
+              )
             return
           }
           this.record('browser.managed-exit-verified', {
-            profile,
+            profile: this.journaledProfile(profile),
             remainingProcesses: 0,
           })
         },
@@ -832,6 +956,52 @@ export class HostBrowser {
       host: this.host.id,
       remainingOwnedTabs: 0,
     })
+  }
+
+  /**
+   * Makes this run's own profile folder and marks it as this editor's, journaling it; does nothing for a saved profile, which the setup made and the lease holds, so nothing of it is made, marked or journaled by path here.
+   * Called by {@link launch} once its owner is read.
+   * @param owner - This process's owner identity, for the marker.
+   * @example await this.makeManagedProfile(owner) // journal: browser.managed-profile
+   */
+  private async makeManagedProfile(owner: StorageOwnerIdentity): Promise<void> {
+    if (this.savedLease) return
+    const root = this.managedRoot
+    // The root of Windows (below the user's local application data folder) is made at the first run; /tmp is always there.
+    await mkdir(root, { recursive: true })
+    this.managedProfile = await madeProfileFolder(root, owner)
+    // The marker is the proof by which a later run may remove this folder, should this editor be killed before the run closes.
+    await writeOwnerMarker(this.managedProfile, owner)
+    this.record('browser.managed-profile', {
+      profile: this.managedProfile,
+      chrome: this.host.chrome,
+    })
+  }
+
+  /**
+   * Names the switches of the managed Chrome launch: a headless browser on the debugging pipe, plus the disk-cache cap for the saved session's folder.
+   * Called by {@link launch}.
+   * @returns The `runtimeArgs` of the debugger configuration.
+   * @example this.managedRuntimeArgs() // => ['--headless=new', '--remote-debugging-pipe']
+   */
+  private managedRuntimeArgs(): string[] {
+    return [
+      '--headless=new',
+      '--remote-debugging-pipe',
+      // The saved folder keeps the learner's session; its cache is capped so it does not grow with every run.
+      ...(this.savedLease
+        ? [`--disk-cache-size=${SIGN_IN_PROFILE_DISK_CACHE_BYTES}`]
+        : []),
+      // No host-resolver rule (D78): a rule would map every `localhost` port and hide the learner's own `::1`-only API; the `[::1]` forwarder keeps the app's own port owned.
+    ]
+  }
+
+  /**
+   * Names the profile in a journal record: its path for a made folder, the placeholder for the saved session's folder.
+   * @param profile - The folder.
+   */
+  private journaledProfile(profile: string): string {
+    return this.savedLease ? SAVED_PROFILE_PLACEHOLDER : profile
   }
 
   /**
@@ -879,6 +1049,8 @@ export class HostBrowser {
    * await this.removeManagedProfile() // journal: browser.managed-profile-removed { profile: '/tmp/codebook-browser-a1b2c3' }
    */
   private async removeManagedProfile(): Promise<void> {
+    // The learner's saved session is never removed by a run, on any path: only the removal command, under the store's lock, deletes it.
+    if (this.savedLease) return
     if (!this.managedProfile || this.managedProfileRemoved) return
     const profile = this.managedProfile
     try {

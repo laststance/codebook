@@ -72,6 +72,7 @@ import {
   REPLAY_VIEWPORT_RECEIPT_LIMIT,
   REPOSITORY_SOURCE_SCHEME,
   REPOSITORY_BROWSER_PROFILE,
+  REPOSITORY_OPERATION_ACTION,
   REPOSITORY_MIN_EDITOR_GROUP_COUNT,
   REPOSITORY_READER_DEBOUNCE_MS,
   REPOSITORY_SOURCE_LIMIT_BYTES,
@@ -1326,7 +1327,10 @@ export class StudyWorkspace {
   private lifetime = 0
   /** The number of the reader's latest {@link open}; an earlier open that resumes later compares against it. Not the number a pane gives its open request. */
   private readerOpenNumber = 0
-  private busy = false
+  /** The Study-pane control request (Click, Continue, Stop) in its control section, which refuses another one and the presentation; each request ends only its own ({@link action}). A Click ends its section early while the learner answers its operation's question ({@link clickNextAction}). */
+  private busy: symbol | undefined
+  /** Whether the Study pane's Click waits for the learner's answer to its operation's question: the pane offers no second Click meanwhile, and Stop stays available. */
+  private clickAwaitsLearner = false
   private saving = false
   private loading = false
   private revision = 0
@@ -3392,7 +3396,7 @@ export class StudyWorkspace {
    * Says whether a paused participant's pause is not yet inspected and committed; asked by {@link lacksInspectedPause} for every paused participant.
    * @param participant - A participant whose phase is `paused`.
    * @param view - The run's view.
-   * @returns `true` when the participant has no snapshot, its snapshot is of another pause, or the snapshot's phase is not captured.
+   * @returns `true` when the participant has no snapshot, its snapshot is of another pause, or the snapshot's phase is neither captured nor withheld (a withheld image still counts as inspected).
    * @example paused.some((participant) => this.isPauseUninspected(participant, view))
    */
   private isPauseUninspected(
@@ -3403,7 +3407,10 @@ export class StudyWorkspace {
     return (
       !snapshot ||
       this.isSnapshotOfOtherPause(snapshot.pause, participant.pause) ||
-      view.captures[snapshot.capturePhase]?.status !== 'captured'
+      // A withheld image is inspected: the pause is real and its Application view shows the live page.
+      !['captured', 'withheld'].includes(
+        view.captures[snapshot.capturePhase]?.status ?? '',
+      )
     )
   }
 
@@ -9011,6 +9018,58 @@ export class StudyWorkspace {
       )
   }
 
+  /**
+   * Sends the current run's next declared application action for the Study pane's Click; {@link action} calls it inside the Click's control section.
+   * A version 3 operation goes through the same questions as the chat's request (X1): the saved-session confirmation and the masked box of an ask-learner secret. That box stays open without focus for up to {@link StudyService.confirmationTimeoutMs}, so the Click ends its control section for the learner's answer: Stop and the presentation stay available, and Click is not offered again until the answer.
+   * @param service - The attached service.
+   * @param record - The current run.
+   * @throws When an earlier Click's question is still open, the run is no browser run or it offers no application action now; what {@link StudyService.performAction} or {@link StudyService.action} throws, a refused or unanswered question among them.
+   * @example await this.clickNextAction(service, record) // settles once the learner answered and the operation was accepted
+   */
+  private async clickNextAction(
+    service: StudyService,
+    record: StudyRecord,
+  ): Promise<void> {
+    // A Click from the command palette while the learner answers an earlier one's question would only be refused by the run.
+    if (this.clickAwaitsLearner)
+      throw new Error(
+        'Answer the question the last Click opened in the editor first.',
+      )
+    if (record.profile !== REPOSITORY_BROWSER_PROFILE)
+      throw new Error(
+        'Node tests advance through their current source pause; they do not accept browser click actions.',
+      )
+    const descriptor = describeStudy({
+      ...record,
+      descriptor: record.definition?.descriptor,
+    })
+    const nextAction = descriptor.actions.find((action) =>
+      service.state(record).nextActions.includes(action.id),
+    )
+    if (!nextAction)
+      throw new Error('No application action is currently available.')
+    const request = {
+      instanceId: service.instanceId,
+      runId: record.id,
+      key: randomUUID(),
+      action: nextAction.id,
+    }
+    // A click of versions 1 and 2 is admitted at once, inside the control section.
+    if (request.action !== REPOSITORY_OPERATION_ACTION) {
+      service.action(request)
+      return
+    }
+    // The learner may answer the question for minutes: the Click's section ends now, so a Stop is admitted meanwhile and withdraws the question.
+    this.busy = undefined
+    this.clickAwaitsLearner = true
+    try {
+      this.publish()
+      await service.performAction(request)
+    } finally {
+      this.clickAwaitsLearner = false
+    }
+  }
+
   /** Handles explicit learner input, preserving revision identity through awaits. @param fromPane - A validated Study-pane action permits Return to hand focus to Wiki; a command preserves its native input. @example await workspace.action('continue') */
   async action(
     action: z.infer<typeof actionSchema>,
@@ -9025,7 +9084,8 @@ export class StudyWorkspace {
       if (this.busy)
         throw new Error('A study control request is already pending.')
       const displayed = this.message().model
-      this.busy = true
+      const control = Symbol('study control')
+      this.busy = control
       this.publish()
       try {
         if (action === 'run') {
@@ -9040,26 +9100,7 @@ export class StudyWorkspace {
               'No current runtime. Reading saved history never starts one.',
             )
           const identity = { instanceId: service.instanceId, runId: record.id }
-          if (action === 'click') {
-            if (record.profile !== REPOSITORY_BROWSER_PROFILE)
-              throw new Error(
-                'Node tests advance through their current source pause; they do not accept browser click actions.',
-              )
-            const descriptor = describeStudy({
-              ...record,
-              descriptor: record.definition?.descriptor,
-            })
-            const nextAction = descriptor.actions.find((action) =>
-              service.state(record).nextActions.includes(action.id),
-            )
-            if (!nextAction)
-              throw new Error('No application action is currently available.')
-            service.action({
-              ...identity,
-              key: randomUUID(),
-              action: nextAction.id,
-            })
-          }
+          if (action === 'click') await this.clickNextAction(service, record)
           if (action === 'continue') {
             if (
               !this.sourceReady() ||
@@ -9084,7 +9125,8 @@ export class StudyWorkspace {
         this.report('control', error)
         throw error
       } finally {
-        this.busy = false
+        // A Click that waited for the learner ended its section already: a Stop admitted meanwhile keeps its own.
+        if (this.busy === control) this.busy = undefined
         await this.refresh()
         this.publish()
       }
@@ -12010,6 +12052,30 @@ export class StudyWorkspace {
         'The recorded session changed. Use the current Save learning replay control.',
       )
     return owner.save(record)
+  }
+
+  /**
+   * Tells which run waits for the learner to review its operations again; the review command and the saved-session status item read it.
+   * @returns The run id and repository folder name, or `undefined` when no run waits.
+   * @example workspace.awaitingOperationsReview() // => { runId: 'r1', repository: 'shop' }
+   */
+  awaitingOperationsReview():
+    { runId: string; repository: string } | undefined {
+    return this.service?.awaitingOperationsReview()
+  }
+
+  /**
+   * Asks the confirmation of a saved-session run's operations again; the `codebook.reviewSavedSessionOperations` command calls it (DES-4).
+   * @param runId - The run; without it the run that waits for a review.
+   * @returns `confirmed`, `declined`, or `not-waiting` when there is no service or no run waits.
+   * @example await workspace.reviewSavedSessionOperations(runId) // => 'confirmed'
+   */
+  async reviewSavedSessionOperations(
+    runId?: string,
+  ): Promise<'confirmed' | 'declined' | 'not-waiting'> {
+    return (
+      (await this.service?.reviewSavedSessionOperations(runId)) ?? 'not-waiting'
+    )
   }
 
   /** Finishes the explicitly selected capture and verifies matching durable learning; called by the status-bar command. @example await workspace.saveLearningReplay(studyId) */
@@ -15023,7 +15089,7 @@ export class StudyWorkspace {
       },
       liveState: live?.state,
       deadlineAt: live?.deadlineAt,
-      busy: this.busy,
+      busy: this.busy !== undefined,
       saving: this.saving,
       // A covered recording is not loading: its moment is retired until the pane is in front again, and the pane says so.
       loading:
@@ -15058,7 +15124,9 @@ export class StudyWorkspace {
         title: profile.title,
         description: profile.description,
       })),
-      canClick: !browserReplay && Boolean(nextAction),
+      // A Click whose operation waits for the learner's answer is not offered twice.
+      canClick:
+        !browserReplay && Boolean(nextAction) && !this.clickAwaitsLearner,
       canRun:
         (!record || record.stopped) &&
         this.selection.profile !== REPOSITORY_BROWSER_PROFILE,

@@ -372,11 +372,12 @@ export function launchDevelopmentServer(
       return listening
     },
     /**
-     * Waits for the listener, then asks the entry path once without following a redirect and describes the answer, for a Next run in a workspace with a Pages folder.
+     * Waits for the listener, then asks the entry path once without following a redirect and describes the answer, for a Next run in a workspace with a Pages folder and for a version 3 Next run that declares `signInPaths`.
      *
-     * Why it exists: such a run decides from the route manifests whether the App or the Pages path serves the entry, so a 3xx or a 404 is kept as data for that decision ({@link resolveNextPagesEntry}) instead of failing here. Only a redacted same-origin path, or the fact of another origin, is kept from a `Location` ({@link describeNextEntryResponse}); a cross-origin target is never fetched. Called by {@link ConfiguredBrowserRun} instead of `ready`.
+     * Why it exists: a run in a workspace with a Pages folder decides from the route manifests whether the App or the Pages path serves the entry, so a 3xx or a 404 is kept as data for that decision ({@link resolveNextPagesEntry}) instead of failing here; and a version 3 run with `signInPaths` must tell a redirect to its sign-in page (Codebook's request carries no cookies) from any other answer, to refuse a fresh run with `SIGN_IN_REQUIRED` or warm the entry with the saved session. Only a redacted same-origin path, the declared sign-in path, or the fact of another origin is kept from a `Location` ({@link describeNextEntryResponse}); a cross-origin target is never fetched. Called by {@link ConfiguredBrowserRun} instead of `ready`: by its Pages-capable entry check (`readyPagesCapableEntry`) and by its sign-in aware check of an App-only workspace (`readyOperationsEntry`), each passing `signInPaths` for a version 3 run.
      * @param signal - Ends the wait and the request when the run is cancelled.
      * @param entryPath - The configured entry path.
+     * @param signInPaths - The configuration's `signInPaths`, so a redirect to one of them is named in the answer.
      * @returns The origin and the structured answer.
      * @throws What the listener wait throws (an exit before listening carries the masked output tail), and a failed request.
      * @example
@@ -385,6 +386,7 @@ export function launchDevelopmentServer(
     async readyEntry(
       signal: AbortSignal,
       entryPath: string,
+      signInPaths?: readonly string[],
     ): Promise<{ origin: string; entry: NextEntryResponse }> {
       repositoryEntryPathSchema.parse(entryPath)
       const listening = await waitForListener(signal),
@@ -402,6 +404,7 @@ export function launchDevelopmentServer(
         response.headers.get('location'),
         requestUrl,
         listening,
+        signInPaths,
       )
       // Only the status and the redacted target are journaled; the raw Location never leaves this method.
       record('application.entry-answered', {

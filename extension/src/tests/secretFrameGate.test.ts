@@ -7,6 +7,7 @@ import { Cdp } from '../runtimeSupport/cdp'
 import {
   SecretFrameGate,
   type SecretFrameFailureReason,
+  type SecretFrameVerdict,
 } from '../runtimeSupport/secretFrameGate'
 
 import {
@@ -722,7 +723,7 @@ test('an armed gate over five minutes of frames and a pause journals few events 
   // Arrange
   mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1_000_000 })
   const { socket, cdp, gate, journal, summaries } = await gateOverCdp()
-  const verdicts: Promise<'pass' | 'drop'>[] = []
+  const verdicts: Promise<SecretFrameVerdict>[] = []
   let evaluationsWhenPauseBegan = 0
   let evaluationsWhenPauseEnded = 0
   // Act
@@ -794,7 +795,7 @@ test('frames from the time the control draws its text are dropped and earlier fr
   mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 3_000_000 })
   const { socket, cdp, gate } = await gateOverCdp()
   const startedAt = Date.now()
-  const outcomes: { atMs: number; verdict: 'pass' | 'drop' }[] = []
+  const outcomes: { atMs: number; verdict: SecretFrameVerdict }[] = []
   // Act
   for (let frame = 0; frame < 100; frame += 1) {
     const atMs = Date.now() - startedAt
@@ -1013,8 +1014,8 @@ test('a typed value drawn on an offscreen canvas drops frames and fails the run'
   assert.deepEqual([verdict, failures], ['drop', ['value-copied-to-text']])
 })
 
-// protects=a frame whose document the observer cannot read (a sandboxed frame has an opaque origin) is skipped and the rest of the page is still checked; fails_when=an unreadable frame breaks the full check, so the observer stops answering and the run fails although nothing showed the secret; no_claim=the frame's own text, which a stated limit leaves unchecked; real headless Chrome
-test('a sandboxed frame the observer cannot read keeps frames passing', async (context) => {
+// protects=a frame whose document the observer cannot read (a sandboxed frame has an opaque origin) is skipped without breaking the full check, and its drawn frames are withheld instead of failing the run; fails_when=an unreadable frame breaks the full check, so the observer stops answering and the run fails although nothing showed the secret, or its frames pass; no_claim=the frame's own text, which a stated limit leaves unchecked; real headless Chrome
+test('a sandboxed frame the observer cannot read withholds frames without failing the run', async (context) => {
   // Arrange
   const armed = await armedWithSecret(context, 'sandbox-secret')
   if (!armed) return
@@ -1032,6 +1033,6 @@ test('a sandboxed frame the observer cannot read keeps frames passing', async (c
   // Assert
   assert.deepEqual(
     [frameDocumentReadable, verdict, failures],
-    [false, 'pass', []],
+    [false, 'drop-cross-origin-frame', []],
   )
 })

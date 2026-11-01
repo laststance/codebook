@@ -5,6 +5,8 @@ import {
   OPERATION_SETTLE_QUIET_MS,
   REPOSITORY_OPERATION_ACTION,
   REPOSITORY_OPERATION_LIMIT,
+  REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
+  SECONDS_PER_MINUTE,
   SECRET_FRAME_VALUE_COPY_MIN_CHARS,
 } from './constants'
 import { ERROR_RECOVERY, type ErrorCode } from './errors'
@@ -25,6 +27,11 @@ export const OPERATIONS_ERROR_CODES = [
   'OPERATION_AFTER_NOT_MET',
   'RUN_FAILED_UNEXPECTEDLY',
   'SECRET_BECAME_VISIBLE',
+  'SIGN_IN_REQUIRED',
+  'SIGN_IN_IN_PROGRESS',
+  'SIGN_IN_PROFILE_IN_USE',
+  'SIGN_IN_PROFILE_UNUSABLE',
+  'SIGN_IN_ORIGIN_REFUSED',
 ] as const satisfies readonly ErrorCode[]
 
 /** One code of {@link OPERATIONS_ERROR_CODES}. */
@@ -112,6 +119,12 @@ const OPERATIONS_QUICK_START_COPY_FROM = {
   instanceId:
     'codebook_status (copy it into every later tool call; recopy it after a restart)',
 } as const
+
+/** How long the saved-session confirmation waits for the learner, in whole minutes, as the help words it. */
+const CONFIRMATION_WAIT_MINUTES =
+  REPOSITORY_PAUSE_HOLD_TIMEOUT_MS /
+  MILLISECONDS_PER_SECOND /
+  SECONDS_PER_MINUTE
 
 /** The settle bound in whole seconds, as the help words it. */
 const SETTLE_BOUND_SECONDS = OPERATION_SETTLE_BOUND_MS / MILLISECONDS_PER_SECOND
@@ -209,6 +222,22 @@ export function operationsHelp() {
         'A send cannot drive a multiple select, a date, range, checkbox or radio input given text, or a contenteditable element: it answers CONTROL_KIND_NOT_SUPPORTED. Use a click operation where the control takes a click (a checkbox, a radio, a custom select).',
       failedFlow:
         'After a failure that may have changed data (operationFailure reads sent "sent" or sideEffects "unknown"), tell the learner which operations the run resource shows as done, offer to save the partial replay, and do not run the flow again unless the learner asks: changes the app made are not undone.',
+      savedSessionConfirmation: {
+        anchor: 'codebook://help/repository-browser#saved-session-confirmation',
+        when: `A version 3 run that starts with the learner's saved session (the run resource reads session saved) asks the learner once, before operation 1. The first ${REPOSITORY_OPERATION_ACTION} call opens an editor dialog listing the page (already opened with the saved session), that the run changes the app's real data and keeps the data the app already had, and each operation: a secret as (hidden), a choice by its visible label, or (chosen when sent) when the option is not on the page yet. The call waits for the answer for at most ${CONFIRMATION_WAIT_MINUTES} minutes.`,
+        values:
+          "The run resource reads confirmation: awaiting-learner until the learner answers (the first repository-operation shows the dialog); confirmed after Run <N> operations; declined after Cancel, a closed dialog or no answer in time; not-needed for a run without the saved session, or with the learner's setting off (then confirmationSetting reads off).",
+        declined:
+          "After a decline the call answers OPERATIONS_NOT_CONFIRMED with isError true. Nothing was sent, the run stays ready and the key stays unused. Every later repository-operation answers OPERATIONS_NOT_CONFIRMED at once, with no dialog, until the learner chooses Review again in the editor's Operations not confirmed notification or the saved-session status item. Relay it and never ask the learner to confirm in the chat. Read the run resource at most every 10 s for at most 5 minutes, and send the next operation (same or new key) only when confirmation reads confirmed.",
+        whileAsking:
+          'Another key while the dialog is open answers BUSY with reason awaiting-confirmation; the same key joins the dialog. Codebook cannot close a dialog it stopped waiting for (no answer in time, or codebook_stop); an answer to that dialog is ignored and sends nothing. If your call ends before the learner answers (a client timeout), recover by reading the run resource or by sending the same key again, never a new one.',
+        fresh:
+          'A run without the saved session shows no dialog: it acts on the app\'s local or seeded data without the learner\'s account, as a single click and an extension run do. A configuration that declares session: "fresh" is described in the saved-session section (codebook://help/repository-browser#set-up-a-saved-session).',
+        setting:
+          'The learner may turn the dialog off for unattended use with codebook.confirmSavedSessionOperations in their user settings; a workspace setting is ignored. Never change it yourself.',
+        noEditor:
+          'An editor that cannot show the dialog answers PREREQUISITE_MISSING and sends nothing.',
+      },
     },
     operationsSecrets: {
       anchor: 'codebook://help/repository-browser#secrets-and-masking',
@@ -221,7 +250,7 @@ export function operationsHelp() {
         `In version 1 and 2 runs, prepared text (initialInputs, and a chrome-extension click's inputs) typed into a secret control reads [masked] in the manifest, the run resource, the saved study and the configuration hash; every prepared text reads [pending] in the run resource until its control is resolved. The page still receives the real text. A prepared secret text into an input of type password is armed on the frame gate with its value before it is typed; one shorter than ${SECRET_FRAME_VALUE_COPY_MIN_CHARS} characters cannot be told from page text, so the run fails with SECRET_INPUT_VISIBLE and sends nothing: use a test password of that length or more. This changes what a version 1 or 2 run served before API 1.14.`,
         'A value the learner typed for an ask-learner operation is masked wherever Codebook writes or serves run data: inspection values, debugger previews and recorded snapshots, errors, logs, tool results and saved studies.',
       ],
-      frames: `Recorded frames and screenshots show what the browser draws. Codebook relies on the browser drawing a password as dots: once a secret was sent, a frame is kept only while Codebook can verify that the page shows the secret nowhere (the control is still a password input, no other plain control holds the value, and the rendered text, the element attributes (CSS attr() content, tooltips) and canvas text calls (fillText, strokeText) hold no new copy of it), and a frame in any window where that cannot be verified is dropped, which the replay shows as an unrecorded gap. A sign-in form that leaves the page after its submit, a re-render that puts another password input in its place, and a new page after a full navigation show nothing and keep recording. If the page shows the secret, or the check cannot answer, capture stops for the rest of the run and the run fails with SECRET_BECAME_VISIBLE. Not checked: WebGL, drawImage of pre-rendered images, CSS content with a literal string in a stylesheet the page builds, closed shadow roots and cross-origin frames. A secret shorter than ${SECRET_FRAME_VALUE_COPY_MIN_CHARS} characters cannot be told from ordinary page text, so none reaches this check: the ask-learner box refuses it and stays open, and a version 1 or 2 prepared one for an input of type password fails with SECRET_INPUT_VISIBLE before it is typed.`,
+      frames: `Recorded frames and screenshots show what the browser draws. Codebook relies on the browser drawing a password as dots: once a secret was sent, a frame is kept only while Codebook can verify that the page shows the secret nowhere (the control is still a password input, no other plain control holds the value, and the rendered text, the element attributes (CSS attr() content, tooltips) and canvas text calls (fillText, strokeText) hold no new copy of it), and a frame in any window where that cannot be verified is dropped, which the replay shows as an unrecorded gap. A sign-in form that leaves the page after its submit, a re-render that puts another password input in its place, and a new page after a full navigation show nothing and keep recording. If the page shows the secret, or the check cannot answer, capture stops for the rest of the run and the run fails with SECRET_BECAME_VISIBLE. Not checked: WebGL, drawImage of pre-rendered images, CSS content with a literal string in a stylesheet the page builds, closed shadow roots. The content of a frame from another origin (a captcha, a payment field, a sign-in widget) cannot be read, so once a secret was sent every image in which such a frame is drawn on screen is withheld: a recorded frame becomes an unrecorded gap, and a stop or result image reads captures[].status withheld with withheldReason cross-origin-frame while the stop's source and values are kept. A withheld image never fails the run; the run goes on, ends partial and counts withheld images in withheldImages. A frame from another origin that draws nothing (display none, visibility hidden, opacity 0, zero size or outside the viewport) withholds nothing, and the Application view still shows the page live. A secret shorter than ${SECRET_FRAME_VALUE_COPY_MIN_CHARS} characters cannot be told from ordinary page text, so none reaches this check: the ask-learner box refuses it and stays open, and a version 1 or 2 prepared one for an input of type password fails with SECRET_INPUT_VISIBLE before it is typed.`,
       limits:
         'Other secrets are masked by name and by format only: a session token, or a secret copied into a plainly named variable or printed as ordinary text, can stay visible in a captured value. Use a local test account, never a real one, for any flow that signs in.',
     },

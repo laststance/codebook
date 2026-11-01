@@ -59,6 +59,7 @@ import {
   WIKI_UPDATE_WATCH_TIMEOUT_MS,
   WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON,
   OPEN_LEARNING_REPLAY_COMMAND,
+  REVIEW_SAVED_SESSION_OPERATIONS_COMMAND,
   SAVE_LEARNING_REPLAY_COMMAND,
   NODE_SERVER_SHUTDOWN_GRACE_MS,
 } from './constants'
@@ -77,6 +78,11 @@ import { learningItemSchema } from './identitySchemas'
 import { repositorySelectionSchema } from './learnerSchemas'
 import { RepositoryReader } from './repositoryReader'
 import { repositoryActionSchema } from './repositoryView'
+import type { SavedSessionManagerPort } from './runtimeSupport/savedSessionSetupTypes'
+import {
+  installSavedSessions,
+  type InstalledSavedSessions,
+} from './savedSessionCommands'
 import { startServer } from './server'
 import { StudyService } from './service'
 import { StudyWorkspace, type UnsavedStudyArchive } from './studyWorkspace'
@@ -98,6 +104,7 @@ import {
   classifyWikiUpdateEnd,
   type WikiUpdateEndFacts,
 } from './utils/classifyWikiUpdateEnd'
+import { createSavedSessionStore } from './utils/createSavedSessionStore'
 import {
   currentStorageOwner,
   useEditorMachineId,
@@ -219,8 +226,14 @@ export function activate(
   context: Pick<vscode.ExtensionContext, 'extensionPath' | 'subscriptions'> & {
     globalStorageUri: Pick<vscode.Uri, 'fsPath'>
     workspaceState: Pick<vscode.Memento, 'get' | 'update'>
+    /** The editor state that keeps the last sign-in paths per repository for the saved-session setup; without it the store forgets them. */
+    globalState?: Pick<vscode.Memento, 'get' | 'update'>
+    /** The saved-session store of this window ({@link SavedSessionManagerPort}); the product leaves it unset and {@link activate} builds the real {@link SavedSessionStore}, a test passes a fake. */
+    savedSessionStore?: SavedSessionManagerPort
   },
 ) {
+  // One store per window: the commands, the status item, `codebook_status` and (later) the runs all share it.
+  const savedSessionStore = createSavedSessionStore(context, vscode.env)
   // Before anything takes a storage lock: locks and the connection descriptor name this machine by the editor's id.
   useEditorMachineId(vscode.env?.machineId, vscode.env?.remoteName)
   // The read of this process's start (a spawned query on macOS and Windows) begins now and is kept, so the first storage lock does not wait for it.
@@ -241,6 +254,7 @@ export function activate(
     cursorRemoval: Promise<void> | undefined,
     cursorRemoving = false
   let notifyMcpDefinitions: () => void = () => {}
+  let savedSessionInstall: InstalledSavedSessions | undefined
   /** Shows every non-modal notification of this window through {@link showPlainNotice}, so no outside text in it becomes a link; `actions` are its buttons and the pressed one is returned. @example void showNotice('error', `Codebook could not open DeepWiki: ${String(error)}`) */
   const showNotice = <Action extends string>(
     severity: NoticeSeverity,
@@ -602,7 +616,13 @@ export function activate(
     }
     const attempt = (starting ??= (async () => {
       const environment = await createEnvironment(
-        context,
+        {
+          extensionPath: context.extensionPath,
+          workspaceState: context.workspaceState,
+          savedSessions: savedSessionStore,
+          showSignInRequired: (reason) =>
+            savedSessionInstall?.showSignInRequired(reason),
+        },
         workspace().presentation,
       )
       const directory = join(
@@ -622,6 +642,9 @@ export function activate(
         service = new StudyService(environment, storageRoot)
         service.diagnostics = diagnostics.log
         service.outputLog = diagnostics.line
+        service.savedSessions = savedSessionStore
+        // The status item shows a run that waits for its operations to be confirmed again.
+        service.operationsReviewChanged = () => savedSessionInstall?.refresh()
         // Every storage folder of the extension stays out of the causes the learner and the agent read (EN12).
         service.extraStorageRoots = [context.globalStorageUri.fsPath]
         await workspace().attach(service)
@@ -1069,6 +1092,8 @@ export function activate(
     for (const step of [
       // Owned runtimes are released first; an in-flight or failing browser reader close cannot strand them.
       (): Promise<void> => stopOnRequest(),
+      // An open saved-session setup closes without a notice and releases its folder.
+      (): Promise<void> | undefined => savedSessionInstall?.dispose(),
       // Waits for the accepted publications and the learner's writes.
       (): Promise<void> | undefined => repositoryReader?.dispose(),
       // Ends the reader's run and saves the playback position.
@@ -2855,6 +2880,29 @@ export function activate(
       'No LLM Wiki run is going on in this window.',
     )
   }
+  // Saved sessions (Set Up / Remove, the status item) on the window's one store, which every window has.
+  savedSessionInstall = installSavedSessions({
+    editor: vscode,
+    store: savedSessionStore,
+    register: registerCommand,
+    showNotice,
+    output,
+    ensureEnvironment: async () => {
+      await start()
+      if (!running) throw new Error('The Codebook server is not running.')
+      return running.environment
+    },
+    stopRun: async (runId) => {
+      if (!running) return
+      await running.service.stop({
+        instanceId: running.service.instanceId,
+        runId,
+      })
+    },
+    workspaceRoot: requireWorkspace,
+    awaitingReview: () => running?.service.awaitingOperationsReview(),
+  })
+  context.subscriptions.push(...savedSessionInstall.disposables)
   context.subscriptions.push(
     registerCommand('codebook.startAgentServer', start),
     registerCommand('codebook.stopAgentServer', stopOnRequest),
@@ -3123,6 +3171,22 @@ export function activate(
     registerCommand(SHOW_WIKI_OUTPUT_COMMAND, () => {
       diagnostics.show()
     }),
+    // Asks the operations of a saved-session run again after a decline; reached from the notice's Review again and the saved-session status item.
+    registerCommand(
+      REVIEW_SAVED_SESSION_OPERATIONS_COMMAND,
+      async (runId?: string) => {
+        // Without a run id (a keyboard shortcut or a task) the command reviews the run that waits.
+        const target = runId ?? workspace().awaitingOperationsReview()?.runId
+        if (
+          (await workspace().reviewSavedSessionOperations(target)) ===
+          'not-waiting'
+        )
+          void showNotice(
+            'information',
+            'No Codebook run is waiting for you to confirm its operations.',
+          )
+      },
+    ),
     registerCommand(SAVE_LEARNING_REPLAY_COMMAND, async (studyId?: string) => {
       try {
         await workspace().saveLearningReplay(studyId)

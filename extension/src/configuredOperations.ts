@@ -2,11 +2,14 @@ import { z } from 'zod'
 
 import {
   ASK_LEARNER_SECRET,
+  OPERATION_CONFIRMATION_READ_TIMEOUT_MS,
   OPERATION_SETTLE_BOUND_MS,
   OPERATION_SETTLE_POLL_MS,
   OPERATION_SETTLE_QUIET_MS,
   REPOSITORY_RUN_TIMEOUT_MS,
+  type SignInRequiredReason,
 } from './constants'
+import type { OperationConfirmationFact } from './operationsConfirmationTypes'
 import type { RepositoryOperation } from './repositoryConfigSchemas'
 import type { Cdp } from './runtimeSupport/cdp'
 import {
@@ -28,6 +31,7 @@ export type OperationRefusalCode =
   | 'OPERATION_AFTER_NOT_MET'
   | 'RUN_FAILED_UNEXPECTEDLY'
   | 'SECRET_BECAME_VISIBLE'
+  | 'SIGN_IN_REQUIRED'
 
 /** Whether anything of the operation reached the page before the failure, and what a retry may rely on. */
 export type OperationSideEffects = 'none' | 'unknown'
@@ -43,6 +47,8 @@ export class OperationRefusal extends Error {
   readonly path: string | undefined
   readonly sent: 'not-sent' | 'sent'
   readonly sideEffects: OperationSideEffects
+  /** Why the page asked for sign-in; set only for `SIGN_IN_REQUIRED`. */
+  readonly reason: SignInRequiredReason | undefined
   constructor(
     readonly code: OperationRefusalCode,
     message: string,
@@ -51,9 +57,11 @@ export class OperationRefusal extends Error {
       path?: string
       sent?: 'not-sent' | 'sent'
       sideEffects?: OperationSideEffects
+      reason?: SignInRequiredReason
     },
   ) {
     super(message)
+    this.reason = where.reason
     this.operationIndex = where.operationIndex
     this.path = where.path
     this.sent = where.sent ?? 'not-sent'
@@ -229,6 +237,128 @@ function checkSelectOption(this: Element, input: { value: string }) {
   if (!option) return { state: 'missing' }
   // `:disabled` also covers an option inside a disabled `<optgroup>`, whose own `disabled` stays false.
   return { state: option.matches(':disabled') ? 'disabled' : 'available' }
+}
+
+/**
+ * Reads, inside the owned page, what the saved-session confirmation needs per control: whether exactly one control matches, its classification attributes and, for a single select with a declared value, the visible label of the enabled option; serialized with `toString()`.
+ * It reads attributes and option labels only, never a control's value, and sends no input event. Sent by {@link readOperationConfirmationFacts}; exported so a Node test runs it against a fake page.
+ * @param input - The loopback origins the page may be at, and per operation its selector and (for a choose) the option value, or `null` for a click.
+ * @returns One entry per control (`null` for a `null` input, and for every control at another origin): `found` only for exactly one match; the `type`, `name`, `id` and `autocomplete` attributes; `optionLabel` for an enabled option.
+ * @example describeConfirmationControls({ origins: ['http://localhost:3000'], controls: [{ selector: '#customer', value: 'c1' }] }) // => [{ found: true, type: '', name: 'customer', id: 'customer', autocomplete: '', optionLabel: 'Alice' }]
+ */
+export function describeConfirmationControls(input: {
+  origins: readonly string[]
+  controls: readonly ({ selector: string; value?: string } | null)[]
+}) {
+  const matchOf = (selector: string): Element | undefined => {
+    try {
+      const matches = document.querySelectorAll(selector)
+      return matches.length === 1 ? matches[0] : undefined
+    } catch {
+      return undefined
+    }
+  }
+  const labelOf = (control: Element, value: string | undefined) => {
+    if (!(control instanceof HTMLSelectElement) || control.multiple)
+      return undefined
+    const option = Array.from(control.options).find(
+      (candidate) => candidate.value === value,
+    )
+    return option && !option.matches(':disabled') ? option.label : undefined
+  }
+  if (!input.origins.includes(location.origin))
+    return input.controls.map(() => null)
+  return input.controls.map((entry) => {
+    if (!entry) return null
+    const control = matchOf(entry.selector)
+    if (!control) return { found: false }
+    return {
+      found: true,
+      type: control instanceof HTMLInputElement ? control.type : '',
+      name: control.getAttribute('name') ?? '',
+      id: control.id,
+      autocomplete: control.getAttribute('autocomplete') ?? '',
+      optionLabel: labelOf(control, entry.value),
+    }
+  })
+}
+
+const confirmationControlsSchema = z.array(
+  z
+    .object({
+      found: z.boolean(),
+      type: z.string().optional(),
+      name: z.string().optional(),
+      id: z.string().optional(),
+      autocomplete: z.string().optional(),
+      optionLabel: z.string().optional(),
+    })
+    .nullable(),
+)
+
+/**
+ * Words one control the page found for the saved-session confirmation: whether it is secret and, when it is not, which option a choose names.
+ * Called by {@link readOperationConfirmationFacts} for every non-click operation whose control was found; a secret control keeps its option label off the dialog.
+ * @param entry - The page's description of the found control; absent attributes read as empty text.
+ * @returns `secret`, plus `optionLabel` only for a non-secret control that has one.
+ * @example describeFoundControl({ found: true, type: 'password', optionLabel: 'Key' }) // => { secret: true }
+ */
+function describeFoundControl(
+  entry: NonNullable<z.infer<typeof confirmationControlsSchema>[number]>,
+): { secret: boolean; optionLabel?: string } {
+  const secret =
+    classifySecretControl({
+      type: entry.type ?? '',
+      name: entry.name ?? '',
+      id: entry.id ?? '',
+      autocomplete: entry.autocomplete ?? '',
+    }) !== undefined
+  return {
+    secret,
+    ...(!secret && entry.optionLabel !== undefined
+      ? { optionLabel: entry.optionLabel }
+      : {}),
+  }
+}
+
+/**
+ * Reads from the page, without any input event, the facts the saved-session confirmation words its lines with (ENG-8): which control is secret and which option a choose names.
+ * Called by {@link ConfiguredBrowserRun.readOperationConfirmationFacts} when the service builds the confirmation question; it sends one `Runtime.evaluate`.
+ * @param port - The run's page channel.
+ * @param operations - The declared operations, in order.
+ * @returns One fact per operation. A click is `found` and not secret with no page read; a control at another origin, not on the page yet, or matching more than once is `found: false`; a secret select drops its option label.
+ * @throws When the page read fails or times out; the caller words the dialog without facts.
+ * @example await readOperationConfirmationFacts(port, [{ kind: 'click', title: 'Pay', selector: '#pay' }]) // => [{ index: 1, found: true, secret: false }]
+ */
+export async function readOperationConfirmationFacts(
+  port: OperationPort,
+  operations: readonly RepositoryOperation[],
+): Promise<OperationConfirmationFact[]> {
+  const controls = operations.map((operation) =>
+    operation.kind === 'click'
+      ? null
+      : {
+          selector: operation.selector,
+          ...(operation.kind === 'choose' ? { value: operation.value } : {}),
+        },
+  )
+  const cdp = await port.pageCdp()
+  const evaluated = await cdp.request(
+    'Runtime.evaluate',
+    {
+      expression: `(${describeConfirmationControls.toString()})(${JSON.stringify({ origins: port.origins(), controls })})`,
+      returnByValue: true,
+    },
+    OPERATION_CONFIRMATION_READ_TIMEOUT_MS,
+  )
+  const described = confirmationControlsSchema.parse(evaluated.result.value)
+  return operations.map((operation, position): OperationConfirmationFact => {
+    const index = position + 1
+    const entry = described[position]
+    if (operation.kind === 'click') return { index, found: true, secret: false }
+    if (!entry?.found) return { index, found: false, secret: false }
+    return { index, found: true, ...describeFoundControl(entry) }
+  })
 }
 
 /**

@@ -191,6 +191,7 @@ test('the repository-browser help keeps its existing top keys and leads with sta
     'operationsDeclare',
     'operationsSecrets',
     'operationsErrorCodes',
+    'savedSession',
     'profile',
     'configurationSchema',
     'entry',

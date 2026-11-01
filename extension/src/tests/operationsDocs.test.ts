@@ -162,6 +162,22 @@ test('the frames help says a secret shorter than 4 characters never reaches the 
   assert.equal(frames.includes('the run itself goes on'), false)
 })
 
+// protects=the chat learns the new behaviour and its reason code; fails_when=the help still lists cross-origin frames as unchecked, or omits withheld or cross-origin-frame; no_claim=the behaviour itself
+test('the frames help tells a chat that a frame from another origin withholds images without failing the run', async (context) => {
+  // Arrange
+  const help = await readHelp(context)
+  // Act
+  const frames = String(help.operationsSecrets.frames)
+  // Assert
+  assert.ok(frames.includes('cross-origin-frame'))
+  assert.ok(frames.includes('withheld'))
+  assert.ok(frames.includes('withheldImages'))
+  assert.equal(
+    frames.includes('closed shadow roots and cross-origin frames'),
+    false,
+  )
+})
+
 // protects=every code version 3 adds has an anchored row with the audience and recovery of the error itself; fails_when=a code lacks a row or an audience, or the help's recovery drifts from ERROR_RECOVERY; no_claim=the wording of a recovery
 test('the Error codes table has one anchored row per version 3 code with the audience and recovery of the error', async (context) => {
   // Arrange
@@ -182,7 +198,7 @@ test('the Error codes table has one anchored row per version 3 code with the aud
   assert.equal(rows.OPTION_NOT_AVAILABLE?.audience, 'chat')
 })
 
-// protects=DX-11: the packaged skill carries each pt1 safety rule; fails_when=a sentence leaves the skill or its version is not 1.0.63; no_claim=how a chat follows the rules
+// protects=DX-11: the packaged skill carries each pt1 safety rule, and (CodeRabbit 2 of pt2) its two answers to OPERATIONS_NOT_CONFIRMED name the details.question each is for; fails_when=a sentence leaves the skill, its version is not 1.0.64, or an answer to OPERATIONS_NOT_CONFIRMED applies to both questions; no_claim=how a chat follows the rules
 test('the bundled skill declares flows as operations, keeps secrets with the learner, claims only shown progress and never repeats unasked', async () => {
   // Arrange
   const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
@@ -194,7 +210,7 @@ test('the bundled skill declares flows as operations, keeps secrets with the lea
         part.startsWith('**Operations (configuration version 3).**'),
       ) ?? ''
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.63"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.64"\n'))
   assert.ok(paragraph.includes('ordered v3 `operations`'))
   assert.ok(paragraph.includes('`afterOperation`'))
   assert.ok(paragraph.includes('always `secret: "ask-learner"`'))
@@ -203,8 +219,16 @@ test('the bundled skill declares flows as operations, keeps secrets with the lea
   assert.ok(
     paragraph.includes('do not repeat the flow unless the learner asks'),
   )
+  // Each answer to OPERATIONS_NOT_CONFIRMED is tied to its details.question, as the code's recovery is: a declined saved-session dialog is never retried from the chat.
   assert.ok(
-    paragraph.includes('Relay `OPERATIONS_NOT_CONFIRMED` to the learner'),
+    paragraph.includes(
+      'When `OPERATIONS_NOT_CONFIRMED` has `details.question` `secret`, relay it to the learner and ask whether to try again',
+    ),
+  )
+  assert.ok(
+    paragraph.includes(
+      'When `OPERATIONS_NOT_CONFIRMED` has `details.question` `saved-session-operations`, relay it and tell the learner to choose **Review again** in the editor, never ask for that confirmation in the chat or whether to try again',
+    ),
   )
   assert.ok(paragraph.includes('warm a slow route in `before`'))
 })
@@ -223,5 +247,59 @@ test('the README names operations, ask-learner, the masking behavior change and 
   assert.ok(section.includes('`[pending]`'))
   assert.ok(section.includes('`isError: true`'))
   assert.ok(section.includes('`NAVIGATION_NOT_SETTLED`'))
-  assert.ok(readme.includes('**MCP API 1.14**'))
+  assert.ok(readme.includes('**MCP API 1.15**'))
+})
+
+// protects=DX-11/DES-4: the help says when a saved-session run asks, what a decline does, how Review again works, the confirmation values, the learner-only setting and why a fresh run shows no dialog; fails_when=a rule leaves the section; no_claim=the wording's quality
+test('the help explains the saved-session confirmation, its decline, Review again, its values and the learner-only setting', async (context) => {
+  // Arrange
+  const help = await readHelp(context)
+  // Act
+  const section = JSON.stringify(
+    help.operationsDeclare.savedSessionConfirmation,
+  )
+  // Assert
+  assert.ok(section.includes('#saved-session-confirmation'))
+  for (const phrase of [
+    'OPERATIONS_NOT_CONFIRMED',
+    'Review again',
+    'awaiting-learner',
+    'confirmationSetting',
+    'codebook.confirmSavedSessionOperations',
+    'workspace setting is ignored',
+    "without the learner's account",
+    'for at most 5 minutes',
+  ])
+    assert.ok(section.includes(phrase), phrase)
+})
+
+// protects=DES-7/DX-5: OPERATIONS_NOT_CONFIRMED names the learner, both questions, Review again and confirmed; fails_when=the chat is told to retry a declined dialog or to confirm in the chat; no_claim=none beyond protects
+test('OPERATIONS_NOT_CONFIRMED names the learner, both questions, Review again and the confirmed value', () => {
+  // Arrange
+  const recovery = ERROR_RECOVERY.OPERATIONS_NOT_CONFIRMED
+  // Act, Assert
+  assert.ok(recovery.startsWith('Audience: learner.'))
+  for (const phrase of [
+    'Review again',
+    'confirmation reads confirmed',
+    'details.question secret',
+    'saved-session-operations',
+    'Never ask the learner to confirm in the chat',
+  ])
+    assert.ok(recovery.includes(phrase), phrase)
+})
+
+// protects=AC7/DX-11: the README and the skill name the saved-session confirmation and keep the setting with the learner; fails_when=a sentence leaves the packaged files; no_claim=how a chat follows them
+test('the README and the skill name the saved-session confirmation and keep its setting with the learner', async () => {
+  // Arrange
+  const readme = await readPackaged('README.md')
+  const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
+  // Act, Assert
+  assert.ok(readme.includes('**A run with your saved session asks first.**'))
+  assert.ok(readme.includes('`codebook.confirmSavedSessionOperations`'))
+  assert.ok(skill.includes('never ask for that confirmation in the chat'))
+  assert.ok(skill.includes('only when it reads `confirmed`'))
+  assert.ok(
+    skill.includes('Never change `codebook.confirmSavedSessionOperations`'),
+  )
 })

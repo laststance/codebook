@@ -45,7 +45,8 @@ export function isMethodNotFound(error: unknown): boolean {
 
 type PendingCommand = {
   method: string
-  resolve: (value: Record<string, unknown>) => void
+  /** Settles the command with its raw answer, reduced first when the command asked for it (see {@link WebSocketFlatCdp.requestReduced}). */
+  complete: (result: Record<string, unknown>) => void
   reject: (error: Error) => void
   timer: ReturnType<typeof setTimeout>
 }
@@ -115,18 +116,59 @@ export class WebSocketFlatCdp implements FlatCdpConnection {
     sessionId?: string,
     timeoutMs: number = EXTENSION_CDP_COMMAND_TIMEOUT_MS,
   ): Promise<Record<string, unknown>> {
+    return this.send(method, params, sessionId, timeoutMs, (result) => result)
+  }
+
+  /**
+   * Sends a command whose answer holds values no caller may receive, and hands the caller only what `reduce` keeps.
+   * Why it exists: `Storage.getCookies` answers every cookie value of the app and its sign-in provider; the reduction runs inside the response handler, before any promise resolves, so the raw answer never reaches a caller, a log or an error (Codex correction 5).
+   * Called by {@link launchSignInBrowser} to learn the kind of the app's cookies.
+   * @param reduce - Runs once on the raw answer; what it returns resolves the promise. A throw rejects with a bare `could not be read`, never the answer.
+   * @example
+   * const kind = await cdp.requestReduced('Storage.getCookies', {}, cookieKindOf)
+   */
+  requestReduced<Reduced>(
+    method: string,
+    params: Record<string, unknown>,
+    reduce: (result: Record<string, unknown>) => Reduced,
+    timeoutMs: number = EXTENSION_CDP_COMMAND_TIMEOUT_MS,
+  ): Promise<Reduced> {
+    return this.send(method, params, undefined, timeoutMs, reduce)
+  }
+
+  private send<Answer>(
+    method: string,
+    params: Record<string, unknown>,
+    sessionId: string | undefined,
+    timeoutMs: number,
+    reduce: (result: Record<string, unknown>) => Answer,
+  ): Promise<Answer> {
     if (this.closed)
       return Promise.reject(
         new FlatCdpCommandError(method, undefined, 'CDP disconnected'),
       )
     const id = ++this.nextId
-    return new Promise((resolve, reject) => {
+    return new Promise<Answer>((resolve, reject) => {
       // Each command owns its deadline, so a slow command never holds the others.
       const timer = setTimeout(() => {
         this.pending.delete(id)
         reject(new FlatCdpCommandError(method, undefined, 'timed out'))
       }, timeoutMs)
-      this.pending.set(id, { method, resolve, reject, timer })
+      this.pending.set(id, {
+        method,
+        complete: (result) => {
+          try {
+            resolve(reduce(result))
+          } catch {
+            // The raw answer is never part of the failure.
+            reject(
+              new FlatCdpCommandError(method, undefined, 'could not be read'),
+            )
+          }
+        },
+        reject,
+        timer,
+      })
       try {
         this.socket.send(
           JSON.stringify({
@@ -192,7 +234,7 @@ export class WebSocketFlatCdp implements FlatCdpConnection {
             message.error.message ?? 'unknown error',
           ),
         )
-      else pending.resolve(message.result ?? {})
+      else pending.complete(message.result ?? {})
       return
     }
     if (message.method === undefined) return

@@ -1936,6 +1936,70 @@ test('learning material saved after the result and before Stop is counted when t
   }
 })
 
+// Value: protects=learning material saved while the seal reads the history's capture gaps (the maintenance turn releases a completed run on its own, so a save can land inside the seal): the seal counts it, so the run reads learningCoverage complete; fails_when=the seal reads the window's material before it awaits the capture gaps and keeps that stale value, so a fully explained run reads none and asks for another save (CI run of PR 178, Test 14/14); why_new=the race showed only under CI load in the test above; seam=the history store's summary read is held once the journal is sealed; no_claim=a save that fails or names another history
+test('learning material saved while the seal reads the capture gaps is counted when the history seals', async () => {
+  // Arrange
+  const run = await testRunHarness()
+  let releaseSummary: (() => void) | undefined
+  try {
+    const { record } = await run.start()
+    const store = run.service.nodeHistoryStore!
+    const readSummary = store.summarize.bind(store)
+    let isSummaryHeld = false
+    const summaryReleased = new Promise<void>((resolve) => {
+      releaseSummary = resolve
+    })
+    // The seal's own summary read: the journal is sealed and the run's learning not yet counted.
+    store.summarize = async (studyId) => {
+      if (
+        !isSummaryHeld &&
+        record.nodeHistoryStatus === 'complete' &&
+        record.nodeLearning === undefined
+      ) {
+        isSummaryHeld = true
+        await summaryReleased
+      }
+      return readSummary(studyId)
+    }
+    await continueCurrentPause(run.service, record)
+    const studyId = `${run.service.instanceId}_${record.id}`
+    const history = await store.read(studyId)
+    const stop = history.entries.find((entry) => entry.type === 'stop')!
+    const result = history.entries.find((entry) => entry.type === 'result')!
+    const stopping = run.service.stop({
+      instanceId: run.service.instanceId,
+      runId: record.id,
+    })
+    await waitUntil(() => isSummaryHeld, 'the seal reading the capture gaps')
+
+    // Act
+    await run.service.explainNodeHistory({
+      studyId,
+      expectedRevision: 0,
+      content: materialCiting([
+        {
+          type: 'stop',
+          sequence: stop.sequence,
+          sourceHash: stop.source.hash,
+        },
+        { type: 'result', sequence: result.sequence },
+      ]),
+    })
+    releaseSummary?.()
+    const state = await stopping
+
+    // Assert
+    assert.equal(state.nodeTest?.historyStatus, 'complete')
+    assert.equal(state.nodeTest?.learningCoverage, 'complete')
+    assert.deepEqual(state.nodeTest?.learningMissing, [])
+    assert.equal(state.nextActions.includes('save-node-learning'), false)
+  } finally {
+    // A failure before the release would leave the seal waiting, and the close waits for the seal.
+    releaseSummary?.()
+    await run.harness.close()
+  }
+})
+
 // Value: protects=a test run that completed before its whole-run deadline: when the deadline passes while the run waits for its release, the deadline adds no error and the run seals complete and reads demonstrated; fails_when=hasRunEnded ignores a completed test, so the deadline's "Study wall deadline expired" becomes the run's error and a passing run reads not-demonstrated; why_new=a completed run at the deadline needed an injected clock (F25); seam=the service clock is injected and moved past the deadline after the result; no_claim=a run that is still on its way at the deadline (the deadline tests)
 test('a completed test run at the whole-run deadline gets no deadline error and seals complete', async () => {
   // Arrange

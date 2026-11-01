@@ -999,3 +999,39 @@ test('a stop of operation 1 whose pause the debugger never announces ends the ru
   )
   assert.equal(run.view().snapshots.length, 0)
 })
+
+// protects=the harness records every Input.* CDP request of a run so the saved-session lanes can assert that a refusal sends none; fails_when=inputRequests misses the typed text request or records a non-Input method; no_claim=the saved-session behavior itself
+test('the runtime harness records the Input requests of a typed operation', async (context) => {
+  // Arrange
+  const { run, inputRequests } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    {
+      operations: {
+        operations: [
+          {
+            kind: 'text',
+            title: 'Password',
+            selector: '#password',
+            secret: 'ask-learner',
+          },
+        ],
+        stopOperations: [1],
+        controls: { '#password': { tagName: 'input', type: 'password' } },
+      },
+    },
+  )
+  await run.prepare()
+  // Act
+  run.action('op-1', OPERATION_ACTION, { learnerSecret: 'typed-by-learner' })
+  const stop = await waitUntil(
+    () => run.view().participants.browser.snapshot,
+    'the stop of the password operation',
+  )
+  await run.continue('browser', stop.pause)
+  await waitUntil(() => run.view().status === 'completed', 'the result')
+  await run.stop()
+  // Assert
+  assert.deepEqual(inputRequests, ['Input.insertText'])
+})

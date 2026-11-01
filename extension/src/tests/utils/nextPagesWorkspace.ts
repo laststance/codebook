@@ -27,6 +27,8 @@ export type NextPagesHarnessOptions = {
   manifests?: NextRouteManifests
   /** Makes the replaced reader reject with this message, as a manifest that cannot be read does. */
   manifestFailure?: string
+  /** Makes the replaced reader answer only when the run is cancelled, as a poll still waiting for a cold compile does. */
+  manifestsHang?: boolean
   /** Fields merged into the written `routes-manifest.json` (Next 16's measured one by default), such as `basePath` or a redirect source. */
   routesManifest?: Record<string, unknown>
   /** The page's router states, one per read; the last repeats. A ready router on route `/` at the entry path when absent. */

@@ -9,6 +9,7 @@ import fsPromises, {
   writeFile,
   rm,
   stat,
+  symlink,
 } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import * as os from 'node:os'
@@ -21,6 +22,7 @@ import {
 } from 'node:timers/promises'
 import { runInNewContext } from 'node:vm'
 
+import { StudyError } from '../errors'
 import type { BrowserViewportFactory } from '../runtimeSupport/browserViewport'
 import { Cdp } from '../runtimeSupport/cdp'
 import * as runtimeConstants from '../runtimeSupport/constants'
@@ -1765,4 +1767,272 @@ test('the managed Chrome launch leaves localhost resolution to the system', asyn
     '--headless=new',
     '--remote-debugging-pipe',
   ])
+})
+
+/**
+ * Makes the learner's saved-session folder of a test, outside the managed profile root and with a space in its path (as "Application Support" has), holding the files a session lives in, and a lease stand-in that notes its calls in the given list.
+ * @param context - The test, which removes the folder when it ends.
+ * @param calls - Receives `prepareForLaunch` and `recordBrowser` as they are called.
+ * @returns The folder, a file inside it that must survive every close, and the lease.
+ */
+async function savedSessionFolder(context: TestContext, calls: string[]) {
+  const parent = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook saved-session ')),
+  )
+  context.after(() => rm(parent, { recursive: true, force: true }))
+  const folder = join(parent, 'sign-in-profiles', 'hash0123456789')
+  await mkdir(join(folder, 'Default'), { recursive: true })
+  const cookies = join(folder, 'Default', 'Cookies')
+  await writeFile(cookies, 'kept')
+  const lease = {
+    profile: folder,
+    setupAt: '2026-11-02T00:00:00.000Z',
+    appCookies: 'persistent' as const,
+    async recordBrowser(marker: {
+      executable: string
+      pid: number
+    }): Promise<void> {
+      calls.push(`recordBrowser:${marker.pid}`)
+    },
+    async prepareForLaunch(): Promise<void> {
+      calls.push('prepareForLaunch')
+    },
+    async release(): Promise<void> {
+      calls.push('release')
+    },
+  }
+  return { folder, cookies, lease }
+}
+
+// Value: protects=CEO-R3/CEO-R6/ENG-16 and the hidden path (Codebook side): a saved-session launch opens the lease's folder over the pipe with the disk cache cap, clears stale locks right before the debugger starts, records the main Chrome in the lease, keeps the folder on close, and no journal record names its path; fails_when=a debugging port appears, the cache flag is missing, an owner marker or a removal touches the folder, or the journal holds the folder's path or its hash; no_claim=js-debug's handling of userDataDir and the macOS keychain (native check)
+test('a saved-session launch opens the learner folder over the pipe, keeps it on close and names its path in no journal record', async (context) => {
+  // Arrange
+  const calls: string[] = []
+  const saved = await savedSessionFolder(context, calls)
+  let configuration: { runtimeArgs?: string[]; userDataDir?: string } = {}
+  const managed = await managedBrowser(context, {
+    startDebugging: async (_folder, started) => {
+      calls.push('startDebugging')
+      configuration = started
+      return true
+    },
+    processesOfProfile: (look) =>
+      look === 1
+        ? [
+            {
+              pid: 4242,
+              command: `/Applications/Google Chrome --remote-debugging-pipe --user-data-dir=${saved.folder} --headless=new`,
+            },
+          ]
+        : [],
+  })
+  managed.browser.useSavedProfile(saved.lease)
+  const signal = new AbortController().signal
+
+  // Act
+  await managed.browser.launch(
+    { type: 'editor-browser', name: 'owned', request: 'launch' },
+    signal,
+  )
+  await managed.browser.recordSavedBrowser(signal)
+  await managed.browser.close()
+
+  // Assert
+  assert.deepEqual(calls, [
+    'prepareForLaunch',
+    'startDebugging',
+    'recordBrowser:4242',
+  ])
+  assert.equal(configuration.userDataDir, saved.folder)
+  assert.deepEqual(Array.from(configuration.runtimeArgs ?? []), [
+    '--headless=new',
+    '--remote-debugging-pipe',
+    '--disk-cache-size=52428800',
+  ])
+  assert.equal(await readFile(saved.cookies, 'utf8'), 'kept')
+  assert.deepEqual(await readdir(saved.folder), ['Default'])
+  const journal = JSON.stringify(managed.events)
+  assert.equal(journal.includes(saved.folder), false)
+  assert.equal(journal.includes('hash0123456789'), false)
+  assert.match(journal, /<saved-session>/)
+  assert.equal(
+    managed.events.some((event) =>
+      [
+        'browser.managed-profile-removed',
+        'browser.managed-profile-left',
+      ].includes(event.type),
+    ),
+    false,
+  )
+})
+
+// Value: protects=Codex correction 3 (the learner's session must never be deleted): a close whose process listing fails, and one whose Chrome does not exit, both reject so the lease stays held, and neither removes or marks the saved folder; fails_when=the close returns normally on an unverifiable exit, or any path removes the folder; no_claim=the lease and the Stop retry (run level)
+test('a saved-session close that cannot confirm the exit rejects and never removes the folder, also when the listing fails', async (context) => {
+  for (const scenario of ['listing fails', 'chrome stays'] as const) {
+    // Arrange
+    const saved = await savedSessionFolder(context, [])
+    const managed = await managedBrowser(context, {
+      activeTimeoutMs: 50,
+      processesOfProfile: () => {
+        if (scenario === 'listing fails') throw new Error('ps is unavailable')
+        return [{ pid: 4242, command: 'chrome --remote-debugging-pipe' }]
+      },
+    })
+    managed.browser.useSavedProfile(saved.lease)
+    await managed.browser.launch(
+      { type: 'editor-browser', name: 'owned', request: 'launch' },
+      new AbortController().signal,
+    )
+
+    // Act
+    const closing = managed.browser.close()
+
+    // Assert
+    await assert.rejects(closing, /Browser cleanup incomplete/)
+    assert.equal(await readFile(saved.cookies, 'utf8'), 'kept')
+    assert.deepEqual(await readdir(saved.folder), ['Default'])
+    assert.equal(JSON.stringify(managed.events).includes(saved.folder), false)
+    assert.equal(
+      managed.events.some((event) =>
+        event.type.startsWith('browser.managed-profile-'),
+      ),
+      false,
+    )
+  }
+})
+
+// Value: protects=OCR 53 / R8 path hiding (no chat error or run.failed record names the saved folder); fails_when=a failed preparation of the saved folder (Preferences, Singleton entries) rejects the launch with the lease's path, or with the real path because the real spelling was learned only after the preparation; no_claim=the service's sanitizing of the error (service tests) and the store's own preparation (signInProfile tests)
+test('a saved-session launch whose folder preparation fails names the folder in no error, by the lease path or its real path', async (context) => {
+  // Arrange
+  const saved = await savedSessionFolder(context, [])
+  const sessions = dirname(saved.folder)
+  const linked = join(dirname(sessions), 'linked-profiles')
+  await symlink(sessions, linked, 'dir')
+  const leasePath = join(linked, basename(saved.folder))
+  const managed = await managedBrowser(context)
+  managed.browser.useSavedProfile({
+    ...saved.lease,
+    profile: leasePath,
+    async prepareForLaunch(): Promise<void> {
+      // A rename names both spellings, as Node's own error does for its two paths.
+      throw Object.assign(
+        new Error(
+          `EACCES: permission denied, rename '${leasePath}/Default/Preferences.tmp' -> '${saved.folder}/Default/Preferences'`,
+        ),
+        { code: 'EACCES' },
+      )
+    },
+  })
+
+  // Act
+  const failure: unknown = await managed.browser
+    .launch(
+      { type: 'editor-browser', name: 'owned', request: 'launch' },
+      new AbortController().signal,
+    )
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+  // Assert
+  assert.ok(failure instanceof Error)
+  assert.equal(
+    failure.message,
+    "EACCES: permission denied, rename '<saved-session>/Default/Preferences.tmp' -> '<saved-session>/Default/Preferences'",
+  )
+  assert.equal(Reflect.get(failure, 'code'), 'EACCES')
+  assert.equal(
+    String(failure.stack).includes('hash0123456789'),
+    false,
+    'the stack repeats no message that named the folder',
+  )
+  assert.equal(JSON.stringify(managed.events).includes('hash0123456789'), false)
+})
+
+// Value: protects=DX-5 (a run start refusal keeps its code, retry rule and log id) beside the path hiding; fails_when=hiding the saved folder turns the store's SIGN_IN_PROFILE_IN_USE refusal of the preparation into a plain error; no_claim=the refusal's wording (savedSessionRefusal tests)
+test('a saved-session preparation refused because the folder is in use reaches the run as the same coded refusal', async (context) => {
+  // Arrange
+  const saved = await savedSessionFolder(context, [])
+  const refusal = new StudyError(
+    'SIGN_IN_PROFILE_IN_USE',
+    'The saved session of dashboard is in use, so nothing was changed.',
+  )
+  const managed = await managedBrowser(context)
+  managed.browser.useSavedProfile({
+    ...saved.lease,
+    async prepareForLaunch(): Promise<void> {
+      throw refusal
+    },
+  })
+
+  // Act
+  const failure: unknown = await managed.browser
+    .launch(
+      { type: 'editor-browser', name: 'owned', request: 'launch' },
+      new AbortController().signal,
+    )
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+  // Assert
+  assert.equal(failure, refusal)
+})
+
+// Value: protects=OCR 53 / R8 path hiding after the launch; fails_when=a failed owned-browser marker write, or a process listing that cannot resolve the saved folder, rejects the run's preparation with the folder's path or hash; no_claim=the marker's content (signInProfile tests)
+test('a saved-session Chrome whose marker write or process listing fails names the folder in no error', async (context) => {
+  for (const scenario of ['marker write fails', 'listing fails'] as const) {
+    // Arrange
+    const saved = await savedSessionFolder(context, [])
+    const managed = await managedBrowser(context, {
+      processesOfProfile: () => [
+        {
+          pid: 4242,
+          command: `/Applications/Google Chrome --remote-debugging-pipe --user-data-dir=${saved.folder} --headless=new`,
+        },
+      ],
+    })
+    managed.browser.useSavedProfile({
+      ...saved.lease,
+      async recordBrowser(): Promise<void> {
+        throw Object.assign(
+          new Error(
+            `ENOSPC: no space left on device, write '${saved.folder}/codebook-owned-browser'`,
+          ),
+          { code: 'ENOSPC' },
+        )
+      },
+    })
+    const signal = new AbortController().signal
+    await managed.browser.launch(
+      { type: 'editor-browser', name: 'owned', request: 'launch' },
+      signal,
+    )
+    // A folder that is gone fails the listing's resolution of it with an error that names it.
+    if (scenario === 'listing fails')
+      await rm(saved.folder, { recursive: true, force: true })
+
+    // Act
+    const failure: unknown = await managed.browser
+      .recordSavedBrowser(signal)
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+
+    // Assert
+    assert.ok(failure instanceof Error, scenario)
+    assert.equal(
+      failure.message,
+      scenario === 'marker write fails'
+        ? "ENOSPC: no space left on device, write '<saved-session>/codebook-owned-browser'"
+        : "ENOENT: no such file or directory, realpath '<saved-session>'",
+    )
+    assert.equal(
+      JSON.stringify(managed.events).includes('hash0123456789'),
+      false,
+    )
+  }
 })

@@ -1,7 +1,9 @@
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { dirname } from 'node:path'
+import { basename, dirname } from 'node:path'
 import { createContext, runInContext } from 'node:vm'
+
+import { withSavedSessionEditorStubs } from './savedSessionEditorStubs'
 
 /** The real `clearTimeout`, kept from before any test fakes timers, so a loaded module can still cancel a timer it armed before the clock was faked. */
 const realClearTimeout = clearTimeout
@@ -21,6 +23,9 @@ export async function loadModule<Module>(
   globals: Record<string, unknown> = {},
   sameContext: Record<string, string> = {},
 ): Promise<Module> {
+  // The activation module installs the saved-session status item in every window; a test's `vscode` stand-in gets the members that needs.
+  if (basename(path) === 'extension.js')
+    withSavedSessionEditorStubs(dependencies.vscode)
   const required = createRequire(path),
     module = { exports: {} }
   const sameContextExports = new Map<string, unknown>()

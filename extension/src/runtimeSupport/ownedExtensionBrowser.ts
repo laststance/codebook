@@ -38,6 +38,7 @@ import {
   isMethodNotFound,
 } from './flatCdpConnection'
 import { assertSupportedChromeVersion } from './utils/assertSupportedChromeVersion'
+import { browserProcessOf } from './utils/browserProcessOf'
 import {
   readCdpString,
   readCdpTargets,
@@ -47,6 +48,7 @@ import { createPhaseReporter } from './utils/createPhaseReporter'
 import { maskLaunchDetail } from './utils/maskLaunchDetail'
 import { ownedBrowserBookmarks } from './utils/ownedBrowserBookmarks'
 import { writeOwnedBrowserMarker } from './utils/ownedBrowserMarker'
+import { ownedChromeArguments } from './utils/ownedChromeArguments'
 import { PollBudget } from './utils/pollBudget'
 import { readChromeExecutableVersion } from './utils/readChromeExecutableVersion'
 import { readDevToolsActivePort } from './utils/readDevToolsActivePort'
@@ -108,23 +110,7 @@ const REAL_OWNED_BROWSER_DEPENDENCIES: OwnedBrowserDependencies = {
       windowsHide: true,
       detached: process.platform !== 'win32',
     })
-    let exited = false
-    const exitListeners: (() => void)[] = []
-    const markExited = (): void => {
-      if (exited) return
-      exited = true
-      for (const listener of exitListeners.splice(0)) listener()
-    }
-    child.once('exit', markExited)
-    child.once('error', markExited)
-    return {
-      pid: child.pid,
-      hasExited: () => exited,
-      onExit: (listener): void => {
-        if (exited) listener()
-        else exitListeners.push(listener)
-      },
-    }
+    return browserProcessOf(child)
   },
   connect: connectFlatCdp,
   sleep: (ms) => delay(ms),
@@ -143,14 +129,12 @@ const REAL_OWNED_BROWSER_DEPENDENCIES: OwnedBrowserDependencies = {
  * browserArguments('/tmp/codebook-browser-a1b2c3') // => ['--remote-debugging-port=0', '--headless=new', …, 'about:blank']
  */
 function browserArguments(profile: string): string[] {
-  return [
-    '--remote-debugging-port=0',
-    '--headless=new',
-    '--no-first-run',
-    '--no-default-browser-check',
-    `--user-data-dir=${profile}`,
-    'about:blank',
-  ]
+  return ownedChromeArguments({
+    profile,
+    debugging: 'port',
+    headless: true,
+    startUrl: 'about:blank',
+  })
 }
 
 /** Shortens a path to its last two segments, so a message never carries the private part of an extension root. */

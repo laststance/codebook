@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 
+import type { OperationConfirmationFact } from '../../operationsConfirmationTypes'
 import type {
+  ConfiguredRuntimeView,
   OperationFailure,
   OperationRecord,
   RuntimeAction,
@@ -19,6 +21,16 @@ export class ControlledOperationsRuntime extends ControlledConfiguredRuntime {
   readonly learnerSecrets: (string | undefined)[] = []
   /** The first failure of an operation, which a test sets when it fails the run. */
   failure?: OperationFailure
+  /** The profile a version 3 run reports, as the real run does once it was admitted: the saved session or a fresh one. */
+  session?: 'saved' | 'fresh'
+  /** `kept` for a run that started with the saved session. */
+  appState?: 'kept'
+  /** The saved-session status the run read at its start. */
+  savedSession?: ConfiguredRuntimeView['savedSession']
+  /** What the page read returns for the saved-session confirmation. */
+  confirmationFacts?: OperationConfirmationFact[]
+  /** Makes the page read of the confirmation fail. */
+  confirmationFactsFailure?: Error
   /** Whether the action commits the operation's stop at once, as a stop inside the input's handler does. */
   pausesOnAction = false
 
@@ -74,6 +86,15 @@ export class ControlledOperationsRuntime extends ControlledConfiguredRuntime {
     return { ...this.operation, operationIndex: record.index }
   }
 
+  /** Answers the confirmation's page read from the facts a test set, or rejects with its failure. */
+  readOperationConfirmationFacts(): Promise<
+    readonly OperationConfirmationFact[]
+  > {
+    return this.confirmationFactsFailure
+      ? Promise.reject(this.confirmationFactsFailure)
+      : Promise.resolve(this.confirmationFacts ?? [])
+  }
+
   /** Finishes an operation the way the run does once its input and stops are done: `done`, acknowledged, and the run `ready` for the next. */
   finish(index: number): void {
     const record = this.records[index - 1]!
@@ -89,6 +110,9 @@ export class ControlledOperationsRuntime extends ControlledConfiguredRuntime {
       ...super.view(),
       operations: this.records.map((record) => ({ ...record })),
       ...(this.failure ? { operationFailure: this.failure } : {}),
+      ...(this.session ? { session: this.session } : {}),
+      ...(this.appState ? { appState: this.appState } : {}),
+      ...(this.savedSession ? { savedSession: this.savedSession } : {}),
       nextAction:
         this.status === 'ready' &&
         this.records.some((record) => record.state === 'not-run')

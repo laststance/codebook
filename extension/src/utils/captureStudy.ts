@@ -156,6 +156,7 @@ export async function captureStudy(
           hash: sha256(Buffer.from(image.blob, 'base64')),
         })
       } else
+        // A withheld image is saved as an absent image with its reason sentence, so the saved format and older readers stay unchanged.
         captures.push({
           ...identity,
           status:

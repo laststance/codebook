@@ -20,9 +20,14 @@ import {
   type Scenario,
 } from './constants'
 import { FrameDelivery, type ViewFrame } from './frameDelivery'
-import type { SecretFrameGate } from './secretFrameGate'
+import {
+  WITHHOLD_REASON_OF_VERDICT,
+  type SecretFrameGate,
+  type SecretFrameVerdict,
+} from './secretFrameGate'
 import { awaitResponse } from './utils/awaitResponse'
 import { cssSizeOf } from './utils/cssSizeOf'
+import { describeWithheldImage } from './utils/describeWithheldImage'
 import { isStackFrameItem } from './utils/isStackFrameItem'
 import { sha256 } from './utils/sha256'
 import { unpaintedApplicationReason } from './utils/unpaintedApplicationReason'
@@ -487,14 +492,14 @@ export class BrowserViewport {
    * @param data - The screenshot's base64 image.
    * @param phase - The capture phase.
    * @param requestedAtMs - When the screenshot was requested (page clock, ms); the gate verifies the window up to now.
-   * @returns `drop` when the gate withheld the image (the recorder got a gap instead); `pass` otherwise.
-   * @example if ((await viewport.recordCapture(png, 'before', startedAt)) === 'drop') throw new Error('withheld')
+   * @returns `pass`, or a withheld verdict (`drop`, `drop-cross-origin-frame`) when the gate withheld the image (the recorder got a gap instead).
+   * @example if ((await viewport.recordCapture(png, 'before', startedAt)) !== 'pass') markWithheld()
    */
   recordCapture(
     data: string,
     phase: string,
     requestedAtMs: number = Date.now(),
-  ): Promise<'pass' | 'drop'> {
+  ): Promise<SecretFrameVerdict> {
     const elapsedMs = this.observer?.elapsedMs() ?? 0
     // The run's result image is its last history moment; stream frames captured after it are not history.
     if (phase === 'after') this.markHistoryEnd(Date.now())
@@ -1198,21 +1203,21 @@ export class BrowserViewport {
    * @returns The verdict; a gate that cannot answer counts as `drop`.
    */
   private admitInOrder(
-    admit: () => Promise<'pass' | 'drop'>,
+    admit: () => Promise<SecretFrameVerdict>,
     store: () => void,
     elapsedMs: number,
     capturedAtMs: number,
-  ): Promise<'pass' | 'drop'> {
+  ): Promise<SecretFrameVerdict> {
     const waiting = { capturedAtMs }
     this.imagesAwaitingVerdict.add(waiting)
     const verdict = (this.imageQueue ?? Promise.resolve()).then(
-      async (): Promise<'pass' | 'drop'> => {
+      async (): Promise<SecretFrameVerdict> => {
         // History ended while the image waited: it is not part of the explained history.
         if (this.isAfterHistory(capturedAtMs)) {
           this.imagesAwaitingVerdict.delete(waiting)
           return 'drop'
         }
-        const answer = await admit().catch((): 'drop' => 'drop')
+        const answer = await admit().catch((): SecretFrameVerdict => 'drop')
         this.imagesAwaitingVerdict.delete(waiting)
         if (this.closed) return answer
         if (answer === 'pass') store()
@@ -1221,8 +1226,7 @@ export class BrowserViewport {
           this.observe(() =>
             this.observer!.gap?.({
               elapsedMs,
-              reason:
-                'An image was withheld while a secret control was not safe to draw.',
+              reason: describeWithheldImage(WITHHOLD_REASON_OF_VERDICT[answer]),
             }),
           )
         return answer

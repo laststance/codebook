@@ -24,61 +24,13 @@ import {
   type ListedProcess,
   type ProcessListingInputs,
 } from './listProcesses'
-import {
-  readOwnedBrowserMarker,
-  type OwnedBrowserMarker,
-} from './ownedBrowserMarker'
-import { ownedBrowserProcessSet } from './ownedBrowserProcesses'
+import { readOwnedBrowserMarker } from './ownedBrowserMarker'
 import { profileProcesses } from './profileProcesses'
 import {
   REAL_PROCESS_STOPPER,
-  stopListedProcesses,
   type ProcessStopper,
 } from './stopListedProcesses'
-
-/**
- * Stops the live browser of an owned profile whose editor is gone, so the folder can be removed (ER18); called by {@link removeUnusedProfile}.
- * The processes are listed again right now, because the sweep's one listing may be minutes old and a pid can have been reused since. Only the browser's main process, proven by the pid and executable the launch recorded and the exact `--user-data-dir` ({@link ownedBrowserProcessSet}), is signalled through its process group, and never this process; its helpers end with it; when anything else still names the folder, nothing is signalled and the folder stays.
- * @param profile - The owned profile folder.
- * @param marker - The executable and pid recorded in the folder's owned-browser marker.
- * @param sweep - The running sweep, for its listing and signals.
- * @returns `true` when no process names the folder any more.
- * @example
- * await stopOrphanBrowser('/tmp/codebook-browser-a1b2c3', { executable: '/opt/chrome/chrome', pid: 4242 }, sweep) // => true
- */
-async function stopOrphanBrowser(
-  profile: string,
-  marker: OwnedBrowserMarker,
-  sweep: Pick<ProfileSweep, 'stopper' | 'listAgain'>,
-): Promise<boolean> {
-  const inputs = { pathsMayNotResolve: true }
-  const listing = await sweep.listAgain()
-  const named = await profileProcesses(profile, listing, inputs)
-  // Nothing names the folder any more.
-  if (named.length === 0) return true
-  const { main, foreign } = await ownedBrowserProcessSet(
-    profile,
-    marker,
-    listing,
-    named,
-    inputs,
-  )
-  // Without a proven main process, or with a stranger that only names the folder, nothing is signalled and the folder stays.
-  if (main === undefined || foreign.length > 0) return false
-  if (main.pid === process.pid) return false
-  // Only the main process's group (spawned detached) or pid is signalled; its helpers end with it.
-  const stopped = await stopListedProcesses([main.pid], sweep.stopper, {
-    groupLeaders: [main.pid],
-  })
-  if (!stopped) return false
-  // A fresh listing proves that nothing names the folder before it is removed.
-  const remaining = await profileProcesses(
-    profile,
-    await sweep.listAgain(),
-    inputs,
-  )
-  return remaining.length === 0
-}
+import { stopOrphanBrowser } from './stopOrphanBrowser'
 
 /**
  * Removes one profile folder when no process uses it as its profile; called by {@link sweepProfile} for a folder whose owner is gone.

@@ -1,3 +1,7 @@
+import {
+  SIGN_IN_REQUIRED_REASONS,
+  type SignInRequiredReason,
+} from '../constants'
 import type { ErrorCode } from '../errors'
 import { NEXT_REFUSAL_CODES, nextSetupDeadlineRecovery } from '../nextRefusals'
 import { viteFailureOf, type ViteRefusalCode } from '../viteRefusals'
@@ -17,6 +21,8 @@ const CODED_FAILURE_CODES = [
   'OPERATION_AFTER_NOT_MET',
   'RUN_FAILED_UNEXPECTEDLY',
   'SECRET_BECAME_VISIBLE',
+  // The page asked for sign-in; the variant names why (SIGN_IN_REQUIRED_REASONS).
+  'SIGN_IN_REQUIRED',
 ] as const satisfies readonly ErrorCode[]
 
 /** A code a run's failure text can lead with, so the service restores it as a coded error. */
@@ -29,6 +35,8 @@ export type RefusalFailure = {
   message: string
   /** Present only for a known variant of a code that has variants (`NEXT_SETUP_DEADLINE`). */
   recoveryOverride?: string
+  /** Present only for `SIGN_IN_REQUIRED` led by a known reason: the fields the agent reads as `details.reason`. */
+  details?: { reason: SignInRequiredReason }
 }
 
 /** The lead of a coded failure text: `<CODE>: ` or `<CODE>(<variant>): `; a variant holds no parenthesis and no line break. */
@@ -57,6 +65,13 @@ export function refusalFailureOf(text: string): RefusalFailure | undefined {
   if (!lead || !code) return undefined
   const message = text.slice(lead[0].length),
     variant = lead[2]
+  // A sign-in refusal carries its reason as the variant; an unknown reason restores the code alone.
+  if (code === 'SIGN_IN_REQUIRED') {
+    const reason = SIGN_IN_REQUIRED_REASONS.find((known) => known === variant)
+    return reason === undefined
+      ? { code, message }
+      : { code, message, details: { reason } }
+  }
   // Only a deadline has variants, and only a known name selects its static recovery.
   const recoveryOverride =
     code === 'NEXT_SETUP_DEADLINE' && variant !== undefined

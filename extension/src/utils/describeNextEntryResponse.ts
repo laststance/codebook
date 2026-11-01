@@ -3,6 +3,7 @@ import {
   HTTP_REDIRECT_STATUS_MIN,
 } from '../constants'
 
+import { matchSignInPath } from './matchSignInPath'
 import { isOwnedApplicationOrigin } from './ownedApplicationOrigin'
 import { redactNextEntryPath } from './redactNextEntryPath'
 
@@ -17,16 +18,19 @@ export type NextEntryResponse = {
   location?: NextEntryLocation
   /** Present when the redirect points at the same path and query that were asked for: a redirect loop. */
   redirectsToItself?: true
+  /** The declared sign-in path (`signInPaths`) the same-origin redirect points at; the query never leaves. */
+  redirectsToSignIn?: string
 }
 
 /**
- * Describes the answer of the owned Next server to the entry path, for the Pages run's refusals, without keeping any raw `Location`.
+ * Describes the answer of the owned Next server to the entry path, for the Pages run's refusals and the sign-in aware readiness of a version 3 run, without keeping any raw `Location`.
  *
- * Why it exists: a redirect of the entry page is refused (`NEXT_ENTRY_REDIRECTED`) with both paths named, but a `Location` may carry a token in its query or point at another site; so only a redacted same-origin path, or the fact of another origin, is kept. Called by the launcher's structured entry check ({@link launchDevelopmentServer}) after its `redirect: 'manual'` GET; nothing here fetches.
+ * Why it exists: a redirect of the entry page is refused (`NEXT_ENTRY_REDIRECTED`) with both paths named, or, when it points at a declared sign-in path, decides whether a version 3 run is refused with `SIGN_IN_REQUIRED` or warms its entry with the saved session; but a `Location` may carry a token in its query or point at another site, so only a redacted same-origin path, the declared sign-in path, or the fact of another origin is kept. Called by the launcher's structured entry check ({@link launchDevelopmentServer}) after its `redirect: 'manual'` GET; nothing here fetches.
  * @param status - The HTTP status of the entry page.
  * @param location - The response's `Location` header, or `null`.
  * @param requestUrl - The absolute URL that was asked for (`<owned origin><entryPath>`), which a relative `Location` resolves against.
  * @param ownedOrigin - The origin the owned server listens on; `localhost`, `127.0.0.1` and `[::1]` at its port count as the same origin.
+ * @param signInPaths - The configuration's `signInPaths`; a same-origin redirect to one of them adds `redirectsToSignIn: <declared path>` (the query is compared away, never kept).
  * @returns
  * - `{ status }` for a status outside 3xx, or a 3xx without `Location`
  * - `{ status, location: { sameOrigin: true, path } }` with the redacted origin-less path for a same-origin target, plus `redirectsToItself: true` when it is the path and query asked for
@@ -42,6 +46,7 @@ export function describeNextEntryResponse(
   location: string | null,
   requestUrl: string,
   ownedOrigin: string,
+  signInPaths?: readonly string[],
 ): NextEntryResponse {
   const isRedirect =
     status >= HTTP_REDIRECT_STATUS_MIN && status < HTTP_REDIRECT_STATUS_END
@@ -62,7 +67,12 @@ export function describeNextEntryResponse(
   // The raw path and query are compared here and dropped; only the verdict leaves.
   const loops =
     target.pathname === requested.pathname && target.search === requested.search
-  return loops
-    ? { status, location: { sameOrigin: true, path }, redirectsToItself: true }
-    : { status, location: { sameOrigin: true, path } }
+  const signIn = matchSignInPath(target, ownedOrigin, signInPaths)
+  const described: NextEntryResponse = {
+    status,
+    location: { sameOrigin: true, path },
+  }
+  if (loops) described.redirectsToItself = true
+  if (signIn !== undefined) described.redirectsToSignIn = signIn
+  return described
 }

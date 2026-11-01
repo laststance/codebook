@@ -2,18 +2,23 @@ import { execFile } from 'node:child_process'
 import { constants as filesystemConstants } from 'node:fs'
 import { access, readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { promisify } from 'node:util'
 
 import * as vscode from 'vscode'
 import { z } from 'zod'
 
 import type { ChromeExtensionViewportFactory } from './chromeExtensionContracts'
-import { ConfiguredBrowserRun } from './configuredBrowserRun'
+import {
+  ConfiguredBrowserRun,
+  developmentServerAdapterOf,
+} from './configuredBrowserRun'
 import type { ConfiguredDescriptor } from './configuredStudySchemas'
 import {
   CHROME_LINUX_EXECUTABLE_NAMES,
+  CONFIRM_SAVED_SESSION_OPERATIONS_SETTING,
   PREREQUISITE_TIMEOUT_MS,
+  REVIEW_AGAIN_LABEL,
   WSL_REMOTE_NAME,
 } from './constants'
 import { StudyError } from './errors'
@@ -31,8 +36,13 @@ import type {
 } from './runtime'
 import type { BrowserViewportFactory } from './runtimeSupport/browserViewport'
 import type { HostConfiguration } from './runtimeSupport/hostBrowser'
+import type {
+  SavedSessionStorePort,
+  SignInRequiredReason,
+} from './runtimeSupport/savedSessionTypes'
 import { assertSupportedChromeVersion } from './runtimeSupport/utils/assertSupportedChromeVersion'
 import { managedProfileRoot } from './runtimeSupport/utils/managedProfileRoot'
+import { startSavedSessionServer } from './savedSessionServer'
 import { createStateChangingRequestAsker } from './utils/askToSendStateChangingRequest'
 import { assertConfiguredSourceDocuments } from './utils/assertConfiguredSourceDocuments'
 import {
@@ -47,6 +57,8 @@ import { createChromeExecutableLookup } from './utils/createChromeExecutableLook
 import { createLearnerSecretAsker } from './utils/createLearnerSecretAsker'
 import { createMemoryOrphanStore } from './utils/createMemoryOrphanStore'
 import { createNodeServerRunUtilities } from './utils/createNodeServerRunUtilities'
+import { createSavedSessionOperationsAsker } from './utils/createSavedSessionOperationsAsker'
+import { describeOperationsConfirmationNotice } from './utils/describeOperationsConfirmationNotice'
 import { listVitestForRootClaim } from './utils/listVitestForRootClaim'
 import { nodeServerMachineGaps } from './utils/nodeServerMachineGaps'
 import type { NodeServerOrphanStore } from './utils/nodeServerOrphanRecords'
@@ -62,7 +74,9 @@ import {
 } from './utils/resolveExternalNodeExecutable'
 import { sanitizeCause } from './utils/sanitizeCause'
 import type { CauseRoots } from './utils/sanitizeCause'
+import { savedSessionPortOf } from './utils/savedSessionPortOf'
 import { searchRepositoryVitest } from './utils/searchRepositoryVitest'
+import { showPlainNotice } from './utils/showPlainNotice'
 
 export interface StudyPresentation {
   createViewport: BrowserViewportFactory
@@ -161,6 +175,10 @@ export async function createEnvironment(
   context: Pick<vscode.ExtensionContext, 'extensionPath'> & {
     /** Where a node-server run keeps its process record for the next activation's orphan check; without it the record lives only in memory. */
     workspaceState?: NodeServerOrphanStore
+    /** The saved-session store; absent in tests and in editors that never set one up. */
+    savedSessions?: SavedSessionStorePort
+    /** Shows the notice that a run needs a saved session, with a button for Set Up Saved Session…. */
+    showSignInRequired?: (reason: SignInRequiredReason) => void
   },
   presentation?: StudyPresentation,
 ): Promise<StudyEnvironment & { dispose(): void }> {
@@ -337,6 +355,15 @@ export async function createEnvironment(
   }
   // One asker for the window's life, so a retry joins a modal still on screen.
   const askToSendStateChangingRequest = createStateChangingRequestAsker(
+    (message, detail, ...items) =>
+      vscode.window.showWarningMessage(
+        message,
+        { modal: true, detail },
+        ...items,
+      ),
+  )
+  // Each ask of the saved-session operations question is its own native modal (ENG-6).
+  const confirmSavedSessionOperations = createSavedSessionOperationsAsker(
     (message, detail, ...items) =>
       vscode.window.showWarningMessage(
         message,
@@ -527,6 +554,9 @@ export async function createEnvironment(
             )
         },
         createViewport: presentation?.createViewport,
+        // Only a version 3 run reads the store; the run decides, and versions 1 and 2 never call it.
+        savedSession: savedSessionPortOf(context.savedSessions, workspace),
+        onSignInRequired: ({ reason }) => context.showSignInRequired?.(reason),
         revealSource: async (snapshot) => {
           const index = run
             .view()
@@ -708,6 +738,64 @@ export async function createEnvironment(
     },
     confirmStateChangingRequest: askToSendStateChangingRequest,
     askLearnerSecret,
+    confirmSavedSessionOperations,
+    savedSessionConfirmationEnabled(): boolean {
+      // Only the learner's user setting counts: a workspace or folder value (a file the chat's repository can carry) is ignored.
+      return (
+        vscode.workspace
+          .getConfiguration('codebook')
+          .inspect<boolean>(CONFIRM_SAVED_SESSION_OPERATIONS_SETTING)
+          ?.globalValue !== false
+      )
+    },
+    async noticeOperationsConfirmation(notice) {
+      const { severity, message, actions } =
+        describeOperationsConfirmationNotice(notice)
+      const choice = await showPlainNotice(
+        vscode.window,
+        severity,
+        message,
+        ...actions,
+      )
+      return choice === REVIEW_AGAIN_LABEL ? 'review-again' : undefined
+    },
+    async savedSessionSetupInputs() {
+      // A live run of this window holds the development port and may hold the saved session: setup waits for it.
+      for (const run of runs.values())
+        if (run instanceof ConfiguredBrowserRun && !run.view().cleaned)
+          return {
+            ready: false,
+            missing: [
+              `A Codebook run is using ${basename(workspace)}; stop it before setup.`,
+            ],
+          }
+      const prerequisites = await resolvePrerequisites()
+      if (
+        !prerequisites.ready ||
+        !prerequisites.nodeExecutable ||
+        !prerequisites.chrome
+      )
+        return { ready: false, missing: prerequisites.missing }
+      return {
+        ready: true,
+        node: prerequisites.nodeExecutable,
+        chrome: prerequisites.chrome,
+        adapters: await readRepositoryAdapterReadiness(
+          workspace,
+          prerequisites.nodeExecutable,
+          new AbortController().signal,
+        ),
+      }
+    },
+    async startSavedSessionServer(adapter, signInPath, signal) {
+      const node = await requireNodeRunPrerequisites('the saved session setup')
+      return startSavedSessionServer(developmentServerAdapterOf(adapter), {
+        workspace,
+        node,
+        signInPath,
+        signal,
+      })
+    },
     dispose(): void {
       tracker.dispose()
       termination.dispose()

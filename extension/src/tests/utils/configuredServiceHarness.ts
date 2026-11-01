@@ -9,6 +9,7 @@ import type {
   ConfiguredRuntimeSnapshot,
   ConfiguredRuntimeView,
   RuntimeAction,
+  RuntimeControl,
   StudyEnvironment,
   StudyRuntime,
 } from '../../runtime'
@@ -215,6 +216,7 @@ export async function configuredServiceHarness(
   createRuntime: (
     directory: string,
     definition: ConfiguredDefinition,
+    control?: RuntimeControl,
   ) => ControlledConfiguredRuntime = (directory, definition) =>
     new ControlledConfiguredRuntime(directory, definition),
 ) {
@@ -263,10 +265,10 @@ export async function configuredServiceHarness(
     },
     build: { revision: 'test', dirty: true, sourceHash: 'test' },
     prerequisites: async () => ({ ready: true, missing: [] }),
-    async createRuntime(directory, definition) {
+    async createRuntime(directory, definition, control) {
       if (!definition || typeof definition === 'string')
         throw new Error('This harness models configured studies only.')
-      const runtime = createRuntime(directory, definition)
+      const runtime = createRuntime(directory, definition, control)
       runtimes.push(runtime)
       return runtime
     },

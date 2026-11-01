@@ -6,6 +6,7 @@ import {
   CROSS_RUNTIME_CONFIG_VERSION,
   OPERATIONS_CONFIG_VERSION,
   REPOSITORY_OPERATION_LIMIT,
+  SIGN_IN_PATH_LIMIT,
   BOOK_MAX_ANCHORS,
   BOOK_TITLE_LIMIT_CHARS,
   REPOSITORY_ATTRIBUTE_LIMIT_CHARS,
@@ -30,6 +31,7 @@ import {
 import { bookIdSchema } from './identitySchemas'
 import { repositoryHashSchema, repositoryPathSchema } from './sourceSchemas'
 import { missingValueInspectionMessage } from './utils/missingValueInspectionMessage'
+import { normalizedSignInPathname } from './utils/normalizedSignInPathname'
 
 /** A CSS selector as every profile declares one: 1 to the selector limit, no control characters. */
 export const selectorSchema = z
@@ -62,6 +64,15 @@ export const repositoryEntryPathSchema = z
       return false
     }
   }, 'Use a same-origin absolute path without traversal, fragments or encoded separators.')
+/**
+ * One sign-in route of a version 3 configuration: a same-origin absolute path without a query, compared with the page's `location.pathname`.
+ * Read by {@link operationsConfigurationShape}'s `signInPaths`; the saved-session store keeps the last declared paths for its setup.
+ * @example signInPathSchema.parse('/login') // '/login'
+ */
+export const signInPathSchema = repositoryEntryPathSchema.refine(
+  (value) => !value.includes('?'),
+  'A sign-in path is compared with location.pathname: leave out the query.',
+)
 const reservedRoots = new Set<string>(REPOSITORY_RESERVED_INSPECTION_ROOTS)
 const forbiddenSegments = new Set<string>(
   REPOSITORY_FORBIDDEN_INSPECTION_SEGMENTS,
@@ -348,10 +359,54 @@ const operationsConfigurationShape = z.strictObject({
     .optional(),
   entryPath: repositoryEntryPathSchema.optional(),
   initialStorage: storageSchema.optional(),
+  signInPaths: z
+    .array(signInPathSchema)
+    .min(1)
+    .max(SIGN_IN_PATH_LIMIT)
+    .optional(),
+  session: z.literal('fresh').optional(),
 })
 
 /**
- * Refuses the version 3 rules a field schema cannot state: distinct operation titles, and an `afterOperation` on every stop that names a declared operation and never decreases along the declared stop order.
+ * Refuses a repeated sign-in path (after one trailing slash is removed) and a sign-in path that is the entry path.
+ * Called by {@link validateOperations}.
+ * @param configuration - A parsed version 3 configuration.
+ * @param context - The refinement context that receives one issue per violation.
+ * @example validateSignInPaths({ entryPath: '/login', signInPaths: ['/login'], … }, context) // adds an issue at ['signInPaths', 0]
+ */
+function validateSignInPaths(
+  configuration: z.infer<typeof operationsConfigurationShape>,
+  context: z.RefinementCtx,
+): void {
+  const entryPathname = normalizedSignInPathname(
+    (configuration.entryPath ?? '/').split('?')[0]!,
+  )
+  const signInPaths = new Set<string>()
+  for (const [index, signInPath] of (
+    configuration.signInPaths ?? []
+  ).entries()) {
+    const normalized = normalizedSignInPathname(signInPath)
+    // A repeated path (after one trailing slash is removed) adds nothing and hides a typo.
+    if (signInPaths.has(normalized))
+      context.addIssue({
+        code: 'custom',
+        path: ['signInPaths', index],
+        message: `Sign-in paths must be distinct; "${signInPath}" is declared twice.`,
+      })
+    // The entry page cannot be a sign-in path: the run would answer SIGN_IN_REQUIRED on its first load.
+    if (normalized === entryPathname)
+      context.addIssue({
+        code: 'custom',
+        path: ['signInPaths', index],
+        message:
+          'The entry path is a sign-in path: the run would always answer SIGN_IN_REQUIRED. Leave signInPaths out to explain the sign-in page itself.',
+      })
+    signInPaths.add(normalized)
+  }
+}
+
+/**
+ * Refuses the version 3 rules a field schema cannot state: distinct operation titles, distinct sign-in paths none of which is the entry path, and an `afterOperation` on every stop that names a declared operation and never decreases along the declared stop order.
  * Called by {@link operationsRepositoryConfigSchema}.
  * @param configuration - A parsed version 3 configuration.
  * @param context - The refinement context that receives one issue per violation.
@@ -372,6 +427,7 @@ function validateOperations(
       })
     titles.add(operation.title)
   }
+  validateSignInPaths(configuration, context)
   const declared = [
     { path: ['afterOperation'], value: configuration.afterOperation },
     ...(configuration.additionalStops ?? []).map((stop, index) => ({

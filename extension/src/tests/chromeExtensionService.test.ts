@@ -64,7 +64,7 @@ test('codebook_status lists the chrome-extension profile with its extension-clic
   ])
   assert.equal(profile?.recording?.available, false)
   assert.equal(status.capabilities.includes('extension-click'), true)
-  assert.equal(status.apiVersion, '1.14')
+  assert.equal(status.apiVersion, '1.15')
 })
 
 // protects=an editor without the Chrome extension adapter reads the profile as not ready with the adapter named; fails_when=status says ready without the run factory; no_claim=the Chrome version check, which the environment reports

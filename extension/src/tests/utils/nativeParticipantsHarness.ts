@@ -910,11 +910,12 @@ export async function nativeParticipantsHarness(
             run.addSession(sessions.browser)
           }
           async attachViewport(): Promise<void> {}
+          async recordSavedBrowser(): Promise<void> {}
           setSecretFrameGate(): void {}
           async reveal(): Promise<void> {}
           resumeViewport(): void {}
           async endRecordingHistory(): Promise<void> {}
-          recordCapture(data: string, phase: string): void {
+          async recordCapture(data: string, phase: string): Promise<'pass'> {
             const observer = recordingObserver()
             observer?.frame({
               data,
@@ -922,6 +923,7 @@ export async function nativeParticipantsHarness(
               kind: 'phase',
               elapsedMs: observer.elapsedMs(),
             })
+            return 'pass'
           }
           async drainAcquisitions(): Promise<void> {}
           async presentCapture(data: string) {
