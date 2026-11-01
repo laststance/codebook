@@ -303,6 +303,7 @@ test('recorder calls return at once while the writer never finishes an append', 
   const elapsedMs = performance.now() - startedAt
 
   // Assert
+  // gstack-timing-ok: the bound is the contract (calls into a stalled writer return at once); 500 synchronous calls take a few ms, so 1 s leaves room for a loaded runner.
   assert.ok(elapsedMs < 1_000, `500 stops took ${elapsedMs} ms`)
 })
 
