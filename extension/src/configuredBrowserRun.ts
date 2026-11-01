@@ -188,6 +188,7 @@ import { nextPathnameOf } from './utils/nextPathnameOf'
 import { nextServedChunkFetcher } from './utils/nextServedChunkFetcher'
 import { nextServerOnlyFileReason } from './utils/nextServerOnlyFileReason'
 import { nextServerOnlyStopMessage } from './utils/nextServerOnlyStopMessage'
+import { OperationAfterTimeoutError } from './utils/operationAfterTimeoutError'
 import {
   browserOriginOf,
   isOwnedApplicationOrigin,
@@ -436,6 +437,9 @@ function requiredBindingsDeclaredOn(
   )
 }
 /** What a server stop's registration says when a deadline expires; a refusal keeps the reason the registration read threw, so the deadline text can pass it on, and the place when the adapter moved the breakpoint to a line the stop's rule refuses. */
+/** The wait {@link ConfiguredBrowserRun.completeOperation} is in, which decides how the run's deadline words its failure. */
+type OperationWait = 'pauses' | 'after' | 'run-after'
+
 type RegistrationStatus =
   | { status: 'pending' | 'bound' | 'unknown' }
   | {
@@ -645,6 +649,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private readonly instanceTexts = new Map<string, Promise<string>>()
   /** What the after conditions last answered while they did not hold, so the run's own deadline, which ends the after wait first, can still name the condition and its hint ({@link afterDeadlineReason}). */
   private lastAfterFailure?: ConfiguredDomFailure
+  /** What the current operation's own after conditions last answered while they did not hold, for the same reason as {@link lastAfterFailure} ({@link operationAfterDeadlineText}). */
+  private lastOperationAfterFailure?: ConfiguredDomFailure
   /** The phases whose text conditions were journaled as held on one of several elements; each phase is journaled once ({@link journalTextReadings}). */
   private readonly journaledTextReadingPhases = new Set<'before' | 'after'>()
   private progressTimer?: ReturnType<typeof setTimeout>
@@ -5511,8 +5517,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const operation = configuration.operations[index - 1]!
     const record = this.operationRecords[index - 1]!
     const isLast = index === configuration.operations.length
+    // Which wait the run's deadline, armed before both and ending first, interrupts: it words that wait's failure.
+    let waiting: OperationWait = 'pauses'
+    this.lastOperationAfterFailure = undefined
     this.progressDeadline(ACTIVE_TIMEOUT_MS, () =>
-      this.operationAfterDeadlineText(index),
+      this.operationDeadlineText(index, waiting),
     )
     try {
       await waitUntil(
@@ -5523,6 +5532,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
       this.alive()
       // The operation's own conditions prove its effect; the last operation without any takes the run's, observed below.
+      waiting = operation.after ? 'after' : 'run-after'
       if (operation.after) {
         await this.waitForConditions(operation.after)
         this.alive()
@@ -5545,15 +5555,35 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Words the failure of an operation's `after` conditions or of the last operation's result, read when the progress deadline expires; it records the operation's failure fields first.
+   * Words the failure of the wait {@link completeOperation} was in when the progress deadline expired; it records the operation's failure fields first.
+   * The deadline and the waits share one bound and the deadline was armed first, so it ends them: the adapter pause wait fails as an unexpected failure with its log id, the operation's own after conditions as `OPERATION_AFTER_NOT_MET` naming the condition that did not hold.
    * @param index - The operation (1-based).
+   * @param waiting - The wait that was running; `run-after` is the last operation's run-level after wait, worded by {@link afterDeadlineReason}.
    * @returns The coded failure text.
-   * @example this.operationAfterDeadlineText(4) // 'OPERATION_AFTER_NOT_MET: Operation 4 (Create Invoice) was sent, but …'
+   * @example this.operationDeadlineText(4, 'after') // 'OPERATION_AFTER_NOT_MET: Operation 4 (Create Invoice) was sent, but …'
    */
-  private operationAfterDeadlineText(index: number): string {
-    const refusal = this.afterNotMet(index, this.afterDeadlineReason())
+  private operationDeadlineText(index: number, waiting: OperationWait): string {
+    let refusal: OperationRefusal
+    if (waiting === 'pauses')
+      refusal = this.unexpectedOperationRefusal(
+        index,
+        waitTimeoutText(ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION),
+      )
+    else if (waiting === 'after')
+      refusal = this.afterNotMet(index, this.operationAfterTimeoutText())
+    else refusal = this.afterNotMet(index, this.afterDeadlineReason())
     this.recordOperationFailure(refusal)
     return formatRefusalFailure(refusal.code, refusal.message)
+  }
+
+  /**
+   * Words the timeout of the current operation's own after conditions, naming the condition that did not hold when the page answered one.
+   * @returns The timeout text, shared by the wait's own error and the run's deadline.
+   * @example this.operationAfterTimeoutText() // "Timed out waiting for the operation's after conditions: condition 2 not-visible"
+   */
+  private operationAfterTimeoutText(): string {
+    const failure = this.lastOperationAfterFailure
+    return `Timed out waiting for the operation's after conditions${failure ? `: condition ${(failure.conditionIndex ?? 0) + 1} ${failure.reason}` : ''}`
   }
 
   /**
@@ -5601,18 +5631,25 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.status === 'failed'
     )
       return error
-    const operation = this.operationsConfiguration!.operations[index - 1]!
-    // A condition wait that timed out means the result did not show.
-    if (
-      error instanceof WaitTimeoutError ||
-      /after conditions/.test(String(error))
-    )
+    // Only the wait for the operation's own after conditions means the result did not show; any other timeout is unexpected.
+    if (error instanceof OperationAfterTimeoutError)
       return this.afterNotMet(index, thrownMessage(error))
-    this.logOperation(
-      index,
-      'error',
-      `unexpected failure: ${thrownMessage(error)}`,
-    )
+    return this.unexpectedOperationRefusal(index, thrownMessage(error))
+  }
+
+  /**
+   * Builds the `RUN_FAILED_UNEXPECTEDLY` refusal of an operation, journaling the cause to Output > Codebook only.
+   * @param index - The operation (1-based).
+   * @param cause - What went wrong; never shown to the agent.
+   * @returns The refusal with the log id; `sent` follows whether the operation's input was dispatched.
+   * @example throw this.unexpectedOperationRefusal(2, 'Timed out waiting for adapter pause retirement')
+   */
+  private unexpectedOperationRefusal(
+    index: number,
+    cause: string,
+  ): OperationRefusal {
+    const operation = this.operationsConfiguration!.operations[index - 1]!
+    this.logOperation(index, 'error', `unexpected failure: ${cause}`)
     return new OperationRefusal(
       'RUN_FAILED_UNEXPECTEDLY',
       `Operation ${index} (${operation.title}) failed unexpectedly. See Output > Codebook, log id ${this.operationLogId(index)}.`,
@@ -7787,11 +7824,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private async waitForConditions(
     conditions: RepositoryCondition[],
   ): Promise<void> {
-    let last: z.infer<typeof domResultSchema> | undefined
     try {
       await waitUntil(
         async () => {
-          last = await this.readConditions(conditions)
+          const last = await this.readConditions(conditions)
+          this.lastOperationAfterFailure = last.ready ? undefined : last.failure
           return last.ready
         },
         "the operation's after conditions",
@@ -7800,9 +7837,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
     } catch (error) {
       if (!(error instanceof WaitTimeoutError)) throw error
-      throw new Error(
-        `Timed out waiting for the operation's after conditions${last?.failure ? `: condition ${(last.failure.conditionIndex ?? 0) + 1} ${last.failure.reason}` : ''}`,
-      )
+      throw new OperationAfterTimeoutError(this.operationAfterTimeoutText())
     }
   }
   /**

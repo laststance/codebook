@@ -496,6 +496,119 @@ test('a result that never shows fails the run as OPERATION_AFTER_NOT_MET naming 
   assert.equal(view.operations?.[0]?.state, 'failed')
 })
 
+// protects=an operation's own after conditions that never hold fail the run as OPERATION_AFTER_NOT_MET naming condition 2 and its reason, not the plain deadline text; fails_when=the failure names no condition (the run-level deadline wording) or the operation is reported as not sent; no_claim=Chrome's rendering of the conditions (the harness page answers the read)
+test('an operation whose own after conditions never hold fails naming the failing condition of that operation', async (context) => {
+  // Arrange
+  const operationWithAfter: RepositoryOperation = {
+    ...amount,
+    after: [
+      { kind: 'visible', selector: '#first' },
+      { kind: 'visible', selector: '#second' },
+    ],
+  }
+  const { run, advance, failOperationAfterWith, evaluatedExpressions } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      operations: {
+        operations: [operationWithAfter, submit],
+        stopOperations: [2],
+      },
+    })
+  await run.prepare()
+  failOperationAfterWith(1, { conditionIndex: 1, reason: 'not-visible' })
+  run.action('op-1', OPERATION_ACTION)
+  await waitUntil(
+    () => run.view().operations?.[0]?.ack === 'yes',
+    'the acknowledged input',
+  )
+  const readsBefore = evaluatedExpressions.length
+  await waitUntil(
+    () => evaluatedExpressions.length > readsBefore,
+    'a read of the operation after conditions',
+  )
+  // Act
+  advance(20_000)
+  await waitUntil(() => run.view().status === 'failed', 'the failure')
+  // Assert
+  const view = run.view()
+  assert.match(
+    view.failures[0] ?? '',
+    /^OPERATION_AFTER_NOT_MET: Operation 1 \(Amount\) was sent, but its result could not be confirmed: Timed out waiting for the operation's after conditions: condition 2 not-visible/,
+  )
+  assert.deepEqual(plain(view.operationFailure), {
+    code: 'OPERATION_AFTER_NOT_MET',
+    operationIndex: 1,
+    path: 'operations[0].after',
+    sent: 'sent',
+    sideEffects: 'unknown',
+    logId: `${run.id}#1`,
+  })
+})
+
+// protects=only the wait for an operation's own after conditions maps to OPERATION_AFTER_NOT_MET: a failure whose text merely mentions after conditions, before the input, is RUN_FAILED_UNEXPECTEDLY, not sent; fails_when=an error is classified by its words, so a transport failure before the input reads as a result that did not show; no_claim=a real transport (the harness page throws while resolving the control)
+test('a failure before the input that mentions after conditions in its text is an unexpected failure, not a missing result', async (context) => {
+  // Arrange
+  const { run, insertedTexts } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    {
+      operations: {
+        operations: [amount],
+        stopOperations: [1],
+        selectControlFailsWith: 'lookup of the after conditions failed',
+      },
+    },
+  )
+  await run.prepare()
+  // Act
+  run.action('op-1', OPERATION_ACTION)
+  await waitUntil(() => run.view().status === 'failed', 'the failure')
+  // Assert
+  const view = run.view()
+  assert.match(view.failures[0] ?? '', /^RUN_FAILED_UNEXPECTEDLY: /)
+  assert.equal(view.operationFailure?.sent, 'not-sent')
+  assert.deepEqual(insertedTexts, [])
+})
+
+// protects=an adapter pause that does not retire within the bound fails the run as RUN_FAILED_UNEXPECTEDLY with the operation's log id, sent because the input was dispatched, never as a missing result; fails_when=the wait for adapter pauses is reported as OPERATION_AFTER_NOT_MET; no_claim=a real debugger (the test marks the browser participant paused without an announced stop)
+test('an adapter pause that never retires fails the operation as an unexpected failure, not a missing result', async (context) => {
+  // Arrange
+  const { run, advance } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    {
+      operations: {
+        operations: [amount, submit],
+        stopOperations: [2],
+      },
+    },
+  )
+  await run.prepare()
+  const participants = Reflect.get(run, 'participants') as {
+    browser: { unannouncedPause: boolean }
+  }
+  participants.browser.unannouncedPause = true
+  run.action('op-1', OPERATION_ACTION)
+  await waitUntil(
+    () => run.view().operations?.[0]?.ack === 'yes',
+    'the acknowledged input',
+  )
+  // Act
+  advance(20_000)
+  await waitUntil(() => run.view().status === 'failed', 'the failure')
+  // Assert
+  const view = run.view()
+  assert.match(view.failures[0] ?? '', /^RUN_FAILED_UNEXPECTEDLY: /)
+  assert.deepEqual(plain(view.operationFailure), {
+    code: 'RUN_FAILED_UNEXPECTEDLY',
+    operationIndex: 1,
+    sent: 'sent',
+    sideEffects: 'unknown',
+    logId: `${run.id}#1`,
+  })
+})
+
 // protects=E4: a full document load between operations ends a Next run with NAVIGATION_BEFORE_LAST_OPERATION, while the entry load and a load after the last operation are not failures; fails_when=a load before the last operation is followed silently, or the entry load fails the run; no_claim=Chrome's real frameNavigated events (harness reports them)
 test('a document load after operation 1 of 2 ends the run, and the entry load does not', async (context) => {
   // Arrange

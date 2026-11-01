@@ -602,6 +602,8 @@ export async function configuredRuntimeHarness(
   let clickTargetScrolled = false
   let screenshot =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII='
+  // The read expression of an operation's own after conditions, by expression, with the failure the page answers while a test keeps them from holding.
+  const operationAfterFailures = new Map<string, BeforeFailure>()
   // The version 3 operations the stand-in page received an input for, and the stops it reported.
   let inputsSeen = 0
   const operationsOption = options.operations
@@ -691,6 +693,10 @@ export async function configuredRuntimeHarness(
     if (expression === 'location.origin') return pageOrigin
     if (expression === scrollExpression)
       return { scrolled: clickTargetScrolled }
+    // An operation's own after conditions that a test chose never to hold.
+    const operationAfterAnswer = operationAfterFailures.get(expression ?? '')
+    if (operationAfterAnswer)
+      return { ready: false, failure: operationAfterAnswer }
     if (expression === afterExpression && !isResultVisible())
       return {
         ready: false,
@@ -1673,6 +1679,15 @@ export async function configuredRuntimeHarness(
     /** Makes the after conditions answer this failure on every read after the input, as an owned page whose result never appears does. */
     failAfterWith(failure: BeforeFailure): void {
       afterFailure = failure
+    },
+    /** Makes the own `after` conditions of a version 3 operation answer this failure on every read, as an owned page whose result never appears does. @example harness.failOperationAfterWith(1, { conditionIndex: 1, reason: 'not-visible' }) */
+    failOperationAfterWith(
+      operationIndex: number,
+      failure: BeforeFailure,
+    ): void {
+      const conditions = operationsOption?.operations[operationIndex - 1]?.after
+      if (!conditions) throw new Error('The operation declares no after')
+      operationAfterFailures.set(configuredDomExpression(conditions), failure)
     },
     /** How many times the run read the after conditions after the input. */
     afterReads(): number {
