@@ -82,6 +82,8 @@ export class ChromeExtensionHistoryRecorder implements ChromeExtensionHistorySin
   readonly frameObserver: ViewportRecordingObserver
   private readonly frames: ExtensionHistoryFrameWriter
   private readonly openPauses = new Map<string, ExtensionHistoryPause>()
+  /** Every pause the history was told of, open or closed: a pin names one of them. */
+  private readonly knownPauseIds = new Set<string>()
   private didWriteResult = false
   private didSurfaceEnd = false
   private didReportFault = false
@@ -161,7 +163,24 @@ export class ChromeExtensionHistoryRecorder implements ChromeExtensionHistorySin
     this.safely(() => this.pauseOpenedNow(pause))
   }
 
+  pinned(pauseId: string, pngBase64: string): void {
+    this.safely(() => this.pinnedNow(pauseId, pngBase64))
+  }
+
+  private pinnedNow(pauseId: string, pngBase64: string): void {
+    // A pin for a pause the history never opened would break the journal's order; a pin after the seal began finds the frame writer closed. Either way the pause reads as having no pinned frame.
+    if (this.sealOperation !== undefined || !this.knownPauseIds.has(pauseId))
+      return
+    this.frames.offer({
+      data: pngBase64,
+      kind: 'pin',
+      pauseId,
+      capturedAtMs: this.writer.nowMs(),
+    })
+  }
+
   private pauseOpenedNow(pause: ExtensionHistoryPause): void {
+    this.knownPauseIds.add(pause.pauseId)
     this.openPauses.set(pause.pauseId, pause)
     this.write(
       this.writer.appendPauseOpen({
@@ -268,6 +287,8 @@ export class ChromeExtensionHistoryRecorder implements ChromeExtensionHistorySin
       )
     }
     await this.frames.drain(EXTENSION_HISTORY_DRAIN_TIMEOUT_MS)
+    // A blob that never reached its name has no entry; the folder keeps no temporary file.
+    await this.frames.removeTemporaryBlobs()
     if (this.frames.failure !== undefined) this.reportFault(this.frames.failure)
     const deadline = startSealDeadline(boundMs)
     try {

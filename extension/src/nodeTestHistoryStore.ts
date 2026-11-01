@@ -978,6 +978,9 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
       !seal &&
       (this.active.has(studyId) || (await this.writtenElsewhere(studyId)))
     const status = seal?.status ?? (isRecording ? 'recording' : 'interrupted')
+    // A history with no seal and no live writer keeps no temporary file that a writer could still rename.
+    if (status === 'interrupted')
+      await this.descriptor.discardInterruptedLeftovers?.(this.path(studyId))
     return this.descriptor.parseIndex({
       header,
       entries,

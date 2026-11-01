@@ -23,6 +23,11 @@ export class ExtensionHistoryPauseTracker {
     private readonly workerUrl: string,
   ) {}
 
+  /** The history's id of an open pause of this generation, `undefined` when the history was not told of it. @example tracker.pauseIdOf(2) */
+  pauseIdOf(generation: number): string | undefined {
+    return this.opened.get(generation)?.pauseId
+  }
+
   /** Remembers that this run asked to continue the pause, so its end is told apart from a worker that went away. @example tracker.noteContinue(2) */
   noteContinue(generation: number): void {
     this.continued.add(generation)

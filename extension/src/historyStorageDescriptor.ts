@@ -77,6 +77,8 @@ export type HistoryWriterRules<Types extends HistoryTypes> = {
   /** The largest journal this profile writes. */
   readonly journalLimitBytes: number
   readonly maxEntries: number
+  /** The room kept free of this entry for the profile's closing entries (pauses ending, the result); an entry that would use it is refused without ending the timeline. Absent: no reserve. */
+  reserveFor?(entry: Types['Entry']): { bytes: number; entries: number }
   /** Parses a numbered entry the writer is about to write. */
   parseEntry(value: unknown): Types['Entry']
   /** Refuses an entry that breaks the profile's order rules; changes nothing. @throws The refusal. */
@@ -165,6 +167,8 @@ export type HistoryStorageDescriptor<Types extends HistoryTypes> = {
   parseSeal(value: unknown): Types['Seal']
   parseIndex(value: HistoryIndexOf<Types>): HistoryIndexOf<Types>
   scanRules: HistoryScanRules<Types>
+  /** Removes the leftovers of a writer that is gone (a temporary frame blob); called when the store reads a history that has no seal and no live writer. Never rejects. */
+  discardInterruptedLeftovers?(directory: string): Promise<void>
   /** Makes the writer of a reserved history; `describeCause` words a failure without private paths. */
   createWriter(
     directory: string,

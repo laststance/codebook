@@ -66,6 +66,21 @@ function stopReasons(
       text: `The executed source of stop ${stop ?? '?'} was not stored.`,
     })
   }
+  // A pause with no pin frame: the live run pins best-effort, and a pin that arrived late or was refused by a budget is not stored.
+  const pinnedPauses = new Set(
+    entries.flatMap((entry) =>
+      entry.type === 'frame' && entry.kind === 'pin' && entry.pauseId
+        ? [entry.pauseId]
+        : [],
+    ),
+  )
+  for (const pause of opened)
+    if (!pinnedPauses.has(pause.pauseId))
+      reasons.push({
+        code: CODES.pinnedFrameMissing,
+        params: { stop: pause.stopIndex },
+        text: `The surface frame pinned at stop ${pause.stopIndex} was not recorded.`,
+      })
   return reasons
 }
 
@@ -140,7 +155,7 @@ function writerReasons(
 
 /**
  * Decides which parts of a chrome-extension history are missing, from its journal and the facts only the writer knows; the seal keeps the result and an unsealed (interrupted) history is judged by it again on every read.
- * 1a detects: declared stops never reached, pauses without a capture, captures without their source, no result, the surface ending, a bound reached, a failed append and a filmstrip with no frames or dropped ones. Pinned frames are judged by the lifecycle part of the cycle, not here.
+ * Detects: declared stops never reached, pauses without a capture or a pinned frame, captures without their source, no result, the surface ending, a bound reached, a failed append and a filmstrip with no frames or dropped ones.
  * @param header - The history's header, whose declared stops say what had to be reached.
  * @param entries - The verified entries.
  * @param facts - What only the writer knows.

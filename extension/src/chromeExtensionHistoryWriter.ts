@@ -15,6 +15,8 @@ import {
   EXTENSION_HISTORY_JOURNAL_LIMIT_BYTES,
   EXTENSION_HISTORY_MAX_ENTRIES,
   EXTENSION_HISTORY_SEAL_LIMIT_BYTES,
+  EXTENSION_HISTORY_TERMINAL_RESERVE_ENTRIES,
+  RECORDING_TERMINAL_RESERVE_BYTES,
 } from './constants'
 import type { HistoryWriterRules } from './historyStorageDescriptor'
 import { HistoryJournalWriter } from './nodeHistoryJournalWriter'
@@ -47,10 +49,16 @@ function startExtensionHistoryClock(): ExtensionHistoryClock {
   return () => performance.now() - startedAt
 }
 
+/** The bounds of one writer's journal; a test names smaller ones to reach them. */
+export type ExtensionHistoryJournalLimits = {
+  journalLimitBytes: number
+  maxEntries: number
+}
+
 /** The chrome-extension profile's writer rules: the journal rules every reader shares plus the evaluator that builds the seal; holds the state of one writer. */
 class ExtensionWriterRules implements HistoryWriterRules<ExtensionHistoryTypes> {
-  readonly journalLimitBytes = EXTENSION_HISTORY_JOURNAL_LIMIT_BYTES
-  readonly maxEntries = EXTENSION_HISTORY_MAX_ENTRIES
+  readonly journalLimitBytes: number
+  readonly maxEntries: number
   readonly sealLimitBytes = EXTENSION_HISTORY_SEAL_LIMIT_BYTES
   private readonly progress = newExtensionJournalProgress()
   private lastEntry?: ExtensionHistoryEntry
@@ -61,7 +69,21 @@ class ExtensionWriterRules implements HistoryWriterRules<ExtensionHistoryTypes> 
   constructor(
     private readonly header: ExtensionHistoryHeader,
     private readonly describeCause: (error: unknown) => string,
-  ) {}
+    limits: ExtensionHistoryJournalLimits,
+  ) {
+    this.journalLimitBytes = limits.journalLimitBytes
+    this.maxEntries = limits.maxEntries
+  }
+
+  /** Stream frames never use the room kept for the closes and the result; pins and the other entries may. */
+  reserveFor(entry: ExtensionHistoryEntry): { bytes: number; entries: number } {
+    return entry.type === 'frame' && entry.kind === 'stream'
+      ? {
+          bytes: RECORDING_TERMINAL_RESERVE_BYTES,
+          entries: EXTENSION_HISTORY_TERMINAL_RESERVE_ENTRIES,
+        }
+      : { bytes: 0, entries: 0 }
+  }
 
   parseEntry(value: unknown): ExtensionHistoryEntry {
     return parseExtensionHistoryEntry(value)
@@ -153,8 +175,12 @@ export class ChromeExtensionHistoryWriter extends HistoryJournalWriter<Extension
     describeCause: (error: unknown) => string,
     /** The run clock; the writer stamps every entry with it. */
     readonly nowMs: ExtensionHistoryClock = startExtensionHistoryClock(),
+    limits: ExtensionHistoryJournalLimits = {
+      journalLimitBytes: EXTENSION_HISTORY_JOURNAL_LIMIT_BYTES,
+      maxEntries: EXTENSION_HISTORY_MAX_ENTRIES,
+    },
   ) {
-    const rules = new ExtensionWriterRules(header, describeCause)
+    const rules = new ExtensionWriterRules(header, describeCause, limits)
     super(directory, header, onClosed, rules)
     this.historyDirectory = directory
     this.extensionRules = rules

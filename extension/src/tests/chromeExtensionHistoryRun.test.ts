@@ -67,11 +67,28 @@ function openCapturedPause(
 }
 
 /** Drives a run through a page stop, a service-worker stop and the last click to its end; returns what the live run showed. */
-async function driveRun(harness: ReturnType<typeof createRunHarness>) {
+async function driveRun(
+  harness: ReturnType<typeof createRunHarness>,
+  options: { awaitPins?: boolean } = {},
+) {
   await harness.run.prepare()
   await harness.run.click()
-  await harness.run.continue(openCapturedPause(harness, 1, 'page'))
-  await harness.run.continue(openCapturedPause(harness, 2, 'service-worker'))
+  /** Waits for the run to pin the paused frame, so the continue does not race its screenshot. */
+  const pinned = async (count: number): Promise<void> => {
+    if (!options.awaitPins) return
+    await waitUntil(
+      () =>
+        harness.viewportCalls.filter(([name]) => name === 'pinPause').length >=
+        count,
+      'the paused frame to be pinned',
+    )
+  }
+  const pageContinue = openCapturedPause(harness, 1, 'page')
+  await pinned(1)
+  await harness.run.continue(pageContinue)
+  const workerContinue = openCapturedPause(harness, 2, 'service-worker')
+  await pinned(2)
+  await harness.run.continue(workerContinue)
   // Both declared stops were reached.
   harness.debuggerState.notReached = []
   await harness.run.click()
@@ -93,10 +110,17 @@ async function driveRun(harness: ReturnType<typeof createRunHarness>) {
 test('a run records a page stop, a service-worker stop and the result into a complete history', async (context) => {
   // Arrange
   const { repository, kept, beginHistory } = await recordingOver(context)
-  const harness = createRunHarness({ beginHistory })
+  const harness = createRunHarness({
+    beginHistory,
+    surfaceAnswers: {
+      'Page.captureScreenshot': () => ({
+        data: pngOf(720, 640, 'paused').toString('base64'),
+      }),
+    },
+  })
 
   // Act
-  const live = await driveRun(harness)
+  const live = await driveRun(harness, { awaitPins: true })
   const observer = harness.viewportObserver.current
   assert.ok(observer)
   observer.frame({

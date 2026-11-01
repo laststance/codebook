@@ -25,6 +25,12 @@ export const HISTORY_SEAL_FILE = 'sealed.json'
 /** The failure of an append an entry or byte bound refused; a live run's header tells it from a disk failure ({@link ChromeExtensionHistoryRecorder.livePartialCode}). */
 export class HistoryLimitReachedError extends Error {}
 
+/**
+ * The refusal of an entry that would use the room a profile keeps free for its closing entries ({@link HistoryWriterRules.reserveFor}).
+ * Unlike a limit, it ends nothing: the writer goes on accepting the entries that may use the reserve, and the seal still names the size limit.
+ */
+export class HistoryReserveReachedError extends HistoryLimitReachedError {}
+
 export class HistoryJournalWriter<Types extends HistoryTypes> {
   private sequence = 0
   private entries = 0
@@ -238,25 +244,32 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
       if (this.failure) throw this.afterFailure(this.failure)
       if (this.closed)
         throw new Error('Node history is already sealing or sealed.')
-      if (this.entries >= this.rules.maxEntries) {
-        this.limitReached = true
-        throw new HistoryLimitReachedError(
-          'Node history reached its event limit.',
-        )
-      }
       const entry = this.rules.parseEntry({
         ...input,
         sequence: this.sequence + 1,
       })
+      // The room a profile keeps free for its closing entries is off limits to the entries it names.
+      const reserve = this.rules.reserveFor?.(entry)
+      const refusal = (message: string): HistoryLimitReachedError =>
+        reserve
+          ? new HistoryReserveReachedError(message)
+          : new HistoryLimitReachedError(message)
+      if (this.entries >= this.rules.maxEntries - (reserve?.entries ?? 0)) {
+        this.limitReached = true
+        throw refusal('Node history reached its event limit.')
+      }
       this.rules.check(entry)
       const line = Buffer.from(`${JSON.stringify(entry)}\n`)
       const path = join(this.directory, HISTORY_JOURNAL_FILE),
         handle = await open(path, 'a', PRIVATE_FILE_MODE)
       try {
         const stat = await handle.stat()
-        if (stat.size + line.byteLength > this.rules.journalLimitBytes) {
+        if (
+          stat.size + line.byteLength >
+          this.rules.journalLimitBytes - (reserve?.bytes ?? 0)
+        ) {
           this.limitReached = true
-          throw new HistoryLimitReachedError(
+          throw refusal(
             'Node history reached its storage limit; existing evidence remains readable.',
           )
         }
@@ -272,6 +285,8 @@ export class HistoryJournalWriter<Types extends HistoryTypes> {
     })
     // Later entries and the seal wait for this one without inheriting its rejection.
     this.pending = operation.catch((error: unknown) => {
+      // An entry refused only by the reserve leaves the timeline whole: later entries may still follow.
+      if (error instanceof HistoryReserveReachedError) return
       this.failure ??= error instanceof Error ? error : new Error(String(error))
     })
     return operation

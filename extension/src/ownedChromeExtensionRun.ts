@@ -903,8 +903,12 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
         }),
       ])
       if (this.ending !== undefined || !this.isPauseOpen(generation)) return
+      // The history gets the frame at once; it never waits for the view's present below.
+      const pngBase64 = readCdpString(shot, 'data')
+      const pauseId = this.historyPauses?.pauseIdOf(generation)
+      if (pauseId !== undefined) this.history?.pinned(pauseId, pngBase64)
       const text = `Paused at stop ${stopIndex ?? '?'} of ${this.view().stopsDeclared} · ${context === 'service-worker' ? 'service worker' : 'page'}`
-      await this.viewport.pinPause(readCdpString(shot, 'data'), text)
+      await this.viewport.pinPause(pngBase64, text)
       // A continue answered while the frame was being pinned found nothing pinned: the live frame returns now.
       if (
         !this.isPauseOpen(generation) &&

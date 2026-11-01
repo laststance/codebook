@@ -12,6 +12,7 @@ import type {
 import {
   ChromeExtensionHistoryWriter,
   type ExtensionHistoryClock,
+  type ExtensionHistoryJournalLimits,
 } from './chromeExtensionHistoryWriter'
 import {
   chromeExtensionLearningMaterialContentSchema,
@@ -36,6 +37,7 @@ import {
   type ExtensionJournalProgress,
 } from './utils/extensionHistoryJournalRules'
 import type { CitableEvent } from './utils/recordingJournalScan'
+import { removeTemporaryFrameBlobs } from './utils/removeTemporaryFrameBlobs'
 
 /** The reasons a history still recording cannot be blamed for yet: stops later in the run, the result and the filmstrip are still to come. */
 const RECORDING_PENDING_CODES: readonly string[] = [
@@ -43,6 +45,8 @@ const RECORDING_PENDING_CODES: readonly string[] = [
   CODES.resultMissing,
   CODES.filmstripMissing,
   CODES.snapshotMissing,
+  // A pin may still be on its way while the run lives.
+  CODES.pinnedFrameMissing,
 ]
 
 /**
@@ -122,6 +126,7 @@ function emptyExtensionSummary(
  */
 export function createExtensionStorageDescriptor(options?: {
   now?: ExtensionHistoryClock
+  limits?: ExtensionHistoryJournalLimits
 }): HistoryStorageDescriptor<ExtensionHistoryTypes> {
   return {
     profile: CHROME_EXTENSION_PROFILE,
@@ -174,7 +179,9 @@ export function createExtensionStorageDescriptor(options?: {
         onClosed,
         describeCause,
         options?.now,
+        options?.limits,
       ),
+    discardInterruptedLeftovers: removeTemporaryFrameBlobs,
     verifySeal: ({ seal, entries, progress, hasIncompleteLine }): void => {
       if (
         hasIncompleteLine ||

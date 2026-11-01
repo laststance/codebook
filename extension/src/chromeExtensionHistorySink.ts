@@ -30,6 +30,8 @@ export interface ChromeExtensionHistorySink {
   readonly livePartialCode: string | undefined
   /** A declared stop paused. */
   pauseOpened(pause: ExtensionHistoryPause): void
+  /** The run took the surface screenshot of an open pause (its pinned frame); the history stores it as that pause's `pin` frame when it can. Never waits for the screenshot: the run calls this only once it has it. */
+  pinned(pauseId: string, pngBase64: string): void
   /** The pause's asynchronous capture finished. */
   captured(pauseId: string, capture: CapturedExtensionStop): void
   /** The pause ended on its own account: it was continued, or its worker went away. */

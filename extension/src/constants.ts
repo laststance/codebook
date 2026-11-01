@@ -2267,8 +2267,14 @@ export const CHROME_EXTENSION_MINIMUM_EXTENSION_VERSION = '0.2.59'
 export const CHROME_EXTENSION_HISTORY_DIRECTORY = 'chrome-extensions.v1'
 /** The `formatVersion` of a chrome-extension history's header and the `version` of its seal. */
 export const CHROME_EXTENSION_HISTORY_FORMAT_VERSION = 1
-/** The most entries one chrome-extension history holds. */
-export const EXTENSION_HISTORY_MAX_ENTRIES = 10_000
+/** The most entries one chrome-extension history holds: every frame the budget admits ({@link MAX_RECORDING_FRAMES}) plus 1,000 for pauses, captures, closes and the result. */
+export const EXTENSION_HISTORY_MAX_ENTRIES = 13_100
+/** Entries kept free of stream frames, so the closes and the result of a busy surface's run still fit. */
+export const EXTENSION_HISTORY_TERMINAL_RESERVE_ENTRIES = 100
+/** Bytes of the frame blobs ({@link MAX_RECORDING_PNG_BYTES}) kept for pinned pause frames: stream frames stop 32 MiB earlier, so a busy surface cannot crowd out stop frames. */
+export const EXTENSION_HISTORY_PIN_RESERVE_BYTES = 33_554_432
+/** Frames of the frame budget ({@link MAX_RECORDING_FRAMES}) kept for pinned pause frames. */
+export const EXTENSION_HISTORY_PIN_RESERVE_FRAMES = 100
 /** The largest journal of a chrome-extension history (events, snapshots and sources; frame blobs are apart): as {@link NODE_SERVER_HISTORY_LIMIT_BYTES}. */
 export const EXTENSION_HISTORY_JOURNAL_LIMIT_BYTES = 8_388_608
 /** The largest seal of a chrome-extension history; it holds every partial reason uncut. */

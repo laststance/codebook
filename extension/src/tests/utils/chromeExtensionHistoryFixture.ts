@@ -8,6 +8,7 @@ import type { CapturedExtensionStop } from '../../chromeExtensionContracts'
 import type { ExtensionHistoryHeader } from '../../chromeExtensionHistorySchemas'
 import type { ExtensionHistoryIdentity } from '../../chromeExtensionHistorySink'
 import type { ExtensionHistoryTypes } from '../../chromeExtensionHistoryTypes'
+import type { ExtensionHistoryJournalLimits } from '../../chromeExtensionHistoryWriter'
 import { createExtensionStorageDescriptor } from '../../chromeExtensionStorageDescriptor'
 import { NodeHistoryStore } from '../../nodeTestHistoryStore'
 import type { ReplayDebugSnapshot } from '../../replayDebugSchemas'
@@ -153,6 +154,7 @@ export function capturedStop(options: {
 export async function openExtensionStore(
   context: TestContext,
   now?: () => number,
+  limits?: ExtensionHistoryJournalLimits,
 ): Promise<{
   store: NodeHistoryStore<ExtensionHistoryTypes>
   learningDirectory: string
@@ -162,7 +164,10 @@ export async function openExtensionStore(
   )
   context.after(() => rm(learningDirectory, { recursive: true, force: true }))
   const store = new NodeHistoryStore(
-    createExtensionStorageDescriptor(now ? { now } : undefined),
+    createExtensionStorageDescriptor({
+      ...(now ? { now } : {}),
+      ...(limits ? { limits } : {}),
+    }),
     learningDirectory,
     EXTENSION_WORKSPACE_KEY,
   )
