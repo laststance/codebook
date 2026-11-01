@@ -636,9 +636,9 @@ test('a stop queued while the last stop of an operation is continued fails the r
     .continue('browser', firstStop.pause)
     .catch(() => undefined)
   await receipts.started
-  // Act: a debugger stop of the same participant arrives, before operation 2 was sent.
-  emitDapStopOnly()
+  // Act: a debugger stop of the same participant arrives after the continuation's DAP receipt and before operation 2 was sent.
   receipts.dap()
+  emitDapStopOnly()
   receipts.cdp()
   receipts.input()
   receipts.response()
