@@ -36,6 +36,34 @@ export function describeLastExtensionEntry(
   return `${entry.type} (entry ${entry.sequence})`
 }
 
+/** The reasons of the captures: an empty snapshot is a missing snapshot, a source the replay cannot show is an unavailable source. */
+function captureReasons(
+  opened: readonly Extract<ExtensionHistoryEntry, { type: 'pause-open' }>[],
+  captures: readonly Extract<ExtensionHistoryEntry, { type: 'capture' }>[],
+): ExtensionHistorySealReason[] {
+  const stopOfPause = new Map(opened.map((pause) => [pause.pauseId, pause]))
+  const reasons: ExtensionHistorySealReason[] = []
+  for (const capture of captures) {
+    if (extensionCaptureHasSource(capture)) continue
+    const stop = stopOfPause.get(capture.pauseId)?.stopIndex
+    const isEmpty = capture.debuggerSnapshot.frames.length === 0
+    reasons.push(
+      isEmpty
+        ? {
+            code: CODES.snapshotMissing,
+            params: { stop: stop ?? 0 },
+            text: `Stop ${stop ?? '?'} paused, but its values and source were not captured.`,
+          }
+        : {
+            code: CODES.sourceUnavailable,
+            params: { stop: stop ?? 0 },
+            text: `The executed source of stop ${stop ?? '?'} was not stored.`,
+          },
+    )
+  }
+  return reasons
+}
+
 /** The reasons of the stops: declared stops never reached, pauses with no capture, captures whose executed source was not stored. */
 function stopReasons(
   header: Pick<ExtensionHistoryHeader, 'declaredStops'>,
@@ -61,25 +89,7 @@ function stopReasons(
         params: { stop: pause.stopIndex },
         text: `Stop ${pause.stopIndex} paused, but its values and source were not captured.`,
       })
-  const stopOfPause = new Map(opened.map((pause) => [pause.pauseId, pause]))
-  for (const capture of captures) {
-    if (extensionCaptureHasSource(capture)) continue
-    const stop = stopOfPause.get(capture.pauseId)?.stopIndex
-    // A snapshot with no frame has no values to show; any other miss lacks only the executed source.
-    if (capture.debuggerSnapshot.frames.length === 0) {
-      reasons.push({
-        code: CODES.snapshotMissing,
-        params: { stop: stop ?? 0 },
-        text: `Stop ${stop ?? '?'} paused, but its values and source were not captured.`,
-      })
-      continue
-    }
-    reasons.push({
-      code: CODES.sourceUnavailable,
-      params: { stop: stop ?? 0 },
-      text: `The executed source of stop ${stop ?? '?'} was not stored.`,
-    })
-  }
+  reasons.push(...captureReasons(opened, captures))
   // A pin the live run captured and the history lost; a pause the run never pinned (the live run pins best-effort) is no loss, the replay then shows the last filmstrip frame with its distance.
   const pinnedPauses = new Set(
     entries.flatMap((entry) =>
