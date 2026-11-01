@@ -484,7 +484,6 @@ test('a control that turns into a password between resolution and the input rece
   assert.equal(await read(page, 'document.getElementById("shifty").value'), '')
 })
 
-// protects=the settle wait returns once the page is complete and quiet for the window, and ends with NAVIGATION_NOT_SETTLED when navigation never stops; fails_when=an operation is sent into a page that still loads, or a quiet page waits for the bound; no_claim=Chrome's real load events (the run records main-frame navigations); a fake channel stands in for the page's readyState, as the configured run tests do
 // protects=a click target is read again right before the press: a target that moved is pressed where it now is, and one that disappeared is refused as INPUT_NOT_ACCEPTED, not sent, with no mouse event; fails_when=the press goes to the centre read at preparation, or a vanished target is pressed; no_claim=a real page (a scripted port answers the two reads and records the mouse events)
 test('a click re-reads its target right before the press and refuses one that is gone', async () => {
   // Arrange
@@ -548,6 +547,7 @@ test('a click re-reads its target right before the press and refuses one that is
   assert.deepEqual(mouseEvents, [])
 })
 
+// protects=the settle wait returns once the page is complete and quiet for the window, and ends with NAVIGATION_NOT_SETTLED when navigation never stops; fails_when=an operation is sent into a page that still loads, or a quiet page waits for the bound; no_claim=Chrome's real load events (the run records main-frame navigations); a fake channel stands in for the page's readyState, as the configured run tests do
 test('the settle wait passes a quiet complete page and refuses a page that keeps navigating', async () => {
   // Arrange
   const states = ['loading', 'loading', 'complete']

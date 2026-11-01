@@ -14,6 +14,7 @@ import type { StudyRecord, StudyService } from '../service'
 
 import { decodeRetainedStudy } from './decodeRetainedStudy'
 import { describeStudy } from './describeStudy'
+import { maskLearningSummaryText } from './maskLearningSummaryText'
 import { projectSavedOperations } from './projectSavedOperations'
 import { redactPreparedConfiguration } from './redactPreparedConfiguration'
 
@@ -178,8 +179,10 @@ export async function captureStudy(
     .filter((value) => value.learningSummary)
     .at(-1)
   const learningSummary = summaryExplanation?.learningSummary && {
-    content: service.maskLearnerSecretsInData(
+    // The text is masked; each step's reference stays as it was, since it is an identity the study checks again.
+    content: maskLearningSummaryText(
       summaryExplanation.learningSummary,
+      (value) => service.maskLearnerSecretsInData(value),
     ),
     explanationId: summaryExplanation.id,
     createdAt: summaryExplanation.createdAt,
