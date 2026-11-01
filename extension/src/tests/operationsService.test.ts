@@ -6,6 +6,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
 import { StudyError } from '../errors'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer } from '../server'
 
 import { configuredServiceHarness } from './utils/configuredServiceHarness'
@@ -385,14 +386,7 @@ test('a version 3 run that fails after a continuation answers isError with OPERA
     name: 'codebook_continue',
     arguments: continueArguments,
   })
-  await new Promise<void>((resolve) => {
-    const poll = setInterval(() => {
-      if (runtime.status === 'running') {
-        clearInterval(poll)
-        resolve()
-      }
-    }, 5)
-  })
+  await waitUntil(() => runtime.status === 'running', 'the continued run')
   runtime.records[0]!.state = 'failed'
   runtime.failure = {
     code: 'OPERATION_AFTER_NOT_MET',
@@ -456,14 +450,7 @@ test('a single-action run that fails after a continuation answers isError with t
     name: 'codebook_continue',
     arguments: continueArguments,
   })
-  await new Promise<void>((resolve) => {
-    const poll = setInterval(() => {
-      if (runtime.status === 'running') {
-        clearInterval(poll)
-        resolve()
-      }
-    }, 5)
-  })
+  await waitUntil(() => runtime.status === 'running', 'the continued run')
   runtime.failures.push(
     'Repository continuation reached no next declared pause',
   )
