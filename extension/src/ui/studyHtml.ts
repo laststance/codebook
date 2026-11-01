@@ -2524,13 +2524,20 @@ function studyClient(
    * @example useReplayWords(message) // heading reads 'Server replay' for a server replay
    */
   const useReplayWords = (message: StudyViewMessage): void => {
-    // With no replay selected, a workspace that saved only server replays is waited on in server words.
+    // With no replay selected, the saved replays decide the words: test replays first, then server replays, then Extension replays, so a workspace holding only Extension replays is not asked to choose a test replay.
+    const noReplaySelected = message.nodeReplayProfile === undefined
+    const hasTestReplays = Boolean(message.nodeHistoryCatalog?.length)
     const onlyServerReplays =
-      message.nodeReplayProfile === undefined &&
-      !message.nodeHistoryCatalog?.length &&
+      noReplaySelected &&
+      !hasTestReplays &&
       Boolean(message.nodeServerHistoryCatalog?.length)
+    const onlyExtensionReplays =
+      noReplaySelected &&
+      !hasTestReplays &&
+      !message.nodeServerHistoryCatalog?.length &&
+      Boolean(message.nodeExtensionHistoryCatalog?.length)
     replayWords =
-      message.nodeReplayProfile === 'chrome-extension'
+      message.nodeReplayProfile === 'chrome-extension' || onlyExtensionReplays
         ? options.extensionReplay
         : message.nodeReplayProfile === 'node-server' || onlyServerReplays
           ? options.serverReplay

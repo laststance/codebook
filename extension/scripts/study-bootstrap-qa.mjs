@@ -3598,6 +3598,21 @@ async function check(page, options, collected) {
           onlyServerReplaysSaved.status ===
           'Choose a server replay from Saved studies to step through its request, output, debugger stops and response.',
       })
+      // Arrange: a workspace that saved only Extension replays and has none selected waits in the Extension words, never as a test replay.
+      await publish({
+        ...options.message,
+        revision: revisionAt(5),
+        nodeExtensionHistoryCatalog: [{ studyId: 'extension-study' }],
+      })
+      const onlyExtensionReplaysSaved = await sectionReading()
+      // Value: protects=the Study pane's waiting line for a workspace with only Extension replays saved reading the Extension catalog's choose-a-replay line; fails_when=it asks to choose a test replay; no_claim=the replay's own section once one is selected
+      cases.push({
+        name: 'a workspace with only Extension replays saved waits in the Extension words',
+        actual: onlyExtensionReplaysSaved,
+        passed:
+          onlyExtensionReplaysSaved.status ===
+          'Choose an Extension replay from Saved studies to step through its frames and debugger stops.',
+      })
       // Arrange: a server replay's Study message and Application document, worded with the server catalog.
       const serverReplayHash = 'b'.repeat(64)
       const serverTitle =
