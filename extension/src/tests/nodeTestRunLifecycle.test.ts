@@ -1940,12 +1940,12 @@ test('learning material saved after the result and before Stop is counted when t
 test('learning material saved while the seal reads the capture gaps is counted when the history seals', async () => {
   // Arrange
   const run = await testRunHarness()
+  let releaseSummary: (() => void) | undefined
   try {
     const { record } = await run.start()
     const store = run.service.nodeHistoryStore!
     const readSummary = store.summarize.bind(store)
     let isSummaryHeld = false
-    let releaseSummary!: () => void
     const summaryReleased = new Promise<void>((resolve) => {
       releaseSummary = resolve
     })
@@ -1985,7 +1985,7 @@ test('learning material saved while the seal reads the capture gaps is counted w
         { type: 'result', sequence: result.sequence },
       ]),
     })
-    releaseSummary()
+    releaseSummary?.()
     const state = await stopping
 
     // Assert
@@ -1994,6 +1994,8 @@ test('learning material saved while the seal reads the capture gaps is counted w
     assert.deepEqual(state.nodeTest?.learningMissing, [])
     assert.equal(state.nextActions.includes('save-node-learning'), false)
   } finally {
+    // A failure before the release would leave the seal waiting, and the close waits for the seal.
+    releaseSummary?.()
     await run.harness.close()
   }
 })
