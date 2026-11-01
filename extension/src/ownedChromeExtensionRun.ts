@@ -549,6 +549,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
     elapsedMs: () => this.history?.frameObserver.elapsedMs() ?? 0,
     frame: (frame) => this.history?.frameObserver.frame(frame),
     closed: (closing) => this.history?.frameObserver.closed(closing),
+    gap: (gap) => this.history?.frameObserver.gap?.(gap),
   }
 
   /**

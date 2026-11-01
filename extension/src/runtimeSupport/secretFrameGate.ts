@@ -1,3 +1,9 @@
+/**
+ * The secret frame gate's invariant (every branch of the in-page observer and of the image paths below is checked against it):
+ * while armed, and after a release, an image passes only if a verification that answered after its capture time shows no armed control, and no other control or rendered text, showed the secret then.
+ * A time that no verification covers (an observer that never answered, the gap between the last answer and a document's replacement) is not safe; it is a gap, not a pass.
+ * Every image of a run that has a gate, stream frame or stop capture, asks the gate, armed or not, and reaches the recorder in the order it arrived.
+ */
 import {
   SECRET_FRAME_MARGIN_MS,
   SECRET_FRAME_OBSERVER_GLOBAL,
@@ -40,7 +46,7 @@ export type SecretFrameGateOptions = {
 /**
  * Runs inside the page: watches one password control and keeps a record of the times it was not safe to draw.
  * Injected as source text by {@link SecretFrameGate.arm}; it must stay self-contained.
- * The page is unsafe while the armed control is attached but no longer a `password` control, while any other non-password control holds its last value (a replacement that shows it), and while that value appears in the page's rendered text more often than when the value arrived (text the page already showed, such as a "Forgot password?" label, is no copy). A control removed from the page, as a sign-in form that unmounts after its submit, or replaced by another password control shows nothing and stays safe.
+ * The page is unsafe while the armed element is connected but no longer a `password` control (whatever its selector matches now: the selector only serves to notice a replacement), while any other non-password control holds its last value (a replacement that shows it), and while that value appears in the page's rendered text more often than when the value arrived (text the page already showed, such as a "Forgot password?" label, is no copy). A control removed from the page, as a sign-in form that unmounts after its submit, or replaced by another password control shows nothing and stays safe.
  * @param selector - The control's selector.
  * @param globalName - The page global the record is kept under.
  * @param copyMinChars - The shortest value checked for a copy into visible text.
@@ -68,9 +74,33 @@ function installSecretFrameObserver(
   let lastValue = ''
   // How often each value already appeared in the rendered text when it arrived: page text, not a copy.
   const baselines = new Map<string, number>()
+  // Every document the learner could see: the page, the open shadow roots in it and the same-origin frames in it.
+  const visibleRoots = (): ParentNode[] => {
+    const roots: ParentNode[] = []
+    const visit = (root: ParentNode): void => {
+      roots.push(root)
+      for (const element of Array.from(root.querySelectorAll('*'))) {
+        if (element.shadowRoot) visit(element.shadowRoot)
+        if (element instanceof HTMLIFrameElement) {
+          // A cross-origin frame has no readable document; its text cannot be checked.
+          const inner = element.contentDocument
+          if (inner) visit(inner)
+        }
+      }
+    }
+    visit(document)
+    return roots
+  }
   const occurrencesOf = (value: string): number =>
-    // `innerText` is the rendered text: script, style and hidden elements are left out.
-    (document.body?.innerText ?? '').split(value).length - 1
+    // `innerText` is the rendered text (script, style and hidden elements are left out) and includes open shadow roots.
+    visibleRoots().reduce(
+      (total, root) =>
+        total +
+        (root instanceof Document
+          ? (root.body?.innerText ?? '').split(value).length - 1
+          : 0),
+      0,
+    )
   // The value the learner will type is counted before anything is typed.
   const typedValue =
     secretValue !== undefined &&
@@ -89,55 +119,74 @@ function installSecretFrameObserver(
     }
     return occurrences > baseline
   }
-  const plainControlHolds = (value: string): boolean =>
-    Array.from(document.querySelectorAll('input, textarea')).some(
-      (element) =>
-        element !== node &&
-        (element instanceof HTMLTextAreaElement ||
-          (element instanceof HTMLInputElement &&
-            !['password', 'hidden'].includes(element.type))) &&
-        element.value === value,
+  // A control other than the armed one shows the value when it holds it whole (a longer value that contains a long secret counts, a short one must match exactly).
+  const holdsValue = (held: string, value: string): boolean =>
+    value.length >= copyMinChars ? held.includes(value) : held === value
+  const plainControlHolds = (value: string, roots: ParentNode[]): boolean =>
+    roots.some((root) =>
+      Array.from(root.querySelectorAll('input, textarea')).some(
+        (element) =>
+          element !== node &&
+          (element instanceof HTMLTextAreaElement ||
+            (element instanceof HTMLInputElement &&
+              !['password', 'hidden'].includes(element.type))) &&
+          holdsValue(element.value, value),
+      ),
     )
-  const unsafeReason = (): SecretFrameFailureReason | undefined => {
-    const matches = document.querySelectorAll(selector)
-    const attached =
-      node.isConnected && matches.length === 1 && matches[0] === node
-    // While attached, the control itself must stay a password control; its value is remembered for the checks below.
-    if (attached) {
-      if (node.type !== 'password') return 'control-not-password'
-      if (node.value !== '') lastValue = node.value
-    }
+  // The armed element itself, whatever the selector matches now: the selector only serves to notice a replacement.
+  const armedControlReason = (): SecretFrameFailureReason | undefined => {
+    if (!node.isConnected) return undefined
+    // A show-password toggle changes the type; the selector may stop matching by then.
+    if (node.type !== 'password') return 'control-not-password'
+    if (node.value !== '') lastValue = node.value
+    return undefined
+  }
+  const unsafeReason = (
+    withText: boolean,
+  ): SecretFrameFailureReason | undefined => {
+    const own = armedControlReason()
+    if (own !== undefined) return own
     // Both the typed value and the last one the control held are checked for the rest of the run, whatever the control holds now.
     const watched = [typedValue, lastValue].filter(
       (value): value is string => value !== undefined && value !== '',
     )
+    // The per-paint check reads the page's own controls only; a full check also reads shadow roots and frames.
+    const roots = withText ? visibleRoots() : [document]
     for (const value of watched)
-      if (plainControlHolds(value)) return 'control-replaced'
+      if (plainControlHolds(value, roots)) return 'control-replaced'
+    if (!withText) return undefined
     for (const value of watched)
       if (value.length >= copyMinChars && copiedToText(value))
         return 'value-copied-to-text'
     return undefined
   }
-  const check = (): void => {
-    const reason = unsafeReason()
+  // `full` reads the rendered text as well; a check that skips it can open an unsafe time but never ends one.
+  const check = (full = true): void => {
+    const reason = unsafeReason(full)
     const now = Date.now()
     if (reason !== undefined && state.open === null) {
       state.open = now
       state.reason ??= reason
-    } else if (reason === undefined && state.open !== null) {
+    } else if (full && reason === undefined && state.open !== null) {
       state.unsafe.push([state.open, now])
       state.open = null
     }
   }
   // Without a value known beforehand, the baseline is taken when the value first arrives with an input event.
-  node.addEventListener('input', check)
+  node.addEventListener('input', () => check())
   // A mutation callback runs before the next paint, so any painted unsafe state is recorded.
-  new MutationObserver(check).observe(document, {
+  new MutationObserver(() => check()).observe(document, {
     attributes: true,
     childList: true,
     subtree: true,
     characterData: true,
   })
+  // A value set by script raises no mutation: the controls are read before every paint as well.
+  const watchPaints = (): void => {
+    check(false)
+    requestAnimationFrame(watchPaints)
+  }
+  requestAnimationFrame(watchPaints)
   Object.defineProperty(window, globalName, {
     configurable: true,
     value: {

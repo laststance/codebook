@@ -476,13 +476,24 @@ function studyClient(
     }
   }
   // The operation the learner last moved to from the operation row, Previous or Next operation, or a summary step; any other playback control forgets it, so the caption never outlives its moment.
-  let soughtOperation: { index: number; atMs: number } | undefined
+  // It belongs to the replay it was set in: opening another saved replay in the same page forgets it.
+  let soughtOperation:
+    { index: number; atMs: number; studyId: string | undefined } | undefined
+  /** The sought operation when it still belongs to the selected replay, `undefined` after a switch to another one. */
+  const soughtInSelectedReplay = ():
+    { index: number; atMs: number } | undefined =>
+    soughtOperation?.studyId === current?.recording?.studyId
+      ? soughtOperation
+      : undefined
   const playback = (
     action: 'play' | 'pause' | 'seek',
     positionMs?: number,
     operation?: { index: number; atMs: number },
   ): void => {
-    soughtOperation = operation
+    soughtOperation = operation && {
+      ...operation,
+      studyId: current?.recording?.studyId,
+    }
     if (current?.recording)
       send({
         type: 'playback',
@@ -522,7 +533,7 @@ function studyClient(
    */
   const operationStep = (direction: 'previous' | 'next') => {
     const recording = current?.recording
-    const position = soughtOperation?.atMs ?? recording?.presentedMs
+    const position = soughtInSelectedReplay()?.atMs ?? recording?.presentedMs
     if (!recording || recording.readiness !== 'ready' || position === undefined)
       return undefined
     const timed = (recording.operations ?? []).flatMap((mark) =>
@@ -641,7 +652,7 @@ function studyClient(
     recording: NonNullable<StudyViewMessage['recording']>,
     selectedHistoryGap: boolean,
   ): void => {
-    const sought = soughtOperation
+    const sought = soughtInSelectedReplay()
     const isCaptionShown =
       sought !== undefined &&
       recording.readiness === 'ready' &&
@@ -4047,6 +4058,9 @@ function studyClient(
     )
       poseTransaction = undefined
     current = message
+    // A sought operation of another replay is dropped as soon as the page shows a different one.
+    if (soughtOperation?.studyId !== message.recording?.studyId)
+      soughtOperation = undefined
     useReplayWords(message)
     // The summary composition lays out either replay family alike (Cycle 0051, DS-A); `recording` is read for a browser recording's own parts only.
     const { model, recording } = message,

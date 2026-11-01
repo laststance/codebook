@@ -128,6 +128,11 @@ export interface ViewportRecordingObserver {
     browserTimestamp?: number
   }): void
   closed(input: { elapsedMs: number; expected: boolean }): void
+  /**
+   * Declares that an image of the interval was withheld (the secret frame gate dropped it): the recording shows the interval as unrecorded and cannot be sealed complete.
+   * Optional so an observer that keeps no gap can ignore it.
+   */
+  gap?(input: { elapsedMs: number; reason: string }): void
 }
 
 /**
@@ -181,8 +186,8 @@ export class BrowserViewport {
   private readonly listeners: vscode.Disposable[] = []
   private observerFailed = false
   private secretFrameGate?: SecretFrameGate
-  /** The chain of frames waiting on the secret frame gate; absent until the gate was used. */
-  private gatedFrames?: Promise<void>
+  /** The chain of images waiting on the secret frame gate; absent until the gate was used. */
+  private imageQueue?: Promise<void>
   private observerClosed = false
   private summaryAt = 0
   private readonly liveCounts = new Map<string, number>()
@@ -472,15 +477,34 @@ export class BrowserViewport {
     )
   }
 
-  /** Observes explicit phase pixels at CDP response receipt, before disk/reveal delays; it grants no paint or pause confirmation. @example viewport.recordCapture(png, 'before') */
-  recordCapture(data: string, phase: string): void {
-    this.observe(() =>
-      this.observer!.frame({
-        data,
-        phase,
-        kind: 'phase',
-        elapsedMs: this.observer!.elapsedMs(),
-      }),
+  /**
+   * Observes explicit phase pixels at CDP response receipt, before disk/reveal delays; it grants no paint or pause confirmation.
+   * With a secret frame gate the capture takes the stream frames' ordered path through the gate, so it reaches the recorder after the frames that arrived before it.
+   * @param data - The screenshot's base64 image.
+   * @param phase - The capture phase.
+   * @param requestedAtMs - When the screenshot was requested (page clock, ms); the gate verifies the window up to now.
+   * @returns `drop` when the gate withheld the image (the recorder got a gap instead); `pass` otherwise.
+   * @example if ((await viewport.recordCapture(png, 'before', startedAt)) === 'drop') throw new Error('withheld')
+   */
+  recordCapture(
+    data: string,
+    phase: string,
+    requestedAtMs: number = Date.now(),
+  ): Promise<'pass' | 'drop'> {
+    const elapsedMs = this.observer?.elapsedMs() ?? 0
+    const store = (): void =>
+      this.observe(() =>
+        this.observer!.frame({ data, phase, kind: 'phase', elapsedMs }),
+      )
+    const gate = this.secretFrameGate
+    if (!gate) {
+      store()
+      return Promise.resolve('pass')
+    }
+    return this.admitInOrder(
+      () => gate.admitCapture(requestedAtMs, Date.now()),
+      store,
+      elapsedMs,
     )
   }
 
@@ -1091,46 +1115,71 @@ export class BrowserViewport {
   }
 
   /**
-   * Hands one screencast frame to the recording observer, through the secret frame gate when it is armed.
-   * Frames are verified one after another so the recording keeps its order; a dropped frame is simply absent, which the recorder reads as an unrecorded gap.
+   * Hands one screencast frame to the recording observer, through the secret frame gate whenever the viewport has one (armed or not: a late frame of a released document is still dropped).
+   * Frames and phase captures are verified one after another so the recording keeps its order; a dropped image becomes a gap in the recording.
    * @param data - The frame's base64 image.
    * @param browserTimestamp - The frame's capture time in seconds since the epoch, as the browser reports it.
    * @example this.deliverStreamFrame(frame.data, frame.metadata.timestamp)
    */
   private deliverStreamFrame(data: string, browserTimestamp?: number): void {
-    const deliver = (): void =>
+    // Verification can take a round trip, so the elapsed time is read when the frame arrives, not when it passes.
+    const elapsedMs = this.observer?.elapsedMs() ?? 0
+    const store = (): void =>
       this.observe(() =>
         this.observer!.frame({
           data,
-          elapsedMs: this.observer!.elapsedMs(),
+          elapsedMs,
           kind: 'stream',
           browserTimestamp,
         }),
       )
     const gate = this.secretFrameGate
-    if (!gate?.armed) {
-      // Frames still waiting on the gate keep their place before this one.
-      if (this.gatedFrames) this.gatedFrames = this.gatedFrames.then(deliver)
-      else deliver()
+    if (!gate || !this.observer) {
+      store()
       return
     }
     const capturedAtMs = (browserTimestamp ?? Date.now() / 1000) * 1000
-    // Verification can take a round trip, so the elapsed time is read when the frame arrives, not when it passes.
-    const elapsedMs = this.observer?.elapsedMs() ?? 0
-    this.gatedFrames = (this.gatedFrames ?? Promise.resolve())
-      .then(() => gate.admitFrame(capturedAtMs))
-      .then((verdict) => {
-        if (verdict === 'pass' && !this.closed)
+    void this.admitInOrder(
+      () => gate.admitFrame(capturedAtMs),
+      store,
+      elapsedMs,
+    )
+  }
+
+  /**
+   * Puts one image behind every image that arrived before it, asks the gate, and either stores the image or declares a gap.
+   * @param admit - Asks the gate for the image's verdict.
+   * @param store - Hands the image to the recorder.
+   * @param elapsedMs - The recording time the image arrived at, used for the gap too.
+   * @returns The verdict; a gate that cannot answer counts as `drop`.
+   */
+  private admitInOrder(
+    admit: () => Promise<'pass' | 'drop'>,
+    store: () => void,
+    elapsedMs: number,
+  ): Promise<'pass' | 'drop'> {
+    const verdict = (this.imageQueue ?? Promise.resolve()).then(
+      async (): Promise<'pass' | 'drop'> => {
+        const answer = await admit().catch((): 'drop' => 'drop')
+        if (this.closed) return answer
+        if (answer === 'pass') store()
+        // A withheld image leaves the recording a declared missing interval, not a silent repeat of the previous frame.
+        else
           this.observe(() =>
-            this.observer!.frame({
-              data,
+            this.observer!.gap?.({
               elapsedMs,
-              kind: 'stream',
-              browserTimestamp,
+              reason:
+                'An image was withheld while a secret control was not safe to draw.',
             }),
           )
-      })
-      .catch(() => undefined)
+        return answer
+      },
+    )
+    this.imageQueue = verdict.then(
+      () => undefined,
+      () => undefined,
+    )
+    return verdict
   }
 
   /** Contains optional recorder exceptions so no failed observer can prevent input, rendering or cleanup. @example this.observe(() => observer.frame(frame)) */

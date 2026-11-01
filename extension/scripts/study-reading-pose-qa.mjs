@@ -713,6 +713,21 @@ async function check(page, options, collected) {
     actual: { previous: previousSeek?.positionMs, next: nextSeek?.positionMs },
     passed: previousSeek?.positionMs === 1500 && nextSeek?.positionMs === 3500,
   })
+  // The operation the learner sought belongs to the replay it was sought in: opening another saved replay in the same webview forgets it.
+  await render(operationReplay(0, { studyId: 'replay-a' }))
+  await markOf(3).click()
+  // The same webview opens another saved replay (`publish`, not a fresh page).
+  await publish(operationReplay(1, { studyId: 'replay-b', presentedMs: 2000 }))
+  await waitUntilRendered(revisionAt(1))
+  const sentBeforeSwitchedNext = (await sentPlayback()).length
+  // A disabled button gets no click, as in the learner's page; the case then reports no seek.
+  await page.evaluate(() => document.getElementById('next-operation').click())
+  const switchedSeeks = (await sentPlayback()).slice(sentBeforeSwitchedNext)
+  cases.push({
+    name: 'Next operation after opening another replay is computed from that replay, not from the operation sought in the previous one',
+    actual: switchedSeeks.map((message) => message.positionMs),
+    passed: switchedSeeks.length === 1 && switchedSeeks[0].positionMs === 3500,
+  })
   // Inside an unrecorded interval the transport keeps its own text and the caption is not shown.
   const inGap = [
     { ...fourMarks[0] },

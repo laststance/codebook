@@ -16,6 +16,7 @@ import {
   CAPTURE_TIMEOUT_MS,
   POLL_INTERVAL_MS,
 } from '../runtimeSupport/constants'
+import { SecretFrameGate } from '../runtimeSupport/secretFrameGate'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import {
@@ -2828,5 +2829,131 @@ test('the extension pane state reaches the renderer once it is ready and after e
   // Assert
   assert.match(firstDocument, /<div id="scroller" tabindex="0"/)
   assert.deepEqual(posted(), ['Preparing the extension', 'Running the click'])
+  harness.viewport.close()
+})
+
+/**
+ * Attaches a viewport with a recording observer to a socket that answers every CDP request, and returns what a test needs to feed it screencast frames.
+ * @param observer - The recording observer the viewport reports to.
+ * @example const { harness, sendFrame } = await attachedStreamViewport(observer)
+ */
+async function attachedStreamViewport(
+  observer: ViewportModule.ViewportRecordingObserver,
+) {
+  class RespondingSocket extends EventTarget {
+    send(value: string | ArrayBufferLike | Blob | ArrayBufferView): void {
+      const message = JSON.parse(String(value))
+      queueMicrotask(() =>
+        this.dispatchEvent(
+          new MessageEvent('message', {
+            data: JSON.stringify({ id: message.id, result: {} }),
+          }),
+        ),
+      )
+    }
+    close(): void {
+      this.dispatchEvent(new Event('close'))
+    }
+  }
+  const socket = new RespondingSocket(),
+    cdp = new Cdp(socket, () => undefined)
+  const harness = await viewportHarness('normal', false, observer)
+  const attaching = harness.viewport.attach(cdp, new AbortController().signal)
+  await delay(0)
+  harness.ready('11111111-1111-1111-1111-111111111111')
+  await attaching
+  let sessionId = 0
+  const sendFrame = (timestampSeconds: number): void => {
+    sessionId += 1
+    socket.dispatchEvent(
+      new MessageEvent('message', {
+        data: JSON.stringify({
+          method: 'Page.screencastFrame',
+          params: {
+            data: 'cGl4ZWxz',
+            sessionId,
+            metadata: { timestamp: timestampSeconds },
+          },
+        }),
+      }),
+    )
+  }
+  return { harness, sendFrame }
+}
+
+/** A gate whose page answers as a healthy page after `answerDelayMs`, or as a document that was replaced once `replaced.value` is set. */
+function gateOverPage(answerDelayMs: number, replaced: { value: boolean }) {
+  return new SecretFrameGate({
+    evaluate: async (expression) => {
+      await delay(answerDelayMs)
+      if (expression === 'performance.timeOrigin') return replaced.value ? 2 : 1
+      if (expression.includes('query()'))
+        return replaced.value
+          ? null
+          : { now: Date.now(), open: null, unsafe: [] }
+      return { ok: true, origin: 1 }
+    },
+  })
+}
+
+// protects=a late frame of the old document, captured before a released gate noticed the replacement, never reaches the recording and leaves a gap; fails_when=the viewport stops asking the gate once it is unarmed; no_claim=a real navigation (a fake page answers for the gate)
+test('after the gate was released a late frame from the old document is withheld from the recording and declared a gap', async () => {
+  // Arrange
+  const stored: number[] = [],
+    gaps: number[] = []
+  const replaced = { value: false }
+  const gate = gateOverPage(0, replaced)
+  const armedAtMs = Date.now()
+  await gate.arm('#password', 'typed-secret')
+  const { harness, sendFrame } = await attachedStreamViewport({
+    elapsedMs: () => 10,
+    frame: (frame) => stored.push(frame.elapsedMs),
+    closed() {},
+    gap: (gap) => gaps.push(gap.elapsedMs),
+  })
+  harness.viewport.setSecretFrameGate(gate)
+  replaced.value = true
+  // The release happens while this fresh frame is verified.
+  await gate.admitFrame(Date.now())
+  // Act
+  sendFrame((armedAtMs + 1) / 1000)
+  await delay(50)
+  // Assert
+  assert.deepEqual([stored, gaps, gate.armed], [[], [10], false])
+  harness.viewport.close()
+})
+
+// protects=a stop capture and the stream frames reach the recorder in the order they arrived, so the receipt clock never moves backwards; fails_when=a capture skips the frames waiting on the gate; no_claim=real screencast timing
+test('with a gate, a capture that arrives after a stream frame is recorded after it', async () => {
+  // Arrange
+  const stored: { kind: string; elapsedMs: number }[] = []
+  let clock = 0
+  const replaced = { value: false }
+  const gate = gateOverPage(30, replaced)
+  await gate.arm('#password', 'typed-secret')
+  const { harness, sendFrame } = await attachedStreamViewport({
+    elapsedMs: () => (clock += 10),
+    frame: (frame) =>
+      stored.push({ kind: frame.kind, elapsedMs: frame.elapsedMs }),
+    closed() {},
+  })
+  harness.viewport.setSecretFrameGate(gate)
+  // Act
+  sendFrame(Date.now() / 1000)
+  const verdict = await harness.viewport.recordCapture(
+    'bGF0ZXI=',
+    'after',
+    Date.now(),
+  )
+  await delay(50)
+  // Assert
+  assert.deepEqual(
+    [
+      verdict,
+      stored.map((image) => image.kind),
+      stored[0]!.elapsedMs < stored[1]!.elapsedMs,
+    ],
+    ['pass', ['stream', 'phase'], true],
+  )
   harness.viewport.close()
 })

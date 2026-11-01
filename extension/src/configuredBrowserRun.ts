@@ -8143,18 +8143,20 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         CAPTURE_TIMEOUT_MS,
       )
       current()
-      // A stop screenshot keeps no pixel from a window the secret gate cannot call safe.
+      const bytes = Buffer.from(result.data, 'base64'),
+        hash = sha256(bytes)
+      // A stop screenshot keeps no pixel from a window the secret gate cannot call safe; it reaches the recorder in order with the stream frames.
       if (
-        (await this.secretFrameGate.admitCapture(requestedAtMs, Date.now())) ===
-        'drop'
+        (await this.browser.recordCapture(
+          result.data,
+          phase,
+          requestedAtMs,
+        )) === 'drop'
       )
         throw new Error('Image withheld: a secret control was not safe to draw')
       current()
-      const bytes = Buffer.from(result.data, 'base64'),
-        hash = sha256(bytes)
-      // Record receipt-time pixels before disk/renderer waits; only the later exact-pause receipt confirms correspondence.
+      // Receipt-time pixels went to the recording before disk/renderer waits; only the later exact-pause receipt confirms correspondence.
       this.evidence.record('capture.response-received', { phase, pause, hash })
-      this.browser.recordCapture(result.data, phase)
       const file = pause ? `${phase}-${pause.generation}.png` : `${phase}.png`
       await this.evidence.save(file, bytes)
       current()

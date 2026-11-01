@@ -55,12 +55,14 @@ export function describeOperationStatus(
 ): string | undefined {
   if (!operations?.length) return undefined
   const total = operations.length
-  if (operations.every((operation) => operation.state === 'done'))
+  const unfinished = operations.find((operation) => operation.state !== 'done')
+  // A failed run never reads Done: a final save that failed after every operation was done still names the last operation and why.
+  if (failure || runState === 'failed')
+    return stoppedText(failure, unfinished?.index ?? total)
+  if (!unfinished)
     return `Done · ${total} ${total === 1 ? 'operation' : 'operations'}`
-  const unfinished = operations.find((operation) => operation.state !== 'done')!
-  // A run that failed or was stopped names where it stopped and, for a coded failure, why.
-  if (failure || runState === 'failed' || runState === 'stopped')
-    return stoppedText(failure, unfinished.index)
+  // A run stopped before its end names where it stopped.
+  if (runState === 'stopped') return stoppedText(failure, unfinished.index)
   const isLast = unfinished.index === total
   // Everything was sent and acknowledged; only the page's result is still being checked.
   if (

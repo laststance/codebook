@@ -412,3 +412,71 @@ test('a frame captured after the last verification of a replaced document is dro
     ['pass', 'drop', 'pass'],
   )
 })
+
+// protects=a show-password toggle that makes the armed element leave an `input[type="password"]` selector still drops frames and fails the run; fails_when=the type check is skipped because the selector stopped matching; no_claim=other selectors (real Chrome)
+test('a toggle that takes the armed control out of its type selector still drops frames and fails the run', async (context) => {
+  // Arrange
+  const page = await launchRealHeadlessPage(context)
+  if (!page) return
+  await page.load('<form><input id="pw" type="password"></form>')
+  const failures: SecretFrameFailureReason[] = []
+  const gate = new SecretFrameGate({
+    evaluate: (expression) => page.evaluate(expression),
+    onFailure: (reason) => void failures.push(reason),
+  })
+  await gate.arm('input[type="password"]', 'typed-secret')
+  // Act
+  await page.evaluate("document.getElementById('pw').type = 'text'")
+  await settle(page)
+  const afterToggle = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.deepEqual([afterToggle, failures], ['drop', ['control-not-password']])
+})
+
+// protects=a replacement text control inside an open shadow root that holds the secret is found; fails_when=only light-DOM controls are read; no_claim=closed shadow roots, cross-origin frames
+test('a text control in an open shadow root holding the secret drops frames', async (context) => {
+  // Arrange
+  const page = await launchRealHeadlessPage(context)
+  if (!page) return
+  await page.load('<input id="pw" type="password"><div id="host"></div>')
+  const gate = new SecretFrameGate({
+    evaluate: (expression) => page.evaluate(expression),
+  })
+  await gate.arm('#pw', 'typed-secret')
+  // Act
+  await page.evaluate(
+    `(() => { const input = document.createElement('input'); input.type = 'text'; document.getElementById('host').attachShadow({ mode: 'open' }).append(input); input.value = 'typed-secret' })()`,
+  )
+  await settle(page)
+  const verdict = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.equal(verdict, 'drop')
+})
+
+// protects=a script that shows the secret in a visible text control and clears it again, with no DOM mutation and before any verification, still makes that time unsafe; fails_when=the observer reads the page only on a mutation or a verification; no_claim=exact paint timing
+test('a value set by script into a visible text control and cleared again before any verification drops frames of that time', async (context) => {
+  // Arrange
+  const page = await launchRealHeadlessPage(context)
+  if (!page) return
+  await page.load(
+    '<input id="pw" type="password"><input id="plain" type="text">',
+  )
+  const gate = new SecretFrameGate({
+    evaluate: (expression) => page.evaluate(expression),
+  })
+  await gate.arm('#pw', 'typed-secret')
+  await delay(CLEAR_OF_MARGIN_MS)
+  const capturedBefore = Date.now()
+  await delay(CLEAR_OF_MARGIN_MS)
+  // Act
+  await page.evaluate("document.getElementById('plain').value = 'typed-secret'")
+  await delay(CLEAR_OF_MARGIN_MS)
+  const capturedWhileShown = Date.now()
+  await delay(CLEAR_OF_MARGIN_MS)
+  await page.evaluate("document.getElementById('plain').value = ''")
+  await settle(page)
+  const earlier = await gate.admitFrame(capturedBefore)
+  const during = await gate.admitFrame(capturedWhileShown)
+  // Assert
+  assert.deepEqual([earlier, during], ['pass', 'drop'])
+})

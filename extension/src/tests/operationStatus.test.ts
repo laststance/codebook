@@ -104,3 +104,22 @@ test('a run without operations and a run between two operations show no operatio
   assert.equal(noOperations, undefined)
   assert.equal(betweenStatus, undefined)
 })
+
+// protects=a run whose final save failed after every operation was done reads Stopped at the last operation, never Done; fails_when=the all-done check runs before the failed-run check; no_claim=the save itself (service tests)
+test('a failed run whose operations are all done reads Stopped at the last operation, not Done', () => {
+  // Arrange
+  const records = recordsIn(['done', 'done', 'done', 'done'])
+  // Act
+  const status = describeOperationStatus(records, 'failed', {
+    code: 'RUN_FAILED_UNEXPECTEDLY',
+    operationIndex: 4,
+  })
+  const withoutFailureRecord = describeOperationStatus(
+    records,
+    'failed',
+    undefined,
+  )
+  // Assert
+  assert.equal(status, 'Stopped at operation 4 · failed unexpectedly')
+  assert.equal(withoutFailureRecord, 'Stopped at operation 4 · stopped')
+})
