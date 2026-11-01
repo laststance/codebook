@@ -112,7 +112,7 @@ test('Saved studies lists a sealed extension run as an Extension replay with its
     assert.equal(entry?.surfaceKind, 'popup')
     assert.equal(
       listed?.outcome,
-      'Why does Save fail? · Extension replay · Bookmark Notes 1.2.0 · popup · capture complete',
+      'Why does Save fail? · Extension replay · Bookmark Notes 1.2.0 · popup · capture partial',
     )
     assert.equal(listed?.profile, 'chrome-extension')
     assert.equal(
@@ -688,7 +688,7 @@ test('an Extension replay without saved material shows its recording alone', asy
     // Assert
     assert.equal(lastView(harness)?.nodeHistoryLearningSummary, undefined)
     assert.equal(section?.explanation, undefined)
-    assert.equal(section?.status, 'Result changed · capture complete · 2 stops')
+    assert.equal(section?.status, 'Result changed · capture partial · 2 stops')
   } finally {
     await harness.close()
   }
