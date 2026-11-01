@@ -41,6 +41,7 @@ type RepositoryBrowserHelp = Record<string, unknown> & {
     string,
     { anchor: string; meaning: string; recovery: string }
   >
+  operationsErrorCodes?: { codes: Record<string, unknown> }
   viteRefusals?: Record<string, unknown>
 }
 
@@ -156,6 +157,7 @@ test('every repository-browser anchor the help names resolves to a refusal secti
   const sections = new Set([
     ...Object.keys(help.nextRefusals ?? {}),
     ...Object.keys(help.viteRefusals ?? {}),
+    ...Object.keys(help.operationsErrorCodes?.codes ?? {}),
   ])
   // Act
   const named = [
@@ -185,6 +187,10 @@ test('the repository-browser help keeps its existing top keys and leads with sta
     'nextQuickStart',
     'nextSupport',
     'nextRefusals',
+    'operationsQuickStart',
+    'operationsDeclare',
+    'operationsSecrets',
+    'operationsErrorCodes',
     'profile',
     'configurationSchema',
     'entry',
