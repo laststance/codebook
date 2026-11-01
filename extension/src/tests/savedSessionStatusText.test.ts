@@ -92,3 +92,27 @@ test('the item reads Setup open during a setup and Saved session needed after a 
       'shop keeps its sign-in only while the browser stays open, so a saved session cannot keep it.',
   })
 })
+
+// protects=outside voice 4 (a setup stuck on its lock says so); fails_when=the item tells the learner to quit a browser that already exited while the real cause is the lock, or a stuck browser loses its own text; no_claim=the Retry notice
+test('the item of a stuck setup names the lock when only the lock could not be released, and the browser when its exit was not confirmed', () => {
+  // Arrange / Act
+  const lockKept = savedSessionStatusText({
+    kind: 'setup',
+    phase: { phase: 'stuck', repositoryName: 'shop', stuckOn: 'lock-release' },
+  })
+  const browserKept = savedSessionStatusText({
+    kind: 'setup',
+    phase: { phase: 'stuck', repositoryName: 'shop', stuckOn: 'browser-exit' },
+  })
+  // Assert
+  assert.deepEqual(lockKept, {
+    text: '$(warning) Saved session · still locked',
+    tooltip:
+      'Codebook could not unlock the saved session for shop. Retry from here.',
+  })
+  assert.deepEqual(browserKept, {
+    text: '$(warning) Saved session · browser not closed',
+    tooltip:
+      'Codebook could not confirm that the browser for shop exited. Quit it, then retry.',
+  })
+})

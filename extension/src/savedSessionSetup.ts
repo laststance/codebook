@@ -21,10 +21,12 @@ import { hideSavedProfilePath } from './runtimeSupport/utils/hideSavedProfilePat
 import { SignInBrowserStopUnconfirmedError } from './runtimeSupport/utils/signInBrowserStopUnconfirmedError'
 import { thrownMessage } from './utils/thrownMessage'
 
-/** Where a setup stands (DES-2). `stuck`: the browser's exit could not be confirmed, so the lock is kept and a retry (Retry, Done or Close setup) finishes the setup the way it was first ended. */
+/** Where a setup stands (DES-2). `stuck`: the browser's exit or the release of the folder's lock could not be confirmed, so the lock is kept and a retry (Retry, Done, Close setup or the window closing) finishes the setup the way it was first ended. */
 export type SetupPhase = {
   phase: 'starting' | 'open' | 'finishing' | 'stuck' | 'ended'
   repositoryName: string
+  /** Set while `stuck`: what could not be confirmed, so the status item names the right cause. */
+  stuckOn?: 'browser-exit' | 'lock-release'
 }
 
 /** How a setup is being ended. */
@@ -96,12 +98,17 @@ type OpenSetup = {
   first?: FirstEnding
 }
 
-/** A start that ended (failed or cancelled) before the browser it opened was confirmed stopped: the lock is kept, no record is written, and a retry stops the browser again. */
-type StuckStart = {
+/**
+ * A setup that ended but still holds the folder's lock: a start (failed or cancelled) whose browser was not confirmed stopped, or any setup whose lock release failed (outside voice 4).
+ * A retry stops the browser again while its exit is unproven, then releases the lock, and only then tells the learner how the setup ended; a retry writes nothing.
+ */
+type StuckSetup = {
   repositoryName: string
   lease: SavedSessionSetupLease
-  /** Stops the browser again; `true` once its exit is confirmed. */
+  /** Stops the browser again; `true` once its exit is confirmed (at once when it was confirmed before the lock release failed). */
   retryStop: () => Promise<boolean>
+  /** Tells the learner how the setup ended, once the lock is released; `isWindowClosing` is the reason of the attempt that released it. */
+  tellReleased: (isWindowClosing: boolean) => void
 }
 
 /** What a failed or cancelled start had brought up before it ended. */
@@ -120,6 +127,12 @@ const CANCELLED_NOTICE =
   'Setup closed while it was starting, so the saved session was not changed.'
 const STOPPED_NOTICE =
   'The Codebook browser of the setup has stopped, so the saved session is free again. Set it up again when you are ready.'
+const UNLOCKED_NOTICE =
+  'Setup unlocked the saved session and left it as it was. Set it up again when you are ready.'
+const BROWSER_STUCK_NOTICE =
+  'Setup could not confirm that the Codebook browser exited, so the saved session stays locked. Quit that browser, then retry.'
+const LOCK_STUCK_NOTICE = (name: string): string =>
+  `Setup could not unlock the saved session for ${name}, so it stays locked. See Output › Codebook, then retry.`
 
 /** The learner's next step after a coded refusal at setup start; the refusal's own message says only what happened (the chat reads the recovery instead). */
 const START_REFUSAL_STEPS: Partial<Record<ErrorCode, string>> = {
@@ -194,6 +207,9 @@ async function firstEndingOf(
   return { ending, appCookies }
 }
 
+/** The stop of a browser whose exit was already confirmed: a retry after a failed lock release only releases the lock again. */
+const confirmedStop = (): Promise<boolean> => Promise.resolve(true)
+
 /**
  * Orders the sign-in paths a record keeps: the chosen one first, then the known ones, no repeats, at most {@link SIGN_IN_PATH_LIMIT}.
  * @example
@@ -207,7 +223,7 @@ function recordedPaths(chosen: string, known: readonly string[]): string[] {
  * The setup of one saved session (DES-2): takes the folder's lock, starts the app, opens the Codebook browser at the sign-in page, and ends on Done, Close setup, the closed last page, the 10-minute limit or the window closing.
  * Why it exists: the learner signs in by hand in a browser that is never recorded; this class keeps the order that makes the saved session honest (close the browser, wait for its exit, only then write the record, then release the lock).
  * Created once per window by {@link installSavedSessions}; vscode-free so a test drives it with fakes and a manual clock.
- * The setup dev server stops in its own `finally` on every exit path. An unconfirmed browser exit keeps the lock and leaves the setup `stuck`, and a retry finishes it the way it was first ended; a failed or cancelled start whose browser could not be confirmed stopped is `stuck` the same way and writes no record. Close setup or the window closing while the setup starts cancels the start.
+ * The setup dev server stops in its own `finally` on every exit path. An unconfirmed browser exit keeps the lock and leaves the setup `stuck`, and a retry finishes it the way it was first ended; a failed or cancelled start whose browser could not be confirmed stopped is `stuck` the same way and writes no record. A lock release that fails keeps the lease and leaves the setup `stuck` too, and the learner hears how it ended only once a retry released the lock. Close setup or the window closing while the setup starts cancels the start. Every notice answer acts only on the setup that showed the notice ({@link SavedSessionSetup.answer}).
  * @example
  * const setup = new SavedSessionSetup(ports)
  * await setup.start({ repositoryRoot, repositoryName: 'shop', adapter: 'next-dev-webpack', signInPath: '/login', knownSignInPaths: [], chromeExecutable })
@@ -215,8 +231,9 @@ function recordedPaths(chosen: string, known: readonly string[]): string[] {
  */
 export class SavedSessionSetup {
   private open: OpenSetup | undefined
-  private stuckStart: StuckStart | undefined
+  private stuck: StuckSetup | undefined
   private current: SetupPhase | undefined
+  private startedSetups = 0
   private finishing: Promise<void> | undefined
   private startAbort: AbortController | undefined
   private starting: Promise<void> | undefined
@@ -233,12 +250,18 @@ export class SavedSessionSetup {
     return this.current !== undefined && this.current.phase !== 'ended'
   }
 
+  /** Identifies the setup started last (`0` before any): a notice keeps it and hands it back to {@link SavedSessionSetup.answer}, so its answer acts only on the setup that showed it. */
+  get generation(): number {
+    return this.startedSetups
+  }
+
   /**
    * Starts a setup; resolves once the browser is open, or once a failed or cancelled start closed what it started and was reported.
    * @param input - The repository, adapter, sign-in path and Chrome.
    */
   start(input: SavedSessionSetupInput): Promise<void> {
     if (this.isActive) return Promise.resolve()
+    this.startedSetups += 1
     // The cancel exists before the folder is taken, so Close setup or a closing window during the acquire still stops the start.
     const abort = new AbortController()
     this.startAbort = abort
@@ -263,9 +286,33 @@ export class SavedSessionSetup {
     return this.finish(reason)
   }
 
-  /** Ends the setup of this window as the window closes: cancels a start under way and waits until it closed what it started, or closes an open setup without a notice. */
+  /** Ends the setup of this window as the window closes: cancels a start under way and waits until it closed what it started, closes an open setup without a notice, or retries a stuck one. */
   async dispose(): Promise<void> {
     await this.finish('window-closing')
+  }
+
+  /**
+   * Acts on the answer to a notice of a setup only while that setup is still the active setup of this window (outside voice 5).
+   * Why it exists: VS Code keeps notices with buttons in its notification center, so a notice can be answered long after its setup ended, and that answer must never end a later setup. Every notice answer goes through it: this class's own notices and the commands' re-offer.
+   * @param generation - {@link SavedSessionSetup.generation}, read when the notice was shown.
+   * @param choice - The pressed button: Done ends with Done; Close setup and Retry end without Done (a stuck setup finishes the way it was first ended); `undefined` (dismissed) does nothing.
+   * @returns Once the ending it started, if any, settled.
+   * @example
+   * const generation = setup.generation
+   * await setup.answer(generation, await ui.offerDoneOrClose('shop')) // a later setup is left alone
+   */
+  answer(
+    generation: number,
+    choice: 'Done' | 'Close setup' | 'Retry' | undefined,
+  ): Promise<void> {
+    if (choice === undefined || !this.isSetupOf(generation))
+      return Promise.resolve()
+    return this.finish(choice === 'Done' ? 'done' : 'closed')
+  }
+
+  /** Says whether the setup of `generation` is still the active setup of this window. */
+  private isSetupOf(generation: number): boolean {
+    return generation === this.startedSetups && this.isActive
   }
 
   /** Takes the folder, then opens the browser; every failure is reported and leaves nothing started. */
@@ -345,23 +392,20 @@ export class SavedSessionSetup {
       'info',
       `Saved session setup: open at ${input.signInPath}.`,
     )
-    this.armTimers(open)
-    void this.ports.ui.offerDoneOrClose(input.repositoryName).then((choice) => {
-      // A notice can be answered long after its setup ended; an answer never ends a later setup.
-      if (this.open !== open) return
-      if (choice === 'Done') void this.done()
-      else if (choice === 'Close setup') void this.finish('closed')
-    })
+    const { generation } = this
+    this.armTimers(open, generation)
+    void this.ports.ui
+      .offerDoneOrClose(input.repositoryName)
+      .then((choice) => this.answer(generation, choice))
   }
 
-  private armTimers(open: OpenSetup): void {
+  private armTimers(open: OpenSetup, generation: number): void {
     const { clock, ui } = this.ports
     open.timers.push(
       clock.setTimeout(() => {
-        void ui.warnClosingSoon().then((choice) => {
-          // A late answer to an earlier setup's warning is ignored.
-          if (choice === 'Done' && this.open === open) void this.done()
-        })
+        void ui
+          .warnClosingSoon()
+          .then((choice) => this.answer(generation, choice))
       }, SIGN_IN_SETUP_WARNING_MS),
       clock.setTimeout(() => {
         void this.finish('timed-out')
@@ -387,16 +431,28 @@ export class SavedSessionSetup {
     } finally {
       await this.closeServer(started.server, lease.profile)
     }
+    this.reportStartEnd(input, error, lease.profile, signal)
     if (retryStop !== undefined) {
-      const stuck: StuckStart = { repositoryName: name, lease, retryStop }
-      this.stuckStart = stuck
-      this.reportStartEnd(input, error, lease.profile, signal)
-      this.reportStuck(name, stuck)
+      this.stuck = {
+        repositoryName: name,
+        lease,
+        retryStop,
+        tellReleased: (isWindowClosing): void =>
+          this.tellBrowserStopped(name, isWindowClosing),
+      }
+      this.reportBrowserStuck(name)
       return
     }
-    await this.releaseLease(lease)
-    this.setPhase({ phase: 'ended', repositoryName: name })
-    this.reportStartEnd(input, error, lease.profile, signal)
+    // The start's own report said how it ended; a lock released only on a retry says so then.
+    await this.releaseOrKeep({
+      repositoryName: name,
+      lease,
+      retryStop: confirmedStop,
+      tellReleased: (isWindowClosing) => {
+        if (!isWindowClosing)
+          void this.ports.ui.notify('information', UNLOCKED_NOTICE)
+      },
+    })
   }
 
   /** Tells how a start ended before it opened: a cancel only in the log (the canceller tells the learner), a failure in the log and a notice. */
@@ -447,8 +503,7 @@ export class SavedSessionSetup {
     if (this.finishing) return this.finishing
     let attempt: Promise<void> | undefined
     if (this.open) attempt = this.runFinish(this.open, ending)
-    else if (this.stuckStart)
-      attempt = this.retryStuckStart(this.stuckStart, ending)
+    else if (this.stuck) attempt = this.retryStuck(this.stuck, ending)
     if (attempt === undefined) return this.cancelStart(ending)
     this.finishing = attempt.finally(() => {
       this.finishing = undefined
@@ -489,7 +544,7 @@ export class SavedSessionSetup {
       ui.log('info', `Saved session setup: ${first.ending} for ${name}.`)
       const closeResult = await open.browser.close()
       if (closeResult === 'unconfirmed') {
-        this.reportStuck(name, open)
+        this.reportBrowserStuck(name)
         return
       }
       await this.saveAndRelease(
@@ -506,50 +561,51 @@ export class SavedSessionSetup {
     }
   }
 
-  /** Retries the stop of a stuck start's browser; the lock is released only once its exit is confirmed, and no record is written. */
-  private async retryStuckStart(
-    stuck: StuckStart,
+  /** Retries a stuck setup: stops its browser again while the exit is unproven, then releases the lock and tells how the setup ended; a retry writes no record. */
+  private async retryStuck(
+    stuck: StuckSetup,
     requested: SetupEnding,
   ): Promise<void> {
-    const { ui } = this.ports
     const name = stuck.repositoryName
     this.setPhase({ phase: 'finishing', repositoryName: name })
     const isStopped = await stuck.retryStop().catch(() => false)
     if (!isStopped) {
-      this.reportStuck(name, stuck)
+      this.reportBrowserStuck(name)
       return
     }
-    this.stuckStart = undefined
-    await this.releaseLease(stuck.lease)
-    this.setPhase({ phase: 'ended', repositoryName: name })
-    ui.log('info', `Saved session setup: the browser for ${name} stopped.`)
-    if (requested !== 'window-closing')
-      void ui.notify('information', STOPPED_NOTICE)
+    // A confirmed exit is final: a release that fails now is retried without stopping the browser again.
+    const stopped: StuckSetup = { ...stuck, retryStop: confirmedStop }
+    if (await this.releaseOrKeep(stopped))
+      stopped.tellReleased(requested === 'window-closing')
   }
 
-  private reportStuck(name: string, owner: OpenSetup | StuckStart): void {
+  /** Says that a start's browser stopped on a retry, once its lock was released. */
+  private tellBrowserStopped(name: string, isWindowClosing: boolean): void {
     const { ui } = this.ports
-    this.setPhase({ phase: 'stuck', repositoryName: name })
-    ui.log(
+    ui.log('info', `Saved session setup: the browser for ${name} stopped.`)
+    if (!isWindowClosing) void ui.notify('information', STOPPED_NOTICE)
+  }
+
+  private reportBrowserStuck(name: string): void {
+    this.ports.ui.log(
       'error',
       `Saved session setup: the browser exit for ${name} could not be confirmed.`,
     )
-    void ui
-      .notify(
-        'error',
-        'Setup could not confirm that the Codebook browser exited, so the saved session stays locked. Quit that browser, then retry.',
-        'Retry',
-      )
-      .then((pressed) => {
-        // A Retry pressed on an earlier setup's notice never ends a later setup.
-        if (pressed === 'Retry' && this.isCurrent(owner))
-          void this.closeSetup('closed')
-      })
+    this.reportStuck(
+      { phase: 'stuck', repositoryName: name, stuckOn: 'browser-exit' },
+      BROWSER_STUCK_NOTICE,
+    )
   }
 
-  /** Says whether `owner` is still the setup of this window, so a late answer to an older notice is ignored. */
-  private isCurrent(owner: OpenSetup | StuckStart): boolean {
-    return this.open === owner || this.stuckStart === owner
+  /** Shows a stuck setup with its Retry; a Retry pressed on an earlier setup's notice never ends a later setup. */
+  private reportStuck(phase: SetupPhase, notice: string): void {
+    const { generation } = this
+    this.setPhase(phase)
+    void this.ports.ui
+      .notify('error', notice, 'Retry')
+      .then((pressed) =>
+        this.answer(generation, pressed === 'Retry' ? 'Retry' : undefined),
+      )
   }
 
   private async closeServer(
@@ -564,24 +620,42 @@ export class SavedSessionSetup {
     })
   }
 
-  /** Releases the folder's lock; a release that fails is logged with the folder hidden and never leaves the setup `finishing`. */
-  private async releaseLease(lease: SavedSessionSetupLease): Promise<void> {
-    await lease.release().catch((error: unknown) => {
+  /**
+   * Releases the folder's lock of a setup whose browser is gone (outside voice 4).
+   * The store keeps its hold when the release fails, so the setup keeps the lease too: it stays `stuck` with Retry, and a retry (Retry, Done, Close setup or the window closing) releases it again. Nothing says how the setup ended before its lock is released.
+   * @param ended - The ended setup; it becomes the stuck setup when the release fails.
+   * @returns `true` once the lock is released and the setup ended; `false` when it was left `stuck`.
+   * @example
+   * if (await this.releaseOrKeep(ended)) ended.tellReleased(false)
+   */
+  private async releaseOrKeep(ended: StuckSetup): Promise<boolean> {
+    const name = ended.repositoryName
+    try {
+      await ended.lease.release()
+    } catch (error) {
       this.ports.ui.log(
         'error',
-        `Saved session setup: the lock was not released: ${causeOf(error, lease.profile)}`,
+        `Saved session setup: the lock was not released: ${causeOf(error, ended.lease.profile)}`,
       )
-    })
+      this.stuck = ended
+      this.reportStuck(
+        { phase: 'stuck', repositoryName: name, stuckOn: 'lock-release' },
+        LOCK_STUCK_NOTICE(name),
+      )
+      return false
+    }
+    this.stuck = undefined
+    this.setPhase({ phase: 'ended', repositoryName: name })
+    return true
   }
 
-  /** Writes the record after a confirmed exit, releases the lock and tells the learner how it ended. */
+  /** Writes the record after a confirmed exit, releases the lock and, once it is released, tells the learner how the setup ended. */
   private async saveAndRelease(
     open: OpenSetup,
     first: FirstEnding,
     closeResult: 'graceful' | 'forced',
     isWindowClosing: boolean,
   ): Promise<void> {
-    const { ui } = this.ports
     const name = open.input.repositoryName
     const confirmed = first.ending === 'done' && closeResult === 'graceful'
     const saveFailure = await this.writeRecordOf(
@@ -589,22 +663,48 @@ export class SavedSessionSetup {
       confirmed,
       first.appCookies,
     )
-    await this.releaseLease(open.lease)
-    this.open = undefined
-    this.setPhase({ phase: 'ended', repositoryName: name })
-    if (saveFailure !== undefined) {
-      ui.log(
+    if (saveFailure !== undefined)
+      this.ports.ui.log(
         'error',
         `Saved session setup: the record was not written: ${causeOf(saveFailure, open.lease.profile)}`,
       )
+    // The record is written once: a retry after a failed release only releases the lock again.
+    this.open = undefined
+    const ended: StuckSetup = {
+      repositoryName: name,
+      lease: open.lease,
+      retryStop: confirmedStop,
+      tellReleased: (isClosingNow) =>
+        this.tellEnding(name, {
+          isSaved: saveFailure === undefined,
+          isForcedDone: first.ending === 'done' && closeResult === 'forced',
+          confirmed,
+          isWindowClosing: isClosingNow,
+        }),
+    }
+    if (await this.releaseOrKeep(ended)) ended.tellReleased(isWindowClosing)
+  }
+
+  /** Tells the learner how a setup that opened its browser ended, once its lock is released. */
+  private tellEnding(
+    name: string,
+    outcome: {
+      isSaved: boolean
+      isForcedDone: boolean
+      confirmed: boolean
+      isWindowClosing: boolean
+    },
+  ): void {
+    const { ui } = this.ports
+    if (!outcome.isSaved)
       void ui.notify(
         'error',
         'Setup could not save the session. Set it up again.',
       )
-    } else if (first.ending === 'done' && closeResult === 'forced')
-      void ui.notify('warning', FORCED_NOTICE)
-    else if (confirmed) void ui.notify('information', DONE_NOTICE(name))
-    else if (!isWindowClosing) void ui.notify('information', CLOSED_NOTICE)
+    else if (outcome.isForcedDone) void ui.notify('warning', FORCED_NOTICE)
+    else if (outcome.confirmed) void ui.notify('information', DONE_NOTICE(name))
+    else if (!outcome.isWindowClosing)
+      void ui.notify('information', CLOSED_NOTICE)
   }
 
   /** Writes the record of a confirmed exit; resolves why it could not be written, or `undefined` once it was. */

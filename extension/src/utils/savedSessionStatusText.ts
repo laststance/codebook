@@ -37,6 +37,18 @@ const SETUP_TEXTS: Record<
   }),
 }
 
+/** Words a setup phase of this window; a setup stuck on its lock's release names the lock, not a browser that is already gone. */
+function setupText(phase: SetupPhase): SavedSessionStatusText | undefined {
+  const name = phase.repositoryName
+  if (phase.phase === 'ended') return undefined
+  if (phase.stuckOn === 'lock-release')
+    return {
+      text: '$(warning) Saved session · still locked',
+      tooltip: `Codebook could not unlock the saved session for ${name}. Retry from here.`,
+    }
+  return SETUP_TEXTS[phase.phase](name)
+}
+
 /** Words a stored session's state; `undefined` hides the item (nothing to show). */
 function viewText(
   view: SavedSessionView,
@@ -84,10 +96,7 @@ export function savedSessionStatusText(
   format: SetupTimeFormat = {},
 ): SavedSessionStatusText | undefined {
   if (input.kind === 'view') return viewText(input.view, format)
-  if (input.kind === 'setup')
-    return input.phase.phase === 'ended'
-      ? undefined
-      : SETUP_TEXTS[input.phase.phase](input.phase.repositoryName)
+  if (input.kind === 'setup') return setupText(input.phase)
   if (input.kind === 'review')
     return {
       text: '$(key) Saved session · operations not confirmed',

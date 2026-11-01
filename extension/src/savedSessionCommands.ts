@@ -364,9 +364,12 @@ export function installSavedSessions(
     })
   }
 
-  /** Answers Set Up and the status item while a setup of this window is active: Close setup for a start, a wait notice while it ends, a retry when stuck, else Done and Close setup again. */
+  /** Answers Set Up and the status item while a setup of this window is active: Close setup for a start, a wait notice while it ends, a retry when stuck, else Done and Close setup again. Each answer acts only on the setup that showed its notice. */
   const reofferSetup = async (name: string): Promise<void> => {
+    // A notice answered after its setup ended never ends a later setup (outside voice 5).
+    const { generation } = setup
     const phase = setup.phase?.phase
+    // A stuck setup is retried at once: no notice is shown, so no answer can come late.
     if (phase === 'stuck') return setup.closeSetup('closed')
     // Ending already: Done or Close setup would only wait for the same close.
     if (phase === 'finishing') {
@@ -383,12 +386,9 @@ export function installSavedSessions(
         `Codebook is starting ${name} to open its sign-in page.`,
         CLOSE_SETUP_BUTTON,
       )
-      if (choice === CLOSE_SETUP_BUTTON) await setup.closeSetup('closed')
-      return
+      return setup.answer(generation, choice)
     }
-    const choice = await ui.offerDoneOrClose(name)
-    if (choice === 'Done') await setup.done()
-    else if (choice === CLOSE_SETUP_BUTTON) await setup.closeSetup('closed')
+    return setup.answer(generation, await ui.offerDoneOrClose(name))
   }
 
   const setUpCommand = async (): Promise<void> => {

@@ -176,10 +176,10 @@ const VITE_NOT_INSTALLED = {
 
 /**
  * Loads the commands with a store, an agent environment and a setup browser the test drives, so a setup runs through the real {@link SavedSessionSetup}.
- * Every notice lands in `notices` and `answer` picks its button; the status item, the quick picks and the store's effects are recorded.
+ * Every notice lands in `notices` and `answer` picks its button (a promise answers it later); the status item, the quick picks and the store's effects are recorded.
  */
 async function loadWithSetup(options: {
-  answer?: (message: string) => string | undefined
+  answer?: (message: string) => string | undefined | Promise<string | undefined>
   adapters?: { 'next-dev-webpack': unknown; 'vite-dev': unknown }
   ensureEnvironment?: () => Promise<never>
   startServer?: (signal: AbortSignal) => Promise<unknown>
@@ -406,6 +406,91 @@ test('Set Up while a setup is ending says that Codebook is closing its browser a
       actions: [],
     },
   ])
+})
+
+// protects=outside voice 5 (a re-offered Done notice is bound to the setup that showed it); fails_when=Done answered late on an earlier setup's re-offered notice ends the setup open now and saves a session the learner never confirmed; no_claim=VS Code's notification center
+test('Done on a re-offered notice of an earlier setup never ends the setup that is open now', async (context) => {
+  // Arrange
+  const lateAnswer = defer<string | undefined>()
+  let signInNotices = 0
+  const { calls, item, handlers, installed } = await loadWithSetup({
+    answer: (message) => {
+      if (!message.startsWith('Sign in to')) return undefined
+      signInNotices += 1
+      // The second sign-in notice is the first setup's re-offer, answered only after a second setup opened.
+      return signInNotices === 2 ? lateAnswer.promise : undefined
+    },
+  })
+  // The setup left open is closed after the test, so its 10-minute timer does not hold the process.
+  context.after(() => installed.dispose())
+  await handlers.get('codebook.setUpSavedSession')!()
+  const reoffered = handlers.get('codebook.savedSession.actions')!()
+  await settle()
+  await installed.dispose()
+  await handlers.get('codebook.setUpSavedSession')!()
+
+  // Act
+  lateAnswer.resolve('Done')
+  await reoffered
+  await settle()
+
+  // Assert
+  assert.equal(signInNotices, 3)
+  assert.equal(item.text, '$(key) Saved session · setup open')
+  assert.deepEqual(
+    calls.filter((call) => call === 'browserClose' || call === 'writeRecord'),
+    ['browserClose', 'writeRecord'],
+  )
+})
+
+// protects=outside voice 5 (the starting notice's Close setup is bound to the setup that showed it); fails_when=Close setup answered late on an earlier start's notice closes the setup open now; no_claim=VS Code's notification center
+test('Close setup on the starting notice of an earlier setup never closes the setup that is open now', async (context) => {
+  // Arrange
+  const lateAnswer = defer<string | undefined>()
+  const firstStart = defer<void>()
+  let serverStarts = 0
+  const { calls, item, handlers, installed } = await loadWithSetup({
+    answer: (message) =>
+      message.startsWith('Codebook is starting')
+        ? lateAnswer.promise
+        : undefined,
+    startServer: (signal) => {
+      serverStarts += 1
+      // The second setup's app answers at once.
+      if (serverStarts === 2)
+        return Promise.resolve({
+          origin: 'http://localhost:3165',
+          port: 3165,
+          close: async (): Promise<void> => undefined,
+        })
+      // The first setup's sign-in page compiles until its start is stopped.
+      firstStart.resolve()
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () =>
+          reject(new Error('the start was stopped')),
+        )
+      })
+    },
+  })
+  // The setup left open is closed after the test, so its 10-minute timer does not hold the process.
+  context.after(() => installed.dispose())
+  const firstSetUp = handlers.get('codebook.setUpSavedSession')!()
+  await firstStart.promise
+  const reoffered = handlers.get('codebook.savedSession.actions')!()
+  await settle()
+  await installed.dispose()
+  await firstSetUp
+  await handlers.get('codebook.setUpSavedSession')!()
+
+  // Act
+  lateAnswer.resolve('Close setup')
+  await reoffered
+  await settle()
+
+  // Assert
+  assert.equal(serverStarts, 2)
+  assert.equal(item.text, '$(key) Saved session · setup open')
+  assert.equal(calls.includes('browserClose'), false)
 })
 
 // protects=setup start without a ready development server; fails_when=the learner is asked to pick a server that cannot start, or the folder's lock is taken before the start fails; no_claim=the readiness sentences themselves (readRepositoryAdapterReadiness)

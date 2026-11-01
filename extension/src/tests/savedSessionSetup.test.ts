@@ -31,7 +31,8 @@ function harness(
     launchError?: Error
     acquireError?: Error
     writeError?: Error
-    releaseError?: Error
+    /** One failure per release call, in order; a release with none left succeeds. */
+    releaseErrors?: Error[]
     /** The folder is handed over only once this settles. */
     acquireGate?: Promise<void>
     /** The server never answers; it rejects once the start is cancelled. */
@@ -55,6 +56,7 @@ function harness(
   let warn: (choice: 'Done' | undefined) => void = () => undefined
   let serverCloses = 0
   let releases = 0
+  const releaseErrors = [...(options.releaseErrors ?? [])]
   const setup = new SavedSessionSetup({
     store: {
       acquireForSetup: async () => {
@@ -72,7 +74,8 @@ function harness(
           release: async (): Promise<void> => {
             calls.push('release')
             releases += 1
-            if (options.releaseError) throw options.releaseError
+            const releaseError = releaseErrors.shift()
+            if (releaseError) throw releaseError
           },
         }
       },
@@ -513,26 +516,114 @@ test('Retry on the notice of an earlier stuck setup never ends the setup that is
   assert.equal(test.records.length, 1)
 })
 
-// protects=OCR 33 (a failed lock release never leaves the setup finishing); fails_when=Done rejects, the setup stays active, or the cause names the folder; no_claim=the store's own release
-test('a lock release that fails after Done still ends the setup, logs the cause without the folder path and says the session was saved', async () => {
+const LOCK_STUCK_NOTICE_FOR_SHOP =
+  'Setup could not unlock the saved session for shop, so it stays locked. See Output › Codebook, then retry.'
+
+// protects=outside voice 4, Codex structured P2, OCR 33 (a failed lock release keeps the lease and offers Retry, never leaves the setup finishing, and says the session was saved only after the release); fails_when=the setup ends while the store still holds the lock, Done says runs can start before the lock is released, Retry does not release again, the record is written twice, or the cause names the folder; no_claim=the store's own release (signInProfile tests)
+test('a lock release that fails after Done keeps the setup stuck with Retry, and says the session was saved only once Retry released the lock', async () => {
   // Arrange
   const test = harness({
-    releaseError: new Error(
-      `EACCES: permission denied, unlink '${PROFILE}.signin.lock'`,
-    ),
+    releaseErrors: [
+      new Error(`EACCES: permission denied, unlink '${PROFILE}.lock'`),
+    ],
   })
   await test.setup.start(INPUT)
   // Act
   await test.setup.done()
+  const phaseAfterDone = test.setup.phase
+  const noticesAfterDone = test.notices.map((notice) => notice.message)
+  test.pressInNotice(LOCK_STUCK_NOTICE_FOR_SHOP, 'Retry')
+  await flush()
   // Assert
-  assert.equal(test.setup.isActive, false)
+  assert.deepEqual(phaseAfterDone, {
+    phase: 'stuck',
+    repositoryName: 'shop',
+    stuckOn: 'lock-release',
+  })
+  assert.deepEqual(noticesAfterDone, [LOCK_STUCK_NOTICE_FOR_SHOP])
+  assert.equal(test.releases(), 2)
+  assert.equal(test.records.length, 1)
   assert.equal(test.setup.phase?.phase, 'ended')
+  assert.deepEqual(
+    test.notices.map((notice) => notice.message),
+    [LOCK_STUCK_NOTICE_FOR_SHOP, DONE_NOTICE_FOR_SHOP],
+  )
   assert.ok(
     test.logs.includes(
-      "error: Saved session setup: the lock was not released: EACCES: permission denied, unlink '<saved-session>.signin.lock'",
+      "error: Saved session setup: the lock was not released: EACCES: permission denied, unlink '<saved-session>.lock'",
     ),
   )
-  assert.equal(test.notices.at(-1)?.message, DONE_NOTICE_FOR_SHOP)
+})
+
+// protects=outside voice 4 (the window closing releases a kept lock again); fails_when=the window closes while this window still holds a lock its setup could not release; no_claim=the store's hold bookkeeping
+test('closing the window while a setup keeps a lock it could not release releases that lock again before the window goes', async () => {
+  // Arrange
+  const test = harness({
+    releaseErrors: [new Error('EBUSY: resource busy or locked')],
+  })
+  await test.setup.start(INPUT)
+  await test.setup.closeSetup('closed')
+  const phaseAfterClose = test.setup.phase?.phase
+  // Act
+  await test.setup.dispose()
+  // Assert
+  assert.equal(phaseAfterClose, 'stuck')
+  assert.equal(test.releases(), 2)
+  assert.equal(test.setup.isActive, false)
+  assert.deepEqual(
+    test.records.map((record) => record.confirmed),
+    [false],
+  )
+  assert.deepEqual(
+    test.notices.map((notice) => notice.message),
+    [LOCK_STUCK_NOTICE_FOR_SHOP],
+  )
+})
+
+// protects=outside voice 4 on the start path; fails_when=a failed start whose lock release fails ends the setup while the lock is held, Retry cannot free it, or a record is written; no_claim=real processes
+test('a start that fails and cannot release its lock stays locked with Retry, and Retry frees it without writing a record', async () => {
+  // Arrange
+  const test = harness({
+    launchError: new Error('Chrome exited at once'),
+    releaseErrors: [new Error('EPERM: operation not permitted')],
+  })
+  // Act
+  await test.setup.start(INPUT)
+  const phaseAfterStart = test.setup.phase?.phase
+  test.pressInNotice(LOCK_STUCK_NOTICE_FOR_SHOP, 'Retry')
+  await flush()
+  // Assert
+  assert.equal(phaseAfterStart, 'stuck')
+  assert.equal(test.releases(), 2)
+  assert.deepEqual(test.records, [])
+  assert.equal(test.setup.phase?.phase, 'ended')
+  assert.deepEqual(
+    test.notices.map((notice) => notice.message),
+    [
+      'Setup could not start: Chrome exited at once. See Output › Codebook.',
+      LOCK_STUCK_NOTICE_FOR_SHOP,
+      'Setup unlocked the saved session and left it as it was. Set it up again when you are ready.',
+    ],
+  )
+})
+
+// protects=outside voice 5 (an answer is bound to the setup that showed its notice); fails_when=a Done answered on an earlier setup's warning ends the setup open now and saves a session the learner never confirmed; no_claim=VS Code's notification center
+test('Done on the closing-soon warning of an earlier setup never ends the setup that is open now', async () => {
+  // Arrange
+  const test = harness()
+  await test.setup.start(INPUT)
+  test.clock.advance(480_000)
+  await test.setup.closeSetup('closed')
+  await test.setup.start(INPUT)
+  // Act
+  test.answerWarning()
+  await flush()
+  // Assert
+  assert.equal(test.setup.phase?.phase, 'open')
+  assert.deepEqual(
+    test.records.map((record) => record.confirmed),
+    [false],
+  )
 })
 
 // protects=OCR 30, CEO-R7 (no folder path in a start failure, also before a lease is held); fails_when=the notice or the Output line names the home folder, the store or the repository hash; no_claim=every error text of Node
