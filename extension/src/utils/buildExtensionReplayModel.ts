@@ -4,7 +4,8 @@ import type {
   ExtensionHistoryHeader,
   ExtensionPauseCloseReason,
 } from '../chromeExtensionHistorySchemas'
-import { sha256 } from '../runtimeSupport/utils/sha256'
+
+import { extensionCaptureHasSource } from './extensionCaptureHasSource'
 
 /** The frame a journal `frame` entry describes: the blob's hash and size, and when it was received on the run clock. */
 export type ExtensionReplayFrame = {
@@ -89,27 +90,6 @@ export type ExtensionReplayModel = {
   endedAtMs: number
 }
 
-/**
- * Tells whether a capture's top frame holds the executed source: the frame's source names the capture's path and line, and its text hashes to the capture's source hash.
- * @param capture - The pause's capture.
- * @returns `true` when the stop can show its source at the executed line.
- * @example sourceMatchesCapture(capture) // => true for a capture whose snapshot carries the executed file
- */
-function sourceMatchesCapture(
-  capture: ExtensionHistoryEntryOf<'capture'>,
-): boolean {
-  const frame = capture.debuggerSnapshot.frames[0]
-  const source = frame?.source
-  if (!source) return false
-  return [
-    source.name === capture.path,
-    source.line === capture.line,
-    source.hash === capture.sourceHash,
-    sha256(source.text) === source.hash,
-    frame.line === capture.line,
-  ].every(Boolean)
-}
-
 /** The pauses, the unsorted timeline events and the result a journal holds; filled by {@link collectExtensionReplay}. */
 type CollectedExtensionReplay = {
   pauses: Map<string, ExtensionReplayPause>
@@ -167,7 +147,7 @@ function captureExtensionPause(
   pause.path = entry.path
   pause.line = entry.line
   pause.hasSnapshot = entry.debuggerSnapshot.frames.length > 0
-  pause.hasSource = sourceMatchesCapture(entry)
+  pause.hasSource = extensionCaptureHasSource(entry)
 }
 
 /**

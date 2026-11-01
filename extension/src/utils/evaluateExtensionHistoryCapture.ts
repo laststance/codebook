@@ -8,6 +8,8 @@ import {
   EXTENSION_HISTORY_RESULT_UNREAD_CAUSE,
 } from '../constants'
 
+import { extensionCaptureHasSource } from './extensionCaptureHasSource'
+
 /** What only the writer knows when it seals, beside what the journal says. */
 export type ExtensionCaptureFacts = {
   /** The first failed append: the entry before the gap and the failure's cause (already without private paths). */
@@ -61,8 +63,17 @@ function stopReasons(
       })
   const stopOfPause = new Map(opened.map((pause) => [pause.pauseId, pause]))
   for (const capture of captures) {
-    if (capture.debuggerSnapshot.frames[0]?.source !== undefined) continue
+    if (extensionCaptureHasSource(capture)) continue
     const stop = stopOfPause.get(capture.pauseId)?.stopIndex
+    // A snapshot with no frame has no values to show; any other miss lacks only the executed source.
+    if (capture.debuggerSnapshot.frames.length === 0) {
+      reasons.push({
+        code: CODES.snapshotMissing,
+        params: { stop: stop ?? 0 },
+        text: `Stop ${stop ?? '?'} paused, but its values and source were not captured.`,
+      })
+      continue
+    }
     reasons.push({
       code: CODES.sourceUnavailable,
       params: { stop: stop ?? 0 },
