@@ -212,6 +212,11 @@ export function observeResult(runtime: ControlledConfiguredRuntime): void {
 export async function configuredServiceHarness(
   context: TestContext,
   clock = Date.now,
+  createRuntime: (
+    directory: string,
+    definition: ConfiguredDefinition,
+  ) => ControlledConfiguredRuntime = (directory, definition) =>
+    new ControlledConfiguredRuntime(directory, definition),
 ) {
   let ownedService: StudyService | undefined,
     ownedBooks: RepositoryBookStore | undefined
@@ -261,7 +266,7 @@ export async function configuredServiceHarness(
     async createRuntime(directory, definition) {
       if (!definition || typeof definition === 'string')
         throw new Error('This harness models configured studies only.')
-      const runtime = new ControlledConfiguredRuntime(directory, definition)
+      const runtime = createRuntime(directory, definition)
       runtimes.push(runtime)
       return runtime
     },

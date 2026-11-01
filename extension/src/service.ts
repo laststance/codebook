@@ -4613,7 +4613,11 @@ export class StudyService {
                 sourceBuild: this.environment.build,
               },
               record.runtime.evidence.elapsedMs(),
-              record.definition?.configuration.version === 2 ? 3 : 2,
+              // Versions 2 and 3 name a participant for every stop, so their recording is the cross-runtime one.
+              record.definition?.configuration.version === 1 ||
+                record.definition?.configuration.version === undefined
+                ? 2
+                : 3,
             )
           } catch (error) {
             record.recordingFailure = `Recording unavailable before input: ${this.sanitizedCause(error)}`

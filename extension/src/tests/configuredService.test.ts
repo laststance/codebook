@@ -2736,7 +2736,7 @@ test('configured help names the declared, the requested and the bound place, say
     .parse(JSON.parse(help.text))
   assert.equal(
     contract.entry,
-    'API 1.13, extension 0.2.0 or later. Read actual workspace source and publish an immutable source-only article first. Use its default repository/<bookId>/<nodeId> identity, exact revision, selected citation, path/hash and one-based source line/column. Leave learningItemId absent to preserve the article identity.',
+    'API 1.14, extension 0.2.0 or later. Read actual workspace source and publish an immutable source-only article first. Use its default repository/<bookId>/<nodeId> identity, exact revision, selected citation, path/hash and one-based source line/column. Leave learningItemId absent to preserve the article identity.',
   )
   assert.equal(
     (contract.sequence[2] ?? '').includes(
@@ -4072,6 +4072,7 @@ test('the input schema of codebook_start states the inspection rule for the firs
   assert.deepEqual(described, [
     ['next-dev-webpack 1', repositoryBrowserRule, repositoryBrowserRule],
     ['next-dev-webpack 2', repositoryBrowserRule, repositoryBrowserRule],
+    ['next-dev-webpack 3', repositoryBrowserRule, repositoryBrowserRule],
     ['vitest-node 1', nodeTestRule, nodeTestRule],
   ])
 })
@@ -4137,6 +4138,7 @@ test("the input schema of codebook_start says that a required value is read befo
   assert.deepEqual(saysIt, [
     ['next-dev-webpack 1', true, true, false],
     ['next-dev-webpack 2', true, true, false],
+    ['next-dev-webpack 3', true, true, false],
     ['vitest-node 1', false, false, true],
   ])
 })
@@ -4783,7 +4785,7 @@ test('API 1.8 discovery exposes the bounded configured profile and its executabl
     ),
     help = await readResource(service, 'codebook://help/repository-browser')
   // Assert
-  assert.equal(status.apiVersion, '1.13')
+  assert.equal(status.apiVersion, '1.14')
   assert.ok(profile && 'requiresConfiguration' in profile)
   assert.equal(profile.requiresConfiguration, true)
   assert.equal(profile.minimumExtensionVersion, '0.2.0')

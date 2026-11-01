@@ -690,6 +690,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @example run.onSecretOperationSending = (selector) => gate.arm(selector)
    */
   onSecretOperationSending?: (selector: string) => void
+
+  /**
+   * Gives the secrets the learner typed for ask-learner operations, for the sinks that mask every exact occurrence of them (ENG-4).
+   * The set lives in memory for the run's life and is never persisted, logged or served.
+   * @returns The learner's secrets so far; empty for a run without an ask-learner operation.
+   * @example for (const secret of run.learnerSecrets) text = text.replaceAll(secret, '[masked]')
+   */
+  get learnerSecrets(): ReadonlySet<string> {
+    return this.learnerSecretValues
+  }
   private snapshot?: ConfiguredRuntimeSnapshot
   private snapshotReady = false
   private readonly failures: string[] = []
@@ -5364,6 +5374,22 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Gives the stop a continuation arms before it resumes: the stop after the one being continued, except that a version 3 stop that follows a later operation is armed in that operation's turn ({@link armStopsOfOperation}), not inside this continuation.
+   * @param continuedStop - The stop being continued.
+   * @returns The next declared stop to arm now; `undefined` when there is none, or it follows a later operation.
+   * @example this.stopArmedAfter(this.stops[0]!) // this.stops[1] for a version 1 run, undefined for a version 3 stop declared after the next operation
+   */
+  private stopArmedAfter(
+    continuedStop: PreparedStop,
+  ): PreparedStop | undefined {
+    const nextStop = this.stops[this.stopIndex + 1]
+    if (!nextStop || !this.operationsConfiguration) return nextStop
+    return afterOperationOf(nextStop) === afterOperationOf(continuedStop)
+      ? nextStop
+      : undefined
+  }
+
+  /**
    * Returns the run to `ready` for the next operation, or observes the result after the last one, once an operation is done: its input was acknowledged, its value checked, and every stop declared for it continued (ENG-1).
    * Called after an operation's input returned ({@link dispatchOperation}) and after the last stop of an operation was continued ({@link beginAfter}); it acts once per operation.
    * @param index - The operation (1-based).
@@ -7321,13 +7347,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         participant.gate.current?.generation !== pause.generation
       )
         throw new Error('conflict: pause changed before continue')
-      const nextStop = this.stops[this.stopIndex + 1]
-      // A version 3 stop that follows a later operation is armed in that operation's turn, not inside this continuation.
-      const armsNextStop =
-        nextStop !== undefined &&
-        (!this.operationsConfiguration ||
-          afterOperationOf(nextStop) === afterOperationOf(stop))
-      if (nextStop && armsNextStop) {
+      const nextStop = this.stopArmedAfter(stop)
+      if (nextStop) {
         try {
           await this.armStop(nextStop)
           this.armedStops.add(nextStop)
@@ -7360,7 +7381,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       })
       participant.expectedResumeRequests++
       // The continuation's next declared stop is the run's, so its window opens with the continuation.
-      if (armsNextStop) this.openCausalWindowOfStop(this.stopIndex + 1)
+      this.openCausalWindowOfNextStop(nextStop)
       this.evidence.record('continue.accepted', pause)
       this.progressDeadline(
         ACTIVE_TIMEOUT_MS,
@@ -8222,6 +8243,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    */
   private openCausalWindowOfStop(stopIndex: number): void {
     this.openCausalWindow(this.stops[stopIndex]?.participant)
+  }
+  /**
+   * Opens the causal window of the stop a continuation arms, called by {@link continue}; no stop armed, no window.
+   * @param nextStop - The stop {@link stopArmedAfter} gave, if any.
+   * @example this.openCausalWindowOfNextStop(this.stopArmedAfter(stop))
+   */
+  private openCausalWindowOfNextStop(nextStop: PreparedStop | undefined): void {
+    this.openCausalWindow(nextStop?.participant)
   }
   /**
    * Ends the causal window of a session whose program the learner pauses, so the stop the pause makes is the learner's; called by {@link onRequest} for every request, before it looks at resumes only. A resume the run did not make ends the window through {@link fail}.

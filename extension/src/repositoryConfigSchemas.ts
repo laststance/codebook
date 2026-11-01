@@ -280,7 +280,7 @@ const operationTitleSchema = z.string().min(1).max(BOOK_TITLE_LIMIT_CHARS)
  * One declared operation of a version 3 run: `text` into a text-like or number input (its `text`, or `secret: "ask-learner"` for a secret control, never both), `choose` an option of a native single `<select>`, or `click` a unique visible enabled target.
  * Read by {@link operationsConfigurationShape}; {@link ConfiguredBrowserRun} sends each one through its own `repository-operation` action.
  */
-export const repositoryOperationSchema = z.discriminatedUnion('kind', [
+const repositoryOperationSchema = z.discriminatedUnion('kind', [
   z
     .strictObject({
       kind: z.literal('text'),

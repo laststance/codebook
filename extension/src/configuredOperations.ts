@@ -159,7 +159,7 @@ const UNSUPPORTED_ADVICE: Readonly<Record<string, string>> = {
  * @returns `ready: false` with a reason when the page is at another origin or the selector does not name this one connected control; otherwise the control's tag, type, name, id, autocomplete, whether it is a multiple select or editable content, and `ready` only when it is visible and enabled.
  * @example describeOperationControl.call(element, { selector: '#amount', origins: ['http://localhost:3000'] }) // => { ready: true, tagName: 'input', type: 'number', … }
  */
-export function describeOperationControl(
+function describeOperationControl(
   this: Element,
   input: { selector: string; origins: readonly string[] },
 ) {
@@ -200,7 +200,7 @@ export function describeOperationControl(
  * @returns `available` for an enabled option, `disabled` for a disabled one, `missing` for none (also when the control is not a select).
  * @example checkSelectOption.call(select, { value: '3958dc9e' }) // => { state: 'available' }
  */
-export function checkSelectOption(this: Element, input: { value: string }) {
+function checkSelectOption(this: Element, input: { value: string }) {
   if (!(this instanceof HTMLSelectElement)) return { state: 'missing' }
   const option = Array.from(this.options).find(
     (candidate) => candidate.value === input.value,
@@ -216,7 +216,7 @@ export function checkSelectOption(this: Element, input: { value: string }) {
  * @returns `applied: false` with a reason when nothing was changed (another origin, a control that is not the one classified, a missing or disabled option); otherwise whether the control then holds the value (`valueMatches`), whether the browser calls it valid (`isValid`) and, for a number input, its `min`, `max`, `step` and `pattern` rules.
  * @example applyNativeValue.call(input, { kind: 'number', value: '120', … }) // => { applied: true, valueMatches: true, isValid: true, rule: { min: '1' } }
  */
-export function applyNativeValue(
+function applyNativeValue(
   this: Element,
   input: {
     selector: string
@@ -232,53 +232,69 @@ export function applyNativeValue(
     }
   },
 ) {
-  if (!input.origins.includes(location.origin))
-    return { applied: false, reason: 'wrong-origin' }
-  const matches = document.querySelectorAll(input.selector)
-  if (matches.length !== 1 || matches[0] !== this || !this.isConnected)
-    return { applied: false, reason: 'unique-control-required' }
-  const isSelect = this instanceof HTMLSelectElement,
-    isNumber = this instanceof HTMLInputElement
-  if (!isSelect && !isNumber)
-    return { applied: false, reason: 'control-changed' }
+  // Everything the page reads is declared inside this function, which is serialized with `toString()`; the small arrows keep each step simple.
+  const control =
+    this instanceof HTMLSelectElement || this instanceof HTMLInputElement
+      ? this
+      : undefined
+  const optionOf = (candidate: Element | undefined) =>
+    candidate instanceof HTMLSelectElement
+      ? Array.from(candidate.options).find(
+          (entry) => entry.value === input.value,
+        )
+      : undefined
   // The control must be the one that was classified: a control that turned into another kind or into a secret one receives nothing.
-  if (
-    this.tagName.toLowerCase() !== input.expected.tagName ||
-    (isNumber ? this.type : '') !== input.expected.type ||
-    (this.getAttribute('name') ?? '') !== input.expected.name ||
-    this.id !== input.expected.id ||
-    (this.getAttribute('autocomplete') ?? '') !== input.expected.autocomplete
-  )
-    return { applied: false, reason: 'control-changed' }
-  if (this.disabled) return { applied: false, reason: 'control-disabled' }
-  if (isSelect) {
-    const option = Array.from(this.options).find(
-      (candidate) => candidate.value === input.value,
-    )
-    if (!option) return { applied: false, reason: 'option-missing' }
-    if (option.disabled) return { applied: false, reason: 'option-disabled' }
+  const sameKind = (candidate: Element | undefined) =>
+    [
+      candidate?.tagName.toLowerCase(),
+      candidate instanceof HTMLInputElement ? candidate.type : '',
+      candidate?.getAttribute('name') ?? '',
+      candidate?.id,
+      candidate?.getAttribute('autocomplete') ?? '',
+    ].join('\u0000') ===
+    [
+      input.expected.tagName,
+      input.expected.type,
+      input.expected.name,
+      input.expected.id,
+      input.expected.autocomplete,
+    ].join('\u0000')
+  const isUnique = () => {
+    const matches = document.querySelectorAll(input.selector)
+    return matches.length === 1 && matches[0] === this && this.isConnected
   }
-  const setter = Object.getOwnPropertyDescriptor(
-    isSelect ? HTMLSelectElement.prototype : HTMLInputElement.prototype,
-    'value',
-  )?.set
+  const option = optionOf(control)
+  const checks: [boolean, string][] = [
+    [!input.origins.includes(location.origin), 'wrong-origin'],
+    [!isUnique(), 'unique-control-required'],
+    [!control || !sameKind(control), 'control-changed'],
+    [Boolean(control?.disabled), 'control-disabled'],
+    [control instanceof HTMLSelectElement && !option, 'option-missing'],
+    [Boolean(option?.disabled), 'option-disabled'],
+  ]
+  const refusal = checks.find(([failed]) => failed)
+  if (refusal || !control) return { applied: false, reason: refusal?.[1] }
+  const prototype =
+    control instanceof HTMLSelectElement
+      ? HTMLSelectElement.prototype
+      : HTMLInputElement.prototype
+  const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
   if (!setter) return { applied: false, reason: 'setter-missing' }
-  setter.call(this, input.value)
-  this.dispatchEvent(new Event('input', { bubbles: true }))
-  this.dispatchEvent(new Event('change', { bubbles: true }))
-  const valueMatches = this.value === input.value
+  setter.call(control, input.value)
+  control.dispatchEvent(new Event('input', { bubbles: true }))
+  control.dispatchEvent(new Event('change', { bubbles: true }))
+  const rules = (entry: HTMLInputElement) => ({
+    min: entry.getAttribute('min') ?? undefined,
+    max: entry.getAttribute('max') ?? undefined,
+    step: entry.getAttribute('step') ?? undefined,
+    pattern: entry.getAttribute('pattern') ?? undefined,
+  })
   return {
     applied: true,
-    valueMatches,
-    isValid: isNumber ? this.validity.valid : true,
-    rule: isNumber
-      ? {
-          min: this.getAttribute('min') ?? undefined,
-          max: this.getAttribute('max') ?? undefined,
-          step: this.getAttribute('step') ?? undefined,
-          pattern: this.getAttribute('pattern') ?? undefined,
-        }
-      : undefined,
+    valueMatches: control.value === input.value,
+    isValid:
+      control instanceof HTMLInputElement ? control.validity.valid : true,
+    rule: control instanceof HTMLInputElement ? rules(control) : undefined,
   }
 }
 
@@ -320,11 +336,13 @@ function controlKindName(description: ControlDescription): string {
  * @param port - The run's page channel and navigation clock.
  * @param operationIndex - The operation about to be sent (1-based), named in the failure.
  * @throws {@link OperationRefusal} `NAVIGATION_NOT_SETTLED` when the page is not settled within {@link OPERATION_SETTLE_BOUND_MS}; nothing was sent.
+ * @param boundMs - How long the wait may last; a test passes a short one.
  * @example await waitForSettledPage(port, 2)
  */
 export async function waitForSettledPage(
   port: OperationPort,
   operationIndex: number,
+  boundMs: number = OPERATION_SETTLE_BOUND_MS,
 ): Promise<void> {
   const startedAt = performance.now()
   for (;;) {
@@ -343,10 +361,10 @@ export async function waitForSettledPage(
       )
         return
     }
-    if (performance.now() - startedAt >= OPERATION_SETTLE_BOUND_MS)
+    if (performance.now() - startedAt >= boundMs)
       throw new OperationRefusal(
         'NAVIGATION_NOT_SETTLED',
-        `Operation ${operationIndex} was not sent: the page did not finish loading and stay still for ${OPERATION_SETTLE_QUIET_MS} ms within ${OPERATION_SETTLE_BOUND_MS / 1000} s. Warm a slow route with the run's before conditions, or split the flow into two runs.`,
+        `Operation ${operationIndex} was not sent: the page did not finish loading and stay still for ${OPERATION_SETTLE_QUIET_MS} ms within ${boundMs / 1000} s. Warm a slow route with the run's before conditions, or split the flow into two runs.`,
         { operationIndex },
       )
     await port.sleep(OPERATION_SETTLE_POLL_MS)
@@ -459,6 +477,17 @@ export async function prepareOperation(
   }
 }
 
+/** What {@link prepareControlOperation} and its steps know of one `text` or `choose` operation and the control it resolved. */
+type ControlOperationContext = {
+  cdp: Cdp
+  objectId: string
+  description: ControlDescription
+  index: number
+  operation: Exclude<RepositoryOperation, { kind: 'click' }>
+  learnerSecret: string | undefined
+  configPath: (field: string) => string
+}
+
 /**
  * Applies the secret and control-kind rules to a described control and builds the send of a `text` or `choose` operation.
  * Called by {@link prepareOperation} once the control is resolved and available.
@@ -470,81 +499,94 @@ export async function prepareOperation(
  */
 async function prepareControlOperation(
   port: OperationPort,
-  context: {
-    cdp: Cdp
-    objectId: string
-    description: ControlDescription
-    index: number
-    operation: Exclude<RepositoryOperation, { kind: 'click' }>
-    learnerSecret: string | undefined
-    configPath: (field: string) => string
-  },
+  context: ControlOperationContext,
 ): Promise<Omit<PreparedOperation, 'discard'>> {
-  const { cdp, objectId, description, index, operation, configPath } = context
-  const attributes = fingerprintOf(description)
-  const secretReason = classifySecretControl(attributes)
+  const { operation } = context
+  return operation.kind === 'choose'
+    ? prepareChooseOperation(port, context, operation)
+    : prepareTextOperation(port, context, operation)
+}
+
+/**
+ * Prepares a `choose` operation: the control must be a native single `<select>` that reads as no secret and offers an enabled option with the declared value.
+ * @param port - What the run lets the engine use.
+ * @param context - The resolved control.
+ * @param operation - The `choose` operation.
+ * @returns The prepared operation, which sets the value through the native setter and checks it.
+ * @throws {@link OperationRefusal} `CONTROL_KIND_NOT_SUPPORTED`, `SECRET_INPUT_VISIBLE` or `OPTION_NOT_AVAILABLE`; nothing was sent.
+ * @example const prepared = await prepareChooseOperation(port, context, operation)
+ */
+async function prepareChooseOperation(
+  port: OperationPort,
+  context: ControlOperationContext,
+  operation: Extract<RepositoryOperation, { kind: 'choose' }>,
+): Promise<Omit<PreparedOperation, 'discard'>> {
+  const { cdp, objectId, description, index, configPath } = context
   const label = `Operation ${index} (${operation.title})`
-  if (operation.kind === 'choose') {
-    if (description.tagName !== 'select' || description.multiple)
-      throw new OperationRefusal(
-        'CONTROL_KIND_NOT_SUPPORTED',
-        `${label} was not sent: choose drives a native single <select>, and ${operation.selector} is ${controlKindName(description)}. A custom select is driven with click operations.`,
-        { operationIndex: index, path: configPath('selector') },
-      )
-    // The selected option's label would be drawn in recorded frames.
-    if (secretReason)
-      throw new OperationRefusal(
-        'SECRET_INPUT_VISIBLE',
-        `${label} was not sent: ${operation.selector} reads as a secret control (${secretReason}), and a chosen option would show on the page and in recorded frames. Codebook never chooses a value for a secret select.`,
-        { operationIndex: index, path: configPath('selector') },
-      )
-    const option = optionSchema.parse(
-      (
-        await cdp.request('Runtime.callFunctionOn', {
-          objectId,
-          functionDeclaration: checkSelectOption.toString(),
-          arguments: [{ value: { value: operation.value } }],
-          returnByValue: true,
-        })
-      ).result.value,
-    )
-    port.assertCurrent()
-    if (option.state !== 'available')
-      throw new OperationRefusal(
-        'OPTION_NOT_AVAILABLE',
-        `${label} was not sent: the select at ${operation.selector} has ${option.state === 'disabled' ? 'a disabled' : 'no'} option with the value "${operation.value}".`,
-        { operationIndex: index, path: configPath('value') },
-      )
-    return {
-      isSecret: false,
-      send: (hooks): Promise<void> =>
-        sendNativeValue(port, {
-          ...context,
-          kind: 'select',
-          value: operation.value,
-        })(hooks),
-    }
-  }
-  // A `text` operation.
-  const isAskLearner = operation.secret === ASK_LEARNER_SECRET
-  if (!isAskLearner && secretReason)
+  if (description.tagName !== 'select' || description.multiple)
     throw new OperationRefusal(
-      'SECRET_INPUT_FROM_CHAT',
-      `${label} was not sent: ${operation.selector} reads as a secret control (${secretReason}). A secret never comes from the chat; declare secret: "ask-learner" instead of text, and the learner types it in the editor.`,
-      { operationIndex: index, path: configPath('text') },
+      'CONTROL_KIND_NOT_SUPPORTED',
+      `${label} was not sent: choose drives a native single <select>, and ${operation.selector} is ${controlKindName(description)}. A custom select is driven with click operations.`,
+      { operationIndex: index, path: configPath('selector') },
     )
-  // The learner's secret must go into a control the browser draws as dots.
-  if (isAskLearner && attributes.type !== 'password')
+  // The selected option's label would be drawn in recorded frames.
+  const secretReason = classifySecretControl(fingerprintOf(description))
+  if (secretReason)
     throw new OperationRefusal(
       'SECRET_INPUT_VISIBLE',
-      `${label} was not sent: secret: "ask-learner" needs an <input type="password">, and ${operation.selector} is ${controlKindName(description)}, which the browser would draw in plain text in recorded frames.`,
-      { operationIndex: index, path: configPath('secret') },
+      `${label} was not sent: ${operation.selector} reads as a secret control (${secretReason}), and a chosen option would show on the page and in recorded frames. Codebook never chooses a value for a secret select.`,
+      { operationIndex: index, path: configPath('selector') },
     )
+  const option = optionSchema.parse(
+    (
+      await cdp.request('Runtime.callFunctionOn', {
+        objectId,
+        functionDeclaration: checkSelectOption.toString(),
+        arguments: [{ value: { value: operation.value } }],
+        returnByValue: true,
+      })
+    ).result.value,
+  )
+  port.assertCurrent()
+  if (option.state !== 'available')
+    throw new OperationRefusal(
+      'OPTION_NOT_AVAILABLE',
+      `${label} was not sent: the select at ${operation.selector} has ${option.state === 'disabled' ? 'a disabled' : 'no'} option with the value "${operation.value}".`,
+      { operationIndex: index, path: configPath('value') },
+    )
+  return {
+    isSecret: false,
+    send: (hooks): Promise<void> =>
+      sendNativeValue(port, {
+        ...context,
+        kind: 'select',
+        value: operation.value,
+      })(hooks),
+  }
+}
+
+/**
+ * Prepares a `text` operation: the secret rules (chat text never goes into a secret control, an ask-learner secret only into a password input), then the control kind (text-like through the browser's insertion, number through the native setter, anything else refused).
+ * @param port - What the run lets the engine use.
+ * @param context - The resolved control.
+ * @param operation - The `text` operation.
+ * @returns The prepared operation.
+ * @throws {@link OperationRefusal} `SECRET_INPUT_FROM_CHAT`, `SECRET_INPUT_VISIBLE`, `CONTROL_KIND_NOT_SUPPORTED` or, without the learner's secret, `RUN_FAILED_UNEXPECTEDLY`; nothing was sent.
+ * @example const prepared = await prepareTextOperation(port, context, operation)
+ */
+function prepareTextOperation(
+  port: OperationPort,
+  context: ControlOperationContext,
+  operation: Extract<RepositoryOperation, { kind: 'text' }>,
+): Omit<PreparedOperation, 'discard'> {
+  const { description, index, configPath } = context
+  const isAskLearner = operation.secret === ASK_LEARNER_SECRET
   const text = isAskLearner ? context.learnerSecret : operation.text
+  assertTextMaySendSecret(context, operation, isAskLearner)
   if (text === undefined)
     throw new OperationRefusal(
       'RUN_FAILED_UNEXPECTEDLY',
-      `${label} was not sent: the learner's secret was not supplied.`,
+      `Operation ${index} (${operation.title}) was not sent: the learner's secret was not supplied.`,
       { operationIndex: index, path: configPath('secret') },
     )
   const isNumber =
@@ -554,29 +596,56 @@ async function prepareControlOperation(
     (description.tagName === 'input' &&
       TEXT_LIKE_INPUT_TYPES.has(description.type ?? ''))
   if (!isNumber && !isTextLike) {
-    const kind = description.type ?? ''
     const advice =
       description.tagName === 'select'
         ? 'Use a choose operation.'
-        : (UNSUPPORTED_ADVICE[kind] ?? '')
+        : (UNSUPPORTED_ADVICE[description.type ?? ''] ?? '')
     throw new OperationRefusal(
       'CONTROL_KIND_NOT_SUPPORTED',
-      `${label} was not sent: text cannot be typed into ${controlKindName(description)} at ${operation.selector}. ${advice}`.trim(),
+      `Operation ${index} (${operation.title}) was not sent: text cannot be typed into ${controlKindName(description)} at ${operation.selector}. ${advice}`.trim(),
       { operationIndex: index, path: configPath('selector') },
     )
   }
-  if (isNumber)
-    return {
-      isSecret: isAskLearner,
-      send: (hooks): Promise<void> =>
-        sendNativeValue(port, { ...context, kind: 'number', value: text })(
-          hooks,
-        ),
-    }
   return {
     isSecret: isAskLearner,
-    send: (hooks): Promise<void> => sendTextLike(port, context, text, hooks),
+    send: (hooks): Promise<void> =>
+      isNumber
+        ? sendNativeValue(port, { ...context, kind: 'number', value: text })(
+            hooks,
+          )
+        : sendTextLike(port, context, text, hooks),
   }
+}
+
+/**
+ * Refuses a `text` operation whose text would travel the wrong way: chat text into a control that reads as secret, or an ask-learner secret into a control the browser would draw in plain text.
+ * @param context - The resolved control.
+ * @param operation - The `text` operation.
+ * @param isAskLearner - Whether the operation declares `secret: "ask-learner"`.
+ * @throws {@link OperationRefusal} `SECRET_INPUT_FROM_CHAT` or `SECRET_INPUT_VISIBLE`.
+ * @example assertTextMaySendSecret(context, operation, false)
+ */
+function assertTextMaySendSecret(
+  context: ControlOperationContext,
+  operation: Extract<RepositoryOperation, { kind: 'text' }>,
+  isAskLearner: boolean,
+): void {
+  const { description, index, configPath } = context
+  const label = `Operation ${index} (${operation.title})`
+  const secretReason = classifySecretControl(fingerprintOf(description))
+  if (!isAskLearner && secretReason)
+    throw new OperationRefusal(
+      'SECRET_INPUT_FROM_CHAT',
+      `${label} was not sent: ${operation.selector} reads as a secret control (${secretReason}). A secret never comes from the chat; declare secret: "ask-learner" instead of text, and the learner types it in the editor.`,
+      { operationIndex: index, path: configPath('text') },
+    )
+  // The learner's secret must go into a control the browser draws as dots.
+  if (isAskLearner && description.type !== 'password')
+    throw new OperationRefusal(
+      'SECRET_INPUT_VISIBLE',
+      `${label} was not sent: secret: "ask-learner" needs an <input type="password">, and ${operation.selector} is ${controlKindName(description)}, which the browser would draw in plain text in recorded frames.`,
+      { operationIndex: index, path: configPath('secret') },
+    )
 }
 
 /**
@@ -611,7 +680,7 @@ async function describeControl(
  * @returns The element when exactly one matches on an owned origin; otherwise nothing.
  * @example selectControl('#amount', ['http://localhost:3000'])
  */
-export function selectControl(selector: string, origins: readonly string[]) {
+function selectControl(selector: string, origins: readonly string[]) {
   if (!origins.includes(location.origin)) return undefined
   let matches: NodeListOf<Element>
   try {
