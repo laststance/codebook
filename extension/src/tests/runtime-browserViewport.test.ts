@@ -2927,6 +2927,29 @@ test('after a document replacement a late frame from the old document is withhel
   harness.viewport.close()
 })
 
+// protects=frames still waiting for the secret check when the run stops are declared a gap before the recording closes, so it seals partial instead of reading complete; fails_when=close() shuts the observer first and the late verdicts are discarded without a gap; no_claim=a real browser or the recording writer (the observer is a recording of calls; a fake page answers late)
+test('closing the viewport while frames wait for the secret check declares a gap before the recording closes', async () => {
+  // Arrange
+  const calls: string[] = []
+  const replaced = { value: false }
+  const gate = gateOverPage(200, replaced)
+  await gate.arm('#password', 'typed-secret')
+  const { harness, sendFrame } = await attachedStreamViewport({
+    elapsedMs: () => 10,
+    frame: () => calls.push('frame'),
+    closed: () => calls.push('closed'),
+    gap: () => calls.push('gap'),
+  })
+  harness.viewport.setSecretFrameGate(gate)
+  sendFrame(Date.now() / 1000)
+  await delay(20)
+  // Act
+  harness.viewport.close()
+  await delay(600)
+  // Assert
+  assert.deepEqual(calls, ['gap', 'closed'])
+})
+
 // protects=a stop capture and the stream frames reach the recorder in the order they arrived, so the receipt clock never moves backwards; fails_when=a capture skips the frames waiting on the gate; no_claim=real screencast timing
 test('with a gate, a capture that arrives after a stream frame is recorded after it', async () => {
   // Arrange

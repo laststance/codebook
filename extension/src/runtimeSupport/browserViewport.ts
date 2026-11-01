@@ -188,6 +188,8 @@ export class BrowserViewport {
   private secretFrameGate?: SecretFrameGate
   /** The chain of images waiting on the secret frame gate; absent until the gate was used. */
   private imageQueue?: Promise<void>
+  /** How many images are queued for the gate's verdict and not yet stored or declared a gap. */
+  private imagesAwaitingVerdict = 0
   private observerClosed = false
   private summaryAt = 0
   private readonly liveCounts = new Map<string, number>()
@@ -1158,9 +1160,11 @@ export class BrowserViewport {
     store: () => void,
     elapsedMs: number,
   ): Promise<'pass' | 'drop'> {
+    this.imagesAwaitingVerdict += 1
     const verdict = (this.imageQueue ?? Promise.resolve()).then(
       async (): Promise<'pass' | 'drop'> => {
         const answer = await admit().catch((): 'drop' => 'drop')
+        this.imagesAwaitingVerdict -= 1
         if (this.closed) return answer
         if (answer === 'pass') store()
         // A withheld image leaves the recording a declared missing interval, not a silent repeat of the previous frame.
@@ -1196,6 +1200,15 @@ export class BrowserViewport {
   /** Retires capture once without coupling asynchronous disk finalization to viewport ownership. @example this.closeObserver(true) */
   private closeObserver(expected: boolean): void {
     if (this.observerClosed) return
+    // Images still waiting for the gate cannot be stored once the observer is closed: their time is declared a gap, so the recording reads partial instead of complete.
+    if (this.imagesAwaitingVerdict > 0)
+      this.observe(() =>
+        this.observer!.gap?.({
+          elapsedMs: this.observer!.elapsedMs(),
+          reason:
+            'Images still waiting for the secret check when the run stopped were not stored.',
+        }),
+      )
     this.observe(() =>
       this.observer!.closed({
         elapsedMs: this.observer!.elapsedMs(),

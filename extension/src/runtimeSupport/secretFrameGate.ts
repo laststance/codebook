@@ -283,6 +283,8 @@ export class SecretFrameGate {
   private firstUnsafeMs?: number
   private intervals: [number, number][] = []
   private lastAnswerMs = 0
+  /** When a secret too short to tell from ordinary page text was sent (host clock); no image from then on can be verified, so every one is dropped. */
+  private unverifiableSinceMs?: number
   /** When the observer was last installed (host clock), where an observer that never answered started to vouch for the page. */
   private armedAtMs = 0
   /** Times between the last verified-safe answer of an observer and the release that followed its document's replacement; no image from them is verified. */
@@ -332,6 +334,13 @@ export class SecretFrameGate {
       )
     )
       return
+    // A value shorter than the copy minimum cannot be told from page text: its copies are never checked, so no later image is claimed safe.
+    if (
+      secretValue !== undefined &&
+      secretValue !== '' &&
+      secretValue.length < SECRET_FRAME_VALUE_COPY_MIN_CHARS
+    )
+      this.unverifiableSinceMs ??= Date.now()
     // Each observer keeps its own record: a later arm never overwrites an earlier control's.
     this.observersInstalled += 1
     const entry = {
@@ -398,6 +407,15 @@ export class SecretFrameGate {
     toMs: number,
     kind: 'frame' | 'capture',
   ): Promise<'pass' | 'drop'> {
+    // A short secret was sent: Codebook cannot verify any later image, so it is an unrecorded gap; the run itself goes on.
+    if (
+      this.unverifiableSinceMs !== undefined &&
+      toMs >= this.unverifiableSinceMs
+    ) {
+      this.options.onDrop?.({ kind, atMs: toMs })
+      this.count('drops')
+      return 'drop'
+    }
     // Unarmed: nothing secret was sent, every image passes as before, except those of a gap left by a document replacement.
     if (!this.armed) return this.admitUnarmed(fromMs, toMs, kind)
     // A verification must answer after the capture; one answered earlier is not reused. One that was already on the wire when the image arrived answers an earlier time, so the image asks for the next one.

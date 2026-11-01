@@ -123,6 +123,39 @@ test('frames between the last verified answer and a document replacement are dro
   )
 })
 
+// protects=a secret too short to tell from page text drops every later image as an unrecorded gap and leaves the run alive, while a longer one keeps today's passing frames; fails_when=frames after a 1-3 character secret pass although its copies are never checked, or the run fails; no_claim=a real page (the evaluate function answers as a healthy page)
+test('a 3-character secret drops frames from its send onward without failing the run, a 6-character one keeps passing', async () => {
+  // Arrange
+  const healthyPage = async (expression: string) => {
+    if (expression === 'performance.timeOrigin') return 1
+    if (expression.includes('query()'))
+      return { now: Date.now(), open: null, unsafe: [] }
+    return { ok: true, origin: 1 }
+  }
+  const failures: SecretFrameFailureReason[] = []
+  const shortGate = new SecretFrameGate({
+    evaluate: healthyPage,
+    onFailure: (reason) => void failures.push(reason),
+  })
+  const longGate = new SecretFrameGate({ evaluate: healthyPage })
+  const beforeSend = Date.now() - 1_000
+  // Act
+  const beforeShort = await shortGate.admitFrame(beforeSend)
+  await shortGate.arm('#pw', 'ab1')
+  await delay(10)
+  const afterShort = await shortGate.admitFrame(Date.now())
+  const laterShort = await shortGate.admitFrame(Date.now())
+  await longGate.arm('#pw', 'ab1cd2')
+  await delay(10)
+  const afterLong = await longGate.admitFrame(Date.now())
+  // Assert
+  assert.deepEqual(
+    [beforeShort, afterShort, laterShort, afterLong, failures],
+    ['pass', 'drop', 'drop', 'pass', []],
+  )
+  assert.equal(shortGate.failure, undefined)
+})
+
 // protects=a safe password control lets its frames pass; fails_when=a verification of a safe control drops frames; no_claim=pixels, the gate does not read them
 test('frames of a control that stays a password control pass', async (context) => {
   // Arrange
