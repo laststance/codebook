@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
-import {
+import fsPromises, {
   chmod,
   lstat,
   mkdir,
@@ -9,6 +9,7 @@ import {
   readdir,
   readFile,
   realpath,
+  rename,
   rm,
   stat,
   symlink,
@@ -91,7 +92,7 @@ function runRequest(
   return {
     repositoryRoot,
     runId,
-    session: 'saved-if-available',
+    mode: 'saved-if-available',
     chromeVersion,
     signal: new AbortController().signal,
   }
@@ -424,7 +425,7 @@ test('a run start while a setup is open in another window is refused with SIGN_I
   // Act
   const saved = await rejection(runWindow.acquireForRun(runRequest(repository)))
   const fresh = await rejection(
-    runWindow.acquireForRun({ ...runRequest(repository), session: 'fresh' }),
+    runWindow.acquireForRun({ ...runRequest(repository), mode: 'fresh' }),
   )
 
   // Assert
@@ -472,6 +473,80 @@ test('a setup closed without Done makes a run answer setup-not-finished and keep
   )
 })
 
+// Value: protects=outside voice 2 (a new setup withdraws the earlier Done before its browser can change the profile); fails_when=a setup of a saved session that ends by an editor crash (or by a final record write that fails) leaves the earlier confirmed: true, so a later run uses a profile the learner never approved with Done; no_claim=a real Chrome changing accounts
+test('a new setup withdraws the earlier Done before its browser opens, so a setup the editor never finished answers setup-not-finished', async (context) => {
+  // Arrange
+  const { storage, repository, hash } = await workspace(context)
+  const setupWindow = storeOf(storage, 'window-a')
+  await finishSetup(setupWindow, repository)
+  const record = join(storage, 'sign-in-profiles', hash, 'signin.json')
+
+  // Act
+  const lease = await setupWindow.acquireForSetup(repository)
+  const onDiskAtSetupStart: unknown = JSON.parse(await readFile(record, 'utf8'))
+  await lease.recordBrowser({
+    executable: '/opt/chrome/chrome',
+    pid: ID_OF_NO_PROCESS,
+  })
+  // The editor is killed while the setup browser is open: its lock now names a gone process.
+  await writeDeadLock(storage, hash, 'setup')
+  const runWindow = storeOf(storage, 'window-b')
+  const status = await runWindow.describe(repository)
+  const admission = await runWindow.acquireForRun(runRequest(repository))
+
+  // Assert
+  assert.deepEqual(onDiskAtSetupStart, {
+    version: 1,
+    confirmed: false,
+    setupAt: '2026-11-02T12:10:00.000Z',
+    signInPaths: ['/login'],
+    chromeMajor: 154,
+    repositoryRoot: repository,
+    appCookies: 'persistent',
+  })
+  assert.deepEqual(status, {
+    available: false,
+    state: 'unconfirmed',
+    setupAt: '2026-11-02T12:10:00.000Z',
+  })
+  assert.deepEqual(admission, {
+    session: 'fresh',
+    signInRequiredReason: 'setup-not-finished',
+  })
+})
+
+// Value: protects=the README's "Close setup while the app is still starting … leaves the saved session as it was" beside the withdrawn Done; fails_when=a setup that ends before its browser was launched (a cancel while the app starts, a server that fails) loses the earlier Done, or one whose browser was launched gets it back without a new Done; no_claim=the setup state machine's own endings (savedSessionSetup tests)
+test('a setup released before its browser opened gives the earlier Done back, and one whose browser opened does not', async (context) => {
+  // Arrange
+  const { storage, repository } = await workspace(context)
+  const store = storeOf(storage, 'window-a')
+  await finishSetup(store, repository)
+
+  // Act
+  const cancelledBeforeBrowser = await store.acquireForSetup(repository)
+  await cancelledBeforeBrowser.release()
+  const afterCancel = await store.describe(repository)
+  const failedAfterBrowser = await store.acquireForSetup(repository)
+  await failedAfterBrowser.recordBrowser({
+    executable: '/opt/chrome/chrome',
+    pid: ID_OF_NO_PROCESS,
+  })
+  await failedAfterBrowser.release()
+  const afterBrowser = await store.describe(repository)
+
+  // Assert
+  assert.deepEqual(afterCancel, {
+    available: true,
+    state: 'saved',
+    setupAt: '2026-11-02T12:10:00.000Z',
+  })
+  assert.deepEqual(afterBrowser, {
+    available: false,
+    state: 'unconfirmed',
+    setupAt: '2026-11-02T12:10:00.000Z',
+  })
+})
+
 // Value: protects=DES-3 and the help's no-saved-session for a declared fresh profile (OCR 3); fails_when=a run that declared session: "fresh" is answered setup-not-finished because the last setup was closed without Done, so its SIGN_IN_REQUIRED names a recovery that cannot help it, or the run takes the lock; no_claim=lane B's refusal text
 test('a run that declares a fresh profile answers no-saved-session even after a setup was closed without Done', async (context) => {
   // Arrange
@@ -482,7 +557,7 @@ test('a run that declares a fresh profile answers no-saved-session even after a 
   // Act
   const admission = await store.acquireForRun({
     ...runRequest(repository),
-    session: 'fresh',
+    mode: 'fresh',
   })
 
   // Assert
@@ -816,6 +891,89 @@ test('prepareForLaunch refuses when a process names the folder after the admissi
   assert.equal(await exists(join(folder, 'SingletonLock')), true)
 })
 
+/** Says what a rejected promise rejected with, whatever it is. */
+async function anyRejection(promise: Promise<unknown>): Promise<unknown> {
+  return promise.then(
+    () => assert.fail('expected a rejection'),
+    (reason: unknown) => reason,
+  )
+}
+
+// Value: protects=red team A1 (path exposure) and the no-path contract of the chat error and run.failed; fails_when=a file-system failure while a run or a setup takes the saved session (here Default/Preferences cannot be made) rejects with words that name the saved folder or its hash; no_claim=lane B's own hiding after the admission
+test('a run or a setup that fails on the saved folder names neither the folder nor its hash, and keeps the system error code', async (context) => {
+  // Arrange
+  const { storage, repository, hash } = await workspace(context)
+  await finishSetup(storeOf(storage, 'window-a'), repository)
+  const folder = join(storage, 'sign-in-profiles', hash)
+  await rm(join(folder, 'Default'), { recursive: true, force: true })
+  await writeFile(join(folder, 'Default'), 'a file where Chrome needs a folder')
+  const store = storeOf(storage, 'window-b')
+
+  // Act
+  const runFailure = await anyRejection(
+    store.acquireForRun(runRequest(repository)),
+  )
+  const setupFailure = await anyRejection(store.acquireForSetup(repository))
+
+  // Assert
+  for (const failure of [runFailure, setupFailure]) {
+    const words = failure instanceof Error ? failure.message : String(failure)
+    assert.equal(words.includes(hash), false)
+    assert.equal(words.includes(storage), false)
+    assert.equal(words.includes('<saved-session>'), true)
+    assert.equal(systemErrorCode(failure), 'EEXIST')
+  }
+  assert.equal(
+    await exists(join(storage, 'sign-in-profiles', `${hash}.signin.lock`)),
+    false,
+  )
+})
+
+// Value: protects=native finding 9 and CodeRabbit's fresh-release note; fails_when=a lock that cannot be removed for a moment after a fresh admission fails the fresh run with an uncoded system error, or the hold it keeps is never released again in this window; no_claim=a real EBUSY from a virus scanner
+test('a fresh admission whose lock cannot be removed still runs fresh, and the next run of the window frees the lock', async (context) => {
+  // Arrange
+  const { storage, repository, hash } = await workspace(context)
+  const store = storeOf(storage, 'window-a')
+  await finishSetup(store, repository, { confirmed: false })
+  const lockPath = join(storage, 'sign-in-profiles', `${hash}.signin.lock`)
+  const unlink = fsPromises.unlink.bind(fsPromises)
+  let refusals = 1
+  context.mock.method(
+    fsPromises,
+    'unlink',
+    async (path: Parameters<typeof unlink>[0]) => {
+      // The lock refuses its first removal, as a scanner holding it would.
+      if (String(path) === lockPath && refusals > 0) {
+        refusals -= 1
+        throw Object.assign(new Error('EBUSY: resource busy or locked'), {
+          code: 'EBUSY',
+        })
+      }
+      return unlink(path)
+    },
+  )
+
+  // Act
+  const first = await store
+    .acquireForRun(runRequest(repository))
+    .catch((error: unknown) => systemErrorCode(error))
+  const whileBusy = await holdState(store, hash)
+  const second = await store.acquireForRun(runRequest(repository, 'run-2'))
+
+  // Assert
+  assert.deepEqual(first, {
+    session: 'fresh',
+    signInRequiredReason: 'setup-not-finished',
+  })
+  assert.equal(whileBusy, 'held')
+  assert.deepEqual(second, {
+    session: 'fresh',
+    signInRequiredReason: 'setup-not-finished',
+  })
+  assert.equal(await holdState(store, hash), 'released')
+  assert.equal(await exists(lockPath), false)
+})
+
 /** Prepares a stale-holder scene: a saved session whose editor was killed, and a live stand-in Chrome in its folder with the given marker. */
 async function orphanScene(
   context: TestContext,
@@ -890,34 +1048,70 @@ test('a Chrome whose start differs from the marker, or a marker without a start,
   }
 })
 
-// Value: protects=Codex correction 2; fails_when=a live Chrome is stopped although the lock was not left by a killed editor; no_claim=lane B's close
-test('a live Chrome beside a lock that was not stale is never stopped', async (context) => {
+// Value: protects=red team A1 (orphan recovery is not one-shot) and CEO-R5; fails_when=the orphan Chrome of a killed editor is stopped only by the call that removed its dead lock, so after one failed recovery (here a process listing that failed) every later run, setup and removal stays refused with no way out; no_claim=the start proof itself (covered above), Chrome's helper tree
+test('an orphan Chrome that one recovery failed to stop is stopped by the next run, on the marker proof alone', async (context) => {
   // Arrange
-  const { storage, repository, hash } = await workspace(context)
-  await finishSetup(storeOf(storage, 'window-a'), repository)
-  const folder = join(storage, 'sign-in-profiles', hash)
-  const browser = await startBrowser(context, folder)
-  await writeFile(
-    join(folder, 'codebook-owned-browser'),
-    JSON.stringify({
+  const { storage, repository, browser } = await orphanScene(
+    context,
+    async (child) => ({
       executable: process.execPath,
-      pid: browser.pid,
-      processStart: await readProcessStart(browser.pid ?? 0),
+      pid: child.pid,
+      processStart: await readProcessStart(child.pid ?? 0),
+      launchKind: 'attached',
     }),
   )
-  const recorded = silentStopper()
-  const store = new SavedSessionStore({
-    globalStorage: storage,
-    windowSession: 'window-b',
-    stopper: recorded.stopper,
+  const failedListing = storeOf(storage, 'window-b', {
+    listProcesses: async () => {
+      throw new Error('ps timed out')
+    },
   })
+  const firstRefusal = await rejection(
+    failedListing.acquireForRun(runRequest(repository)),
+  )
+  const exited = once(browser, 'exit')
 
   // Act
-  const refusal = await rejection(store.acquireForRun(runRequest(repository)))
+  const admission = await new SavedSessionStore({
+    globalStorage: storage,
+    windowSession: 'window-c',
+  }).acquireForRun(runRequest(repository, 'run-2'))
+  await exited
 
   // Assert
-  assert.equal(refusal.code, 'SIGN_IN_PROFILE_IN_USE')
-  assert.deepEqual(recorded.sent, [])
+  assert.equal(firstRefusal.code, 'SIGN_IN_PROFILE_IN_USE')
+  assert.equal(admission.session, 'saved')
+  assert.equal(browser.signalCode, 'SIGTERM')
+})
+
+// Value: protects=red team A2 (the marker is written atomically); fails_when=a run's browser marker is written in place, so a link at its name leads the write into a file outside the saved session (and an editor that dies mid-write leaves a truncated marker that proves no orphan); no_claim=power loss on a real disk
+test("a run's browser marker replaces a link at its name and never writes through it", async (context) => {
+  // Arrange
+  const { storage, repository, hash } = await workspace(context)
+  const store = storeOf(storage, 'window-a')
+  await finishSetup(store, repository)
+  const folder = join(storage, 'sign-in-profiles', hash)
+  const decoy = join(storage, 'decoy-marker.txt')
+  await writeFile(decoy, 'keep')
+  const admission = await store.acquireForRun(runRequest(repository))
+  assert.equal(admission.session, 'saved')
+  await symlink(decoy, join(folder, 'codebook-owned-browser'))
+
+  // Act
+  if (admission.session === 'saved')
+    await admission.lease.recordBrowser({
+      executable: '/opt/chrome/chrome',
+      pid: ID_OF_NO_PROCESS,
+    })
+
+  // Assert
+  assert.equal(await readFile(decoy, 'utf8'), 'keep')
+  const marker = join(folder, 'codebook-owned-browser')
+  assert.equal((await lstat(marker)).isFile(), true)
+  assert.deepEqual(JSON.parse(await readFile(marker, 'utf8')), {
+    executable: '/opt/chrome/chrome',
+    pid: ID_OF_NO_PROCESS,
+    launchKind: 'attached',
+  })
 })
 
 // Value: protects=CEO-R5; fails_when=Singleton files or a lock left by a killed Chrome block the next run; no_claim=lane B's failure handling
@@ -966,6 +1160,28 @@ test('a run on an older Chrome than the setup is refused with chrome-version, a 
   assert.equal(newer.session, 'saved')
   const read = await readSignInRecord(join(storage, 'sign-in-profiles', hash))
   assert.equal(read.kind === 'record' ? read.record.chromeMajor : 0, 155)
+})
+
+// Value: protects=D12 through a setup (native finding 1); fails_when=a setup on an older Chrome lowers the recorded major, so a run on that older Chrome opens a profile a newer Chrome migrated; no_claim=what Chrome does with such a profile
+test('a setup on an older Chrome keeps the newer recorded major, so a run on that older Chrome stays refused', async (context) => {
+  // Arrange
+  const { storage, repository, hash } = await workspace(context)
+  const store = storeOf(storage, 'window-a')
+  await finishSetup(store, repository, { chromeMajor: 155 })
+
+  // Act
+  await finishSetup(store, repository, { chromeMajor: 154 })
+  const refusal = await rejection(
+    store.acquireForRun(
+      runRequest(repository, 'run-1', 'Google Chrome 154.0.1.2'),
+    ),
+  )
+
+  // Assert
+  const read = await readSignInRecord(join(storage, 'sign-in-profiles', hash))
+  assert.equal(read.kind === 'record' ? read.record.chromeMajor : 0, 155)
+  assert.equal(refusal.code, 'SIGN_IN_PROFILE_UNUSABLE')
+  assert.equal(refusal.details?.reason, 'chrome-version')
 })
 
 // Value: protects=signin.json forward compatibility (OCR 42); fails_when=an accepted newer Chrome rewrites signin.json without the keys a later Codebook added under version 1; no_claim=a real later build
@@ -1143,8 +1359,8 @@ test('removal deletes the saved session directly and leaves no folder and no loc
   assert.equal(entry.hash, hash)
 })
 
-// Value: protects=ENG-15 path proof; fails_when=a link's target, a misnamed folder or a folder whose record names another repository loses a file; no_claim=Windows junctions
-test('removal refuses a link, a misnamed folder and a folder whose record names another repository, and deletes nothing', async (context) => {
+// Value: protects=ENG-15 path proof; fails_when=a link's target or a misnamed folder loses a file; no_claim=Windows junctions
+test('removal refuses a link and a misnamed folder, and deletes nothing', async (context) => {
   // Arrange
   const { storage, repository, hash } = await workspace(context)
   const store = storeOf(storage, 'window-a')
@@ -1157,16 +1373,10 @@ test('removal refuses a link, a misnamed folder and a folder whose record names 
   await symlink(decoy, join(root, linkHash))
   await mkdir(join(root, 'abc'))
   await finishSetup(store, repository)
-  const wrongRecordHash = 'b'.repeat(64)
-  await mkdir(join(root, wrongRecordHash))
-  await writeFile(
-    join(root, wrongRecordHash, 'signin.json'),
-    await readFile(join(root, hash, 'signin.json'), 'utf8'),
-  )
 
   // Act
   const outcomes = await Promise.all(
-    [linkHash, 'abc', wrongRecordHash].map((name) =>
+    [linkHash, 'abc'].map((name) =>
       store.remove({ hash: name, repositoryName: 'x' }),
     ),
   )
@@ -1174,11 +1384,117 @@ test('removal refuses a link, a misnamed folder and a folder whose record names 
   // Assert
   assert.deepEqual(
     outcomes.map(({ outcome }) => outcome),
-    ['refused-path', 'refused-path', 'refused-path'],
+    ['refused-path', 'refused-path'],
   )
   assert.equal(await readFile(join(decoy, 'keep.txt'), 'utf8'), 'keep')
   assert.equal(await exists(join(root, 'abc')), true)
   assert.equal(await exists(join(root, hash, 'signin.json')), true)
+})
+
+// Value: protects=native finding 4 (a record of another repository is no dead end) and the SIGN_IN_PROFILE_UNUSABLE recovery (Remove, then set up again); fails_when=a folder whose signin.json names another repository is used by a run of this one, reads saved, or is refused by every removal so the learner cannot get out of it; no_claim=how such a record came to be (a copy or a hand edit)
+test('a saved session whose record names another repository reads unusable, refuses the run, and removal deletes it', async (context) => {
+  // Arrange
+  const { storage, repository, hash } = await workspace(context)
+  const store = storeOf(storage, 'window-a')
+  await finishSetup(store, repository)
+  await writeFile(
+    join(storage, 'sign-in-profiles', hash, 'signin.json'),
+    JSON.stringify({
+      version: 1,
+      confirmed: true,
+      setupAt: '2026-11-02T12:10:00.000Z',
+      signInPaths: ['/login'],
+      chromeMajor: 154,
+      repositoryRoot: join(storage, 'another-repository'),
+      appCookies: 'persistent',
+    }),
+  )
+
+  // Act
+  const status = await store.describe(repository)
+  const refusal = await rejection(store.acquireForRun(runRequest(repository)))
+  const [entry] = await store.list(repository)
+  const removal = entry ? await store.remove(entry) : undefined
+
+  // Assert
+  assert.deepEqual(status, { available: false, state: 'unusable' })
+  assert.equal(refusal.code, 'SIGN_IN_PROFILE_UNUSABLE')
+  assert.equal(refusal.details?.reason, 'not-a-session-folder')
+  assert.deepEqual(entry, {
+    hash,
+    repositoryName: 'unknown repository',
+    state: 'unusable',
+    isCurrent: true,
+  })
+  assert.deepEqual(removal, { outcome: 'removed' })
+  assert.deepEqual(await readdir(join(storage, 'sign-in-profiles')), [])
+})
+
+// Value: protects=native finding 6 (the name is proven before anything is read); fails_when=a removal asked for an entry whose name is no session hash reads a record outside the sessions folder before it refuses; no_claim=what such a read could reveal
+test('a removal of a name that is no session hash looks at nothing outside the sessions folder', async (context) => {
+  // Arrange
+  const { storage, repository } = await workspace(context)
+  const store = storeOf(storage, 'window-a')
+  await finishSetup(store, repository)
+  const outside = join(storage, 'outside-the-store')
+  await mkdir(outside)
+  await writeFile(join(outside, 'signin.json'), '{}')
+  const looked: string[] = []
+  for (const method of ['open', 'lstat'] as const) {
+    const original = fsPromises[method].bind(fsPromises)
+    context.mock.method(
+      fsPromises,
+      method,
+      (path: Parameters<typeof original>[0], ...rest: unknown[]) => {
+        looked.push(String(path))
+        return Reflect.apply(original, fsPromises, [path, ...rest])
+      },
+    )
+  }
+
+  // Act
+  const outcome = await store.remove({
+    hash: '../outside-the-store',
+    repositoryName: 'x',
+  })
+
+  // Assert
+  assert.equal(outcome.outcome, 'refused-path')
+  assert.deepEqual(
+    looked.filter((path) => path.includes('outside-the-store')),
+    [],
+  )
+})
+
+// Value: protects=native finding 5 (no deletion by path through a swapped folder); fails_when=a session folder swapped for a link after the removal's proof (while it lists the processes) leads the record's deletion into the link's target, or the removal reports removed; no_claim=a swap between the last proof and the unlink (the same limit as the no-follow walk)
+test('a session folder swapped for a link during the removal deletes nothing behind the link', async (context) => {
+  // Arrange
+  const { storage, repository, hash } = await workspace(context)
+  const folder = join(storage, 'sign-in-profiles', hash)
+  const decoy = join(storage, 'decoy-folder')
+  await mkdir(decoy)
+  await writeFile(join(decoy, 'signin.json'), 'keep')
+  let didSwap = false
+  const remover = storeOf(storage, 'window-a', {
+    listProcesses: async () => {
+      // The folder is moved away and a link to the decoy takes its name, after the proof under the lock.
+      if (!didSwap) {
+        didSwap = true
+        await rename(folder, join(storage, 'moved-session'))
+        await symlink(decoy, folder)
+      }
+      return []
+    },
+  })
+  await finishSetup(storeOf(storage, 'window-b'), repository)
+
+  // Act
+  const outcome = await remover.remove({ hash, repositoryName: 'repo-app' })
+
+  // Assert
+  assert.equal(outcome.outcome, 'refused-path')
+  assert.equal(await readFile(join(decoy, 'signin.json'), 'utf8'), 'keep')
+  assert.equal((await lstat(folder)).isSymbolicLink(), true)
 })
 
 // Value: protects=DX-10 Stop run and remove (store part); fails_when=removal deletes under a live run, never names that run, or never proceeds after the release; no_claim=the UI modal

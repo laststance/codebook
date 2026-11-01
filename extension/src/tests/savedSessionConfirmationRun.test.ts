@@ -89,7 +89,7 @@ async function savedSessionRun(context: TestContext) {
   const receipt = service.start({
     instanceId: service.instanceId,
     profile: 'repository-browser',
-    key: 'saved-session-run',
+    key: 'run-1',
     configuration: harness.definition.configuration,
   })
   await service.record(receipt).preparation

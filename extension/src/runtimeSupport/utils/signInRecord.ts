@@ -1,5 +1,5 @@
 import { lstat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 
 import { z } from 'zod'
 
@@ -13,6 +13,8 @@ import { atomicPrivateWrite } from '../../utils/atomicPrivateWrite'
 import { readWikiRegularFile } from '../../utils/readWikiRegularFile'
 import type { SavedSessionUnusableReason } from '../savedSessionTypes'
 
+import { sha256 } from './sha256'
+
 /** The shape of `signin.json` (version 1): what the last setup of a saved session recorded. Unknown keys are kept through a read and a rewrite, so that a later build may add some under this version and an older build's accepted Chrome upgrade does not drop them. */
 const signInRecordSchema = z.looseObject({
   version: z.literal(SIGN_IN_RECORD_VERSION),
@@ -23,7 +25,7 @@ const signInRecordSchema = z.looseObject({
   signInPaths: z.array(signInPathSchema).min(1).max(4),
   /** The Chrome major version that set the session up (D12: a lower major later is refused). */
   chromeMajor: z.number().int().positive(),
-  /** The repository's real path; removal's path proof and the session list read it. */
+  /** The repository's real path; the session list names it, and {@link readSignInRecord} refuses a record whose path does not hash to its folder's name. */
   repositoryRoot: z.string().min(1),
   appCookies: z.enum(['persistent', 'session-only', 'none', 'unknown']),
 })
@@ -39,14 +41,14 @@ export type SignInRecordRead =
       kind: 'unusable'
       reason: Extract<
         SavedSessionUnusableReason,
-        'unreadable-record' | 'newer-record'
+        'unreadable-record' | 'newer-record' | 'not-a-session-folder'
       >
     }
 
 /**
- * Reads `signin.json` of a saved-session folder without following links, within {@link SIGN_IN_RECORD_LIMIT_BYTES}; called by the store for every status, admission and removal.
- * A file that is no regular file, too large, not JSON or not the schema is `unreadable-record`; a numeric `version` above the one this build writes is `newer-record`. Neither is ever rewritten or deleted here.
- * @param folder - The saved-session folder.
+ * Reads `signin.json` of a saved-session folder without following links, within {@link SIGN_IN_RECORD_LIMIT_BYTES}; called by the store for every status, admission and setup.
+ * A file that is no regular file, too large, not JSON or not the schema is `unreadable-record`; a numeric `version` above the one this build writes is `newer-record`; a record whose `repositoryRoot` does not hash to the folder's name (a folder copied from another repository, or edited by hand) is `not-a-session-folder`, so no run uses another repository's session. None is ever rewritten or deleted here; the removal deletes such a folder after its own path proof.
+ * @param folder - The saved-session folder, named by the sha256 of its repository's real path.
  * @returns The record, `absent` when no file stands there, or `unusable` with the reason.
  * @example
  * await readSignInRecord('/storage/sign-in-profiles/ab12…') // => { kind: 'absent' }
@@ -78,9 +80,11 @@ export async function readSignInRecord(
   if (typeof version === 'number' && version > SIGN_IN_RECORD_VERSION)
     return { kind: 'unusable', reason: 'newer-record' }
   const result = signInRecordSchema.safeParse(parsed)
-  return result.success
-    ? { kind: 'record', record: result.data }
-    : { kind: 'unusable', reason: 'unreadable-record' }
+  if (!result.success) return { kind: 'unusable', reason: 'unreadable-record' }
+  // A record of another repository's session is not this folder's.
+  if (sha256(result.data.repositoryRoot) !== basename(folder))
+    return { kind: 'unusable', reason: 'not-a-session-folder' }
+  return { kind: 'record', record: result.data }
 }
 
 /** Says whether anything (a link or a special file included) stands at the path. */

@@ -22,11 +22,11 @@ export function savedSessionPortOf(
   if (!store) return undefined
   return {
     repositoryName: basename(repositoryRoot),
-    acquire: (runId, session, chromeVersion, signal) =>
+    acquire: (runId, mode, chromeVersion, signal) =>
       store.acquireForRun({
         repositoryRoot,
         runId,
-        session,
+        mode,
         chromeVersion,
         signal,
       }),

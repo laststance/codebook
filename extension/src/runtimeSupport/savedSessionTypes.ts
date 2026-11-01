@@ -35,13 +35,14 @@ export type SavedSessionUnusableReason =
 
 /**
  * What a version 3 run asks the store for at its start (once, before the development server starts).
- * `session` is `saved-if-available` unless the configuration declares `session: "fresh"`; `signal` ends the wait when the run stops.
+ * `mode` is `saved-if-available` unless the configuration declares `session: "fresh"`; `signal` ends the wait when the run stops.
  */
 export type SavedSessionRunRequest = {
   repositoryRoot: string
   /** The service's run id (`RuntimeControl.runId`), never the run object's own id. */
   runId: string
-  session: 'saved-if-available' | 'fresh'
+  /** How the run may use the saved session: `fresh` when its configuration declared `session: "fresh"`, which never uses it. */
+  mode: 'saved-if-available' | 'fresh'
   /** The version text of the run's Chrome; its major is compared with the recorded one by `chromeMajorOf`. */
   chromeVersion: string
   signal: AbortSignal
@@ -100,7 +101,7 @@ export interface SavedSessionRunPort {
   readonly repositoryName: string
   acquire(
     runId: string,
-    session: SavedSessionRunRequest['session'],
+    mode: SavedSessionRunRequest['mode'],
     chromeVersion: string,
     signal: AbortSignal,
   ): Promise<SavedSessionRunAdmission>

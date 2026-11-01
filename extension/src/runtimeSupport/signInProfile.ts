@@ -14,6 +14,7 @@ import {
   SIGN_IN_REMOVE_RETRY_DELAY_MS,
   OWNED_BROWSER_MARKER_FILE,
 } from '../constants'
+import { atomicPrivateBytes } from '../utils/atomicPrivateBytes'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
 import { isStaleStorageLock } from '../utils/isStaleStorageLock'
 import { passIfMissing } from '../utils/passIfMissing'
@@ -44,6 +45,8 @@ import type {
 } from './savedSessionTypes'
 import { chromeMajorOf } from './utils/chromeMajorOf'
 import { ensureSignInPreferences } from './utils/ensureSignInPreferences'
+import { errorWithPathHidden } from './utils/errorWithPathHidden'
+import { hideSavedProfilePath } from './utils/hideSavedProfilePath'
 import {
   listProcesses,
   type ListedProcess,
@@ -51,7 +54,6 @@ import {
 } from './utils/listProcesses'
 import {
   readOwnedBrowserMarker,
-  writeOwnedBrowserMarker,
   type OwnedBrowserMarker,
 } from './utils/ownedBrowserMarker'
 import { profileProcesses } from './utils/profileProcesses'
@@ -123,8 +125,6 @@ type HeldLock = {
   token: string
   /** The process start this hold wrote into the lock (absent while it could not be read); the release compares the lock with it, never with a later read. */
   processStart?: string
-  /** `true` when the lock was taken over from a holder that no longer exists. */
-  wasStale: boolean
 }
 
 /** The in-memory view of a hold by this window, for `whenReleased`. */
@@ -140,11 +140,13 @@ type WindowHold = {
  * Created once per window by the extension; the service reads {@link SavedSessionStore.describe} for `codebook_status`, a version 3 run calls {@link SavedSessionStore.acquireForRun}, and the setup and removal commands use {@link SavedSessionStore.acquireForSetup} and {@link SavedSessionStore.remove}. It prefers refusing (`SIGN_IN_PROFILE_IN_USE`) to any signal or deletion it cannot prove safe: a failed process listing, an unreadable lock or a Chrome without a matching start proof all refuse.
  * @example
  * const store = new SavedSessionStore({ globalStorage, windowSession: vscode.env.sessionId })
- * const admission = await store.acquireForRun({ repositoryRoot, runId, session: 'saved-if-available', chromeVersion, signal })
+ * const admission = await store.acquireForRun({ repositoryRoot, runId, mode: 'saved-if-available', chromeVersion, signal })
  */
 export class SavedSessionStore implements SavedSessionManagerPort {
   private readonly root: string
   private readonly holds = new Map<string, WindowHold>()
+  /** Holds whose lock a fresh admission could not remove; the next take of the same session tries that release again ({@link SavedSessionStore.retryUnreleased}). */
+  private readonly unreleased = new Map<string, HeldLock>()
   private readonly listeners = new Set<(hash: string) => void>()
 
   constructor(private readonly options: SavedSessionStoreOptions) {
@@ -337,6 +339,7 @@ export class SavedSessionStore implements SavedSessionManagerPort {
     purpose: SignInLockPurpose,
     runId?: string,
   ): Promise<{ held: HeldLock } | { conflict: SignInLockConflict }> {
+    await this.retryUnreleased(target)
     await mkdir(this.root, { recursive: true, mode: PRIVATE_DIRECTORY_MODE })
     await chmod(this.root, PRIVATE_DIRECTORY_MODE)
     const identity = await this.identity()
@@ -349,29 +352,21 @@ export class SavedSessionStore implements SavedSessionManagerPort {
       token: randomUUID(),
       createdAt: new Date((this.options.now ?? Date.now)()).toISOString(),
     }
-    let wasStale = false
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         await placeStorageLock(target.lockPath, record)
         return {
-          held: {
-            token: record.token,
-            processStart: record.processStart,
-            wasStale,
-          },
+          held: { token: record.token, processStart: record.processStart },
         }
       } catch (error) {
         if (systemErrorCode(error) !== 'EEXIST') throw error
         // A lock of a gone holder is removed under a claim, then the create is tried once more.
-        if (
-          attempt === 0 &&
-          (await removeStaleStorageLock(
+        if (attempt === 0)
+          await removeStaleStorageLock(
             target.lockPath,
             identity,
             this.readStart,
-          ))
-        )
-          wasStale = true
+          )
       }
     }
     return {
@@ -436,6 +431,19 @@ export class SavedSessionStore implements SavedSessionManagerPort {
     this.emit(target.hash)
   }
 
+  /**
+   * Tries again the release of a hold whose lock a fresh admission could not remove; called by {@link SavedSessionStore.takeLock} before every take, so a lock that was only busy for a moment never keeps refusing this window's next run, setup or removal.
+   * A release that fails again keeps the hold for the next take; the take then meets this window's own lock as a conflict.
+   */
+  private async retryUnreleased(target: SessionTarget): Promise<void> {
+    const held = this.unreleased.get(target.hash)
+    if (held === undefined) return
+    await this.releaseLock(target, held).then(
+      () => this.unreleased.delete(target.hash),
+      () => undefined,
+    )
+  }
+
   private emit(hash: string): void {
     for (const listener of this.listeners) listener(hash)
   }
@@ -470,12 +478,14 @@ export class SavedSessionStore implements SavedSessionManagerPort {
   }
 
   /**
-   * Proves nothing uses the folder, from a fresh listing. A listing that cannot be made proves nothing and refuses. A process that names the folder refuses, except the Chrome of a stale holder that the owned-browser marker proves (pid, executable, folder and the browser's own start) and that is stopped.
+   * Proves nothing uses the folder, from a fresh listing. A listing that cannot be made proves nothing and refuses. A process that names the folder refuses, except an orphan Chrome that the owned-browser marker proves (pid, executable, the exact folder and the browser's own start, with no stranger naming the folder) and that is stopped.
+   * Why an orphan may be stopped whenever the caller just took the lock: every holder releases its lock only after its Chrome's exit was confirmed, so a Chrome the marker proves while this call holds the lock was left by a holder that is gone (an editor that was killed, a recovery that failed to stop it before). The permission comes from that proof, not from whether this very call removed the dead holder's lock, so a recovery that failed once is tried again by the next run, setup or removal.
+   * @param mayStopOrphan - `true` when the caller took the lock right before (admission, setup, removal); `false` for a lease's launch preparation, which refuses any process instead.
    * @returns `true` only when no process names the folder at the end.
    */
   private async isUnused(
     target: SessionTarget,
-    wasStale: boolean,
+    mayStopOrphan: boolean,
   ): Promise<boolean> {
     try {
       const named = await profileProcesses(
@@ -487,7 +497,7 @@ export class SavedSessionStore implements SavedSessionManagerPort {
       )
       if (named.length === 0) return true
       const marker = await readOwnedBrowserMarker(target.folder)
-      if (!wasStale || marker === undefined) return false
+      if (!mayStopOrphan || marker === undefined) return false
       return await stopOrphanBrowser(
         target.folder,
         marker,
@@ -506,9 +516,9 @@ export class SavedSessionStore implements SavedSessionManagerPort {
   /** The fresh proof, then Singleton entries, a stale port file and the Preferences: what every launch on the folder needs. */
   private async prepareLaunch(
     target: SessionTarget,
-    wasStale: boolean,
+    mayStopOrphan: boolean,
   ): Promise<void> {
-    if (!(await this.isUnused(target, wasStale)))
+    if (!(await this.isUnused(target, mayStopOrphan)))
       throw savedSessionRefusal(
         { code: 'SIGN_IN_PROFILE_IN_USE' },
         target.repositoryName,
@@ -520,31 +530,72 @@ export class SavedSessionStore implements SavedSessionManagerPort {
     await ensureSignInPreferences(target.folder)
   }
 
+  /**
+   * Records the Chrome a lease launched, with its own start, in the folder's owned-browser marker: the proof by which a later run, setup or removal may stop it as an orphan.
+   * Published atomically ({@link atomicPrivateBytes}): an editor that dies mid-write leaves the earlier marker or the whole new one, never a truncated file that would leave the orphan unprovable, and a link at the marker's name is replaced, never written through.
+   */
   private async writeMarker(
     target: SessionTarget,
     marker: OwnedBrowserMarker & { pid: number },
   ): Promise<void> {
     const processStart = await this.readStart(marker.pid)
-    await writeOwnedBrowserMarker(target.folder, {
+    const recorded: OwnedBrowserMarker = {
       ...marker,
       ...(processStart !== undefined && { processStart }),
-    })
+    }
+    await atomicPrivateBytes(
+      join(target.folder, OWNED_BROWSER_MARKER_FILE),
+      JSON.stringify(recorded),
+    )
+  }
+
+  /**
+   * Runs a step of an admission, a setup or a removal and rethrows its failure without the saved-session folder: a file-system error names the folder (the user's home and the repository's hash), and the run turns it into the chat error and the `run.failed` record.
+   * Every spelling is hidden: the folder, the sessions folder, their real paths and the bare hash ({@link hideSavedProfilePath}); a coded refusal that names none stays the very error ({@link errorWithPathHidden}).
+   * @param target - The session whose folder is hidden.
+   * @param step - The step.
+   * @returns What the step returned.
+   * @throws The step's failure, its words without the folder.
+   */
+  private async withFolderHidden<Value>(
+    target: SessionTarget,
+    step: () => Promise<Value>,
+  ): Promise<Value> {
+    try {
+      return await step()
+    } catch (error) {
+      const spellings = [target.folder, this.root, target.hash]
+      // The real paths differ where a parent is a link (`/var` and `/private/var` on macOS).
+      for (const path of [target.folder, this.root])
+        spellings.push(await realpath(path).catch(() => path))
+      throw errorWithPathHidden(error, (text) =>
+        hideSavedProfilePath(text, spellings),
+      )
+    }
   }
 
   /**
    * Admits a version 3 run to the saved session, atomically under the folder's lock, or tells it to run with a fresh profile.
-   * A repository that never had a setup, and a run that declared `session: 'fresh'` whatever the saved session's state, are answered `no-saved-session` without creating a folder, a lock or a record. The Chrome rule (D12): a run Chrome whose major is lower than the recorded one, or unreadable, is refused `chrome-version`; a higher one is accepted and recorded.
+   * A repository that never had a setup, and a run whose configuration declared `session: "fresh"` (request `mode: 'fresh'`) whatever the saved session's state, are answered `no-saved-session` without creating a folder, a lock or a record. The Chrome rule (D12): a run Chrome whose major is lower than the recorded one, or unreadable, is refused `chrome-version`; a higher one is accepted and recorded. No error it throws names the folder ({@link SavedSessionStore.withFolderHidden}).
    * @param request - See {@link SavedSessionRunRequest}.
    * @returns The saved session with its lease, or the fresh answer.
-   * @throws `SIGN_IN_IN_PROGRESS` (a setup is open, also for `session: 'fresh'`), `BUSY` (reason profile-in-use), `SIGN_IN_PROFILE_IN_USE`, `SIGN_IN_PROFILE_UNUSABLE`.
+   * @throws `SIGN_IN_IN_PROGRESS` (a setup is open, also for `mode: 'fresh'`), `BUSY` (reason profile-in-use), `SIGN_IN_PROFILE_IN_USE`, `SIGN_IN_PROFILE_UNUSABLE`; a file-system failure with the folder hidden.
    * @example
-   * const admission = await store.acquireForRun({ repositoryRoot, runId, session: 'saved-if-available', chromeVersion: 'Google Chrome 154.0.1.2', signal })
+   * const admission = await store.acquireForRun({ repositoryRoot, runId, mode: 'saved-if-available', chromeVersion: 'Google Chrome 154.0.1.2', signal })
    */
   async acquireForRun(
     request: SavedSessionRunRequest,
   ): Promise<SavedSessionRunAdmission> {
     request.signal.throwIfAborted()
     const target = await this.folderOf(request.repositoryRoot)
+    return this.withFolderHidden(target, () => this.admit(target, request))
+  }
+
+  /** The steps of {@link SavedSessionStore.acquireForRun} once the folder is named. */
+  private async admit(
+    target: SessionTarget,
+    request: SavedSessionRunRequest,
+  ): Promise<SavedSessionRunAdmission> {
     // A setup that is open refuses every run, also one that wants a fresh profile (its dev server owns the port).
     if (await this.isSetupOpen(target))
       throw savedSessionRefusal(
@@ -552,7 +603,7 @@ export class SavedSessionStore implements SavedSessionManagerPort {
         target.repositoryName,
       )
     // A run that declared a fresh profile never uses the saved session, so an unfinished setup is not its reason either.
-    if (request.session === 'fresh')
+    if (request.mode === 'fresh')
       return { session: 'fresh', signInRequiredReason: 'no-saved-session' }
     const proof = await proveSessionFolder(this.root, target.hash)
     if (!proof.ok)
@@ -565,8 +616,20 @@ export class SavedSessionStore implements SavedSessionManagerPort {
       this.admitUnderLock(target, held, request),
     )
     // A fresh answer holds nothing: the lock goes before the run starts.
-    if (admission.session === 'fresh') await this.releaseLock(target, held)
+    if (admission.session === 'fresh') await this.releaseFreshHold(target, held)
     return admission
+  }
+
+  /**
+   * Releases the lock a fresh admission took. The fresh run needs no lock, so a release that fails (`EBUSY`, `EPERM`) does not fail it: the hold stays, {@link SavedSessionStore.whenReleased} stays pending, and the next take of the session tries the release again ({@link SavedSessionStore.retryUnreleased}).
+   */
+  private async releaseFreshHold(
+    target: SessionTarget,
+    held: HeldLock,
+  ): Promise<void> {
+    await this.releaseLock(target, held).catch(() => {
+      this.unreleased.set(target.hash, held)
+    })
   }
 
   /**
@@ -603,7 +666,7 @@ export class SavedSessionStore implements SavedSessionManagerPort {
     // D12: refuse a downgrade or a Chrome whose major cannot be read.
     if (major === undefined || major < read.record.chromeMajor)
       throw savedSessionUnusable('chrome-version', target.repositoryName)
-    await this.prepareLaunch(target, held.wasStale)
+    await this.prepareLaunch(target, true)
     if (major > read.record.chromeMajor)
       await writeSignInRecord(target.folder, {
         ...read.record,
@@ -643,10 +706,10 @@ export class SavedSessionStore implements SavedSessionManagerPort {
   }
 
   /**
-   * Takes the folder for a setup: proves the entry is a real folder of this user inside `sign-in-profiles` (or absent), creates it (0700), refuses an unusable record, and runs the launch preparation.
+   * Takes the folder for a setup: proves the entry is a real folder of this user inside `sign-in-profiles` (or absent), creates it (0700), refuses an unusable record, runs the launch preparation, and withdraws an earlier Done on disk before the setup browser can change the profile.
    * @param repositoryRoot - The workspace repository root.
    * @returns The setup lease.
-   * @throws `SIGN_IN_IN_PROGRESS` (another setup), `SIGN_IN_PROFILE_IN_USE` (a run, a removal or an unprovable Chrome), `SIGN_IN_PROFILE_UNUSABLE` (reason `not-a-session-folder` for a link, a file or a folder that cannot be proven).
+   * @throws `SIGN_IN_IN_PROGRESS` (another setup), `SIGN_IN_PROFILE_IN_USE` (a run, a removal or an unprovable Chrome), `SIGN_IN_PROFILE_UNUSABLE` (reason `not-a-session-folder` for a link, a file, a folder that cannot be proven or a record of another repository); a file-system failure with the folder hidden ({@link SavedSessionStore.withFolderHidden}).
    * @example
    * const lease = await store.acquireForSetup('/work/app')
    */
@@ -654,10 +717,12 @@ export class SavedSessionStore implements SavedSessionManagerPort {
     repositoryRoot: string,
   ): Promise<SavedSessionSetupLease> {
     const target = await this.folderOf(repositoryRoot)
-    const held = await this.lockOrThrow(target, 'setup')
-    return this.releasingOnFailure(target, held, () =>
-      this.prepareSetup(target, held),
-    )
+    return this.withFolderHidden(target, async () => {
+      const held = await this.lockOrThrow(target, 'setup')
+      return this.releasingOnFailure(target, held, () =>
+        this.prepareSetup(target, held),
+      )
+    })
   }
 
   /** The steps of {@link SavedSessionStore.acquireForSetup} under its lock. */
@@ -673,34 +738,50 @@ export class SavedSessionStore implements SavedSessionManagerPort {
     const read = await readSignInRecord(target.folder)
     if (read.kind === 'unusable')
       throw savedSessionUnusable(read.reason, target.repositoryName)
-    await this.prepareLaunch(target, held.wasStale)
-    return this.setupLease(
-      target,
-      held,
-      read.kind === 'record' ? read.record : undefined,
-    )
+    await this.prepareLaunch(target, true)
+    const previous = read.kind === 'record' ? read.record : undefined
+    // The earlier Done approved the profile as it was, and the setup browser may change it (another account): the approval is withdrawn on disk first, so Close setup, a crash or a failed final write reads setup-not-finished, never the old Done.
+    if (previous?.confirmed)
+      await writeSignInRecord(target.folder, { ...previous, confirmed: false })
+    return this.setupLease(target, held, previous)
   }
 
+  /**
+   * The lease of a setup. Its record keeps the highest Chrome major that ever opened the profile (D12), and a setup that ends before its browser was launched gives the earlier record back.
+   * Why the major never goes down: Chrome migrates a profile forward, so a setup on an older Chrome that wrote its own major would let a run on that older Chrome open a profile a newer one migrated; keeping the higher major keeps such a run refused (`chrome-version`). Refusing the setup instead is not possible here: its Chrome's version is known only once that Chrome opened the profile.
+   * Why the earlier record comes back only without a launch: the setup calls `recordBrowser` right after its browser spawned, so a lease whose `recordBrowser` and `writeRecord` were never called ends with the profile as the earlier Done approved it (a cancel while the app starts, a server that failed to start); once a browser ran, only a new Done confirms the profile.
+   */
   private setupLease(
     target: SessionTarget,
     held: HeldLock,
     previous: SignInRecord | undefined,
   ): SavedSessionSetupLease {
+    let mayHaveChangedProfile = false
     // A release that failed is tried again by the next call.
-    const releaser = new SharedAttempt(() => this.finishRunLease(target, held))
+    const releaser = new SharedAttempt(async () => {
+      if (!mayHaveChangedProfile && previous?.confirmed)
+        await this.restoreRecord(target, previous)
+      await this.finishRunLease(target, held)
+    })
     return {
       profile: target.folder,
       ...(previous !== undefined && { previous }),
-      recordBrowser: (marker): Promise<void> =>
-        this.writeMarker(target, marker),
+      recordBrowser: (marker): Promise<void> => {
+        mayHaveChangedProfile = true
+        return this.writeMarker(target, marker)
+      },
       // A setup's record holds exactly the known fields: nothing else the caller's object carries is written.
       writeRecord: async (fields): Promise<void> => {
+        mayHaveChangedProfile = true
         await writeSignInRecord(target.folder, {
           version: SIGN_IN_RECORD_VERSION,
           confirmed: fields.confirmed,
           setupAt: fields.setupAt,
           signInPaths: [...fields.signInPaths],
-          chromeMajor: fields.chromeMajor,
+          chromeMajor: Math.max(
+            fields.chromeMajor,
+            previous?.chromeMajor ?? fields.chromeMajor,
+          ),
           repositoryRoot: target.realRoot,
           appCookies: fields.appCookies,
         })
@@ -708,6 +789,17 @@ export class SavedSessionStore implements SavedSessionManagerPort {
       },
       release: (): Promise<void> => releaser.run(),
     }
+  }
+
+  /** Gives an untouched profile its earlier record back when a setup that never launched a browser releases it; a write that fails leaves the withdrawn Done (the safe side) and does not keep the lock. */
+  private async restoreRecord(
+    target: SessionTarget,
+    previous: SignInRecord,
+  ): Promise<void> {
+    await writeSignInRecord(target.folder, previous).then(
+      () => this.emit(target.hash),
+      () => undefined,
+    )
   }
 
   /**
@@ -723,11 +815,18 @@ export class SavedSessionStore implements SavedSessionManagerPort {
     const target = this.targetOf(entry.hash, entry.repositoryName)
     const first = await this.proofOf(target)
     if (first !== undefined) return first
+    return this.withFolderHidden(target, () => this.removeLocked(target))
+  }
+
+  /** The steps of {@link SavedSessionStore.remove} after the first path proof: the lock, the deletion under it, then the lock's release. */
+  private async removeLocked(
+    target: SessionTarget,
+  ): Promise<SavedSessionRemoval> {
     const taken = await this.takeLock(target, 'removal')
     if ('conflict' in taken) return this.removalRefusal(taken.conflict)
     this.registerHold(target.hash, 'removal')
     const removal = await this.releasingOnFailure(target, taken.held, () =>
-      this.removeUnderLock(target, taken.held.wasStale),
+      this.removeUnderLock(target),
     )
     try {
       await this.releaseLock(target, taken.held)
@@ -746,25 +845,23 @@ export class SavedSessionStore implements SavedSessionManagerPort {
   /** The steps of {@link SavedSessionStore.remove} under its lock: the path proof again, the fresh process listing, then the deletion. */
   private async removeUnderLock(
     target: SessionTarget,
-    wasStale: boolean,
   ): Promise<SavedSessionRemoval> {
     // The proof is made again under the lock: the folder may have changed since the first look.
     const again = await this.proofOf(target)
     if (again !== undefined) return again
-    if (!(await this.isUnused(target, wasStale)))
+    if (!(await this.isUnused(target, true)))
       return { outcome: 'in-use-elsewhere' }
     return this.deleteFolder(target)
   }
 
+  /**
+   * The removal's path proof: the name is a session hash and the entry a real folder of this user directly inside `sign-in-profiles` ({@link proveSessionFolder}). Nothing in the folder is read before its name is proven, and its record is not read at all: a folder whose record names another repository (copied or edited by hand) reads unusable everywhere else, and removal is the way out of it.
+   * @returns `undefined` when the folder may be deleted, else the refusal.
+   */
   private async proofOf(
     target: SessionTarget,
   ): Promise<SavedSessionRemoval | undefined> {
-    const read = await readSignInRecord(target.folder)
-    const proof = await proveSessionFolder(
-      this.root,
-      target.hash,
-      read.kind === 'record' ? read.record.repositoryRoot : undefined,
-    )
+    const proof = await proveSessionFolder(this.root, target.hash)
     return proof.ok
       ? undefined
       : { outcome: 'refused-path', reason: proof.reason }
@@ -782,6 +879,9 @@ export class SavedSessionStore implements SavedSessionManagerPort {
     target: SessionTarget,
   ): Promise<SavedSessionRemoval> {
     const removeFolder = this.options.removeFolder ?? removeSessionFolder
+    // Proven once more right before the first deletion: the listing and an orphan's stop took time since the last proof, and the record goes by its path, which a folder swapped for a link would lead elsewhere.
+    const again = await this.proofOf(target)
+    if (again !== undefined) return again
     try {
       // The record goes first so a reader never sees a half-deleted session as saved.
       await unlink(join(target.folder, SIGN_IN_RECORD_FILE)).catch(

@@ -32,6 +32,8 @@ const REDIRECT_TO_LOGIN = {
   status: 307,
   location: '/login?callbackUrl=%2Fdashboard%2Finvoices',
 } as const
+/** The App Router page of the entry, as the route manifests name it. */
+const INVOICES_APP_PAGE = '/dashboard/invoices/page'
 /** A Next project with both an App and a Pages folder (for example `pages/api/auth`), whose route manifests resolve the entry as an App route once it compiled. */
 const BOTH_ROUTERS_APP_ENTRY = {
   withAppFolder: true,
@@ -39,7 +41,7 @@ const BOTH_ROUTERS_APP_ENTRY = {
     settings: {},
     kind: 'app',
     route: {
-      key: '/dashboard/invoices/page',
+      key: INVOICES_APP_PAGE,
       path: '.next/dev/server/app/dashboard/invoices/page_client-reference-manifest.js',
     },
   },

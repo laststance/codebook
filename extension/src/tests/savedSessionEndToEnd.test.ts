@@ -186,7 +186,7 @@ test('a setup refused while another window holds the lock answers SIGN_IN_IN_PRO
     .acquireForRun({
       repositoryRoot: repository,
       runId: 'run-1',
-      session: 'saved-if-available',
+      mode: 'saved-if-available',
       chromeVersion: 'Google Chrome 154.0.1.2',
       signal: new AbortController().signal,
     })
