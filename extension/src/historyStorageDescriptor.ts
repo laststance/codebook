@@ -77,8 +77,10 @@ export type HistoryWriterRules<Types extends HistoryTypes> = {
   /** The largest journal this profile writes. */
   readonly journalLimitBytes: number
   readonly maxEntries: number
-  /** The room kept free of this entry for the profile's closing entries (pauses ending, the result); an entry that would use it is refused without ending the timeline. Absent: no reserve. */
-  reserveFor?(entry: Types['Entry']): { bytes: number; entries: number }
+  /** The room kept free of this entry for the profile's closing entries (pauses ending, the result); an entry that would use it is refused without ending the timeline. Absent or undefined: the entry has no reserve, so its refusal ends the timeline. */
+  reserveFor?(
+    entry: Types['Entry'],
+  ): { bytes: number; entries: number } | undefined
   /** Parses a numbered entry the writer is about to write. */
   parseEntry(value: unknown): Types['Entry']
   /** Refuses an entry that breaks the profile's order rules; changes nothing. @throws The refusal. */

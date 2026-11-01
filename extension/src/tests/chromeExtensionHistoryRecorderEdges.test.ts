@@ -788,3 +788,35 @@ test('a paused service-worker stop whose worker was replaced is journaled worker
   // Assert
   assert.deepEqual(pauseCloseReasons(history), ['worker-lost'])
 })
+
+// protects=E-C: a capture refused by the byte limit ends the timeline, so the close and the result that follow it are refused and the seal names the size limit; fails_when=a later entry is appended after the refused capture (a gap) or the seal omits the size limit; no_claim=the production size
+test('a capture refused by the size limit ends the timeline and the entries after it are refused', async (context) => {
+  // Arrange
+  const { recorder, store, header } = await recorderOver(context, {
+    limits: { journalLimitBytes: 800, maxEntries: 13_100 },
+  })
+  const page = pauseOf(1, 'page')
+
+  // Act
+  recorder.pauseOpened(page)
+  recorder.captured(
+    page.pauseId,
+    capturedStop({ stopIndex: page.stopIndex, context: page.context }),
+  )
+  recorder.pauseClosed(page.pauseId, 'continue')
+  recorder.resultObserved(CHANGED_RESULT)
+  await recorder.seal({}, 5_000)
+  const history = await store.read(header.studyId)
+
+  // Assert
+  assert.equal(history.status, 'partial')
+  assert.deepEqual(
+    history.entries.map((entry) => entry.type),
+    ['pause-open'],
+  )
+  assert.ok(
+    history.seal?.reasons.some(
+      (reason) => reason.code === 'EXTENSION_HISTORY_SIZE_LIMIT',
+    ),
+  )
+})

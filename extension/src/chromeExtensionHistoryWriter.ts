@@ -78,13 +78,15 @@ class ExtensionWriterRules implements HistoryWriterRules<ExtensionHistoryTypes> 
   }
 
   /** Stream frames never use the room kept for the closes and the result; pins and the other entries may. */
-  reserveFor(entry: ExtensionHistoryEntry): { bytes: number; entries: number } {
+  reserveFor(
+    entry: ExtensionHistoryEntry,
+  ): { bytes: number; entries: number } | undefined {
     return entry.type === 'frame' && entry.kind === 'stream'
       ? {
           bytes: RECORDING_TERMINAL_RESERVE_BYTES,
           entries: EXTENSION_HISTORY_TERMINAL_RESERVE_ENTRIES,
         }
-      : { bytes: 0, entries: 0 }
+      : undefined
   }
 
   parseEntry(value: unknown): ExtensionHistoryEntry {
