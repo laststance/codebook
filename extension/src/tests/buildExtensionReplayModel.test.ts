@@ -300,3 +300,23 @@ test('a pause closed by the run ending, a lost worker or a closed surface is not
   ])
   assert.equal(position, 'Service worker stop 2 service worker lost · 0.40 s')
 })
+
+// protects=the result row of the event list shows a cause without terminal control sequences; fails_when=an escape sequence in a recorded cause reaches the pane text; no_claim=the cause wording
+test('the result row of the event list strips terminal controls from the recorded cause', async (context) => {
+  // Arrange
+  const { model } = await modelOf(context, [
+    { at: 10, type: 'open', pauseId: 'p1', stopIndex: 1, context: 'page' },
+    { at: 20, type: 'result' },
+  ])
+  const resultEvent = model.events.find((event) => event.type === 'result')!
+  const withCause = {
+    ...model,
+    result: { ...model.result!, cause: '\u001b[31mread failed\u001b[0m' },
+  }
+
+  // Act
+  const row = describeExtensionEventRow(resultEvent, withCause)
+
+  // Assert
+  assert.equal(row.body, 'read failed')
+})

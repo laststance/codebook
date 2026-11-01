@@ -206,7 +206,7 @@ export function describeExtensionEventRow(
   if (event.type === 'frame' && event.frame)
     return { heading, body: `${event.frame.width} × ${event.frame.height} px` }
   if (event.type === 'result')
-    return { heading, body: model.result?.cause ?? '' }
+    return { heading, body: stripTerminalControls(model.result?.cause ?? '') }
   return { heading, body: '' }
 }
 
