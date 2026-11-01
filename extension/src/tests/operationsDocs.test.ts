@@ -147,6 +147,21 @@ test('the Secrets and masking section names ask-learner, the chat refusal, the f
   assert.ok(text.includes('[pending]'))
 })
 
+// protects=the frames help tells a chat the same short-secret refusal as the ask-learner and prepared-text sentences; fails_when=the help says a secret shorter than 4 characters is sent and the run goes on with every later image dropped; no_claim=the refusals themselves (operationErrors.test.ts covers the box; armPreparedSecretGate is not exercised here)
+test('the frames help says a secret shorter than 4 characters never reaches the frame check, refused by the ask-learner box or with SECRET_INPUT_VISIBLE', async (context) => {
+  // Arrange
+  const help = await readHelp(context)
+  // Act
+  const frames = String(help.operationsSecrets.frames)
+  // Assert
+  assert.ok(
+    frames.endsWith(
+      'A secret shorter than 4 characters cannot be told from ordinary page text, so none reaches this check: the ask-learner box refuses it and stays open, and a version 1 or 2 prepared one for an input of type password fails with SECRET_INPUT_VISIBLE before it is typed.',
+    ),
+  )
+  assert.equal(frames.includes('the run itself goes on'), false)
+})
+
 // protects=every code version 3 adds has an anchored row with the audience and recovery of the error itself; fails_when=a code lacks a row or an audience, or the help's recovery drifts from ERROR_RECOVERY; no_claim=the wording of a recovery
 test('the Error codes table has one anchored row per version 3 code with the audience and recovery of the error', async (context) => {
   // Arrange
