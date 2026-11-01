@@ -658,6 +658,8 @@ export class StudyService {
   private readonly repositoryRetirement = new AbortController()
   private readonly repositoryOpens = new Set<Promise<unknown>>()
   private readonly startKeys = new Map<string, StudyRecord>()
+  /** The number of the latest verdict read of each sealed extension history, so only that read writes the summary ({@link refreshExtensionSummary}). */
+  private readonly extensionSummaryGenerations = new WeakMap<object, number>()
   /** Each Extension history's summary read in flight, by study id; an entry is removed when its read settles. */
   private readonly extensionSummaryReads = new Map<
     string,
@@ -2536,6 +2538,11 @@ export class StudyService {
             ),
         )
         await this.refreshExtensionSummary(identity.studyId)
+        // The open Extension replay shows the new revision without a reopen, as a server or test history does.
+        this.presentationController?.nodeHistoryLearningMaterialSaved(
+          identity.studyId,
+          extensionMaterial,
+        )
         return extensionMaterial
       }
       // An unknown id, or a history removed while it is saved, is a reference to correct, as at the history's resources (Cycle 0052 tasks 60, 75).
@@ -2686,6 +2693,9 @@ export class StudyService {
       this.recordOfStudyId(studyId)?.chromeExtension?.history?.sealed
     const histories = this.nodeHistoryRepository?.extensionHistories
     if (!sealed || !histories) return
+    // Only the latest read of a history writes its summary, so an older read that finishes last cannot overwrite a newer revision's coverage.
+    const request = (this.extensionSummaryGenerations.get(sealed) ?? 0) + 1
+    this.extensionSummaryGenerations.set(sealed, request)
     const summary = await this.sharedSummaryRead(
       this.extensionSummaryReads,
       studyId,
@@ -2693,8 +2703,9 @@ export class StudyService {
       joinReadInFlight,
       this.chromeExtensionHistorySealBoundMs,
     )
-    // A failed or too slow read keeps the sealed summary.
-    if (summary) sealed.summary = summary
+    // A failed or too slow read keeps the sealed summary, and an older read never overwrites a newer one.
+    if (summary && this.extensionSummaryGenerations.get(sealed) === request)
+      sealed.summary = summary
   }
 
   /**

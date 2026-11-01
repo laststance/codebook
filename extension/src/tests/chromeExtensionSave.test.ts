@@ -392,3 +392,61 @@ test('the summary of a saved extension history asks the question of its learning
   assert.equal(before?.question.startsWith('Extension run:'), true)
   assert.equal(after?.question, 'What does Press Ping change?')
 })
+
+// protects=an Extension save tells the open reader once with the saved material, as a server or test save does; fails_when=the save returns without the reader notification, so the open replay shows no new summary until reopened; no_claim=what the reader draws
+test('saving the learning of an extension run tells the open reader once with the new material', async (context) => {
+  // Arrange
+  const { service, studyId, events } = await sealedRun(context)
+  const notified: { studyId: string; revision: number }[] = []
+  service.presentationController = {
+    nodeHistoryLearningMaterialSaved: (
+      savedStudyId: string,
+      material: { revision: number },
+    ) => {
+      notified.push({ studyId: savedStudyId, revision: material.revision })
+    },
+  } as unknown as NonNullable<typeof service.presentationController>
+
+  // Act
+  await service.explainNodeHistory({
+    studyId,
+    expectedRevision: 0,
+    content: extensionMaterial(events),
+  })
+
+  // Assert
+  assert.deepEqual(notified, [{ studyId, revision: 1 }])
+})
+
+// protects=a summary read started before a save that finishes after the read started after it keeps the newer revision; fails_when=the older read writes its materialRevision back over the newer verdict; no_claim=the timeout of a slow read
+test('an older summary read finishing last does not overwrite the newer revision', async (context) => {
+  // Arrange
+  const { service, repository, studyId, record } = await sealedRun(context)
+  const sealed = record.chromeExtension?.history?.sealed
+  assert.ok(sealed?.summary)
+  const baseSummary = sealed.summary
+  const releases: ((revision: number) => void)[] = []
+  repository.extensionHistories.summarize = () =>
+    new Promise((resolve) => {
+      releases.push((revision) =>
+        resolve({ ...baseSummary, materialRevision: revision }),
+      )
+    })
+  const refresh = (): Promise<void> =>
+    (
+      service as unknown as {
+        refreshExtensionSummary(id: string): Promise<void>
+      }
+    ).refreshExtensionSummary(studyId)
+
+  // Act
+  const older = refresh()
+  const newer = refresh()
+  releases[1]?.(2)
+  await newer
+  releases[0]?.(1)
+  await older
+
+  // Assert
+  assert.equal(sealed.summary?.materialRevision, 2)
+})
