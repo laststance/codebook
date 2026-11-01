@@ -1,3 +1,4 @@
+import type { Dirent } from 'node:fs'
 import { lstat, open, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -10,6 +11,7 @@ import {
 import type { DevelopmentServerAdapterName } from '../developmentServerAdapter'
 
 import { findNextRouteFolder } from './findNextRouteFolder'
+import { isFolderOfItsOwn } from './isFolderOfItsOwn'
 import { isUnlinkedRegularFile } from './isUnlinkedRegularFile'
 
 /** The source file kinds a Vite sign-in path scan reads. */
@@ -96,7 +98,18 @@ async function discoverNextSignInPaths(workspace: string): Promise<string[]> {
   return found
 }
 
-/** Walks `src/` breadth-first without following links, up to the file limit; skips `node_modules` and dot folders. */
+/** Lists one folder of the Vite scan only when a real folder stands at its own path ({@link isFolderOfItsOwn}), so a linked `src` (or a junction below it) never leads the scan out of the repository; none when it cannot be read. */
+async function ownFolderEntries(
+  workspace: string,
+  folder: string,
+): Promise<Dirent[]> {
+  const path = join(workspace, folder)
+  // A link or a junction at the folder's own path leads elsewhere: nothing behind it is listed.
+  if (!(await isFolderOfItsOwn(path).catch(() => false))) return []
+  return readdir(path, { withFileTypes: true }).catch(() => [])
+}
+
+/** Walks `src/` breadth-first without following any link, not even a `src` that is one, up to the file limit; skips `node_modules` and dot folders. */
 async function viteSourceFiles(
   workspace: string,
   signal: AbortSignal,
@@ -106,10 +119,7 @@ async function viteSourceFiles(
   while (queue.length > 0 && files.length < SIGN_IN_PATH_SCAN_FILE_LIMIT) {
     signal.throwIfAborted()
     const folder = queue.shift() ?? ''
-    const entries = await readdir(join(workspace, folder), {
-      withFileTypes: true,
-    }).catch(() => [])
-    for (const entry of entries) {
+    for (const entry of await ownFolderEntries(workspace, folder)) {
       const relative = `${folder}/${entry.name}`
       if (entry.isDirectory()) {
         if (entry.name !== 'node_modules' && !entry.name.startsWith('.'))
@@ -170,7 +180,7 @@ async function discoverViteSignInPaths(
 /**
  * Finds which of the usual sign-in paths the repository has, so the setup offers the app's own route first.
  * Called by the Set Up Saved Session command before it asks where the app signs in (DX-14).
- * Next: a page file at the path in the App Router (directly or under one top-level route group) or the Pages Router; links are never followed. Vite has no route files, so a bounded scan of `src/` looks for the path as a quoted literal. A folder or file that cannot be read counts as having no route, so discovery never fails the setup.
+ * Next: a page file at the path in the App Router (directly or under one top-level route group) or the Pages Router; links are never followed. Vite has no route files, so a bounded scan of `src/` looks for the path as a quoted literal; a `src` that is a link (or any folder below it that leads elsewhere) is not read. A folder or file that cannot be read counts as having no route, so discovery never fails the setup.
  * @param workspace - The opened repository.
  * @param adapter - The repository's development server adapter.
  * @param signal - Ends the scan.

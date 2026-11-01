@@ -6,6 +6,11 @@ import { test, type TestContext } from 'node:test'
 
 import { discoverSignInPaths } from '../utils/discoverSignInPaths'
 
+import {
+  createLinkIfAllowed,
+  LINK_NOT_ALLOWED,
+} from './utils/createLinkIfAllowed'
+
 /** Makes a temp repository holding the given files (paths relative, contents given). */
 async function repository(
   context: TestContext,
@@ -93,6 +98,39 @@ test('a Vite repository offers a sign-in path that src names as a quoted literal
       "export const routes = [{ path: '/signin', element: null }]",
     'src/node_modules/x/index.ts': "const p = '/login'",
   })
+  // Act
+  const paths = await discoverSignInPaths(root, 'vite-dev', signal)
+  // Assert
+  assert.deepEqual(paths, ['/signin'])
+})
+
+// protects=red-team native 7 (the Vite scan never reads files outside the repository); fails_when=a `src` that is a link to a folder outside the repository is walked and its quoted /login offered; no_claim=a link swapped in while the scan runs, Windows volume junctions (covered by isFolderOfItsOwn's own tests)
+test('a Vite repository whose src is a link to a folder outside it offers no sign-in path from that folder', async (context) => {
+  // Arrange
+  const outside = await repository(context, {
+    'routes.tsx': "export const routes = [{ path: '/login', element: null }]",
+  })
+  const root = await repository(context, { 'package.json': '{}' })
+  if (!(await createLinkIfAllowed(outside, join(root, 'src'))))
+    return context.skip(LINK_NOT_ALLOWED)
+  // Act
+  const paths = await discoverSignInPaths(root, 'vite-dev', signal)
+  // Assert
+  assert.deepEqual(paths, [])
+})
+
+// protects=the no-follow rule below a Vite src; fails_when=a linked folder inside src is walked and its quoted /login offered beside the real /signin; no_claim=Windows volume junctions
+test('a Vite repository offers the sign-in path of its own src and none from a linked folder inside it', async (context) => {
+  // Arrange
+  const outside = await repository(context, {
+    'routes.tsx': "export const routes = [{ path: '/login', element: null }]",
+  })
+  const root = await repository(context, {
+    'src/routes.tsx':
+      "export const routes = [{ path: '/signin', element: null }]",
+  })
+  if (!(await createLinkIfAllowed(outside, join(root, 'src/linked'))))
+    return context.skip(LINK_NOT_ALLOWED)
   // Act
   const paths = await discoverSignInPaths(root, 'vite-dev', signal)
   // Assert
