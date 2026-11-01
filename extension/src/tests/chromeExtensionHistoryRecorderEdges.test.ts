@@ -705,11 +705,13 @@ test('a paused page stop that vanishes when the browser dies is journaled surfac
   // Arrange
   const { recorder, store, header } = await recorderOver(context)
   const tracker = newTracker()
-  tracker.sync([declaredPauseView(1, 'page')], 1, recorder)
+  tracker.sync([declaredPauseView(1, 'page')], 1, recorder, () => true)
 
   // Act
+  // The pause set changes before the run hears the browser is gone, then the loss arrives.
+  tracker.sync([], 1, recorder, () => true)
   recorder.surfaceEnded()
-  tracker.sync([], 1, recorder)
+  tracker.settleUndecided(() => false, recorder)
   await recorder.seal({ failureCode: 'BROWSER_LOST' }, 5_000)
   const history = await store.read(header.studyId)
 
@@ -717,16 +719,48 @@ test('a paused page stop that vanishes when the browser dies is journaled surfac
   assert.deepEqual(pauseCloseReasons(history), ['surface-lost'])
 })
 
+// protects=AC-LIVE: a pause that vanishes while the browser is alive with no continue asked (a Continue pressed in the debug toolbar) is closed as continue before the run's next pause opens, so the replay's following interval is a no-stop moment; fails_when=the stop stays open until the seal and is carried across the running interval
+test('a paused page stop resumed from the debug toolbar is closed as continue before the next stop opens', async (context) => {
+  // Arrange
+  const { recorder, store, header } = await recorderOver(context)
+  const tracker = newTracker()
+  tracker.sync([declaredPauseView(1, 'page')], 1, recorder, () => true)
+
+  // Act
+  tracker.sync([], 1, recorder, () => true)
+  tracker.sync([declaredPauseView(2, 'page')], 1, recorder, () => true)
+  await recorder.seal({}, 5_000)
+  const history = await store.read(header.studyId)
+
+  // Assert
+  assert.deepEqual(
+    history.entries
+      .filter(
+        (entry) => entry.type === 'pause-open' || entry.type === 'pause-close',
+      )
+      .map(
+        (entry) =>
+          `${entry.type}:${entry.type === 'pause-close' ? entry.reason : ''}`,
+      ),
+    [
+      'pause-open:',
+      'pause-close:continue',
+      'pause-open:',
+      'pause-close:run-ended',
+    ],
+  )
+})
+
 // protects=N69: a pause this run asked to continue is journaled continue when it leaves the debugger; fails_when=a continue the chat asked for is journaled as lost or run-ended
 test('a paused page stop the run continued is journaled continue', async (context) => {
   // Arrange
   const { recorder, store, header } = await recorderOver(context)
   const tracker = newTracker()
-  tracker.sync([declaredPauseView(1, 'page')], 1, recorder)
+  tracker.sync([declaredPauseView(1, 'page')], 1, recorder, () => true)
 
   // Act
   tracker.noteContinue(1)
-  tracker.sync([], 1, recorder)
+  tracker.sync([], 1, recorder, () => true)
   await recorder.seal({}, 5_000)
   const history = await store.read(header.studyId)
 
@@ -739,10 +773,15 @@ test('a paused service-worker stop whose worker was replaced is journaled worker
   // Arrange
   const { recorder, store, header } = await recorderOver(context)
   const tracker = newTracker()
-  tracker.sync([declaredPauseView(1, 'service-worker')], 1, recorder)
+  tracker.sync(
+    [declaredPauseView(1, 'service-worker')],
+    1,
+    recorder,
+    () => true,
+  )
 
   // Act
-  tracker.sync([], 2, recorder)
+  tracker.sync([], 2, recorder, () => true)
   await recorder.seal({}, 5_000)
   const history = await store.read(header.studyId)
 

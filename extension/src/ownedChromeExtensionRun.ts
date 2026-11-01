@@ -183,6 +183,8 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   private surfaceSessionId: string | undefined
   private surfaceAttached = false
   private surfaceGone = false
+  /** Set when the test browser's connection or process ended without the run's own close. */
+  private browserGone = false
   private sourceCheck: (() => void | Promise<void>) | undefined
   private actionGuard: ExtensionActionGuard | undefined
   private lastReceipt: ExtensionClickReceipt | undefined
@@ -806,6 +808,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
 
   /** The browser's CDP connection or process ended without the run's own close. */
   private onBrowserLost(): void {
+    this.browserGone = true
     this.history?.surfaceEnded()
     this.showRecordingState()
     this.fail(
@@ -859,6 +862,29 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
       this.historyPauses?.sync(
         debug.pauses(),
         debug.workerGeneration(),
+        history,
+        () => this.isBrowserAlive(),
+      )
+    } catch {
+      // A history that throws must not end the run.
+    }
+  }
+
+  /** Whether the test browser and the surface are still alive and the run has not ended; the liveness signal that tells a manual resume from a lost browser. */
+  private isBrowserAlive(): boolean {
+    return !this.browserGone && !this.surfaceGone && this.ending === undefined
+  }
+
+  /**
+   * Decides the pauses that vanished with no continue when the run ends, before the history seals.
+   * Why: the debugger's pause set can change before the browser's loss reaches the run, so a vanished pause is decided on a later check (the next pause-set change, or here), never at the vanishing; the liveness here ignores `ending`, which is already set.
+   */
+  private settleVanishedPausesAtEnd(): void {
+    const { history } = this
+    if (history === undefined) return
+    try {
+      this.historyPauses?.settleUndecided(
+        () => !this.browserGone && !this.surfaceGone,
         history,
       )
     } catch {
@@ -1229,6 +1255,7 @@ class OwnedChromeExtensionRun implements ChromeExtensionRuntime {
   private async cleanup(ending: RunEnding): Promise<void> {
     this.cancelRunTimer?.()
     this.cancelSetupTimer?.()
+    this.settleVanishedPausesAtEnd()
     for (const cancelPinTimer of [...this.pinTimerCancels])
       this.safely(cancelPinTimer)
     this.pinTimerCancels.clear()
