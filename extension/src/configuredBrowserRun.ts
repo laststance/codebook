@@ -198,6 +198,7 @@ import {
 } from './utils/pagePauseUnderResumeText'
 import { pausePlace } from './utils/pausePlace'
 import { placeAfterDeclaringLine } from './utils/placeAfterDeclaringLine'
+import { preparedInputsOf } from './utils/preparedInputsOf'
 import { prepareRepositoryInputs } from './utils/prepareRepositoryInputs'
 import { readDeclaredDevelopmentPort } from './utils/readDeclaredDevelopmentPort'
 import { readDevelopmentBundle } from './utils/readDevelopmentBundle'
@@ -7888,7 +7889,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * this.servedDefinition().configuration.initialInputs?.[0]?.text // => '[pending]' before the control is resolved
    */
   private servedDefinition(): ConfiguredDefinition {
-    if (this.definition.configuration.initialInputs === undefined)
+    if (preparedInputsOf(this.definition.configuration) === undefined)
       return this.definition
     return {
       ...this.definition,

@@ -1,12 +1,8 @@
+import { preparedInputsOf } from './preparedInputsOf'
 import {
   redactPreparedTexts,
   type PreparedTextState,
 } from './redactPreparedTexts'
-
-/** Any declaration that may carry prepared texts: a repository-browser configuration. */
-type PreparedTextHolder = {
-  initialInputs?: readonly { selector: string; text: string }[]
-}
 
 /**
  * Gives a repository-browser configuration with its prepared texts redacted for one form.
@@ -15,16 +11,17 @@ type PreparedTextHolder = {
  * @param configuration - The accepted configuration with the learner-declared texts.
  * @param states - The state of each `initialInputs` entry by index.
  * @param form - `canonical` (stored, hashed) or `view` (run resource).
- * @returns The same configuration when it has no `initialInputs`; otherwise a copy with each text replaced.
+ * @returns The same configuration when it has no `initialInputs` (none declared, or version 3); otherwise a copy with each text replaced.
  * @example
  * redactPreparedConfiguration(configuration, ['secret'], 'canonical').initialInputs?.[0]?.text // => '[masked]'
  */
-export function redactPreparedConfiguration<T extends PreparedTextHolder>(
+export function redactPreparedConfiguration<T extends object>(
   configuration: T,
   states: readonly (PreparedTextState | undefined)[],
   form: 'canonical' | 'view',
 ): T {
-  const inputs = configuration.initialInputs
+  const inputs = preparedInputsOf(configuration)
+  // A configuration without prepared texts (none declared, or version 3) is its own canonical form.
   if (inputs === undefined) return configuration
   return {
     ...configuration,

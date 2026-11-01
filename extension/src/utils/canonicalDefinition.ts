@@ -1,6 +1,7 @@
 import type { ConfiguredDefinition } from '../configuredStudySchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
+import { preparedInputsOf } from './preparedInputsOf'
 import { redactPreparedConfiguration } from './redactPreparedConfiguration'
 import type { PreparedTextState } from './redactPreparedTexts'
 
@@ -21,7 +22,7 @@ export function canonicalDefinition(
   configuration: ConfiguredDefinition['configuration']
   configurationHash: string
 } {
-  if (definition.configuration.initialInputs === undefined)
+  if (preparedInputsOf(definition.configuration) === undefined)
     return {
       configuration: definition.configuration,
       configurationHash: definition.configurationHash,

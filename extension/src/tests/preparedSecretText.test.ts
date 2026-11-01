@@ -11,6 +11,7 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { StudyService } from '../service'
 import { assertStudyCheckpoint } from '../utils/assertStudyCheckpoint'
 import { captureStudy } from '../utils/captureStudy'
+import { preparedInputsOf } from '../utils/preparedInputsOf'
 
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
 
@@ -132,7 +133,7 @@ test('a prepared password is masked in every stored and served form while the pa
     ['run resource', runResource],
   ] as const)
     assert.equal(text.includes(PASSWORD), false, `${name} holds the password`)
-  assert.deepEqual(archive.configuration.initialInputs, [
+  assert.deepEqual(preparedInputsOf(archive.configuration), [
     { selector: '#email', text: EMAIL },
     { selector: '#password', text: '[masked]' },
   ])
@@ -191,7 +192,7 @@ test('a prepared text reads [pending] in the run view until its control is resol
   )
   const view = harness.run.view()
   // Assert
-  assert.deepEqual(view.definition.configuration.initialInputs, [
+  assert.deepEqual(preparedInputsOf(view.definition.configuration), [
     { selector: '#password', text: '[masked]' },
     { selector: '#email', text: '[pending]' },
   ])

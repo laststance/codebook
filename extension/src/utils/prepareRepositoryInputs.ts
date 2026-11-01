@@ -1,23 +1,14 @@
-import { z } from 'zod'
-
 import type { RepositoryConfiguration } from '../repositoryConfigSchemas'
 import type { Cdp } from '../runtimeSupport/cdp'
 
-import { isSecretControl, type ControlIdentity } from './isSecretControl'
+import {
+  controlReadinessSchema,
+  isSecretControl,
+  type ControlIdentity,
+} from './isSecretControl'
 
-const resultSchema = z.object({
-  ready: z.boolean(),
-  reason: z.string().optional(),
-  /** The resolved control's identity, reported by the focus phase so its text can be classified before it is sent. */
-  control: z
-    .object({
-      type: z.string().optional(),
-      name: z.string().optional(),
-      id: z.string().optional(),
-      autocomplete: z.string().optional(),
-    })
-    .optional(),
-})
+/** The page's answer, with the resolved control's identity from the focus phase so its text can be classified before it is sent. */
+const resultSchema = controlReadinessSchema
 
 /** What {@link prepareRepositoryInputs} reports while it writes, so a setup deadline can name the input and say whether its text may already be in the page. */
 export type RepositoryInputProgress = {

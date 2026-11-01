@@ -46,7 +46,7 @@ export type SecretFrameGateOptions = {
  * @param copyMinChars - The shortest value checked for a copy into visible text.
  * @returns `{ ok: true }` once watching, or the reason the control is not a password control now.
  */
-export function installSecretFrameObserver(
+function installSecretFrameObserver(
   selector: string,
   globalName: string,
   copyMinChars: number,
