@@ -150,12 +150,12 @@ test('the secret question is a masked input box titled repository and operation 
   assert.equal(shown.length, 2)
   assert.deepEqual(
     {
-      password: shown[0]?.password,
+      maskedBox: shown[0]?.password,
       title: shown[0]?.title,
       ignoreFocusOut: shown[0]?.ignoreFocusOut,
     },
     {
-      password: true,
+      maskedBox: true,
       title: 'nextjs-dashboard · Password',
       ignoreFocusOut: true,
     },

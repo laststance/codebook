@@ -102,7 +102,7 @@ async function pausedSecretRun(
   const receipt = service.start({
     instanceId: service.instanceId,
     profile: 'repository-browser',
-    key: 'learner-secret-study',
+    key: 'masked',
     configuration: harness.definition.configuration,
   })
   const record = service.record(receipt)

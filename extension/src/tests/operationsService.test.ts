@@ -441,7 +441,7 @@ test('a single-action run that fails after a continuation answers isError with t
   const receipt = service.start({
     instanceId: service.instanceId,
     profile: 'repository-browser',
-    key: 'dx2-single',
+    key: 'single',
     configuration,
   })
   await service.record(receipt).preparation

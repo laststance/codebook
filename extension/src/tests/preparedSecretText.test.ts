@@ -95,7 +95,7 @@ async function pausedPreparedRun(context: TestContext) {
   const receipt = service.start({
     instanceId: service.instanceId,
     profile: 'repository-browser',
-    key: 'prepared-secret-study',
+    key: 'prepared',
     configuration: harness.definition.configuration,
   })
   const record = service.record(receipt)

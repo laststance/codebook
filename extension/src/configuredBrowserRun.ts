@@ -5396,7 +5396,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         this.operationsDispatched = index
         this.operation!.inputDispatched = true
         this.evidence.record('input.dispatched', {
-          key: this.operationKeys[index - 1],
+          key: this.operationKeys.at(index - 1),
           operationIndex: index,
           kind: operation.kind,
         })
