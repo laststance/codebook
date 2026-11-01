@@ -49,7 +49,7 @@ const FIXTURE = `<!doctype html><html><body>
 <script>
 window.reactChanges = [];
 window.clicks = 0;
-document.getElementById('stealer').addEventListener('focus', () => { document.getElementById('landing').focus(); });
+document.getElementById('stealer').addEventListener('focus', () => { setTimeout(() => document.getElementById('landing').focus(), 0); });
 document.getElementById('go').addEventListener('click', () => { window.clicks++; });
 for (const id of ['amount', 'customer']) {
   const element = document.getElementById(id);
@@ -767,8 +767,8 @@ test('a select replaced by its change handler with a control holding the chosen 
   ])
 })
 
-// protects=text goes only to the control that holds the focus at the last look: a page that moves the focus on focus gets a refusal and no text lands in either control; fails_when=the text is inserted into the control that took the focus; no_claim=shadow-root focus (the same walk is not exercised here); real headless Chrome
-test('a page that moves the focus away from the control on focus receives no text', async (context) => {
+// protects=text goes only to the control that holds the focus at the last look: a page that moves the focus just after the focus step gets a refusal and no text lands in either control; fails_when=the text is inserted into the control that took the focus; no_claim=shadow-root focus (the same walk is not exercised here); real headless Chrome
+test('a page that moves the focus away right after the focus step receives no text', async (context) => {
   // Arrange
   const page = await openRealChromePage(context, FIXTURE)
   if (!page) return
