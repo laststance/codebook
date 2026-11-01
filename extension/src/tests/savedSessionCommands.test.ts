@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import type { SavedSessionRemoval } from '../runtimeSupport/savedSessionSetupTypes'
 import type * as SavedSessionCommands from '../savedSessionCommands'
 
 import { defer } from './utils/defer'
@@ -16,7 +17,11 @@ const ENTRY = {
 }
 
 /** Loads the commands module against a stub editor and a fake store; every effect lands in `calls`. */
-async function load(warningAnswers: string[], pressFirstButton = false) {
+async function load(
+  warningAnswers: string[],
+  pressFirstButton = false,
+  fixedRemoval?: SavedSessionRemoval,
+) {
   const calls: string[] = []
   const notices: { severity: string; message: string; actions: string[] }[] = []
   const handlers = new Map<
@@ -65,6 +70,8 @@ async function load(warningAnswers: string[], pressFirstButton = false) {
       remove: async () => {
         removals += 1
         calls.push('remove')
+        // A fixed answer makes every removal end the same way, for the refusal notices.
+        if (fixedRemoval) return fixedRemoval
         return removals === 1
           ? { outcome: 'run-in-this-window', runId: 'run-1' }
           : { outcome: 'removed' }
@@ -129,6 +136,51 @@ test('Remove offers Stop run and remove for a run of this window, stops it, wait
     },
   ])
 })
+
+const REFUSALS: {
+  name: string
+  removal: SavedSessionRemoval
+  message: string
+}[] = [
+  {
+    name: 'a run in another window',
+    removal: { outcome: 'in-use-elsewhere' },
+    message:
+      'The saved session for shop is in use by a run in another window. Stop that run there, then remove it again.',
+  },
+  {
+    name: 'a setup that is open',
+    removal: { outcome: 'setup-open' },
+    message:
+      'Setup for shop is open. Choose Done or Close setup first, then remove it.',
+  },
+  {
+    name: 'a folder that is not a saved-session folder',
+    removal: { outcome: 'refused-path', reason: 'outside the store' },
+    message:
+      'Codebook did not remove the saved session for shop: its folder is not a saved-session folder.',
+  },
+  {
+    name: 'a removal that stopped part way',
+    removal: { outcome: 'partly-removed', cause: 'EBUSY on cookies' },
+    message:
+      'Codebook removed part of the saved session for shop: EBUSY on cookies. Remove it again.',
+  },
+]
+
+for (const refusal of REFUSALS) {
+  // Value: protects=the learner reads why a saved session was not deleted; fails_when=a refusal shows another sentence or as information; why_new=the four refusal sentences had no test; seam=codebook.removeSavedSession with a fake store; no_claim=the store's own refusal detection
+  test(`Remove tells the learner why nothing was deleted for ${refusal.name}`, async () => {
+    // Arrange
+    const { notices, handlers } = await load(['Remove'], false, refusal.removal)
+    // Act
+    await handlers.get('codebook.removeSavedSession')?.()
+    // Assert
+    assert.deepEqual(notices, [
+      { severity: 'error', message: refusal.message, actions: [] },
+    ])
+  })
+}
 
 // protects=Remove asks before deleting; fails_when=the session is deleted without the learner pressing Remove; no_claim=the modal rendering
 test('Remove deletes nothing when the learner dismisses the confirmation', async () => {
