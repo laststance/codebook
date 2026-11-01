@@ -30,7 +30,7 @@ async function readAllText(folder: string): Promise<string> {
 /** Runs a version 3 study whose password the learner typed, on the controlled runtime, until its first stop is committed. */
 async function pausedSecretRun(
   context: TestContext,
-  captured: { secret: string; value: string | number } = {
+  captured: { secret: string; value: string | number | boolean } = {
     secret: SECRET,
     value: SECRET,
   },
@@ -163,4 +163,20 @@ test('a digits-only secret the app turned into a number is masked in the saved s
     'run resource holds the number',
   )
   assert.match(saved, /\[masked\]/)
+})
+
+// protects=learner secret as a boolean: the secret "true" the app parsed into the boolean true is masked in the saved study's captured values; fails_when=the inspected boolean true reaches the saved study unmasked; no_claim=the real debugger: the controlled runtime reports the boolean as the evaluated value
+test('a secret the app parsed into a boolean is masked in the saved study', async (context) => {
+  // Arrange
+  const { service, record, library } = await pausedSecretRun(context, {
+    secret: 'true',
+    value: true,
+  })
+  // Act
+  const archive = await captureStudy(service, record, library.workspaceKey)
+  assert.ok(archive)
+  // Assert
+  const saved = JSON.stringify(archive)
+  assert.match(saved, /"value:nextTheme":"\[masked\]"/)
+  assert.equal(/"value:nextTheme":true/.test(saved), false)
 })

@@ -147,7 +147,7 @@ export async function configuredRuntimeHarness(
     /** Names the executed module's source map lists (its `names`), such as an env value an inlined constant carries. */
     sourceMapNames?: string[]
     /** The text the debugger reports for `nextTheme` (its variable and the declared inspection) instead of `dark`. */
-    capturedValue?: string | number
+    capturedValue?: string | number | boolean
     /** Makes the Vite stand-in reload the page, serving changed module bytes, right after the entry page was requested and before the run waits for the page to settle. */
     reloadDuringEntryLoad?: boolean
     /** Runs the Next configuration in a workspace with a Pages folder: the stand-in server answers the structured entry check, the `.next/dev` build is written around the cited source, and the page reports `window.next.router` ({@link NextPagesHarnessOptions}). */

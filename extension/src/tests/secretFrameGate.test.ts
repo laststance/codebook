@@ -821,3 +821,109 @@ test('frames from the time the control draws its text are dropped and earlier fr
   assert.equal(outcomes.length, 100)
   assert.equal(gate.failure, 'control-not-password')
 })
+
+/** Starts a real page and a gate armed on its password control with a known secret. */
+async function armedWithSecret(context: TestContext, secret: string) {
+  const page = await launchRealHeadlessPage(context)
+  if (!page) return undefined
+  await page.load(
+    '<input id="pw" type="password"><canvas id="board"></canvas><div id="host"></div><p id="note">hello</p>',
+  )
+  const failures: SecretFrameFailureReason[] = []
+  const gate = new SecretFrameGate({
+    evaluate: (expression) => page.evaluate(expression),
+    onFailure: (reason) => void failures.push(reason),
+  })
+  await gate.arm('#pw', secret)
+  return { page, gate, failures }
+}
+
+// protects=a secret drawn on a canvas with fillText fails the gate; fails_when=the observer reads only controls and innerText, so canvas pixels count as safe; no_claim=WebGL and drawImage of pre-rendered images; real headless Chrome
+test('a typed value drawn on a canvas with fillText drops frames and fails the run', async (context) => {
+  // Arrange
+  const armed = await armedWithSecret(context, 'canvas-secret')
+  if (!armed) return
+  const { page, gate, failures } = armed
+  await typeIntoControl(page, 'canvas-secret')
+  // Act
+  await page.evaluate(
+    "document.getElementById('board').getContext('2d').fillText('you typed canvas-secret', 10, 10)",
+  )
+  await settle(page)
+  const verdict = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.deepEqual([verdict, failures], ['drop', ['value-copied-to-text']])
+})
+
+// protects=a secret drawn on a canvas inside a same-origin iframe fails the gate; fails_when=only the top window's canvas prototype is wrapped; no_claim=a draw made before the observer first reaches the frame
+test('a typed value drawn on a canvas in a same-origin iframe drops frames and fails the run', async (context) => {
+  // Arrange
+  const armed = await armedWithSecret(context, 'frame-canvas-secret')
+  if (!armed) return
+  const { page, gate, failures } = armed
+  await typeIntoControl(page, 'frame-canvas-secret')
+  await page.evaluate(
+    "document.getElementById('host').append(document.createElement('iframe'))",
+  )
+  await settle(page)
+  // Act
+  await page.evaluate(
+    "(() => { const doc = document.querySelector('iframe').contentDocument; const canvas = doc.createElement('canvas'); doc.body.append(canvas); canvas.getContext('2d').strokeText('frame-canvas-secret', 5, 5) })()",
+  )
+  await settle(page)
+  const verdict = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.deepEqual([verdict, failures], ['drop', ['value-copied-to-text']])
+})
+
+// protects=a value copied into an attribute that CSS attr() draws fails the gate; fails_when=attribute values are not inspected; no_claim=CSS content with a literal string in a stylesheet the page builds
+test('a typed value copied into an attribute drawn by CSS generated content drops frames and fails the run', async (context) => {
+  // Arrange
+  const armed = await armedWithSecret(context, 'attr-secret')
+  if (!armed) return
+  const { page, gate, failures } = armed
+  await typeIntoControl(page, 'attr-secret')
+  await settle(page)
+  // Act
+  await page.evaluate(
+    "(() => { const style = document.createElement('style'); style.textContent = '#note::before{content:attr(data-x)}'; document.head.append(style); document.getElementById('note').setAttribute('data-x', 'attr-secret') })()",
+  )
+  await settle(page)
+  const verdict = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.deepEqual([verdict, failures], ['drop', ['value-copied-to-text']])
+})
+
+// protects=a controlled password input whose value attribute holds the value (React syncs it) keeps frames passing; fails_when=the armed control's own value attribute counts as a copy; no_claim=a page that reveals the value another way
+test('a controlled password input whose value attribute holds the value keeps frames passing', async (context) => {
+  // Arrange
+  const armed = await armedWithSecret(context, 'sync-secret')
+  if (!armed) return
+  const { page, gate, failures } = armed
+  await typeIntoControl(page, 'sync-secret')
+  // Act
+  await page.evaluate(
+    "(() => { document.getElementById('pw').setAttribute('value', 'sync-secret'); const second = document.createElement('input'); second.type = 'password'; second.setAttribute('value', 'sync-secret'); document.getElementById('host').append(second) })()",
+  )
+  await settle(page)
+  const verdict = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.deepEqual([verdict, failures], ['pass', []])
+})
+
+// protects=a hidden input holding the value keeps frames passing; fails_when=a hidden input's attributes count as a copy; no_claim=hidden inputs the page reveals another way
+test('a hidden input holding the value keeps frames passing', async (context) => {
+  // Arrange
+  const armed = await armedWithSecret(context, 'hidden-secret')
+  if (!armed) return
+  const { page, gate, failures } = armed
+  await typeIntoControl(page, 'hidden-secret')
+  // Act
+  await page.evaluate(
+    "(() => { const hidden = document.createElement('input'); hidden.type = 'hidden'; hidden.setAttribute('value', 'hidden-secret'); hidden.value = 'hidden-secret'; document.getElementById('host').append(hidden) })()",
+  )
+  await settle(page)
+  const verdict = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.deepEqual([verdict, failures], ['pass', []])
+})

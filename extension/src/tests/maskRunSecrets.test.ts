@@ -35,7 +35,7 @@ test('overlapping secrets leave no fragment of the longer one', () => {
   assert.equal(masked, 'token [masked] and [masked]')
 })
 
-// protects=strings in nested objects and array elements are masked while other keys and values stay readable, and a key equal to a secret is masked; fails_when=array elements or nested strings keep the secret or ordinary keys are rewritten; no_claim=class instances and cyclic values, which JSON-like results never hold
+// protects=strings in nested objects and array elements are masked while other keys and values stay readable, and a key equal to a secret stays; fails_when=array elements or nested strings keep the secret or a key is rewritten; no_claim=class instances and cyclic values, which JSON-like results never hold
 test('the deep variant masks nested strings and array elements and leaves other keys alone', () => {
   // Arrange
   const value = {
@@ -49,6 +49,16 @@ test('the deep variant masks nested strings and array elements and leaves other 
   assert.deepEqual(masked, {
     values: ['safe', 'copy [masked] here'],
     nested: { note: '[masked]', count: 3, flag: true, none: null },
-    '[masked]': 'key-is-a-secret',
+    hunter2: 'key-is-a-secret',
   })
+})
+
+// protects=a protocol key survives a learner secret that equals it, with its value; fails_when=object keys are masked, so status or ok vanish from a tool result; no_claim=runtime data stored as keys, which Codebook's schemas do not do
+test('a secret equal to a protocol key leaves the key and its value in a tool result', () => {
+  // Arrange
+  const result = { status: 'completed', ok: true }
+  // Act
+  const masked = maskRunSecretsDeep(result, new Set(['status']))
+  // Assert
+  assert.deepEqual(masked, { status: 'completed', ok: true })
 })

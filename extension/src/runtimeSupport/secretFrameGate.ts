@@ -1,4 +1,9 @@
 /**
+ * Stated limits of the in-page observer (what it cannot verify, so a green gate does not claim it):
+ * - Canvas text is checked only through `fillText` and `strokeText` (2D and offscreen contexts, in every same-origin realm reached by the observer); WebGL, `drawImage` of pre-rendered images and a draw made in a frame before the observer first reaches it are not checked.
+ * - Attributes are checked (CSS `attr()` content, `title` tooltips), but CSS `content` with a literal string in a stylesheet the page builds is not.
+ * - Closed shadow roots and cross-origin frames have no readable content.
+ *
  * The secret frame gate's invariant (every branch of the in-page observer and of the image paths below is checked against it):
  * while armed, and after a document replacement, an image passes only if a verification that answered after its capture time shows no armed control, and no other control or rendered text, showed the secret then.
  * A time that no verification covers (an observer that never answered, the gap between the last answer and a document's replacement) is not safe; it is a gap, not a pass.
@@ -67,7 +72,7 @@ export type SecretFrameGateOptions = {
 /**
  * Runs inside the page: watches one password control and keeps a record of the times it was not safe to draw.
  * Injected as source text by {@link SecretFrameGate.arm}; it must stay self-contained.
- * The page is unsafe while the armed element is connected but no longer a `password` control (whatever its selector matches now: the selector only serves to notice a replacement), while any other non-password control holds its last value (a replacement that shows it), and while that value appears in the page's rendered text more often than when the value arrived (text the page already showed, such as a "Forgot password?" label, is no copy). A control removed from the page, as a sign-in form that unmounts after its submit, or replaced by another password control shows nothing and stays safe.
+ * The page is unsafe while the armed element is connected but no longer a `password` control (whatever its selector matches now: the selector only serves to notice a replacement), while any other non-password control holds its last value (a replacement that shows it), while that value appears in the page's rendered text or in element attributes more often than when the value arrived, and after any canvas text call that holds it (text the page already showed, such as a "Forgot password?" label, is no copy). A control removed from the page, as a sign-in form that unmounts after its submit, or replaced by another password control shows nothing and stays safe.
  * @param selector - The control's selector, or `null` in a document that replaced the one the learner typed in: there is no password control to watch, the value was never page text there (its baseline is zero), and only copies in rendered text and in plain controls are checked.
  * @param globalName - The page global the record is kept under.
  * @param copyMinChars - The shortest value checked for a copy into visible text.
@@ -102,11 +107,18 @@ function installSecretFrameObserver(
   // Every root the learner could see: the page, the open shadow roots in it and the same-origin frames in it, recursively. A cross-origin frame has no readable document, so its text and controls cannot be checked (a stated limit of this gate).
   // Realm-independent: a frame's nodes fail the parent realm's `instanceof`, so roots and elements are told apart by `nodeType` and `tagName`.
   const observedRoots = new WeakSet<object>()
+  // Set once any canvas of any reachable realm was asked to draw a watched value: pixels already drawn cannot be read back, so the page stays unsafe for the rest of the run.
+  let drewValueOnCanvas = false
+  // The realms (the page window and the same-origin frame windows) whose canvas drawing methods are already wrapped.
+  const wrappedRealms = new WeakSet<object>()
   const mutationCallback = (): void => check()
   const visibleRoots = (): ParentNode[] => {
     const roots: ParentNode[] = []
     const visit = (root: ParentNode): void => {
       roots.push(root)
+      // A frame document has its own canvas prototypes: wrap them as soon as the frame is reachable.
+      if ((root as Node).nodeType === 9)
+        wrapCanvasRealm((root as Document).defaultView)
       // Mutations in a shadow root or a frame document are not seen by the observer on the page's document.
       if (!observedRoots.has(root)) {
         observedRoots.add(root)
@@ -145,9 +157,34 @@ function installSecretFrameObserver(
       0,
     )
   }
+  // Attributes are drawn by CSS `attr()` generated content and by `title` tooltips. Left out: the armed control's own `value` attribute and the `value` attribute of any password input (React syncs a controlled input's attribute, and a password input never draws it), and hidden inputs (never drawn).
+  const attributeOccurrencesInRoot = (
+    root: ParentNode,
+    value: string,
+  ): number => {
+    let total = 0
+    for (const element of Array.from(root.querySelectorAll('*'))) {
+      const isInput = element.tagName === 'INPUT'
+      const inputType = isInput ? (element as HTMLInputElement).type : ''
+      if (inputType === 'hidden') continue
+      for (const attribute of Array.from(element.attributes)) {
+        if (
+          attribute.name === 'value' &&
+          isInput &&
+          (element === node || inputType === 'password')
+        )
+          continue
+        total += countIn(attribute.value, value)
+      }
+    }
+    return total
+  }
   const occurrencesOf = (value: string): number =>
     visibleRoots().reduce(
-      (total, root) => total + occurrencesInRoot(root, value),
+      (total, root) =>
+        total +
+        occurrencesInRoot(root, value) +
+        attributeOccurrencesInRoot(root, value),
       0,
     )
   // The value the learner will type is counted before anything is typed.
@@ -172,6 +209,46 @@ function installSecretFrameObserver(
   // A control other than the armed one shows the value when it holds it whole (a longer value that contains a long secret counts, a short one must match exactly).
   const holdsValue = (held: string, value: string): boolean =>
     value.length >= copyMinChars ? held.includes(value) : held === value
+  // A canvas call is the only moment its text is known: a call whose text holds a watched value marks the page unsafe for good.
+  function wrapCanvasRealm(realm: Window | null): void {
+    if (realm === null || wrappedRealms.has(realm)) return
+    wrappedRealms.add(realm)
+    try {
+      const constructors = realm as unknown as Record<
+        string,
+        { prototype: Record<string, unknown> } | undefined
+      >
+      for (const constructorName of [
+        'CanvasRenderingContext2D',
+        'OffscreenCanvasRenderingContext2D',
+      ]) {
+        const prototype = constructors[constructorName]?.prototype
+        if (prototype === undefined) continue
+        for (const method of ['fillText', 'strokeText']) {
+          const original = prototype[method]
+          if (typeof original !== 'function') continue
+          prototype[method] = function (this: unknown, ...args: unknown[]) {
+            noteCanvasText(args[0])
+            return Reflect.apply(original, this, args)
+          }
+        }
+      }
+    } catch {
+      // A realm that refuses the wrap (frozen prototype) is a stated limit of this gate.
+    }
+  }
+  function noteCanvasText(text: unknown): void {
+    // The control may hold a value the observer has not read yet.
+    armedControlReason()
+    const drawn = String(text)
+    const watchedNow = [typedValue, lastValue].filter(
+      (value): value is string => value !== undefined && value !== '',
+    )
+    if (watchedNow.some((value) => holdsValue(drawn, value))) {
+      drewValueOnCanvas = true
+      check(false)
+    }
+  }
   const plainControlHolds = (value: string, roots: ParentNode[]): boolean =>
     roots.some((root) =>
       Array.from(root.querySelectorAll('input, textarea')).some(
@@ -198,6 +275,7 @@ function installSecretFrameObserver(
   ): SecretFrameFailureReason | undefined => {
     const own = armedControlReason()
     if (own !== undefined) return own
+    if (drewValueOnCanvas) return 'value-copied-to-text'
     // Both the typed value and the last one the control held are checked for the rest of the run, whatever the control holds now.
     const watched = [typedValue, lastValue].filter(
       (value): value is string => value !== undefined && value !== '',
@@ -224,6 +302,7 @@ function installSecretFrameObserver(
       state.open = null
     }
   }
+  wrapCanvasRealm(window)
   // Without a value known beforehand, the baseline is taken when the value first arrives with an input event.
   node?.addEventListener('input', () => check())
   // A mutation callback runs before the next paint, so any painted unsafe state is recorded.
