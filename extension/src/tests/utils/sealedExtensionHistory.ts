@@ -107,7 +107,9 @@ export async function writeExtensionHistory(
         context: step.context,
         stopIndex: step.stopIndex,
         targetUrl:
-          'chrome-extension://abcdefghijklmnopabcdefghijklmnop/popup.html',
+          step.context === 'page'
+            ? 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/popup.html'
+            : 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/worker.js',
         workerGeneration: step.context === 'page' ? 0 : 1,
       })
     else if (step.type === 'capture') {
