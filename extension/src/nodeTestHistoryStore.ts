@@ -978,8 +978,11 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
       !seal &&
       (this.active.has(studyId) || (await this.writtenElsewhere(studyId)))
     const status = seal?.status ?? (isRecording ? 'recording' : 'interrupted')
-    // A history with no seal and no live writer keeps no temporary file that a writer could still rename.
-    if (status === 'interrupted')
+    // A history with no seal and no live writer keeps no temporary file that a writer could still rename; a writer record this window could not read (EMFILE, EBUSY) may name a live writer, so its files stay.
+    if (
+      status === 'interrupted' &&
+      this.writerVerdicts.get(studyId)?.verdict !== 'unread'
+    )
       await this.descriptor.discardInterruptedLeftovers?.(this.path(studyId))
     return this.descriptor.parseIndex({
       header,

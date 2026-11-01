@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { readdir, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { before, test, type TestContext } from 'node:test'
 
@@ -160,6 +160,38 @@ test('removing an extension history is refused while another window’s writer i
   assert.deepEqual(whileLive, { outcome: 'refused', reason: 'recording' })
   assert.deepEqual(whileUnreadable, { outcome: 'refused', reason: 'recording' })
   assert.equal(afterCrash.outcome, 'removed')
+  writer.abandon()
+})
+
+// protects=a window that cannot read another window's writer record (EMFILE, EBUSY) leaves that live recording's temporary frame blobs alone; fails_when=reading the history as interrupted removes `frames/*.tmp`, so the writing window's next rename fails and its later frames are lost; no_claim=the process judge itself (injected)
+test('reading an unsealed extension history whose writer record cannot be read keeps its temporary frame blobs', async (context) => {
+  // Arrange
+  const { learningDirectory } = await openWithSealedHistory(context)
+  const writing = new NodeHistoryStore(
+    createExtensionStorageDescriptor(),
+    learningDirectory,
+    EXTENSION_WORKSPACE_KEY,
+  )
+  const reading = new NodeHistoryStore(
+    createExtensionStorageDescriptor(),
+    learningDirectory,
+    EXTENSION_WORKSPACE_KEY,
+    () => 64,
+    async () => 0,
+    { now: Date.now, judge: async () => 'unread' },
+  )
+  const header = extensionHistoryHeader(EXTENSION_WORKSPACE_KEY)
+  const writer = await writing.start(header)
+  const framesDirectory = join(writer.historyDirectory, 'frames')
+  await mkdir(framesDirectory, { recursive: true })
+  const inFlight = join(framesDirectory, `${'a'.repeat(64)}.png.blob.tmp`)
+  await writeFile(inFlight, 'partial png')
+
+  // Act
+  await reading.read(header.studyId)
+
+  // Assert
+  assert.equal(existsSync(inFlight), true)
   writer.abandon()
 })
 
