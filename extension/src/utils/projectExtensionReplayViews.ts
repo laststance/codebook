@@ -150,8 +150,13 @@ export function projectExtensionReplayViews(input: ExtensionReplayViewsInput): {
  * @param replay - The replay.
  * @param position - The selected event's index in the timeline; absent before one is selected.
  * @param options - The view's generation, whether the replay is opening or leaving the shown moment, and the loaded frame's address.
- * @returns The view; its `frame.label` is the recorded label or `No recorded frame at this moment`.
+ * @returns
+ * - Opening: the loading placeholder, with no frame
+ * - Leaving: the previous image stays, the header drops the time and `frame.label` reads the loading text, so the image is not claimed for a stop
+ * - Damaged blob: `No recorded frame at this moment` with the reason
+ * - Otherwise: the recorded label
  * @example projectExtensionApplication(replay, 0, { generation: 1, loading: false, leaving: false, src }).frame?.label // => 'Recorded frame captured at this stop'
+ * @example projectExtensionApplication(replay, 0, { generation: 2, loading: false, leaving: true, src }).frame?.label // => 'Loading the recorded extension frame…'
  */
 function projectExtensionApplication(
   replay: ExtensionReplayPresentation,
@@ -195,9 +200,12 @@ function projectExtensionApplication(
     name: `${time} · ${test}`,
     frame: {
       // A frame whose blob is damaged is the no-frame state for this moment, with its reason.
+      // While the selection leaves for another stop the kept image still belongs to the earlier one, so no stop is claimed for it.
       label: options.damaged
         ? NODE_EXTENSION_REPLAY_TEXT.noFrame
-        : describeExtensionFrameLabel(frame),
+        : options.leaving
+          ? NODE_EXTENSION_REPLAY_TEXT.loading
+          : describeExtensionFrameLabel(frame),
       ...(options.damaged ? { reason: options.damaged } : {}),
       ...(options.src && frame.state !== 'none'
         ? {
