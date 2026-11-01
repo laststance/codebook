@@ -770,6 +770,43 @@ test('reselecting the shown extension stop after the learner ends the replay deb
   }
 })
 
+// protects=selecting the stop after Retry kept the learner's ended replay debugger stopped still restarts the debugger; fails_when=Retry records the stop as shown natively, so Select this stop skips the presentation and the debugger stays stopped against the guidance; no_claim=the real debug session or the Retry button's drawing
+test('selecting a stop after Retry kept the ended replay debugger stopped presents it in a fresh debugger', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await writeExtensionHistoryFor(harness, RUN)
+    await openExtensionReplay(harness, history.studyId)
+    harness.endHistoricalDebugSession()
+    // A source-slot row is on the pane, as after a slot that failed to open; Retry shows the moment again.
+    harness.reader['report']('history-source', new Error('slot unavailable'))
+    await harness.reader.action('retry')
+    const presentationsBefore = harness.historicalDebugPresentations.length
+
+    // Act
+    await selectExtensionEvent(harness, history.studyId, OPEN1)
+    await waitUntil(
+      () =>
+        harness.historicalDebugPresentations.length > presentationsBefore &&
+        lastView(harness)?.nodeHistoryPosition?.debuggerAvailable === true,
+      'the stop is presented in a fresh debugger',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(
+      harness.historicalDebugPresentations.length,
+      presentationsBefore + 1,
+    )
+    assert.equal(
+      lastView(harness)?.nodeHistoryPosition?.debuggerAvailable,
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // protects=an Extension replay whose first debugger launch failed presents the same stop again when the learner reselects it; fails_when=the failed launch is remembered as a shown native moment and the reselect repaints nothing, leaving debuggerAvailable false; no_claim=the wording of the launch failure
 test('reselecting the stop whose debugger launch failed starts the debugger again', async () => {
   // Arrange

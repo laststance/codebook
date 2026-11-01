@@ -927,7 +927,7 @@ export class StudyWorkspace {
   private extensionShownFrame?: ExtensionShownFrame
   /** What the native surfaces show of the committed Extension moment ({@link extensionNativeKey}); they repaint only when it changes. */
   private extensionNativeShown?: string
-  /** The selection request whose debugger launch failed and was kept open, so its moment must not count as shown natively. */
+  /** The selection request whose debugger launch failed and was kept open, or whose moment committed beside the learner's stopped debugger (Retry), so its moment must not count as shown natively. */
   private extensionDebuggerFailedRequest?: number
   /** The saved Extension replays Saved studies lists, listed with {@link nodeHistoryCatalog} ({@link listNodeHistoryCatalog}). */
   private nodeExtensionHistoryCatalog: ExtensionHistorySummary[] = []
@@ -27371,7 +27371,8 @@ export class StudyWorkspace {
       this.selectedNodeHistoryDebugAvailable = false
       this.selectedNodeHistoryValuesUninspected = false
     } else if (hasDebuggerStop && debuggerStopped && keepStoppedDebugger) {
-      // The learner's stopped debugger stays stopped (Retry); the moment commits without a stop in it.
+      // The learner's stopped debugger stays stopped (Retry); the moment commits without a stop in it, so it must not count as shown natively.
+      this.extensionDebuggerFailedRequest = request
       this.selectedNodeHistoryDebugAvailable = false
       this.selectedNodeHistoryValuesUninspected = false
     } else if (slot !== 'kept') {
