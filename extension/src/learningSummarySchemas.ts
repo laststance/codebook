@@ -3,6 +3,7 @@ import { z } from 'zod'
 import {
   MAX_EXPLANATION_CHARS,
   REFERENCE_LENGTH_LIMIT,
+  REPOSITORY_OPERATION_LIMIT,
   LEARNING_SUMMARY_LIMITS,
 } from './constants'
 import { learningSummaryIssues } from './utils/learningSummaryIssues'
@@ -45,6 +46,15 @@ export function learningStepsSchema<
         explanation: z.string().min(1).max(MAX_EXPLANATION_CHARS),
         evidence: z.enum(['observed', 'source-derived', 'unknown']),
         reference: referenceField,
+        operationIndex: z
+          .number()
+          .int()
+          .min(1)
+          .max(REPOSITORY_OPERATION_LIMIT)
+          .optional()
+          .describe(
+            'Since API 1.14, for a step that explains one operation of a version 3 run: its 1-based number. The replay links the step to that operation mark; a number with no operation leaves the step unlinked.',
+          ),
       }),
     )
     .min(1)

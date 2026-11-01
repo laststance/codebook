@@ -6,6 +6,7 @@ import {
 
 import { describeStudy } from './describeStudy'
 import { isCrossRuntimeStudy } from './isCrossRuntimeStudy'
+import { recordingOperationOf } from './recordingOperationOf'
 import { validateConfiguredStudyEvidence } from './validateConfiguredStudyEvidence'
 
 /** Rejects mismatched identities, source hashes and impossible availability before recording context reaches playback. @example validateRecordingContext(value, key).studyId */
@@ -27,6 +28,17 @@ export function validateRecordingContext(
     context.materialSignature !== study.materialSignature
   )
     throw new Error('Recording context belongs to another checkpoint.')
+  // The context's operations are the study's, on the recording clock; a seek to an operation trusts them.
+  const savedOperations = study.operations?.map(recordingOperationOf)
+  if (
+    JSON.stringify(savedOperations) !==
+    JSON.stringify(
+      'operations' in context && context.operations
+        ? context.operations
+        : undefined,
+    )
+  )
+    throw new Error('Recording context operations differ from the study.')
   const intervals = context.pausedIntervals ?? []
   if (
     new Set(intervals.map((interval) => interval.snapshotId)).size !==

@@ -1,5 +1,7 @@
 import { configuredObservationSchema } from '../configuredStudySchemas'
 import {
+  OPERATIONS_CONFIG_VERSION,
+  OPERATIONS_STUDY_VERSION,
   RECORDED_LOCATION_STUDY_VERSION,
   REPOSITORY_BROWSER_ACTION,
   REPOSITORY_BROWSER_PROFILE,
@@ -12,6 +14,7 @@ import type { StudyRecord, StudyService } from '../service'
 
 import { decodeRetainedStudy } from './decodeRetainedStudy'
 import { describeStudy } from './describeStudy'
+import { projectSavedOperations } from './projectSavedOperations'
 import { redactPreparedConfiguration } from './redactPreparedConfiguration'
 
 /** Copies only committed canonical evidence for {@link StudyWorkspace}; a changed read is discarded. @example await captureStudy(service, record, workspaceKey) */
@@ -190,7 +193,11 @@ export async function captureStudy(
   const configured =
     record.profile === REPOSITORY_BROWSER_PROFILE
       ? {
-          version: RECORDED_LOCATION_STUDY_VERSION,
+          // A study of ordered operations has its own format, so an older Codebook lists it as saved by a newer one instead of failing on its schema.
+          version:
+            canonicalConfiguration.version === OPERATIONS_CONFIG_VERSION
+              ? OPERATIONS_STUDY_VERSION
+              : RECORDED_LOCATION_STUDY_VERSION,
           configuration: canonicalConfiguration,
           configurationHash: sha256(JSON.stringify(canonicalConfiguration)),
           descriptor: record.definition?.descriptor,
@@ -203,6 +210,15 @@ export async function captureStudy(
             runtime?.profile === REPOSITORY_BROWSER_PROFILE
               ? runtime.operation
               : undefined,
+          // Every declared operation with the state it reached, as the run resource lists it when this checkpoint is taken.
+          ...(runtime?.operations
+            ? {
+                operations: projectSavedOperations(
+                  runtime.operations,
+                  runtime.events,
+                ),
+              }
+            : {}),
         }
       : {}
   return decodeRetainedStudy(
