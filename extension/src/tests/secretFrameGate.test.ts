@@ -978,3 +978,60 @@ test('a hidden input holding the value keeps frames passing', async (context) =>
   // Assert
   assert.deepEqual([verdict, failures], ['pass', []])
 })
+
+// protects=a textarea that holds the typed value is a plain control that shows it; fails_when=only input elements count as plain controls, so a textarea echo of the secret passes; no_claim=a textarea inside a closed shadow root; real headless Chrome
+test('a textarea holding the typed value drops frames and fails the run', async (context) => {
+  // Arrange
+  const armed = await armedWithSecret(context, 'area-secret')
+  if (!armed) return
+  const { page, gate, failures } = armed
+  await typeIntoControl(page, 'area-secret')
+  // Act
+  await page.evaluate(
+    "(() => { const area = document.createElement('textarea'); document.getElementById('host').append(area); area.value = 'area-secret' })()",
+  )
+  await settle(page)
+  const verdict = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.deepEqual([verdict, failures], ['drop', ['control-replaced']])
+})
+
+// protects=a secret drawn with fillText on an OffscreenCanvas context fails the gate, as an on-page canvas does; fails_when=only CanvasRenderingContext2D is wrapped, so offscreen text later shown as a bitmap passes; no_claim=offscreen canvases in workers, WebGL and drawImage; real headless Chrome
+test('a typed value drawn on an offscreen canvas drops frames and fails the run', async (context) => {
+  // Arrange
+  const armed = await armedWithSecret(context, 'offscreen-secret')
+  if (!armed) return
+  const { page, gate, failures } = armed
+  await typeIntoControl(page, 'offscreen-secret')
+  // Act
+  await page.evaluate(
+    "new OffscreenCanvas(80, 20).getContext('2d').fillText('offscreen-secret', 5, 5)",
+  )
+  await settle(page)
+  const verdict = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.deepEqual([verdict, failures], ['drop', ['value-copied-to-text']])
+})
+
+// protects=a frame whose document the observer cannot read (a sandboxed frame has an opaque origin) is skipped and the rest of the page is still checked; fails_when=an unreadable frame breaks the full check, so the observer stops answering and the run fails although nothing showed the secret; no_claim=the frame's own text, which a stated limit leaves unchecked; real headless Chrome
+test('a sandboxed frame the observer cannot read keeps frames passing', async (context) => {
+  // Arrange
+  const armed = await armedWithSecret(context, 'sandbox-secret')
+  if (!armed) return
+  const { page, gate, failures } = armed
+  await typeIntoControl(page, 'sandbox-secret')
+  // Act
+  await page.evaluate(
+    "(() => { const frame = document.createElement('iframe'); frame.setAttribute('sandbox', ''); frame.srcdoc = '<p>elsewhere</p>'; document.getElementById('host').append(frame) })()",
+  )
+  await settle(page)
+  const frameDocumentReadable = await page.evaluate(
+    "document.querySelector('iframe').contentDocument !== null",
+  )
+  const verdict = await gate.admitFrame(Date.now() - 20)
+  // Assert
+  assert.deepEqual(
+    [frameDocumentReadable, verdict, failures],
+    [false, 'pass', []],
+  )
+})
